@@ -1,0 +1,1128 @@
+cbuffer OceanSharedConstants (80 bytes)
+  +0	4	?	g_froth_distortion_speed
+  +4	4	?	g_froth_distortion_amount
+  +8	4	?	g_lowest_wave_trough_y_pos
+  +16	16	?	g_ps_sea_info
+  +32	4	?	g_detail_normal_uv_scale1
+  +36	4	?	g_detail_normal_uv_scale2
+  +40	4	?	g_detail_normal_uv_speed1
+  +44	4	?	g_detail_normal_uv_speed2
+  +48	4	?	g_transparency_exponential_scale
+  +64	16	?	g_foam_anim_data
+  used by: ocean.hlsl waterplane.hlsl
+
+cbuffer OceanSharedConstants (80 bytes)
+  +0	4	float	g_froth_distortion_speed
+  +4	4	float	g_froth_distortion_amount
+  +8	4	float	g_lowest_wave_trough_y_pos
+  +16	16	float4	g_ps_sea_info
+  +32	4	float	g_detail_normal_uv_scale1
+  +36	4	float	g_detail_normal_uv_scale2
+  +40	4	float	g_detail_normal_uv_speed1
+  +44	4	float	g_detail_normal_uv_speed2
+  +48	4	float	g_transparency_exponential_scale
+  +64	16	float4	g_foam_anim_data
+  used by: ocean.hlsl waterplane.hlsl
+
+cbuffer auto_exposure_buffer (16 bytes)
+  +0	4	?	g_auto_exposure_speed
+  +4	4	?	g_auto_exposure_dt
+  used by: hdr_tone_mapper.hlsl
+
+cbuffer blur_PS (16 bytes)
+  +0	8	?	texel_size
+  used by: blur.hlsl
+
+cbuffer camera_VS_PS (576 bytes)
+  +0	12	?	camera_position
+  +16	64	?	view
+  +80	64	?	projection
+  +144	64	?	view_projection
+  +208	64	?	inv_view
+  +272	64	?	inv_projection
+  +336	64	?	inv_view_projection
+  +400	16	?	camera_near_far
+  +416	4	?	time_in_sec
+  +420	8	?	g_inverse_focal_length
+  +428	4	?	g_vertical_fov
+  +432	16	?	g_screen_size
+  +448	4	?	g_vpos_texel_offset
+  +464	16	?	g_viewport_dimensions
+  +480	16	?	g_render_target_dimensions
+  +496	16	?	g_camera_temp0
+  +512	16	?	g_camera_temp1
+  +528	16	?	g_camera_temp2
+  +544	16	?	g_clip_rect
+  +560	4	?	g_num_of_samples
+  used by: alpha_blend_overlay.hlsl battlefog.hlsl blur.hlsl campaignborder.hlsl campaignterrain.hlsl cloth.hlsl cloud_plane.hlsl debuggeometry.hlsl debuggrid.hlsl debuglines.hlsl depth_of_field.hlsl directionallight.hlsl downsample.hlsl editordynamicgeometry.hlsl environment_specular_light.hlsl gaussianblur.hlsl gridspline.hlsl gridsurface.hlsl hdr_to_screen.hlsl hdr_tone_mapper.hlsl high_pass.hlsl imposter.hlsl indicator.hlsl lenseflare.hlsl mlaa_ps_3_0.hlsl mlaa_ps_4_0.hlsl ocean.hlsl ocean2.hlsl outline.hlsl particle_vfx_main.hlsl particle_vfx_simulation.hlsl pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl projectiletrail.hlsl reflections_blur.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranch_v3.hlsl rigidbranchcommon_v3.hlsl rigidbranchwet_v3.hlsl rigidcampaigntrees.hlsl rigidcampaignvegetation.hlsl rigidcollision.hlsl rigidcommon.hlsl rigiddebuggeometry.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafcommon_v3.hlsl rigidleafwet_v3.hlsl rigidprojecteddecal.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidterrain.hlsl rigidterrainblend.hlsl rigidtextureblend.hlsl rigidtextureblendwind.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidtreebillboard.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl rope.hlsl sail.hlsl sailsymbol.hlsl seainteraction.hlsl shadow_map_depth_buffer_analysis.hlsl shroud_plane.hlsl skydome.hlsl spline.hlsl sprite.hlsl ssao.hlsl virtualtexture.hlsl visibilityshader.hlsl wake.hlsl waterplane.hlsl waterrefraction.hlsl weighted.hlsl weightedcloth.hlsl weightedcommon.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer camera_VS_PS (576 bytes)
+  +0	12	float3	camera_position
+  +16	64	float4x4	view
+  +80	64	float4x4	projection
+  +144	64	float4x4	view_projection
+  +208	64	float4x4	inv_view
+  +272	64	float4x4	inv_projection
+  +336	64	float4x4	inv_view_projection
+  +400	16	float4	camera_near_far
+  +416	4	float	time_in_sec
+  +420	8	float2	g_inverse_focal_length
+  +428	4	float	g_vertical_fov
+  +432	16	float4	g_screen_size
+  +448	4	float	g_vpos_texel_offset
+  +464	16	float4	g_viewport_dimensions
+  +480	16	float4	g_render_target_dimensions
+  +496	16	float4	g_camera_temp0
+  +512	16	float4	g_camera_temp1
+  +528	16	float4	g_camera_temp2
+  +544	16	float4	g_clip_rect
+  +560	4	int	g_num_of_samples
+  used by: aoit.hlsl depth_of_field_cs.hlsl directionallight.hlsl environment_specular_light.hlsl hdr_to_screen.hlsl hdr_tone_mapper.hlsl ocean.hlsl oit.hlsl particle_vfx_main.hlsl particle_vfx_prepare_sortdata_cs.hlsl pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranch_v3.hlsl rigidbranchcommon_v3.hlsl rigidbranchwet_v3.hlsl rigidcommon.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafcommon_v3.hlsl rigidleafwet_v3.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidtreebillboard.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl waterplane.hlsl weighted.hlsl weightedcloth.hlsl weightedcommon.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer campaign_CB (32 bytes)
+  +0	16	?	g_wp_normal_scales
+  +16	8	?	g_wp_world_size
+  +24	4	?	g_refraction_offset
+  +28	4	?	g_refraction_scale
+  used by: waterplane.hlsl
+
+cbuffer campaign_CB (32 bytes)
+  +0	16	float4	g_wp_normal_scales
+  +16	8	float2	g_wp_world_size
+  +24	4	float	g_refraction_offset
+  +28	4	float	g_refraction_scale
+  used by: waterplane.hlsl
+
+cbuffer campaign_border_PS (96 bytes)
+  +0	64	?	g_bezier_basis
+  +64	16	?	g_border_colour_a
+  +80	4	?	g_length
+  +84	4	?	g_start_length
+  +88	4	?	g_end_length
+  used by: campaignborder.hlsl
+
+cbuffer campaign_ocean_cb (16 bytes)
+  +0	4	?	g_sea_uv_scale
+  +4	4	?	g_swell_uv_scale
+  used by: waterplane.hlsl
+
+cbuffer campaign_ocean_cb (16 bytes)
+  +0	4	float	g_sea_uv_scale
+  +4	4	float	g_swell_uv_scale
+  used by: waterplane.hlsl
+
+cbuffer campaign_tree_ps (16 bytes)
+  +0	4	?	g_inv_lod_distance
+  used by: rigidcampaigntrees.hlsl
+
+cbuffer cbCopyBlendToCache (80 bytes)
+  +0	16	?	g_viewport_pos_inv_size
+  +16	16	?	g_to_shfs_lhfs_hfo
+  +32	16	?	g_world_scale_offset
+  +48	16	?	g_height_texture_sizes
+  +64	16	?	g_virtual_height
+  used by: virtualtexture.hlsl
+
+cbuffer cbData (16 bytes)
+  +0	4	?	g_LuminanceThreshold
+  +4	4	?	g_IterationDepth
+  used by: mlaa_ps_3_0.hlsl mlaa_ps_4_0.hlsl
+
+cbuffer cbPageTableReplace (48 bytes)
+  +0	16	?	g_Replacement
+  +16	16	?	g_MulAdd
+  +32	12	?	g_OldPage_SampleMip
+  used by: virtualtexture.hlsl
+
+cbuffer cbPageTouch (16 bytes)
+  +0	16	?	g_page_touch_constants
+  used by: virtualtexture.hlsl
+
+cbuffer cbTerrainVirtualTexture (48 bytes)
+  +0	16	?	g_terrain_vtex_constants_0
+  +16	16	?	g_terrain_vtex_constants_1
+  +32	16	?	g_terrain_vtex_constants_2
+  used by: rigidterrain.hlsl rigidterrainblend.hlsl virtualtexture.hlsl
+
+cbuffer cbTextureDebug (32 bytes)
+  +0	16	?	g_quad_pos_inv_scale
+  +16	4	?	g_slice_id
+  +20	4	?	g_num_of_samples
+  used by: texturedebug.hlsl
+
+cbuffer cb_vfx (48 bytes)
+  +0	12	?	g_camera_aligned_x_axis
+  +16	12	?	g_camera_aligned_y_axis
+  +32	12	?	g_camera_aligned_z_axis
+  +44	4	?	g_view_id
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx (48 bytes)
+  +0	12	float3	g_camera_aligned_x_axis
+  +16	12	float3	g_camera_aligned_y_axis
+  +32	12	float3	g_camera_aligned_z_axis
+  +44	4	int	g_view_id
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_bitonicsort (32 bytes)
+  +0	4	?	g_compop_direction_swap
+  +4	4	?	g_compop_dist
+  +8	8	?	g_compop_dist_coord2
+  +16	4	?	g_tex_width
+  +20	4	?	g_ascending_order
+  used by: particle_vfx_gpu_sort.hlsl
+
+cbuffer cb_vfx_bitonicsort_cs (16 bytes)
+  +0	16	int4	g_bitonicsort_info
+  used by: particle_vfx_gpu_sort_cs.hlsl
+
+cbuffer cb_vfx_emitter_constants_common (8192 bytes)
+  +0	8192	?[512]	behaviour_mask
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_common (8192 bytes)
+  +0	8192	uint4[512]	behaviour_mask
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_gs (16384 bytes)
+  +0	8192	?[512]	vs_translation_params
+  +8192	8192	?[512]	vs_translation_params1
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_gs (16384 bytes)
+  +0	8192	float4[512]	vs_translation_params
+  +8192	8192	float4[512]	vs_translation_params1
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_ps (40960 bytes)
+  +0	8192	?[512]	ps_sim_game_logic_params
+  +8192	8192	?[512]	ps_sim_gravity_params
+  +16384	8192	?[512]	ps_sim_deceleration_params
+  +24576	8192	?[512]	ps_sim_following_emitter_params
+  +32768	8192	?[512]	ps_sim_turbulence_params
+  used by: particle_vfx_simulation.hlsl particle_vfx_spawn.hlsl
+
+cbuffer cb_vfx_emitter_constants_ps (40960 bytes)
+  +0	8192	float4[512]	ps_sim_game_logic_params
+  +8192	8192	float4[512]	ps_sim_gravity_params
+  +16384	8192	float4[512]	ps_sim_deceleration_params
+  +24576	8192	float4[512]	ps_sim_following_emitter_params
+  +32768	8192	float4[512]	ps_sim_turbulence_params
+  used by: particle_vfx_spawn.hlsl
+
+cbuffer cb_vfx_emitter_constants_ps (57344 bytes)
+  +0	8192	?[512]	ps_specular_params
+  +8192	8192	?[512]	ps_specular_params1
+  +16384	8192	?[512]	ps_receive_shadows_high_quality_params
+  +24576	8192	?[512]	ps_lighting_legacy_params
+  +32768	8192	?[512]	ps_lighting_params
+  +40960	8192	?[512]	ps_alpha_crush_params
+  +49152	8192	?[512]	ps_soft_edge_params
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_ps (57344 bytes)
+  +0	8192	float4[512]	ps_specular_params
+  +8192	8192	float4[512]	ps_specular_params1
+  +16384	8192	float4[512]	ps_receive_shadows_high_quality_params
+  +24576	8192	float4[512]	ps_lighting_legacy_params
+  +32768	8192	float4[512]	ps_lighting_params
+  +40960	8192	float4[512]	ps_alpha_crush_params
+  +49152	8192	float4[512]	ps_soft_edge_params
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_vs (57344 bytes)
+  +0	8192	?[512]	vs_culling_distances
+  +8192	8192	?[512]	vs_rotation_params
+  +16384	8192	?[512]	vs_scroll_uvs_params
+  +24576	8192	?[512]	vs_atlas_texture_params
+  +32768	8192	?[512]	vs_cell_texture_params
+  +40960	8192	?[512]	vs_animated_texture_params
+  +49152	8192	?[512]	vs_animated_texture_params1
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_emitter_constants_vs (57344 bytes)
+  +0	8192	float4[512]	vs_culling_distances
+  +8192	8192	float4[512]	vs_rotation_params
+  +16384	8192	float4[512]	vs_scroll_uvs_params
+  +24576	8192	float4[512]	vs_atlas_texture_params
+  +32768	8192	uint4[512]	vs_cell_texture_params
+  +40960	8192	uint4[512]	vs_animated_texture_params
+  +49152	8192	float4[512]	vs_animated_texture_params1
+  used by: particle_vfx_main.hlsl
+
+cbuffer cb_vfx_game_simulation_data (64 bytes)
+  +0	16	?	sea_surface_data
+  +16	16	?	sea_anim_data
+  +32	12	?	wind_velocity
+  +48	12	?	wind_variance_dir
+  used by: particle_vfx_simulation.hlsl particle_vfx_spawn.hlsl
+
+cbuffer cb_vfx_game_simulation_data (64 bytes)
+  +0	16	float4	sea_surface_data
+  +16	16	float4	sea_anim_data
+  +32	12	float3	wind_velocity
+  +48	12	float3	wind_variance_dir
+  used by: particle_vfx_spawn.hlsl
+
+cbuffer cb_vfx_particle_count (16 bytes)
+  +0	4	?	g_particle_count_tex_width
+  used by: particle_vfx_count.hlsl
+
+cbuffer cb_vfx_shared (16 bytes)
+  +0	4	?	g_emitter_instance_tex_width
+  +4	4	?	g_particle_instance_tex_width
+  +8	4	?	g_sorted_data_tex_width
+  +12	4	?	g_num_alive_particles
+  used by: particle_vfx_main.hlsl particle_vfx_simulation.hlsl particle_vfx_spawn.hlsl
+
+cbuffer cb_vfx_shared (16 bytes)
+  +0	4	float	g_emitter_instance_tex_width
+  +4	4	float	g_particle_instance_tex_width
+  +8	4	float	g_sorted_data_tex_width
+  +12	4	float	g_num_alive_particles
+  used by: particle_vfx_main.hlsl particle_vfx_prepare_sortdata_cs.hlsl particle_vfx_spawn.hlsl
+
+cbuffer clear_PS (32 bytes)
+  +0	16	?	clear_color
+  +16	4	?	depth_clear
+  used by: partial_clear.hlsl
+
+cbuffer cloth_PS (32 bytes)
+  +0	12	?	g_fore_colour
+  +16	12	?	g_back_colour
+  used by: cloth.hlsl
+
+cbuffer cloth_VS (64 bytes)
+  +0	64	?	g_world
+  used by: cloth.hlsl
+
+cbuffer cloud_plane_PS (80 bytes)
+  +0	12	?	g_sun_direction
+  +16	12	?	g_sun_transmitted_colour
+  +32	12	?	g_sun_reflected_colour
+  +44	4	?	g_transmit_falloff
+  +48	4	?	g_flatten_factor
+  +52	12	?	g_cloud_shadow_colour
+  +64	4	?	g_cloud_shadow_falloff
+  +68	4	?	g_horizon_alpha_start
+  +72	4	?	g_horizon_alpha_end
+  used by: cloud_plane.hlsl
+
+cbuffer cloud_plane_VS (16 bytes)
+  +0	4	?	g_wind_alignment
+  +4	4	?	g_cloud_shadow_gradient
+  +8	4	?	g_height_scale
+  used by: cloud_plane.hlsl
+
+cbuffer colorimetry_VS_PS (16 bytes)
+  +0	4	?	g_brightness
+  +4	4	?	g_gamma_output
+  +8	4	?	g_inv_gamma_output
+  used by: campaignborder.hlsl hdr_to_screen.hlsl hdr_tone_mapper.hlsl imposter.hlsl passthrough.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtextureblend.hlsl rigidtextureblendwind.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl sprite.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer colorimetry_VS_PS (16 bytes)
+  +0	4	float	g_brightness
+  +4	4	float	g_gamma_output
+  +8	4	float	g_inv_gamma_output
+  used by: hdr_to_screen.hlsl hdr_tone_mapper.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer constant_tone_mapping_buffer (16 bytes)
+  +0	4	?	g_luma_black_point
+  +4	4	?	g_luma_white_point
+  +8	4	?	g_luma_high_pass_threshold
+  used by: hdr_tone_mapper.hlsl rigidtextureblend.hlsl rigidtextureblendwind.hlsl
+
+cbuffer constant_tone_mapping_buffer (16 bytes)
+  +0	4	float	g_luma_black_point
+  +4	4	float	g_luma_white_point
+  +8	4	float	g_luma_high_pass_threshold
+  used by: hdr_tone_mapper.hlsl
+
+cbuffer depth_of_field_coc_PS (16 bytes)
+  +0	4	?	g_focus_distance
+  +4	4	?	g_focal_length
+  +8	4	?	g_coc_blur_kernel_scale
+  used by: depth_of_field.hlsl
+
+cbuffer directional_light_PS (80 bytes)
+  +0	64	?	g_overlay_view_projection
+  +64	4	?	g_refraction_depth
+  used by: directionallight.hlsl
+
+cbuffer directional_light_PS (80 bytes)
+  +0	64	float4x4	g_overlay_view_projection
+  +64	4	float	g_refraction_depth
+  used by: directionallight.hlsl
+
+cbuffer downsample_PS (256 bytes)
+  +0	248	?[16]	g_sample_offsets
+  +248	4	?	g_view_scale
+  used by: downsample.hlsl
+
+cbuffer editor_dynamic_geometry_PS (32 bytes)
+  +0	12	?	g_fore_colour
+  +16	12	?	g_back_colour
+  used by: editordynamicgeometry.hlsl
+
+cbuffer editor_dynamic_geometry_VS (64 bytes)
+  +0	64	?	g_world
+  used by: editordynamicgeometry.hlsl
+
+cbuffer fog_VS_PS (48 bytes)
+  +0	12	?	g_volume_fog_colour
+  +12	4	?	g_fog_distance_start
+  +16	4	?	g_fog_distance_strength
+  +20	4	?	g_fog_distance_scale
+  +24	4	?	g_fog_height_bottom
+  +28	4	?	g_fog_height_top
+  +32	4	?	g_fog_height_strength
+  +36	4	?	g_fog_colour_blend
+  +40	4	?	g_fog_clear_distance
+  used by: battlefog.hlsl editordynamicgeometry.hlsl gridsurface.hlsl imposter.hlsl particle_vfx_main.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigiddebuggeometry.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtextureblend.hlsl rigidtextureblendwind.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl wake.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer fog_VS_PS (48 bytes)
+  +0	12	float3	g_volume_fog_colour
+  +12	4	float	g_fog_distance_start
+  +16	4	float	g_fog_distance_strength
+  +20	4	float	g_fog_distance_scale
+  +24	4	float	g_fog_height_bottom
+  +28	4	float	g_fog_height_top
+  +32	4	float	g_fog_height_strength
+  +36	4	float	g_fog_colour_blend
+  +40	4	float	g_fog_clear_distance
+  used by: particle_vfx_main.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer fog_of_war_PS (112 bytes)
+  +0	4	?	g_fog_of_war_size
+  +4	4	?	g_fog_of_war_min_height
+  +8	4	?	g_fog_of_war_height_range
+  +16	12	?	g_fog_of_war_source_position
+  +32	64	?	g_fog_of_war_source_view_projection
+  +96	4	?	g_fog_of_war_source_z_far
+  +100	4	?	g_fog_of_war_distance
+  +104	4	?	g_fog_of_war_cross_fade_step
+  used by: visibilityshader.hlsl
+
+cbuffer g_IntelExt (860 bytes)
+  +0	860	struct{opcode:dword@0;rid:dword@4;sid:dword@8;src0f:float4@12;src1f:float4@28;src2f:float4@44;dst0f:float4@60;src0u:uint4@76;src1u:uint4@92;src2u:uint4@108;dst0u:uint4@124;pad:float@140;}	$Element
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl
+
+cbuffer g_alpha_fragments_SRV (16 bytes)
+  +0	16	struct{packed_rgb_colour:dword@0;packed_depth_and_alpha:dword@4;}[2]	$Element
+  used by: aoit.hlsl
+
+cbuffer g_alpha_fragments_UAV (16 bytes)
+  +0	16	struct{packed_rgb_colour:dword@0;packed_depth_and_alpha:dword@4;}[2]	$Element
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl
+
+cbuffer g_fragment_linked_list_SRV (12 bytes)
+  +0	12	struct{alpha_fragment:PACKED_ALPHA_FRAGMENT@0;next_fragment_index:dword@8;}	$Element
+  used by: oit.hlsl
+
+cbuffer g_fragment_linked_list_UAV (12 bytes)
+  +0	12	struct{alpha_fragment:PACKED_ALPHA_FRAGMENT@0;next_fragment_index:dword@8;}	$Element
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl
+
+cbuffer g_rw_sorted_data_buffer (8 bytes)
+  +0	8	struct{dist:float@0;pid:float@4;}	$Element
+  used by: particle_vfx_gpu_sort_cs.hlsl particle_vfx_prepare_sortdata_cs.hlsl
+
+cbuffer g_sorted_data_buffer (8 bytes)
+  +0	8	struct{dist:float@0;pid:float@4;}	$Element
+  used by: particle_vfx_gpu_sort_cs.hlsl particle_vfx_main.hlsl particle_vfx_spawn.hlsl
+
+cbuffer gaussian_blur (16 bytes)
+  +0	16	?	g_input_size_ps
+  used by: gaussianblur.hlsl
+
+cbuffer grass_PS (48 bytes)
+  +0	4	?	g_inv_lod_distance
+  +4	8	?	g_alpha
+  +16	8	?	g_normal_scale_bias
+  +24	4	?	g_far_addition
+  +32	8	?	g_far_scale
+  +40	4	?	g_clip_bias
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl
+
+cbuffer grass_PS (48 bytes)
+  +0	4	float	g_inv_lod_distance
+  +4	8	float2	g_alpha
+  +16	8	float2	g_normal_scale_bias
+  +24	4	float	g_far_addition
+  +32	8	float2	g_far_scale
+  +40	4	float	g_clip_bias
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl
+
+cbuffer grid_spline_PS (32 bytes)
+  +0	16	?	g_spline_colour
+  +16	12	?	g_mouse_intersected_position
+  used by: gridspline.hlsl
+
+cbuffer grid_spline_VS (16 bytes)
+  +0	4	?	g_spline_length
+  used by: gridspline.hlsl
+
+cbuffer hdr_to_screen_PS (1952 bytes)
+  +0	4	?	radial_blur_strength
+  +4	8	?	radial_blur_position
+  +12	4	?	focus_distance
+  +16	4	?	focal_length
+  +20	4	?	blur_kernel_scale
+  +32	64	?	colour_matrix
+  +96	16	?	pos_transform
+  +112	1296	?[81]	sample_data_9x9
+  +1408	400	?[25]	sample_data_5x5
+  +1808	144	?[9]	sample_data_3x3
+  used by: hdr_to_screen.hlsl
+
+cbuffer hdr_to_screen_PS (1952 bytes)
+  +0	4	float	radial_blur_strength
+  +4	8	float2	radial_blur_position
+  +12	4	float	focus_distance
+  +16	4	float	focal_length
+  +20	4	float	blur_kernel_scale
+  +32	64	float4x4	colour_matrix
+  +96	16	float4	pos_transform
+  +112	1296	float4[81]	sample_data_9x9
+  +1408	400	float4[25]	sample_data_5x5
+  +1808	144	float4[9]	sample_data_3x3
+  used by: hdr_to_screen.hlsl
+
+cbuffer high_pass_PS (272 bytes)
+  +0	8	?	input_texel_offset
+  +16	248	?[16]	sample_offsets
+  used by: high_pass.hlsl
+
+cbuffer lense_flare_PS (16 bytes)
+  +0	8	?	texel_size
+  used by: hdr_lenseflare.hlsl
+
+cbuffer lense_flare_PS (32 bytes)
+  +0	4	?	time
+  +4	8	?	half_texel_offset
+  +12	4	?	vignette_strength
+  +16	4	?	sun_flare_ps
+  used by: lenseflare.hlsl
+
+cbuffer lense_flare_VS (48 bytes)
+  +0	4	?	sun_occlusion
+  +4	12	?	sun_position
+  +16	4	?	sun_flare
+  +32	16	?	pos_transform
+  used by: lenseflare.hlsl
+
+cbuffer lighting_VS_PS (192 bytes)
+  +0	4	?	g_apply_environment_specular
+  +4	12	?	sun_direction
+  +16	12	?	sun_colour
+  +32	28	?[2]	ambient_cube_lr
+  +64	28	?[2]	ambient_cube_tb
+  +96	28	?[2]	ambient_cube_fb
+  +128	12	?	g_deep_water_colour
+  +144	12	?	g_shallow_water_colour
+  +160	12	?	g_sea_bed_light_scatter
+  +172	4	?	g_refraction_light_scatter
+  +176	4	?	g_hdr_on
+  +180	4	?	g_ssr_enabled
+  used by: battlefog.hlsl campaignborder.hlsl cloud_plane.hlsl debuggeometry.hlsl debuggrid.hlsl directionallight.hlsl editordynamicgeometry.hlsl environment_specular_light.hlsl gridspline.hlsl gridsurface.hlsl imposter.hlsl indicator.hlsl ocean.hlsl ocean2.hlsl outline.hlsl particle_vfx_main.hlsl pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigiddebuggeometry.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtextureblend.hlsl rigidtextureblendwind.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl sun.hlsl wake.hlsl waterplane.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer lighting_VS_PS (192 bytes)
+  +0	4	bool	g_apply_environment_specular
+  +4	12	float3	sun_direction
+  +16	12	float3	sun_colour
+  +32	28	float3[2]	ambient_cube_lr
+  +64	28	float3[2]	ambient_cube_tb
+  +96	28	float3[2]	ambient_cube_fb
+  +128	12	float3	g_deep_water_colour
+  +144	12	float3	g_shallow_water_colour
+  +160	12	float3	g_sea_bed_light_scatter
+  +172	4	float	g_refraction_light_scatter
+  +176	4	float	g_hdr_on
+  +180	4	bool	g_ssr_enabled
+  used by: directionallight.hlsl environment_specular_light.hlsl ocean.hlsl particle_vfx_main.hlsl pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl waterplane.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer luma_stats_buffer (16 bytes)
+  +0	4	?	g_absolute_luma_black_point
+  +4	4	?	g_max_luma_black_point
+  +8	4	?	g_min_luma_white_point
+  +12	4	?	g_absolute_luma_white_point
+  used by: hdr_tone_mapper.hlsl
+
+cbuffer ocean_VS (32 bytes)
+  +0	4	?	g_sea_decay
+  +4	4	?	g_sea_uv_scale
+  +8	4	?	g_swell_uv_scale
+  +16	16	?	g_vs_sea_info
+  used by: ocean.hlsl
+
+cbuffer ocean_v2_coast (80 bytes)
+  +0	8	?	g_coast_elevate_to_shore
+  +16	12	?	g_coast_waves_scale
+  +28	4	?	g_coast_grad_sharp
+  +32	4	?	g_coast_teximg_border
+  +36	4	?	g_coast_teximg_inner
+  +40	8	?	g_coast_foam_hdr_scale
+  +48	12	?	g_coast_turbid_color
+  +64	12	?	g_coast_turbid_color_bottom
+  +76	4	?	g_coast_turbid_hdr_scale
+  used by: ocean2.hlsl
+
+cbuffer ocean_v2_lighting (32 bytes)
+  +0	4	?	g_water_reflectivity
+  +4	4	?	g_water_emissive_coeff
+  +8	4	?	g_env_map_dial_down
+  +12	4	?	g_env_map_dial_down_shallow
+  +16	4	?	g_turbid_reflect_down
+  +20	4	?	g_tight_reflection_smoothness
+  +24	4	?	g_loose_reflection_smoothness
+  +28	4	?	g_fraction_big_facets
+  used by: ocean2.hlsl
+
+cbuffer ocean_v2_tile (64 bytes)
+  +0	16	?	g_grid_dimensions
+  +16	8	?	g_meters_per_grid_sqr
+  +24	8	?	g_meters_per_tile
+  +32	16	?	g_field_uv_center_meters
+  +48	4	?	g_num_tiles_dimension
+  used by: ocean2.hlsl
+
+cbuffer ocean_v2_water (192 bytes)
+  +0	4	?	g_water_level
+  +4	4	?	g_detail_map_repetition
+  +8	8	?	g_details_fade_distance
+  +16	12	?	g_deep_normals_sharpness
+  +32	8	?	g_foam_texuv_repetition
+  +48	12	?	g_deep_waves_scale
+  +60	4	?	g_height_scale_meters
+  +64	8	?	g_shallow_water_delta
+  +80	12	?	g_shallow_normals_sharp
+  +96	12	?	g_shallow_waves_scale
+  +108	4	?	g_foam_hdr_scale
+  +112	16	?	g_foam_scroll_time
+  +128	12	?	g_turbid_color
+  +144	12	?	g_turbid_color_bottom
+  +156	4	?	g_turbid_hdr_scale
+  +160	12	?	g_detail_normals_sharpness
+  +176	8	?	g_shore_blend_zone
+  used by: ocean2.hlsl
+
+cbuffer outline_PS (32 bytes)
+  +0	4	?	g_alpha
+  +16	16	?	g_outline_colour
+  used by: outline.hlsl
+
+cbuffer outline_VS (80 bytes)
+  +0	64	?	g_world
+  +64	12	?	g_offset
+  used by: outline.hlsl
+
+cbuffer parameters (16 bytes)
+  +0	4	?	g_flags
+  +4	4	?	g_min_normal_dot
+  +8	4	?	g_min_depth
+  +12	4	?	g_buffers_scale
+  used by: reflections_blur.hlsl
+
+cbuffer parameters (96 bytes)
+  +0	4	?	g_flags
+  +4	4	?	g_ray_length_scale
+  +8	4	?	g_ray_max_samples
+  +16	8	?	g_acceptance_depth_range
+  +24	8	?	g_border_falloff_range
+  +32	4	?	g_depth_bias_intensity
+  +36	8	?	g_depth_falloff_range
+  +48	8	?	g_blur_radius_multiplier
+  +56	4	?	g_steep_reflection_adjustment_intensity
+  +64	16	?	g_terrain_offset_scale
+  +80	4	?	g_buffers_scale
+  used by: environment_specular_light.hlsl
+
+cbuffer parameters (96 bytes)
+  +0	4	int	g_flags
+  +4	4	float	g_ray_length_scale
+  +8	4	float	g_ray_max_samples
+  +16	8	float2	g_acceptance_depth_range
+  +24	8	float2	g_border_falloff_range
+  +32	4	float	g_depth_bias_intensity
+  +36	8	float2	g_depth_falloff_range
+  +48	8	float2	g_blur_radius_multiplier
+  +56	4	float	g_steep_reflection_adjustment_intensity
+  +64	16	float4	g_terrain_offset_scale
+  +80	4	float	g_buffers_scale
+  used by: environment_specular_light.hlsl
+
+cbuffer passthrough_PS (80 bytes)
+  +0	8	?	texel_size
+  +16	64	?	colour_matrix
+  used by: passthrough.hlsl
+
+cbuffer passthrough_VS (16 bytes)
+  +0	8	?	texel_scale
+  used by: passthrough.hlsl
+
+cbuffer point_light_PS (16 bytes)
+  +0	16	?	g_viewport_offset_scale
+  used by: pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl
+
+cbuffer point_light_PS (16 bytes)
+  +0	16	float4	g_viewport_offset_scale
+  used by: pointlightlinearfalloff.hlsl pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloff.hlsl pointlightsmoothfalloffshadow.hlsl
+
+cbuffer pointlight_shadowmap_cb (48 bytes)
+  +0	16	?	g_shadow_buffer_size
+  +16	4	?	g_shadow_sample_bias
+  +20	4	?	g_shadow_soft_edges
+  +24	8	?	g_light_proj_zw
+  +32	4	?	g_light_width
+  +36	4	?	g_point_light_shadow_map_sample_bias
+  used by: pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloffshadow.hlsl
+
+cbuffer pointlight_shadowmap_cb (48 bytes)
+  +0	16	float4	g_shadow_buffer_size
+  +16	4	float	g_shadow_sample_bias
+  +20	4	float	g_shadow_soft_edges
+  +24	8	float2	g_light_proj_zw
+  +32	4	float	g_light_width
+  +36	4	float	g_point_light_shadow_map_sample_bias
+  used by: pointlightlinearfalloffshadow.hlsl pointlightsmoothfalloffshadow.hlsl
+
+cbuffer pointlight_shadows_cb (768 bytes)
+  +0	384	?[6]	g_cube_face_viewproj_matrix
+  +384	384	?[6]	g_cube_face_view_matrix
+  used by: rigidcommon.hlsl rigidtreebillboard.hlsl weightedcommon.hlsl
+
+cbuffer projected_decal_PS (80 bytes)
+  +0	16	?	g_viewport_offset_scale
+  +16	8	?	g_tile_constant
+  +24	8	?	g_texture_ratio
+  +32	4	?	g_is_campaign
+  +48	16	?	g_far_world_write_uv_offset
+  +64	8	?	g_far_render_bounds
+  used by: rigidprojecteddecal.hlsl
+
+cbuffer projectile_trail_PS (16 bytes)
+  +0	4	?	render_normal_map
+  used by: projectiletrail.hlsl
+
+cbuffer ps_editor_vis_cb (16 bytes)
+  +0	16	?	g_tile_dimensions
+  used by: rigidterrain.hlsl
+
+cbuffer ps_height_map_cb (128 bytes)
+  +0	16	?	g_mid_distance_details
+  +16	16	?	g_near_distance_details
+  +32	4	?	g_mid_distance_normal_strength
+  +36	8	?	g_mid_distance_slope
+  +48	16	?	g_channel_offsets
+  +64	12	?	g_normal_scales
+  +76	4	?	g_blend_gain
+  +80	4	?	g_far_tile_distance
+  +84	8	?	g_far_blend_range
+  +96	16	?	g_far_world_write_uv_offset
+  +112	4	?	g_far_world_read_uv_offset
+  +116	4	?	g_blend_contrast
+  +120	4	?	g_lq_infield_blend_range
+  +124	4	?	g_is_campaign
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl rigidterrain.hlsl
+
+cbuffer ps_height_map_cb (128 bytes)
+  +0	16	float4	g_mid_distance_details
+  +16	16	float4	g_near_distance_details
+  +32	4	float	g_mid_distance_normal_strength
+  +36	8	float2	g_mid_distance_slope
+  +48	16	float4	g_channel_offsets
+  +64	12	float3	g_normal_scales
+  +76	4	float	g_blend_gain
+  +80	4	float	g_far_tile_distance
+  +84	8	float2	g_far_blend_range
+  +96	16	float4	g_far_world_write_uv_offset
+  +112	4	float	g_far_world_read_uv_offset
+  +116	4	float	g_blend_contrast
+  +120	4	float	g_lq_infield_blend_range
+  +124	4	bool	g_is_campaign
+  used by: rigidgrass.hlsl rigidgrasswet.hlsl
+
+cbuffer ps_mapping_array (32768 bytes)
+  +0	32756	?[2048]	g_array_mapping
+  used by: rigidterrain.hlsl
+
+cbuffer ps_texture_array_cb (6480 bytes)
+  +0	4	?	g_light_params_texture_width
+  +16	6400	?[400]	g_blend_pixel_scale_array
+  +6416	16	?	g_array_section_sizes
+  +6432	4	?	g_remapped_season
+  +6436	4	?	g_climate_change_index
+  +6448	16	?	g_layer_exempt_groups
+  +6464	8	?	g_sea_texture_index
+  used by: rigidterrain.hlsl
+
+cbuffer render_target_dims_buffer (16 bytes)
+  +0	8	?	g_render_target_recip_size
+  used by: hdr_tone_mapper.hlsl
+
+cbuffer rigid_config_PS (80 bytes)
+  +0	4	?	g_unlit
+  +4	4	?	g_dissolve_enable
+  +8	4	?	g_untextured
+  +12	4	?	g_snow
+  +16	4	?	g_rain
+  +20	4	?	g_tesselation_factor
+  +24	4	?	g_tesselation_displacement_scale
+  +32	8	?	g_uv2_tile_interval
+  +40	8	?	g_texel_density_uv_scale
+  +48	16	?	g_decal_uv_rect_coords
+  +64	4	?	g_force_snow_shader
+  +68	4	?	g_is_second_class_object
+  +72	4	?	g_pixel_selection_active
+  +76	4	?	g_pixel_selection_start_pixel_index
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranchcommon_v3.hlsl rigidcommon.hlsl rigidleafcommon_v3.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidterrainblend.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidtreebillboard.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl weighted.hlsl weightedcloth.hlsl weightedcommon.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer rigid_config_PS (80 bytes)
+  +0	4	float	g_unlit
+  +4	4	float	g_dissolve_enable
+  +8	4	float	g_untextured
+  +12	4	float	g_snow
+  +16	4	float	g_rain
+  +20	4	float	g_tesselation_factor
+  +24	4	float	g_tesselation_displacement_scale
+  +32	8	float2	g_uv2_tile_interval
+  +40	8	float2	g_texel_density_uv_scale
+  +48	16	float4	g_decal_uv_rect_coords
+  +64	4	float	g_force_snow_shader
+  +68	4	float	g_is_second_class_object
+  +72	4	int	g_pixel_selection_active
+  +76	4	int	g_pixel_selection_start_pixel_index
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranchcommon_v3.hlsl rigidcommon.hlsl rigidleafcommon_v3.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl weightedcloth.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer rigid_faction_colours (64 bytes)
+  +0	60	?[4]	faction_colours
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidterrainblend.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer rigid_faction_colours (64 bytes)
+  +0	60	float3[4]	faction_colours
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer river_CB (16 bytes)
+  +0	8	?	g_world_size
+  +8	4	?	g_flow_rate
+  +12	4	?	g_vertical_offset
+  used by: rigidriver.hlsl
+
+cbuffer river_CB (16 bytes)
+  +0	8	float2	g_world_size
+  +8	4	float	g_flow_rate
+  +12	4	float	g_vertical_offset
+  used by: rigidriver.hlsl
+
+cbuffer sail_PS (16 bytes)
+  +0	4	?	sail_scale
+  used by: sail.hlsl sailsymbol.hlsl
+
+cbuffer sail_VS (48 bytes)
+  +0	48	?	world_matrix
+  used by: sail.hlsl sailsymbol.hlsl
+
+cbuffer sea_interaction_VS (32 bytes)
+  +0	16	?	g_decal_projection_plane
+  +16	12	?	g_decal_projection_normal
+  used by: seainteraction.hlsl
+
+cbuffer shadowmap_PS (720 bytes)
+  +0	16	?	g_vHardShadowBufferSize
+  +16	16	?	g_vSoftShadowBufferSize
+  +32	256	?[4]	g_amHardSplit
+  +288	256	?[4]	g_amSoftSplit
+  +544	8	?	g_fFadeRange
+  +552	4	?	g_sample_bias
+  +556	4	?	g_iSplitCount
+  +560	12	?	g_shadow_light_direction
+  +576	68	?[5]	g_split_distances
+  +656	64	?[4]	g_split_uv_texture_bounds
+  used by: directionallight.hlsl ocean.hlsl particle_vfx_main.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl waterplane.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer shadowmap_PS (720 bytes)
+  +0	16	float4	g_vHardShadowBufferSize
+  +16	16	float4	g_vSoftShadowBufferSize
+  +32	256	float4x4[4]	g_amHardSplit
+  +288	256	float4x4[4]	g_amSoftSplit
+  +544	8	float2	g_fFadeRange
+  +552	4	float	g_sample_bias
+  +556	4	float	g_iSplitCount
+  +560	12	float3	g_shadow_light_direction
+  +576	68	float[5]	g_split_distances
+  +656	64	float4[4]	g_split_uv_texture_bounds
+  used by: directionallight.hlsl ocean.hlsl particle_vfx_main.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl rigidriver.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl waterplane.hlsl weighted.hlsl weightedcloth.hlsl weightedwithburn.hlsl weightedwithdecal.hlsl weightedwithdecalburn.hlsl weightedwithdecaldirt.hlsl weightedwithdecaldirtburn.hlsl weightedwithdirt.hlsl weightedwithdirtburn.hlsl
+
+cbuffer shared_fog_of_war_PS (16 bytes)
+  +0	4	?	g_fog_of_war_blend
+  +4	4	?	g_fog_of_war_outfield_blend
+  used by: hdr_to_screen.hlsl
+
+cbuffer shared_fog_of_war_PS (16 bytes)
+  +0	4	float	g_fog_of_war_blend
+  +4	4	float	g_fog_of_war_outfield_blend
+  used by: hdr_to_screen.hlsl
+
+cbuffer shroud_PS (80 bytes)
+  +0	4	?	g_shroud_enabled
+  +4	4	?	g_campaign_autumn_timer
+  +16	16	?	g_campaign_world_bounds
+  +32	16	?	g_campaign_playable_area_bounds
+  +48	4	?	g_snow_height
+  +52	4	?	g_rock_slope_scale
+  +56	4	?	g_rock_height_min
+  +60	4	?	g_rock_height_max
+  +64	8	?	g_uv_offset
+  used by: campaignborder.hlsl campaignterrain.hlsl directionallight.hlsl rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidcampaignvegetation.hlsl rigidprojecteddecal.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidterrain.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl shroud_plane.hlsl waterplane.hlsl
+
+cbuffer shroud_PS (80 bytes)
+  +0	4	float	g_shroud_enabled
+  +4	4	float	g_campaign_autumn_timer
+  +16	16	float4	g_campaign_world_bounds
+  +32	16	float4	g_campaign_playable_area_bounds
+  +48	4	float	g_snow_height
+  +52	4	float	g_rock_slope_scale
+  +56	4	float	g_rock_height_min
+  +60	4	float	g_rock_height_max
+  +64	8	float2	g_uv_offset
+  used by: directionallight.hlsl shroud_plane.hlsl waterplane.hlsl
+
+cbuffer shroud_plane_buffer (16 bytes)
+  +0	8	?	g_quantised_camera_position
+  used by: shroud_plane.hlsl
+
+cbuffer skydome_PS (112 bytes)
+  +0	12	?	g_linear_sky_colour_scaled
+  +16	12	?	g_linear_circumsolar_color_scaled
+  +32	12	?	g_linear_horizon_colour_scaled
+  +48	12	?	g_linear_horizon_opposite_colour_scaled
+  +64	12	?	g_linear_backscatter_colour_scaled
+  +76	4	?	g_horizon_decay
+  +80	4	?	g_circumsolar_decay
+  +84	4	?	g_backscatter_decay
+  +96	12	?	g_sun_direction
+  used by: skydome.hlsl
+
+cbuffer smdba_down_size_buffer (16 bytes)
+  +0	8	?	g_num_samples_per_pixel
+  +8	4	?	g_shadow_far_extent_hard_limit
+  used by: shadow_map_depth_buffer_analysis.hlsl
+
+cbuffer spline_PS (32 bytes)
+  +0	4	?	g_spline_length
+  +16	16	?	g_spline_colour
+  used by: spline.hlsl
+
+cbuffer sprite_PS (32 bytes)
+  +0	4	?	g_windows_time_PS
+  +4	4	?	g_model_time_PS
+  +8	4	?	g_text_rendering_enabled_PS
+  +12	4	?	g_switch_diffuse_channels
+  +16	8	?	g_screen_dimensions_PS
+  +24	8	?	g_campaign_shroud_uv_offset
+  used by: sprite.hlsl
+
+cbuffer sprite_VS (48 bytes)
+  +0	4	?	g_windows_time
+  +4	4	?	g_model_time
+  +16	16	?	g_sprite_transform
+  +32	4	?	g_text_rendering_enabled
+  used by: sprite.hlsl
+
+cbuffer ssao_blur_PS (16 bytes)
+  +0	4	?	g_BlurRadius
+  +4	4	?	g_BlurSharpness
+  +8	8	?	g_BlurResolution
+  used by: ssao.hlsl
+
+cbuffer ssao_resolve_PS (48 bytes)
+  +0	4	?	g_NumSteps
+  +4	4	?	g_NumDir
+  +8	4	?	g_R
+  +12	4	?	g_ExternalAngleBias
+  +16	4	?	g_Attenuation
+  +20	4	?	g_ExternalContrast
+  +24	8	?	g_AOResolution
+  +32	4	?	g_VerticalFieldOfView
+  +36	4	?	g_Strength
+  +40	4	?	g_MinStrength
+  +44	4	?	g_JitterResolution
+  used by: ssao.hlsl
+
+cbuffer ssao_resolve_VS (16 bytes)
+  +0	8	?	g_vs_AOResolution
+  +8	4	?	g_vs_VerticalFieldOfView
+  used by: ssao.hlsl
+
+cbuffer sun_VS (144 bytes)
+  +0	64	?	g_world_view
+  +64	64	?	g_projection
+  +128	4	?	g_sun_scale
+  used by: sun.hlsl
+
+cbuffer texture_blend_PS (400 bytes)
+  +0	8	?	texture0_blend_height
+  +8	8	?	texture1_blend_height
+  +16	8	?	texture2_blend_height
+  +24	8	?	texture3_blend_height
+  +32	8	?	texture4_blend_height
+  +40	8	?	texture5_blend_height
+  +48	8	?	texture6_blend_height
+  +56	8	?	texture7_blend_height
+  +64	12	?	colour0
+  +80	12	?	colour1
+  +96	12	?	colour2
+  +112	12	?	colour3
+  +128	12	?	colour4
+  +144	12	?	colour5
+  +160	12	?	colour6
+  +176	12	?	colour7
+  +188	4	?	global_alpha0
+  +192	4	?	global_alpha1
+  +196	4	?	global_alpha2
+  +200	4	?	global_alpha3
+  +204	4	?	global_alpha4
+  +208	4	?	global_alpha5
+  +212	4	?	global_alpha6
+  +216	4	?	global_alpha7
+  +220	4	?	height0_vertical
+  +224	4	?	height1_vertical
+  +228	4	?	height2_vertical
+  +232	4	?	height3_vertical
+  +236	4	?	height4_vertical
+  +240	4	?	height5_vertical
+  +244	4	?	height6_vertical
+  +248	4	?	height7_vertical
+  +252	4	?	normal_and_gloss
+  +256	12	?	fake_ui_light_direction
+  +272	16	?	g_texture0_output_offset_scale
+  +288	16	?	g_texture1_output_offset_scale
+  +304	16	?	g_texture2_output_offset_scale
+  +320	16	?	g_texture3_output_offset_scale
+  +336	16	?	g_texture4_output_offset_scale
+  +352	16	?	g_texture5_output_offset_scale
+  +368	16	?	g_texture6_output_offset_scale
+  +384	16	?	g_texture7_output_offset_scale
+  used by: rigidtextureblend.hlsl rigidtextureblendwind.hlsl
+
+cbuffer texture_scale (144 bytes)
+  +0	16	?	g_texture0_offset_scale
+  +16	16	?	g_texture1_offset_scale
+  +32	16	?	g_texture2_offset_scale
+  +48	16	?	g_texture3_offset_scale
+  +64	16	?	g_texture4_offset_scale
+  +80	16	?	g_texture5_offset_scale
+  +96	16	?	g_texture6_offset_scale
+  +112	16	?	g_texture7_offset_scale
+  +128	4	?	wind_offset
+  used by: rigidtextureblend.hlsl rigidtextureblendwind.hlsl
+
+cbuffer trade_route_PS (32 bytes)
+  +0	16	?	g_trade_route_colour
+  +16	4	?	g_trade_route_length
+  +20	4	?	g_trade_route_smooth_a
+  +24	4	?	g_trade_route_smooth_b
+  used by: campaignterrain.hlsl
+
+cbuffer tree_billboard_constants (64 bytes)
+  +0	48	?[3]	g_tint_colours
+  +48	4	?	g_tree_displacement_radius
+  used by: rigidtreebillboard.hlsl
+
+cbuffer tree_billboard_constants (64 bytes)
+  +0	48	float4[3]	g_tint_colours
+  +48	4	float	g_tree_displacement_radius
+  used by: rigidtreebillboard.hlsl
+
+cbuffer ts_blend_cb (48 bytes)
+  +0	16	?	g_ts_blend_world_to_page
+  +16	16	?	g_ts_blend_page_to_world
+  +32	8	?	g_ts_inv_page_size
+  +40	4	?	g_ts_texel_offset
+  used by: rigidterrain.hlsl
+
+cbuffer variant_animation_size (16 bytes)
+  +0	8	?	g_animation_texture_height
+  +8	8	?	g_animation_texture_width
+  used by: weightedcommon.hlsl
+
+cbuffer vegetation_tint_colours (64 bytes)
+  +0	48	?[3]	g_tint_colours
+  +48	16	?	g_billboard_params
+  used by: rigidbranchcommon_v3.hlsl rigidleaf_v3.hlsl rigidleafcommon_v3.hlsl rigidleafwet_v3.hlsl
+
+cbuffer vegetation_tint_colours (64 bytes)
+  +0	48	float4[3]	g_tint_colours
+  +48	16	float4	g_billboard_params
+  used by: rigidleaf_v3.hlsl rigidleafwet_v3.hlsl
+
+cbuffer visibility_VS (16 bytes)
+  +0	4	?	g_visibility_distance
+  used by: visibilityshader.hlsl
+
+cbuffer vs_height_map_cb (96 bytes)
+  +0	4	?	g_height_map_lf_scale
+  +4	4	?	g_height_map_hf_scale
+  +8	4	?	g_height_map_vertical_offset
+  +16	8	?	g_blend_lf_min_max
+  +32	16	?	g_height_map_dimension
+  +48	8	?	g_world_dimensions
+  +56	8	?	g_infield_dimensions
+  +64	4	?	g_lf_uv_offset
+  +68	4	?	g_layer1_texture_index
+  +72	4	?	g_layer2_texture_index
+  +76	4	?	g_far_terrain_scale
+  +80	8	?	g_far_render_bounds
+  used by: rigidriver.hlsl rigidterrain.hlsl shroud_plane.hlsl
+
+cbuffer water_refraction_PS (16 bytes)
+  +0	4	?	g_refraction_depth
+  used by: waterrefraction.hlsl
+
+cbuffer waterplane_VS (128 bytes)
+  +0	64	?	g_world
+  +64	64	?	g_overlay_view_projection
+  used by: waterplane.hlsl
+
+cbuffer weather_shared (32 bytes)
+  +0	8	?	g_wind
+  +8	8	?	g_wind_offset
+  +16	4	?	g_snowing_intensity
+  +20	4	?	g_weather_type
+  +24	4	?	g_season_type
+  +28	4	?	g_snow_mask
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranch_v3.hlsl rigidbranchwet_v3.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl rigidprojecteddecal.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidterrain.hlsl rigidterrainblend.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidtreebillboard.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl
+
+cbuffer weather_shared (32 bytes)
+  +0	8	float2	g_wind
+  +8	8	float2	g_wind_offset
+  +16	4	float	g_snowing_intensity
+  +20	4	int	g_weather_type
+  +24	4	int	g_season_type
+  +28	4	float	g_snow_mask
+  used by: rigidambientmapfiremesh.hlsl rigidambientmapmesh.hlsl rigidbranch_v3.hlsl rigidbranchwet_v3.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleaf_v3.hlsl rigidleafwet_v3.hlsl rigidstandard.hlsl rigidstandardfire.hlsl rigidtileddirtmapfiremesh.hlsl rigidtileddirtmapmesh.hlsl rigidtreebillboard.hlsl rigidui3dalphashared.hlsl rigidwithdecalburnmesh.hlsl rigidwithdecaldirtburnmesh.hlsl rigidwithdecaldirtmesh.hlsl rigidwithdecalmesh.hlsl rigidwithdirtburnmesh.hlsl rigidwithdirtmesh.hlsl
+
+cbuffer wind_PS (16 bytes)
+  +0	8	?	wind_direction_PS
+  used by: rigidriver.hlsl
+
+cbuffer wind_PS (16 bytes)
+  +0	8	float2	wind_direction_PS
+  used by: rigidriver.hlsl
+
+cbuffer wind_VS (32 bytes)
+  +0	8	?	wind_direction
+  +8	4	?	gust_start_time
+  +12	4	?	wind_vegetation_multiplier
+  +16	4	?	wind_vegetation_hstrength
+  +20	4	?	wind_vegetation_vstrength
+  used by: rigidbranchcommon_v3.hlsl rigidcommon.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleafcommon_v3.hlsl rigidterrainblend.hlsl
+
+cbuffer wind_VS (32 bytes)
+  +0	8	float2	wind_direction
+  +8	4	float	gust_start_time
+  +12	4	float	wind_vegetation_multiplier
+  +16	4	float	wind_vegetation_hstrength
+  +20	4	float	wind_vegetation_vstrength
+  used by: rigidbranchcommon_v3.hlsl rigidcommon.hlsl rigidgrass.hlsl rigidgrasswet.hlsl rigidleafcommon_v3.hlsl
+
