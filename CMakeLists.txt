@@ -28,3 +28,16 @@ target_link_libraries(vfs_probe PRIVATE we_core)
 
 add_executable(format_check tools/format_check.cpp)
 target_link_libraries(format_check PRIVATE we_core)
+
+# Dear ImGui (vendored, DX11 + Win32 backends only)
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp third_party/imgui/imgui_demo.cpp
+    third_party/imgui/backends/imgui_impl_dx11.cpp third_party/imgui/backends/imgui_impl_win32.cpp)
+target_include_directories(imgui PUBLIC third_party/imgui third_party/imgui/backends)
+if(MSVC)
+    target_compile_options(imgui PRIVATE /W0)
+endif()
+
+add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp)
+target_link_libraries(weather_editor PRIVATE we_core imgui d3d11 dxgi d3dcompiler dxguid comdlg32)

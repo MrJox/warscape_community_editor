@@ -139,6 +139,12 @@ std::string_view XmlDoc::attr_raw(int elem, size_t attr) const {
     return std::string_view(text_).substr(a.value_off, a.value_len);
 }
 
+std::string_view XmlDoc::original_raw(int elem, size_t attr) const {
+    const XmlAttr& a = elems_[elem].attrs[attr];
+    if (a.appended) return {};
+    return std::string_view(text_).substr(a.value_off, a.value_len);
+}
+
 const XmlAttr* XmlDoc::find_attr(int elem, std::string_view name, size_t* index) const {
     const auto& attrs = elems_[elem].attrs;
     for (size_t k = 0; k < attrs.size(); ++k)

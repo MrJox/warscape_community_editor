@@ -47,6 +47,9 @@ public:
 
     // Current raw value (edits applied), still entity-encoded.
     std::string_view attr_raw(int elem, size_t attr) const;
+    // Value as loaded (empty for attributes added by an edit).
+    std::string_view original_raw(int elem, size_t attr) const;
+    bool attr_modified(int elem, size_t attr) const { return attr_raw(elem, attr) != original_raw(elem, attr) || elems_[elem].attrs[attr].appended; }
     const XmlAttr* find_attr(int elem, std::string_view name, size_t* index = nullptr) const;
     std::optional<std::string> get(int elem, std::string_view name) const; // entity-decoded
 
