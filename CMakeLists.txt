@@ -18,7 +18,7 @@ target_include_directories(we_core PUBLIC src)
 add_executable(xml_roundtrip tools/xml_roundtrip.cpp)
 target_link_libraries(xml_roundtrip PRIVATE we_core)
 
-target_sources(we_core PRIVATE src/formats/fxc.cpp src/core/process.cpp src/core/vfs.cpp src/formats/env_value.cpp)
+target_sources(we_core PRIVATE src/formats/fxc.cpp src/core/process.cpp src/core/vfs.cpp src/formats/env_value.cpp src/formats/rmv2.cpp)
 
 add_executable(fxc_dump tools/fxc_dump.cpp)
 target_link_libraries(fxc_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
@@ -39,5 +39,14 @@ if(MSVC)
     target_compile_options(imgui PRIVATE /W0)
 endif()
 
-add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp)
-target_link_libraries(weather_editor PRIVATE we_core imgui d3d11 dxgi d3dcompiler dxguid comdlg32)
+add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp
+    src/render/texture.cpp src/render/shader_lib.cpp src/render/math.cpp src/render/scene.cpp
+    src/render/environment.cpp src/render/renderer.cpp src/render/image_io.cpp)
+target_link_libraries(weather_editor PRIVATE we_core imgui d3d11 dxgi d3dcompiler dxguid comdlg32 dbghelp windowscodecs ole32)
+if(MSVC)
+    target_compile_options(weather_editor PRIVATE /Zi)
+    target_link_options(weather_editor PRIVATE /DEBUG)
+endif()
+
+add_executable(rmv2_check tools/rmv2_check.cpp)
+target_link_libraries(rmv2_check PRIVATE we_core)

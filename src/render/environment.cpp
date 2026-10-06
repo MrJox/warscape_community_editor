@@ -1,0 +1,198 @@
+#include "environment.h"
+
+#include "formats/env_value.h"
+#include "formats/xml_doc.h"
+#include "render/shader_lib.h"
+
+#include <cmath>
+
+namespace we {
+
+namespace {
+
+constexpr float kDeg = 3.14159265358979f / 180.0f;
+
+struct Reader {
+    const XmlDoc& doc;
+    int elem = -1;
+
+    bool has(const char* name) const { return elem >= 0 && doc.find_attr(elem, name); }
+    EnvValue value(const char* name) const {
+        if (elem < 0) return {};
+        auto v = doc.get(elem, name);
+        return v ? parse_value(*v) : EnvValue{};
+    }
+    void f(const char* name, float& out) const {
+        EnvValue v = value(name);
+        if ((v.kind == ValueKind::Float || v.kind == ValueKind::Int) && !v.f.empty()) out = v.f[0];
+    }
+    void b(const char* name, bool& out) const {
+        EnvValue v = value(name);
+        if (v.kind == ValueKind::Bool) out = v.b;
+    }
+    void rgb(const char* name, float3& out) const {
+        EnvValue v = value(name);
+        if (v.kind == ValueKind::Rgb) out = {v.f[0], v.f[1], v.f[2]};
+    }
+    void s(const char* name, std::string& out) const {
+        if (auto v = elem >= 0 ? doc.get(elem, name) : std::nullopt) out = *v;
+    }
+};
+
+// First element with this name anywhere in the document (each appears once in practice).
+int find_element(const XmlDoc& doc, const char* name) {
+    const auto& els = doc.elements();
+    for (int i = 0; i < int(els.size()); ++i)
+        if (els[i].name == name) return i;
+    return -1;
+}
+
+} // namespace
+
+float3 EnvironmentParams::to_sun() const {
+    // ASSUMPTION: azimuth measured from +Z towards +X (clockwise seen from above), elevation above horizon.
+    float az = sun_azimuth * kDeg, el = sun_elevation * kDeg;
+    return normalize(float3{std::cos(el) * std::sin(az), std::sin(el), std::cos(el) * std::cos(az)});
+}
+
+float3 colour_to_linear(const float3& c) {
+    auto l = [](float x) { return x > 0 ? std::pow(x, 2.2f) : 0.0f; };
+    return {l(c.x), l(c.y), l(c.z)};
+}
+
+EnvironmentParams read_environment(const XmlDoc& doc) {
+    EnvironmentParams e;
+    Reader lighting{doc, find_element(doc, "LIGHTING")};
+    lighting.f("sun_direction_azimuth", e.sun_azimuth);
+    lighting.f("sun_direction_elevation", e.sun_elevation);
+    lighting.rgb("sun_colour", e.sun_colour);
+    lighting.f("sun_colour_scale", e.sun_colour_scale);
+    lighting.b("use_custom_ambient_cube_colours", e.use_custom_ambient);
+    lighting.f("ambient_cube_hdr_scaler", e.ambient_hdr_scaler);
+    lighting.f("ambient_scale", e.ambient_scale);
+    lighting.rgb("ambient_cube_left", e.ambient_left);
+    lighting.rgb("ambient_cube_right", e.ambient_right);
+    lighting.rgb("ambient_cube_front", e.ambient_front);
+    lighting.rgb("ambient_cube_back", e.ambient_back);
+    lighting.rgb("ambient_cube_top", e.ambient_top);
+    lighting.rgb("ambient_cube_bottom", e.ambient_bottom);
+    lighting.rgb("deep_water_colour", e.deep_water);
+    lighting.rgb("shallow_water_colour", e.shallow_water);
+    lighting.f("sea_bed_light_scatter_red", e.sea_bed_scatter.x);
+    lighting.f("sea_bed_light_scatter_green", e.sea_bed_scatter.y);
+    lighting.f("sea_bed_light_scatter_blue", e.sea_bed_scatter.z);
+    lighting.f("refraction_light_scatter", e.refraction_scatter);
+    lighting.f("cubemap_sun_colour_scale", e.cubemap_sun_colour_scale);
+
+    Reader sky{doc, find_element(doc, "SKYGEN")};
+    e.has_sky = sky.elem >= 0;
+    sky.rgb("sky_colour", e.sky_colour);
+    sky.f("sky_colour_scale", e.sky_colour_scale);
+    sky.rgb("circumsolar_colour", e.circumsolar_colour);
+    sky.f("circumsolar_colour_scale", e.circumsolar_colour_scale);
+    sky.f("circumsolar_decay", e.circumsolar_decay);
+    sky.rgb("horizon_colour", e.horizon_colour);
+    sky.f("horizon_colour_scale", e.horizon_colour_scale);
+    sky.rgb("horizon_opposite_colour", e.horizon_opposite_colour);
+    sky.f("horizon_opposite_colour_scale", e.horizon_opposite_colour_scale);
+    sky.f("horizon_decay", e.horizon_decay);
+    sky.rgb("backscatter_colour", e.backscatter_colour);
+    sky.f("backscatter_colour_scale", e.backscatter_colour_scale);
+    sky.f("backscatter_decay", e.backscatter_decay);
+
+    Reader fog{doc, find_element(doc, "FOG")};
+    fog.f("fog_distance_start", e.fog_distance_start);
+    fog.f("fog_distance_strength", e.fog_distance_strength);
+    fog.f("fog_distance_scale", e.fog_distance_scale);
+    fog.f("fog_height_top", e.fog_height_top);
+    fog.f("fog_height_strength", e.fog_height_strength);
+    fog.f("fog_clear_distance", e.fog_clear_distance);
+    fog.f("fog_colour_blend", e.fog_colour_blend);
+    fog.b("terrain_relative_height_fog", e.terrain_relative_height_fog);
+    fog.f("fog_precipitation_distance_modifier", e.fog_precipitation_distance_modifier);
+    if (EnvValue v = fog.value("volume_fog_colour"); v.kind == ValueKind::Argb)
+        for (int i = 0; i < 4; ++i) e.volume_fog_colour[i] = v.f[i];
+
+    Reader hdr{doc, find_element(doc, "HDR")};
+    hdr.f("absolute_black_point", e.absolute_black_point);
+    hdr.f("max_black_point", e.max_black_point);
+    hdr.f("min_white_point", e.min_white_point);
+    hdr.f("absolute_white_point", e.absolute_white_point);
+    hdr.f("auto_exposure_speed", e.auto_exposure_speed);
+    hdr.f("high_pass_threshold", e.high_pass_threshold);
+
+    Reader pp{doc, find_element(doc, "POST_PROCESSING")};
+    pp.rgb("overlay", e.overlay);
+    pp.f("brightness_r", e.brightness.x); pp.f("brightness_g", e.brightness.y); pp.f("brightness_b", e.brightness.z);
+    pp.f("contrast_r", e.contrast.x); pp.f("contrast_g", e.contrast.y); pp.f("contrast_b", e.contrast.z);
+    pp.f("saturation_r", e.saturation.x); pp.f("saturation_g", e.saturation.y); pp.f("saturation_b", e.saturation.z);
+    pp.f("hue", e.hue);
+
+    Reader dof{doc, find_element(doc, "DEPTH_OF_FIELD")};
+    dof.b("use_DOF", e.use_dof);
+    if (EnvValue v = dof.value("DOF_focus"); v.kind == ValueKind::Variance) { e.dof_focus[0] = v.f[0]; e.dof_focus[1] = v.f[1]; }
+    dof.f("DOF_blur_size", e.dof_blur_size);
+
+    Reader w{doc, find_element(doc, "WEATHER")};
+    w.f("snowing_intensity", e.snowing_intensity);
+    w.s("definition_name", e.weather_definition);
+    return e;
+}
+
+void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
+    const float3 to_sun = e.to_sun();
+    auto set3 = [&](const char* cb, const char* var, const float3& v) { cbs.set_f(cb, var, {v.x, v.y, v.z}); };
+
+    // skydome_PS (verified: copied from precomputed sky-node fields, see docs/re/environment_to_shader.md)
+    // ASSUMPTION: "linear ... scaled" = pow(colour, 2.2) * scale.
+    set3("skydome_PS", "g_linear_sky_colour_scaled", colour_to_linear(e.sky_colour) * e.sky_colour_scale);
+    set3("skydome_PS", "g_linear_circumsolar_color_scaled", colour_to_linear(e.circumsolar_colour) * e.circumsolar_colour_scale);
+    set3("skydome_PS", "g_linear_horizon_colour_scaled", colour_to_linear(e.horizon_colour) * e.horizon_colour_scale);
+    set3("skydome_PS", "g_linear_horizon_opposite_colour_scaled", colour_to_linear(e.horizon_opposite_colour) * e.horizon_opposite_colour_scale);
+    set3("skydome_PS", "g_linear_backscatter_colour_scaled", colour_to_linear(e.backscatter_colour) * e.backscatter_colour_scale);
+    cbs.set_f("skydome_PS", "g_horizon_decay", {e.horizon_decay});
+    cbs.set_f("skydome_PS", "g_circumsolar_decay", {e.circumsolar_decay});
+    cbs.set_f("skydome_PS", "g_backscatter_decay", {e.backscatter_decay});
+    set3("skydome_PS", "g_sun_direction", to_sun);
+
+    // lighting_VS_PS. sun_direction is the direction light travels (shader uses -sun_direction as L).
+    // ASSUMPTION: sun colour = linear(colour) * scale; ambient = linear(colour) * ambient_scale.
+    set3("lighting_VS_PS", "sun_direction", -to_sun);
+    set3("lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * e.sun_colour_scale);
+    float amb = e.ambient_scale;
+    float3 lr[2] = {colour_to_linear(e.ambient_right) * amb, colour_to_linear(e.ambient_left) * amb};
+    float3 tb[2] = {colour_to_linear(e.ambient_top) * amb, colour_to_linear(e.ambient_bottom) * amb};
+    float3 fb[2] = {colour_to_linear(e.ambient_front) * amb, colour_to_linear(e.ambient_back) * amb};
+    auto set_pair = [&](const char* var, const float3 v[2]) {
+        float data[7] = {v[0].x, v[0].y, v[0].z, 0, v[1].x, v[1].y, v[1].z}; // float3[2]: 16-byte stride
+        cbs.set("lighting_VS_PS", var, data, sizeof data);
+    };
+    set_pair("ambient_cube_lr", lr);
+    set_pair("ambient_cube_tb", tb);
+    set_pair("ambient_cube_fb", fb);
+    set3("lighting_VS_PS", "g_deep_water_colour", colour_to_linear(e.deep_water));
+    set3("lighting_VS_PS", "g_shallow_water_colour", colour_to_linear(e.shallow_water));
+    set3("lighting_VS_PS", "g_sea_bed_light_scatter", e.sea_bed_scatter);
+    cbs.set_f("lighting_VS_PS", "g_refraction_light_scatter", {e.refraction_scatter});
+    int one = 1;
+    cbs.set("lighting_VS_PS", "g_apply_environment_specular", &one, 4);
+    cbs.set_f("lighting_VS_PS", "g_hdr_on", {1.0f});
+
+    // fog_VS_PS. ASSUMPTION: fog colour = linear(rgb of argb); height bottom = 0 (flat test map).
+    set3("fog_VS_PS", "g_volume_fog_colour", colour_to_linear({e.volume_fog_colour[1], e.volume_fog_colour[2], e.volume_fog_colour[3]}));
+    cbs.set_f("fog_VS_PS", "g_fog_distance_start", {e.fog_distance_start});
+    cbs.set_f("fog_VS_PS", "g_fog_distance_strength", {e.fog_distance_strength});
+    cbs.set_f("fog_VS_PS", "g_fog_distance_scale", {e.fog_distance_scale});
+    cbs.set_f("fog_VS_PS", "g_fog_height_bottom", {0.0f});
+    cbs.set_f("fog_VS_PS", "g_fog_height_top", {e.fog_height_top});
+    cbs.set_f("fog_VS_PS", "g_fog_height_strength", {e.fog_height_strength});
+    cbs.set_f("fog_VS_PS", "g_fog_colour_blend", {e.fog_colour_blend});
+    cbs.set_f("fog_VS_PS", "g_fog_clear_distance", {e.fog_clear_distance});
+
+    cbs.set_f("weather_shared", "g_snowing_intensity", {e.snowing_intensity});
+
+    cbs.set_f("auto_exposure_buffer", "g_auto_exposure_speed", {e.auto_exposure_speed});
+    cbs.set_f("constant_tone_mapping_buffer", "g_luma_high_pass_threshold", {e.high_pass_threshold});
+}
+
+} // namespace we

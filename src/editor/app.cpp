@@ -4,6 +4,7 @@
 #include "formats/env_value.h"
 
 #include "imgui.h"
+#include "render/environment.h"
 
 #include <windows.h>
 #include <commdlg.h>
@@ -79,6 +80,109 @@ App::App(ID3D11Device* dev, ID3D11DeviceContext* ctx) : dev_(dev), ctx_(ctx) {
     output_dir_ = fs::path(widen(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "C:\\")) / "Documents" / "AttilaWeatherEditor" / "out";
     load_settings();
     mount();
+    init_renderer();
+}
+
+void App::open_path(const std::string& path) {
+    if (vfs_ && vfs_->owner(path)) open_vfs(Vfs::normalize(path));
+    else open_disk(fs::path(widen(path)));
+}
+
+std::string App::diagnostics() const {
+    std::string d = "status: " + status_ + "\n";
+    d += "scene objects: " + std::to_string(scene_ ? scene_->objects().size() : 0) + "\n";
+    if (scene_)
+        for (auto& e : scene_->errors()) d += "scene error: " + e + "\n";
+    if (textures_)
+        for (auto& e : textures_->errors()) d += "texture error: " + e + "\n";
+    if (renderer_) {
+        for (auto& e : renderer_->errors()) d += "render error: " + e + "\n";
+        for (auto& m : renderer_->cbuffers().missing()) d += "missing cb var: " + m + "\n";
+    }
+    return d;
+}
+
+void App::init_renderer() {
+    if (!vfs_) return;
+    try {
+        textures_ = std::make_unique<TextureCache>(dev_, *vfs_);
+        scene_ = std::make_unique<TestScene>(dev_, *vfs_, *textures_);
+        renderer_ = std::make_unique<Renderer>(dev_, ctx_, *vfs_);
+        int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
+        float3 ext = scene_->bounds_max() - scene_->bounds_min();
+        cam_dist_ = std::max(60.0f, std::max(ext.x, ext.z) * 0.9f);
+        start_time_ = ImGui::GetTime();
+        set_status(status_ + " Test map: " + std::to_string(n) + " buildings.", status_error_);
+    } catch (const std::exception& e) {
+        set_status(std::string("Renderer init failed: ") + e.what(), true);
+    }
+}
+
+void App::draw_viewport() {
+    if (!renderer_) {
+        ImGui::TextColored(kDim, "Renderer unavailable (see status line).");
+        return;
+    }
+    // Toolbar
+    const char* views[] = {"Final (temp. tone map)", "HDR raw", "Albedo", "Normal", "Specular", "Depth", "Sky cube"};
+    int v = int(renderer_->view);
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::Combo("##view", &v, views, IM_ARRAYSIZE(views))) renderer_->view = Renderer::View(v);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90);
+    ImGui::InputInt("seed", &scene_seed_);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90);
+    ImGui::InputInt("count", &scene_count_);
+    scene_count_ = std::clamp(scene_count_, 1, 100);
+    ImGui::SameLine();
+    if (ImGui::Button("Re-roll")) {
+        int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
+        set_status("Test map: " + std::to_string(n) + " buildings.");
+    }
+    ImGui::SameLine();
+    const Document* env = env_doc_ >= 0 && env_doc_ < int(docs_.size()) ? docs_[env_doc_].get() : nullptr;
+    ImGui::TextColored(kDim, "environment: %s", env ? env->title().c_str() : "(none - open a .environment)");
+
+    ImVec2 size = ImGui::GetContentRegionAvail();
+    int w = int(size.x), h = int(size.y);
+    if (w < 16 || h < 16) return;
+
+    EnvironmentParams params = env ? read_environment(env->doc) : EnvironmentParams{};
+    // Camera: orbit around the target.
+    float cp = std::cos(cam_pitch_), sp = std::sin(cam_pitch_);
+    camera_.target = cam_target_;
+    camera_.eye = cam_target_ + float3{std::sin(cam_yaw_) * cp, sp, -std::cos(cam_yaw_) * cp} * cam_dist_;
+    try {
+        renderer_->render(scene_.get(), camera_, params, w, h, float(ImGui::GetTime() - start_time_));
+    } catch (const std::exception& e) {
+        set_status(std::string("Render error: ") + e.what(), true);
+    }
+    if (!renderer_->output()) return;
+
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::Image(ImTextureID(renderer_->output()), size);
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::InvisibleButton("##vp", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsItemActive()) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            cam_yaw_ += io.MouseDelta.x * 0.006f;
+            cam_pitch_ = std::clamp(cam_pitch_ + io.MouseDelta.y * 0.006f, -0.2f, 1.5f);
+        }
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+            float3 right{std::cos(cam_yaw_), 0, std::sin(cam_yaw_)};
+            float3 fwd{-std::sin(cam_yaw_), 0, std::cos(cam_yaw_)};
+            float k = cam_dist_ * 0.0015f;
+            cam_target_ = cam_target_ - right * (io.MouseDelta.x * k) + fwd * (io.MouseDelta.y * k);
+        }
+    }
+    if (ImGui::IsItemHovered() && io.MouseWheel != 0) cam_dist_ = std::clamp(cam_dist_ * std::pow(0.88f, io.MouseWheel), 5.0f, 3000.0f);
+    if (!renderer_->errors().empty() && ImGui::IsItemHovered()) {
+        std::string all;
+        for (auto& e : renderer_->errors()) all += e + "\n";
+        ImGui::SetTooltip("%s", all.c_str());
+    }
 }
 
 void App::mount() {
@@ -188,6 +292,10 @@ void App::frame() {
     draw_browser();
     ImGui::EndChild();
     ImGui::SameLine();
+    ImGui::BeginChild("viewport", ImVec2(ImGui::GetContentRegionAvail().x * 0.6f, -status_h), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+    draw_viewport();
+    ImGui::EndChild();
+    ImGui::SameLine();
     ImGui::BeginChild("docs", ImVec2(0, -status_h), ImGuiChildFlags_Borders);
     if (docs_.empty()) {
         ImGui::TextColored(kDim, "Open a file from the list on the left, or File > Open loose file.");
@@ -201,6 +309,8 @@ void App::frame() {
             std::string tab = (d.vfs_path.empty() ? d.source_disk.filename().string() : d.vfs_path.substr(d.vfs_path.rfind('/') + 1)) + "###tab";
             if (ImGui::BeginTabItem(tab.c_str(), &open, fl)) {
                 active_ = i;
+                std::string lower = d.title();
+                if (lower.find(".environment") != std::string::npos || lower.find(".lighting") != std::string::npos) env_doc_ = i;
                 draw_document(d);
                 ImGui::EndTabItem();
             }
@@ -209,6 +319,8 @@ void App::frame() {
                 bool close = !d.doc.modified() ||
                              MessageBoxW(nullptr, L"Discard unsaved changes?", L"Attila Weather Editor", MB_YESNO | MB_ICONWARNING) == IDYES;
                 if (close) {
+                    if (env_doc_ == i) env_doc_ = -1;
+                    else if (env_doc_ > i) --env_doc_;
                     docs_.erase(docs_.begin() + i);
                     --i;
                     active_ = -1;
@@ -255,7 +367,10 @@ void App::draw_menu() {
             if (auto p = file_dialog(true, default_save_path(*d))) save(*d, *p);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Remount packs")) mount();
+        if (ImGui::MenuItem("Remount packs")) {
+            mount();
+            init_renderer();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Settings")) {

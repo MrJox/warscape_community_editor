@@ -1,11 +1,12 @@
 // Shader gate + reflection dump for the game's compiled shaders.
 //
-//   fxc_dump <fxc_dir> <out_dir>
+//   fxc_dump <fxc_dir> <out_dir> [asm_dir]
 //
 // For every dx11_*.fxc: parse the CA header, reflect the DXBC, create the shader on a hardware
 // D3D11 device. Writes:
 //   <out_dir>/index.tsv     one row per shader: name parts, stage, create result, cbuffers, resources
 //   <out_dir>/cbuffers.txt  every distinct constant buffer layout with its variables and users
+//   [asm_dir]/<file>.asm    D3DDisassemble output per shader (large; keep out of the repo)
 #include "core/text_encoding.h"
 #include "formats/fxc.h"
 
@@ -76,7 +77,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     fs::path in = argv[1], out = argv[2];
+    fs::path asm_dir = argc > 3 ? fs::path(argv[3]) : fs::path();
     fs::create_directories(out);
+    if (!asm_dir.empty()) fs::create_directories(asm_dir);
 
     ComPtr<ID3D11Device> dev;
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
@@ -107,6 +110,13 @@ int main(int argc, char** argv) {
             UINT type = D3D11_SHVER_GET_TYPE(sd.Version);
             HRESULT hr = create(dev.Get(), type, f.dxbc(), f.dxbc_size());
             if (FAILED(hr)) ++failed;
+            if (!asm_dir.empty()) {
+                ComPtr<ID3DBlob> text;
+                if (SUCCEEDED(D3DDisassemble(f.dxbc(), f.dxbc_size(), 0, nullptr, &text))) {
+                    std::ofstream a(asm_dir / (de.path().stem().string() + ".asm"), std::ios::binary);
+                    a.write(static_cast<const char*>(text->GetBufferPointer()), std::streamsize(text->GetBufferSize() - 1));
+                }
+            }
             per_stage[stage_name(type)]++;
 
             std::string cbs, res, inputs;

@@ -1,5 +1,7 @@
 #pragma once
 #include "core/vfs.h"
+#include "render/renderer.h"
+#include "render/scene.h"
 #include "formats/xml_doc.h"
 
 #include <d3d11.h>
@@ -27,6 +29,9 @@ class App {
 public:
     App(ID3D11Device* dev, ID3D11DeviceContext* ctx);
     void frame();
+    void open_path(const std::string& path); // in-pack path or a file on disk
+    void set_view(int v) { if (renderer_) renderer_->view = Renderer::View(v); }
+    std::string diagnostics() const;
     bool confirm_close(); // false = cancel closing
 
 private:
@@ -42,6 +47,8 @@ private:
     void draw_element(Document& d, int elem);
     void draw_attribute(Document& d, int elem, size_t attr);
     void draw_changes(Document& d);
+    void draw_viewport();
+    void init_renderer();
     void load_settings();
     void store_settings() const;
     void set_status(std::string s, bool error = false);
@@ -62,6 +69,17 @@ private:
     // inspector
     char attr_filter_[128] = {};
     std::string pending_before_; // raw value when the active widget was activated
+
+    // 3D preview
+    std::unique_ptr<TextureCache> textures_;
+    std::unique_ptr<TestScene> scene_;
+    std::unique_ptr<Renderer> renderer_;
+    Camera camera_;
+    float cam_yaw_ = 0.6f, cam_pitch_ = 0.35f, cam_dist_ = 120.0f;
+    float3 cam_target_{0, 5, 0};
+    int scene_seed_ = 1, scene_count_ = 16;
+    double start_time_ = 0;
+    int env_doc_ = -1; // document driving the environment (last active .environment/.lighting)
 
     std::filesystem::path output_dir_;
     std::filesystem::path settings_path_;

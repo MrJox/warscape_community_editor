@@ -1,5 +1,7 @@
 // Attila Weather Editor: window, D3D11 device and the ImGui frame loop.
+#include "core/process.h"
 #include "editor/app.h"
+#include "render/image_io.h"
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -7,9 +9,41 @@
 
 #include <d3d11.h>
 #include <windows.h>
+#include <dbghelp.h>
+#include <shellapi.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
+
+// Writes %LOCALAPPDATA%\awe\crash.dmp and crash.txt (exception code + module offset) on a crash.
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
+    wchar_t dir[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", dir, MAX_PATH);
+    std::wstring base = (n ? std::wstring(dir) : std::wstring(L".")) + L"\\awe\\";
+    CreateDirectoryW(base.c_str(), nullptr);
+    HANDLE f = CreateFileW((base + L"crash.dmp").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        MINIDUMP_EXCEPTION_INFORMATION mi{GetCurrentThreadId(), ep, FALSE};
+        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f, MiniDumpWithIndirectlyReferencedMemory, &mi, nullptr, nullptr);
+        CloseHandle(f);
+    }
+    HMODULE mod = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       static_cast<LPCWSTR>(ep->ExceptionRecord->ExceptionAddress), &mod);
+    wchar_t mname[MAX_PATH] = L"?";
+    if (mod) GetModuleFileNameW(mod, mname, MAX_PATH);
+    FILE* t = _wfopen((base + L"crash.txt").c_str(), L"w");
+    if (t) {
+        fwprintf(t, L"code %08lx at %ls+0x%llx\n", ep->ExceptionRecord->ExceptionCode, mname,
+                 (unsigned long long)((char*)ep->ExceptionRecord->ExceptionAddress - (char*)mod));
+        fclose(t);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -53,6 +87,7 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+    SetUnhandledExceptionFilter(crash_handler);
     ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc{sizeof wc, CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"AttilaWeatherEditor", nullptr};
     RegisterClassExW(&wc);
@@ -93,6 +128,19 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     we::App app(g_device.Get(), g_ctx.Get());
     g_app = &app;
+    std::wstring shot_path; // --shot <file.png>: save the window after a few frames and exit
+    {   // --open <path> (repeatable)
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; i + 1 < argc; ++i) {
+            std::wstring a = argv[i];
+            if (a == L"--open") app.open_path(we::narrow(argv[++i]));
+            else if (a == L"--shot") shot_path = argv[++i];
+            else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
+        }
+        LocalFree(argv);
+    }
+    int frame_no = 0;
 
     bool done = false;
     while (!done) {
@@ -118,6 +166,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         g_ctx->OMSetRenderTargets(1, g_rtv.GetAddressOf(), nullptr);
         g_ctx->ClearRenderTargetView(g_rtv.Get(), clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        if (!shot_path.empty() && ++frame_no == 20) {
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> back;
+            g_swap->GetBuffer(0, IID_PPV_ARGS(&back));
+            we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
+            if (FILE* t = _wfopen((shot_path + L".txt").c_str(), L"w")) {
+                fputs(app.diagnostics().c_str(), t);
+                fclose(t);
+            }
+            done = true;
+        }
         g_swap->Present(1, 0);
     }
 
