@@ -26,6 +26,7 @@ class Renderer {
 public:
     enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped };
     float debug_points[4] = {}; int debug_maps = 0;
+    bool fog = true;
     float luma_black() const { return luma_black_; }
     float luma_white() const { return luma_white_; }
 
@@ -53,6 +54,7 @@ private:
     void pass_gbuffer(const TestScene* scene);
     void pass_sky_forward();
     void pass_directional_light();
+    void pass_fog();
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);
     void pass_to_screen();
@@ -107,7 +109,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_back_, rs_none_;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_, bs_alpha_;
+    bool fog_enabled_ = true;
 };
 
 } // namespace we

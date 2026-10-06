@@ -10,13 +10,14 @@ Status legend: **verified** (disassembly of the shader and/or empire.retail.dll)
 | 2 | G-buffer | `rigidcommon.hlsl` vs30_main + `rigidstandard.hlsl` ps30_gbuffer / _alpha_test | 5 targets, layout below |
 | 3 | Sky (forward) | `skydome.hlsl` ps30_main | samples the sky cube; below-horizon directions clamp to the horizon |
 | 4 | Directional light | `directionallight.hlsl` ps30_slm_highdef (shadows_hardware_gather_5_0, sm_5_0) | full-screen, stencil = geometry. Ambient cube + env. specular + sun |
+| 4b | Fog | `battlefog.hlsl` ps30_main | over geometry (stencil), alpha-blended (assumption); sky cube + sun-lit fog colour |
 | 5 | Luma stats | `hdr_tone_mapper.hlsl` downsample_image_store_luma, hdr_luma_to_quarter_size_luma_stats, downsample_quarter_size_luma_stats | quarter image (rgb + luma), then min/max/avg pyramid to 1x1 |
 | 6 | Exposure | determine_black_and_white_points | 1x1 ping-pong; `prev + (target-prev)*(1-speed)^(30*dt)`; read back (4-frame ring) into `constant_tone_mapping_buffer` |
 | 7 | Bloom | high_pass_luminance_cutoff, blur_x, blur_y | quarter size, 11-tap |
 | 8 | Tone map | constant_tone_mapper_with_bloom | linear output; S-curve LUT (see below) |
 | 9 | To screen | `hdr_to_screen.hlsl` ps30_main_high | fog of war (off), `g_brightness`, gamma, then `colour_matrix` in gamma space |
 
-Not yet: shadow cascades (split count 0 = unshadowed), SSAO (white), fog (`battlefog.hlsl`), clouds (`cloud_plane.hlsl`), sun (`sun.hlsl`), precipitation/VFX, DOF, terrain/ground.
+Not yet: shadow cascades (split count 0 = unshadowed), SSAO (white), clouds (`cloud_plane.hlsl`), sun (`sun.hlsl`), precipitation/VFX, DOF, terrain/ground.
 
 ## G-buffer (from rigidstandard ps30_gbuffer and directionallight)
 
@@ -48,6 +49,7 @@ Matrices: clip.i = dot(pos, row i) — row-major upload, column-vector maths.
 | `colour_matrix` | **verified** fn 0x172c100: Overlay * Hue * Saturation(Haeberli 0.3086/0.6094/0.0820) * Contrast(pivot 0.5) * Brightness(x engine factor [this+0xe0]); hue rotation sign layout assumption |
 | S-curve LUT | 256x1 RGBA8 texture created in fn 0x178c710 ("HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture"); **fill code not found** — placeholder Schlick-bias curve from low/high_tones_bias |
 | colorimetry gamma | assumption 2.2 (graphics option) |
+| **HDR light scale** | **key open item**: with `g_hdr_on` the lighting and fog shaders multiply light colours by 0.004 (1/250); ambient by 360*0.004. So the engine's `sun_colour` constant is ~250x the plain linear(colour)*scale. Exact factor: memory dump |
 
 ## Test map
 

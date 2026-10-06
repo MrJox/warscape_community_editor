@@ -34,6 +34,7 @@ const char* kTmBlurY = TM "blur_y";
 const char* kTmToneMap = TM "constant_tone_mapper_with_bloom"; // linear out; hdr_to_screen applies gamma
 #undef TM
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 
 // Editor-side helpers (not game shaders): full-screen triangle and the debug/temporary display pass.
 const char* kHelperHlsl = R"(
@@ -239,6 +240,16 @@ void Renderer::make_states() {
     D3D11_BLEND_DESC b{};
     b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     dev_->CreateBlendState(&b, &bs_opaque_);
+    // ASSUMPTION: fog composites with standard alpha blending (battlefog writes the fog amount to .w).
+    b.RenderTarget[0].BlendEnable = TRUE;
+    b.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    b.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    b.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    b.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+    b.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    b.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
+    dev_->CreateBlendState(&b, &bs_alpha_);
 }
 
 Renderer::Target Renderer::make_target(int w, int h, DXGI_FORMAT fmt) {
@@ -560,6 +571,26 @@ void Renderer::pass_to_screen() {
     fullscreen_to(final_.rtv.Get(), w_, h_, *ps);
 }
 
+void Renderer::pass_fog() {
+    const GameShader* ps = shader(kFogPS);
+    if (!ps || !fog) return;
+    ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+    bind_shader(ctx_, *ps, cbs_);
+    bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
+    bind_srv(ctx_, *ps, "s_sky", sky_cube_srv_.Get());
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_point_.GetAddressOf());
+    bind_sampler(ctx_, *ps, "s_sky", s_clamp_linear_.Get());
+    // Fog over geometry only (stencil 1): sky pixels keep the sky.
+    ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
+    ctx_->OMSetDepthStencilState(ds_light_.Get(), 1);
+    ctx_->OMSetBlendState(bs_alpha_.Get(), nullptr, 0xffffffff);
+    cbs_.upload(dev_, ctx_);
+    fullscreen(*ps);
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+    ID3D11ShaderResourceView* nulls[8] = {};
+    ctx_->PSSetShaderResources(0, 8, nulls);
+}
+
 void Renderer::pass_display() {
     ctx_->OMSetRenderTargets(1, out_.rtv.GetAddressOf(), nullptr);
     ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
@@ -594,7 +625,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
-                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS})
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS})
         shader(s);
     apply_environment(env, cbs_);
 
@@ -614,6 +645,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
     pass_sky_forward();
     pass_directional_light();
+    pass_fog();
 
     ID3D11ShaderResourceView* nulls[16] = {};
     ctx_->PSSetShaderResources(0, 16, nulls);
