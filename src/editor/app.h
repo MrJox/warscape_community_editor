@@ -80,6 +80,7 @@ private:
     int scene_seed_ = 1, scene_count_ = 16;
     double start_time_ = 0;
     int env_doc_ = -1; // document driving the environment (last active .environment/.lighting)
+    float output_gamma_ = 2.2f, output_brightness_ = 1.0f; // from the game's preferences.script.txt
 
     std::filesystem::path output_dir_;
     std::filesystem::path settings_path_;

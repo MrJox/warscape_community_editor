@@ -50,3 +50,6 @@ endif()
 
 add_executable(rmv2_check tools/rmv2_check.cpp)
 target_link_libraries(rmv2_check PRIVATE we_core)
+
+add_executable(env_vs_dump tools/env_vs_dump.cpp src/render/environment.cpp src/render/shader_lib.cpp src/render/math.cpp)
+target_link_libraries(env_vs_dump PRIVATE we_core d3d11 d3dcompiler dxguid)

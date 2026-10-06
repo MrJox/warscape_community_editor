@@ -31,7 +31,7 @@ const char* kTmPoints = TM "determine_black_and_white_points";
 const char* kTmHighPass = TM "high_pass_luminance_cutoff";
 const char* kTmBlurX = TM "blur_x";
 const char* kTmBlurY = TM "blur_y";
-const char* kTmToneMap = TM "constant_tone_mapper_with_bloom"; // linear out; hdr_to_screen applies gamma
+const char* kTmToneMap = TM "basic_tone_mapper"; // game's live path (dump: constant_tone_mapping_buffer = 0); linear out
 #undef TM
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
@@ -551,6 +551,8 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
     }
     bind(*tm, s_clamp_linear_.Get());
     bind_sampler(ctx_, *tm, "g_hdr_rgb_texture_sampler", s_clamp_point_.Get());
+    bind_sampler(ctx_, *tm, "g_black_and_white_points_sampler", s_clamp_point_.Get());
+    bind_srv(ctx_, *tm, "g_black_and_white_points_sampler", points_[cur].t.srv.Get());
     bind_srv(ctx_, *tm, "g_hdr_rgb_texture_sampler", hdr_.srv.Get());
     bind_srv(ctx_, *tm, "g_hdr_rgb_bloom_texture_sampler", bloom_a_.t.srv.Get());
     bind_srv(ctx_, *tm, "g_scurve_texture_sampler", scurve_srv_.Get());

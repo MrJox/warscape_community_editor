@@ -9,9 +9,10 @@ Engine layout (empire.retail.dll 1.6.0, verified by disassembly 2026-10-06, see 
   shader manager = *( *(dll + 0x2a21d18) + 0x71558 )           (fn 0x178c460)
   named cbuffer object:   +0x28 -> char* cbuffer name         (e.g. "lighting_VS_PS" at manager+0x634)
   named variable object:  +0x08 -> char* variable name, +0x0c -> owning cbuffer object,
-                          value pointer at +0x2c (vector vars) or +0x24 (scalar vars)  (fns 0x1923b50, 0x178a230)
+                          +0x14 -> the variable's slot in the cbuffer's CPU copy (every type; verified on
+                          the 2026-10-06 dump: sun_colour 0x0db596c0, ambient_cube_lr 0x0db596d0)
 The script scans the manager for variable objects (name pointer into the DLL + owner pointer that
-names a cbuffer) and prints the 16 bytes behind both value-pointer candidates.
+names a cbuffer) and prints the floats in the variable's slot (16 for matrices/arrays, else 4).
 """
 import os
 import re
@@ -62,14 +63,13 @@ def main():
         key = f"{cb}.{name}"
         if pat and not pat.search(key):
             continue
-        vals = []
-        for vo in (0x2C, 0x24):
-            vp = struct.unpack_from("<I", blob, off + vo)[0]
-            raw = D.read(vp, 16) if vp else b""
-            vals.append(" ".join(f"{x:.6g}" for x in struct.unpack("<4f", raw)) if len(raw) == 16 else "-")
-        rows.append((key, manager + off, vals))
-    for key, addr, (v2c, v24) in sorted(rows):
-        print(f"{key:60} obj {addr:#010x}  [+2c] {v2c:40}  [+24] {v24}")
+        vp = struct.unpack_from("<I", blob, off + 0x14)[0]
+        n = 16 if re.search(r"matrix|cube_|split|bounds|projection|world_view|view|sample_data", name) else 4
+        raw = (D.read(vp, 4 * n) if vp else None) or b""
+        val = " ".join(f"{x:.6g}" for x in struct.unpack(f"<{n}f", raw)) if len(raw) == 4 * n else "-"
+        rows.append((key, manager + off, val))
+    for key, addr, val in sorted(set(rows)):
+        print(f"{key:58} {val}")
     print(f"{len(rows)} variables")
 
 

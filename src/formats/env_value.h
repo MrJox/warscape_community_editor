@@ -5,7 +5,7 @@
 //   1 / 0.5 / 111.599998 / -7.2      float or int
 //   true / false                     bool
 //   rgb(1.0,0.788235,0.615686)       colour
-//   argb(0.48,0.56,0.83,0.0039)      colour with alpha FIRST
+//   argb(0.48,0.56,0.83,0.0039)      colour: despite the name the order is r, g, b, a (verified)
 //   variance(0.3,40)                 two floats
 //   euler(3.141593,1.000000,0.0)     legacy direction
 //
@@ -28,7 +28,7 @@ struct NumStyle {
 
 struct EnvValue {
     ValueKind kind = ValueKind::String;
-    std::vector<float> f; // Float/Int: 1; Rgb: r,g,b; Argb: a,r,g,b; Variance: 2; Euler: 3
+    std::vector<float> f; // Float/Int: 1; Rgb: r,g,b; Argb: r,g,b,a; Variance: 2; Euler: 3
     long long i = 0;      // Int
     bool b = false;
     std::string s;        // original text

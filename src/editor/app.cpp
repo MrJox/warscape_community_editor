@@ -111,6 +111,7 @@ void App::init_renderer() {
         textures_ = std::make_unique<TextureCache>(dev_, *vfs_);
         scene_ = std::make_unique<TestScene>(dev_, *vfs_, *textures_);
         renderer_ = std::make_unique<Renderer>(dev_, ctx_, *vfs_);
+        read_output_settings(output_gamma_, output_brightness_);
         int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
         float3 ext = scene_->bounds_max() - scene_->bounds_min();
         cam_dist_ = std::max(60.0f, std::max(ext.x, ext.z) * 0.9f);
@@ -152,6 +153,8 @@ void App::draw_viewport() {
     if (w < 16 || h < 16) return;
 
     EnvironmentParams params = env ? read_environment(env->doc) : EnvironmentParams{};
+    params.output_gamma = output_gamma_;
+    params.output_brightness = output_brightness_;
     // Camera: orbit around the target.
     float cp = std::cos(cam_pitch_), sp = std::sin(cam_pitch_);
     camera_.target = cam_target_;
@@ -526,12 +529,9 @@ void App::draw_attribute(Document& d, int e, size_t a) {
     case ValueKind::Rgb:
         changed = ImGui::ColorEdit3("##v", v.f.data(), ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
         break;
-    case ValueKind::Argb: {
-        float rgba[4] = {v.f[1], v.f[2], v.f[3], v.f[0]};
-        changed = ImGui::ColorEdit4("##v", rgba, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_AlphaBar);
-        if (changed) v.f = {rgba[3], rgba[0], rgba[1], rgba[2]};
+    case ValueKind::Argb: // "argb(...)" lists r, g, b, a (verified against the game's fog colour)
+        changed = ImGui::ColorEdit4("##v", v.f.data(), ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_AlphaBar);
         break;
-    }
     case ValueKind::Variance: changed = ImGui::DragFloat2("##v", v.f.data(), 0.01f, 0, 0, "%.6g"); break;
     case ValueKind::Euler: changed = ImGui::DragFloat3("##v", v.f.data(), 0.01f, 0, 0, "%.6g"); break;
     case ValueKind::String: {

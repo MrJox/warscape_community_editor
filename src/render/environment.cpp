@@ -4,6 +4,11 @@
 #include "formats/xml_doc.h"
 #include "render/shader_lib.h"
 
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+
+#include <algorithm>
 #include <cmath>
 
 namespace we {
@@ -50,9 +55,24 @@ int find_element(const XmlDoc& doc, const char* name) {
 } // namespace
 
 float3 EnvironmentParams::to_sun() const {
-    // ASSUMPTION: azimuth measured from +Z towards +X (clockwise seen from above), elevation above horizon.
+    // Verified (memory dump 2026-10-06): azimuth from +Z towards +X, elevation above the horizon.
     float az = sun_azimuth * kDeg, el = sun_elevation * kDeg;
     return normalize(float3{std::cos(el) * std::sin(az), std::sin(el), std::cos(el) * std::cos(az)});
+}
+
+void read_output_settings(float& gamma, float& brightness) {
+    const char* appdata = std::getenv("APPDATA");
+    if (!appdata) return;
+    std::ifstream f(std::string(appdata) + "\\The Creative Assembly\\Attila\\scripts\\preferences.script.txt");
+    std::string key;
+    float v;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::istringstream is(line);
+        if (!(is >> key >> v)) continue;
+        if (key == "gfx_gamma_setting" && v > 0.1f) gamma = v;
+        else if (key == "gfx_brightness_setting" && v > 0.0f) brightness = v;
+    }
 }
 
 float3 colour_to_linear(const float3& c) {
@@ -158,22 +178,26 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     auto set3 = [&](const char* cb, const char* var, const float3& v) { cbs.set_f(cb, var, {v.x, v.y, v.z}); };
 
     // skydome_PS (verified: copied from precomputed sky-node fields, see docs/re/environment_to_shader.md)
-    // ASSUMPTION: "linear ... scaled" = pow(colour, 2.2) * scale.
-    set3("skydome_PS", "g_linear_sky_colour_scaled", colour_to_linear(e.sky_colour) * e.sky_colour_scale);
-    set3("skydome_PS", "g_linear_circumsolar_color_scaled", colour_to_linear(e.circumsolar_colour) * e.circumsolar_colour_scale);
-    set3("skydome_PS", "g_linear_horizon_colour_scaled", colour_to_linear(e.horizon_colour) * e.horizon_colour_scale);
-    set3("skydome_PS", "g_linear_horizon_opposite_colour_scaled", colour_to_linear(e.horizon_opposite_colour) * e.horizon_opposite_colour_scale);
-    set3("skydome_PS", "g_linear_backscatter_colour_scaled", colour_to_linear(e.backscatter_colour) * e.backscatter_colour_scale);
-    cbs.set_f("skydome_PS", "g_horizon_decay", {e.horizon_decay});
-    cbs.set_f("skydome_PS", "g_circumsolar_decay", {e.circumsolar_decay});
+    // Verified (memory dump + fn 0x18e3700): colours = pow(c, 2.2) * scale * 7.5 (HDR sky factor);
+    // horizon decay * -0.5, circumsolar decay * -10, backscatter decay copied unchanged.
+    const float sky = kSkyHdrScale;
+    set3("skydome_PS", "g_linear_sky_colour_scaled", colour_to_linear(e.sky_colour) * (e.sky_colour_scale * sky));
+    set3("skydome_PS", "g_linear_circumsolar_color_scaled", colour_to_linear(e.circumsolar_colour) * (e.circumsolar_colour_scale * sky));
+    set3("skydome_PS", "g_linear_horizon_colour_scaled", colour_to_linear(e.horizon_colour) * (e.horizon_colour_scale * sky));
+    set3("skydome_PS", "g_linear_horizon_opposite_colour_scaled", colour_to_linear(e.horizon_opposite_colour) * (e.horizon_opposite_colour_scale * sky));
+    set3("skydome_PS", "g_linear_backscatter_colour_scaled", colour_to_linear(e.backscatter_colour) * (e.backscatter_colour_scale * sky));
+    cbs.set_f("skydome_PS", "g_horizon_decay", {e.horizon_decay * -0.5f});
+    cbs.set_f("skydome_PS", "g_circumsolar_decay", {e.circumsolar_decay * -10.0f});
     cbs.set_f("skydome_PS", "g_backscatter_decay", {e.backscatter_decay});
     set3("skydome_PS", "g_sun_direction", to_sun);
 
     // lighting_VS_PS. sun_direction is the direction light travels (shader uses -sun_direction as L).
-    // ASSUMPTION: sun colour = linear(colour) * scale; ambient = linear(colour) * ambient_cube_hdr_scaler * ambient_scale.
+    // Verified (memory dump): sun colour = pow(c, 2.2) * sun_colour_scale * 5000 (shaders multiply by 0.004 in HDR).
+    // ASSUMPTION (custom cubes not yet in a dump): ambient = pow(c, 2.2) * ambient_cube_hdr_scaler * ambient_scale.
+    // With use_custom_ambient_cube_colours = false the engine takes the cube from elsewhere (open item).
     // (The HDR white point is >= min_white_point (9 in most files), so scene light must reach several units.)
     set3("lighting_VS_PS", "sun_direction", -to_sun);
-    set3("lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * e.sun_colour_scale);
+    set3("lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * (e.sun_colour_scale * kSunHdrScale));
     float amb = e.ambient_scale * e.ambient_hdr_scaler;
     float3 lr[2] = {colour_to_linear(e.ambient_right) * amb, colour_to_linear(e.ambient_left) * amb};
     float3 tb[2] = {colour_to_linear(e.ambient_top) * amb, colour_to_linear(e.ambient_bottom) * amb};
@@ -193,13 +217,15 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     cbs.set("lighting_VS_PS", "g_apply_environment_specular", &one, 4);
     cbs.set_f("lighting_VS_PS", "g_hdr_on", {1.0f});
 
-    // fog_VS_PS. ASSUMPTION: fog colour = linear(rgb of argb); height bottom = 0 (flat test map).
-    set3("fog_VS_PS", "g_volume_fog_colour", colour_to_linear({e.volume_fog_colour[1], e.volume_fog_colour[2], e.volume_fog_colour[3]}));
-    cbs.set_f("fog_VS_PS", "g_fog_distance_start", {e.fog_distance_start});
+    // fog_VS_PS. Verified (memory dump): colour = pow(2.2) of the first three components of "argb(...)"
+    // (which are r, g, b; the fourth is alpha); start = start - fog_precipitation_distance_modifier; top >= 0.001.
+    // Height bottom = 0 on the flat test map.
+    set3("fog_VS_PS", "g_volume_fog_colour", colour_to_linear({e.volume_fog_colour[0], e.volume_fog_colour[1], e.volume_fog_colour[2]}));
+    cbs.set_f("fog_VS_PS", "g_fog_distance_start", {e.fog_distance_start - e.fog_precipitation_distance_modifier});
     cbs.set_f("fog_VS_PS", "g_fog_distance_strength", {e.fog_distance_strength});
     cbs.set_f("fog_VS_PS", "g_fog_distance_scale", {e.fog_distance_scale});
     cbs.set_f("fog_VS_PS", "g_fog_height_bottom", {0.0f});
-    cbs.set_f("fog_VS_PS", "g_fog_height_top", {e.fog_height_top});
+    cbs.set_f("fog_VS_PS", "g_fog_height_top", {std::max(e.fog_height_top, 0.001f)});
     cbs.set_f("fog_VS_PS", "g_fog_height_strength", {e.fog_height_strength});
     cbs.set_f("fog_VS_PS", "g_fog_colour_blend", {e.fog_colour_blend});
     cbs.set_f("fog_VS_PS", "g_fog_clear_distance", {e.fog_clear_distance});
@@ -214,10 +240,11 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     cbs.set_f("auto_exposure_buffer", "g_auto_exposure_speed", {e.auto_exposure_speed});
     cbs.set_f("constant_tone_mapping_buffer", "g_luma_high_pass_threshold", {e.high_pass_threshold});
 
-    // Output colorimetry: graphics options in the game (defaults; ASSUMPTION gamma 2.2).
-    cbs.set_f("colorimetry_VS_PS", "g_brightness", {1.0f});
-    cbs.set_f("colorimetry_VS_PS", "g_gamma_output", {2.2f});
-    cbs.set_f("colorimetry_VS_PS", "g_inv_gamma_output", {1.0f / 2.2f});
+    // Output colorimetry = the game's graphics options (verified: gfx_gamma_setting / gfx_brightness_setting
+    // from preferences.script.txt appear unchanged in colorimetry_VS_PS).
+    cbs.set_f("colorimetry_VS_PS", "g_brightness", {e.output_brightness});
+    cbs.set_f("colorimetry_VS_PS", "g_gamma_output", {e.output_gamma});
+    cbs.set_f("colorimetry_VS_PS", "g_inv_gamma_output", {1.0f / e.output_gamma});
 
     float4x4 cm = colour_matrix(e);
     cbs.set_m("hdr_to_screen_PS", "colour_matrix", cm.data());
@@ -226,7 +253,7 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
 float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness) {
     // Verified from empire.retail.dll fn 0x172c100 (2026-10-06):
     //   M = Overlay * Hue * Saturation * Contrast * Brightness, applied to gamma-space colour as M * (rgb, 1).
-    // Brightness is scaled by an engine factor ([this+0xe0], ASSUMPTION 1.0 = default options).
+    // Brightness is scaled by an engine factor ([this+0xe0]; 1.0 in the dump).
     float4x4 m;
     m.m[0][0] = e.brightness.x * global_brightness;
     m.m[1][1] = e.brightness.y * global_brightness;

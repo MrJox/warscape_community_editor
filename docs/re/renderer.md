@@ -60,3 +60,18 @@ A battle building is a folder of pieces; `<name>_pieceNN_destruct01.rigid_model_
 - shader manager: `*( *(dll+0x2a21d18) + 0x71558 )` (fn 0x178c460); shader registry init fn 0x16f1a30
 - manager + 0x634 `lighting_VS_PS`; + 0xd31ec SKYDOME_SHADER (cb `skydome_PS` at +0x298); + 0xb804 tone mapper (`g_scurve_texture` var at +0x838); + 0x30380 hdr_to_screen
 - property name tables: SKYGEN 0x1da74a4, HDR 0x1da5f80 (accessor vfuncs 0x19081f0, 0x176af70)
+
+## Verified against a memory dump (2026-10-06, med_sp_land_day_dry.environment, tdd_pack6)
+
+`tools/env_vs_dump` compares the editor's mapping with `tools/re/dump_cbs.py` output. All file-driven values match:
+sky (pow 2.2 * scale * 7.5; horizon decay *-0.5, circumsolar *-10, backscatter as is), sun colour (pow 2.2 * scale * 5000),
+sun direction (cos el sin az, sin el, cos el cos az), fog (argb = r,g,b,a; start - precipitation modifier; top >= 0.001),
+colour_matrix, water colours, colorimetry (= gfx_gamma_setting / gfx_brightness_setting from preferences.script.txt).
+The game's live tone mapper is basic_tone_mapper (constant_tone_mapping_buffer is all zero).
+
+Open:
+- Ambient cube when use_custom_ambient_cube_colours = false (276 files): not the XML colours, and not a plain integral
+  of the sky (per-channel ratios differ). set_ambient is fn 0x178ab70 (6 colours via device vfunc +0x260), reached
+  through vtable 0x1c99868. Values are multiples of 0.025.
+- Ambient cube for custom = true: needs a second dump with such a file (formula currently assumed).
+- S-curve LUT fill code; shadow cascades (dump: 4 splits, 2048 atlas, fade 0.1/0.296), clouds, sun, SSAO.

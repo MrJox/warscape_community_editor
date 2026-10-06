@@ -36,7 +36,7 @@ struct EnvironmentParams {
     // FOG
     float fog_distance_start = 0, fog_distance_strength = 0, fog_distance_scale = 1;
     float fog_height_top = 0, fog_height_strength = 0, fog_clear_distance = 10000, fog_colour_blend = 0;
-    float volume_fog_colour[4] = {1, 1, 1, 1}; // a, r, g, b as written
+    float volume_fog_colour[4] = {1, 1, 1, 1}; // r, g, b, a (the files say "argb(...)" but list r, g, b, a)
     bool terrain_relative_height_fog = true;
     float fog_precipitation_distance_modifier = 0;
 
@@ -58,11 +58,21 @@ struct EnvironmentParams {
     float snowing_intensity = 0;
     std::string weather_definition;
 
+    // Output settings (graphics options, not part of the file): preferences.script.txt
+    float output_gamma = 2.2f, output_brightness = 1.0f;
+
     // derived
     float3 to_sun() const; // unit vector pointing at the sun
 };
 
 EnvironmentParams read_environment(const XmlDoc& doc);
+
+// Engine HDR factors, verified against a memory dump of the game (docs/re/renderer.md).
+constexpr float kSunHdrScale = 5000.0f; // lighting_VS_PS.sun_colour = linear * sun_colour_scale * 5000
+constexpr float kSkyHdrScale = 7.5f;    // skydome_PS colours = linear * scale * 7.5
+
+// gfx_gamma_setting / gfx_brightness_setting from %APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt
+void read_output_settings(float& gamma, float& brightness);
 
 // sRGB-ish colour from the files to linear light. ASSUMPTION: pow 2.2.
 float3 colour_to_linear(const float3& c);
