@@ -18,7 +18,13 @@ target_include_directories(we_core PUBLIC src)
 add_executable(xml_roundtrip tools/xml_roundtrip.cpp)
 target_link_libraries(xml_roundtrip PRIVATE we_core)
 
-target_sources(we_core PRIVATE src/formats/fxc.cpp)
+target_sources(we_core PRIVATE src/formats/fxc.cpp src/core/process.cpp src/core/vfs.cpp src/formats/env_value.cpp)
 
 add_executable(fxc_dump tools/fxc_dump.cpp)
 target_link_libraries(fxc_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
+
+add_executable(vfs_probe tools/vfs_probe.cpp)
+target_link_libraries(vfs_probe PRIVATE we_core)
+
+add_executable(format_check tools/format_check.cpp)
+target_link_libraries(format_check PRIVATE we_core)
