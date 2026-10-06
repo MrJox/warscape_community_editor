@@ -100,7 +100,7 @@ weather_editor/
 5. RE spike:
    - from the DLL, map `.environment` attributes to CB variables (string xrefs on attribute names → setters → CB writes);
    - find the render pass order, render-target formats, the G-buffer layout and how shadow cascades are split.
-6. Ground truth: one RenderDoc capture of a battle frame → dump CB values and pipeline state per draw (see Verification).
+6. Ground truth: one full memory dump of the game in a battle → `dump_cbs.py` (see Verification).
 
 ### Phase 1: Battle weather MVP (first usable release)
 1. RMV2 v6 reader for `RS_STANDARD_V5` (LOD0, vertex format 0), DDS loader (BCn upload natively, no conversion).
@@ -123,7 +123,7 @@ weather_editor/
    - Save / Save As (loose XML)
    - "modified" diff view against the original
 5. Cross-fade slider between two environments.
-6. **Gate:** CB values match the RenderDoc capture for the same `.environment`; round trip still byte-identical after edit + revert.
+6. **Gate:** CB values match the memory dump for the same `.environment`; round trip still byte-identical after edit + revert.
 
 ### Phase 2: Wind, precipitation and particles
 1. `weather_definitions.xml` editing: wind gust simulation, wind on clouds (`cloud_velocity`), precipitation links.
@@ -158,7 +158,7 @@ Read, edit and save actual tiles. To be scoped separately.
 - **Formats:** the automated round-trip test over all files in every phase.
 - **Shaders:** every SM5 `.fxc` must create and reflect.
 - **Rendering (decided 2026-10-06):** no whole-frame image comparison against the game. A real battle frame has too much other content (units, terrain, other lights) for a diff to mean anything, and battles can't be started from the CLI. Because the editor runs the game's own shaders, the pixel math is identical by construction. What can differ is the **inputs**, so ground truth is checked per input:
-  1. **Constant buffer values:** in one RenderDoc capture of any battle frame, read the CB contents of the sky, fog, lighting and tone-mapper draws for the active `.environment`. Compare them with what the editor computes from the same file. Values only, not pixels, so scene content does not matter. This is a manual capture by the user (custom battle, F12), read with RenderDoc's Python API.
+  1. **Constant buffer values:** RenderDoc crashes the game mid-capture (2026-10-06), so the values come from a **full memory dump** instead (Task Manager > Attila.exe > Create dump file, during a battle). `tools/re/dump_cbs.py` follows the engine's shader manager and prints every named cbuffer variable's live value. Compare them with what the editor computes from the same `.environment`. Values only, not pixels, so scene content does not matter.
   2. **Pipeline state:** render target formats, pass order and sampler states from the same capture.
   3. **Isolated pass checks:** feed a pass recorded in the capture with the captured inputs and compare that pass's output only.
   - Start simple: the first checks use the sky dome and tone mapper, which depend only on the environment file and the camera.
