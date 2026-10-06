@@ -120,6 +120,20 @@ EnvironmentParams read_environment(const XmlDoc& doc) {
     hdr.f("absolute_white_point", e.absolute_white_point);
     hdr.f("auto_exposure_speed", e.auto_exposure_speed);
     hdr.f("high_pass_threshold", e.high_pass_threshold);
+    // Older files have single low/high_tones_bias; newer ones per channel.
+    float lo = -1, hi = -1;
+    hdr.f("low_tones_bias", lo);
+    hdr.f("high_tones_bias", hi);
+    for (int i = 0; i < 3; ++i) {
+        if (lo >= 0) e.low_tones_bias[i] = lo;
+        if (hi >= 0) e.high_tones_bias[i] = hi;
+    }
+    hdr.f("low_tones_bias_red", e.low_tones_bias[0]);
+    hdr.f("low_tones_bias_green", e.low_tones_bias[1]);
+    hdr.f("low_tones_bias_blue", e.low_tones_bias[2]);
+    hdr.f("high_tones_bias_red", e.high_tones_bias[0]);
+    hdr.f("high_tones_bias_green", e.high_tones_bias[1]);
+    hdr.f("high_tones_bias_blue", e.high_tones_bias[2]);
 
     Reader pp{doc, find_element(doc, "POST_PROCESSING")};
     pp.rgb("overlay", e.overlay);
@@ -156,10 +170,11 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     set3("skydome_PS", "g_sun_direction", to_sun);
 
     // lighting_VS_PS. sun_direction is the direction light travels (shader uses -sun_direction as L).
-    // ASSUMPTION: sun colour = linear(colour) * scale; ambient = linear(colour) * ambient_scale.
+    // ASSUMPTION: sun colour = linear(colour) * scale; ambient = linear(colour) * ambient_cube_hdr_scaler * ambient_scale.
+    // (The HDR white point is >= min_white_point (9 in most files), so scene light must reach several units.)
     set3("lighting_VS_PS", "sun_direction", -to_sun);
     set3("lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * e.sun_colour_scale);
-    float amb = e.ambient_scale;
+    float amb = e.ambient_scale * e.ambient_hdr_scaler;
     float3 lr[2] = {colour_to_linear(e.ambient_right) * amb, colour_to_linear(e.ambient_left) * amb};
     float3 tb[2] = {colour_to_linear(e.ambient_top) * amb, colour_to_linear(e.ambient_bottom) * amb};
     float3 fb[2] = {colour_to_linear(e.ambient_front) * amb, colour_to_linear(e.ambient_back) * amb};
@@ -191,8 +206,84 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
 
     cbs.set_f("weather_shared", "g_snowing_intensity", {e.snowing_intensity});
 
+    // HDR: the four limits go 1:1 into luma_stats_buffer (names match; used by the GPU luma statistics).
+    cbs.set_f("luma_stats_buffer", "g_absolute_luma_black_point", {e.absolute_black_point});
+    cbs.set_f("luma_stats_buffer", "g_max_luma_black_point", {e.max_black_point});
+    cbs.set_f("luma_stats_buffer", "g_min_luma_white_point", {e.min_white_point});
+    cbs.set_f("luma_stats_buffer", "g_absolute_luma_white_point", {e.absolute_white_point});
     cbs.set_f("auto_exposure_buffer", "g_auto_exposure_speed", {e.auto_exposure_speed});
     cbs.set_f("constant_tone_mapping_buffer", "g_luma_high_pass_threshold", {e.high_pass_threshold});
+
+    // Output colorimetry: graphics options in the game (defaults; ASSUMPTION gamma 2.2).
+    cbs.set_f("colorimetry_VS_PS", "g_brightness", {1.0f});
+    cbs.set_f("colorimetry_VS_PS", "g_gamma_output", {2.2f});
+    cbs.set_f("colorimetry_VS_PS", "g_inv_gamma_output", {1.0f / 2.2f});
+
+    float4x4 cm = colour_matrix(e);
+    cbs.set_m("hdr_to_screen_PS", "colour_matrix", cm.data());
+}
+
+float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness) {
+    // Verified from empire.retail.dll fn 0x172c100 (2026-10-06):
+    //   M = Overlay * Hue * Saturation * Contrast * Brightness, applied to gamma-space colour as M * (rgb, 1).
+    // Brightness is scaled by an engine factor ([this+0xe0], ASSUMPTION 1.0 = default options).
+    float4x4 m;
+    m.m[0][0] = e.brightness.x * global_brightness;
+    m.m[1][1] = e.brightness.y * global_brightness;
+    m.m[2][2] = e.brightness.z * global_brightness;
+
+    float4x4 c; // contrast around 0.5
+    const float con[3] = {e.contrast.x, e.contrast.y, e.contrast.z};
+    for (int i = 0; i < 3; ++i) {
+        c.m[i][i] = con[i];
+        c.m[i][3] = 0.5f - 0.5f * con[i];
+    }
+    m = c * m;
+
+    float4x4 s; // Haeberli saturation, per channel
+    const float sat[3] = {e.saturation.x, e.saturation.y, e.saturation.z};
+    const float w[3] = {0.3086f, 0.6094f, 0.0820f};
+    float off[3];
+    for (int i = 0; i < 3; ++i) off[i] = (1.0f - sat[i]) * w[i];
+    for (int r = 0; r < 3; ++r)
+        for (int col = 0; col < 3; ++col) s.m[r][col] = off[col] + (r == col ? sat[col] : 0.0f);
+    m = s * m;
+
+    float4x4 h; // hue rotation about the grey axis
+    float a = e.hue * 0.0174532924f, cs = std::cos(a), sn = std::sin(a);
+    float t = (1.0f - cs) / 3.0f, q = 0.577350259f * sn;
+    // ASSUMPTION: sign layout of the off-diagonals (standard right-handed rotation); hue is 0 in 652/658 files.
+    h.m[0][0] = h.m[1][1] = h.m[2][2] = t + cs;
+    h.m[0][1] = t - q; h.m[0][2] = t + q;
+    h.m[1][0] = t + q; h.m[1][2] = t - q;
+    h.m[2][0] = t - q; h.m[2][1] = t + q;
+    m = h * m;
+
+    float4x4 o; // overlay multiplies the rows
+    o.m[0][0] = e.overlay.x;
+    o.m[1][1] = e.overlay.y;
+    o.m[2][2] = e.overlay.z;
+    return o * m;
+}
+
+void build_scurve(const EnvironmentParams& e, uint8_t out[256 * 4]) {
+    // PLACEHOLDER: the engine builds a 256x1 texture ("HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture",
+    // fn 0x178c710) but the code that fills it is not found yet. Until then: Schlick bias for the low half
+    // and the high half, per channel (bias 0.5 = straight line).
+    auto bias = [](float x, float b) {
+        b = std::fmin(std::fmax(b, 0.001f), 0.999f);
+        return x / ((1.0f / b - 2.0f) * (1.0f - x) + 1.0f);
+    };
+    const float lo[3] = {e.low_tones_bias[0], e.low_tones_bias[1], e.low_tones_bias[2]};
+    const float hi[3] = {e.high_tones_bias[0], e.high_tones_bias[1], e.high_tones_bias[2]};
+    for (int i = 0; i < 256; ++i) {
+        float x = i / 255.0f;
+        for (int ch = 0; ch < 3; ++ch) {
+            float y = x < 0.5f ? 0.5f * bias(2 * x, lo[ch]) : 0.5f + 0.5f * bias(2 * x - 1, hi[ch]);
+            out[i * 4 + ch] = uint8_t(std::lround(std::fmin(std::fmax(y, 0.0f), 1.0f) * 255));
+        }
+        out[i * 4 + 3] = 255;
+    }
 }
 
 } // namespace we

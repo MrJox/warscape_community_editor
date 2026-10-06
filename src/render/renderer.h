@@ -24,7 +24,10 @@ struct Camera {
 
 class Renderer {
 public:
-    enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube };
+    enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped };
+    float debug_points[4] = {}; int debug_maps = 0;
+    float luma_black() const { return luma_black_; }
+    float luma_white() const { return luma_white_; }
 
     Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs);
     ~Renderer();
@@ -51,6 +54,9 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_display();
+    void pass_tonemap(const EnvironmentParams& env, float dt);
+    void pass_to_screen();
+    void fullscreen_to(ID3D11RenderTargetView* rtv, int w, int h, const GameShader& ps);
     void fullscreen(const GameShader& ps);
     const GameShader* shader(const std::string& name);
     void error(const std::string& e);
@@ -64,7 +70,7 @@ private:
 
     int w_ = 0, h_ = 0;
     Target gb_[5];   // gbuffer channels 1..4 + per-instance id
-    Target hdr_, out_;
+    Target hdr_, out_, final_; // final_: hdr_to_screen output (its alpha is the refraction mask)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> out_srv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> depth_tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
@@ -82,6 +88,21 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> fs_vs_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> display_ps_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> display_cb_;
+
+    // Tone mapping chain (hdr_tone_mapper.hlsl), see docs/re/renderer.md
+    struct SizedTarget { Target t; int w = 0, h = 0; };
+    SizedTarget quarter_, bloom_a_, bloom_b_, ldr_;
+    std::vector<SizedTarget> stats_;          // luma stats pyramid, last is 1x1
+    SizedTarget points_[2];                  // black/white points ping-pong
+    static constexpr int kReadbackRing = 4;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> points_staging_[kReadbackRing];
+    int points_cur_ = 0;
+    uint64_t frame_ = 0;
+    float last_time_ = -1;
+    float luma_black_ = 0.001f, luma_white_ = 9.0f;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> scurve_tex_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> scurve_srv_;
+    uint8_t scurve_last_[256 * 4] = {};
 
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;

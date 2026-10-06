@@ -5,6 +5,7 @@
 
 #include <d3dcompiler.h>
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -22,6 +23,17 @@ const char* kRigidVS = "dx11_sm_4_0_rigidcommon.hlsl_vs_vs30_main";
 const char* kRigidGbufferPS = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps30_gbuffer";
 const char* kRigidGbufferAlphaPS = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps30_gbuffer_alpha_test";
 const char* kDirLightPS = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
+#define TM "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_"
+const char* kTmDownLuma = TM "downsample_image_store_luma";
+const char* kTmLumaStats = TM "hdr_luma_to_quarter_size_luma_stats";
+const char* kTmStatsDown = TM "downsample_quarter_size_luma_stats";
+const char* kTmPoints = TM "determine_black_and_white_points";
+const char* kTmHighPass = TM "high_pass_luminance_cutoff";
+const char* kTmBlurX = TM "blur_x";
+const char* kTmBlurY = TM "blur_y";
+const char* kTmToneMap = TM "constant_tone_mapper_with_bloom"; // linear out; hdr_to_screen applies gamma
+#undef TM
+const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 
 // Editor-side helpers (not game shaders): full-screen triangle and the debug/temporary display pass.
 const char* kHelperHlsl = R"(
@@ -139,6 +151,21 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
     }
     dev_->CreateShaderResourceView(sky_cube_.Get(), nullptr, &sky_cube_srv_);
 
+    // Black/white points: two 1x1 targets (previous/current) plus CPU readback for the constant tone mapper.
+    for (int i = 0; i < 2; ++i) {
+        points_[i].w = points_[i].h = 1;
+        points_[i].t = make_target(1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT);
+    }
+    for (auto& st : points_staging_) {
+        D3D11_TEXTURE2D_DESC sd{1, 1, 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ};
+        dev_->CreateTexture2D(&sd, nullptr, &st);
+    }
+    {
+        D3D11_TEXTURE2D_DESC sd{256, 1, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE};
+        dev_->CreateTexture2D(&sd, nullptr, &scurve_tex_);
+        dev_->CreateShaderResourceView(scurve_tex_.Get(), nullptr, &scurve_srv_);
+    }
+
     // Faction colours: white = no tint on the test map.
     for (const char* v : {"faction_colours"}) {
         float fc[11] = {1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1};
@@ -235,7 +262,28 @@ void Renderer::resize(int w, int h) {
     gb_[4] = make_target(w, h, DXGI_FORMAT_R32_FLOAT);      // per-instance value
     hdr_ = make_target(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
     out_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
+    final_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
     out_srv_ = out_.srv;
+
+    auto sized = [&](int tw, int th, DXGI_FORMAT f) {
+        SizedTarget s;
+        s.w = std::max(1, tw);
+        s.h = std::max(1, th);
+        s.t = make_target(s.w, s.h, f);
+        return s;
+    };
+    int qw = (w + 3) / 4, qh = (h + 3) / 4;
+    quarter_ = sized(qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT); // rgb + luma in .w
+    bloom_a_ = sized(qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+    bloom_b_ = sized(qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+    ldr_ = sized(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);     // tone-mapped, linear
+    stats_.clear();
+    int sw = qw, sh = qh;
+    do {
+        sw = (sw + 3) / 4;
+        sh = (sh + 3) / 4;
+        stats_.push_back(sized(sw, sh, DXGI_FORMAT_R32G32B32A32_FLOAT)); // min, max, avg, max
+    } while (sw > 1 || sh > 1);
     D3D11_TEXTURE2D_DESC td{UINT(w), UINT(h), 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL};
     depth_tex_.Reset();
     dsv_.Reset();
@@ -397,19 +445,137 @@ void Renderer::pass_directional_light() {
     fullscreen(*ps);
 }
 
+void Renderer::fullscreen_to(ID3D11RenderTargetView* rtv, int w, int h, const GameShader& ps) {
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+    D3D11_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
+    ctx_->RSSetViewports(1, &vp);
+    cbs_.set_f("render_target_dims_buffer", "g_render_target_recip_size", {1.0f / w, 1.0f / h});
+    cbs_.upload(dev_, ctx_);
+    fullscreen(ps);
+    ID3D11ShaderResourceView* nulls[8] = {};
+    ctx_->PSSetShaderResources(0, 8, nulls);
+}
+
+void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
+    const GameShader* down = shader(kTmDownLuma);
+    const GameShader* stats = shader(kTmLumaStats);
+    const GameShader* stats_down = shader(kTmStatsDown);
+    const GameShader* points = shader(kTmPoints);
+    const GameShader* high = shader(kTmHighPass);
+    const GameShader* bx = shader(kTmBlurX);
+    const GameShader* by = shader(kTmBlurY);
+    const GameShader* tm = shader(kTmToneMap);
+    if (!down || !stats || !stats_down || !points || !high || !bx || !by || !tm) return;
+    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+    ctx_->RSSetState(rs_none_.Get());
+    // Inputs are bound after unbinding the outputs: D3D11 drops an SRV whose resource is a bound RTV.
+    auto bind = [&](const GameShader& s, ID3D11SamplerState* st) {
+        ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+        bind_shader(ctx_, s, cbs_);
+        for (auto& [n, slot] : s.samplers) ctx_->PSSetSamplers(slot, 1, &st);
+    };
+
+    // 1. quarter-size copy with luma in .w
+    bind(*down, s_clamp_linear_.Get());
+    bind_srv(ctx_, *down, "g_hdr_rgb_texture_sampler", hdr_.srv.Get());
+    fullscreen_to(quarter_.t.rtv.Get(), quarter_.w, quarter_.h, *down);
+
+    // 2. luma statistics pyramid down to 1x1 (min, max, average), clamped by the absolute points
+    ID3D11ShaderResourceView* src = quarter_.t.srv.Get();
+    for (size_t i = 0; i < stats_.size(); ++i) {
+        const GameShader& s = i == 0 ? *stats : *stats_down;
+        bind(s, s_clamp_point_.Get());
+        bind_srv(ctx_, s, i == 0 ? "g_luma_values_texture_sampler" : "g_luma_stats_texture_sampler", src);
+        fullscreen_to(stats_[i].t.rtv.Get(), stats_[i].w, stats_[i].h, s);
+        src = stats_[i].t.srv.Get();
+    }
+
+    // 3. black/white points with temporal adaptation (prev -> cur); the first frame snaps.
+    int prev = points_cur_, cur = 1 - points_cur_;
+    cbs_.set_f("auto_exposure_buffer", "g_auto_exposure_dt", {frame_ == 0 ? 1000.0f : dt});
+    bind(*points, s_clamp_point_.Get());
+    bind_srv(ctx_, *points, "g_prev_black_and_white_points_sampler", points_[prev].t.srv.Get());
+    bind_srv(ctx_, *points, "g_luma_stats_texture_sampler", stats_.back().t.srv.Get());
+    fullscreen_to(points_[cur].t.rtv.Get(), 1, 1, *points);
+    points_cur_ = cur;
+    // The constant tone mapper takes the points from a cbuffer: read back the previous frame's result.
+    // Ring of staging copies; the oldest one (kReadbackRing - 1 frames back) is finished on the GPU.
+    ctx_->CopyResource(points_staging_[frame_ % kReadbackRing].Get(), points_[cur].t.tex.Get());
+    if (frame_ + 1 >= kReadbackRing) {
+        D3D11_MAPPED_SUBRESOURCE ms;
+        auto* st = points_staging_[(frame_ + 1) % kReadbackRing].Get();
+        if (SUCCEEDED(ctx_->Map(st, 0, D3D11_MAP_READ, 0, &ms))) {
+            const float* p = static_cast<const float*>(ms.pData);
+            for (int k = 0; k < 4; ++k) debug_points[k] = p[k];
+            ++debug_maps;
+            if (p[1] > p[0]) {
+                luma_black_ = p[0];
+                luma_white_ = p[1];
+            }
+            ctx_->Unmap(st, 0);
+        }
+    }
+    ++frame_;
+    cbs_.set_f("constant_tone_mapping_buffer", "g_luma_black_point", {luma_black_});
+    cbs_.set_f("constant_tone_mapping_buffer", "g_luma_white_point", {luma_white_});
+
+    // 4. bloom: high pass on the quarter image, separable 11-tap blur
+    bind(*high, s_clamp_point_.Get());
+    bind_srv(ctx_, *high, "g_black_and_white_points_sampler", points_[cur].t.srv.Get());
+    bind_srv(ctx_, *high, "g_hdr_rgb_texture_sampler", quarter_.t.srv.Get());
+    fullscreen_to(bloom_a_.t.rtv.Get(), bloom_a_.w, bloom_a_.h, *high);
+    bind(*bx, s_clamp_linear_.Get());
+    bind_srv(ctx_, *bx, "g_hdr_rgb_texture_sampler", bloom_a_.t.srv.Get());
+    fullscreen_to(bloom_b_.t.rtv.Get(), bloom_b_.w, bloom_b_.h, *bx);
+    bind(*by, s_clamp_linear_.Get());
+    bind_srv(ctx_, *by, "g_hdr_rgb_texture_sampler", bloom_b_.t.srv.Get());
+    fullscreen_to(bloom_a_.t.rtv.Get(), bloom_a_.w, bloom_a_.h, *by);
+
+    // 5. tone map with bloom and the S-curve
+    uint8_t curve[256 * 4];
+    build_scurve(env, curve);
+    if (std::memcmp(curve, scurve_last_, sizeof curve) != 0) {
+        ctx_->UpdateSubresource(scurve_tex_.Get(), 0, nullptr, curve, 256 * 4, 0);
+        std::memcpy(scurve_last_, curve, sizeof curve);
+    }
+    bind(*tm, s_clamp_linear_.Get());
+    bind_sampler(ctx_, *tm, "g_hdr_rgb_texture_sampler", s_clamp_point_.Get());
+    bind_srv(ctx_, *tm, "g_hdr_rgb_texture_sampler", hdr_.srv.Get());
+    bind_srv(ctx_, *tm, "g_hdr_rgb_bloom_texture_sampler", bloom_a_.t.srv.Get());
+    bind_srv(ctx_, *tm, "g_scurve_texture_sampler", scurve_srv_.Get());
+    fullscreen_to(ldr_.t.rtv.Get(), ldr_.w, ldr_.h, *tm);
+}
+
+void Renderer::pass_to_screen() {
+    const GameShader* ps = shader(kToScreenPS);
+    if (!ps) return;
+    float zero2[2] = {0, 0};
+    cbs_.set("shared_fog_of_war_PS", "g_fog_of_war_blend", zero2, 8); // battle: no fog of war
+    ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+    bind_shader(ctx_, *ps, cbs_);
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_point_.GetAddressOf());
+    bind_srv(ctx_, *ps, "frame_sampler", ldr_.t.srv.Get());
+    bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
+    bind_srv(ctx_, *ps, "s_fog_of_war_mask", black_srv_.Get());
+    fullscreen_to(final_.rtv.Get(), w_, h_, *ps);
+}
+
 void Renderer::pass_display() {
     ctx_->OMSetRenderTargets(1, out_.rtv.GetAddressOf(), nullptr);
     ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
     struct { int mode; float exposure; float pad[2]; } dc{0, 1.0f, {}};
     ID3D11ShaderResourceView* src = hdr_.srv.Get();
     switch (view) {
-    case View::Final: dc.mode = 0; break;
+    case View::Final: dc.mode = 3; src = final_.srv.Get(); break;
     case View::HdrRaw: dc.mode = 1; break;
     case View::Albedo: dc.mode = 2; src = gb_[1].srv.Get(); break;
     case View::Normal: dc.mode = 3; src = gb_[0].srv.Get(); break;
     case View::Specular: dc.mode = 3; src = gb_[2].srv.Get(); break;
     case View::Depth: dc.mode = 4; src = gb_[3].srv.Get(); break;
     case View::SkyCube: dc.mode = 5; break;
+    case View::Bloom: dc.mode = 1; src = bloom_a_.t.srv.Get(); break;
+    case View::Quarter: dc.mode = 1; src = quarter_.t.srv.Get(); break;
+    case View::ToneMapped: dc.mode = 1; src = ldr_.t.srv.Get(); break;
     }
     ctx_->UpdateSubresource(display_cb_.Get(), 0, nullptr, &dc, 0, 0);
     ctx_->IASetInputLayout(nullptr);
@@ -427,7 +593,9 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     if (width < 8 || height < 8) return;
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
-    for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS}) shader(s);
+    for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS})
+        shader(s);
     apply_environment(env, cbs_);
 
     pass_sky_cube(env, time_s);
@@ -449,7 +617,11 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
 
     ID3D11ShaderResourceView* nulls[16] = {};
     ctx_->PSSetShaderResources(0, 16, nulls);
-    pass_display();
+    float dt = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);
+    last_time_ = time_s;
+    pass_tonemap(env, dt);
+    if (view == View::Final) pass_to_screen();
+    pass_display(); // Final: copies final_ with alpha = 1 for the viewport
     ctx_->PSSetShaderResources(0, 16, nulls);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
 }

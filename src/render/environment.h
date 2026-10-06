@@ -43,6 +43,7 @@ struct EnvironmentParams {
     // HDR
     float absolute_black_point = 0.001f, max_black_point = 1, min_white_point = 9, absolute_white_point = 18;
     float auto_exposure_speed = 0.035f, high_pass_threshold = 10;
+    float low_tones_bias[3] = {0.5f, 0.5f, 0.5f}, high_tones_bias[3] = {0.5f, 0.5f, 0.5f};
 
     // POST_PROCESSING
     float3 overlay{1, 1, 1}, brightness{1, 1, 1}, contrast{1, 1, 1}, saturation{1, 1, 1};
@@ -68,5 +69,10 @@ float3 colour_to_linear(const float3& c);
 
 // Writes skydome_PS, lighting_VS_PS, fog_VS_PS, weather_shared, auto exposure / tone mapping cbuffers.
 void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs);
+
+// POST_PROCESSING -> hdr_to_screen_PS.colour_matrix (row-major, rows = output r, g, b, w).
+float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness = 1.0f);
+// 256x1 RGBA8 tone curve (g_scurve_texture). PLACEHOLDER formula, see environment.cpp.
+void build_scurve(const EnvironmentParams& e, uint8_t out[256 * 4]);
 
 } // namespace we

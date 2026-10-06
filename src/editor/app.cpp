@@ -96,6 +96,9 @@ std::string App::diagnostics() const {
     if (textures_)
         for (auto& e : textures_->errors()) d += "texture error: " + e + "\n";
     if (renderer_) {
+        d += "points readback: " + std::to_string(renderer_->debug_maps) + " maps, raw " + std::to_string(renderer_->debug_points[0]) + " " +
+             std::to_string(renderer_->debug_points[1]) + " " + std::to_string(renderer_->debug_points[2]) + " " + std::to_string(renderer_->debug_points[3]) + "\n";
+        d += "luma black/white points: " + std::to_string(renderer_->luma_black()) + " / " + std::to_string(renderer_->luma_white()) + "\n";
         for (auto& e : renderer_->errors()) d += "render error: " + e + "\n";
         for (auto& m : renderer_->cbuffers().missing()) d += "missing cb var: " + m + "\n";
     }
@@ -124,7 +127,7 @@ void App::draw_viewport() {
         return;
     }
     // Toolbar
-    const char* views[] = {"Final (temp. tone map)", "HDR raw", "Albedo", "Normal", "Specular", "Depth", "Sky cube"};
+    const char* views[] = {"Final", "HDR raw", "Albedo", "Normal", "Specular", "Depth", "Sky cube", "Bloom", "Quarter", "Tone mapped"};
     int v = int(renderer_->view);
     ImGui::SetNextItemWidth(170);
     if (ImGui::Combo("##view", &v, views, IM_ARRAYSIZE(views))) renderer_->view = Renderer::View(v);
