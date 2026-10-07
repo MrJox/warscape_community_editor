@@ -23,6 +23,7 @@ const char* kSpawnPS = "dx11_sm_4_0_particle_vfx_spawn.hlsl_ps_ps_main";
 const char* kMainVS = "dx11_sm_4_0_particle_vfx_main.hlsl_vs_vs40_main";
 const char* kMainGS = "dx11_sm_4_0_particle_vfx_main.hlsl_gs_gs_main";
 const char* kMainPS = "dx11_sm_4_0_particle_vfx_main.hlsl_ps_ps_main";
+const char* kDistortionPS = "dx11_sm_4_0_particle_vfx_main.hlsl_ps_ps_distortion";
 
 constexpr float kPi = 3.14159265f;
 constexpr int kMaxEmitters = 512;
@@ -40,6 +41,63 @@ Microsoft::WRL::ComPtr<ID3D11Buffer> make_cb(ID3D11Device* dev, const std::vecto
     dev->CreateBuffer(&bd, &sd, &b);
     return b;
 }
+
+// Particle maps of one kind in one 2D array (behaviour_mask.y = diffuse slice, .z = normal slice), as the game's
+// pixel shaders expect. All particle maps seen are 1024^2 DXT5 with 11 mips, so slices are plain copies.
+struct TextureArrayBuilder {
+    bool srgb;
+    std::map<std::string, uint32_t> slices;
+    std::vector<Texture> textures;
+
+    // Slice of the path, loading it on first use; -1 if missing or incompatible with slice 0.
+    int add(ID3D11Device* dev, Vfs& vfs, const std::string& path, std::vector<std::string>& errors) {
+        if (path.empty()) return -1;
+        if (auto it = slices.find(path); it != slices.end()) return int(it->second);
+        try {
+            Texture t = load_dds(dev, vfs.read(path), srgb);
+            if (!textures.empty() && (t.width != textures[0].width || t.height != textures[0].height || t.format != textures[0].format ||
+                                      t.mips != textures[0].mips)) {
+                errors.push_back(path + ": size/format differs from the other particle maps, not drawn");
+                return -1;
+            }
+            slices[path] = uint32_t(textures.size());
+            textures.push_back(t);
+            return int(textures.size() - 1);
+        } catch (const std::exception& e) {
+            errors.push_back(path + ": " + e.what());
+            return -1;
+        }
+    }
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> build(ID3D11Device* dev, ID3D11DeviceContext* ctx) const {
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        if (textures.empty()) return srv;
+        Microsoft::WRL::ComPtr<ID3D11Resource> r0;
+        textures[0].srv->GetResource(&r0);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> t0;
+        r0.As(&t0);
+        D3D11_TEXTURE2D_DESC td;
+        t0->GetDesc(&td);
+        UINT mips = td.MipLevels;
+        td.ArraySize = UINT(textures.size());
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.MiscFlags = 0;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> arr;
+        if (FAILED(dev->CreateTexture2D(&td, nullptr, &arr))) return srv;
+        for (UINT s = 0; s < td.ArraySize; ++s) {
+            Microsoft::WRL::ComPtr<ID3D11Resource> r;
+            textures[s].srv->GetResource(&r);
+            for (UINT m = 0; m < mips; ++m) ctx->CopySubresourceRegion(arr.Get(), D3D11CalcSubresource(m, s, mips), 0, 0, 0, r.Get(), m, nullptr);
+        }
+        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = textures[0].format;
+        sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+        sd.Texture2DArray.MipLevels = mips;
+        sd.Texture2DArray.ArraySize = td.ArraySize;
+        dev->CreateShaderResourceView(arr.Get(), &sd, &srv);
+        return srv;
+    }
+};
 
 } // namespace
 
@@ -116,7 +174,8 @@ void ParticleSystem::create_resources() {
         vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
         vd.Texture2DArray.MipLevels = 1;
         vd.Texture2DArray.ArraySize = 1;
-        dev_->CreateShaderResourceView(t.Get(), &vd, &normal_srv_);
+        dev_->CreateShaderResourceView(t.Get(), &vd, &flat_normal_srv_);
+        normal_srv_ = flat_normal_srv_;
         float zero[2][4] = {};
         D3D11_TEXTURE2D_DESC sdsc{1, 1, 1, 2, DXGI_FORMAT_R32G32B32A32_FLOAT, {1, 0}, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE};
         D3D11_SUBRESOURCE_DATA ss[2] = {{zero[0], 16, 16}, {zero[1], 16, 16}};
@@ -159,6 +218,11 @@ void ParticleSystem::create_resources() {
     bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
     bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     dev_->CreateBlendState(&bd, &bs_premultiplied_);
+    bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA; // distortion buffer: lerp towards the particle's offset
+    bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    dev_->CreateBlendState(&bd, &bs_alpha_);
     D3D11_DEPTH_STENCIL_DESC dd{};
     dd.DepthEnable = TRUE;
     dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
@@ -198,28 +262,18 @@ void ParticleSystem::restart() {
 // Emitter constant buffers, the curve texture array and the diffuse texture array of the current effect.
 void ParticleSystem::build_emitter_gpu() {
     std::vector<uint8_t> common(8192), gs(16384), vs(57344), ps_render(57344), ps_sim(40960);
-    std::map<std::string, uint32_t> slices;
-    std::vector<Texture> diffuse;
+    TextureArrayBuilder diffuse{true}, normal{false};
+    std::vector<std::string> tex_errors;
+    has_distortion_ = false;
     const size_t n = effect_.emitters.size();
     for (size_t i = 0; i < n; ++i) {
         EmitterConstants& k = effect_.emitters[i].k;
-        if (!k.diffuse.empty() && !slices.count(k.diffuse)) {
-            try {
-                Texture t = load_dds(dev_, vfs_.read(k.diffuse), true);
-                if (!diffuse.empty() && (t.width != diffuse[0].width || t.height != diffuse[0].height || t.format != diffuse[0].format))
-                    error(k.diffuse + ": size/format differs from " + effect_.emitters[0].k.diffuse + ", drawn with slice 0");
-                else {
-                    slices[k.diffuse] = uint32_t(diffuse.size());
-                    diffuse.push_back(t);
-                }
-            } catch (const std::exception& e) {
-                error(k.diffuse + ": " + e.what());
-            }
-        }
-        k.behaviour_mask[1] = slices.count(k.diffuse) ? slices[k.diffuse] : 0;
-        if (slices.empty()) k.behaviour_mask[0] &= ~vfx_bits::kPsTexture;
-        k.behaviour_mask[2] = 0;
-        k.behaviour_mask[0] &= ~vfx_bits::kPsNormal; // ASSUMPTION: normal maps not loaded yet (weather chains have none)
+        int ds = diffuse.add(dev_, vfs_, k.diffuse, tex_errors), ns = normal.add(dev_, vfs_, k.normal, tex_errors);
+        k.behaviour_mask[1] = uint32_t(std::max(ds, 0));
+        k.behaviour_mask[2] = uint32_t(std::max(ns, 0));
+        if (ds < 0) k.behaviour_mask[0] &= ~vfx_bits::kPsTexture;
+        if (ns < 0) k.behaviour_mask[0] &= ~vfx_bits::kPsNormal;
+        if (k.behaviour_mask[3] == kVfxDistortionViewId) has_distortion_ = true;
         const int e = int(i);
         put(common, 0, e, k.behaviour_mask);
         put(gs, 0, e, k.vs_translation_params);
@@ -272,33 +326,10 @@ void ParticleSystem::build_emitter_gpu() {
         dev_->CreateShaderResourceView(t.Get(), &sd, &curves_srv_);
     }
 
-    diffuse_srv_.Reset();
-    if (!diffuse.empty()) { // all diffuse maps in one array (behaviour_mask.y = slice), as the game's pixel shader expects
-        Microsoft::WRL::ComPtr<ID3D11Resource> r0;
-        diffuse[0].srv->GetResource(&r0);
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> t0;
-        r0.As(&t0);
-        D3D11_TEXTURE2D_DESC td;
-        t0->GetDesc(&td);
-        UINT mips = td.MipLevels;
-        td.ArraySize = UINT(diffuse.size());
-        td.Usage = D3D11_USAGE_DEFAULT;
-        td.MiscFlags = 0;
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> arr;
-        if (SUCCEEDED(dev_->CreateTexture2D(&td, nullptr, &arr))) {
-            for (UINT s = 0; s < td.ArraySize; ++s) {
-                Microsoft::WRL::ComPtr<ID3D11Resource> r;
-                diffuse[s].srv->GetResource(&r);
-                for (UINT m = 0; m < mips; ++m) ctx_->CopySubresourceRegion(arr.Get(), D3D11CalcSubresource(m, s, mips), 0, 0, 0, r.Get(), m, nullptr);
-            }
-            D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
-            sd.Format = diffuse[0].format;
-            sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-            sd.Texture2DArray.MipLevels = mips;
-            sd.Texture2DArray.ArraySize = td.ArraySize;
-            dev_->CreateShaderResourceView(arr.Get(), &sd, &diffuse_srv_);
-        }
-    }
+    for (auto& e : tex_errors) error(e);
+    diffuse_srv_ = diffuse.build(dev_, ctx_);
+    if (auto s = normal.build(dev_, ctx_)) normal_srv_ = s;
+    else normal_srv_ = flat_normal_srv_;
 }
 
 void ParticleSystem::bind_emitter_cbs(const GameShader& s, bool sim_layout) {
@@ -587,12 +618,15 @@ void ParticleSystem::render(const Frame& f) {
         }
     }
 
-    // 5. draw (sorted far to near: the VS reads entry num_alive - vertex_id)
-    if (alive_ > 0 && f.target) {
-        ctx_->OMSetRenderTargets(1, &f.target, f.depth);
+    // 5. draw (sorted far to near: the VS reads entry num_alive - vertex_id). The VS drops particles whose
+    // behaviour_mask.w differs from g_view_id, so the same sorted list is drawn once per view.
+    auto draw = [&](const GameShader& pixel, ID3D11RenderTargetView* rtv, uint32_t view_id, ID3D11BlendState* blend) {
+        cbs_.set_i("cb_vfx", "g_view_id", int(view_id));
+        cbs_.upload(dev_, ctx_);
+        ctx_->OMSetRenderTargets(1, &rtv, f.depth);
         D3D11_VIEWPORT vp{0, 0, float(f.width), float(f.height), 0, 1};
         ctx_->RSSetViewports(1, &vp);
-        ctx_->OMSetBlendState(bs_premultiplied_.Get(), nullptr, 0xffffffff);
+        ctx_->OMSetBlendState(blend, nullptr, 0xffffffff);
         ctx_->OMSetDepthStencilState(f.depth ? ds_test_.Get() : ds_off_.Get(), 0);
         ctx_->IASetInputLayout(nullptr);
         ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
@@ -605,21 +639,50 @@ void ParticleSystem::render(const Frame& f) {
         bind_sampler(ctx_, *vs, "g_sam_emitter_constants", s_linear_clamp_.Get());
         bind_shader(ctx_, *gs, cbs_);
         bind_emitter_cbs(*gs, false);
-        bind_shader(ctx_, *ps, cbs_);
-        bind_emitter_cbs(*ps, false);
-        bind_srv(ctx_, *ps, "s_environment", f.sky);
-        bind_srv(ctx_, *ps, "s_sky", f.sky);
-        bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", f.depth_zw);
-        bind_srv(ctx_, *ps, "g_tex_diffuse", diffuse_srv_.Get());
-        bind_srv(ctx_, *ps, "g_tex_normal", normal_srv_.Get());
-        bind_sampler(ctx_, *ps, "s_environment", s_linear_clamp_.Get());
-        bind_sampler(ctx_, *ps, "s_sky", s_linear_clamp_.Get());
-        bind_sampler(ctx_, *ps, "gbuffer_channel_4_sampler", s_point_clamp_.Get());
-        bind_sampler(ctx_, *ps, "g_sam_diffuse", s_linear_wrap_.Get());
-        bind_sampler(ctx_, *ps, "g_sam_normal", s_linear_wrap_.Get());
+        bind_shader(ctx_, pixel, cbs_);
+        bind_emitter_cbs(pixel, false);
+        bind_srv(ctx_, pixel, "s_environment", f.sky);
+        bind_srv(ctx_, pixel, "s_sky", f.sky);
+        bind_srv(ctx_, pixel, "gbuffer_channel_4_sampler", f.depth_zw);
+        bind_srv(ctx_, pixel, "g_tex_diffuse", diffuse_srv_.Get());
+        bind_srv(ctx_, pixel, "g_tex_normal", normal_srv_.Get());
+        bind_sampler(ctx_, pixel, "s_environment", s_linear_clamp_.Get());
+        bind_sampler(ctx_, pixel, "s_sky", s_linear_clamp_.Get());
+        bind_sampler(ctx_, pixel, "gbuffer_channel_4_sampler", s_point_clamp_.Get());
+        bind_sampler(ctx_, pixel, "g_sam_diffuse", s_linear_wrap_.Get());
+        bind_sampler(ctx_, pixel, "g_sam_normal", s_linear_wrap_.Get());
         ctx_->Draw(alive_ + 1, 0);
         ctx_->GSSetShader(nullptr, nullptr, 0);
         unbind();
+    };
+    distortion_active_ = false;
+    if (alive_ > 0 && f.target) {
+        draw(*ps, f.target, kVfxMainViewId, bs_premultiplied_.Get());
+        if (has_distortion_) {
+            // Distortion buffer: RGBA8, xy = screen offset * 0.5 + 0.5 (neutral 127/255), blended with the particle
+            // alpha; hdr_to_screen (enable_distortion variant) offsets its uv by (xy - 0.498) * 0.02.
+            if (dist_w_ != f.width || dist_h_ != f.height) {
+                dist_tex_.Reset();
+                dist_rtv_.Reset();
+                dist_srv_.Reset();
+                D3D11_TEXTURE2D_DESC td{UINT(f.width), UINT(f.height), 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT,
+                                        D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE};
+                dev_->CreateTexture2D(&td, nullptr, &dist_tex_);
+                dev_->CreateRenderTargetView(dist_tex_.Get(), nullptr, &dist_rtv_);
+                dev_->CreateShaderResourceView(dist_tex_.Get(), nullptr, &dist_srv_);
+                dist_w_ = f.width;
+                dist_h_ = f.height;
+            }
+            const float neutral[4] = {127.0f / 255.0f, 127.0f / 255.0f, 0, 0};
+            ctx_->ClearRenderTargetView(dist_rtv_.Get(), neutral);
+            try {
+                draw(lib_.get(kDistortionPS), dist_rtv_.Get(), kVfxDistortionViewId, bs_alpha_.Get());
+                distortion_active_ = true;
+            } catch (const std::exception& e) {
+                error(e.what());
+            }
+        }
+        cbs_.set_i("cb_vfx", "g_view_id", int(kVfxMainViewId));
         ctx_->OMSetBlendState(nullptr, nullptr, 0xffffffff);
     }
 }

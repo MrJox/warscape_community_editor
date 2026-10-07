@@ -109,8 +109,7 @@ traced in the DLL, marked in the code):
 - Emitter instance tint = middle of the reference's tint range; camera-following emitters sit at the camera.
 - Wind: |wind_velocity| = 22.5 * mean(wind_size_min, wind_size_max) (dumps: 5.62 for 0.2..0.3, 7.39 for 0.25..0.4),
   direction from the UI (the game randomises it per battle), no gust variance.
-- Not supported yet: lens water drops (distortion), non-continuous_mesh emitters (lightning),
-  scene_view_type 1 (distortion pass, behaviour_mask.w = 12: heat haze), normal maps, soft-edge property name,
+- Not supported yet: non-continuous_mesh emitters (lightning), soft-edge property name,
   shadow-receiving PS variants.
 
 Properties repeat per graphics quality (`quality="0"` base, `"1"`/`"2"` lower-quality overrides such as
@@ -133,3 +132,11 @@ Particle diffuse maps are 1024^2 DXT5 with 11 mips (glow_cells_a, flame_cells_v1
 ## Non-custom ambient cube (open)
 
 Dry dump values appear only in cbuffer copies (no stored source object), so they are built per frame; see renderer.md.
+
+## Distortion pass (heat haze, lens water drops)
+
+scene_view_type 1 emitters have behaviour_mask.w = 12 and draw with `particle_vfx_main` ps_distortion into an RGBA8
+buffer cleared to (127, 127)/255: output rg = normal.xy * 0.5 + 0.5, a = particle alpha (alpha blended); diffuse is
+usually empty, the normal map (behaviour_mask.z, bit 0x40000) drives it. The composite is the ENABLE_DISTORTION build of
+hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified rows: lens water drops 391/392
+(snow dump). The editor saves the buffer next to `--shot` images as `<shot>.distortion.png`.

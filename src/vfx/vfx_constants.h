@@ -20,6 +20,8 @@ constexpr uint32_t kPsAlphaCrush = 0x400000, kPsSoftEdge = 0x800000, kPsFog = 0x
 
 // View id the main pass draws with (cb_vfx.g_view_id must equal behaviour_mask.w; 30 for every weather row).
 constexpr uint32_t kVfxMainViewId = 30;
+// scene_view_type 1 (heat haze, lens water drops): drawn with ps_distortion into the distortion buffer.
+constexpr uint32_t kVfxDistortionViewId = 12;
 
 // Emitter-constants texture: 8 rows per emitter (min/max pairs), u = particle age / lifetime.
 // Rows 0-1 scale (xy), 2-3 colour (rgb), 4-5 unused by the main VS, 6-7 alpha (x).

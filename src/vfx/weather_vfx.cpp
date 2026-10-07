@@ -84,9 +84,9 @@ WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
             const VfxStack* stack = nullptr;
             const VfxChain* chain = render_chain(lib, em.id, &stack);
             if (!chain) continue; // sound / logic-only emitters draw nothing
-            if (stack->scene_view_type != 0) { // dump: view type 1 = behaviour_mask.w 12, the distortion pass
+            if (stack->scene_view_type > 1) {
                 out.notes.push_back(ref.inst_name + "/" + em.id + ": scene_view_type " + std::to_string(stack->scene_view_type) +
-                                    " (distortion pass) not supported yet");
+                                    " not supported");
                 continue;
             }
             ActiveEmitter a;
@@ -96,6 +96,7 @@ WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
             a.def = em;
             a.chain = *chain;
             a.k = build_emitter_constants(em, chain);
+            if (stack->scene_view_type == 1) a.k.behaviour_mask[3] = kVfxDistortionViewId; // dump: heat haze rows have w = 12
             if (ov) {
                 for (int c = 0; c < 4; ++c) a.tint_min[c] = ov->tint_min[c], a.tint_max[c] = ov->tint_max[c];
                 a.particle_lifetime_bias[0] = ov->particle_lifetime_bias[0];

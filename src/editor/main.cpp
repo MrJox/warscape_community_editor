@@ -183,6 +183,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             Microsoft::WRL::ComPtr<ID3D11Texture2D> back;
             g_swap->GetBuffer(0, IID_PPV_ARGS(&back));
             we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
+            if (app.renderer() && app.renderer()->particles())
+                if (ID3D11ShaderResourceView* d = app.renderer()->particles()->distortion()) { // debug: <shot>.distortion.png
+                    ComPtr<ID3D11Resource> r;
+                    d->GetResource(&r);
+                    ComPtr<ID3D11Texture2D> t;
+                    if (SUCCEEDED(r.As(&t))) we::save_texture_png(g_device.Get(), g_ctx.Get(), t.Get(), shot_path + L".distortion.png");
+                }
             if (FILE* t = _wfopen((shot_path + L".txt").c_str(), L"w")) {
                 fputs(app.diagnostics().c_str(), t);
                 Microsoft::WRL::ComPtr<ID3D11InfoQueue> iq;

@@ -35,6 +35,8 @@ const char* kTmBlurY = TM "blur_y";
 const char* kTmToneMap = TM "basic_tone_mapper"; // game's live path (dump: constant_tone_mapping_buffer = 0); linear out
 #undef TM
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+// Same shader compiled with ENABLE_DISTORTION: uv += (distortion_sampler.xy - 0.498) * 0.02 (heat haze, lens drops).
+const char* kToScreenDistortPS = "dx11_enable_distortion_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
 const char* kSunVS = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
@@ -637,7 +639,9 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
 }
 
 void Renderer::pass_to_screen() {
-    const GameShader* ps = shader(kToScreenPS);
+    ID3D11ShaderResourceView* distortion = particles_ ? particles_->distortion() : nullptr;
+    const GameShader* ps = distortion ? shader(kToScreenDistortPS) : nullptr;
+    if (!ps) ps = shader(kToScreenPS), distortion = nullptr;
     if (!ps) return;
     float zero2[2] = {0, 0};
     cbs_.set("shared_fog_of_war_PS", "g_fog_of_war_blend", zero2, 8); // battle: no fog of war
@@ -647,6 +651,11 @@ void Renderer::pass_to_screen() {
     bind_srv(ctx_, *ps, "frame_sampler", ldr_.t.srv.Get());
     bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
     bind_srv(ctx_, *ps, "s_fog_of_war_mask", black_srv_.Get());
+    if (distortion) {
+        bind_srv(ctx_, *ps, "distortion_sampler", distortion);
+        bind_sampler(ctx_, *ps, "distortion_sampler", s_clamp_linear_.Get());
+        bind_sampler(ctx_, *ps, "frame_sampler", s_clamp_linear_.Get());
+    }
     fullscreen_to(final_.rtv.Get(), w_, h_, *ps);
 }
 

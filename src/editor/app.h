@@ -31,6 +31,7 @@ public:
     void frame();
     void open_path(const std::string& path); // in-pack path or a file on disk
     void set_view(int v) { if (renderer_) renderer_->view = Renderer::View(v); }
+    Renderer* renderer() { return renderer_.get(); }
     void set_blend(int doc, float t) { blend_doc_ = doc; blend_t_ = t; }
     void set_orbit(float yaw, float pitch, float dist, float target_y = 5) { cam_yaw_ = yaw; cam_pitch_ = pitch; cam_dist_ = dist; cam_target_.y = target_y; }
     std::string diagnostics() const;

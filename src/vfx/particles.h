@@ -51,6 +51,8 @@ public:
     uint32_t alive() const { return alive_; }
     uint32_t capacity() const { return kWidth * kWidth; }
     const std::vector<std::string>& errors() const { return errors_; }
+    // Distortion buffer of this frame (heat haze, lens drops), or nullptr when no such emitter drew.
+    ID3D11ShaderResourceView* distortion() const { return distortion_active_ ? dist_srv_.Get() : nullptr; }
 
     // Wind the game feeds cb_vfx_game_simulation_data for this definition.
     // ASSUMPTION (2 dumps): |wind_velocity| = 22.5 * (wind_size_min + wind_size_max) / 2, no gust variance.
@@ -107,12 +109,18 @@ private:
     int sorted_ = 0;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> emitter_tex_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emitter_srv_;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> curves_srv_, diffuse_srv_, normal_srv_, vector_field_srv_, sea_srv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> curves_srv_, diffuse_srv_, normal_srv_, flat_normal_srv_, vector_field_srv_, sea_srv_;
+    bool has_distortion_ = false;
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_common_, cb_gs_, cb_vs_, cb_ps_render_, cb_ps_sim_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> spawn_vb_;
     UINT spawn_capacity_ = 0;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_linear_clamp_, s_linear_wrap_, s_point_clamp_;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_premultiplied_, bs_opaque_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_premultiplied_, bs_opaque_, bs_alpha_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> dist_tex_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> dist_rtv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> dist_srv_;
+    int dist_w_ = 0, dist_h_ = 0;
+    bool distortion_active_ = false;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_test_, ds_off_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_none_;
 };
