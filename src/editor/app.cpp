@@ -153,7 +153,26 @@ void App::draw_viewport() {
     int w = int(size.x), h = int(size.y);
     if (w < 16 || h < 16) return;
 
+    // Cross-fade: second environment + slider.
+    ImGui::SetNextItemWidth(200);
+    const Document* other = blend_doc_ >= 0 && blend_doc_ < int(docs_.size()) && blend_doc_ != env_doc_ ? docs_[blend_doc_].get() : nullptr;
+    if (ImGui::BeginCombo("##blend", other ? other->title().c_str() : "cross-fade: (none)")) {
+        if (ImGui::Selectable("(none)", !other)) blend_doc_ = -1;
+        for (int i = 0; i < int(docs_.size()); ++i) {
+            std::string t = docs_[i]->title();
+            if (i == env_doc_ || (t.find(".environment") == std::string::npos && t.find(".lighting") == std::string::npos)) continue;
+            if (ImGui::Selectable((t + "##b" + std::to_string(i)).c_str(), i == blend_doc_)) blend_doc_ = i;
+        }
+        ImGui::EndCombo();
+    }
+    if (other) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180);
+        ImGui::SliderFloat("##t", &blend_t_, 0.0f, 1.0f, "blend %.2f");
+    }
+
     EnvironmentParams params = env ? read_environment(env->doc) : EnvironmentParams{};
+    if (env && other && blend_t_ > 0) params = blend_environments(params, read_environment(other->doc), blend_t_);
     params.output_gamma = output_gamma_;
     params.output_brightness = output_brightness_;
     // Camera: orbit around the target.
@@ -327,6 +346,8 @@ void App::frame() {
                 bool close = !d.doc.modified() ||
                              MessageBoxW(nullptr, L"Discard unsaved changes?", L"Attila Weather Editor", MB_YESNO | MB_ICONWARNING) == IDYES;
                 if (close) {
+                    if (blend_doc_ == i) blend_doc_ = -1;
+                    else if (blend_doc_ > i) --blend_doc_;
                     if (env_doc_ == i) env_doc_ = -1;
                     else if (env_doc_ > i) --env_doc_;
                     docs_.erase(docs_.begin() + i);

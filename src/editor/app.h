@@ -31,6 +31,7 @@ public:
     void frame();
     void open_path(const std::string& path); // in-pack path or a file on disk
     void set_view(int v) { if (renderer_) renderer_->view = Renderer::View(v); }
+    void set_blend(int doc, float t) { blend_doc_ = doc; blend_t_ = t; }
     void set_orbit(float yaw, float pitch, float dist, float target_y = 5) { cam_yaw_ = yaw; cam_pitch_ = pitch; cam_dist_ = dist; cam_target_.y = target_y; }
     std::string diagnostics() const;
     bool confirm_close(); // false = cancel closing
@@ -81,6 +82,8 @@ private:
     int scene_seed_ = 1, scene_count_ = 16;
     double start_time_ = 0;
     int env_doc_ = -1; // document driving the environment (last active .environment/.lighting)
+    int blend_doc_ = -1;  // optional second environment for the cross-fade slider
+    float blend_t_ = 0;
     float output_gamma_ = 2.2f, output_brightness_ = 1.0f; // from the game's preferences.script.txt
 
     std::filesystem::path output_dir_;

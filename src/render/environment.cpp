@@ -75,6 +75,74 @@ void read_output_settings(float& gamma, float& brightness) {
     }
 }
 
+EnvironmentParams blend_environments(const EnvironmentParams& a, const EnvironmentParams& b, float t) {
+    EnvironmentParams r = t < 0.5f ? a : b;
+    auto f = [t](float x, float y) { return x + (y - x) * t; };
+    auto v = [&](const float3& x, const float3& y) { return float3{f(x.x, y.x), f(x.y, y.y), f(x.z, y.z)}; };
+    auto arr = [&](float* o, const float* x, const float* y, int n) { for (int i = 0; i < n; ++i) o[i] = f(x[i], y[i]); };
+    float daz = std::fmod(b.sun_azimuth - a.sun_azimuth + 540.0f, 360.0f) - 180.0f;
+    r.sun_azimuth = a.sun_azimuth + daz * t;
+    r.sun_elevation = f(a.sun_elevation, b.sun_elevation);
+    r.sun_colour = v(a.sun_colour, b.sun_colour);
+    r.sun_colour_scale = f(a.sun_colour_scale, b.sun_colour_scale);
+    r.ambient_hdr_scaler = f(a.ambient_hdr_scaler, b.ambient_hdr_scaler);
+    r.ambient_scale = f(a.ambient_scale, b.ambient_scale);
+    r.ambient_left = v(a.ambient_left, b.ambient_left);
+    r.ambient_right = v(a.ambient_right, b.ambient_right);
+    r.ambient_front = v(a.ambient_front, b.ambient_front);
+    r.ambient_back = v(a.ambient_back, b.ambient_back);
+    r.ambient_top = v(a.ambient_top, b.ambient_top);
+    r.ambient_bottom = v(a.ambient_bottom, b.ambient_bottom);
+    r.deep_water = v(a.deep_water, b.deep_water);
+    r.shallow_water = v(a.shallow_water, b.shallow_water);
+    r.sea_bed_scatter = v(a.sea_bed_scatter, b.sea_bed_scatter);
+    r.refraction_scatter = f(a.refraction_scatter, b.refraction_scatter);
+    r.cubemap_sun_colour_scale = f(a.cubemap_sun_colour_scale, b.cubemap_sun_colour_scale);
+    r.sky_colour = v(a.sky_colour, b.sky_colour);
+    r.circumsolar_colour = v(a.circumsolar_colour, b.circumsolar_colour);
+    r.horizon_colour = v(a.horizon_colour, b.horizon_colour);
+    r.horizon_opposite_colour = v(a.horizon_opposite_colour, b.horizon_opposite_colour);
+    r.backscatter_colour = v(a.backscatter_colour, b.backscatter_colour);
+    r.sky_colour_scale = f(a.sky_colour_scale, b.sky_colour_scale);
+    r.circumsolar_colour_scale = f(a.circumsolar_colour_scale, b.circumsolar_colour_scale);
+    r.horizon_colour_scale = f(a.horizon_colour_scale, b.horizon_colour_scale);
+    r.horizon_opposite_colour_scale = f(a.horizon_opposite_colour_scale, b.horizon_opposite_colour_scale);
+    r.backscatter_colour_scale = f(a.backscatter_colour_scale, b.backscatter_colour_scale);
+    r.horizon_decay = f(a.horizon_decay, b.horizon_decay);
+    r.circumsolar_decay = f(a.circumsolar_decay, b.circumsolar_decay);
+    r.backscatter_decay = f(a.backscatter_decay, b.backscatter_decay);
+    r.fog_distance_start = f(a.fog_distance_start, b.fog_distance_start);
+    r.fog_distance_strength = f(a.fog_distance_strength, b.fog_distance_strength);
+    r.fog_distance_scale = f(a.fog_distance_scale, b.fog_distance_scale);
+    r.fog_height_top = f(a.fog_height_top, b.fog_height_top);
+    r.fog_height_strength = f(a.fog_height_strength, b.fog_height_strength);
+    r.fog_clear_distance = f(a.fog_clear_distance, b.fog_clear_distance);
+    r.fog_colour_blend = f(a.fog_colour_blend, b.fog_colour_blend);
+    arr(r.volume_fog_colour, a.volume_fog_colour, b.volume_fog_colour, 4);
+    r.fog_precipitation_distance_modifier = f(a.fog_precipitation_distance_modifier, b.fog_precipitation_distance_modifier);
+    r.absolute_black_point = f(a.absolute_black_point, b.absolute_black_point);
+    r.max_black_point = f(a.max_black_point, b.max_black_point);
+    r.min_white_point = f(a.min_white_point, b.min_white_point);
+    r.absolute_white_point = f(a.absolute_white_point, b.absolute_white_point);
+    r.auto_exposure_speed = f(a.auto_exposure_speed, b.auto_exposure_speed);
+    r.high_pass_threshold = f(a.high_pass_threshold, b.high_pass_threshold);
+    arr(r.low_tones_bias, a.low_tones_bias, b.low_tones_bias, 3);
+    arr(r.high_tones_bias, a.high_tones_bias, b.high_tones_bias, 3);
+    r.overlay = v(a.overlay, b.overlay);
+    r.brightness = v(a.brightness, b.brightness);
+    r.contrast = v(a.contrast, b.contrast);
+    r.saturation = v(a.saturation, b.saturation);
+    r.hue = f(a.hue, b.hue);
+    arr(r.dof_focus, a.dof_focus, b.dof_focus, 2);
+    r.dof_blur_size = f(a.dof_blur_size, b.dof_blur_size);
+    r.sun_scale = f(a.sun_scale, b.sun_scale);
+    r.sun_flare = f(a.sun_flare, b.sun_flare);
+    r.snowing_intensity = f(a.snowing_intensity, b.snowing_intensity);
+    r.output_gamma = a.output_gamma;
+    r.output_brightness = a.output_brightness;
+    return r;
+}
+
 float3 colour_to_linear(const float3& c) {
     auto l = [](float x) { return x > 0 ? std::pow(x, 2.2f) : 0.0f; };
     return {l(c.x), l(c.y), l(c.z)};

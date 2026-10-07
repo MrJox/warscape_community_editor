@@ -80,6 +80,11 @@ EnvironmentParams read_environment(const XmlDoc& doc);
 constexpr float kSunHdrScale = 5000.0f; // lighting_VS_PS.sun_colour = linear * sun_colour_scale * 5000
 constexpr float kSkyHdrScale = 7.5f;    // skydome_PS colours = linear * scale * 7.5
 
+// Cross-fade between two environments (t = 0: a, 1: b). Numeric parameters interpolate linearly (azimuth
+// along the shorter arc); switches, strings and cloud layouts take the nearer side.
+// ASSUMPTION: the engine's lighting-environment cross-fade interpolates the same way.
+EnvironmentParams blend_environments(const EnvironmentParams& a, const EnvironmentParams& b, float t);
+
 // gfx_gamma_setting / gfx_brightness_setting from %APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt
 void read_output_settings(float& gamma, float& brightness);
 
