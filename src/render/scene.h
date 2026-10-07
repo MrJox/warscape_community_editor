@@ -72,8 +72,12 @@ public:
     const std::vector<std::string>& errors() const { return errors_; }
     int building_count() const { return buildings_; }
 
+    // Flat ground: one RS_STANDARD_V5-style quad (vertex format 0) with a tiled battle terrain texture.
+    void build_ground(const std::string& diffuse, float half_size = 1000.0f, float tile_metres = 8.0f);
+
 private:
     const GpuModel* load_model(const std::string& path);
+    std::unique_ptr<GpuModel> ground_;
 
     ID3D11Device* dev_;
     Vfs& vfs_;

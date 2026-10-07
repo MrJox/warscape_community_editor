@@ -27,6 +27,7 @@ public:
     enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped };
     float debug_points[4] = {}; int debug_maps = 0;
     bool fog = true;
+    bool shadows = true;
     float luma_black() const { return luma_black_; }
     float luma_white() const { return luma_white_; }
 
@@ -55,6 +56,7 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
+    void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);
     void pass_to_screen();
@@ -87,6 +89,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> instance_ids_tex_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> instance_ids_srv_, white_srv_, black_srv_, shadow_srv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> shadow_tex_;
+    // Cascaded shadow atlas: 2048^2, four 1024^2 quadrants (layout from the game's g_split_uv_texture_bounds).
+    static constexpr int kShadowSize = 2048;
+    Target shadow_atlas_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> shadow_depth_tex_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> shadow_dsv_;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_shadow_;
     Microsoft::WRL::ComPtr<ID3D11VertexShader> fs_vs_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> display_ps_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> display_cb_;

@@ -35,6 +35,8 @@ const char* kTmToneMap = TM "basic_tone_mapper"; // game's live path (dump: cons
 #undef TM
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
+const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
+const char* kShadowPS = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
 // Editor-side helpers (not game shaders): full-screen triangle and the debug/temporary display pass.
 const char* kHelperHlsl = R"(
@@ -135,6 +137,18 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         D3D11_SUBRESOURCE_DATA sd{&one, 4};
         dev_->CreateTexture2D(&td, &sd, &shadow_tex_);
         dev_->CreateShaderResourceView(shadow_tex_.Get(), nullptr, &shadow_srv_);
+    }
+
+    shadow_atlas_ = make_target(kShadowSize, kShadowSize, DXGI_FORMAT_R32_FLOAT);
+    {
+        D3D11_TEXTURE2D_DESC td{kShadowSize, kShadowSize, 1, 1, DXGI_FORMAT_D32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL};
+        dev_->CreateTexture2D(&td, nullptr, &shadow_depth_tex_);
+        dev_->CreateDepthStencilView(shadow_depth_tex_.Get(), nullptr, &shadow_dsv_);
+        D3D11_RASTERIZER_DESC r{};
+        r.FillMode = D3D11_FILL_SOLID;
+        r.CullMode = D3D11_CULL_FRONT; // ASSUMPTION: back faces into the shadow map (the game's sample bias is 0)
+        r.DepthClipEnable = FALSE;     // keep casters behind the light's near plane
+        dev_->CreateRasterizerState(&r, &rs_shadow_);
     }
 
     // Sky cubemap (output of ps30_skygen).
@@ -436,8 +450,6 @@ void Renderer::pass_directional_light() {
     ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
     ctx_->OMSetDepthStencilState(ds_light_.Get(), 1);
     ctx_->RSSetState(rs_none_.Get());
-    // No shadow cascades yet: zero splits (shader then skips the shadow lookup).
-    cbs_.set_f("shadowmap_PS", "g_iSplitCount", {0.0f});
     float zero_shroud = 0;
     cbs_.set("shroud_PS", "g_shroud_enabled", &zero_shroud, 4);
     float4x4 ident;
@@ -448,7 +460,7 @@ void Renderer::pass_directional_light() {
     bind_srv(ctx_, *ps, "s_environment", sky_cube_srv_.Get());
     bind_srv(ctx_, *ps, "s_overlay", black_srv_.Get());
     bind_srv(ctx_, *ps, "s_shroud", white_srv_.Get());
-    bind_srv(ctx_, *ps, "g_tShadowBuffer_SM50", shadow_srv_.Get());
+    bind_srv(ctx_, *ps, "g_tShadowBuffer_SM50", shadow_atlas_.srv.Get());
     for (auto& [name, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_point_.GetAddressOf());
     bind_sampler(ctx_, *ps, "s_environment", s_clamp_linear_.Get());
     bind_sampler(ctx_, *ps, "s_ssao", s_clamp_linear_.Get());
@@ -527,8 +539,6 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
         }
     }
     ++frame_;
-    cbs_.set_f("constant_tone_mapping_buffer", "g_luma_black_point", {luma_black_});
-    cbs_.set_f("constant_tone_mapping_buffer", "g_luma_white_point", {luma_white_});
 
     // 4. bloom: high pass on the quarter image, separable 11-tap blur
     bind(*high, s_clamp_point_.Get());
@@ -571,6 +581,122 @@ void Renderer::pass_to_screen() {
     bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
     bind_srv(ctx_, *ps, "s_fog_of_war_mask", black_srv_.Get());
     fullscreen_to(final_.rtv.Get(), w_, h_, *ps);
+}
+
+void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s) {
+    const float far_split = std::min(cam.zfar, 1500.0f);
+    // Split distances (view depth). ASSUMPTION: practical split scheme (log/uniform blend 0.75); the game's
+    // values depend on its camera (dump: 120, 147, 228, 416).
+    float splits[5];
+    const float n = std::max(cam.znear, 1.0f);
+    for (int i = 0; i <= 4; ++i) {
+        float t = i / 4.0f;
+        float lg = n * std::pow(far_split / n, t), un = n + (far_split - n) * t;
+        splits[i] = 0.75f * lg + 0.25f * un;
+    }
+    const float4x4 cam_view = look_at_lh(cam.eye, cam.target, {0, 1, 0});
+    const float4x4 inv_view = inverse(cam_view);
+    const float tan_y = std::tan(cam.fov_y * 0.5f), tan_x = tan_y * aspect;
+    float3 up = std::fabs(light_dir.y) > 0.99f ? float3{0, 0, 1} : float3{0, 1, 0};
+
+    float matrices[4][16];
+    float bounds[4][4] = {{0, 0, 0.5f, 0.5f}, {0.5f, 0, 1, 0.5f}, {0, 0.5f, 0.5f, 1}, {0.5f, 0.5f, 1, 1}};
+    float4x4 light_vp[4];
+    for (int c = 0; c < 4; ++c) {
+        // Bounding sphere of the frustum slice (stable size while the camera rotates).
+        float3 pts[8];
+        for (int k = 0; k < 8; ++k) {
+            float d = (k & 4) ? splits[c + 1] : splits[c];
+            float3 v{((k & 1) ? 1.0f : -1.0f) * tan_x * d, ((k & 2) ? 1.0f : -1.0f) * tan_y * d, d};
+            pts[k] = inv_view.transform_point(v);
+        }
+        float3 centre{0, 0, 0};
+        for (auto& p : pts) centre = centre + p * 0.125f;
+        float radius = 0;
+        for (auto& p : pts) radius = std::max(radius, length(p - centre));
+        radius = std::ceil(radius);
+        // Snap the centre to shadow texels in light space to avoid shimmering.
+        float4x4 lview = look_at_lh(centre - light_dir * 2000.0f, centre, up);
+        float texel = 2 * radius / (kShadowSize / 2);
+        float3 lc = lview.transform_point(centre);
+        float sx = std::floor(lc.x / texel) * texel - lc.x, sy = std::floor(lc.y / texel) * texel - lc.y;
+        float4x4 snap = translation({sx, sy, 0});
+        light_vp[c] = ortho_lh(2 * radius, 2 * radius, 0.0f, 4000.0f) * snap * lview;
+        // World -> atlas uv (y down) + depth: matches the lighting shader's lookup.
+        float4x4 to_uv;
+        float bx = bounds[c][0], by = bounds[c][1];
+        to_uv.m[0][0] = 0.25f; to_uv.m[0][3] = bx + 0.25f;
+        to_uv.m[1][1] = -0.25f; to_uv.m[1][3] = by + 0.25f;
+        float4x4 m = to_uv * light_vp[c];
+        std::memcpy(matrices[c], m.data(), 64);
+    }
+
+    // Render casters into the four quadrants.
+    const GameShader* vs = shader(kShadowVS);
+    const GameShader* ps = shader(kShadowPS);
+    const float one[4] = {1, 1, 1, 1};
+    ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+    ctx_->ClearRenderTargetView(shadow_atlas_.rtv.Get(), one);
+    ctx_->ClearDepthStencilView(shadow_dsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    if (vs && ps && scene && shadows) {
+        std::vector<D3D11_INPUT_ELEMENT_DESC> el = {
+            {"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL", 1, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL", 2, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        for (UINT i = 1; i <= 7; ++i)
+            el.push_back({"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, D3D11_INPUT_PER_INSTANCE_DATA, 1});
+        ctx_->IASetInputLayout(lib_->layout(*vs, "rigid_std", el));
+        ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ctx_->OMSetRenderTargets(1, shadow_atlas_.rtv.GetAddressOf(), shadow_dsv_.Get());
+        ctx_->OMSetDepthStencilState(ds_sky_.Get(), 0);
+        ctx_->OMSetDepthStencilState(ds_gbuffer_.Get(), 0);
+        ctx_->RSSetState(rs_shadow_.Get());
+        for (int c = 0; c < 4; ++c) {
+            D3D11_VIEWPORT vp{bounds[c][0] * kShadowSize, bounds[c][1] * kShadowSize, kShadowSize / 2.0f, kShadowSize / 2.0f, 0, 1};
+            ctx_->RSSetViewports(1, &vp);
+            cbs_.set_m("camera_VS_PS", "view_projection", light_vp[c].data());
+            cbs_.upload(dev_, ctx_);
+            bind_shader(ctx_, *vs, cbs_);
+            bind_shader(ctx_, *ps, cbs_);
+            for (auto& [name, slot] : vs->textures) ctx_->VSSetShaderResources(slot, 1, instance_ids_srv_.GetAddressOf());
+            for (auto& o : scene->objects()) {
+                if (o.model->path == "(ground)") continue; // receiver only
+                RigidInstance inst{};
+                for (int r = 0; r < 3; ++r)
+                    for (int k = 0; k < 4; ++k) inst.world[r][k] = o.world.m[r][k];
+                D3D11_MAPPED_SUBRESOURCE ms;
+                if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
+                std::memcpy(ms.pData, &inst, sizeof inst);
+                ctx_->Unmap(instance_vb_.Get(), 0);
+                for (auto& m : o.model->meshes) {
+                    ID3D11Buffer* vbs[2] = {m.vb.Get(), instance_vb_.Get()};
+                    UINT strides[2] = {32, sizeof(RigidInstance)}, offs[2] = {0, 0};
+                    ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
+                    ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+                    ctx_->DrawIndexedInstanced(m.index_count, 1, 0, 0, 0);
+                }
+            }
+        }
+    }
+    ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+    (void)time_s;
+
+    // shadowmap_PS as the game fills it (layout and constants from the memory dump).
+    float buf_size[4] = {float(kShadowSize), float(kShadowSize), 1.0f / kShadowSize, 1.0f / kShadowSize};
+    cbs_.set("shadowmap_PS", "g_vHardShadowBufferSize", buf_size, 16);
+    cbs_.set("shadowmap_PS", "g_amHardSplit", matrices, sizeof matrices);
+    float dist[17] = {};
+    for (int i = 0; i <= 4; ++i) dist[i * 4] = splits[i]; // float[5], 16-byte stride
+    cbs_.set("shadowmap_PS", "g_split_distances", dist, sizeof dist);
+    cbs_.set("shadowmap_PS", "g_split_uv_texture_bounds", bounds, sizeof bounds);
+    cbs_.set_f("shadowmap_PS", "g_fFadeRange", {0.1f, 0.296399f});
+    cbs_.set_f("shadowmap_PS", "g_sample_bias", {0.0f});
+    cbs_.set_f("shadowmap_PS", "g_iSplitCount", {shadows ? 4.0f : 0.0f});
+    cbs_.set_f("shadowmap_PS", "g_shadow_light_direction", {light_dir.x, light_dir.y, light_dir.z});
 }
 
 void Renderer::pass_fog() {
@@ -627,13 +753,14 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
-                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS})
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS})
         shader(s);
     apply_environment(env, cbs_);
 
     pass_sky_cube(env, time_s);
 
     float aspect = float(width) / float(height);
+    pass_shadows(scene, cam, aspect, -env.to_sun(), time_s);
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
     set_camera(view_m, proj, cam.eye, width, height, time_s);

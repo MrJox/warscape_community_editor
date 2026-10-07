@@ -238,7 +238,6 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     cbs.set_f("luma_stats_buffer", "g_min_luma_white_point", {e.min_white_point});
     cbs.set_f("luma_stats_buffer", "g_absolute_luma_white_point", {e.absolute_white_point});
     cbs.set_f("auto_exposure_buffer", "g_auto_exposure_speed", {e.auto_exposure_speed});
-    cbs.set_f("constant_tone_mapping_buffer", "g_luma_high_pass_threshold", {e.high_pass_threshold});
 
     // Output colorimetry = the game's graphics options (verified: gfx_gamma_setting / gfx_brightness_setting
     // from preferences.script.txt appear unchanged in colorimetry_VS_PS).

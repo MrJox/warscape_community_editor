@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <random>
 
 namespace we {
@@ -78,9 +79,78 @@ const GpuModel* TestScene::load_model(const std::string& path) {
     return raw->meshes.empty() ? nullptr : raw;
 }
 
+namespace {
+
+uint16_t to_half(float f) {
+    uint32_t x;
+    std::memcpy(&x, &f, 4);
+    uint32_t sign = (x >> 16) & 0x8000, exp = (x >> 23) & 0xff, man = x & 0x7fffff;
+    if (exp == 0) return uint16_t(sign);
+    int e = int(exp) - 127 + 15;
+    if (e >= 31) return uint16_t(sign | 0x7c00);
+    if (e <= 0) return uint16_t(sign);
+    return uint16_t(sign | (e << 10) | (man >> 13));
+}
+
+// STANDARD_RIGID_MESH_VERTEX: half4 pos, half4 uv, BGRA8 normal/tangent/bitangent, BGRA8 colour.
+struct Vertex0 {
+    uint16_t pos[4], uv[4];
+    uint8_t normal[4], tangent[4], bitangent[4], colour[4];
+};
+
+void pack_vec(uint8_t out[4], float x, float y, float z) { // memory order B, G, R, A -> shader x = R, y = G, z = B
+    auto q = [](float v) { return uint8_t(std::lround((v * 0.5f + 0.5f) * 255.0f)); };
+    out[0] = q(z);
+    out[1] = q(y);
+    out[2] = q(x);
+    out[3] = 255;
+}
+
+} // namespace
+
+void TestScene::build_ground(const std::string& diffuse, float s, float tile) {
+    ground_ = std::make_unique<GpuModel>();
+    ground_->path = "(ground)";
+    float t = s * 2 / tile;
+    const float corners[4][4] = {{-s, -s, 0, 0}, {-s, s, 0, t}, {s, s, t, t}, {s, -s, t, 0}}; // x, z, u, v
+    Vertex0 v[4]{};
+    for (int i = 0; i < 4; ++i) {
+        v[i].pos[0] = to_half(corners[i][0]);
+        v[i].pos[1] = to_half(0);
+        v[i].pos[2] = to_half(corners[i][1]);
+        v[i].pos[3] = to_half(1);
+        v[i].uv[0] = to_half(corners[i][2]);
+        v[i].uv[1] = to_half(corners[i][3]);
+        pack_vec(v[i].normal, 0, 1, 0);
+        pack_vec(v[i].tangent, 1, 0, 0);
+        pack_vec(v[i].bitangent, 0, 0, 1);
+        v[i].colour[0] = v[i].colour[1] = v[i].colour[2] = v[i].colour[3] = 255;
+    }
+    const uint16_t idx[6] = {0, 1, 2, 0, 2, 3};
+    GpuMesh g;
+    D3D11_BUFFER_DESC bd{sizeof v, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+    D3D11_SUBRESOURCE_DATA sd{v};
+    dev_->CreateBuffer(&bd, &sd, &g.vb);
+    D3D11_BUFFER_DESC ib{sizeof idx, D3D11_USAGE_IMMUTABLE, D3D11_BIND_INDEX_BUFFER};
+    D3D11_SUBRESOURCE_DATA isd{idx};
+    dev_->CreateBuffer(&ib, &isd, &g.ib);
+    g.index_count = 6;
+    const Texture* d = tex_.get(diffuse, true);
+    g.textures["s_diffuse_map"] = d ? d : tex_.white();
+    g.textures["s_specular_colour_map"] = tex_.black();
+    g.textures["s_gloss_map"] = tex_.black();
+    g.textures["s_colour_mask_map"] = tex_.black();
+    g.textures["s_normal_map"] = tex_.flat_normal();
+    ground_->meshes.push_back(std::move(g));
+    ground_->bmin = {-s, 0, -s};
+    ground_->bmax = {s, 0, s};
+}
+
 int TestScene::generate(uint32_t seed, int count, const std::string& prefix) {
     objects_.clear();
     errors_.clear();
+    if (!ground_) build_ground("terrain/textures/battle/default/grass/0_su_diffuse.dds");
+    objects_.push_back({ground_.get(), float4x4{}});
     // A building is a folder of pieces; "<name>_pieceNN_destruct01" is each piece's intact state.
     // Piece placement nodes in <name>_tech.cs2.parsed are identity in every file checked, so the
     // pieces are drawn at the origin of the building (see docs/re/renderer.md).
