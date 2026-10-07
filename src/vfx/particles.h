@@ -6,12 +6,14 @@
 // The CPU side (emission rate, spawn positions and velocities) follows the XML semantics; the exact game code is
 // not reverse-engineered yet, see the ASSUMPTION notes in particles.cpp.
 #include "render/math.h"
+#include "render/texture.h"
 #include "vfx/weather_vfx.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
 
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,7 +43,10 @@ public:
     ~ParticleSystem();
 
     // Loads the effect of a weather definition (no-op when unchanged). Restarts the simulation.
-    void set_weather(const std::string& definition_name);
+    // Reloads when the name or `revision` changes (revision: the editor's edit counter of open vfx/weather XML).
+    // Live particles are kept when the reload yields the same emitters.
+    void set_weather(const std::string& definition_name, uint64_t revision = 0);
+    void set_reader(VfxReader reader) { reader_ = std::move(reader); }
     void restart();
     void render(const Frame& f);
 
@@ -96,6 +101,9 @@ private:
     std::vector<std::string> errors_;
 
     std::string definition_;
+    uint64_t revision_ = 0;
+    VfxReader reader_;
+    std::map<std::string, Texture> texture_cache_; // path|srgb -> loaded DDS
     bool loaded_ = false;
     WeatherVfx effect_;
     std::vector<EmitterState> state_;

@@ -11,8 +11,8 @@ namespace {
 
 float num(const std::optional<std::string>& s, float def) { return s ? float(std::atof(s->c_str())) : def; }
 
-std::optional<WeatherDefinition> find_definition(Vfs& vfs, const std::string& name) {
-    XmlDoc doc = XmlDoc::parse(vfs.read("weather/weather_definitions.xml"));
+std::optional<WeatherDefinition> find_definition(const VfxReader& read, const std::string& name) {
+    XmlDoc doc = XmlDoc::parse(read("weather/weather_definitions.xml"));
     const auto& els = doc.elements();
     for (int i = 0; i < int(els.size()); ++i) {
         if (els[i].name != "WEATHER_DEFINITION" || doc.get(i, "name").value_or("") != name) continue;
@@ -28,7 +28,7 @@ std::optional<WeatherDefinition> find_definition(Vfs& vfs, const std::string& na
     return std::nullopt;
 }
 
-VfxFile load_vfx(Vfs& vfs, const std::string& name) { return parse_vfx(XmlDoc::parse(vfs.read("vfx/" + name + ".xml"))); }
+VfxFile load_vfx(const VfxReader& read, const std::string& name) { return parse_vfx(XmlDoc::parse(read("vfx/" + name + ".xml"))); }
 
 // An emitter is drawn when it is enabled and some render stack pairs it with a chain that has a texture.
 const VfxChain* render_chain(const VfxFile& lib, const std::string& emitter, const VfxStack** stack) {
@@ -46,6 +46,10 @@ const VfxChain* render_chain(const VfxFile& lib, const std::string& emitter, con
 } // namespace
 
 WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
+    return load_weather_vfx([&vfs](const std::string& p) { return vfs.read(p); }, definition_name);
+}
+
+WeatherVfx load_weather_vfx(const VfxReader& vfs, const std::string& definition_name) {
     WeatherVfx out;
     if (definition_name.empty() || definition_name == "none") return out;
     auto def = find_definition(vfs, definition_name);

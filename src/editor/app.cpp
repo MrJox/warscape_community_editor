@@ -120,6 +120,13 @@ void App::init_renderer() {
         textures_ = std::make_unique<TextureCache>(dev_, *vfs_);
         scene_ = std::make_unique<TestScene>(dev_, *vfs_, *textures_);
         renderer_ = std::make_unique<Renderer>(dev_, ctx_, *vfs_);
+        // Precipitation reads open documents first, so edits to vfx/*.xml and weather_definitions.xml show live.
+        renderer_->particles()->set_reader([this](const std::string& path) {
+            const std::string p = Vfs::normalize(path);
+            for (auto& d : docs_)
+                if (d->vfs_path == p) return d->doc.save();
+            return vfs_->read(p);
+        });
         read_output_settings(output_gamma_, output_brightness_);
         int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
         float3 ext = scene_->bounds_max() - scene_->bounds_min();
@@ -188,6 +195,12 @@ void App::draw_viewport() {
     camera_.target = cam_target_;
     camera_.eye = cam_target_ + float3{std::sin(cam_yaw_) * cp, sp, -std::cos(cam_yaw_) * cp} * cam_dist_;
     camera_.eye.y = std::max(camera_.eye.y, 2.0f); // stay above the ground plane when looking up
+    uint64_t vfx_rev = 0; // edit state of open documents the particle system reads
+    for (auto& d : docs_)
+        if (d->vfs_path.rfind("vfx/", 0) == 0 || d->vfs_path.rfind("weather/", 0) == 0 && d->vfs_path.find(".environment") == std::string::npos)
+            vfx_rev = vfx_rev * 1000003u + std::hash<std::string>{}(d->vfs_path) + d->undo.size() * 7919u + d->redo.size() * 104729u +
+                      (d->doc.modified() ? 1u : 0u);
+    renderer_->vfx_revision = vfx_rev;
     try {
         renderer_->render(scene_.get(), camera_, params, w, h, float(ImGui::GetTime() - start_time_));
     } catch (const std::exception& e) {

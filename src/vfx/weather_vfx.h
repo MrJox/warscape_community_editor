@@ -5,6 +5,8 @@
 #include "vfx_constants.h"
 #include "vfx_def.h"
 
+#include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -34,7 +36,11 @@ struct WeatherVfx {
     std::vector<std::string> notes; // skipped emitters / missing files, for the UI
 };
 
+// Bytes of an in-pack file; throws if missing. The editor passes one that prefers open (edited) documents.
+using VfxReader = std::function<std::vector<uint8_t>(const std::string& path)>;
+
 // Reads weather/weather_definitions.xml; empty name / "none" or no vfx1 gives an empty effect.
+WeatherVfx load_weather_vfx(const VfxReader& read, const std::string& definition_name);
 WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name);
 
 } // namespace we

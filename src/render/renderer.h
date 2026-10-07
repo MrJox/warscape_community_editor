@@ -33,6 +33,7 @@ public:
     bool shadows = true;
     bool clouds = true;
     bool ssao = true;
+    uint64_t vfx_revision = 0; // changes when an open vfx/ or weather/ XML is edited: particles reload
     uint32_t cloud_seed = 1;
     size_t cloud_sprites() const { size_t n = 0; for (auto& p : cloud_gpu_) n += p.count; return n; }
     float luma_black() const { return luma_black_; }

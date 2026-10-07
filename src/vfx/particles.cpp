@@ -50,11 +50,15 @@ struct TextureArrayBuilder {
     std::vector<Texture> textures;
 
     // Slice of the path, loading it on first use; -1 if missing or incompatible with slice 0.
-    int add(ID3D11Device* dev, Vfs& vfs, const std::string& path, std::vector<std::string>& errors) {
+    int add(ID3D11Device* dev, const VfxReader& read, std::map<std::string, Texture>& cache, const std::string& path,
+            std::vector<std::string>& errors) {
         if (path.empty()) return -1;
         if (auto it = slices.find(path); it != slices.end()) return int(it->second);
         try {
-            Texture t = load_dds(dev, vfs.read(path), srgb);
+            const std::string key = path + (srgb ? "|srgb" : "");
+            auto c = cache.find(key);
+            if (c == cache.end()) c = cache.emplace(key, load_dds(dev, read(path), srgb)).first;
+            const Texture& t = c->second;
             if (!textures.empty() && (t.width != textures[0].width || t.height != textures[0].height || t.format != textures[0].format ||
                                       t.mips != textures[0].mips)) {
                 errors.push_back(path + ": size/format differs from the other particle maps, not drawn");
@@ -102,7 +106,7 @@ struct TextureArrayBuilder {
 } // namespace
 
 ParticleSystem::ParticleSystem(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs, ShaderLibrary& lib, ConstantBuffers& cbs)
-    : dev_(dev), ctx_(ctx), vfs_(vfs), lib_(lib), cbs_(cbs) {
+    : dev_(dev), ctx_(ctx), vfs_(vfs), lib_(lib), cbs_(cbs), reader_([&vfs](const std::string& p) { return vfs.read(p); }) {
     create_resources();
     build_emitter_gpu();
 }
@@ -237,19 +241,26 @@ void ParticleSystem::create_resources() {
     dev_->CreateRasterizerState(&rd, &rs_none_);
 }
 
-void ParticleSystem::set_weather(const std::string& definition_name) {
-    if (loaded_ && definition_name == definition_) return;
+void ParticleSystem::set_weather(const std::string& definition_name, uint64_t revision) {
+    if (loaded_ && definition_name == definition_ && revision == revision_) return;
+    const bool same_definition = loaded_ && definition_name == definition_;
     loaded_ = true;
     definition_ = definition_name;
+    revision_ = revision;
+    std::vector<std::string> before;
+    for (auto& e : effect_.emitters) before.push_back(e.instance + "/" + e.name);
+    errors_.clear();
     try {
-        effect_ = load_weather_vfx(vfs_, definition_name);
+        effect_ = load_weather_vfx(reader_, definition_name);
     } catch (const std::exception& e) {
         effect_ = {};
         error("weather vfx '" + definition_name + "': " + e.what());
     }
     if (effect_.emitters.size() > size_t(std::min(kMaxEmitters, kEmitterWidth))) effect_.emitters.resize(std::min(kMaxEmitters, kEmitterWidth));
     build_emitter_gpu();
-    restart();
+    std::vector<std::string> after;
+    for (auto& e : effect_.emitters) after.push_back(e.instance + "/" + e.name);
+    if (!same_definition || before != after) restart(); // an edited value keeps the particles in flight
 }
 
 void ParticleSystem::restart() {
@@ -268,7 +279,7 @@ void ParticleSystem::build_emitter_gpu() {
     const size_t n = effect_.emitters.size();
     for (size_t i = 0; i < n; ++i) {
         EmitterConstants& k = effect_.emitters[i].k;
-        int ds = diffuse.add(dev_, vfs_, k.diffuse, tex_errors), ns = normal.add(dev_, vfs_, k.normal, tex_errors);
+        int ds = diffuse.add(dev_, reader_, texture_cache_, k.diffuse, tex_errors), ns = normal.add(dev_, reader_, texture_cache_, k.normal, tex_errors);
         k.behaviour_mask[1] = uint32_t(std::max(ds, 0));
         k.behaviour_mask[2] = uint32_t(std::max(ns, 0));
         if (ds < 0) k.behaviour_mask[0] &= ~vfx_bits::kPsTexture;

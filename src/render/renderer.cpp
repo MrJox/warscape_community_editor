@@ -1068,7 +1068,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     pass_directional_light();
     pass_fog();
     if (particles_) { // weather precipitation (vfx1 of the WEATHER definition), see src/vfx/particles.h
-        particles_->set_weather(env.weather_definition);
+        particles_->set_weather(env.weather_definition, vfx_revision);
         ParticleSystem::Frame pf;
         pf.eye = cam.eye;
         pf.view = view_m;
