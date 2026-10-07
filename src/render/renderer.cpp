@@ -36,6 +36,9 @@ const char* kTmToneMap = TM "basic_tone_mapper"; // game's live path (dump: cons
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
+const char* kSunVS = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
+const char* kSunPS = "dx11_sm_3_0_sun.hlsl_ps_ps30_main";
+constexpr float kSunDistance = 7600.0f; // memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600
 const char* kShadowPS = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
 // Editor-side helpers (not game shaders): full-screen triangle and the debug/temporary display pass.
@@ -151,6 +154,15 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         dev_->CreateRasterizerState(&r, &rs_shadow_);
     }
 
+    {   // Sun billboard: two triangles; POSITION.xy in view units (x sun_scale), TEXCOORD.xy.
+        // ASSUMPTION: corners at +-kSunDistance, i.e. half-size = sun_scale * distance.
+        const float d = kSunDistance;
+        float v[6][4] = {{-d, -d, 0, 1}, {-d, d, 0, 0}, {d, d, 1, 0}, {-d, -d, 0, 1}, {d, d, 1, 0}, {d, -d, 1, 1}};
+        D3D11_BUFFER_DESC sbd{sizeof v, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+        D3D11_SUBRESOURCE_DATA ssd{v};
+        dev_->CreateBuffer(&sbd, &ssd, &sun_vb_);
+    }
+
     // Sky cubemap (output of ps30_skygen).
     D3D11_TEXTURE2D_DESC cd{kSkyCube, kSkyCube, 0, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT,
                             D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0,
@@ -264,6 +276,9 @@ void Renderer::make_states() {
     b.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
     dev_->CreateBlendState(&b, &bs_alpha_);
+    // ASSUMPTION: the sun disc adds its texture (weighted by alpha) on top of the sky.
+    b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+    dev_->CreateBlendState(&b, &bs_additive_alpha_);
 }
 
 Renderer::Target Renderer::make_target(int w, int h, DXGI_FORMAT fmt) {
@@ -699,6 +714,49 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
     cbs_.set_f("shadowmap_PS", "g_shadow_light_direction", {light_dir.x, light_dir.y, light_dir.z});
 }
 
+void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, const float4x4& proj) {
+    const GameShader* vs = shader(kSunVS);
+    const GameShader* ps = shader(kSunPS);
+    if (!vs || !ps || !env.has_sky || env.sun_scale <= 0) return;
+    std::string tex = "rigidmodels/skybox/" + env.sun_texture;
+    if (tex != sun_texture_path_) {
+        sun_texture_path_ = tex;
+        sun_srv_.Reset();
+        try {
+            Texture t = load_dds(dev_, vfs_.read(tex), true);
+            sun_srv_ = t.srv;
+        } catch (const std::exception& e) {
+            error(std::string("sun texture: ") + e.what());
+        }
+    }
+    if (!sun_srv_) return;
+    // g_world_view: camera rotation, translation = rotation * (to_sun * distance) (camera-relative).
+    float4x4 wv = view_m;
+    float3 s = env.to_sun() * kSunDistance;
+    for (int r = 0; r < 3; ++r) wv.m[r][3] = view_m.m[r][0] * s.x + view_m.m[r][1] * s.y + view_m.m[r][2] * s.z;
+    cbs_.set_m("sun_VS", "g_world_view", wv.data());
+    cbs_.set_m("sun_VS", "g_projection", proj.data());
+    cbs_.set_f("sun_VS", "g_sun_scale", {env.sun_scale});
+    cbs_.upload(dev_, ctx_);
+    std::vector<D3D11_INPUT_ELEMENT_DESC> el = {{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                                                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+    ctx_->IASetInputLayout(lib_->layout(*vs, "sun", el));
+    UINT stride = 16, off = 0;
+    ctx_->IASetVertexBuffers(0, 1, sun_vb_.GetAddressOf(), &stride, &off);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
+    ctx_->OMSetDepthStencilState(ds_sky_.Get(), 0);
+    ctx_->OMSetBlendState(bs_additive_alpha_.Get(), nullptr, 0xffffffff);
+    ctx_->RSSetState(rs_none_.Get());
+    bind_shader(ctx_, *vs, cbs_);
+    bind_shader(ctx_, *ps, cbs_);
+    bind_srv(ctx_, *ps, "s_diffuse", sun_srv_.Get());
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+    ctx_->Draw(6, 0);
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+    // Back to the main camera for the following passes (the sun pass only touched sun_VS).
+}
+
 void Renderer::pass_fog() {
     const GameShader* ps = shader(kFogPS);
     if (!ps || !fog) return;
@@ -753,7 +811,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
-                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS})
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS})
         shader(s);
     apply_environment(env, cbs_);
 
@@ -773,6 +831,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     const float clear[4] = {0, 0, 0, 0};
     ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
     pass_sky_forward();
+    pass_sun(env, view_m, proj);
     pass_directional_light();
     pass_fog();
 

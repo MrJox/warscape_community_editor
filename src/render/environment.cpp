@@ -120,6 +120,11 @@ EnvironmentParams read_environment(const XmlDoc& doc) {
     sky.f("backscatter_colour_scale", e.backscatter_colour_scale);
     sky.f("backscatter_decay", e.backscatter_decay);
 
+    Reader sunm{doc, find_element(doc, "SUN_MESH")};
+    sunm.f("sun_scale", e.sun_scale);
+    sunm.f("sun_flare", e.sun_flare);
+    sunm.s("sun_texture", e.sun_texture);
+
     Reader fog{doc, find_element(doc, "FOG")};
     fog.f("fog_distance_start", e.fog_distance_start);
     fog.f("fog_distance_strength", e.fog_distance_strength);

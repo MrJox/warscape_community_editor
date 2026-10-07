@@ -137,6 +137,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             if (a == L"--open") app.open_path(we::narrow(argv[++i]));
             else if (a == L"--shot") shot_path = argv[++i];
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
+            else if (a == L"--cam" && i + 3 < argc) { // --cam <yaw> <pitch> <distance> (radians, metres)
+                float yaw = float(_wtof(argv[i + 1])), pitch = float(_wtof(argv[i + 2])), dist = float(_wtof(argv[i + 3]));
+                app.set_orbit(yaw, pitch, dist);
+                i += 3;
+            }
         }
         LocalFree(argv);
     }

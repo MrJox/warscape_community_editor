@@ -19,7 +19,8 @@ class TestScene;
 
 struct Camera {
     float3 eye{0, 30, -80}, target{0, 5, 0};
-    float fov_y = 0.8f, znear = 0.5f, zfar = 6000.0f;
+    // The game's battle camera (memory dump): near 1, far 13000, vertical FOV 1.13446 rad (65 degrees).
+    float fov_y = 1.13446f, znear = 1.0f, zfar = 13000.0f;
 };
 
 class Renderer {
@@ -56,6 +57,7 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
+    void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
     void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);
@@ -117,7 +119,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_back_, rs_none_;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_, bs_alpha_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_, bs_alpha_, bs_additive_alpha_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> sun_vb_;
+    std::string sun_texture_path_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sun_srv_;
     bool fog_enabled_ = true;
 };
 

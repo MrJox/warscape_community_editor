@@ -54,6 +54,10 @@ struct EnvironmentParams {
     float dof_focus[2] = {0.3f, 40};
     float dof_blur_size = 4.5f;
 
+    // SUN_MESH
+    float sun_scale = 0.1f, sun_flare = 1.0f;
+    std::string sun_texture = "sundisk1.dds";
+
     // WEATHER
     float snowing_intensity = 0;
     std::string weather_definition;
