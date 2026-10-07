@@ -49,6 +49,24 @@ struct CloudInstance {
 };
 
 std::vector<CloudPlane> read_cloud_planes(const XmlDoc& doc);
+
+// A plane's live clouds: initial fill (fn 0x18e5b10), drift (fn 0x192aa40: angle x += speed * dt, the cloud dies
+// past the far edge) and new clouds entering at column 0 (fn 0x192a900).
+// ASSUMPTIONS: a new column every cell_angle / velocity seconds; clouds die beyond (cells / 2) * cell_angle.
+class CloudField {
+public:
+    void reset(const CloudPlane& plane, uint32_t seed);
+    void update(const CloudPlane& plane, float dt); // returns nothing; instances() changes when clouds move
+    const std::vector<CloudInstance>& instances() const { return inst_; }
+
+private:
+    void spawn(const CloudPlane& plane, int x, int y);
+    struct Rng { uint32_t state = 1; float next(); } rng_;
+    std::vector<CloudInstance> inst_;
+    std::vector<float> speed_; // per instance (sprites of one cloud share it)
+    float timer_ = 0;
+};
+
 // Deterministic for a given seed (the game's state is per session, so positions differ; the distribution matches).
 std::vector<CloudInstance> generate_clouds(const CloudPlane& plane, uint32_t seed);
 // "rigidmodels/skybox/cloudsets/cloudset_2/near_set1.dds" etc.

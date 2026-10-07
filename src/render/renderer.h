@@ -120,7 +120,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> points_staging_[kReadbackRing];
     int points_cur_ = 0;
     uint64_t frame_ = 0;
-    float last_time_ = -1;
+    float last_time_ = -1, frame_dt_ = 0.016f;
     float luma_black_ = 0.001f, luma_white_ = 9.0f;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> scurve_tex_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> scurve_srv_;
@@ -133,9 +133,11 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> sun_vb_, cloud_quad_vb_;
     struct CloudGpu {
         std::string signature;
+        CloudField field;
         Microsoft::WRL::ComPtr<ID3D11Buffer> instances;
-        UINT count = 0;
+        UINT capacity = 0, count = 0;
     };
+    float cloud_dt_ = 0;
     std::vector<CloudGpu> cloud_gpu_;
     std::map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> sky_textures_;
     ID3D11ShaderResourceView* sky_texture(const std::string& path);

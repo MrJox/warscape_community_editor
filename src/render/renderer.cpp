@@ -858,15 +858,29 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
                 sig += ";" + std::to_string(e.enabled) + std::to_string(e.scale) + std::to_string(e.offset[0]) + std::to_string(e.offset[1]) +
                        std::to_string(e.offset[2]) + std::to_string(e.texture_index) + std::to_string(e.texture_row) + std::to_string(e.texture_column);
         }
+        bool dirty = false;
         if (sig != g.signature) {
             g.signature = sig;
-            g.instances.Reset();
-            std::vector<CloudInstance> inst = generate_clouds(p, cloud_seed * 7919u + uint32_t(i));
+            g.field.reset(p, cloud_seed * 7919u + uint32_t(i));
+            dirty = true;
+        }
+        if (p.velocity * 0.1f > 0.001f && cloud_dt_ > 0) {
+            g.field.update(p, cloud_dt_);
+            dirty = true;
+        }
+        if (dirty) {
+            const auto& inst = g.field.instances();
             g.count = UINT(inst.size());
-            if (!inst.empty()) {
-                D3D11_BUFFER_DESC bd{UINT(inst.size() * sizeof(CloudInstance)), D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
-                D3D11_SUBRESOURCE_DATA sd{inst.data()};
-                dev_->CreateBuffer(&bd, &sd, &g.instances);
+            if (g.count > g.capacity || !g.instances) {
+                g.capacity = std::max<UINT>(g.count + 256, 1024);
+                D3D11_BUFFER_DESC bd{UINT(g.capacity * sizeof(CloudInstance)), D3D11_USAGE_DYNAMIC, D3D11_BIND_VERTEX_BUFFER, D3D11_CPU_ACCESS_WRITE};
+                g.instances.Reset();
+                dev_->CreateBuffer(&bd, nullptr, &g.instances);
+            }
+            D3D11_MAPPED_SUBRESOURCE ms;
+            if (g.count && SUCCEEDED(ctx_->Map(g.instances.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                std::memcpy(ms.pData, inst.data(), inst.size() * sizeof(CloudInstance));
+                ctx_->Unmap(g.instances.Get(), 0);
             }
         }
         if (!g.count || !g.instances) continue;
@@ -1020,6 +1034,9 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     pass_sky_cube(env, time_s);
 
     float aspect = float(width) / float(height);
+    frame_dt_ = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);
+    last_time_ = time_s;
+    cloud_dt_ = frame_dt_;
     pass_shadows(scene, cam, aspect, -env.to_sun(), time_s);
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
@@ -1043,8 +1060,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
 
     ID3D11ShaderResourceView* nulls[16] = {};
     ctx_->PSSetShaderResources(0, 16, nulls);
-    float dt = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);
-    last_time_ = time_s;
+    float dt = frame_dt_;
     pass_tonemap(env, dt);
     if (view == View::Final) pass_to_screen();
     pass_display(); // Final: copies final_ with alpha = 1 for the viewport

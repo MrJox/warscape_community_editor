@@ -124,19 +124,69 @@ std::vector<CloudPlane> read_cloud_planes(const XmlDoc& doc) {
     return planes;
 }
 
-std::vector<CloudInstance> generate_clouds(const CloudPlane& p, uint32_t seed) {
-    std::vector<CloudInstance> out;
-    const PlaneConstants k = constants(p);
-    const float cap = std::acos(-k.centre / k.radius);
-    const float cell_angle = 2.0f * cap / float(p.grid_size);
-    const float cell_m = cell_angle * k.radius;
-    const int cells = p.grid_size + 2;
-    const float rot_range = p.rotation * 3.14159265f;
-    Rand rng{seed};
+float CloudField::Rng::next() {
+    state = state * 0x343fdu + 0x269ec3u;
+    return float(state >> 16) * (1.0f / 65535.0f);
+}
 
+namespace {
+struct Geometry {
+    float cell_angle, cell_m;
+    int cells;
+};
+Geometry geometry(const CloudPlane& p) {
+    PlaneConstants k = constants(p);
+    float cap = std::acos(-k.centre / k.radius);
+    float a = 2.0f * cap / float(p.grid_size);
+    return {a, a * k.radius, p.grid_size + 2};
+}
+} // namespace
+
+void CloudField::reset(const CloudPlane& p, uint32_t seed) {
+    inst_.clear();
+    speed_.clear();
+    timer_ = 0;
+    rng_.state = seed;
+    const int cells = p.grid_size + 2;
     for (int x = 0; x < cells; ++x)
-        for (int y = 0; y < cells; ++y) {
-            if (!(p.density >= rng.next())) continue;
+        for (int y = 0; y < cells; ++y)
+            if (p.density >= rng_.next()) spawn(p, x, y);
+}
+
+void CloudField::update(const CloudPlane& p, float dt) {
+    if (!(p.velocity * 0.1f > 0.001f) || dt <= 0) return;
+    const Geometry g = geometry(p);
+    const float limit = g.cells * 0.5f * g.cell_angle;
+    for (size_t i = 0; i < inst_.size();) {
+        inst_[i].t2[0] += speed_[i] * dt;
+        if (inst_[i].t2[0] > limit) {
+            inst_[i] = inst_.back();
+            speed_[i] = speed_.back();
+            inst_.pop_back();
+            speed_.pop_back();
+        } else {
+            ++i;
+        }
+    }
+    timer_ += dt;
+    const float interval = g.cell_angle / p.velocity;
+    while (timer_ > interval) {
+        timer_ -= interval;
+        for (int y = 0; y < g.cells; ++y)
+            if (p.density >= rng_.next()) spawn(p, 0, y);
+    }
+}
+
+void CloudField::spawn(const CloudPlane& p, int x, int y) {
+    const PlaneConstants k = constants(p);
+    const Geometry geo = geometry(p);
+    const float cell_angle = geo.cell_angle, cell_m = geo.cell_m;
+    const int cells = geo.cells;
+    const float rot_range = p.rotation * 3.14159265f;
+    auto& rng = rng_;
+    std::vector<CloudInstance>& out = inst_;
+    {
+        {
             // --- fn 0x18f0bf0 ---
             float jx = 0, jy = 0;
             if (k.jitter > 0) {
@@ -146,9 +196,12 @@ std::vector<CloudInstance> generate_clouds(const CloudPlane& p, uint32_t seed) {
             float cloud_rot = rng.next() * rot_range * 2.0f - rot_range;
             float ax = (float(x) + jx - cells * 0.5f + 0.5f) * cell_angle;
             float ay = (float(y) + jy - cells * 0.5f + 0.5f) * cell_angle;
-            if (p.velocity * 0.1f > 0.001f) rng.next(); // per-cloud speed jitter (drift not simulated yet)
-            const CloudTemplate* t = choose(p, rng);
-            if (!t) continue;
+            float speed = 0;
+            if (p.velocity * 0.1f > 0.001f) speed = (1.0f + rng.next() * 65535.0f * 7.629511e-7f - 0.025f) * p.velocity; // 1 +- 2.5%
+            Rand pick{rng.state};
+            const CloudTemplate* t = choose(p, pick);
+            rng.state = pick.state;
+            if (!t) return;
             float cloud_radius = 0;
             for (auto& e : t->elements) {
                 if (!e.enabled) continue;
@@ -178,9 +231,16 @@ std::vector<CloudInstance> generate_clouds(const CloudPlane& p, uint32_t seed) {
                 ci.t5[0] = float(map);
                 ci.t5[1] = cloud_radius;
                 out.push_back(ci);
+                speed_.push_back(speed);
             }
         }
-    return out;
+    }
+}
+
+std::vector<CloudInstance> generate_clouds(const CloudPlane& p, uint32_t seed) {
+    CloudField f;
+    f.reset(p, seed);
+    return f.instances();
 }
 
 std::string cloud_texture(const CloudPlane& p, int map) {
