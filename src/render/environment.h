@@ -4,9 +4,11 @@
 // Reading: every value comes from the XmlDoc, so edits in the inspector show up on the next frame.
 // Mapping: apply_environment() writes the cbuffers. Every transform that is not yet verified against
 // the game is marked ASSUMPTION here and listed in docs/re/environment_to_shader.md.
+#include "render/clouds.h"
 #include "render/math.h"
 
 #include <string>
+#include <vector>
 
 namespace we {
 
@@ -57,6 +59,9 @@ struct EnvironmentParams {
     // SUN_MESH
     float sun_scale = 0.1f, sun_flare = 1.0f;
     std::string sun_texture = "sundisk1.dds";
+
+    // SKY_DOME > CLOUD_PLANE_MESH
+    std::vector<CloudPlane> cloud_planes;
 
     // WEATHER
     float snowing_intensity = 0;

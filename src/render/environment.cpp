@@ -172,6 +172,8 @@ EnvironmentParams read_environment(const XmlDoc& doc) {
     if (EnvValue v = dof.value("DOF_focus"); v.kind == ValueKind::Variance) { e.dof_focus[0] = v.f[0]; e.dof_focus[1] = v.f[1]; }
     dof.f("DOF_blur_size", e.dof_blur_size);
 
+    e.cloud_planes = read_cloud_planes(doc);
+
     Reader w{doc, find_element(doc, "WEATHER")};
     w.f("snowing_intensity", e.snowing_intensity);
     w.s("definition_name", e.weather_definition);

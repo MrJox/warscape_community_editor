@@ -75,3 +75,16 @@ Open:
   through vtable 0x1c99868. Values are multiples of 0.025.
 - Ambient cube for custom = true: needs a second dump with such a file (formula currently assumed).
 - S-curve LUT fill code; shadow cascades (dump: 4 splits, 2048 atlas, fade 0.1/0.296), clouds, sun, SSAO.
+
+## Clouds (2026-10-07)
+
+Rebuilt from the DLL plus the live objects in the memory dump (`src/render/clouds.cpp`):
+- init fn 0x18e5b10: every cell of a (grid_size+2)^2 grid spawns a cloud when `rand <= cloud_density`.
+- spawn fn 0x18f0bf0: jitter, cloud rotation (+-cloud_rotation*pi), template, per-element sprites (4 rands each),
+  element offset * cell size, angular size min(scale, 4) * cell angle, texture_row/column/index 0 = random.
+- template fn 0x1905f60: first CLOUD with this_cloud_only, else weighted by probability.
+- sprite fn 0x18d82a0 stores the instance data cloud_plane.hlsl reads (TEXCOORD1..5), checked on 741 live sprites.
+- Dome constants per plane type (dump): near radius 608000 / centre -592800 / jitter 0.5 / atlas 2x2;
+  far 972800 / -912000 / 0 / 1x2. Cell angle = 2*acos(-centre/radius)/grid_size (both planes).
+- PS constants (dump): transmitted/reflected raw, shadow colour pow 2.2, horizon_alpha_start 0.7 -> 0.97 (assumed 1-(1-x)/10).
+Open: drift with cloud_velocity (update body not decoded), g_wind_alignment, blend state (assumed alpha).

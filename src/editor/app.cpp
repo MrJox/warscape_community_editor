@@ -91,6 +91,7 @@ void App::open_path(const std::string& path) {
 std::string App::diagnostics() const {
     std::string d = "status: " + status_ + "\n";
     d += "scene objects: " + std::to_string(scene_ ? scene_->objects().size() : 0) + "\n";
+    if (renderer_) d += "cloud sprites: " + std::to_string(renderer_->cloud_sprites()) + "\n";
     if (scene_)
         for (auto& e : scene_->errors()) d += "scene error: " + e + "\n";
     if (textures_)
@@ -159,6 +160,7 @@ void App::draw_viewport() {
     float cp = std::cos(cam_pitch_), sp = std::sin(cam_pitch_);
     camera_.target = cam_target_;
     camera_.eye = cam_target_ + float3{std::sin(cam_yaw_) * cp, sp, -std::cos(cam_yaw_) * cp} * cam_dist_;
+    camera_.eye.y = std::max(camera_.eye.y, 2.0f); // stay above the ground plane when looking up
     try {
         renderer_->render(scene_.get(), camera_, params, w, h, float(ImGui::GetTime() - start_time_));
     } catch (const std::exception& e) {
@@ -174,7 +176,7 @@ void App::draw_viewport() {
     if (ImGui::IsItemActive()) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             cam_yaw_ += io.MouseDelta.x * 0.006f;
-            cam_pitch_ = std::clamp(cam_pitch_ + io.MouseDelta.y * 0.006f, -0.2f, 1.5f);
+            cam_pitch_ = std::clamp(cam_pitch_ + io.MouseDelta.y * 0.006f, -1.2f, 1.5f);
         }
         if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
             float3 right{std::cos(cam_yaw_), 0, std::sin(cam_yaw_)};

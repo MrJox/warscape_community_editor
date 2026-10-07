@@ -38,6 +38,8 @@ const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
 const char* kSunVS = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
 const char* kSunPS = "dx11_sm_3_0_sun.hlsl_ps_ps30_main";
+const char* kCloudVS = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
+const char* kCloudPS = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 constexpr float kSunDistance = 7600.0f; // memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600
 const char* kShadowPS = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
@@ -161,6 +163,13 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         D3D11_BUFFER_DESC sbd{sizeof v, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
         D3D11_SUBRESOURCE_DATA ssd{v};
         dev_->CreateBuffer(&sbd, &ssd, &sun_vb_);
+    }
+
+    {   // Cloud sprite quad: POSITION xy in [-1, 1] (scaled by the sprite's angular size), TEXCOORD0 uv.
+        float q[6][4] = {{-1, -1, 0, 1}, {-1, 1, 0, 0}, {1, 1, 1, 0}, {-1, -1, 0, 1}, {1, 1, 1, 0}, {1, -1, 1, 1}};
+        D3D11_BUFFER_DESC qbd{sizeof q, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+        D3D11_SUBRESOURCE_DATA qsd{q};
+        dev_->CreateBuffer(&qbd, &qsd, &cloud_quad_vb_);
     }
 
     // Sky cubemap (output of ps30_skygen).
@@ -757,6 +766,98 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     // Back to the main camera for the following passes (the sun pass only touched sun_VS).
 }
 
+ID3D11ShaderResourceView* Renderer::sky_texture(const std::string& path) {
+    auto it = sky_textures_.find(path);
+    if (it != sky_textures_.end()) return it->second.Get();
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    try {
+        srv = load_dds(dev_, vfs_.read(path), true).srv; // ASSUMPTION: cloud atlases sampled as sRGB like other colour maps
+    } catch (const std::exception& e) {
+        error(path + ": " + e.what());
+    }
+    sky_textures_[path] = srv;
+    return srv.Get();
+}
+
+void Renderer::pass_clouds(const EnvironmentParams& env) {
+    const GameShader* vs = shader(kCloudVS);
+    const GameShader* ps = shader(kCloudPS);
+    if (!vs || !ps || !clouds) return;
+    cloud_gpu_.resize(env.cloud_planes.size());
+    std::vector<int> order;
+    for (int i = 0; i < int(env.cloud_planes.size()); ++i)
+        if (env.cloud_planes[i].far_plane) order.insert(order.begin(), i); // far plane first
+        else order.push_back(i);
+    std::vector<D3D11_INPUT_ELEMENT_DESC> el = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"TEXCOORD", 5, DXGI_FORMAT_R32G32_FLOAT, 1, 64, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+    };
+    ctx_->IASetInputLayout(lib_->layout(*vs, "clouds", el));
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
+    ctx_->OMSetDepthStencilState(ds_sky_.Get(), 0);
+    ctx_->OMSetBlendState(bs_alpha_.Get(), nullptr, 0xffffffff);
+    ctx_->RSSetState(rs_none_.Get());
+    const float3 to_sun = env.to_sun();
+    for (int i : order) {
+        const CloudPlane& p = env.cloud_planes[i];
+        CloudGpu& g = cloud_gpu_[i];
+        // Regenerate when anything that affects spawning changes.
+        std::string sig = std::to_string(cloud_seed) + "|" + std::to_string(p.grid_size) + "|" + std::to_string(p.density) + "|" +
+                          std::to_string(p.height_variation) + "|" + std::to_string(p.rotation) + "|" + std::to_string(p.far_plane);
+        for (auto& c : p.clouds) {
+            sig += "|" + std::to_string(c.this_cloud_only) + std::to_string(c.probability);
+            for (auto& e : c.elements)
+                sig += ";" + std::to_string(e.enabled) + std::to_string(e.scale) + std::to_string(e.offset[0]) + std::to_string(e.offset[1]) +
+                       std::to_string(e.offset[2]) + std::to_string(e.texture_index) + std::to_string(e.texture_row) + std::to_string(e.texture_column);
+        }
+        if (sig != g.signature) {
+            g.signature = sig;
+            g.instances.Reset();
+            std::vector<CloudInstance> inst = generate_clouds(p, cloud_seed * 7919u + uint32_t(i));
+            g.count = UINT(inst.size());
+            if (!inst.empty()) {
+                D3D11_BUFFER_DESC bd{UINT(inst.size() * sizeof(CloudInstance)), D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+                D3D11_SUBRESOURCE_DATA sd{inst.data()};
+                dev_->CreateBuffer(&bd, &sd, &g.instances);
+            }
+        }
+        if (!g.count || !g.instances) continue;
+
+        // cloud_plane_VS / cloud_plane_PS as the game fills them (memory dump): colours raw except the shadow
+        // colour (pow 2.2); horizon_alpha_start remapped (0.7 -> 0.97; ASSUMPTION 1 - (1 - x) / 10).
+        cbs_.set_f("cloud_plane_VS", "g_wind_alignment", {0.0f}); // ASSUMPTION: wind direction angle (dump: -1.076)
+        cbs_.set_f("cloud_plane_VS", "g_cloud_shadow_gradient", {p.shadow_gradient});
+        cbs_.set_f("cloud_plane_VS", "g_height_scale", {p.height_scale});
+        cbs_.set_f("cloud_plane_PS", "g_sun_direction", {to_sun.x, to_sun.y, to_sun.z});
+        cbs_.set_f("cloud_plane_PS", "g_sun_transmitted_colour", {p.transmitted[0], p.transmitted[1], p.transmitted[2]});
+        cbs_.set_f("cloud_plane_PS", "g_sun_reflected_colour", {p.reflected[0], p.reflected[1], p.reflected[2]});
+        cbs_.set_f("cloud_plane_PS", "g_transmit_falloff", {p.transmit_falloff});
+        cbs_.set_f("cloud_plane_PS", "g_flatten_factor", {p.flatten});
+        float3 sh = colour_to_linear({p.shadow[0], p.shadow[1], p.shadow[2]});
+        cbs_.set_f("cloud_plane_PS", "g_cloud_shadow_colour", {sh.x, sh.y, sh.z});
+        cbs_.set_f("cloud_plane_PS", "g_cloud_shadow_falloff", {p.shadow_falloff});
+        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_start", {1.0f - (1.0f - p.horizon_alpha_start) * 0.1f});
+        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_end", {p.horizon_alpha_end});
+        cbs_.upload(dev_, ctx_);
+        bind_shader(ctx_, *vs, cbs_);
+        bind_shader(ctx_, *ps, cbs_);
+        bind_srv(ctx_, *ps, "s_diffuse_cloud_maps_0", sky_texture(cloud_texture(p, 0)));
+        bind_srv(ctx_, *ps, "s_diffuse_cloud_maps_1", sky_texture(cloud_texture(p, 1)));
+        for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+        ID3D11Buffer* vbs[2] = {cloud_quad_vb_.Get(), g.instances.Get()};
+        UINT strides[2] = {16, sizeof(CloudInstance)}, offs[2] = {0, 0};
+        ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
+        ctx_->DrawInstanced(6, g.count, 0, 0);
+    }
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+}
+
 void Renderer::pass_fog() {
     const GameShader* ps = shader(kFogPS);
     if (!ps || !fog) return;
@@ -811,7 +912,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
-                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS})
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS, kCloudVS, kCloudPS})
         shader(s);
     apply_environment(env, cbs_);
 
@@ -832,6 +933,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
     pass_sky_forward();
     pass_sun(env, view_m, proj);
+    pass_clouds(env);
     pass_directional_light();
     pass_fog();
 

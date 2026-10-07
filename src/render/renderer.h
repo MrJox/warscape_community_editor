@@ -8,6 +8,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,9 @@ public:
     float debug_points[4] = {}; int debug_maps = 0;
     bool fog = true;
     bool shadows = true;
+    bool clouds = true;
+    uint32_t cloud_seed = 1;
+    size_t cloud_sprites() const { size_t n = 0; for (auto& p : cloud_gpu_) n += p.count; return n; }
     float luma_black() const { return luma_black_; }
     float luma_white() const { return luma_white_; }
 
@@ -57,6 +61,7 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
+    void pass_clouds(const EnvironmentParams& env);
     void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
     void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display();
@@ -120,7 +125,15 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_back_, rs_none_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_, bs_alpha_, bs_additive_alpha_;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> sun_vb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> sun_vb_, cloud_quad_vb_;
+    struct CloudGpu {
+        std::string signature;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> instances;
+        UINT count = 0;
+    };
+    std::vector<CloudGpu> cloud_gpu_;
+    std::map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> sky_textures_;
+    ID3D11ShaderResourceView* sky_texture(const std::string& path);
     std::string sun_texture_path_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sun_srv_;
     bool fog_enabled_ = true;
