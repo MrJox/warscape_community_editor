@@ -26,11 +26,12 @@ struct Camera {
 
 class Renderer {
 public:
-    enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped };
+    enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped, AO };
     float debug_points[4] = {}; int debug_maps = 0;
     bool fog = true;
     bool shadows = true;
     bool clouds = true;
+    bool ssao = true;
     uint32_t cloud_seed = 1;
     size_t cloud_sprites() const { size_t n = 0; for (auto& p : cloud_gpu_) n += p.count; return n; }
     float luma_black() const { return luma_black_; }
@@ -61,6 +62,7 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
+    void pass_ssao(const Camera& cam);
     void pass_clouds(const EnvironmentParams& env);
     void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
     void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
@@ -81,7 +83,10 @@ private:
 
     int w_ = 0, h_ = 0;
     Target gb_[5];   // gbuffer channels 1..4 + per-instance id
-    Target hdr_, out_, final_; // final_: hdr_to_screen output (its alpha is the refraction mask)
+    Target hdr_, out_, final_, ao_, ao_tmp_, ao_blur_; // ao_: full-res resolve; ao_tmp_/ao_blur_: half-res blur
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> jitter_srv_;
+    ID3D11ShaderResourceView* ao_result_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_point_; // final_: hdr_to_screen output (its alpha is the refraction mask)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> out_srv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> depth_tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
@@ -102,7 +107,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> shadow_depth_tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> shadow_dsv_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_shadow_;
-    Microsoft::WRL::ComPtr<ID3D11VertexShader> fs_vs_;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> fs_vs_, fs_vs2_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> display_ps_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> display_cb_;
 

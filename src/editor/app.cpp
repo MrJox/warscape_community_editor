@@ -129,7 +129,7 @@ void App::draw_viewport() {
         return;
     }
     // Toolbar
-    const char* views[] = {"Final", "HDR raw", "Albedo", "Normal", "Specular", "Depth", "Sky cube", "Bloom", "Quarter", "Tone mapped"};
+    const char* views[] = {"Final", "HDR raw", "Albedo", "Normal", "Specular", "Depth", "Sky cube", "Bloom", "Quarter", "Tone mapped", "AO"};
     int v = int(renderer_->view);
     ImGui::SetNextItemWidth(170);
     if (ImGui::Combo("##view", &v, views, IM_ARRAYSIZE(views))) renderer_->view = Renderer::View(v);

@@ -6,6 +6,7 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -38,6 +39,9 @@ const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
 const char* kSunVS = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
 const char* kSunPS = "dx11_sm_3_0_sun.hlsl_ps_ps30_main";
+const char* kSsaoPS = "dx11_sm_3_0_ssao.hlsl_ps_pixel_resolve";
+const char* kSsaoBlurXPS = "dx11_sm_3_0_ssao.hlsl_ps_pixel_blur_x";
+const char* kSsaoBlurYPS = "dx11_sm_3_0_ssao.hlsl_ps_pixel_blur_y";
 const char* kCloudVS = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
 const char* kCloudPS = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 constexpr float kSunDistance = 7600.0f; // memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600
@@ -49,6 +53,15 @@ struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 VSOut fs_vs(uint id : SV_VertexID) {
     VSOut o;
     o.uv = float2((id << 1) & 2, id & 2);
+    o.pos = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    return o;
+}
+// Same, with a second texcoord packed into the same register (ssao.hlsl pixel_resolve expects TEXCOORD1.zw).
+struct VSOut2 { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 uv1 : TEXCOORD1; };
+VSOut2 fs_vs2(uint id : SV_VertexID) {
+    VSOut2 o;
+    o.uv = float2((id << 1) & 2, id & 2);
+    o.uv1 = o.uv;
     o.pos = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
 }
@@ -100,6 +113,8 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
 
     auto vs = compile("fs_vs", "vs_5_0");
     dev_->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &fs_vs_);
+    auto vs2 = compile("fs_vs2", "vs_5_0");
+    dev_->CreateVertexShader(vs2->GetBufferPointer(), vs2->GetBufferSize(), nullptr, &fs_vs2_);
     auto ps = compile("display_ps", "ps_5_0");
     dev_->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &display_ps_);
     D3D11_BUFFER_DESC bd{16, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER};
@@ -170,6 +185,30 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         D3D11_BUFFER_DESC qbd{sizeof q, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
         D3D11_SUBRESOURCE_DATA qsd{q};
         dev_->CreateBuffer(&qbd, &qsd, &cloud_quad_vb_);
+    }
+
+    {   // HBAO jitter texture, 256^2 (g_JitterResolution in the dump). UNORM, expanded with *2-1 by the shader:
+        // x, y = direction rotation (cos, sin of 2*pi*r / num_dir), z = step jitter.
+        // ASSUMPTION: content follows NVIDIA's HBAO sample, which this shader mirrors (same constant names).
+        std::vector<uint8_t> px(256 * 256 * 4);
+        uint32_t jseed = 12345;
+        auto rnd = [&jseed] { jseed = jseed * 1664525u + 1013904223u; return float(jseed >> 8) / float(1 << 24); };
+        for (int i = 0; i < 256 * 256; ++i) {
+            float a = 6.2831853f * rnd() / 5.0f, j = rnd();
+            float v[3] = {std::cos(a), std::sin(a), j};
+            for (int c = 0; c < 3; ++c) px[i * 4 + c] = uint8_t(std::lround((v[c] * 0.5f + 0.5f) * 255.0f));
+            px[i * 4 + 3] = 255;
+        }
+        D3D11_TEXTURE2D_DESC td{256, 256, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE};
+        D3D11_SUBRESOURCE_DATA sd{px.data(), 256 * 4};
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> t;
+        dev_->CreateTexture2D(&td, &sd, &t);
+        dev_->CreateShaderResourceView(t.Get(), nullptr, &jitter_srv_);
+        D3D11_SAMPLER_DESC sm{};
+        sm.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+        sm.AddressU = sm.AddressV = sm.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sm.MaxLOD = D3D11_FLOAT32_MAX;
+        dev_->CreateSamplerState(&sm, &s_wrap_point_);
     }
 
     // Sky cubemap (output of ps30_skygen).
@@ -308,10 +347,13 @@ void Renderer::resize(int w, int h) {
     gb_[1] = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM); // sqrt(albedo), .w mask
     gb_[2] = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM); // specular colour, .w material id / 255
     gb_[3] = make_target(w, h, DXGI_FORMAT_R32_FLOAT);      // z / w
-    gb_[4] = make_target(w, h, DXGI_FORMAT_R32_FLOAT);      // per-instance value
+    gb_[4] = make_target(w, h, DXGI_FORMAT_R32_UINT);       // per-instance value (uint output, debug layer)
     hdr_ = make_target(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
     out_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
     final_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
+    ao_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
+    ao_tmp_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R8G8B8A8_UNORM); // blur at half resolution (dump)
+    ao_blur_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R8G8B8A8_UNORM);
     out_srv_ = out_.srv;
 
     auto sized = [&](int tw, int th, DXGI_FORMAT f) {
@@ -480,7 +522,7 @@ void Renderer::pass_directional_light() {
     cbs_.set_m("directional_light_PS", "g_overlay_view_projection", ident.data());
     cbs_.upload(dev_, ctx_);
     for (int i = 0; i < 4; ++i) bind_srv(ctx_, *ps, "gbuffer_channel_" + std::to_string(i + 1) + "_sampler", gb_[i].srv.Get());
-    bind_srv(ctx_, *ps, "s_ssao", white_srv_.Get());
+    bind_srv(ctx_, *ps, "s_ssao", ao_result_ ? ao_result_ : white_srv_.Get());
     bind_srv(ctx_, *ps, "s_environment", sky_cube_srv_.Get());
     bind_srv(ctx_, *ps, "s_overlay", black_srv_.Get());
     bind_srv(ctx_, *ps, "s_shroud", white_srv_.Get());
@@ -858,6 +900,64 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 }
 
+void Renderer::pass_ssao(const Camera& cam) {
+    const GameShader* res = shader(kSsaoPS);
+    const GameShader* bx = shader(kSsaoBlurXPS);
+    const GameShader* by = shader(kSsaoBlurYPS);
+    const float white[4] = {1, 1, 1, 1};
+    if (!res || !bx || !by || !ssao) {
+        ctx_->ClearRenderTargetView(ao_.rtv.Get(), white);
+        ao_result_ = ao_.srv.Get();
+        return;
+    }
+    // ssao_resolve_PS / ssao_blur_PS as in the memory dump (HBAO: 5 directions x 5 steps).
+    cbs_.set_f("ssao_resolve_PS", "g_R", {1.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_ExternalAngleBias", {0.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_Attenuation", {0.78f});
+    cbs_.set_f("ssao_resolve_PS", "g_ExternalContrast", {1.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_AOResolution", {float(w_), float(h_)});
+    cbs_.set_f("ssao_resolve_PS", "g_VerticalFieldOfView", {cam.fov_y});
+    cbs_.set_f("ssao_resolve_PS", "g_Strength", {3.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_MinStrength", {0.17f});
+    cbs_.set_f("ssao_resolve_PS", "g_JitterResolution", {256.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_NumDir", {5.0f});
+    cbs_.set_f("ssao_resolve_PS", "g_NumSteps", {5.0f});
+    cbs_.set_f("ssao_blur_PS", "g_BlurRadius", {4.0f});
+    cbs_.set_f("ssao_blur_PS", "g_BlurSharpness", {3.0f});
+    cbs_.set_f("ssao_blur_PS", "g_BlurResolution", {w_ * 0.5f, h_ * 0.5f}); // dump: half the screen size
+    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+    ctx_->RSSetState(rs_none_.Get());
+    auto run = [&](const GameShader& ps, ID3D11ShaderResourceView* src, Target& dst, int tw, int th) {
+        ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+        bind_shader(ctx_, ps, cbs_);
+        for (auto& [n, slot] : ps.samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_point_.GetAddressOf());
+        bind_sampler(ctx_, ps, "jitter_texture_sampler", s_wrap_point_.Get());
+        bind_sampler(ctx_, ps, "resolve_target_sampler", s_clamp_linear_.Get());
+        bind_sampler(ctx_, ps, "blur_x_target_sampler", s_clamp_linear_.Get()); // blur_y's name for its input
+        bind_srv(ctx_, ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
+        bind_srv(ctx_, ps, "jitter_texture_sampler", jitter_srv_.Get());
+        if (src) {
+            bind_srv(ctx_, ps, "resolve_target_sampler", src);
+            bind_srv(ctx_, ps, "blur_x_target_sampler", src);
+        }
+        ctx_->OMSetRenderTargets(1, dst.rtv.GetAddressOf(), nullptr);
+        D3D11_VIEWPORT vp{0, 0, float(tw), float(th), 0, 1};
+        ctx_->RSSetViewports(1, &vp);
+        cbs_.upload(dev_, ctx_);
+        ctx_->IASetInputLayout(nullptr);
+        ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ctx_->VSSetShader(fs_vs2_.Get(), nullptr, 0);
+        bind_shader(ctx_, ps, cbs_);
+        ctx_->Draw(3, 0);
+        ID3D11ShaderResourceView* nulls[4] = {};
+        ctx_->PSSetShaderResources(0, 4, nulls);
+    };
+    run(*res, nullptr, ao_, w_, h_);
+    run(*bx, ao_.srv.Get(), ao_tmp_, w_ / 2, h_ / 2);
+    run(*by, ao_tmp_.srv.Get(), ao_blur_, w_ / 2, h_ / 2);
+    ao_result_ = ao_blur_.srv.Get();
+}
+
 void Renderer::pass_fog() {
     const GameShader* ps = shader(kFogPS);
     if (!ps || !fog) return;
@@ -894,6 +994,7 @@ void Renderer::pass_display() {
     case View::Bloom: dc.mode = 1; src = bloom_a_.t.srv.Get(); break;
     case View::Quarter: dc.mode = 1; src = quarter_.t.srv.Get(); break;
     case View::ToneMapped: dc.mode = 1; src = ldr_.t.srv.Get(); break;
+    case View::AO: dc.mode = 3; src = ao_result_ ? ao_result_ : ao_.srv.Get(); break;
     }
     ctx_->UpdateSubresource(display_cb_.Get(), 0, nullptr, &dc, 0, 0);
     ctx_->IASetInputLayout(nullptr);
@@ -912,7 +1013,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
-                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS, kCloudVS, kCloudPS})
+                          kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS, kCloudVS, kCloudPS, kSsaoPS, kSsaoBlurXPS, kSsaoBlurYPS})
         shader(s);
     apply_environment(env, cbs_);
 
@@ -929,6 +1030,9 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 
     pass_gbuffer(scene);
+    pass_ssao(cam);
+    D3D11_VIEWPORT main_vp{0, 0, float(width), float(height), 0, 1};
+    ctx_->RSSetViewports(1, &main_vp);
     const float clear[4] = {0, 0, 0, 0};
     ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
     pass_sky_forward();

@@ -8,6 +8,8 @@
 #include "imgui_impl_win32.h"
 
 #include <d3d11.h>
+#include <d3d11sdklayers.h>
+#include <vector>
 #include <windows.h>
 #include <dbghelp.h>
 #include <shellapi.h>
@@ -105,6 +107,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 #ifdef _DEBUG
     flags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
+    if (const char* d = std::getenv("AWE_D3D_DEBUG"); d && *d == '1') flags |= D3D11_CREATE_DEVICE_DEBUG; // needs Windows "Graphics Tools"
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
     if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &sd, &g_swap, &g_device, nullptr, &g_ctx))) {
         MessageBoxW(hwnd, L"Could not create a Direct3D 11 device.", L"Attila Weather Editor", MB_ICONERROR);
@@ -180,6 +183,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
             if (FILE* t = _wfopen((shot_path + L".txt").c_str(), L"w")) {
                 fputs(app.diagnostics().c_str(), t);
+                Microsoft::WRL::ComPtr<ID3D11InfoQueue> iq;
+                if (SUCCEEDED(g_device.As(&iq))) {
+                    for (UINT64 k = 0, n = iq->GetNumStoredMessages(); k < n && k < 5000; ++k) {
+                        SIZE_T len = 0;
+                        iq->GetMessage(k, nullptr, &len);
+                        std::vector<char> buf(len);
+                        auto* qmsg = reinterpret_cast<D3D11_MESSAGE*>(buf.data());
+                        if (SUCCEEDED(iq->GetMessage(k, qmsg, &len)))
+                            fprintf(t, "d3d: %.*s\n", int(qmsg->DescriptionByteLength), qmsg->pDescription);
+                    }
+                }
                 fclose(t);
             }
             done = true;
