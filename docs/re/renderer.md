@@ -96,3 +96,27 @@ Rebuilt from the DLL plus the live objects in the memory dump (`src/render/cloud
   far 972800 / -912000 / 0 / 1x2. Cell angle = 2*acos(-centre/radius)/grid_size (both planes).
 - PS constants (dump): transmitted/reflected raw, shadow colour pow 2.2, horizon_alpha_start 0.7 -> 0.97 (assumed 1-(1-x)/10).
 Open: drift with cloud_velocity (update body not decoded), g_wind_alignment, blend state (assumed alpha).
+
+## Open-item investigation (2026-10-07, second pass)
+
+S-curve (tone mapper LUT), not yet located:
+- Two LUT textures: `HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture` (fn 0x178c710, view +0x80, dirty byte +0x84) and
+  `HDR_DYNAMIC_TONE_MAP_VIEW SCurve Texture` (fn 0x17659b0, view +0x88); both 256x1, engine format 0x1e.
+  ps_basic_tone_mapper (the variant the game uses) samples it per channel at (luma-normalised colour, 0.5).
+- HDR block (one per environment node; rain dump: scene+0x1688, a blended copy at scene+0x20b8): vtable 0x1c9aea8;
+  +0x2c absolute_black, +0x30 max_black, +0x34 min_white, +0x38 absolute_white, +0x3c auto_exposure_speed,
+  +0x40/+0x44 low/high red, +0x48/+0x4c green, +0x50/+0x54 blue, +0x58 lock_rgb_relative_tones (byte).
+  Debug sliders (fn 0x1755760) bind these, bias range -5..5.
+- Defaults (fn 0x177cd80, "Set RGB Tone Values to Defaults"): black 0.01, max black 2, min white 6, absolute white 40,
+  speed 0.02, low 0.33, high 0.66 on every channel, lock true.
+- Ruled out: Perlin bias (no ln 0.5 constants), GPU generation (no generator shader), the float3->texture path
+  (fn 0x177cc70/0x18d7cb0, used only by the CPU environment cube). The LUT bytes are not in either dump.
+
+Ambient (use_custom_ambient_cube_colours = false), not yet located:
+- set_ambient fn 0x178ab70 <- fn 0x177cfe0 (copies 6 float3 from a struct at +0x18..+0x5c) <- fn 0x177d090 =
+  vtable 0x1c997d0 slot +0x98 (35 call sites in 0x1700000-0x1960000; none tests the custom flag directly).
+- fn 0x18f0a70 averages the six faces of the CPU-generated environment cube (fn 0x18d7d20 per face: sky through
+  fn 0x18e3700-style factors + sun from LIGHTING +0x38) into one colour (* constant at 0x1b2b7b4). Candidate input.
+
+Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_scan.py` (4-byte patterns) miss them;
+`tools/re/bias_scan.py` disassembles functions and handles them.

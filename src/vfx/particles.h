@@ -54,6 +54,13 @@ public:
     float wind_azimuth_deg = 0; // wind_dir_random in the game: the direction is per battle
     const WeatherVfx& effect() const { return effect_; }
     uint32_t alive() const { return alive_; }
+    // Upper bound of live particles of one emitter (same estimate as alive()).
+    uint32_t alive(size_t emitter) const {
+        uint32_t n = 0;
+        if (emitter < state_.size())
+            for (auto& b : state_[emitter].deaths) n += b.second;
+        return n;
+    }
     uint32_t capacity() const { return kWidth * kWidth; }
     const std::vector<std::string>& errors() const { return errors_; }
     // Distortion buffer of this frame (heat haze, lens drops), or nullptr when no such emitter drew.

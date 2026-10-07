@@ -96,7 +96,10 @@ std::string App::diagnostics() const {
         const ParticleSystem& p = *renderer_->particles();
         d += "weather vfx: '" + p.effect().definition.name + "' -> " + p.effect().definition.vfx1 + ", " +
              std::to_string(p.effect().emitters.size()) + " emitters, " + std::to_string(p.alive()) + " particles\n";
-        for (auto& e : p.effect().emitters) d += "  emitter: " + e.library + " / " + e.instance + " / " + e.name + "\n";
+        for (size_t i = 0; i < p.effect().emitters.size(); ++i) {
+            auto& e = p.effect().emitters[i];
+            d += "  emitter: " + e.library + " / " + e.instance + " / " + e.name + ": " + std::to_string(p.alive(i)) + " particles\n";
+        }
         for (auto& n : p.effect().notes) d += "  vfx note: " + n + "\n";
         for (auto& e : p.errors()) d += "  vfx error: " + e + "\n";
     }

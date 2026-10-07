@@ -140,3 +140,12 @@ buffer cleared to (127, 127)/255: output rg = normal.xy * 0.5 + 0.5, a = particl
 usually empty, the normal map (behaviour_mask.z, bit 0x40000) drives it. The composite is the ENABLE_DISTORTION build of
 hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified rows: lens water drops 391/392
 (snow dump). The editor saves the buffer next to `--shot` images as `<shot>.distortion.png`.
+
+## Emission rate (open, 2026-10-07)
+
+Lens snowflakes (`snowflakes_loop`): EmissionRateCurve emission_min = single key ~0 (-0.0067), emission_max = 29.8.
+The editor's random lerp between the curves gives ~15/s per reference (~110 alive with 2 references); the game shows
+~2 on screen from a high camera. Rain (min == max) and snow_BTL (960/999) are insensitive to this, which is why their
+counts match. Hypothesis: min/max are blended by a runtime factor (camera height or pitch?) rather than random.
+The emitter descriptor stores the curve pair at +0x2b4/+0x2c0 (fn 0x17c0650); the per-frame emission code is not found.
+Per-emitter alive counts are in the `--shot` diagnostics.
