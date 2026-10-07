@@ -37,6 +37,11 @@ public:
     uint32_t cloud_seed = 1;
     size_t cloud_sprites() const { size_t n = 0; for (auto& p : cloud_gpu_) n += p.count; return n; }
     float luma_black() const { return luma_black_; }
+    std::string engine_ambient_faces() const {
+        std::string s;
+        for (auto& f : amb_faces_) s += "(" + std::to_string(f[0]) + " " + std::to_string(f[1]) + " " + std::to_string(f[2]) + ") ";
+        return s;
+    }
     float luma_white() const { return luma_white_; }
 
     Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs);
@@ -100,6 +105,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> sky_cube_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> sky_face_rtv_[6];
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sky_cube_srv_;
+    // Engine ambient (use_custom_ambient_cube_colours = false): per-face averages of the environment cube
+    // (1x1 mip, read back through two alternating staging textures). See apply_engine_ambient().
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> amb_staging_[2];
+    float amb_faces_[6][3] = {};
+    bool amb_valid_ = false;
+    void readback_ambient();
+    void apply_engine_ambient(const EnvironmentParams& env);
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cube_vb_, cube_ib_, instance_vb_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> instance_ids_tex_;

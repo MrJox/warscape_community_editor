@@ -110,6 +110,7 @@ std::string App::diagnostics() const {
     if (renderer_) {
         d += "points readback: " + std::to_string(renderer_->debug_maps) + " maps, raw " + std::to_string(renderer_->debug_points[0]) + " " +
              std::to_string(renderer_->debug_points[1]) + " " + std::to_string(renderer_->debug_points[2]) + " " + std::to_string(renderer_->debug_points[3]) + "\n";
+        d += "sky cube face averages (+x -x +y -y +z -z): " + renderer_->engine_ambient_faces() + "\n";
         d += "luma black/white points: " + std::to_string(renderer_->luma_black()) + " / " + std::to_string(renderer_->luma_white()) + "\n";
         for (auto& e : renderer_->errors()) d += "render error: " + e + "\n";
         for (auto& m : renderer_->cbuffers().missing()) d += "missing cb var: " + m + "\n";

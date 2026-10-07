@@ -228,6 +228,10 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         dev_->CreateRenderTargetView(sky_cube_.Get(), &rd, &sky_face_rtv_[f]);
     }
     dev_->CreateShaderResourceView(sky_cube_.Get(), nullptr, &sky_cube_srv_);
+    for (auto& s : amb_staging_) {
+        D3D11_TEXTURE2D_DESC sd{1, 1, 1, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0};
+        dev_->CreateTexture2D(&sd, nullptr, &s);
+    }
 
     // Black/white points: two 1x1 targets (previous/current) plus CPU readback for the constant tone mapper.
     for (int i = 0; i < 2; ++i) {
@@ -438,6 +442,60 @@ void Renderer::pass_sky_cube(const EnvironmentParams& env, float time_s) {
     }
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
     ctx_->GenerateMips(sky_cube_srv_.Get());
+    readback_ambient();
+}
+
+namespace {
+float half_to_float(uint16_t h) {
+    uint32_t s = (h >> 15) & 1, e = (h >> 10) & 31, m = h & 1023, f;
+    if (e == 0) f = m ? 0 : (s << 31); // denormals flushed (ambient values are far above them)
+    else if (e == 31) f = (s << 31) | 0x7f800000 | (m << 13);
+    else f = (s << 31) | ((e + 112) << 23) | (m << 13);
+    if (e == 0 && m) return (s ? -1.0f : 1.0f) * float(m) / 16777216.0f;
+    float r;
+    std::memcpy(&r, &f, 4);
+    return r;
+}
+} // namespace
+
+// Face averages of the sky cube: copy each face's 1x1 mip into this frame's staging texture, read the previous one.
+void Renderer::readback_ambient() {
+    const UINT mips = 9; // 256 -> 1
+    ID3D11Texture2D* dst = amb_staging_[frame_ & 1].Get();
+    for (UINT f = 0; f < 6; ++f) ctx_->CopySubresourceRegion(dst, f, 0, 0, 0, sky_cube_.Get(), D3D11CalcSubresource(mips - 1, f, mips), nullptr);
+    ID3D11Texture2D* src = amb_staging_[(frame_ + 1) & 1].Get();
+    if (frame_ == 0) return;
+    for (UINT f = 0; f < 6; ++f) {
+        D3D11_MAPPED_SUBRESOURCE ms;
+        if (FAILED(ctx_->Map(src, f, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
+        const uint16_t* h = static_cast<const uint16_t*>(ms.pData);
+        for (int c = 0; c < 3; ++c) amb_faces_[f][c] = half_to_float(h[c]);
+        ctx_->Unmap(src, f);
+    }
+    amb_valid_ = true;
+}
+
+// Verified (EnvMapGen fn 0x118e00e0, ambient apply fn 0x1178a300, dry dump): with use_custom_ambient_cube_colours = false
+// the cube is the per-face average (lowest mip) of the environment cube rendered from 50 m above the origin, the bottom
+// face replaced by 0.35 * luma(top) * (0.71, 0.69, 0.66) (fn 0x118f0980, 0.35 = engine variable), times ambient_scale;
+// lr = (+x, -x), tb = (+y, bottom), fb = (+z, -z).
+// ASSUMPTION: the editor's cube holds the sky only; the game's also contains terrain, buildings and clouds.
+void Renderer::apply_engine_ambient(const EnvironmentParams& env) {
+    if (env.use_custom_ambient || !amb_valid_) return;
+    float faces[6][3];
+    std::memcpy(faces, amb_faces_, sizeof faces);
+    const float* top = faces[2];
+    float luma = 0.2126f * top[0] + 0.7152f * top[1] + 0.0722f * top[2];
+    const float tint[3] = {0.71f, 0.69f, 0.66f};
+    for (int c = 0; c < 3; ++c) faces[3][c] = 0.35f * tint[c] * luma;
+    auto pair = [&](const char* var, int a, int b) {
+        float d[7] = {faces[a][0] * env.ambient_scale, faces[a][1] * env.ambient_scale, faces[a][2] * env.ambient_scale, 0,
+                      faces[b][0] * env.ambient_scale, faces[b][1] * env.ambient_scale, faces[b][2] * env.ambient_scale};
+        cbs_.set("lighting_VS_PS", var, d, sizeof d);
+    };
+    pair("ambient_cube_lr", 0, 1);
+    pair("ambient_cube_tb", 2, 3);
+    pair("ambient_cube_fb", 4, 5);
 }
 
 void Renderer::pass_gbuffer(const TestScene* scene) {
@@ -1042,6 +1100,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     apply_environment(env, cbs_);
 
     pass_sky_cube(env, time_s);
+    apply_engine_ambient(env);
 
     float aspect = float(width) / float(height);
     frame_dt_ = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);

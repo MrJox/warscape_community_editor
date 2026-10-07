@@ -120,3 +120,17 @@ Ambient (use_custom_ambient_cube_colours = false), not yet located:
 
 Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_scan.py` (4-byte patterns) miss them;
 `tools/re/bias_scan.py` disassembles functions and handles them.
+
+## Non-custom ambient cube: solved (2026-10-08, Ghidra)
+
+- EnvMapGen (fn 0x118e00e0) renders the full scene into the environment cube from (0, ground + 50, 0), 90 degree faces,
+  far 972800, then reads back every face's lowest mip (its average) as float3 (R11G11B10-quantised values in the dump).
+- fn 0x118f0980 replaces the bottom face: 0.35 * luma(top) * (0.71, 0.69, 0.66), luma = Rec.709; 0.35 = engine variable
+  (dll+0x2a773d8 +0x48, same in both dumps). fn 0x177da80 stores the six colours in the environment interpolator (+0xfa4),
+  fn 0x1177dab0 copies them to every LIGHTING block (+0xd0.., flag +0xcc).
+- Ambient apply fn 0x178a300: if use_custom_ambient_cube_colours or no computed cube: linear(XML) * hdr_scaler; else
+  computed * ambient_scale with lr = (+x, -x), tb = (+y, bottom), fb = (+z, -z). Dry dump: computed * 0.8 matches every
+  cbuffer value exactly. Blending two lighting blocks (fn 0x175f4e0) mixes custom and computed cubes the same way.
+- Editor: implemented with the sky cube's face averages. The game's cube also contains clouds, sun and terrain, so the
+  editor's values differ (dry file: game top (3.97, 4.63, 4.88) vs editor (1.55, 2.99, 4.75)); next step is to render
+  clouds and ground into the editor's environment cube.
