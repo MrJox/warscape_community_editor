@@ -78,7 +78,9 @@ EnvironmentParams read_environment(const XmlDoc& doc);
 
 // Engine HDR factors, verified against a memory dump of the game (docs/re/renderer.md).
 constexpr float kSunHdrScale = 5000.0f; // lighting_VS_PS.sun_colour = linear * sun_colour_scale * 5000
-constexpr float kSkyHdrScale = 7.5f;    // skydome_PS colours = linear * scale * 7.5
+// skydome_PS colours = linear * scale * min(sky_light_scale, 5) * 5000 / 1200 (fn 0x18e3700 via fn 0x17594b0),
+// where sky_light_scale = cubemap_sun_colour_scale, or sun_colour_scale when that is 0. Verified on 3 dumps.
+constexpr float kSkyHdrScale = 5000.0f / 1200.0f;
 
 // Cross-fade between two environments (t = 0: a, 1: b). Numeric parameters interpolate linearly (azimuth
 // along the shorter arc); switches, strings and cloud layouts take the nearer side.

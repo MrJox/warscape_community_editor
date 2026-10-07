@@ -16,6 +16,6 @@ for c in sorted(cands):
                 f = pe.func_start(c)
                 fns.setdefault(f, []).append(f"{ins.address - pe.image_base:x} {ins.mnemonic} {ins.op_str}")
             break
-for f, l in sorted(fns.items()):
-    print(f"fn {f:x}: {len(l)}")
+for f, l in sorted(fns.items(), key=lambda kv: kv[0] or 0):
+    print(f"fn {(f or 0):x}: {len(l)}")
     for x in sorted(set(l))[:12]: print("   ", x)

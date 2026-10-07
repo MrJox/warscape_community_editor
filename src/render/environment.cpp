@@ -253,9 +253,10 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     auto set3 = [&](const char* cb, const char* var, const float3& v) { cbs.set_f(cb, var, {v.x, v.y, v.z}); };
 
     // skydome_PS (verified: copied from precomputed sky-node fields, see docs/re/environment_to_shader.md)
-    // Verified (memory dump + fn 0x18e3700): colours = pow(c, 2.2) * scale * 7.5 (HDR sky factor);
+    // Verified (3 memory dumps + fn 0x18e3700): colours = pow(c, 2.2) * scale * sky light factor (see kSkyHdrScale);
     // horizon decay * -0.5, circumsolar decay * -10, backscatter decay copied unchanged.
-    const float sky = kSkyHdrScale;
+    const float sky_light = e.cubemap_sun_colour_scale != 0.0f ? e.cubemap_sun_colour_scale : e.sun_colour_scale;
+    const float sky = std::min(sky_light, 5.0f) * kSkyHdrScale;
     set3("skydome_PS", "g_linear_sky_colour_scaled", colour_to_linear(e.sky_colour) * (e.sky_colour_scale * sky));
     set3("skydome_PS", "g_linear_circumsolar_color_scaled", colour_to_linear(e.circumsolar_colour) * (e.circumsolar_colour_scale * sky));
     set3("skydome_PS", "g_linear_horizon_colour_scaled", colour_to_linear(e.horizon_colour) * (e.horizon_colour_scale * sky));
@@ -268,13 +269,14 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
 
     // lighting_VS_PS. sun_direction is the direction light travels (shader uses -sun_direction as L).
     // Verified (memory dump): sun colour = pow(c, 2.2) * sun_colour_scale * 5000 (shaders multiply by 0.004 in HDR).
-    // ASSUMPTION (custom cubes not yet in a dump): ambient = pow(c, 2.2) * ambient_cube_hdr_scaler * ambient_scale.
+    // Verified (rain + snow dumps, use_custom_ambient_cube_colours = true): ambient = pow(c, 2.2) * ambient_cube_hdr_scaler
+    // (ambient_scale is not applied), stored as lr = (left, right), tb = (top, bottom), fb = (front, back).
     // With use_custom_ambient_cube_colours = false the engine takes the cube from elsewhere (open item).
     // (The HDR white point is >= min_white_point (9 in most files), so scene light must reach several units.)
     set3("lighting_VS_PS", "sun_direction", -to_sun);
     set3("lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * (e.sun_colour_scale * kSunHdrScale));
-    float amb = e.ambient_scale * e.ambient_hdr_scaler;
-    float3 lr[2] = {colour_to_linear(e.ambient_right) * amb, colour_to_linear(e.ambient_left) * amb};
+    float amb = e.ambient_hdr_scaler;
+    float3 lr[2] = {colour_to_linear(e.ambient_left) * amb, colour_to_linear(e.ambient_right) * amb};
     float3 tb[2] = {colour_to_linear(e.ambient_top) * amb, colour_to_linear(e.ambient_bottom) * amb};
     float3 fb[2] = {colour_to_linear(e.ambient_front) * amb, colour_to_linear(e.ambient_back) * amb};
     auto set_pair = [&](const char* var, const float3 v[2]) {

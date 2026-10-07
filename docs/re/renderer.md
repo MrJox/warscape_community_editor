@@ -41,10 +41,10 @@ Matrices: clip.i = dot(pos, row i) — row-major upload, column-vector maths.
 
 | Value | Status | Source |
 | --- | --- | --- |
-| `skydome_PS` colours | verified copy of precomputed sky-node fields (fn 0x1923b50); "linear*scale" = **assumption** pow 2.2 * scale |
+| `skydome_PS` colours | **verified** (3 dumps): fn 0x18e3700 computes pow 2.2 * scale * min(L, 5) * 5000 / 1200 into the sky node, fn 0x1923b50 copies it. L = LIGHTING `cubemap_sun_colour_scale`, or `sun_colour_scale` when that is 0 (fn 0x17594b0 on the lighting block at scene+0x1d64: +0x34 sun_colour_scale, +0xc0 cubemap_sun_colour_scale). 5000 = engine float var (dll+0x2a37730)+0x48 = 25000 * 0.2 when dll global +0x71658 > 0 (HDR), else 1 |
 | `lighting_VS_PS.sun_direction/sun_colour` | verified: `set_sun(dir, colour)` normalises dir, copies colour (fn 0x178a230); callers not yet traced |
 | sun azimuth/elevation convention | **assumption** (azimuth from +Z towards +X) |
-| ambient cube | **assumption** linear(colour) * ambient_cube_hdr_scaler * ambient_scale; +x = right, +y = top, +z = front |
+| ambient cube (custom) | **verified** (rain + snow dumps): pow 2.2 * ambient_cube_hdr_scaler, no ambient_scale; lr = (left, right), tb = (top, bottom), fb = (front, back) |
 | `luma_stats_buffer` | verified by names: absolute/max black, min/absolute white 1:1 from HDR |
 | `colour_matrix` | **verified** fn 0x172c100: Overlay * Hue * Saturation(Haeberli 0.3086/0.6094/0.0820) * Contrast(pivot 0.5) * Brightness(x engine factor [this+0xe0]); hue rotation sign layout assumption |
 | S-curve LUT | 256x1 RGBA8 texture created in fn 0x178c710 ("HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture"); **fill code not found** — placeholder Schlick-bias curve from low/high_tones_bias |
@@ -73,8 +73,16 @@ Open:
 - Ambient cube when use_custom_ambient_cube_colours = false (276 files): not the XML colours, and not a plain integral
   of the sky (per-channel ratios differ). set_ambient is fn 0x178ab70 (6 colours via device vfunc +0x260), reached
   through vtable 0x1c99868. Values are multiples of 0.025.
-- Ambient cube for custom = true: needs a second dump with such a file (formula currently assumed).
+  Dry dump (hdr_scaler 3.45): lr (3.45 3.75 3.7)(2.3 2.575 2.65), tb (3.175 3.7 3.9)(0.8953 0.8701 0.8323),
+  fb (1.925 2.25 2.45)(2.15 2.45 2.55). lr[0].x equals ambient_cube_hdr_scaler, so this is probably another colour
+  source times the same scaler; ambient_scale (unused by custom cubes) may belong to this path.
 - S-curve LUT fill code; shadow cascades (dump: 4 splits, 2048 atlas, fade 0.1/0.296), clouds, sun, SSAO.
+
+## Second and third dumps (2026-10-07, rain and snow battles)
+
+`env_vs_dump --all` ranks every .environment file by matching constants: rain = weather/charlemagne/
+cont_sp_land_day_rain_2 (35 matches, next best 31), snow = weather/default/default/land/day/snow/snow_3_heavy (35, next 23).
+Every file-driven lighting_VS_PS / skydome_PS / fog_VS_PS / tone-mapper value now matches in all three dumps.
 
 ## Clouds (2026-10-07)
 

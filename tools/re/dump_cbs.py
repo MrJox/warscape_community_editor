@@ -58,7 +58,7 @@ def main():
             continue
         cb_name_p = D.u32(owner + 0x28)
         cb = D.cstr(cb_name_p, 64) if cb_name_p and lo <= cb_name_p < hi else None
-        if not cb:
+        if not cb or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{2,63}", cb):
             continue
         key = f"{cb}.{name}"
         if pat and not pat.search(key):
