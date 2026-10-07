@@ -87,6 +87,7 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
     size_t data = 128;
     uint32_t array = 1;
     bool cube = (caps2 & 0x200) != 0;
+    bool volume = (caps2 & 0x200000) != 0 && depth > 1;
     DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
     if (pf_flags & 0x4) {
         switch (pf_fourcc) {
@@ -100,6 +101,7 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
         case fourcc('D', 'X', '1', '0'):
             fmt = DXGI_FORMAT(u32(128));
             if (u32(132) == 3 /* TEXTURE2D */) array = std::max(1u, u32(140));
+            if (u32(132) == 4 /* TEXTURE3D */) volume = depth > 1;
             if (u32(136) & 0x4) cube = true;
             data = 148;
             break;
@@ -109,13 +111,13 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
         fmt = from_masks(bits, u32(92), u32(96), u32(100), u32(104));
         if (fmt == DXGI_FORMAT_UNKNOWN) throw std::runtime_error("dds: unsupported uncompressed layout");
     }
-    if (depth > 1 && (u32(8) & 0x800000)) throw std::runtime_error("dds: volume textures not supported");
+    if (!volume) depth = 1;
     uint32_t faces = cube ? 6 * array : array;
 
     std::vector<D3D11_SUBRESOURCE_DATA> subs;
     size_t p = data;
     for (uint32_t f = 0; f < faces; ++f) {
-        uint32_t w = width, h = height;
+        uint32_t w = width, h = height, d = depth;
         for (uint32_t m = 0; m < mips; ++m) {
             size_t pitch, size;
             if (is_block(fmt)) {
@@ -127,12 +129,31 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
                 pitch = size_t(w) * pb;
                 size = pitch * h;
             }
-            if (p + size > b.size()) throw std::runtime_error("dds: truncated data");
+            if (p + size * d > b.size()) throw std::runtime_error("dds: truncated data");
             subs.push_back({&b[p], UINT(pitch), UINT(size)});
-            p += size;
+            p += size * d;
             w = std::max(1u, w / 2);
             h = std::max(1u, h / 2);
+            d = std::max(1u, d / 2);
         }
+    }
+
+    if (volume) {
+        D3D11_TEXTURE3D_DESC vd{width, height, depth, mips, srgb ? to_typeless(fmt) : fmt, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0};
+        Microsoft::WRL::ComPtr<ID3D11Texture3D> tex3;
+        if (FAILED(dev->CreateTexture3D(&vd, subs.data(), &tex3))) throw std::runtime_error("dds: CreateTexture3D failed");
+        Texture t;
+        t.width = width;
+        t.height = height;
+        t.depth = depth;
+        t.mips = mips;
+        t.format = srgb ? to_srgb(fmt) : fmt;
+        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = t.format;
+        sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+        sd.Texture3D.MipLevels = mips;
+        if (FAILED(dev->CreateShaderResourceView(tex3.Get(), &sd, &t.srv))) throw std::runtime_error("dds: CreateShaderResourceView failed");
+        return t;
     }
 
     D3D11_TEXTURE2D_DESC td{};

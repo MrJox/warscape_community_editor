@@ -29,8 +29,12 @@ SCAN_BYTES = 0x200000  # the shader manager is ~1.4 MB (skydome shader at +0xd31
 
 
 def main():
-    path = sys.argv[1]
-    pat = re.compile(sys.argv[2]) if len(sys.argv) > 2 else None
+    args = [a for a in sys.argv[1:] if not a.startswith("--array=")]
+    # --array=N: print the first N float4 rows of every matching variable (non-zero rows only, with their index),
+    # for the [512] per-emitter arrays of the cb_vfx_emitter_constants_* buffers.
+    array_rows = next((int(a.split("=")[1]) for a in sys.argv[1:] if a.startswith("--array=")), 0)
+    path = args[0]
+    pat = re.compile(args[1]) if len(args) > 1 else None
     D = Dump(path)
     mod = D.module("empire.retail.dll")
     if not mod:
@@ -64,6 +68,17 @@ def main():
         if pat and not pat.search(key):
             continue
         vp = struct.unpack_from("<I", blob, off + 0x14)[0]
+        if array_rows:
+            for r in range(array_rows if vp else 0):
+                raw = D.read(vp + 16 * r, 16)  # per row: Dump.read fails across memory-region boundaries
+                if not raw:
+                    continue
+                v = struct.unpack("<4f", raw)
+                u = struct.unpack("<4I", raw)
+                if any(u):
+                    txt = " ".join(f"{x:.6g}" if (w == 0 or 1e-30 < abs(x) < 1e30) else f"#{w}" for x, w in zip(v, u))
+                    rows.append((f"{key}[{r}]", manager + off, txt))
+            continue
         n = 16 if re.search(r"matrix|cube_|split|bounds|projection|world_view|view|sample_data", name) else 4
         raw = (D.read(vp, 4 * n) if vp else None) or b""
         val = " ".join(f"{x:.6g}" for x in struct.unpack(f"<{n}f", raw)) if len(raw) == 4 * n else "-"

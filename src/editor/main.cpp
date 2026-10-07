@@ -132,6 +132,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     we::App app(g_device.Get(), g_ctx.Get());
     g_app = &app;
     std::wstring shot_path; // --shot <file.png>: save the window after a few frames and exit
+    int shot_frame = 20;    // --frames <n>: frame to save (particles need time to fill)
     {   // --open <path> (repeatable)
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -139,6 +140,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             std::wstring a = argv[i];
             if (a == L"--open") app.open_path(we::narrow(argv[++i]));
             else if (a == L"--shot") shot_path = argv[++i];
+            else if (a == L"--frames") shot_frame = std::max(1, _wtoi(argv[++i]));
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
             else if (a == L"--blend") app.set_blend(0, float(_wtof(argv[++i]))); // first --open document, blended into the active one
             else if (a == L"--cam" && i + 3 < argc) { // --cam <yaw> <pitch> <distance> (radians, metres)
@@ -177,7 +179,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         g_ctx->OMSetRenderTargets(1, g_rtv.GetAddressOf(), nullptr);
         g_ctx->ClearRenderTargetView(g_rtv.Get(), clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        if (!shot_path.empty() && ++frame_no == 20) {
+        if (!shot_path.empty() && ++frame_no == shot_frame) {
             Microsoft::WRL::ComPtr<ID3D11Texture2D> back;
             g_swap->GetBuffer(0, IID_PPV_ARGS(&back));
             we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);

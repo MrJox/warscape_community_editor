@@ -92,6 +92,14 @@ std::string App::diagnostics() const {
     std::string d = "status: " + status_ + "\n";
     d += "scene objects: " + std::to_string(scene_ ? scene_->objects().size() : 0) + "\n";
     if (renderer_) d += "cloud sprites: " + std::to_string(renderer_->cloud_sprites()) + "\n";
+    if (renderer_ && renderer_->particles()) {
+        const ParticleSystem& p = *renderer_->particles();
+        d += "weather vfx: '" + p.effect().definition.name + "' -> " + p.effect().definition.vfx1 + ", " +
+             std::to_string(p.effect().emitters.size()) + " emitters, " + std::to_string(p.alive()) + " particles\n";
+        for (auto& e : p.effect().emitters) d += "  emitter: " + e.library + " / " + e.instance + " / " + e.name + "\n";
+        for (auto& n : p.effect().notes) d += "  vfx note: " + n + "\n";
+        for (auto& e : p.errors()) d += "  vfx error: " + e + "\n";
+    }
     if (scene_)
         for (auto& e : scene_->errors()) d += "scene error: " + e + "\n";
     if (textures_)
@@ -412,6 +420,25 @@ void App::draw_menu() {
             output_dir_ = fs::path(widen(buf));
             store_settings();
         }
+        ImGui::EndMenu();
+    }
+    if (renderer_ && renderer_->particles() && ImGui::BeginMenu("Precipitation")) {
+        ParticleSystem& p = *renderer_->particles();
+        const WeatherVfx& fx = p.effect();
+        ImGui::Checkbox("Enabled", &p.enabled);
+        ImGui::SameLine();
+        if (ImGui::Button("Restart")) p.restart();
+        ImGui::SetNextItemWidth(300);
+        ImGui::SliderFloat("Wind direction (deg)", &p.wind_azimuth_deg, 0, 360, "%.0f");
+        ImGui::TextDisabled("The game picks the wind direction per battle (wind_dir_random).");
+        ImGui::Separator();
+        ImGui::Text("Weather definition: %s", fx.definition.name.empty() ? "(none)" : fx.definition.name.c_str());
+        ImGui::Text("Effect: %s", fx.definition.vfx1.empty() ? "(none)" : ("vfx/" + fx.definition.vfx1 + ".xml").c_str());
+        ImGui::Text("Wind size %.3g..%.3g", fx.definition.wind_size_min, fx.definition.wind_size_max);
+        ImGui::Text("Particles: %u / %u", p.alive(), p.capacity());
+        for (auto& e : fx.emitters) ImGui::BulletText("%s / %s / %s", e.library.c_str(), e.instance.c_str(), e.name.c_str());
+        for (auto& n : fx.notes) ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1), "%s", n.c_str());
+        for (auto& e : p.errors()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", e.c_str());
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();

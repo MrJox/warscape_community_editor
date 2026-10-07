@@ -14,6 +14,7 @@ struct Texture {
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     uint32_t width = 0, height = 0, mips = 0;
     bool cube = false;
+    uint32_t depth = 1; // > 1: volume texture (Texture3D)
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 };
 

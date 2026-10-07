@@ -109,6 +109,7 @@ float4x4 face_view(int face) {
 
 Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs) {
     lib_ = std::make_unique<ShaderLibrary>(dev, vfs, cbs_);
+    particles_ = std::make_unique<ParticleSystem>(dev, ctx, vfs, *lib_, cbs_);
     make_states();
 
     auto vs = compile("fs_vs", "vs_5_0");
@@ -1057,6 +1058,23 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     pass_clouds(env);
     pass_directional_light();
     pass_fog();
+    if (particles_) { // weather precipitation (vfx1 of the WEATHER definition), see src/vfx/particles.h
+        particles_->set_weather(env.weather_definition);
+        ParticleSystem::Frame pf;
+        pf.eye = cam.eye;
+        pf.view = view_m;
+        pf.time = time_s;
+        pf.dt = frame_dt_;
+        pf.wind_velocity = particles_->wind_velocity();
+        pf.target = hdr_.rtv.Get();
+        pf.depth = dsv_.Get();
+        pf.depth_zw = gb_[3].srv.Get();
+        pf.sky = sky_cube_srv_.Get();
+        pf.width = width;
+        pf.height = height;
+        particles_->render(pf);
+        ctx_->RSSetViewports(1, &main_vp);
+    }
 
     ID3D11ShaderResourceView* nulls[16] = {};
     ctx_->PSSetShaderResources(0, 16, nulls);

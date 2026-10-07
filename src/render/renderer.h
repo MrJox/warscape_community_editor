@@ -4,6 +4,7 @@
 #include "render/environment.h"
 #include "render/math.h"
 #include "render/shader_lib.h"
+#include "vfx/particles.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -45,6 +46,7 @@ public:
     View view = View::Final;
 
     ConstantBuffers& cbuffers() { return cbs_; }
+    ParticleSystem* particles() { return particles_.get(); }
     const std::vector<std::string>& errors() const { return errors_; }
 
 private:
@@ -79,6 +81,7 @@ private:
     Vfs& vfs_;
     ConstantBuffers cbs_;
     std::unique_ptr<ShaderLibrary> lib_;
+    std::unique_ptr<ParticleSystem> particles_;
     std::vector<std::string> errors_;
 
     int w_ = 0, h_ = 0;
