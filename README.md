@@ -43,3 +43,11 @@ Edited files are saved as loose files under the output folder (Settings menu), k
 | `vfx_check "<weather definition>" [rows.txt]` | Builds the precipitation emitters of a weather definition and compares their constants with dumped rows |
 | `tools/re/dump_cbs.py <dmp> [regex] [--array=512]` | Live shader constants from a Task Manager full dump of Attila.exe |
 | `tools/re/schema.py <fn_rva>` | Property names, types and defaults of a schema function in empire.retail.dll |
+
+## Decompiler (reverse engineering)
+
+`TDD Claude\tools\` holds Ghidra 12.1.4 and a portable JDK 21 with an analysed project of `empire.retail.dll`
+(`tools\ghidra_proj`). `powershell -File tools\ghidra.ps1 Decomp out.c <rva>...` decompiles functions,
+`... Xrefs out.txt <rva>...` lists references, `... DecompRange out.c <start> <end>` decompiles a whole range
+(`tools\decomp\r16_1a.c` covers the renderer, VFX and weather code, RVA 0x1600000-0x1a00000). Addresses are RVAs;
+Ghidra shows them at image base 0x10000000.

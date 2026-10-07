@@ -141,11 +141,15 @@ usually empty, the normal map (behaviour_mask.z, bit 0x40000) drives it. The com
 hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified rows: lens water drops 391/392
 (snow dump). The editor saves the buffer next to `--shot` images as `<shot>.distortion.png`.
 
-## Emission rate (open, 2026-10-07)
+## Emission rate (verified 2026-10-08, Ghidra)
 
-Lens snowflakes (`snowflakes_loop`): EmissionRateCurve emission_min = single key ~0 (-0.0067), emission_max = 29.8.
-The editor's random lerp between the curves gives ~15/s per reference (~110 alive with 2 references); the game shows
-~2 on screen from a high camera. Rain (min == max) and snow_BTL (960/999) are insensitive to this, which is why their
-counts match. Hypothesis: min/max are blended by a runtime factor (camera height or pitch?) rather than random.
-The emitter descriptor stores the curve pair at +0x2b4/+0x2c0 (fn 0x17c0650); the per-frame emission code is not found.
-Per-emitter alive counts are in the `--shot` diagnostics.
+- fn 0x11829530(desc, emitter_life, age, f): t = clamp(age / life, 0, 1) (fmod when EmissionLoopAnim, desc +0x2d0);
+  each curve is baked to 128 entries (t * 127, linear between entries; a single-key curve is a tagged pointer to one
+  float); rate = max(0, lerp(min(t), max(t), f)). life <= 0 uses the first entries.
+- fn 0x1188e240 (continuous emitter): accum += min(dt, 0.1) * rate * owner[+0xb4] * owner[+0x78]^2; particles spawn
+  while accum >= 1. Instance: +0xdc emitter life, +0xe0 age, +0xf8 accumulator, +0xfc cached rate, +0x100 f.
+- f is random per emitter instance, not per frame: the two live lens-snowflake emitters in the snow dump have
+  f = 0.71 and 0.95 (rates 21.1 and 28.4 /s, owner multipliers 1, emitter at the origin with a 90 degree X rotation).
+- So the game emits ~49 lens flakes/s in that battle as well; the far smaller number visible in game is not the rate.
+  Still open: what hides or moves them (spawn placement, follow-emitter delta, or size).
+

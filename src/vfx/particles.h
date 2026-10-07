@@ -82,6 +82,7 @@ private:
     };
     struct EmitterState {
         float rate_accum = 0;
+        float rate_blend = -1; // emission min->max blend, random once per emitter instance (game: instance +0x100)
         std::deque<std::pair<float, uint32_t>> deaths; // (latest death time, count) per spawned batch
         float3 last_pos;
         bool started = false;

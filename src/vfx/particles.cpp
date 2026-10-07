@@ -403,8 +403,11 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
         if (!d.b("InfiniteLife", false) && age > emitter_life) continue;
         const VfxCurve* emin = d.curve("EmissionRateCurve", "emission_min");
         const VfxCurve* emax = d.curve("EmissionRateCurve", "emission_max");
-        float rate = lerp(emin ? emin->eval(t_norm) : 0.0f, emax ? emax->eval(t_norm) : 0.0f, rand01());
-        st.rate_accum += rate * window;
+        // Verified (fn 0x11829530 / 0x1188e240, snow dump): rate = lerp(min(t), max(t), f) clamped >= 0, where f is drawn
+        // once per emitter instance (live snowflake emitters: 0.71 and 0.95); per frame dt is capped at 0.1 s.
+        if (st.rate_blend < 0) st.rate_blend = rand01();
+        float rate = std::max(0.0f, lerp(emin ? emin->eval(t_norm) : 0.0f, emax ? emax->eval(t_norm) : 0.0f, st.rate_blend));
+        st.rate_accum += rate * (st.started && window <= f.dt ? std::min(window, 0.1f) : window);
         uint32_t count = uint32_t(st.rate_accum);
         st.rate_accum -= float(count);
 
