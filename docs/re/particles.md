@@ -106,4 +106,12 @@ traced in the DLL, marked in the code):
 - Wind: |wind_velocity| = 22.5 * mean(wind_size_min, wind_size_max) (dumps: 5.62 for 0.2..0.3, 7.39 for 0.25..0.4),
   direction from the UI (the game randomises it per battle), no gust variance.
 - Not supported yet: library_vfx_camera_effects (lens drops, screen space), non-continuous_mesh emitters (lightning),
-  normal maps, soft-edge property name, shadow-receiving PS variants.
+  scene_view_type 1 (distortion pass, behaviour_mask.w = 12: heat haze), normal maps, soft-edge property name,
+  shadow-receiving PS variants.
+
+Properties repeat per graphics quality (`quality="0"` base, `"1"`/`"2"` lower-quality overrides such as
+`Enable=false` at quality 2 or fewer particles at quality 1); the editor uses the base level. Verified extra rows:
+deceleration ranges are copied even with Deceleration=false; vs_animated_texture = bit 0x8, atlas/cell rows as
+vs_cell_texture (no_cells_xy), params (cell_blend, loop, row_restricted, randomize_row), params1 (no_loops, row_restriction).
+`vfx_check` result: rain heavy_daytime, rain heavy, rain stormy, snow stormy, snow gusty, dry desert storm all match.
+Particle diffuse maps are 1024^2 DXT5 with 11 mips (glow_cells_a, flame_cells_v1), so the texture array is a plain copy.

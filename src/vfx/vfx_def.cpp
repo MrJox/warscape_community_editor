@@ -65,7 +65,16 @@ void read_props(const XmlDoc& doc, int e, VfxProps& out) {
         const std::string& n = doc.elements()[c].name;
         if (n != "property" && n != "ranged_property" && n != "texture_property") continue;
         auto name = doc.get(c, "name");
-        if (name) out.props[*name] = read_prop(doc, c);
+        if (!name) continue;
+        // Emitter properties repeat per graphics quality: quality="0" is the base value, higher levels are
+        // lower-quality overrides (fewer particles, shorter culling). ASSUMPTION: the editor shows the base level.
+        int quality = std::atoi(doc.get(c, "quality").value_or("0").c_str());
+        if (quality != 0 && out.props.count(*name)) continue;
+        if (quality != 0) {
+            out.props[*name] = read_prop(doc, c); // only a quality override exists: keep it until a base one appears
+            continue;
+        }
+        out.props[*name] = read_prop(doc, c);
     }
 }
 
@@ -143,6 +152,13 @@ void VfxProps::colour(const std::string& name, float out_min[4], float out_max[4
     if (!p || !p->ranged) return;
     parse_float4(p->min_text, out_min);
     parse_float4(p->max_text, out_max);
+}
+void VfxProps::float_n(const std::string& name, float* out, int n) const {
+    auto* p = find(name);
+    if (!p || p->value.empty()) return;
+    float v[4] = {out[0], n > 1 ? out[1] : 0, n > 2 ? out[2] : 0, n > 3 ? out[3] : 0};
+    parse_float4(p->value, v);
+    for (int k = 0; k < n && k < 4; ++k) out[k] = v[k];
 }
 const VfxCurve* VfxProps::curve(const std::string& name, const std::string& sub) const {
     auto* p = find(name);

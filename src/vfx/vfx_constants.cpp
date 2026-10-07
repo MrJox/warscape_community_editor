@@ -37,10 +37,9 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
     em.range("GravityAmount", k.ps_sim_gravity_params[0], k.ps_sim_gravity_params[1], 0, 0);
     k.ps_sim_gravity_params[2] = em.f("EffectedByWindFactor", 0);
     k.ps_sim_gravity_params[3] = em.f("WindVarianceFactor", 0);
-    if (em.b("Deceleration", false)) { // ASSUMPTION: start time range in xy, amount range in zw (spawn shader usage)
-        em.range("DecelerationStartTime", k.ps_sim_deceleration_params[0], k.ps_sim_deceleration_params[1], 0, 0);
-        em.range("DecelerationAmount", k.ps_sim_deceleration_params[2], k.ps_sim_deceleration_params[3], 0, 0);
-    }
+    // Verified (sand_storm, Deceleration=false): the ranges are copied whatever the flag says.
+    em.range("DecelerationStartTime", k.ps_sim_deceleration_params[0], k.ps_sim_deceleration_params[1], 0, 0);
+    em.range("DecelerationAmount", k.ps_sim_deceleration_params[2], k.ps_sim_deceleration_params[3], 0, 0);
     float box[3] = {10, 10, 10};
     em.vec("RecycleClippedBox", box, 3);
     // x: 3 = RecycleClipped (wrap into the box around the emitter), 1 = ParticlesFollowEmitter,
@@ -120,6 +119,30 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
             k.vs_cell_texture_params[1] = uint32_t(std::max(1, m.i("number_of_cells_y", 1)));
             k.vs_cell_texture_params[2] = uint32_t(std::max(0, m.i("cell", 0)));
             k.vs_cell_texture_params[3] = m.b("randomize_cell", false) ? 1u : 0u;
+        } else if (f == "vs_animated_texture") {
+            // Verified on sand_storm: atlas and cell rows as vs_cell_texture; params = (cell_blend, loop,
+            // row_restricted, randomize_row) (the VS selects with each), params1 = (no_loops.x, no_loops.y, row_restriction).
+            k.behaviour_mask[0] |= kAnimatedTexture;
+            int ax = std::max(1, m.i("atlas_number_of_cells_x", 1)), ay = std::max(1, m.i("atlas_number_of_cells_y", 1));
+            int cell = m.i("atlas_cell", 0);
+            k.vs_atlas_texture_params[0] = 1.0f / float(ax);
+            k.vs_atlas_texture_params[1] = 1.0f / float(ay);
+            k.vs_atlas_texture_params[2] = float(cell % ax) / float(ax);
+            k.vs_atlas_texture_params[3] = float(cell / ax) / float(ay);
+            float cells[2] = {1, 1}, loops[2] = {1, 1};
+            m.float_n("no_cells_xy", cells, 2);
+            m.float_n("no_loops", loops, 2);
+            k.vs_cell_texture_params[0] = uint32_t(std::max(1.0f, cells[0]));
+            k.vs_cell_texture_params[1] = uint32_t(std::max(1.0f, cells[1]));
+            k.vs_cell_texture_params[2] = 0;
+            k.vs_cell_texture_params[3] = m.b("randomize_cell", false) ? 1u : 0u;
+            k.vs_animated_texture_params[0] = m.b("cell_blend", false) ? 1u : 0u;
+            k.vs_animated_texture_params[1] = m.b("loop", false) ? 1u : 0u;
+            k.vs_animated_texture_params[2] = m.b("row_restricted", false) ? 1u : 0u;
+            k.vs_animated_texture_params[3] = m.b("randomize_row", false) ? 1u : 0u;
+            k.vs_animated_texture_params1[0] = loops[0];
+            k.vs_animated_texture_params1[1] = loops[1];
+            k.vs_animated_texture_params1[2] = float(m.i("row_restriction", 0));
         } else if (f == "vs_vertex_alpha") {
             k.behaviour_mask[0] |= kVertexAlpha;
             const VfxCurve* lo = m.curve("curve_alpha", "alpha_min");

@@ -31,12 +31,15 @@ std::optional<WeatherDefinition> find_definition(Vfs& vfs, const std::string& na
 VfxFile load_vfx(Vfs& vfs, const std::string& name) { return parse_vfx(XmlDoc::parse(vfs.read("vfx/" + name + ".xml"))); }
 
 // An emitter is drawn when it is enabled and some render stack pairs it with a chain that has a texture.
-const VfxChain* render_chain(const VfxFile& lib, const std::string& emitter) {
+const VfxChain* render_chain(const VfxFile& lib, const std::string& emitter, const VfxStack** stack) {
     for (auto& s : lib.stacks)
         for (auto& e : s.emitters)
             if (e == emitter)
                 for (auto& c : s.chains)
-                    if (const VfxChain* ch = lib.chain(c); ch && ch->find("ps_texture")) return ch;
+                    if (const VfxChain* ch = lib.chain(c); ch && ch->find("ps_texture")) {
+                        *stack = &s;
+                        return ch;
+                    }
     return nullptr;
 }
 
@@ -82,8 +85,14 @@ WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
                 out.notes.push_back(ref.inst_name + "/" + em.id + ": emitter type " + em.type + " not supported");
                 continue;
             }
-            const VfxChain* chain = render_chain(lib, em.id);
+            const VfxStack* stack = nullptr;
+            const VfxChain* chain = render_chain(lib, em.id, &stack);
             if (!chain) continue; // sound / logic-only emitters draw nothing
+            if (stack->scene_view_type != 0) { // dump: view type 1 = behaviour_mask.w 12, the distortion pass
+                out.notes.push_back(ref.inst_name + "/" + em.id + ": scene_view_type " + std::to_string(stack->scene_view_type) +
+                                    " (distortion pass) not supported yet");
+                continue;
+            }
             ActiveEmitter a;
             a.library = ref.library;
             a.instance = ref.inst_name;

@@ -42,6 +42,8 @@ struct VfxProps {
     void vec(const std::string& name, float* out, int n) const;
     // colour range "float4(r,g,b,a)": index 0 = min, 1 = max
     void colour(const std::string& name, float out_min[4], float out_max[4]) const;
+    // value="float2(1.0,2.0)" style vectors; keeps the defaults for missing components
+    void float_n(const std::string& name, float* out, int n) const;
     const VfxCurve* curve(const std::string& name, const std::string& sub) const;
     std::string text(const std::string& name) const;
 };
