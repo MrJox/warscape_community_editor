@@ -64,10 +64,6 @@ WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
     }
     std::map<std::string, VfxFile> libs;
     for (const VfxRef& ref : top.refs) {
-        if (ref.library == "library_vfx_camera_effects") { // lens drops: screen-space emitters, not simulated here
-            out.notes.push_back(ref.inst_name + ": camera lens effects (" + ref.library + ") not supported yet");
-            continue;
-        }
         auto it = libs.find(ref.library);
         if (it == libs.end()) {
             try {

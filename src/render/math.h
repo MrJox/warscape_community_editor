@@ -43,7 +43,9 @@ struct float4x4 {
 
 float4x4 inverse(const float4x4& a);
 float4x4 translation(const float3& t);
+float4x4 rotation_x(float radians);
 float4x4 rotation_y(float radians);
+float4x4 rotation_z(float radians);
 float4x4 scaling(float s);
 // Left-handed look-at (camera looks down +Z in view space), D3D-style perspective (depth 0..1).
 float4x4 look_at_lh(const float3& eye, const float3& target, const float3& up);

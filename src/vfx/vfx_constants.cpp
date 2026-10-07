@@ -91,6 +91,16 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
             k.vs_translation_params[1] = m.f("pivot_y", 0.5f);
             k.vs_translation_params[2] = float(v2 ? m.i("orientation_mode", 0) : m.i("restriction", 0));
             k.vs_translation_params[3] = v2 ? m.f("velocity_stretch_mul", 0) : 0.0f;
+        } else if (f == "vs_translation_screen_space") {
+            // Verified (snowflakes_loop, snow dump row 393): the GS reads the particle position as clip-space xy.
+            k.behaviour_mask[0] |= kTranslationScreenSpace;
+            k.vs_translation_params[0] = m.f("pivot_x", 0.5f);
+            k.vs_translation_params[1] = m.f("pivot_y", 0.5f);
+        } else if (f == "ps_alpha_crush") {
+            k.behaviour_mask[0] |= kPsAlphaCrush; // (sharp_transition, alpha_crush min, max, variation), row 393
+            k.ps_alpha_crush_params[0] = m.b("sharp_transition", false) ? 1.0f : 0.0f;
+            m.range("alpha_crush", k.ps_alpha_crush_params[1], k.ps_alpha_crush_params[2], 0, 0);
+            k.ps_alpha_crush_params[3] = m.f("variation", 0);
         } else if (f == "vs_colour") {
             k.behaviour_mask[0] |= kColour;
             float a0[4] = {1, 1, 1, 1}, a1[4] = {1, 1, 1, 1}, b0[4] = {1, 1, 1, 1}, b1[4] = {1, 1, 1, 1}, c0[4] = {1, 1, 1, 1}, c1[4] = {1, 1, 1, 1};

@@ -67,7 +67,11 @@ Verified on `rain_heavy_BTL_daytime_only` (rows 54, 55 in the rain dump):
 
 behaviour_mask.x bits: 0x1 vs_rotation, 0x2 vs_colour, 0x4 vs_cell_texture, 0x8 animated texture, 0x10 vs_vertex_alpha,
 0x100 vs_translation (GS billboard, z = restriction), 0x200 vs_translation_velocity_v2 (GS, z = orientation_mode 0..4),
-0x10000 ps_colour, 0x20000 ps_texture diffuse, 0x40000 normal map, 0x200000 ps_lighting, 0x800000 soft edge, 0x1000000 ps_fog.
+0x800 vs_translation_screen_space (GS uses the particle position as clip-space xy; quad scaled by the viewport aspect),
+0x10000 ps_colour, 0x20000 ps_texture diffuse, 0x40000 normal map, 0x200000 ps_lighting, 0x400000 ps_alpha_crush
+(params: sharp_transition, alpha_crush min, max, variation), 0x800000 soft edge, 0x1000000 ps_fog.
+Lens effects (library_vfx_camera_effects): snowflakes_loop is a main-pass screen-space emitter (row 393 in the snow dump,
+EmitterRotation x = 90 puts its spawn disk in the screen plane); the water drops are distortion-pass (view 12, normal map only).
 
 `tools/vfx_check "<definition>" rows.txt` builds the emitters of a weather definition and compares every row with the
 dump (`dump_cbs.py <dmp> cb_vfx_emitter_constants --array=512`). Result (2026-10-07): `rain heavy_daytime` -> row 55,
@@ -105,7 +109,7 @@ traced in the DLL, marked in the code):
 - Emitter instance tint = middle of the reference's tint range; camera-following emitters sit at the camera.
 - Wind: |wind_velocity| = 22.5 * mean(wind_size_min, wind_size_max) (dumps: 5.62 for 0.2..0.3, 7.39 for 0.25..0.4),
   direction from the UI (the game randomises it per battle), no gust variance.
-- Not supported yet: library_vfx_camera_effects (lens drops, screen space), non-continuous_mesh emitters (lightning),
+- Not supported yet: lens water drops (distortion), non-continuous_mesh emitters (lightning),
   scene_view_type 1 (distortion pass, behaviour_mask.w = 12: heat haze), normal maps, soft-edge property name,
   shadow-receiving PS variants.
 
@@ -115,3 +119,17 @@ deceleration ranges are copied even with Deceleration=false; vs_animated_texture
 vs_cell_texture (no_cells_xy), params (cell_blend, loop, row_restricted, randomize_row), params1 (no_loops, row_restriction).
 `vfx_check` result: rain heavy_daytime, rain heavy, rain stormy, snow stormy, snow gusty, dry desert storm all match.
 Particle diffuse maps are 1024^2 DXT5 with 11 mips (glow_cells_a, flame_cells_v1), so the texture array is a plain copy.
+
+## Wind (2026-10-07, partial)
+
+- cb_vfx_game_simulation_data.wind_variance_dir has its own angle (rain dump: -0.6775 rad, stored just before
+  wind_velocity in the VFX frame data); |variance| 5.95 (rain) / 7.42 (snow).
+- cloud_plane_VS.g_wind_alignment.x = atan2(wind.z, wind.x) (rain -1.0759, snow 0.2024); the cloud VS does not use it.
+- Weather definition struct (fn 0x1738a60): +0x3c wind_size_min, +0x40 max, +0x44 gust size variation, +0x48 gust
+  duration, +0x4c duration variation, +0x50 gust interval, +0x54 probability, +0x58 curve, +0x5c vegetation multiplier.
+  The update code (gusts, speed) is not traced; the editor keeps |wind| = 22.5 * mean(wind_size) (fits both dumps
+  within 1%).
+
+## Non-custom ambient cube (open)
+
+Dry dump values appear only in cbuffer copies (no stored source object), so they are built per frame; see renderer.md.

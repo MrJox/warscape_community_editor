@@ -13,9 +13,9 @@ struct VfxChain;
 // behaviour_mask.x bits (fragment present), from the shaders and the dumped masks
 namespace vfx_bits {
 constexpr uint32_t kRotation = 0x1, kColour = 0x2, kCellTexture = 0x4, kAnimatedTexture = 0x8, kVertexAlpha = 0x10;
-constexpr uint32_t kTranslation = 0x100, kTranslationVelocity = 0x200;
+constexpr uint32_t kTranslation = 0x100, kTranslationVelocity = 0x200, kTranslationScreenSpace = 0x800;
 constexpr uint32_t kPsColour = 0x10000, kPsTexture = 0x20000, kPsNormal = 0x40000, kPsLighting = 0x200000;
-constexpr uint32_t kPsSoftEdge = 0x800000, kPsFog = 0x1000000;
+constexpr uint32_t kPsAlphaCrush = 0x400000, kPsSoftEdge = 0x800000, kPsFog = 0x1000000;
 } // namespace vfx_bits
 
 // View id the main pass draws with (cb_vfx.g_view_id must equal behaviour_mask.w; 30 for every weather row).

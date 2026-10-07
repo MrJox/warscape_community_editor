@@ -36,6 +36,26 @@ float4x4 translation(const float3& t) {
     return r;
 }
 
+float4x4 rotation_x(float a) {
+    float4x4 r;
+    float c = std::cos(a), s = std::sin(a);
+    r.m[1][1] = c;
+    r.m[1][2] = -s;
+    r.m[2][1] = s;
+    r.m[2][2] = c;
+    return r;
+}
+
+float4x4 rotation_z(float a) {
+    float4x4 r;
+    float c = std::cos(a), s = std::sin(a);
+    r.m[0][0] = c;
+    r.m[0][1] = -s;
+    r.m[1][0] = s;
+    r.m[1][1] = c;
+    return r;
+}
+
 float4x4 rotation_y(float a) {
     float4x4 r;
     float c = std::cos(a), s = std::sin(a);

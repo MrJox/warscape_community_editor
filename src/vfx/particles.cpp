@@ -378,6 +378,11 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
         d.range("SpawnSpread", spread_lo, spread_hi, 90, 90);
         float arc[2] = {0, 360};
         d.vec("SpawnArc", arc, 2);
+        // EmitterRotation (degrees, x then y then z) turns the spawn area and directions; the lens snowflakes
+        // use x = 90 to put their disk into the screen plane. ASSUMPTION: rotation order.
+        float rot[3] = {0, 0, 0};
+        d.vec("EmitterRotation", rot, 3);
+        float4x4 emitter_rot = rotation_z(rot[2] * kPi / 180.0f) * rotation_y(rot[1] * kPi / 180.0f) * rotation_x(rot[0] * kPi / 180.0f);
 
         uint32_t batch = 0;
         float latest_death = 0;
@@ -385,20 +390,22 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
             float spawn_t = window_start + window * (float(p) + rand01()) / float(std::max(1u, count));
             float life = std::max(0.01f, lerp(life_lo, life_hi, rand01()) + lerp(lb_lo, lb_hi, rand01()));
             if (spawn_t + life <= clock_) continue; // died during pre-warm
-            float3 pos = origin;
+            float3 offset;
             if (use_box) {
-                pos.x += (rand01() - 0.5f) * lerp(box_lo[0], box_hi[0], rand01()) * a.scale;
-                pos.y += (rand01() - 0.5f) * lerp(box_lo[1], box_hi[1], rand01()) * a.scale;
-                pos.z += (rand01() - 0.5f) * lerp(box_lo[2], box_hi[2], rand01()) * a.scale;
+                offset.x = (rand01() - 0.5f) * lerp(box_lo[0], box_hi[0], rand01()) * a.scale;
+                offset.y = (rand01() - 0.5f) * lerp(box_lo[1], box_hi[1], rand01()) * a.scale;
+                offset.z = (rand01() - 0.5f) * lerp(box_lo[2], box_hi[2], rand01()) * a.scale;
             } else {
                 float r = lerp(lerp(r_in_lo, r_in_hi, rand01()), lerp(r_out_lo, r_out_hi, rand01()), rand01()) * a.scale;
                 float az = lerp(arc[0], arc[1], rand01()) * kPi / 180.0f;
-                pos = pos + float3{std::cos(az), 0, std::sin(az)} * r;
+                offset = float3{std::cos(az), 0, std::sin(az)} * r;
             }
             float el = lerp(spread_lo, spread_hi, rand01()) * kPi / 180.0f;
             float az = lerp(arc[0], arc[1], rand01()) * kPi / 180.0f;
             float speed = lerp(speed_lo, speed_hi, rand01()) * a.scale;
             float3 vel = float3{std::cos(el) * std::cos(az), std::sin(el), std::cos(el) * std::sin(az)} * speed;
+            float3 pos = origin + emitter_rot.transform_point(offset);
+            vel = emitter_rot.transform_point(vel);
             float steps = spawn_t < clock_ - kSubStep ? std::floor((clock_ - spawn_t) / kSubStep) : 0.0f;
             out.push_back({{float(i), rand01(), steps, 0}, {pos.x, pos.y, pos.z, spawn_t}, {vel.x, vel.y, vel.z, life}});
             latest_death = std::max(latest_death, spawn_t + life);
