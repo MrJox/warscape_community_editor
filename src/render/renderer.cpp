@@ -553,7 +553,10 @@ void Renderer::render_env_cube(const TestScene* scene, const EnvironmentParams& 
         pass_gbuffer(scene);
         ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
         pass_sky_forward();
-        pass_clouds(env);
+        // Only the top (+y) face receives clouds: the game's side faces equal the cloud-free scene within 10-15% (dry dump,
+        // +x/-x/+z/-z), while clouds on every face put them 100% off. Mechanism inferred: fn 0x1192aa40 sets per-cloud
+        // visibility flags from a frustum during EnvMapGen (fn 0x1192b640), which here leaves only the zenith clouds.
+        if (f == 2) pass_clouds(env);
         pass_directional_light();
         pass_fog();
         ctx_->OMSetRenderTargets(0, nullptr, nullptr);

@@ -66,7 +66,8 @@ Still open `ASSUMPTION`s / known gaps:
 ## Known bugs / problems
 - **Environment cube is too bright.** The editor's top (+y) face is about 7.2 / 7.1 / 6.1; the game's is 4.0 / 4.6 / 4.9 (dry dump).
   - **Ruled out:** cloud layout (checked with the dumped sprites via `AWE_CLOUD_SPRITES`), the computed ambient, and the EnvMapGen cloud calls (they only advance and cull clouds).
-  - **Narrowed (see `docs/re/renderer.md`, "cloud PS inputs ruled out"):** only the near plane contributes; no uniform scale of sun, ambient or alpha fits the game's faces (sides ~0, top warm), so the difference is structural (which sprites reach the cube, or a different cloud-PS input). Next: decode the EnvMapGen caller of fn 0x118b40e0 and compare its sprite list with the main view's.
+  - **Update:** the env pass now draws clouds on the +y face only; side faces are within 10-15% of the game, the top is still 7.2/7.2/6.2 vs 4.0/4.6/4.9.
+- **Narrowed (see `docs/re/renderer.md`, "cloud PS inputs ruled out"):** only the near plane contributes; no uniform scale of sun, ambient or alpha fits the game's faces (sides ~0, top warm), so the difference is structural (which sprites reach the cube, or a different cloud-PS input). Next: decode the EnvMapGen caller of fn 0x118b40e0 and compare its sprite list with the main view's.
 - **Particle count mismatch.** The rain dump's emitter accumulator (9.025 at rate 3000) is unexplained; the spawn-or-accumulate alternation isn't modelled.
 - **Line endings.** `docs/re/renderer.md` triggers Git's CRLF→LF warning; Python edits should use `newline=''`.
 

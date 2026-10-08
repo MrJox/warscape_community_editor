@@ -233,3 +233,11 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
   light dir (-0.882881 -0.438358 0.168413)) do not reduce to a plain ortho * uv matrix (row norms 0.76, 4.3, 0.90, 1.0), so
   the matrix layout is still to be understood before the fit can be reproduced and checked.
 - SSAO jitter texture: generator not found; the pattern is removed by the blur, so the HBAO sample content stays.
+
+### Env-cube clouds: top face only (2026-10-08)
+- Per-face experiment (dry file): without clouds the side faces are +x 4.11 5.07 4.95, -x 2.13 2.92 3.01, +z 2.46 3.29 3.39,
+  -z 2.72 3.58 3.64 against the game's 4.31 4.69 4.63, 2.88 3.22 3.31, 2.41 2.81 3.06, 2.69 3.06 3.19 (within 10-15%), while
+  clouds on every face put them 100% off. The editor now draws the env-pass clouds on the +y face only.
+- Top face is still 7.21 7.16 6.16 against 3.97 4.63 4.88 (cloud-free 1.55 2.99 4.75). A fit of the cloud lighting needs
+  sun scale 0.46/0.58/0.75 per channel (ambient on), i.e. not a uniform factor, so the top-face cloud colour or the game's
+  cloud-free sky differs. Open.
