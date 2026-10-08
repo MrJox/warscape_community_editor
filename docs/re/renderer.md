@@ -191,3 +191,10 @@ the same editor cube (+y 7.19 7.13 6.14) as the editor's random field, so the ga
 clouds with the previously computed ambient instead of the XML ambient makes it brighter (8.7), not dimmer. The cloud
 PS brightness depends on ambient_cube_tb[0], sun_colour and camera_position (cloud_plane.hlsl ps30_main); what the
 game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvMapGen pass.
+
+### Env-cube clouds: EnvMapGen scene render (in progress)
+- fn 0x1192b640 (EnvMapGen per-face scene) calls fn 0x1192a900 twice (cloud planes, object +0x620; guarded by +0x598/+0x59c), last argument 0.
+- fn 0x1192a900: if byte[1]==0 init (fn 0x118e5b10); if dirty byte[0] set: timer +0xc += dt; when timer > interval +0x8 and
+  (+0x48)->+0xec * k > threshold, for each of +0x44 columns LCG (0x343fd/0x269ec3) roll <= probability +0x4 spawns (fn 0x118f0bf0), timer reset;
+  then submits the draw (fn 0x118b40e0) with the args {param_2, this+0x50, param_4, param_5} and clears the dirty byte.
+- Next: decode param_5 in fn 0x118b40e0 (main render vs env pass) to see why the editor's env-cube top face is ~2x the game's.
