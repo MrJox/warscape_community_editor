@@ -197,4 +197,9 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
 - fn 0x1192a900: if byte[1]==0 init (fn 0x118e5b10); if dirty byte[0] set: timer +0xc += dt; when timer > interval +0x8 and
   (+0x48)->+0xec * k > threshold, for each of +0x44 columns LCG (0x343fd/0x269ec3) roll <= probability +0x4 spawns (fn 0x118f0bf0), timer reset;
   then submits the draw (fn 0x118b40e0) with the args {param_2, this+0x50, param_4, param_5} and clears the dirty byte.
-- Next: decode param_5 in fn 0x118b40e0 (main render vs env pass) to see why the editor's env-cube top face is ~2x the game's.
+- fn 0x118b40e0 -> 0x118b72f0 -> 0x118b8500 is a parallel-for over the plane's clouds calling fn 0x1192aa40 per cloud.
+- fn 0x1192aa40 (per cloud): angle +0x9c += speed +0x88 * dt; past the end angle the cloud dies (+0x84 = 1, removed by
+  fn 0x11911630). With the force flag (EnvMapGen passes 0) both visibility bytes +4/+5 = 1; otherwise the cloud's
+  bounds are frustum-tested and +4 / +5 = visible in the two frusta. No draw and no colour/alpha change happens here.
+- Conclusion: the EnvMapGen calls only advance and cull the cloud planes; they do not explain the ~2x env-cube top face.
+  The remaining suspects are the cloud PS inputs during the env pass (ambient_cube_tb[0], sun_colour, camera_position).
