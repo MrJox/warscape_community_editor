@@ -185,3 +185,9 @@ Dry dump comparison (game computed cube = cbuffer / ambient_scale 0.8):
 
 So the game skips the sun disc. Clouds are needed for the top face but the editor's clouds add about twice the game's
 amount (the dump's cloud layout is random and unknown; horizon_alpha_start's remap is still an assumption). Open.
+
+Follow-up (2026-10-08): the dry dump's own 743 cloud sprites (extracted from memory, loaded with AWE_CLOUD_SPRITES) give
+the same editor cube (+y 7.19 7.13 6.14) as the editor's random field, so the gap is not the cloud layout. Lighting the
+clouds with the previously computed ambient instead of the XML ambient makes it brighter (8.7), not dimmer. The cloud
+PS brightness depends on ambient_cube_tb[0], sun_colour and camera_position (cloud_plane.hlsl ps30_main); what the
+game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvMapGen pass.

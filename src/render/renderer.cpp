@@ -1257,6 +1257,37 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
             g.field.update(p, cloud_dt_);
             dirty = true;
         }
+        // Debug: AWE_CLOUD_SPRITES=<file of 18-float sprites read from a game memory dump> replaces the random field.
+        static std::vector<CloudInstance> dumped = [] {
+            std::vector<CloudInstance> v;
+            if (const char* path = std::getenv("AWE_CLOUD_SPRITES"))
+                if (FILE* f = std::fopen(path, "rb")) {
+                    CloudInstance c;
+                    while (std::fread(&c, sizeof c, 1, f) == 1) v.push_back(c);
+                    std::fclose(f);
+                }
+            return v;
+        }();
+        if (!dumped.empty()) {
+            std::vector<CloudInstance> mine;
+            for (auto& c : dumped)
+                if ((c.t2[2] > 800000.0f) == p.far_plane) mine.push_back(c);
+            if (g.count != mine.size() || dirty) {
+                g.count = UINT(mine.size());
+                if (g.count > g.capacity || !g.instances) {
+                    g.capacity = std::max<UINT>(g.count + 256, 1024);
+                    D3D11_BUFFER_DESC bd{UINT(g.capacity * sizeof(CloudInstance)), D3D11_USAGE_DYNAMIC, D3D11_BIND_VERTEX_BUFFER, D3D11_CPU_ACCESS_WRITE};
+                    g.instances.Reset();
+                    dev_->CreateBuffer(&bd, nullptr, &g.instances);
+                }
+                D3D11_MAPPED_SUBRESOURCE ms;
+                if (g.count && SUCCEEDED(ctx_->Map(g.instances.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                    std::memcpy(ms.pData, mine.data(), mine.size() * sizeof(CloudInstance));
+                    ctx_->Unmap(g.instances.Get(), 0);
+                }
+            }
+            dirty = false;
+        }
         if (dirty) {
             const auto& inst = g.field.instances();
             g.count = UINT(inst.size());
