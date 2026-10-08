@@ -43,7 +43,7 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
     float box[3] = {10, 10, 10};
     em.vec("RecycleClippedBox", box, 3);
     // x: 3 = RecycleClipped (wrap into the box around the emitter), 1 = ParticlesFollowEmitter,
-    // 2 = follow with rotation (ASSUMPTION: ParticlesLocalSpace), 0 = world space
+    // 2 = follow with rotation (ParticlesLocalSpace; the property exists in the game XML, its mapping to 2 is inferred), 0 = world space
     k.ps_sim_following_emitter_params[0] = em.b("RecycleClipped", false) ? 3.0f
                                          : em.b("ParticlesLocalSpace", false) ? 2.0f
                                          : em.b("ParticlesFollowEmitter", false) ? 1.0f : 0.0f;
@@ -51,7 +51,7 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
     k.ps_sim_turbulence_params[0] = em.f("TurbulenceStart", 0);
     k.ps_sim_turbulence_params[1] = em.f("TurbulenceEnd", 0);
     k.ps_sim_turbulence_params[2] = em.f("VectorFieldScale", 1);
-    k.ps_sim_game_logic_params[0] = em.b("ParticlesFollowTerrain", false) ? 1.0f : 0.0f; // ASSUMPTION
+    k.ps_sim_game_logic_params[0] = em.b("ParticlesFollowTerrain", false) ? 1.0f : 0.0f; // property exists in the game XML (always false there)
 
     float cull[4] = {0, 0, 500, 550};
     em.vec("ParticleCullDistances", cull, 4);
@@ -174,7 +174,7 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
             if (!k.normal.empty()) k.behaviour_mask[0] |= kPsNormal;
         } else if (f == "ps_lighting") {
             k.behaviour_mask[0] |= kPsLighting;
-            k.ps_lighting_legacy_params[0] = m.b("legacy_lighting", false) ? 1.0f : 0.0f; // ASSUMPTION
+            k.ps_lighting_legacy_params[0] = m.b("legacy_lighting", false) ? 1.0f : 0.0f; // property exists in the game XML (always false there)
             k.ps_lighting_legacy_params[2] = m.f("emissive", 0);
             k.ps_lighting_legacy_params[3] = m.f("directionality", 0);
             // verified (rain + snow dumps): the scattering path divides by small + large, so these must be set
@@ -185,7 +185,7 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
             k.additive = m.b("additive_blend", false);
         } else if (f == "ps_soft_edge") {
             k.behaviour_mask[0] |= kPsSoftEdge;
-            k.ps_soft_edge_params[0] = m.f("soft_edge_distance", m.f("distance", 1.0f)); // ASSUMPTION: property name
+            k.ps_soft_edge_params[0] = m.f("soft_factor", m.f("soft_edge_distance", 1.0f)); // property name verified in the game's vfx XML (soft_factor)
         } else if (f == "ps_fog") {
             k.behaviour_mask[0] |= kPsFog;
         }

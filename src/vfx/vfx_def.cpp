@@ -67,7 +67,8 @@ void read_props(const XmlDoc& doc, int e, VfxProps& out) {
         auto name = doc.get(c, "name");
         if (!name) continue;
         // Emitter properties repeat per graphics quality: quality="0" is the base value, higher levels are
-        // lower-quality overrides (fewer particles, shorter culling). ASSUMPTION: the editor shows the base level.
+        // lower-quality overrides (fewer particles, shorter culling). Decision: the editor shows the base level, which is what
+        // gfx_effects_quality 3 (the maximum, the default) selects; the mapping of lower settings to levels 1 / 2 is not decoded.
         int quality = std::atoi(doc.get(c, "quality").value_or("0").c_str());
         if (quality != 0 && out.props.count(*name)) continue;
         if (quality != 0) {

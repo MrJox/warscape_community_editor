@@ -52,7 +52,8 @@ std::vector<CloudPlane> read_cloud_planes(const XmlDoc& doc);
 
 // A plane's live clouds: initial fill (fn 0x18e5b10), drift (fn 0x192aa40: angle x += speed * dt, the cloud dies
 // past the far edge) and new clouds entering at column 0 (fn 0x192a900).
-// ASSUMPTIONS: a new column every cell_angle / velocity seconds; clouds die beyond (cells / 2) * cell_angle.
+// Verified: death limit (cells / 2) * cell_angle matches the dumped sprites' angle range; timer restarts at 0 after a spawn.
+// ASSUMPTION: the spawn interval (object +0x8, source not decoded) is cell_angle / velocity.
 class CloudField {
 public:
     void reset(const CloudPlane& plane, uint32_t seed);

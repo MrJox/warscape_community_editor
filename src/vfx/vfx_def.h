@@ -14,7 +14,8 @@ namespace we {
 class XmlDoc;
 
 // "alpha_min,16711680;0.0,0.000212;0.204703,0.801828|alpha_max,65280;..." -> one curve per name.
-// ASSUMPTION: linear interpolation between keys, clamped outside them.
+// Linear interpolation between keys, clamped outside them. The game bakes every curve into 128 entries and reads it
+// with linear lookup (fn 0x11829530 / 0x117ba1a0); how the keys are interpolated while baking is not decoded.
 struct VfxCurve {
     std::vector<std::pair<float, float>> keys; // (t, value), t in 0..1
     float eval(float t) const;

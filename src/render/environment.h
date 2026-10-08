@@ -88,7 +88,7 @@ constexpr float kSkyHdrScale = 5000.0f / 1200.0f;
 
 // Cross-fade between two environments (t = 0: a, 1: b). Numeric parameters interpolate linearly (azimuth
 // along the shorter arc); switches, strings and cloud layouts take the nearer side.
-// ASSUMPTION: the engine's lighting-environment cross-fade interpolates the same way.
+// Verified (fn 0x175f4e0): the engine's lighting-block cross-fade is (b - a) * t + a on every numeric field.
 EnvironmentParams blend_environments(const EnvironmentParams& a, const EnvironmentParams& b, float t);
 
 // The player's graphics options (%APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt) that change
@@ -102,7 +102,7 @@ struct GraphicsOptions {
 GraphicsOptions read_graphics_options();
 void read_output_settings(float& gamma, float& brightness);
 
-// sRGB-ish colour from the files to linear light. ASSUMPTION: pow 2.2.
+// sRGB-ish colour from the files to linear light: pow 2.2 (verified against the sun, sky, fog and ambient constants of 3 dumps).
 float3 colour_to_linear(const float3& c);
 
 // Writes skydome_PS, lighting_VS_PS, fog_VS_PS, weather_shared, auto exposure / tone mapping cbuffers.

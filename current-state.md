@@ -39,23 +39,22 @@ Everything is committed (latest commit `991811e`), and the working tree is clean
   - Graphics options: vignette, DOF, SSAO, distortion, shadow quality.
 
 ## What remains
-These are the remaining `ASSUMPTION` markers in `src/`:
+Resolved on 2026-10-08 (comments and docs updated, details in `docs/re/`): lighting cross-fade (linear, fn 0x175f4e0), colour
+conversion (pow 2.2), emitter rotation order (qz*qy*qx, fn 0x1180d730), soft-edge property name (`soft_factor`), cloud
+timer reset and death limit, env-pass shadows (< 1% effect, left off). Decisions rather than open items: VFX quality level
+(base level = gfx_effects_quality 3), SSAO jitter content (blurred away).
 
-| Area | Location | Assumption to replace by measurement |
+Still open `ASSUMPTION`s / known gaps:
+
+| Area | Location | What is missing |
 | --- | --- | --- |
-| Env-cube cloud brightness | renderer.cpp `render_env_cube` | The editor's top face is about 2× the game's (see Known problems) |
-| Env-cube shadows | renderer.cpp:525 | No shadows while generating the env cube |
-| SSAO jitter texture | renderer.cpp:222 | Uses the HBAO default; the engine generates a 256² texture whose generator hasn't been found (SSAO view +0x7c) |
-| Cloud columns | clouds.h:55 | Spawn and death timing; fn 0x1192a900 and fn 0x1192aa40 are now decoded, so this can be implemented |
-| Lighting cross-fade | environment.h:91 | Interpolation method |
-| Colour conversion | environment.h:105 | File colour to linear uses pow 2.2 |
-| CPU particle emission | particles.cpp:366 | Spawn shapes; emitter alternation (fn 0x1188e240) not modelled |
-| Particle rotation | particles.cpp:445 | `EmitterRotation` order |
+| Env-cube cloud brightness | renderer.cpp `render_env_cube` | Near plane is 2-3 units too bright on the side faces; not a uniform scale (see Known problems) |
+| Cloud spawn interval | clouds.h:56 | Object +0x8 assumed cell_angle / velocity; the dry dump has velocity 0 |
+| CPU particle emission | particles.cpp:366 | Game adds ring + box + SpawnPosition and uses one min/max radius lerp (decoded in particles.md), editor still picks box OR ring; accumulate/spawn alternation (fn 0x1188e240) not modelled |
 | Particle tint | particles.cpp:522 | Tint = middle of the range |
-| VFX constants | vfx_constants.cpp:46/54/62/112/177/188 | Local space, follow terrain, scale variation, colour lerp, legacy lighting, soft-edge property name |
-| VFX curves | vfx_def.h:17 | Linear key interpolation |
-| VFX quality level | vfx_def.cpp:70 | The editor shows the base quality level |
-| Shadow light matrix | — | Fitting (fn 0x117329a0) not decoded |
+| VFX constants | vfx_constants.cpp | Scale variation rows, colour lerp shape, ParticlesLocalSpace -> 2 mapping |
+| VFX curves | vfx_def.h | Key interpolation while baking the 128-entry tables |
+| Shadow light fit | renderer.cpp `pass_shadows` | Engine fits a tight box (fn 0x117329a0); editor uses a bounding sphere; dump matrix layout not understood yet |
 
 ## Important decisions and why
 - **Game shaders run as-is.** This is the only way to get pixel-close output, so the editor's job is to reproduce the engine's constants and states exactly.
@@ -67,7 +66,7 @@ These are the remaining `ASSUMPTION` markers in `src/`:
 ## Known bugs / problems
 - **Environment cube is too bright.** The editor's top (+y) face is about 7.2 / 7.1 / 6.1; the game's is 4.0 / 4.6 / 4.9 (dry dump).
   - **Ruled out:** cloud layout (checked with the dumped sprites via `AWE_CLOUD_SPRITES`), the computed ambient, and the EnvMapGen cloud calls (they only advance and cull clouds).
-  - **Remaining suspects:** cloud pixel-shader inputs during the env pass: `ambient_cube_tb[0]`, `sun_colour`, `camera_position`.
+  - **Narrowed (see `docs/re/renderer.md`, "cloud PS inputs ruled out"):** only the near plane contributes; no uniform scale of sun, ambient or alpha fits the game's faces (sides ~0, top warm), so the difference is structural (which sprites reach the cube, or a different cloud-PS input). Next: decode the EnvMapGen caller of fn 0x118b40e0 and compare its sprite list with the main view's.
 - **Particle count mismatch.** The rain dump's emitter accumulator (9.025 at rate 3000) is unexplained; the spawn-or-accumulate alternation isn't modelled.
 - **Line endings.** `docs/re/renderer.md` triggers Git's CRLF→LF warning; Python edits should use `newline=''`.
 
@@ -79,14 +78,8 @@ These are the remaining `ASSUMPTION` markers in `src/`:
 - Decompiles: `../tools/decomp/` (`envgen.c`, `cloudsubmit.c`, `cloudjob*.c`, `cloudper.c`, `clouddraw.c`)
 
 ## Exact next steps
-1. **Env-cube cloud brightness.** Find which constant buffers the game binds for the cloud draw during EnvMapGen.
-   - Start from the cloud draw function (`tools/decomp/clouddraw.c`).
-   - Compare `ambient_cube_tb`, `sun_colour` and `camera_position` in the dry dump against the editor's env-pass values.
-   - Fix `render_env_cube` and re-measure all five faces with `AWE_CLOUD_SPRITES=<scratchpad>/dry_sprites_u.bin`. Target values per face: +x 4.31/4.69/4.63, −x 2.88/3.22/3.31, +y 3.97/4.63/4.88, +z 2.41/2.81/3.06, −z 2.69/3.06/3.19.
-2. **Cloud columns.** Implement spawn and death in `clouds.cpp` from fn 0x1192a900 / 0x118f0bf0 / 0x1192aa40:
-   - Spawn timer with probability per column (LCG 0x343fd / 0x269ec3).
-   - Each cloud's angle advances by speed × dt; a cloud dies past the end angle.
-3. **Env-pass shadows.** Check whether EnvMapGen binds the shadow map (`g_iSplitCount` in the dump during the env pass).
-4. **Particle emission.** Decode fn 0x1188e240 (emitter alternation) and the spawn-shape functions; replace the particle ASSUMPTIONs.
-5. **Remaining assumptions.** VFX curve interpolation, lighting cross-fade, SSAO jitter generator, light-matrix fitting (fn 0x117329a0).
-6. **After each item:** build Release, compare against the dumps, document in `docs/re/`, commit.
+1. **Env-cube clouds.** Decode the EnvMapGen caller of fn 0x118b40e0 and compare its sprite list with the main view's; check whether the env pass binds a different `cloud_plane_PS` block (fn 0x1191e430). Target faces: +x 4.31/4.69/4.63, -x 2.88/3.22/3.31, +y 3.97/4.63/4.88, +z 2.41/2.81/3.06, -z 2.69/3.06/3.19. Measure with `--open weather/charlemagne/med_sp_land_day_dry.environment --shot x.png` (face averages in `x.png.txt`) and `AWE_CLOUD_SPRITES=<scratchpad>/dry_sprites_u.bin`.
+2. **Shadow fit.** Work out the layout of `g_amHardSplit` (values in `docs/re/renderer.md`), then replace the sphere fit with the engine's box fit.
+3. **Particles.** Reproduce fn 0x1895130's spawn composition (`docs/re/particles.md`, "Spawn code"), then the batch alternation.
+4. **Cloud interval.** Needs a dump taken with a file whose near plane has cloud_velocity > 0.
+5. **After each item:** build Release (stop any running `build/Release/weather_editor.exe` first, it locks the file), compare against the dumps, document in `docs/re/`, commit.

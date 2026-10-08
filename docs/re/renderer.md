@@ -203,3 +203,33 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
   bounds are frustum-tested and +4 / +5 = visible in the two frusta. No draw and no colour/alpha change happens here.
 - Conclusion: the EnvMapGen calls only advance and cull the cloud planes; they do not explain the ~2x env-cube top face.
   The remaining suspects are the cloud PS inputs during the env pass (ambient_cube_tb[0], sun_colour, camera_position).
+
+### Env-cube clouds: cloud PS inputs ruled out (2026-10-08)
+- cloud_plane ps30_main (disassembled): colour = (ambient_cube_tb[0] + sun_colour * 0.0001) * 0.5 * 0.65 * (g_hdr_on ? 360 * 0.004 : 1)
+  plus sun-dependent terms scaled by sun_colour * 0.004 * 0.35 (g_hdr_on) - lighting_VS_PS cb1[1], cb1[4], cb1[11].x.
+  The VS only moves the dome with the view matrix; the 50 m env camera offset is irrelevant at the dome radius.
+- Editor experiments (dry file + dumped sprites, temporary env-var overrides, since removed): the far plane contributes nothing
+  to the cube, the whole cloud excess is the near plane. Cube faces without clouds: +x 4.11 5.07 4.95, -x 2.13 2.92 3.01,
+  +y 1.55 2.99 4.75, +z 2.46 3.29 3.39, -z 2.72 3.58 3.64. Game minus no-cloud: sides ~0 (-0.5..+0.7), top (2.4, 1.6, 0.1);
+  editor minus no-cloud: sides +2..+3, top (5.7, 4.2, 1.4).
+- Cloud lighting is bilinear in (sun scale, ambient scale), so four runs fit it exactly. A least-squares fit of the game faces
+  to (cloud opacity, ambient scale, sun scale) leaves a large residual: no uniform scale of sun, ambient or alpha explains the
+  game. g_hdr_on = 0 gives faces of 600-1400 (so the game runs the cloud PS in the HDR branch). The game's clouds are
+  close to invisible on the side faces and warm on the top, so what differs is structural (which sprites reach the cube, or a
+  different cloud-PS input such as sun_colour / g_sun_direction), not a brightness factor.
+- Next: a Task Manager full dump taken while the game regenerates the cube is not possible (EnvMapGen runs in a few ms);
+  instead decode the callers of fn 0x118b40e0 for the EnvMapGen call and compare the draw's sprite count / list with the main
+  view's, and check whether the env pass binds a different cloud_plane_PS block (fn 0x1191e430 fills it per plane).
+
+## Remaining engine items, status (2026-10-08)
+- Lighting cross-fade: linear (b - a) * t + a on every field (fn 0x175f4e0). Colour conversion: pow 2.2 (verified).
+- Cloud columns: death limit (cells / 2) * cell angle matches the dumped sprite angles; the spawn timer restarts at 0 after
+  a spawn (fn 0x1192a900). The interval (object +0x8) is still cell_angle / velocity by assumption (the dry file has
+  cloud_velocity 0, so no dump shows a moving field).
+- Env-pass shadows: binding the main-camera shadow map changes the cube by < 1%; left off.
+- Shadow light fit (fn 0x117329a0): the engine takes a tight box of the 8 slice corners along the light axes; the editor
+  uses a bounding sphere. The dry dump's g_amHardSplit rows (cascade 0: (0.34657 -0.678929 0.04961 430.983),
+  (-1.13041 0.70789 -4.08327 -1160.33), (-0.533614 -0.412684 0.602179 459.788), (0.263156 -0.164795 0.950574 716.725),
+  light dir (-0.882881 -0.438358 0.168413)) do not reduce to a plain ortho * uv matrix (row norms 0.76, 4.3, 0.90, 1.0), so
+  the matrix layout is still to be understood before the fit can be reproduced and checked.
+- SSAO jitter texture: generator not found; the pattern is removed by the blur, so the HBAO sample content stays.

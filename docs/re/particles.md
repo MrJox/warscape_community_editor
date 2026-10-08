@@ -174,3 +174,20 @@ hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified 
 - fn 0x1188e240 either accumulates or spawns per call; not modelled (the rain dump's live count matches accumulating
   every frame, accumulator 9.025 at rate 3000 is unexplained).
 
+## Spawn code (decoded 2026-10-08, not yet reproduced)
+
+Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (LCG 0x343fd / 0x269ec3 on instance +0xc0):
+- Position fn 0x1183fa30: with a mesh spawn source it picks a random point on a triangle (barycentric folding), otherwise
+  fn 0x1183f4a0 builds an offset from three parts that are ADDED: a ring (angle lerp(desc +0x198, +0x19c) * pi/180,
+  radius lerp(min, max) of the curve at desc +0x1b8 times the emitter scale), a box (curve vector at desc +0x1e8, each axis
+  times (rand - 0.5) times scale) and the fixed SpawnPosition (desc +0x188..+0x190, times scale); this is rotated by the
+  desc quaternion (fn 0x1183ee00, from axis/angle) and then by the instance orientation (+0x30..+0x3c). The editor chooses
+  box OR ring and uses a four-value inner/outer radius lerp; the game uses one lerp(min, max) and adds both.
+- Direction and rotation fn 0x1180d730: EmitterRotation euler (desc +0x2ac..+0x2b4, degrees) becomes q = qz * qy * qx
+  (X first); the particle direction is the normalised SpawnDirection rotated by that, speed = lerp(desc +0x12c, +0x130).
+- Per particle: lifetime from fn 0x11835b50 = lerp(desc +0x74, +0x78) + instance +0xa0; angular and scale ranges at
+  desc +0xd8/+0xdc, +0xe4/+0xe8, +0xf0/+0xf4 and mass-like +0x314/+0x318 (times scale^3).
+- Several spawn batches can run per update (list at DAT_12a63570); fn 0x1188e240 fills it, which is the
+  accumulate-or-spawn alternation that would explain the rain dump's accumulator of 9.025 (still not reproduced).
+- Verified from the game's vfx XML: soft-edge property is `soft_factor`; `legacy_lighting`, `ParticlesFollowTerrain`,
+  `ParticlesLocalSpace` exist (always false in the shipped files).

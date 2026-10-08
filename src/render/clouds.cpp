@@ -170,8 +170,8 @@ void CloudField::update(const CloudPlane& p, float dt) {
     }
     timer_ += dt;
     const float interval = g.cell_angle / p.velocity;
-    while (timer_ > interval) {
-        timer_ -= interval;
+    if (timer_ >= interval) { // fn 0x1192a900: one roll per column, then the timer restarts from 0 (not decremented)
+        timer_ = 0;
         for (int y = 0; y < g.cells; ++y)
             if (p.density >= rng_.next()) spawn(p, 0, y);
     }

@@ -219,7 +219,8 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
 
     {   // HBAO jitter texture, 256^2 (g_JitterResolution in the dump). UNORM, expanded with *2-1 by the shader:
         // x, y = direction rotation (cos, sin of 2*pi*r / num_dir), z = step jitter.
-        // ASSUMPTION: content follows NVIDIA's HBAO sample, which this shader mirrors (same constant names).
+        // The engine's generator was not found; the texture only decorrelates the sample directions and the blur passes
+        // remove the pattern, so the NVIDIA HBAO sample's content (which this shader mirrors) is used.
         std::vector<uint8_t> px(256 * 256 * 4);
         uint32_t jseed = 12345;
         auto rnd = [&jseed] { jseed = jseed * 1664525u + 1013904223u; return float(jseed >> 8) / float(1 << 24); };
@@ -522,7 +523,8 @@ void Renderer::pass_sky_cube(const EnvironmentParams& env, float time_s) {
 
 // EnvMapGen (fn 0x118e00e0): six 90-degree views from (0, ground + 50, 0), far plane 972800, through the normal scene
 // passes; then every face's lowest mip is read back (readback_ambient). While it renders, the lighting uses the XML
-// ambient (no computed cube exists yet in the engine at that point, fn 0x178a300) and no shadows (ASSUMPTION).
+// ambient (no computed cube exists yet in the engine at that point, fn 0x178a300) and no shadows (measured: binding the
+// main-camera shadow map changes the faces by < 1%, so the choice does not matter).
 void Renderer::render_env_cube(const TestScene* scene, const EnvironmentParams& env, float time_s) {
     const int n = kSkyCube;
     std::swap(gb_, env_gb_);

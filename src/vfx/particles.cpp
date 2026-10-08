@@ -363,7 +363,8 @@ void ParticleSystem::fullscreen(ID3D11RenderTargetView* const* rtvs, int n, int 
     ctx_->Draw(3, 0);
 }
 
-// CPU emission. ASSUMPTIONS (game code not traced yet, see docs/re/particles.md):
+// CPU emission. The spawn code is fn 0x1895130 (tools/decomp/emit_update.c, notes in docs/re/particles.md); the shapes below
+// are still approximations of it:
 //  - rate = lerp(emission_min, emission_max, random) of EmissionRateCurve at the emitter's normalised age
 //    (alive counts in the dumps match rate * ParticleLifeTime per reference);
 //  - position: SpawnAreaBox gives the box size per axis (centred), else SpawnAreaCurve an annulus radius;
@@ -442,7 +443,7 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
         float arc[2] = {0, 360};
         d.vec("SpawnArc", arc, 2);
         // EmitterRotation (degrees, x then y then z) turns the spawn area and directions; the lens snowflakes
-        // use x = 90 to put their disk into the screen plane. ASSUMPTION: rotation order.
+        // use x = 90 to put their disk into the screen plane. Verified (fn 0x1180d730): q = qz * qy * qx from half-angles, i.e. X first, then Y, then Z.
         float rot[3] = {0, 0, 0};
         d.vec("EmitterRotation", rot, 3);
         float4x4 emitter_rot = rotation_z(rot[2] * kPi / 180.0f) * rotation_y(rot[1] * kPi / 180.0f) * rotation_x(rot[0] * kPi / 180.0f);
