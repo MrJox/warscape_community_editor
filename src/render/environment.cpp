@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include <algorithm>
+#include <DirectXPackedVector.h>
 #include <cmath>
 
 namespace we {
@@ -212,15 +213,8 @@ EnvironmentParams read_environment(const XmlDoc& doc) {
     hdr.f("min_white_point", e.min_white_point);
     hdr.f("absolute_white_point", e.absolute_white_point);
     hdr.f("auto_exposure_speed", e.auto_exposure_speed);
-    hdr.f("high_pass_threshold", e.high_pass_threshold);
-    // Older files have single low/high_tones_bias; newer ones per channel.
-    float lo = -1, hi = -1;
-    hdr.f("low_tones_bias", lo);
-    hdr.f("high_tones_bias", hi);
-    for (int i = 0; i < 3; ++i) {
-        if (lo >= 0) e.low_tones_bias[i] = lo;
-        if (hi >= 0) e.high_tones_bias[i] = hi;
-    }
+    // The battle HDR node reads only these names (property table at dll+0x1da5ba0); the single low/high_tones_bias,
+    // black_point/white_point and high_pass_threshold of older files belong to another table and are ignored.
     hdr.f("low_tones_bias_red", e.low_tones_bias[0]);
     hdr.f("low_tones_bias_green", e.low_tones_bias[1]);
     hdr.f("low_tones_bias_blue", e.low_tones_bias[2]);
@@ -369,24 +363,33 @@ float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness) {
     return o * m;
 }
 
-void build_scurve(const EnvironmentParams& e, uint8_t out[256 * 4]) {
-    // PLACEHOLDER: the engine builds a 256x1 texture ("HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture",
-    // fn 0x178c710) but the code that fills it is not found yet. Until then: Schlick bias for the low half
-    // and the high half, per channel (bias 0.5 = straight line).
-    auto bias = [](float x, float b) {
-        b = std::fmin(std::fmax(b, 0.001f), 0.999f);
-        return x / ((1.0f / b - 2.0f) * (1.0f - x) + 1.0f);
-    };
-    const float lo[3] = {e.low_tones_bias[0], e.low_tones_bias[1], e.low_tones_bias[2]};
-    const float hi[3] = {e.high_tones_bias[0], e.high_tones_bias[1], e.high_tones_bias[2]};
-    for (int i = 0; i < 256; ++i) {
-        float x = i / 255.0f;
-        for (int ch = 0; ch < 3; ++ch) {
-            float y = x < 0.5f ? 0.5f * bias(2 * x, lo[ch]) : 0.5f + 0.5f * bias(2 * x - 1, hi[ch]);
-            out[i * 4 + ch] = uint8_t(std::lround(std::fmin(std::fmax(y, 0.0f), 1.0f) * 255));
+void build_scurve(const EnvironmentParams& e, uint16_t out[256 * 4]) {
+    // Verified (empire.retail.dll): HDR_DYNAMIC_TONE_MAP_VIEW fills its 256x1 RGBA16F "SCurve Texture" with fn 0x17940b0,
+    // passing the HDR block's per-channel (low, high) tone biases (fn 0x17284a0). Per channel, fn 0x174a780 samples the
+    // cubic Bezier (0, 0), (1/3, low), (2/3, high), (1, 1) at 5120 points (basis matrix -1 3 -3 1 / 3 -6 3 0 / -3 3 0 0 /
+    // 1 0 0 0 on (t^3, t^2, t, 1)), bins them by round(x * 255) and keeps per bin the sample whose x is nearest to
+    // bin / 255; the texel is max(y, 0) as half floats, alpha 0. lock_rgb_relative_tones only links the channels while
+    // editing in the engine's debug panel (fn 0x176c1b0).
+    constexpr int kBins = 256, kSamples = kBins * 20;
+    for (int ch = 0; ch < 3; ++ch) {
+        const float px[4] = {0, 1.0f / 3, 2.0f / 3, 1}, py[4] = {0, e.low_tones_bias[ch], e.high_tones_bias[ch], 1};
+        float bx[kBins], by[kBins];
+        for (int i = 0; i < kBins; ++i) bx[i] = by[i] = 3.402823466e38f;
+        for (int k = 0; k < kSamples; ++k) {
+            const float t = float(k) * (1.0f / float(kSamples - 1));
+            const float b0 = (1 - t) * (1 - t) * (1 - t), b1 = 3 * t * (1 - t) * (1 - t), b2 = 3 * t * t * (1 - t), b3 = t * t * t;
+            const float x = b0 * px[0] + b1 * px[1] + b2 * px[2] + b3 * px[3];
+            const float y = b0 * py[0] + b1 * py[1] + b2 * py[2] + b3 * py[3];
+            const int bin = int(std::floor(std::fmin(std::fmax(x, 0.0f), 1.0f) * float(kBins - 1) + 0.5f));
+            const float centre = float(bin) * (1.0f / float(kBins - 1));
+            if (std::fabs(bx[bin] - centre) > std::fabs(x - centre)) {
+                bx[bin] = x;
+                by[bin] = y;
+            }
         }
-        out[i * 4 + 3] = 255;
+        for (int i = 0; i < kBins; ++i) out[i * 4 + ch] = DirectX::PackedVector::XMConvertFloatToHalf(std::fmax(by[i], 0.0f));
     }
+    for (int i = 0; i < kBins; ++i) out[i * 4 + 3] = 0;
 }
 
 } // namespace we

@@ -243,7 +243,7 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         dev_->CreateTexture2D(&sd, nullptr, &st);
     }
     {
-        D3D11_TEXTURE2D_DESC sd{256, 1, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE};
+        D3D11_TEXTURE2D_DESC sd{256, 1, 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE};
         dev_->CreateTexture2D(&sd, nullptr, &scurve_tex_);
         dev_->CreateShaderResourceView(scurve_tex_.Get(), nullptr, &scurve_srv_);
     }
@@ -680,10 +680,10 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
     fullscreen_to(bloom_a_.t.rtv.Get(), bloom_a_.w, bloom_a_.h, *by);
 
     // 5. tone map with bloom and the S-curve
-    uint8_t curve[256 * 4];
+    uint16_t curve[256 * 4];
     build_scurve(env, curve);
     if (std::memcmp(curve, scurve_last_, sizeof curve) != 0) {
-        ctx_->UpdateSubresource(scurve_tex_.Get(), 0, nullptr, curve, 256 * 4, 0);
+        ctx_->UpdateSubresource(scurve_tex_.Get(), 0, nullptr, curve, 256 * 8, 0);
         std::memcpy(scurve_last_, curve, sizeof curve);
     }
     bind(*tm, s_clamp_linear_.Get());

@@ -47,7 +47,7 @@ Matrices: clip.i = dot(pos, row i) — row-major upload, column-vector maths.
 | ambient cube (custom) | **verified** (rain + snow dumps): pow 2.2 * ambient_cube_hdr_scaler, no ambient_scale; lr = (left, right), tb = (top, bottom), fb = (front, back) |
 | `luma_stats_buffer` | verified by names: absolute/max black, min/absolute white 1:1 from HDR |
 | `colour_matrix` | **verified** fn 0x172c100: Overlay * Hue * Saturation(Haeberli 0.3086/0.6094/0.0820) * Contrast(pivot 0.5) * Brightness(x engine factor [this+0xe0]); hue rotation sign layout assumption |
-| S-curve LUT | 256x1 RGBA8 texture created in fn 0x178c710 ("HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture"); **fill code not found** — placeholder Schlick-bias curve from low/high_tones_bias |
+| S-curve LUT | **verified** 256x1 RGBA16F: per channel the cubic Bezier (0,0), (1/3, low_tones_bias_c), (2/3, high_tones_bias_c), (1,1), 5120 samples binned to the nearest texel (fn 0x174a780, upload fn 0x17940b0, biases from the HDR block in fn 0x17284a0). lock_rgb_relative_tones only links channels in the engine debug panel |
 | colorimetry gamma | assumption 2.2 (graphics option) |
 | **HDR light scale** | **key open item**: with `g_hdr_on` the lighting and fog shaders multiply light colours by 0.004 (1/250); ambient by 360*0.004. So the engine's `sun_colour` constant is ~250x the plain linear(colour)*scale. Exact factor: memory dump |
 
@@ -134,3 +134,14 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
 - Editor: implemented with the sky cube's face averages. The game's cube also contains clouds, sun and terrain, so the
   editor's values differ (dry file: game top (3.97, 4.63, 4.88) vs editor (1.55, 2.99, 4.75)); next step is to render
   clouds and ground into the editor's environment cube.
+
+## S-curve and HDR properties (2026-10-08, solved)
+
+- The tone-map views fill their "SCurve Texture" in vtable slot 27 (fn 0x1727fc0 constant view, fn 0x17284a0 dynamic
+  view) through fn 0x17940b0: three channels from fn 0x174a780, written as half floats (alpha 0). fn 0x174a780 evaluates
+  the Bezier with the runtime basis matrix at dll+0x1d26b18 (-1 3 -3 1 / 3 -6 3 0 / -3 3 0 0 / 1 0 0 0, read from the dump).
+  The search earlier missed it because the texture is RGBA16F and the fill sits behind a vtable.
+- Battle HDR property table (dll+0x1da5ba0): absolute_black_point, max_black_point, min_white_point,
+  absolute_white_point, auto_exposure_speed, low/high_tones_bias_red/green/blue, lock_rgb_relative_tones. Defaults
+  (fn 0x177cd80): 0.01, 2, 6, 40, 0.02, 0.33, 0.66, true. The single low/high_tones_bias, black/white_point and
+  high_pass_threshold of older files are in another table (dll+0x1da6034) and do not affect battles.

@@ -147,7 +147,7 @@ private:
     float luma_black_ = 0.001f, luma_white_ = 9.0f;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> scurve_tex_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> scurve_srv_;
-    uint8_t scurve_last_[256 * 4] = {};
+    uint16_t scurve_last_[256 * 4] = {};
 
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;
