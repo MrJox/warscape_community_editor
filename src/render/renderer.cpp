@@ -184,8 +184,10 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         dev_->CreateDepthStencilView(shadow_depth_tex_.Get(), nullptr, &shadow_dsv_);
         D3D11_RASTERIZER_DESC r{};
         r.FillMode = D3D11_FILL_SOLID;
-        r.CullMode = D3D11_CULL_FRONT; // ASSUMPTION: back faces into the shadow map (the game's sample bias is 0)
-        r.DepthClipEnable = FALSE;     // keep casters behind the light's near plane
+        // Verified (rigid shader fn 0x116e5130, param_6 = 1 for rigidstandard: rasterizer +0x1a60 with cull field = 1):
+        // CULL_NONE, solid, depth clip on, no depth bias (engine state objects hold D3D11 enums).
+        r.CullMode = D3D11_CULL_NONE;
+        r.DepthClipEnable = TRUE;
         dev_->CreateRasterizerState(&r, &rs_shadow_);
     }
 
