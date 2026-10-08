@@ -145,7 +145,7 @@ weather_editor/
 
 ### Phase 4: DB tables
 1. Read weather, sky, season and VFX tables through `rpfm_cli` TSV extraction with the RPFM schema.
-2. "What would the game pick" view: climate + weather type + time → environment file(s). **Done** (Selection > Weather picker, `docs/re/variation_db.md`).
+2. "What would the game pick" view: climate + weather type + time → environment file(s). **Done** (Selection > Weather picker, `docs/re/variation_db.md`). Scope decision 2026-10-08: no general DB table editor; what is needed is editing `warscape_asset_variation_db` and converting it between XML and FASTBIN, which is done (items 1 and 3 of this phase are dropped).
 3. Edit and write TSVs for RPFM import (still no own pack writing).
 
 ### Phase 5: More materials

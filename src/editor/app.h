@@ -2,6 +2,7 @@
 #include "core/vfs.h"
 #include "render/renderer.h"
 #include "render/scene.h"
+#include "editor/variation_editor.h"
 #include "formats/variation_db.h"
 #include "formats/xml_doc.h"
 
@@ -36,7 +37,8 @@ public:
     void set_blend(int doc, float t) { blend_doc_ = doc; blend_t_ = t; }
     void set_orbit(float yaw, float pitch, float dist, float target_y = 5) { cam_yaw_ = yaw; cam_pitch_ = pitch; cam_dist_ = dist; cam_target_.y = target_y; }
     std::string diagnostics() const;
-    void show_picker(bool on) { show_picker_ = on; }
+    void set_vdb_script(const std::string& s) { vdb_script_ = s; }
+    void show_picker(bool on, bool edit_tab = false) { show_picker_ = on; if (edit_tab) vdb_select_pick_ = false; }
     void set_pick(const std::string& category, const std::string& value) { pick_overrides_[category] = value; }
     bool confirm_close(); // false = cancel closing
 
@@ -56,6 +58,10 @@ private:
     void draw_viewport();
     void draw_picker();
     void load_variation_db();
+    void load_vdb_source(int index);
+    void load_vdb_file(const std::string& path);
+    void save_variation_db(bool xml, bool bin);
+    void run_vdb_script();
     void init_renderer();
     void load_settings();
     void store_settings() const;
@@ -95,7 +101,16 @@ private:
 
     // "What would the game pick": warscape_asset_variation_db and the current conditions
     std::unique_ptr<VariationDb> vdb_;
-    std::string vdb_error_, vdb_source_;
+    std::string vdb_error_, vdb_source_, vdb_message_;
+    struct VdbSource { std::string label; int pack; bool xml; };
+    std::vector<VdbSource> vdb_sources_;
+    int vdb_source_index_ = 0;
+    char vdb_loose_[512] = {};
+    bool vdb_save_anyway_ = false;
+    VariationDb vdb_orig_; // as loaded, to tell whether the working copy was edited
+    VariationEditState vedit_;
+    std::string vdb_script_; // --vdb-script, run once after the database loaded
+    bool vdb_select_pick_ = true; // the Pick tab is shown first
     bool vdb_loaded_ = false, show_picker_ = false;
     VariationDb::Query pick_query_, pick_overrides_; // overrides: command line --pick, applied when the database loads
 

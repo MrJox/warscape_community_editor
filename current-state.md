@@ -18,7 +18,7 @@ The full battle weather pipeline renders with values taken from the game's DLL, 
 Everything is committed (latest commit `991811e`), and the working tree is clean.
 
 ## Completed (verified against DLL code and dumps)
-- **Weather picker (Phase 4 item 2):** `variation_db` parser and matcher, Selection > Weather picker, `variation_check` gate (XML equality, self-consistency, file existence). See `docs/re/variation_db.md`.
+- **Weather selection database (Phase 4):** `variation_db` parser, matcher and FASTBIN/XML conversion both ways (byte-identical to the game's files), editing with flag remapping, Selection > Weather picker (Pick and Edit tabs, loads and saves .xml and .bin), `variation_convert`, `variation_check` and `variation_e2e.ps1` gates. See `docs/re/variation_db.md`. A general DB table editor was tried and dropped (not needed).
 - **Wind:** gusts, random battle direction, `weather_shared` / `wind_VS` / `wind_PS` constants, VFX wind and variance. Every `WEATHER_DEFINITION` field is supported, including `vfx2`.
 - **HDR:** S-curve tone LUT (per-channel cubic Bezier, RGBA16F); battle HDR property names and engine defaults.
 - **Lens flare and vignette:** shaders, textures, blend states, `sun_position` and `sun_occlusion` (occlusion query against an analytic total).

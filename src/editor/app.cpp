@@ -508,23 +508,140 @@ void App::draw_menu() {
     ImGui::EndMenuBar();
 }
 
+namespace {
+const char* kVdbBin = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
+const char* kVdbXml = "warscape_asset_variation_db/warscape_asset_variation_db.xml";
+} // namespace
+
+// Lists every .bin and .xml of the database in the packs and loads the one the game uses (the winning pack's .bin).
 void App::load_variation_db() {
     vdb_loaded_ = true;
     vdb_.reset();
     vdb_error_.clear();
+    vdb_message_.clear();
+    vdb_sources_.clear();
     if (!vfs_) { vdb_error_ = "Packs are not mounted."; return; }
-    const std::string path = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
+    int use = -1;
+    const auto winner = vfs_->owner(kVdbBin);
+    for (int pack : vfs_->owners(kVdbBin)) {
+        if (winner && pack == *winner) use = int(vdb_sources_.size());
+        vdb_sources_.push_back({vfs_->packs()[pack].name + " : .bin", pack, false});
+    }
+    for (int pack : vfs_->owners(kVdbXml)) vdb_sources_.push_back({vfs_->packs()[pack].name + " : .xml", pack, true});
+    if (use < 0) { vdb_error_ = std::string(kVdbBin) + " is in no pack"; return; }
+    load_vdb_source(use);
+}
+
+void App::load_vdb_source(int index) {
+    vdb_.reset();
+    vdb_error_.clear();
+    vdb_message_.clear();
+    if (index < 0 || index >= int(vdb_sources_.size())) return;
+    vdb_source_index_ = index;
+    const VdbSource& src = vdb_sources_[index];
     try {
-        auto owner = vfs_->owner(path);
-        if (!owner) throw std::runtime_error(path + " is in no pack");
-        vdb_ = std::make_unique<VariationDb>(VariationDb::parse(vfs_->read(path)));
-        vdb_source_ = vfs_->packs()[*owner].name;
+        auto disk = vfs_->fetch_from(src.pack, src.xml ? kVdbXml : kVdbBin);
+        if (!disk) throw std::runtime_error("cannot extract the file from " + vfs_->packs()[src.pack].name);
+        const std::vector<uint8_t> bytes = read_file(disk->string());
+        vdb_ = std::make_unique<VariationDb>(src.xml ? VariationDb::parse_xml(bytes) : VariationDb::parse(bytes));
+        vdb_source_ = src.label;
+        // The other format of the same pack should hold the same data.
+        auto other = vfs_->fetch_from(src.pack, src.xml ? kVdbBin : kVdbXml);
+        if (other) {
+            const std::vector<uint8_t> ob = read_file(other->string());
+            const VariationDb o = src.xml ? VariationDb::parse(ob) : VariationDb::parse_xml(ob);
+            if (!(o == *vdb_)) vdb_message_ = std::string("The .bin and the .xml in ") + vfs_->packs()[src.pack].name + " hold different data.";
+        }
+    } catch (const std::exception& e) {
+        vdb_error_ = e.what();
+        return;
+    }
+    vdb_orig_ = *vdb_;
+    vedit_ = VariationEditState();
+    pick_query_.clear();
+    for (auto& m : vdb_->metas)
+        if (!m.values.empty()) pick_query_[m.name] = m.values.front();
+    for (auto& [k, v] : pick_overrides_) pick_query_[k] = v;
+}
+
+void App::load_vdb_file(const std::string& path) {
+    try {
+        const std::vector<uint8_t> bytes = read_file(path);
+        const bool xml = path.size() >= 4 && (path.substr(path.size() - 4) == ".xml" || path.substr(path.size() - 4) == ".XML");
+        auto db = std::make_unique<VariationDb>(xml ? VariationDb::parse_xml(bytes) : VariationDb::parse(bytes));
+        vdb_ = std::move(db);
+        vdb_error_.clear();
+        vdb_message_.clear();
+        vdb_source_ = path;
+        vdb_orig_ = *vdb_;
+        vedit_ = VariationEditState();
         pick_query_.clear();
         for (auto& m : vdb_->metas)
             if (!m.values.empty()) pick_query_[m.name] = m.values.front();
-        for (auto& [k, v] : pick_overrides_) pick_query_[k] = v;
     } catch (const std::exception& e) {
-        vdb_error_ = e.what();
+        vdb_message_ = std::string("Cannot load ") + path + ": " + e.what();
+    }
+}
+
+// Commands separated by ';' for automated tests: add-value:<category>=<value>, remove-value:<category>=<value>,
+// rename-value:<category>=<from>><to>, add-variation:<file>, save:xml|bin|both. The result is shown in the picker window.
+void App::run_vdb_script() {
+    std::string script = vdb_script_, log;
+    vdb_script_.clear();
+    size_t start = 0;
+    while (start <= script.size()) {
+        size_t semi = script.find(';', start);
+        std::string cmd = script.substr(start, semi == std::string::npos ? std::string::npos : semi - start);
+        start = semi == std::string::npos ? script.size() + 1 : semi + 1;
+        if (cmd.empty()) continue;
+        const size_t colon = cmd.find(':');
+        const std::string op = cmd.substr(0, colon), arg = colon == std::string::npos ? "" : cmd.substr(colon + 1);
+        const size_t eq = arg.find('=');
+        std::string why;
+        bool ok = true;
+        if (op == "add-value" && eq != std::string::npos) ok = vdb_->add_value(arg.substr(0, eq), arg.substr(eq + 1), &why);
+        else if (op == "remove-value" && eq != std::string::npos) ok = vdb_->remove_value(arg.substr(0, eq), arg.substr(eq + 1), &why);
+        else if (op == "rename-value" && eq != std::string::npos && arg.find('>', eq) != std::string::npos) {
+            const size_t gt = arg.find('>', eq);
+            ok = vdb_->rename_value(arg.substr(0, eq), arg.substr(eq + 1, gt - eq - 1), arg.substr(gt + 1), &why);
+        } else if (op == "add-variation" && !vdb_->entries.empty()) vdb_->entries[0].variations.push_back({arg, vdb_->flags_for({})});
+        else if (op == "save") { save_variation_db(arg == "xml" || arg == "both", arg == "bin" || arg == "both"); log += vdb_message_ + " "; continue; }
+        else { ok = false; why = "unknown command"; }
+        log += op + (ok ? " ok " : " FAILED (" + why + ") ");
+    }
+    vdb_message_ = log;
+}
+
+// Writes the working copy as loose files under the output folder, at the in-pack path of the database.
+void App::save_variation_db(bool xml, bool bin) {
+    if (!vdb_) return;
+    const auto problems = vdb_->validate();
+    if (!problems.empty() && !vdb_save_anyway_) {
+        vdb_message_ = "Not saved: the database has problems (see the Edit tab). Tick \"save anyway\" to write it regardless.";
+        return;
+    }
+    try {
+        fs::path dir = output_dir_ / "warscape_asset_variation_db";
+        fs::create_directories(dir);
+        std::string done;
+        if (xml) {
+            const std::string text = vdb_->to_xml();
+            std::ofstream f(dir / "warscape_asset_variation_db.xml", std::ios::binary);
+            f.write(text.data(), std::streamsize(text.size()));
+            if (!f) throw std::runtime_error("cannot write the .xml");
+            done += "warscape_asset_variation_db.xml ";
+        }
+        if (bin) {
+            const std::vector<uint8_t> bytes = vdb_->to_bytes();
+            std::ofstream f(dir / "warscape_asset_variation_db.bin", std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+            if (!f) throw std::runtime_error("cannot write the .bin");
+            done += "warscape_asset_variation_db.bin ";
+        }
+        vdb_message_ = "Saved " + done + "to " + narrow(dir.wstring());
+        vdb_orig_ = *vdb_;
+    } catch (const std::exception& e) {
+        vdb_message_ = std::string("Cannot save: ") + e.what();
     }
 }
 
@@ -540,13 +657,43 @@ void App::draw_picker() {
         ImGui::End();
         return;
     }
-    ImGui::TextColored(kDim, "warscape_asset_variation_db.bin from %s", vdb_source_.c_str());
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reload")) {
-        vdb_loaded_ = false;
-        ImGui::End();
-        return;
+    if (!vdb_script_.empty()) run_vdb_script();
+    const bool dirty = !(*vdb_ == vdb_orig_);
+    ImGui::SetNextItemWidth(420);
+    if (ImGui::BeginCombo("Source", vdb_source_.c_str())) {
+        for (int i = 0; i < int(vdb_sources_.size()); ++i)
+            if (ImGui::Selectable(vdb_sources_[i].label.c_str(), i == vdb_source_index_)) { load_vdb_source(i); ImGui::EndCombo(); ImGui::End(); return; }
+        ImGui::EndCombo();
     }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reload")) { vdb_loaded_ = false; ImGui::End(); return; }
+    ImGui::SetNextItemWidth(420);
+    ImGui::InputTextWithHint("##loose", "or a loose .xml / .bin file", vdb_loose_, sizeof vdb_loose_);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Load file") && vdb_loose_[0]) load_vdb_file(vdb_loose_);
+    if (dirty) ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1), "edited, not saved");
+    else ImGui::TextColored(kDim, "unchanged");
+    ImGui::SameLine();
+    if (ImGui::Button("Save XML")) save_variation_db(true, false);
+    ImGui::SameLine();
+    if (ImGui::Button("Save FASTBIN")) save_variation_db(false, true);
+    ImGui::SameLine();
+    if (ImGui::Button("Save both")) save_variation_db(true, true);
+    ImGui::SameLine();
+    ImGui::Checkbox("save anyway", &vdb_save_anyway_);
+    if (dirty) {
+        ImGui::SameLine();
+        if (ImGui::Button("Revert")) { *vdb_ = vdb_orig_; vedit_ = VariationEditState(); }
+    }
+    ImGui::TextColored(kDim, "Saved to %s\\warscape_asset_variation_db\\", narrow(output_dir_.wstring()).c_str());
+    if (!vdb_message_.empty()) ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1), "%s", vdb_message_.c_str());
+    if (!ImGui::BeginTabBar("vdbtabs")) { ImGui::End(); return; }
+    if (ImGui::BeginTabItem("Edit")) {
+        draw_variation_editor(*vdb_, vedit_, vfs_.get());
+        ImGui::EndTabItem();
+    }
+    if (!ImGui::BeginTabItem("Pick", nullptr, vdb_select_pick_ ? ImGuiTabItemFlags_SetSelected : 0)) { ImGui::EndTabBar(); ImGui::End(); return; }
+    vdb_select_pick_ = false;
     ImGui::Separator();
     ImGui::TextUnformatted("Battle conditions");
     for (auto& m : vdb_->metas) {
@@ -624,6 +771,8 @@ void App::draw_picker() {
     } else {
         ImGui::TextColored(kDim, "Open an .environment file from the pack list to see the conditions under which the game picks it.");
     }
+    ImGui::EndTabItem();
+    ImGui::EndTabBar();
     ImGui::End();
 }
 

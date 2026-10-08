@@ -142,12 +142,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             else if (a == L"--shot") shot_path = argv[++i];
             else if (a == L"--frames") shot_frame = std::max(1, _wtoi(argv[++i]));
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
+            else if (a == L"--vdb-script") { app.set_vdb_script(we::narrow(argv[++i])); app.show_picker(true); } // see App::run_vdb_script
             else if (a == L"--pick") { // --pick <category>=<value> (repeatable): conditions of the Weather picker, which opens
                 std::string kv = we::narrow(argv[++i]);
                 if (auto eq = kv.find('='); eq != std::string::npos) app.set_pick(kv.substr(0, eq), kv.substr(eq + 1));
                 app.show_picker(true);
             }
-            else if (a == L"--picker") { app.show_picker(true); ++i; } // flag (needs any argument after it)
+            else if (a == L"--picker") { app.show_picker(true, std::wstring(argv[++i]) == L"edit"); } // --picker edit opens the Edit tab, any other argument the Pick tab
             else if (a == L"--no-flare" && app.renderer()) app.renderer()->lens_flare = false; // flag (needs any argument after it)
             else if (a == L"--blend") app.set_blend(0, float(_wtof(argv[++i]))); // first --open document, blended into the active one
             else if (a == L"--cam" && i + 3 < argc) { // --cam <yaw> <pitch> <distance> (radians, metres)

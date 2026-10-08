@@ -13,6 +13,28 @@ against the XML export of the same file (239 variations, 0 differences, nothing 
 Metas in file order: map, season, precipitation, time_of_day, climate_change_index, snow_attrition, battle_type,
 climate (31 values, so bits 0..30; bit 31 is free).
 
+## XML form and conversion
+The packs ship the database twice, `warscape_asset_variation_db.bin` (what the game loads) and `.xml` (what people edit), in vanilla
+`data.pack` and in `tdd_pack6_weather`. The XML is UTF-8, CRLF, tab-indented, single-quoted, `serialise_version='1'` on the root,
+every `meta_data_entry`, `value` and `variation`; categories are `<meta_data_entry name=..><values value='a' value='b'/>`, variations
+are `<variation filename='..' flags='n'/>` inside `<entries><entry key='environment'><value><variations>`.
+`VariationDb::to_bytes()` / `parse()` (FASTBIN0) and `to_xml()` / `parse_xml()` convert in both directions (`src/formats/variation_io.cpp`,
+CLI `tools/variation_convert.cpp`). Verified on both pairs in the game files:
+- bin -> parse -> bin is byte-identical; xml -> parse -> bin gives exactly the shipped .bin;
+- vanilla bin -> xml is byte-identical to the shipped .xml; the TDD .xml differs from the canonical output only by one blank line
+  before `</variations>` (a hand edit; the parser ignores blank lines, the writer does not produce it);
+- the .xml and .bin of each pack hold the same data.
+
+## Editing rules
+`flags` are one bit per value over all categories in file order (bit 31 is free), so the value lists and the flags depend on each other.
+`add_value` appends to a category and shifts the later categories' bits; a variation that allowed every existing value of that category
+(and is not flags 0) also allows the new one. `remove_value` drops the bit and shifts later bits down; it refuses when a variation would
+end up with flags 0 (which means "any") and it refuses to remove `default_map`, which the game asks for when nothing matched. More than
+32 values cannot be added. `validate()` reports: more than 32 values, duplicate categories or values, flag bits that belong to no value,
+a category with no allowed value (the variation can never match), a `map` category without `default_map`. The converter and the editor
+refuse to save a database with problems unless forced. Gates (`variation_check`): adding and removing a value restores the database,
+adding a value changes no existing condition's candidates (all 19,200 combinations), removing one keeps the others.
+
 ## Selection (empire.retail.dll, all decompiled)
 - fn 0x17d9f10 builds the query: map (argument), season (fn 0x1882bc0, "default" without a campaign season), climate (name
   table at battle +0x150, "default" without one), precipitation, time_of_day, climate_change_index, snow_attrition

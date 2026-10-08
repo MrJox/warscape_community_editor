@@ -1,10 +1,14 @@
 #pragma once
-// warscape_asset_variation_db/warscape_asset_variation_db.bin: which environment file a battle uses.
+// warscape_asset_variation_db/warscape_asset_variation_db.bin (FASTBIN0) and its XML form: which environment file a battle uses.
 //
-// File layout (FASTBIN0, little endian, verified byte for byte against the XML export of the same file):
+// FASTBIN0 layout (little endian, verified byte for byte against the files in the game's packs):
 //   "FASTBIN0", u16 version (1), u32 meta count, then per meta: u16 serialise (1), str name, u32 value count, str values;
 //   u32 entry count, per entry: str key ("environment"), u16 serialise (1), u32 variation count,
 //   per variation: u16 serialise (1), str filename, u32 flags.   (str = u16 length + bytes)
+//
+// XML form (what the TDD team keeps next to the .bin in the pack): UTF-8, CRLF, tab indentation, single-quoted attributes,
+// serialise_version='1' on the root, every meta_data_entry, value and variation. parse_xml ignores whitespace and blank
+// lines; to_xml writes the canonical layout (the vanilla file is byte-identical to it).
 //
 // Selection, from empire.retail.dll (fns 0x17d9f10 query, 0x1183c740 / 0x1183c690 bits, 0x1862300 match,
 // 0x1180c090 pick, 0x10693bf0 random):
@@ -37,7 +41,26 @@ struct VariationDb {
     std::vector<Meta> metas;
     std::vector<Entry> entries;
 
-    static VariationDb parse(const std::vector<uint8_t>& bytes); // throws std::runtime_error
+    static VariationDb parse(const std::vector<uint8_t>& bytes); // FASTBIN0; throws std::runtime_error
+    std::vector<uint8_t> to_bytes() const;                        // FASTBIN0
+    static VariationDb parse_xml(const std::vector<uint8_t>& xml); // throws std::runtime_error
+    std::string to_xml() const;                                    // canonical layout
+
+    bool operator==(const VariationDb& o) const;
+    int value_count() const;
+    // Problems that make the data wrong for the game: more than 32 values (bits would collide), duplicate names or
+    // values, flag bits that belong to no value, a category with no allowed value in a variation (it can never match).
+    std::vector<std::string> validate() const;
+
+    // Editing the value lists. Every variation's flags are remapped so that it keeps allowing the same values.
+    // add_value appends to the category; a variation that allowed every existing value of that category (and is not
+    // unconstrained) also allows the new one. remove_value refuses when a variation would end up with flags 0, which means
+    // "any". Both return false with the reason in *why.
+    bool add_value(const std::string& category, const std::string& value, std::string* why = nullptr);
+    bool remove_value(const std::string& category, const std::string& value, std::string* why = nullptr);
+    bool rename_value(const std::string& category, const std::string& from, const std::string& to, std::string* why = nullptr);
+    // Flags allowing exactly these values per category (a category left out allows all of its values).
+    uint32_t flags_for(const std::map<std::string, std::vector<std::string>>& allowed) const;
 
     const Meta* meta(const std::string& name) const;
     const Entry* entry(const std::string& key) const;

@@ -19,7 +19,7 @@ add_executable(xml_roundtrip tools/xml_roundtrip.cpp)
 target_link_libraries(xml_roundtrip PRIVATE we_core)
 
 target_sources(we_core PRIVATE src/formats/fxc.cpp src/core/process.cpp src/core/vfs.cpp src/formats/env_value.cpp src/formats/rmv2.cpp
-    src/vfx/vfx_def.cpp src/vfx/vfx_constants.cpp src/vfx/weather_vfx.cpp src/formats/variation_db.cpp)
+    src/vfx/vfx_def.cpp src/vfx/vfx_constants.cpp src/vfx/weather_vfx.cpp src/formats/variation_db.cpp src/formats/variation_io.cpp)
 
 add_executable(fxc_dump tools/fxc_dump.cpp)
 target_link_libraries(fxc_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
@@ -40,7 +40,7 @@ if(MSVC)
     target_compile_options(imgui PRIVATE /W0)
 endif()
 
-add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp
+add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp src/editor/variation_editor.cpp
     src/render/texture.cpp src/render/shader_lib.cpp src/render/math.cpp src/render/scene.cpp
     src/render/environment.cpp src/render/renderer.cpp src/render/image_io.cpp src/render/clouds.cpp src/render/wind.cpp src/vfx/particles.cpp)
 target_link_libraries(weather_editor PRIVATE we_core imgui d3d11 dxgi d3dcompiler dxguid comdlg32 dbghelp windowscodecs ole32)
@@ -60,3 +60,6 @@ target_link_libraries(env_vs_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
 
 add_executable(variation_check tools/variation_check.cpp)
 target_link_libraries(variation_check PRIVATE we_core)
+
+add_executable(variation_convert tools/variation_convert.cpp)
+target_link_libraries(variation_convert PRIVATE we_core)

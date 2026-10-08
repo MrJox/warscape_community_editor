@@ -1,18 +1,25 @@
-// Checks the battle weather selection data (warscape_asset_variation_db.bin).
+// Checks the battle weather selection data (warscape_asset_variation_db.bin / .xml).
 //
-//   variation_check [--xml <export.xml>]
+//   variation_check
 //
-// Gate: with --xml the parsed metas, filenames and flags must equal the XML export of the same file.
-// Report: referenced files missing from every pack, variations that can never match (a category with no allowed value),
-// conditions (every combination of the meta values) for which the game finds no environment file even after the
-// "default_map" retry, and weather/*.environment files no variation refers to.
+// Gates, for every pack that holds the database (vanilla data.pack and the TDD weather pack ship both a .bin and an .xml):
+//   * parse(bin).to_bytes() equals the .bin byte for byte;
+//   * parse_xml(xml) equals parse(bin) (names, values, filenames, flags);
+//   * parse_xml(xml).to_bytes() equals the .bin;
+//   * parse(bin).to_xml() equals the .xml, or differs only by blank lines (reported).
+// Gates on the editing operations (on the database the game uses): adding a value to a category and removing it again gives
+// back the same database, and while the new value is not queried every one of the 19,200 condition combinations keeps its
+// candidate list.
+// Report: referenced files missing from every pack, variations that can never match, conditions (every combination of the
+// meta values) for which the game finds no environment file even after the "default_map" retry, and weather/*.environment
+// files no variation refers to.
+#include "core/text_encoding.h"
 #include "core/vfs.h"
 #include "formats/variation_db.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
-#include <regex>
 #include <set>
 #include <sstream>
 
@@ -22,46 +29,118 @@ namespace {
 
 std::string pack_path(std::string p) { return Vfs::normalize(p); }
 
-int compare_xml(const VariationDb& db, const char* path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) { std::printf("cannot read %s\n", path); return 1; }
-    std::stringstream ss;
-    ss << in.rdbuf();
-    const std::string x = ss.str();
-    int bad = 0;
-    // metas: <meta_data_entry ... name='map'> <values value='a' value='b'/>
-    std::regex meta_re("<meta_data_entry[^>]*name='([^']*)'>\\s*<values([^>]*)/>");
-    std::vector<VariationDb::Meta> metas;
-    for (auto it = std::sregex_iterator(x.begin(), x.end(), meta_re); it != std::sregex_iterator(); ++it) {
-        VariationDb::Meta m;
-        m.name = (*it)[1];
-        std::string vals = (*it)[2];
-        std::regex val_re("value='([^']*)'");
-        for (auto v = std::sregex_iterator(vals.begin(), vals.end(), val_re); v != std::sregex_iterator(); ++v) m.values.push_back((*v)[1]);
-        metas.push_back(std::move(m));
+std::string without_blank_lines(const std::string& t) {
+    std::string out;
+    size_t i = 0;
+    while (i < t.size()) {
+        size_t nl = t.find("\r\n", i);
+        std::string line = t.substr(i, nl == std::string::npos ? std::string::npos : nl - i);
+        if (!line.empty()) out += line + "\r\n";
+        if (nl == std::string::npos) break;
+        i = nl + 2;
     }
-    if (metas.size() != db.metas.size()) { std::printf("XML: %zu metas, bin: %zu\n", metas.size(), db.metas.size()); ++bad; }
-    for (size_t i = 0; i < std::min(metas.size(), db.metas.size()); ++i)
-        if (metas[i].name != db.metas[i].name || metas[i].values != db.metas[i].values) { std::printf("meta %zu differs (%s)\n", i, metas[i].name.c_str()); ++bad; }
-    std::regex var_re("filename='([^']*)' flags='(\\d+)'");
-    std::vector<std::pair<std::string, uint32_t>> xml_vars;
-    for (auto it = std::sregex_iterator(x.begin(), x.end(), var_re); it != std::sregex_iterator(); ++it)
-        xml_vars.emplace_back((*it)[1], uint32_t(std::stoul((*it)[2])));
-    const VariationDb::Entry* e = db.entry("environment");
-    size_t n = e ? e->variations.size() : 0;
-    if (xml_vars.size() != n) { std::printf("XML: %zu variations, bin: %zu\n", xml_vars.size(), n); ++bad; }
-    for (size_t i = 0; i < std::min(xml_vars.size(), n); ++i)
-        if (xml_vars[i].first != e->variations[i].filename || xml_vars[i].second != e->variations[i].flags) { std::printf("variation %zu differs: %s\n", i, xml_vars[i].first.c_str()); ++bad; }
-    std::printf("XML comparison: %zu metas, %zu variations, %d differences\n", metas.size(), xml_vars.size(), bad);
-    return bad ? 1 : 0;
+    return out;
+}
+
+// Pack-by-pack file gates; returns the number of failures.
+int check_pack_files(Vfs& vfs, const std::string& bin_path, const std::string& xml_path) {
+    int bad = 0;
+    for (int pack : vfs.owners(bin_path)) {
+        const std::string name = vfs.packs()[pack].name;
+        auto bin_disk = vfs.fetch_from(pack, bin_path);
+        if (!bin_disk) continue;
+        std::vector<uint8_t> bin = read_file(bin_disk->string());
+        VariationDb from_bin = VariationDb::parse(bin);
+        if (from_bin.to_bytes() != bin) { std::printf("%s: parse(bin).to_bytes() differs from the .bin\n", name.c_str()); ++bad; }
+        auto xml_disk = vfs.fetch_from(pack, xml_path);
+        if (!xml_disk) { std::printf("%s: bin writer identical (%zu bytes); no .xml in this pack\n", name.c_str(), bin.size()); continue; }
+        std::vector<uint8_t> xml = read_file(xml_disk->string());
+        VariationDb from_xml = VariationDb::parse_xml(xml);
+        const bool same = from_xml == from_bin;
+        if (!same) { std::printf("%s: the .xml and the .bin hold different data\n", name.c_str()); ++bad; }
+        if (from_xml.to_bytes() != bin) { std::printf("%s: parse_xml(xml).to_bytes() differs from the .bin\n", name.c_str()); ++bad; }
+        const std::string text(xml.begin(), xml.end());
+        const std::string written = from_bin.to_xml();
+        const char* xml_state = written == text ? "identical" : (without_blank_lines(text) == written ? "identical apart from blank lines in the original" : "DIFFERENT");
+        if (std::string(xml_state) == "DIFFERENT") ++bad;
+        std::printf("%s: bin %zu bytes (writer identical), xml %zu bytes (data %s, to_xml %s, xml->bin identical)\n", name.c_str(), bin.size(), xml.size(),
+                    same ? "equal to the bin" : "DIFFERENT", xml_state);
+        for (auto& problem : from_bin.validate()) std::printf("  validate: %s\n", problem.c_str());
+    }
+    return bad;
+}
+
+// Editing gates on the database the game uses. Returns the number of failures.
+int check_editing(const VariationDb& original) {
+    int bad = 0;
+    auto candidate_lists = [&](const VariationDb& db, const VariationDb& names_from) {
+        std::vector<std::vector<std::string>> all;
+        std::vector<size_t> idx(names_from.metas.size(), 0);
+        for (;;) {
+            VariationDb::Query q;
+            for (size_t i = 0; i < names_from.metas.size(); ++i) q[names_from.metas[i].name] = names_from.metas[i].values[idx[i]];
+            std::vector<std::string> names;
+            for (auto& c : db.candidates("environment", q).candidates) names.push_back(c.variation->filename);
+            all.push_back(std::move(names));
+            size_t d = 0;
+            while (d < idx.size() && ++idx[d] == names_from.metas[d].values.size()) idx[d++] = 0;
+            if (d == idx.size()) break;
+        }
+        return all;
+    };
+    const auto before = candidate_lists(original, original);
+    for (auto& m : original.metas) {
+        VariationDb edited = original;
+        std::string why;
+        const bool full = original.value_count() >= 32;
+        const bool ok = edited.add_value(m.name, "__test_value__", &why);
+        if (full) {
+            if (ok) { std::printf("add_value succeeded with all 32 bits in use (%s)\n", m.name.c_str()); ++bad; }
+            continue;
+        }
+        if (!ok) { std::printf("add_value(%s) failed: %s\n", m.name.c_str(), why.c_str()); ++bad; continue; }
+        if (candidate_lists(edited, original) != before) { std::printf("add_value(%s) changed the candidates of existing conditions\n", m.name.c_str()); ++bad; }
+        if (!edited.remove_value(m.name, "__test_value__", &why)) { std::printf("remove_value(%s) failed: %s\n", m.name.c_str(), why.c_str()); ++bad; continue; }
+        if (!(edited == original)) { std::printf("add_value + remove_value(%s) did not restore the database\n", m.name.c_str()); ++bad; }
+    }
+    // Removing a value that is not the last of its category must keep every other condition's candidates.
+    for (auto& m : original.metas) {
+        if (m.values.size() < 2) continue;
+        VariationDb edited = original;
+        std::string why;
+        const std::string victim = m.values.front();
+        if (!edited.remove_value(m.name, victim, &why)) continue; // refusing is the documented behaviour when a variation would become unconstrained
+        VariationDb names_without;
+        names_without.metas = edited.metas;
+        const auto after = candidate_lists(edited, edited);
+        // Compare with the original restricted to conditions that do not use the removed value.
+        std::vector<std::vector<std::string>> expected;
+        std::vector<size_t> idx(original.metas.size(), 0);
+        for (;;) {
+            bool uses_victim = false;
+            VariationDb::Query q;
+            for (size_t i = 0; i < original.metas.size(); ++i) {
+                q[original.metas[i].name] = original.metas[i].values[idx[i]];
+                if (original.metas[i].name == m.name && original.metas[i].values[idx[i]] == victim) uses_victim = true;
+            }
+            if (!uses_victim) {
+                std::vector<std::string> names;
+                for (auto& c : original.candidates("environment", q).candidates) names.push_back(c.variation->filename);
+                expected.push_back(std::move(names));
+            }
+            size_t d = 0;
+            while (d < idx.size() && ++idx[d] == original.metas[d].values.size()) idx[d++] = 0;
+            if (d == idx.size()) break;
+        }
+        if (after != expected) { std::printf("remove_value(%s=%s) changed the candidates of the remaining conditions\n", m.name.c_str(), victim.c_str()); ++bad; }
+    }
+    std::printf("editing gates: %d failures\n", bad);
+    return bad;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* xml = nullptr;
-    for (int i = 1; i + 1 < argc; ++i)
-        if (std::string(argv[i]) == "--xml") xml = argv[++i];
     try {
         Vfs vfs(Vfs::default_config());
         vfs.mount();
@@ -75,7 +154,8 @@ int main(int argc, char** argv) {
         for (auto& m : db.metas) bits += int(m.values.size());
         std::printf("%s from %s: %zu metas (%d values, %d of 32 bits), %zu variations\n", path.c_str(), vfs.packs()[*owner].name.c_str(),
                     db.metas.size(), bits, std::min(bits, 32), env->variations.size());
-        int rc = xml ? compare_xml(db, xml) : 0;
+        int rc = check_pack_files(vfs, path, "warscape_asset_variation_db/warscape_asset_variation_db.xml");
+        rc |= check_editing(db);
 
         std::set<std::string> referenced;
         int missing = 0, impossible = 0;
