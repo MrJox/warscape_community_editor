@@ -1,0 +1,176 @@
+function	sampler	filter	address_u	address_v	address_w	srgb
+FUN_116c9090	s_input_sampler	0	3	3		0
+FUN_116c99d0	s_terrain_refraction	0	3	3		0
+FUN_116cbdb0	s_coast_a	21	1	1	1	0
+FUN_116cbdb0	s_distortion	21	1	1	1	0
+FUN_116cc350	s_shroud	21	4	4	4	0
+FUN_116cc350	s_shroud_cloud	21	1	1	1	0
+FUN_116cc350	s_shroud_cloud_normal	21	1	1	1	0
+FUN_116cc350	s_low_res_height_map	0	3	3		0
+FUN_116ccba0	s_overlay	21	3	3		0
+FUN_116ccba0	s_lf_colour	21	3	3		0
+FUN_116cf510	s_diffuse_cloud_maps_0	21	1	1	1	1
+FUN_116cf510	s_diffuse_cloud_maps_1	21	1	1	1	1
+FUN_116cfa10	s_global_heights_sampler	21	3	3		0
+FUN_116cfa10	s_distance_sampler	0	3	3		0
+FUN_116cfa10	s_amplitude_mask_sampler	21	1	1	1	0
+FUN_116cfa10	s_displacements_sampler	0	3	3		0
+FUN_116cfa10	s_gradients_sampler	0	3	3		0
+FUN_116cfa10	s_prevframe_foam_sampler	0	3	3		0
+FUN_116cfa10	s_noise_sampler	21	1	1	1	0
+FUN_116d27d0	s_diffuse_map	21	1	1	1	1
+FUN_116d27d0	s_diffuse_map2	21	1	1	1	1
+FUN_116d3040	s_reflection_buffer	21	3	3		0
+FUN_116d3040	s_blur_parameters_buffer	21	3	3		0
+FUN_116d35a0	s_light_accumulation_buffer	21	3	3		0
+FUN_116d35a0	s_terrain	21	3	3		0
+FUN_116d4720	s_overlay	21	3	3		0
+FUN_116d5c70	s_diffuse	0	1	1	1	0
+FUN_116d6280	s_time0_sampler	0	3	3		0
+FUN_116d6280	s_timet_sampler	0	3	3		0
+FUN_116d6280	s_row_sampler	0	3	3		0
+FUN_116d6280	s_twiddle_sampler	0	3	3		0
+FUN_116d6280	s_gaussian_sampler	0	3	3		0
+FUN_116d6280	s_slopemap_row_sampler	0	3	3		0
+FUN_116d6280	s_slopemap_column_sampler	0	3	3		0
+FUN_116d6280	s_heights_sampler	0	3	3		0
+FUN_116d6280	s_displace_xz_sampler	0	3	3		0
+FUN_116d6280	s_displacements_sampler	0	3	3		0
+FUN_116d6280	s_gradients_sampler	0	3	3		0
+FUN_116d6280	s_prevframe_foam_sampler	0	3	3		0
+FUN_116d7af0	s_input_sampler	0	1	1		0
+FUN_116d9eb0	s_normal	21	1	1	1	0
+FUN_116da0b0	g_hdr_rgb_texture_sampler	0	3	3		0
+FUN_116da3c0	g_hdr_rgb_texture_sampler	0	3	3		0
+FUN_116da5d0	input_sampler	21	3	3	3	0
+FUN_116da960	g_scurve_texture_sampler	20	3	3		0
+FUN_116dbb70	input_sampler	21	3	3	3	0
+FUN_116dc0f0	input_sampler	21	3	3	3	0
+FUN_116dcd50	frame_sampler	0	3	3		0
+FUN_116dcd50	hdr_output_sampler	21	3	3	3	0
+FUN_116dcd50	distortion_sampler	21	3	3	3	0
+FUN_116dcd50	depth_sampler	0	3	3		0
+FUN_116de1d0	indicator_texture_sampler	21	3	3	3	1
+FUN_116de600	lense_flare_1_sampler	21	3	3	3	1
+FUN_116de600	lense_flare_2_sampler	21	3	3	3	1
+FUN_116de600	lense_flare_3_sampler	21	3	3	3	1
+FUN_116deda0	s_diffuse_srgb	21	3	3	3	1
+FUN_116dfc20	s_txMask_9	0	3	3		0
+FUN_116dfc20	s_txHorzCount_9	0	3	3		0
+FUN_116dfc20	s_txVertCount_9	0	3	3		0
+FUN_116e02d0	s_txInitialImage_9	0	3	3		0
+FUN_116e02d0	s_txHorzCount_9	0	3	3		0
+FUN_116e02d0	s_txVertCount_9	0	3	3		0
+FUN_116e0cf0	s_detailmap_sampler	21	1	1	1	0
+FUN_116e0cf0	s_water_albedo_sampler	21	1	1	1	0
+FUN_116e0cf0	s_deep_displace_sampler	0	1	1	1	0
+FUN_116e0cf0	s_deep_grad_sampler	0	1	1	1	0
+FUN_116e0cf0	s_shallow_displace_sampler	0	1	1	1	0
+FUN_116e0cf0	s_shallow_grad_sampler	0	1	1	1	0
+FUN_116e0cf0	s_deep_foam_sampler	21	1	1	1	0
+FUN_116e0cf0	s_deep_foam_trail_sampler	21	1	1	1	0
+FUN_116e0cf0	s_reflection_sampler	21	1	1	1	0
+FUN_116e0cf0	s_refraction_sampler	0	2	2		0
+FUN_116e0cf0	s_coast_waves_displace_sampler	0	3	3		0
+FUN_116e0cf0	s_coast_waves_grad_sampler	0	3	3		0
+FUN_116e0cf0	s_coast_distance_sampler	0	3	3		0
+FUN_116e0cf0	s_coast_foam_trail_sampler	21	3	3		0
+FUN_116e0cf0	s_coast_foam_sampler	21	1	1	1	0
+FUN_116e0cf0	s_land_heights_sampler	21	1	1	1	0
+FUN_116e0cf0	s_land_colors_sampler	21	1	1	1	0
+FUN_116e1f20	g_foam_anim_sampler	21	1	1	1	0
+FUN_116e1f20	sea_surface_sampler	21	1	1	1	0
+FUN_116e1f20	swell_surface_sampler	21	1	1	1	0
+FUN_116e1f20	g_static_foam_sampler	21	1	1	1	0
+FUN_116e1f20	reflection_texture_sampler	21	3	3		0
+FUN_116e1f20	refraction_texture_sampler	0	2	2		0
+FUN_116e1f20	colour_overlay_texture_sampler	21	3	3		0
+FUN_116e1f20	ui_colour_overlay_texture_sampler	21	3	3		0
+FUN_116e1f20	sea_bed_info_texture_sampler	21	3	3	3	0
+FUN_116e1f20	detail_normal_sampler	21	1	1	1	0
+FUN_116e3740	input_sampler	0	3	3		0
+FUN_116e4290	s_normal_map	21	1	1	1	0
+FUN_116e7430	s_gbuffer_normal	0	3	3		0
+FUN_116e7990	s_low_res_height_map	0	3	3		0
+FUN_116e7990	s_terrain_refraction	0	3	3		0
+FUN_116e7990	s_depth_map	0	3	3		0
+FUN_116ec510	s_terrain_refraction	0	3	3		0
+FUN_116ec510	s_lf_height	21	1	1	1	0
+FUN_116ec510	s_lf_colour	21	1	1	1	0
+FUN_116edf60	s_diffuse_map	21	1	1	1	1
+FUN_116edf60	s_normal_map	21	1	1	1	0
+FUN_116edf60	s_dissolve_map	21	1	1	1	0
+FUN_116edf60	s_fire_map	21	1	1	1	0
+FUN_116ee4d0	s_diffuse_map	21	1	1	1	1
+FUN_116ee4d0	s_alpha_map	21	1	1	1	0
+FUN_116eea40	s_diffuse_map	21	1	1	1	1
+FUN_116eea40	s_alpha_map	21	1	1	1	0
+FUN_116f1100	s_diffuse_sampler	21	1	1	1	1
+FUN_116f1100	s_diffuse2_sampler	21	1	1	1	1
+FUN_116f1a30	s_ssao	21	3	3	3	0
+FUN_116f1a30	s_sky	21	3	3		0
+FUN_116f1a30	s_environment	21	1	1	1	0
+FUN_116f1a30	s_point_light_shadow_map_sm50	128	3	3	3	1
+FUN_116f1a30	s_shroud	21	3	3		0
+FUN_116f1a30	s_fog_of_war_mask	20	3	3		0
+FUN_116f1a30	g_black_and_white_points_sampler	0	3	3		0
+FUN_116f1a30	g_scurve_texture_sampler	20	3	3		0
+FUN_116f6540	gbuffer_channel_1_sampler	0	3	3		0
+FUN_116f6540	gbuffer_channel_2_sampler	0	3	3		0
+FUN_116f6540	gbuffer_channel_3_sampler	0	3	3		0
+FUN_116f6540	gbuffer_channel_4_sampler	0	3	3		0
+FUN_116f6c80	s_normal_map	21	1	1	1	0
+FUN_116f6c80	s_dissolve_map	21	1	1	1	0
+FUN_116f6c80	s_ambient_map	21	1	1	1	0
+FUN_116f6c80	s_displacement_map	21	1	1	1	0
+FUN_116f6c80	s_detail_map	21	1	1	1	1
+FUN_116f6c80	s_alpha_mask	21	1	1	1	0
+FUN_116f6c80	s_decal_normal	21	1	1	1	0
+FUN_116f6c80	s_decal_mask	21	1	1	1	0
+FUN_116f6c80	s_decal_diffuse	21	1	1	1	1
+FUN_116f6c80	s_decal_dirt_map	21	1	1	1	0
+FUN_116f6c80	s_decal_dirt_mask	21	1	1	1	0
+FUN_116f6c80	s_colour_mask_map	21	1	1	1	0
+FUN_116f6c80	s_skin_mask_map	21	1	1	1	0
+FUN_116f6c80	s_fire_map	21	1	1	1	0
+FUN_116f6c80	s_combined_normal_and_displacement	21	1	1	1	0
+FUN_116f7b40	s_snow_normals	21	1	1	1	0
+FUN_116f89a0	g_data_sampler	20	3	3		0
+FUN_116f9de0	s_diffuse_map	20	3	3		1
+FUN_116f9de0	s_diffuse_map_point_sample	0	3	3		1
+FUN_116f9de0	s_diffuse_map_y	20	3	3		0
+FUN_116f9de0	s_diffuse_map_u	20	3	3		0
+FUN_116f9de0	s_diffuse_map_v	20	3	3		0
+FUN_116f9de0	s_alt_map	20	3	3		1
+FUN_116f9de0	s_shroud_map	20	3	3		0
+FUN_116f9de0	s_campaign_shroud_map	20	3	3		0
+FUN_116fc2d0	depth_sampler	0	3	3		0
+FUN_116fce40	s_diffuse	21	1	1	1	1
+FUN_116fd320	s_depth_map	0	3	3		0
+FUN_116fd320	s_light_params	0	3	3		0
+FUN_116fd320	s_normal_array	21	1	1	1	0
+FUN_116fe030	s_low_res_height_map	0	3	3		0
+FUN_117000c0	s_terrain_normal_map	0	3	3		0
+FUN_117000c0	s_depth_map	0	3	3		0
+FUN_117000c0	s_terrain_gloss_map	0	3	3		0
+FUN_117000c0	s_low_res_height_map	0	3	3		0
+FUN_117000c0	s_normal_array	21	1	1	1	0
+FUN_117029c0	s_fog_of_war_heights	0	3	3		0
+FUN_117029c0	s_fog_of_war_source	0	3	3		0
+FUN_117029c0	s_always_visible_source	0	3	3		0
+FUN_117037e0	s_light_accumulation_buffer	0	3	3		0
+FUN_117d00d0	g_sam_emitter_constants	21	3	3	3	0
+FUN_117d00d0	g_sam_diffuse	21	1	1	1	1
+FUN_117d00d0	g_sam_normal	21	1	1	1	0
+FUN_117d0e70	g_sam_vector_field	21	1	1	1	0
+FUN_117d0e70	g_sam_terrain_surface	21	1	1	1	0
+FUN_118cc4c0	g_debug_sampler	0	3	3		0
+FUN_118cdb40	sea_albedo_sampler	0	3	3		0
+FUN_118cdb40	sea_normal_sampler	0	3	3		0
+FUN_118cdb40	land_albedo_sampler	0	3	3		0
+FUN_118cdb40	land_normal_sampler	0	3	3		0
+FUN_118cdb40	sea_height_sampler	0	3	3		0
+FUN_118cdb40	land_height_sampler	0	3	3		0
+FUN_118ce1e0	depth_sampler	0	3	3		0
+FUN_118ceef0	vtex_diffuse_cache_sampler	20	3	3		0
+FUN_118ceef0	vtex_normal_cache_sampler	20	3	3		0

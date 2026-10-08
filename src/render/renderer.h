@@ -163,7 +163,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> scurve_srv_;
     uint16_t scurve_last_[256 * 4] = {};
 
-    Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_aniso_, s_wrap_linear_, s_clamp_linear_, s_clamp_point_, s_shadow_cmp_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_gbuffer_, ds_sky_, ds_light_, ds_off_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_back_, rs_none_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> bs_opaque_, bs_alpha_, bs_additive_alpha_;

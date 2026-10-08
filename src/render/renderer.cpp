@@ -329,7 +329,10 @@ void Renderer::make_states() {
     s.MaxAnisotropy = 8;
     s.MaxLOD = D3D11_FLOAT32_MAX;
     dev_->CreateSamplerState(&s, &s_wrap_aniso_);
+    // Engine sampler objects store D3D11 enums (filter 21 = MIN_MAG_MIP_LINEAR, address 1 = WRAP, 3 = CLAMP);
+    // docs/re/samplers.tsv lists them per shader.
     s.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    dev_->CreateSamplerState(&s, &s_wrap_linear_); // cloud maps, sun disc
     s.AddressU = s.AddressV = s.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     dev_->CreateSamplerState(&s, &s_clamp_linear_);
     s.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -369,16 +372,19 @@ void Renderer::make_states() {
     D3D11_BLEND_DESC b{};
     b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     dev_->CreateBlendState(&b, &bs_opaque_);
-    // ASSUMPTION: fog composites with standard alpha blending (battlefog writes the fog amount to .w).
+    // Verified (BATTLE_FOG_SHADER fn 0x116c96c0 blend object +0x1cc; vignette +0x71f): SRC_ALPHA / INV_SRC_ALPHA, add,
+    // on colour and alpha.
     b.RenderTarget[0].BlendEnable = TRUE;
     b.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     b.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     b.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    b.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+    b.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    b.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    dev_->CreateBlendState(&b, &bs_alpha_);
     b.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
     b.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-    b.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
-    dev_->CreateBlendState(&b, &bs_alpha_);
     b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     dev_->CreateBlendState(&b, &bs_additive_alpha_);
     {
@@ -912,8 +918,8 @@ void Renderer::pass_lens_flare(const EnvironmentParams& env, const float3& eye, 
             ctx_->IASetInputLayout(lib_->layout(*vs, "flare", el));
             bind_shader(ctx_, *vs, cbs_);
             bind_shader(ctx_, *ps, cbs_);
-            // The final image is gamma-encoded UNORM; the flare maps add as stored (ASSUMPTION: no sRGB decode).
-            bind_srv(ctx_, *ps, samplers[i], sky_texture(textures[i], false));
+            // lense_flare_1..3_sampler have the engine's sRGB-read flag (sampler +0x3c, fn 0x116de600).
+            bind_srv(ctx_, *ps, samplers[i], sky_texture(textures[i], true));
             bind_sampler(ctx_, *ps, samplers[i], s_clamp_linear_.Get());
             ctx_->Draw(6, 0);
         }
@@ -1111,7 +1117,7 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     bind_shader(ctx_, *vs, cbs_);
     bind_shader(ctx_, *ps, cbs_);
     bind_srv(ctx_, *ps, "s_diffuse", sun_srv_.Get());
-    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_wrap_linear_.GetAddressOf()); // SUN_SHADER s_diffuse
     if (env_pass_) {
         ctx_->Draw(6, 0);
     } else { // the sun object's occlusion query wraps its own draw
@@ -1130,7 +1136,7 @@ ID3D11ShaderResourceView* Renderer::sky_texture(const std::string& path, bool sr
     if (it != sky_textures_.end()) return it->second.Get();
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     try {
-        srv = load_dds(dev_, vfs_.read(path), srgb).srv; // ASSUMPTION: cloud atlases sampled as sRGB like other colour maps
+        srv = load_dds(dev_, vfs_.read(path), srgb).srv; // s_diffuse_cloud_maps_0/1: sRGB-read flag set (sampler +0x3c)
     } catch (const std::exception& e) {
         error(path + ": " + e.what());
     }
@@ -1203,7 +1209,7 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
         if (!g.count || !g.instances) continue;
 
         // cloud_plane_VS / cloud_plane_PS as the game fills them (memory dump): colours raw except the shadow
-        // colour (pow 2.2); horizon_alpha_start remapped (0.7 -> 0.97; ASSUMPTION 1 - (1 - x) / 10).
+        // colour (pow 2.2). Verified (fn 0x191e430): g_horizon_alpha_start/end = file value * 0.1 + 0.9.
         cbs_.set_f("cloud_plane_VS", "g_wind_alignment", {wind_.alignment()}); // fn 0x191e430 (unused by the shader)
         cbs_.set_f("cloud_plane_VS", "g_cloud_shadow_gradient", {p.shadow_gradient});
         cbs_.set_f("cloud_plane_VS", "g_height_scale", {p.height_scale});
@@ -1215,14 +1221,14 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
         float3 sh = colour_to_linear({p.shadow[0], p.shadow[1], p.shadow[2]});
         cbs_.set_f("cloud_plane_PS", "g_cloud_shadow_colour", {sh.x, sh.y, sh.z});
         cbs_.set_f("cloud_plane_PS", "g_cloud_shadow_falloff", {p.shadow_falloff});
-        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_start", {1.0f - (1.0f - p.horizon_alpha_start) * 0.1f});
-        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_end", {p.horizon_alpha_end});
+        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_start", {p.horizon_alpha_start * 0.1f + 0.9f});
+        cbs_.set_f("cloud_plane_PS", "g_horizon_alpha_end", {p.horizon_alpha_end * 0.1f + 0.9f});
         cbs_.upload(dev_, ctx_);
         bind_shader(ctx_, *vs, cbs_);
         bind_shader(ctx_, *ps, cbs_);
         bind_srv(ctx_, *ps, "s_diffuse_cloud_maps_0", sky_texture(cloud_texture(p, 0)));
         bind_srv(ctx_, *ps, "s_diffuse_cloud_maps_1", sky_texture(cloud_texture(p, 1)));
-        for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+        for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_wrap_linear_.GetAddressOf()); // cloud maps: linear wrap
         ID3D11Buffer* vbs[2] = {cloud_quad_vb_.Get(), g.instances.Get()};
         UINT strides[2] = {16, sizeof(CloudInstance)}, offs[2] = {0, 0};
         ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
