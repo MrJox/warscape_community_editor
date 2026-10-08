@@ -420,7 +420,9 @@ void Renderer::resize(int w, int h) {
     if (w == w_ && h == h_) return;
     w_ = w;
     h_ = h;
-    // ASSUMPTION (pending capture): gbuffer formats. Channel contents are from the shaders.
+    // Verified formats (engine TTF_* enum = order of its name strings): G-buffer channels 1-3 TTF_A8R8G8B8 (fn 0x118f4b90),
+    // depth channel TTF_R32F (R16F on low settings, fn 0x118f62b0), HDR light accumulation and the dynamic tone-map
+    // view TTF_A16B16G16R16F (fns 0x118f4a80, 0x117659b0). gb_[4] is editor-only (instance ids).
     gb_[0] = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM); // normal (cube-normalised, *0.5+0.5), gloss
     gb_[1] = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM); // sqrt(albedo), .w mask
     gb_[2] = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM); // specular colour, .w material id / 255
