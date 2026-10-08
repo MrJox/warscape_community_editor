@@ -1,0 +1,4 @@
+build/
+scratch/
+manifest/
+__pycache__/
