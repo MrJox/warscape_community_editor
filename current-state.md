@@ -84,3 +84,8 @@ Still open `ASSUMPTION`s / known gaps:
 3. **Particles.** Reproduce fn 0x1895130's spawn composition (`docs/re/particles.md`, "Spawn code"), then the batch alternation.
 4. **Cloud interval.** Needs a dump taken with a file whose near plane has cloud_velocity > 0.
 5. **After each item:** build Release (stop any running `build/Release/weather_editor.exe` first, it locks the file), compare against the dumps, document in `docs/re/`, commit.
+
+## Open questions (parked 2026-10-08, none blocks use of the editor)
+- Env-cube top face is ~1.8x the game's; needs the cloud-PS inputs during EnvMapGen (not obtainable from a Task Manager dump).
+- Shadow light fit, particle spawn shapes and the cloud spawn interval need new data or a layout decode (see the table above).
+- Verified on the current build: `xml_roundtrip` and `format_check` over all 541 weather/lighting/vfx files (0 failed), Release and RelWithDebInfo builds.
