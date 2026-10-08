@@ -5,6 +5,7 @@ namespace te {
 void register_xml_format();
 void register_fastbin_tile_formats();
 void register_bmd_bin_format();
+void register_markers_format();
 
 std::vector<Format>& formats() {
     static std::vector<Format> f;
@@ -18,6 +19,7 @@ void register_all_formats() {
     register_xml_format();
     register_fastbin_tile_formats();
     register_bmd_bin_format();
+    register_markers_format();
 }
 
 const Format* find_format(const std::string& path, const std::vector<uint8_t>& head) {
