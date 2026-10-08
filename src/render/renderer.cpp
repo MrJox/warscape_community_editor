@@ -51,6 +51,10 @@ const char* kSsaoBlurYPS = "dx11_sm_3_0_ssao.hlsl_ps_pixel_blur_y";
 const char* kCloudVS = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
 const char* kCloudPS = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 constexpr float kSunDistance = 7600.0f; // memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600
+// Sun mesh half-size (sun object +0x80 = 2000 in the dry dump; sun_VS: corner = v.xy * g_sun_scale). Cross-checked with the
+// occlusion total of fn 0x1927460: int(k / w * 960) * int(k / w * 540 * aspect) with k = 0.1 * 2000 and view depth
+// 431.6 gives the dumped 153664 (= 392 * 392).
+constexpr float kSunMeshSize = 2000.0f;
 const char* kShadowPS = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 // Lens flare (LENSE_FLARE_SHADER, fn 0x116de600): four sun sprites and a vignette, drawn after hdr_to_screen.
 const char* kFlareVS[4] = {"dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_0", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_1",
@@ -186,8 +190,7 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
     }
 
     {   // Sun billboard: two triangles; POSITION.xy in view units (x sun_scale), TEXCOORD.xy.
-        // ASSUMPTION: corners at +-kSunDistance, i.e. half-size = sun_scale * distance.
-        const float d = kSunDistance;
+        const float d = kSunMeshSize;
         float v[6][4] = {{-d, -d, 0, 1}, {-d, d, 0, 0}, {d, d, 1, 0}, {-d, -d, 0, 1}, {d, d, 1, 0}, {d, -d, 1, 1}};
         D3D11_BUFFER_DESC sbd{sizeof v, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
         D3D11_SUBRESOURCE_DATA ssd{v};
@@ -376,9 +379,18 @@ void Renderer::make_states() {
     b.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
     dev_->CreateBlendState(&b, &bs_alpha_);
-    // ASSUMPTION: the sun disc adds its texture (weighted by alpha) on top of the sky.
     b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     dev_->CreateBlendState(&b, &bs_additive_alpha_);
+    {
+        D3D11_BLEND_DESC sb{};
+        auto& t = sb.RenderTarget[0];
+        t.BlendEnable = TRUE;
+        t.SrcBlend = t.SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+        t.DestBlend = t.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        t.BlendOp = t.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        t.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        dev_->CreateBlendState(&sb, &bs_sun_);
+    }
     // Lens flare sprites (fn 0x116de600, blend object +0x6da): ONE / ONE add on colour and alpha.
     b.RenderTarget[0].SrcBlend = b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     b.RenderTarget[0].SrcBlendAlpha = b.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
@@ -1036,13 +1048,29 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
 void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, const float4x4& proj) {
     const GameShader* vs = shader(kSunVS);
     const GameShader* ps = shader(kSunPS);
-    if (!env_pass_) {   // sun visibility from the queries issued three frames ago
+    // Sun occlusion (fn 0x1927460, getter fn 0x118f50c0): visible = occlusion-query sample count of the sun draw,
+    // total = int(kx / w * W / 2) * int(ky / w * H / 2) for the view-space corner (k, k, z) of the sun quad, k =
+    // sun_scale * 2000 (1 when w <= 0); sun_occlusion = clamp(min(visible, total) / total, 0, 1).
+    if (!env_pass_) {
         auto& old_q = sun_query_[(sun_query_frame_ + 1) % 4];
-        UINT64 visible = 0, total = 0;
-        if (sun_query_frame_ >= 3 && old_q[0] && old_q[1] &&
-            ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
-            ctx_->GetData(old_q[1].Get(), &total, sizeof total, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
-            sun_visibility_ = total ? float(double(visible) / double(total)) : 0.0f;
+        UINT64 visible = 0;
+        if (sun_query_frame_ >= 3 && old_q[0] &&
+            ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK) {
+            const float3 c = env.to_sun() * kSunDistance;
+            const float z = view_m.m[2][0] * c.x + view_m.m[2][1] * c.y + view_m.m[2][2] * c.z;
+            const float k = env.sun_scale * kSunMeshSize;
+            const float w = proj.m[3][0] * k + proj.m[3][1] * k + proj.m[3][2] * z + proj.m[3][3];
+            uint64_t total = 1;
+            if (w > 0) {
+                const float cx = proj.m[0][0] * k + proj.m[0][1] * k + proj.m[0][2] * z + proj.m[0][3];
+                const float cy = proj.m[1][0] * k + proj.m[1][1] * k + proj.m[1][2] * z + proj.m[1][3];
+                const int64_t px = int64_t(cx / w * float(w_) * 0.5f), py = int64_t(cy / w * float(h_) * 0.5f);
+                total = uint64_t(std::max<int64_t>(1, px * py));
+            } else {
+                visible = 0;
+            }
+            sun_visibility_ = std::clamp(float(double(std::min<uint64_t>(visible, total)) / double(total)), 0.0f, 1.0f);
+        }
     }
     if (!env_pass_) ++sun_query_frame_;
     if (!vs || !ps || !env.has_sky || env.sun_scale <= 0) {
@@ -1077,26 +1105,20 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
     ctx_->OMSetDepthStencilState(ds_sky_.Get(), 0);
-    ctx_->OMSetBlendState(bs_additive_alpha_.Get(), nullptr, 0xffffffff);
+    // SUN_SHADER blend (fn 0x116fcf80 area, blend object +0x23b): SRC_ALPHA / INV_SRC_ALPHA on colour and alpha.
+    ctx_->OMSetBlendState(bs_sun_.Get(), nullptr, 0xffffffff);
     ctx_->RSSetState(rs_none_.Get());
     bind_shader(ctx_, *vs, cbs_);
     bind_shader(ctx_, *ps, cbs_);
     bind_srv(ctx_, *ps, "s_diffuse", sun_srv_.Get());
     for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
-    // ASSUMPTION: sun_occlusion = visible fraction of the sun disc (samples passing the depth test / all samples).
-    // Dumps: 0 with the sun off screen. The engine reads it from the sun node (fn 0x1172b1b0, vfunc +0x80).
     if (env_pass_) {
         ctx_->Draw(6, 0);
-    } else {
+    } else { // the sun object's occlusion query wraps its own draw
         auto& qs = sun_query_[sun_query_frame_ % 4];
         ctx_->Begin(qs[0].Get());
         ctx_->Draw(6, 0);
         ctx_->End(qs[0].Get());
-        ctx_->OMSetBlendState(bs_no_write_.Get(), nullptr, 0xffffffff);
-        ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
-        ctx_->Begin(qs[1].Get());
-        ctx_->Draw(6, 0);
-        ctx_->End(qs[1].Get());
     }
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
     // Back to the main camera for the following passes (the sun pass only touched sun_VS).

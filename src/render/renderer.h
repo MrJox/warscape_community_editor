@@ -187,7 +187,7 @@ private:
     int sun_query_frame_ = 0;
     float sun_visibility_ = 0;
     Microsoft::WRL::ComPtr<ID3D11Buffer> flare_vb_;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_add_one_, bs_no_write_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_add_one_, bs_no_write_, bs_sun_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sun_srv_;
     bool fog_enabled_ = true;
 };
