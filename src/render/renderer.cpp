@@ -433,9 +433,10 @@ void Renderer::resize(int w, int h) {
     hdr_ = make_target(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
     out_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
     final_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
-    ao_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
-    ao_tmp_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R8G8B8A8_UNORM); // blur at half resolution (dump)
-    ao_blur_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R8G8B8A8_UNORM);
+    // SSAOX_RESOLVE / BLUR_X / BLUR_Y RTs: TTF_R16F (fn 0x11766de0).
+    ao_ = make_target(w, h, DXGI_FORMAT_R16_FLOAT);
+    ao_tmp_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R16_FLOAT); // blur at half resolution (dump)
+    ao_blur_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R16_FLOAT);
     out_srv_ = out_.srv;
 
     auto sized = [&](int tw, int th, DXGI_FORMAT f) {
