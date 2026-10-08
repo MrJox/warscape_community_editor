@@ -82,6 +82,12 @@ private:
     void pass_ssao(const Camera& cam);
     void pass_clouds(const EnvironmentParams& env);
     void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
+    void analyse_depth(const Camera& cam);
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> depth_staging_[2];
+    int depth_staging_w_ = 0, depth_staging_h_ = 0;
+    uint64_t depth_frame_ = 0;
+    bool depth_range_valid_ = false;
+    float depth_min_ = 1, depth_max_ = 781;
     void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);

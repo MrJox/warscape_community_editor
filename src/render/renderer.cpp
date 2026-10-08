@@ -937,17 +937,71 @@ void Renderer::pass_lens_flare(const EnvironmentParams& env, const float3& eye, 
     ctx_->PSSetShaderResources(0, 4, nulls);
 }
 
-void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s) {
-    const float far_split = std::min(cam.zfar, 1500.0f);
-    // Split distances (view depth). ASSUMPTION: practical split scheme (log/uniform blend 0.75); the game's
-    // values depend on its camera (dump: 120, 147, 228, 416).
-    float splits[5];
-    const float n = std::max(cam.znear, 1.0f);
-    for (int i = 0; i <= 4; ++i) {
-        float t = i / 4.0f;
-        float lg = n * std::pow(far_split / n, t), un = n + (far_split - n) * t;
-        splits[i] = 0.75f * lg + 0.25f * un;
+// Depth Buffer Analysis Shadow Map View equivalent: min / max view depth of the visible geometry from the G-buffer depth
+// channel (z / w), read back two frames later. Sky pixels (z / w = 0 after the clear) are skipped.
+void Renderer::analyse_depth(const Camera& cam) {
+    if (!depth_staging_[0] || depth_staging_w_ != w_ || depth_staging_h_ != h_) {
+        for (auto& t : depth_staging_) {
+            t.Reset();
+            D3D11_TEXTURE2D_DESC sd{UINT(w_), UINT(h_), 1, 1, DXGI_FORMAT_R32_FLOAT, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0};
+            dev_->CreateTexture2D(&sd, nullptr, &t);
+        }
+        depth_staging_w_ = w_;
+        depth_staging_h_ = h_;
+        depth_frame_ = 0;
     }
+    ctx_->CopyResource(depth_staging_[depth_frame_ & 1].Get(), gb_[3].tex.Get());
+    if (depth_frame_++ == 0) return;
+    ID3D11Texture2D* src = depth_staging_[depth_frame_ & 1].Get();
+    D3D11_MAPPED_SUBRESOURCE ms;
+    if (FAILED(ctx_->Map(src, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
+    const float zn = cam.znear, zf = cam.zfar;
+    float lo = 3.4e38f, hi = 0;
+    for (int y = 0; y < h_; y += 2) {
+        const float* row = reinterpret_cast<const float*>(static_cast<const uint8_t*>(ms.pData) + size_t(y) * ms.RowPitch);
+        for (int x = 0; x < w_; x += 2) {
+            const float d = row[x];
+            if (!(d > 0.0f) || d >= 1.0f) continue;
+            const float z = zn * zf / (zf - d * (zf - zn));
+            lo = std::min(lo, z);
+            hi = std::max(hi, z);
+        }
+    }
+    ctx_->Unmap(src, 0);
+    depth_range_valid_ = hi > 0;
+    if (depth_range_valid_) {
+        depth_min_ = lo;
+        depth_max_ = hi;
+    }
+}
+
+void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s) {
+    // Battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps):
+    //   far   = camera near + sum(row)  with the quality row (30, 90, 210, 450) -> 781 (fn 0x11751fc0, table dll+0x1c88aa0)
+    //   range = depth-buffer analysis (min, max visible view depth, max clamped to far), max *=
+    //           shadow_split_enlargement_safe_zone (1.05); start = min, scale = (max - min) / (far - near)
+    //   s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)]
+    //   (shadow_split_blend_fraction 0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2)
+    //   (final_shadow_split_blend_fraction 0.2). Dry dump: range 120.04..780.98 -> splits 120.03 146.95 227.71 416.14 819.92.
+    const float row[4] = {30, 90, 210, 450};
+    const float n = std::max(cam.znear, 1.0f);
+    const float far_q = n + row[0] + row[1] + row[2] + row[3];
+    float start = n, scale = 1;
+    if (depth_range_valid_) {
+        const float lo = depth_min_, hi = std::min(depth_max_, far_q) * 1.05f;
+        if (lo < hi) {
+            start = lo;
+            scale = std::max(hi - lo, 1.0f) / (far_q - n);
+        }
+    }
+    float splits[5];
+    splits[0] = start;
+    for (int i = 1; i <= 4; ++i) splits[i] = splits[i - 1] + row[i - 1] * scale;
+    float slice_near[4];
+    slice_near[0] = splits[0];
+    for (int i = 1; i < 4; ++i) slice_near[i] = splits[i] - 0.1f * (splits[i] - splits[i - 1]);
+    const float fade_w = (splits[4] - splits[3]) * 0.2f;
+    const float fade_y = std::max(splits[4] - (far_q - fade_w), 1e-4f) / fade_w * 0.2f;
     const float4x4 cam_view = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     const float4x4 inv_view = inverse(cam_view);
     const float tan_y = std::tan(cam.fov_y * 0.5f), tan_x = tan_y * aspect;
@@ -960,7 +1014,7 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
         // Bounding sphere of the frustum slice (stable size while the camera rotates).
         float3 pts[8];
         for (int k = 0; k < 8; ++k) {
-            float d = (k & 4) ? splits[c + 1] : splits[c];
+            float d = (k & 4) ? splits[c + 1] : slice_near[c];
             float3 v{((k & 1) ? 1.0f : -1.0f) * tan_x * d, ((k & 2) ? 1.0f : -1.0f) * tan_y * d, d};
             pts[k] = inv_view.transform_point(v);
         }
@@ -1047,7 +1101,7 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
     for (int i = 0; i <= 4; ++i) dist[i * 4] = splits[i]; // float[5], 16-byte stride
     cbs_.set("shadowmap_PS", "g_split_distances", dist, sizeof dist);
     cbs_.set("shadowmap_PS", "g_split_uv_texture_bounds", bounds, sizeof bounds);
-    cbs_.set_f("shadowmap_PS", "g_fFadeRange", {0.1f, 0.296399f});
+    cbs_.set_f("shadowmap_PS", "g_fFadeRange", {0.1f, fade_y});
     cbs_.set_f("shadowmap_PS", "g_sample_bias", {0.0f});
     cbs_.set_f("shadowmap_PS", "g_iSplitCount", {shadows ? 4.0f : 0.0f});
     cbs_.set_f("shadowmap_PS", "g_shadow_light_direction", {light_dir.x, light_dir.y, light_dir.z});
@@ -1405,6 +1459,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 
     pass_gbuffer(scene);
+    analyse_depth(cam);
     pass_ssao(cam);
     D3D11_VIEWPORT main_vp{0, 0, float(width), float(height), 0, 1};
     ctx_->RSSetViewports(1, &main_vp);
