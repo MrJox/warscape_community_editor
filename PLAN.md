@@ -12,6 +12,8 @@
 
 **Phase 1 progress:** C++ readers/writers with 100% corpus round trip: tree_list.bin (562), grass_list.bin (81), civilian_deployment.bin (85), civilian_shelter.bin (85); layouts in `docs/formats/fastbin_tile.md`. BMD binary (`*_procedural_bmd_data.bin`, `bmd_data_escalation*.bin`) partly decoded (BUILDING, PROP, PARTICLE_EMITTER records); finding: the PROP record has one byte not present in the XML, so XML cannot regenerate the bin exactly. `ted_p4_history` is not used (user: it is unused). TEd's file list will come from the TEd binary and BOB DLL strings plus the corpus itself.
 
+**Phase 1 progress (cont.):** BMD binary (`*_procedural_bmd_data.bin`, `bmd_data_escalation*.bin`) fully decoded in C++: 860/860 byte-identical. `.markers` framing parser: 449/449 byte-identical with the per-marker payload still opaque (framing = repository header + class tag/name/version/count; trailer of the separator file looks like a layer/group list: name + marker indices). **PNG encoder de-risked:** zlib level 6 + libpng min-sum filter heuristic reproduce the kit's PNGs (see `docs/formats/image_encoders.md`). `ted_p4_history` stays unused.
+
 **Next (Phase 1):** decompile TEd loaders and read `ted_p4_history` to list every file TEd reads; readers for markers, tile.ted semantics, tile database; formats still unclaimed by the gate: `.markers` 449, `.bin` 1677 (FASTBIN0, tree lists), `.data` 171 (CHMF), `.dds` 5880, `.png` 8554, `.tif` 2248, `.tga` 1756, `.rigid_model_v2` 198, `.tmd` 498 (World Machine, probably pass-through), `.bob` 26, `.agf` 23.
 
 ## Context
