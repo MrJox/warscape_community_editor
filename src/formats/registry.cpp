@@ -3,6 +3,7 @@
 namespace te {
 
 void register_xml_format();
+void register_fastbin_tile_formats();
 
 std::vector<Format>& formats() {
     static std::vector<Format> f;
@@ -14,6 +15,7 @@ void register_all_formats() {
     if (done) return;
     done = true;
     register_xml_format();
+    register_fastbin_tile_formats();
 }
 
 const Format* find_format(const std::string& path, const std::vector<uint8_t>& head) {

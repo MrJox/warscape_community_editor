@@ -10,6 +10,8 @@
 - `tile_editor/` skeleton (CMake, `attila_core` compiled from `weather_editor/src` in place, `tile_formats` registry, `roundtrip` gate). **XML gate: 10,046 of 10,061 in-scope XML/.ted files round-trip byte-identically (includes 61 MB `tile.ted`).** The 15 failures are malformed CA files (`groupformations.xml`, 6 `*_tree_parameters.xml` per kit, one UTF-16 vfx with an odd byte count): they need the opaque pass-through fallback.
 - **Deviation:** the physical extraction of `attila_core` from `weather_editor` is postponed. `weather_editor` has uncommitted edits from other sessions (xml_doc, app), so nothing is moved; both projects build from the same sources until it is quiet.
 
+**Phase 1 progress:** C++ readers/writers with 100% corpus round trip: tree_list.bin (562), grass_list.bin (81), civilian_deployment.bin (85), civilian_shelter.bin (85); layouts in `docs/formats/fastbin_tile.md`. BMD binary (`*_procedural_bmd_data.bin`, `bmd_data_escalation*.bin`) partly decoded (BUILDING, PROP, PARTICLE_EMITTER records); finding: the PROP record has one byte not present in the XML, so XML cannot regenerate the bin exactly. `ted_p4_history` is not used (user: it is unused). TEd's file list will come from the TEd binary and BOB DLL strings plus the corpus itself.
+
 **Next (Phase 1):** decompile TEd loaders and read `ted_p4_history` to list every file TEd reads; readers for markers, tile.ted semantics, tile database; formats still unclaimed by the gate: `.markers` 449, `.bin` 1677 (FASTBIN0, tree lists), `.data` 171 (CHMF), `.dds` 5880, `.png` 8554, `.tif` 2248, `.tga` 1756, `.rigid_model_v2` 198, `.tmd` 498 (World Machine, probably pass-through), `.bob` 26, `.agf` 23.
 
 ## Context
@@ -114,7 +116,7 @@ Principles:
 5. **Gate:** manifest covers 100% of both kits; every file is classified; BOB runs headless on a scratch copy and a second run reproduces the same output hashes (determinism check: timestamps, GUIDs, random seeds).
 
 ### Phase 1: Read everything TEd reads (battle + campaign) (about 2 weeks)
-1. Decompile `TEd.AssemblyKit.exe` loaders (existing Ghidra setup in `tools/`) to enumerate exactly which files and fields TEd reads per module; write `docs/re/ted_inputs.md`. Cross-check against `bin_probe` over the corpus, so no file type stays "unknown".
+1. Decompile `TEd.AssemblyKit.exe` loaders (existing Ghidra setup in `tools/`) to enumerate exactly which files and fields TEd reads per module; write `docs/re/ted_inputs.md`. (`ted_p4_history` is an old Perforce log, not evidence of what TEd reads: ignored, per the user.) Cross-check against `bin_probe` over the corpus, so no file type stays "unknown".
 2. Readers (model only, no write yet): all text XML above, `tile.ted`, `*.markers`, `*.tree_list`, PNG/TIFF/DDS/TGA (16-bit PNG and 16-bit TIFF height data), `_settings.xml`, `TILES/*.xml`, `tile_upgrades.xml`, `tile_map.png` + `climate_map.png` + `explicit_tiles.txt`, campaign `masks.xml`, season masks, `layout_map.png`, `*.terry` (read-only first).
 3. `TileProject` / `MapProject` loaders that open a tile folder or a whole map and resolve cross references (tile -> tile set -> tile_map colour -> catchment).
 4. CLI `tile_dump` prints a project; errors on any unknown field.
