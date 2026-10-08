@@ -349,11 +349,11 @@ float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness) {
     float4x4 h; // hue rotation about the grey axis
     float a = e.hue * 0.0174532924f, cs = std::cos(a), sn = std::sin(a);
     float t = (1.0f - cs) / 3.0f, q = 0.577350259f * sn;
-    // ASSUMPTION: sign layout of the off-diagonals (standard right-handed rotation); hue is 0 in 652/658 files.
+    // Verified (fn 0x172c100): row0 = (t+c, t+q, t-q), row1 = (t-q, t+c, t+q), row2 = (t+q, t-q, t+c).
     h.m[0][0] = h.m[1][1] = h.m[2][2] = t + cs;
-    h.m[0][1] = t - q; h.m[0][2] = t + q;
-    h.m[1][0] = t + q; h.m[1][2] = t - q;
-    h.m[2][0] = t - q; h.m[2][1] = t + q;
+    h.m[0][1] = t + q; h.m[0][2] = t - q;
+    h.m[1][0] = t - q; h.m[1][2] = t + q;
+    h.m[2][0] = t + q; h.m[2][1] = t - q;
     m = h * m;
 
     float4x4 o; // overlay multiplies the rows
