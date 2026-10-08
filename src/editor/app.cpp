@@ -136,7 +136,12 @@ void App::init_renderer() {
                 if (d->vfs_path == p) return d->doc.save();
             return vfs_->read(p);
         });
-        read_output_settings(output_gamma_, output_brightness_);
+        {
+            const GraphicsOptions go = read_graphics_options();
+            output_gamma_ = go.gamma;
+            output_brightness_ = go.brightness;
+            if (renderer_) renderer_->apply_graphics_options(go);
+        }
         int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
         float3 ext = scene_->bounds_max() - scene_->bounds_min();
         cam_dist_ = std::max(60.0f, std::max(ext.x, ext.z) * 0.9f);
@@ -442,6 +447,20 @@ void App::draw_menu() {
         if (ImGui::InputText("##out", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
             output_dir_ = fs::path(widen(buf));
             store_settings();
+        }
+        if (renderer_) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Game graphics options (read from preferences.script.txt):");
+            ImGui::Checkbox("Vignette (gfx_vignette)", &renderer_->vignette);
+            ImGui::Checkbox("Depth of field (gfx_depth_of_field)", &renderer_->depth_of_field);
+            ImGui::Checkbox("SSAO (gfx_ssao)", &renderer_->ssao);
+            ImGui::Checkbox("Distortion (gfx_distortion)", &renderer_->distortion);
+            ImGui::Checkbox("Shadows", &renderer_->shadows);
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderInt("Shadow quality (gfx_shadow_quality)", &renderer_->shadow_quality, 0, 3);
+            ImGui::Checkbox("Lens flare", &renderer_->lens_flare);
+            ImGui::DragFloat("Gamma (gfx_gamma_setting)", &output_gamma_, 0.01f, 1.0f, 3.0f);
+            ImGui::DragFloat("Brightness (gfx_brightness_setting)", &output_brightness_, 0.01f, 0.5f, 2.0f);
         }
         ImGui::EndMenu();
     }

@@ -35,6 +35,14 @@ public:
     bool clouds = true;
     bool ssao = true;
     bool lens_flare = true;
+    bool vignette = true;        // gfx_vignette: the lens-flare vignette pass
+    bool depth_of_field = true;  // gfx_depth_of_field: ENABLE_DEPTH_OF_FIELD hdr_to_screen when use_DOF
+    bool distortion = true;      // gfx_distortion: distortion composite
+    int shadow_quality = 3;      // gfx_shadow_quality: cascade split row (ShadowMapView +0x84)
+    void apply_graphics_options(const GraphicsOptions& o) {
+        vignette = o.vignette; ssao = o.ssao; distortion = o.distortion; depth_of_field = o.depth_of_field > 0;
+        shadow_quality = o.shadow_quality;
+    }
     float sun_visibility() const { return sun_visibility_; }
     uint64_t vfx_revision = 0; // changes when an open vfx/ or weather/ XML is edited: particles reload
     uint32_t cloud_seed = 1;

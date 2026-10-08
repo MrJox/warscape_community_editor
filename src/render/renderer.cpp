@@ -824,8 +824,8 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
 }
 
 void Renderer::pass_to_screen(const EnvironmentParams& env) {
-    ID3D11ShaderResourceView* distortion = particles_ ? particles_->distortion() : nullptr;
-    const bool dof = env.use_dof;
+    ID3D11ShaderResourceView* distortion = (particles_ && this->distortion) ? particles_->distortion() : nullptr;
+    const bool dof = env.use_dof && depth_of_field;
     const GameShader* ps = nullptr;
     if (distortion) ps = shader(dof ? kToScreenDofDistortPS : kToScreenDistortPS);
     if (!ps) ps = shader(dof ? kToScreenDofPS : kToScreenPS), distortion = nullptr;
@@ -928,7 +928,12 @@ void Renderer::pass_lens_flare(const EnvironmentParams& env, const float3& eye, 
             ctx_->Draw(6, 0);
         }
     }
-    // Vignette (blend object +0x71f: SRC_ALPHA / INV_SRC_ALPHA, black with alpha = saturate(2 r - 0.9)^1.7).
+    // Vignette (blend object +0x71f: SRC_ALPHA / INV_SRC_ALPHA, black with alpha = saturate(2 r - 0.9)^1.7); only with
+    // the VIGNETTE graphics option (gfx_vignette).
+    if (!vignette) {
+        ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+        return;
+    }
     ctx_->OMSetBlendState(bs_alpha_.Get(), nullptr, 0xffffffff);
     ctx_->IASetInputLayout(lib_->layout(*main_vs, "flare", el));
     bind_shader(ctx_, *main_vs, cbs_);
@@ -985,7 +990,9 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
     //   s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)]
     //   (shadow_split_blend_fraction 0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2)
     //   (final_shadow_split_blend_fraction 0.2). Dry dump: range 120.04..780.98 -> splits 120.03 146.95 227.71 416.14 819.92.
-    const float row[4] = {30, 90, 210, 450};
+    // Battle rows of the split table (dll+0x1c88aa0), indexed by gfx_shadow_quality.
+    static const float rows[4][4] = {{60, 180, 180, 180}, {30, 90, 210, 210}, {30, 90, 210, 450}, {30, 90, 210, 450}};
+    const float* row = rows[std::clamp(shadow_quality, 0, 3)];
     const float n = std::max(cam.znear, 1.0f);
     const float far_q = n + row[0] + row[1] + row[2] + row[3];
     float start = n, scale = 1;

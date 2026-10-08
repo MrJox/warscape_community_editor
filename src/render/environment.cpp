@@ -61,19 +61,34 @@ float3 EnvironmentParams::to_sun() const {
     return normalize(float3{std::cos(el) * std::sin(az), std::sin(el), std::cos(el) * std::cos(az)});
 }
 
-void read_output_settings(float& gamma, float& brightness) {
+GraphicsOptions read_graphics_options() {
+    GraphicsOptions o;
     const char* appdata = std::getenv("APPDATA");
-    if (!appdata) return;
+    if (!appdata) return o;
     std::ifstream f(std::string(appdata) + "\\The Creative Assembly\\Attila\\scripts\\preferences.script.txt");
-    std::string key;
-    float v;
     std::string line;
     while (std::getline(f, line)) {
         std::istringstream is(line);
-        if (!(is >> key >> v)) continue;
-        if (key == "gfx_gamma_setting" && v > 0.1f) gamma = v;
-        else if (key == "gfx_brightness_setting" && v > 0.0f) brightness = v;
+        std::string key, value;
+        if (!(is >> key >> value)) continue;
+        if (!value.empty() && value.back() == ';') value.pop_back();
+        const float v = float(std::atof(value.c_str()));
+        const bool on = value == "true" || (value != "false" && v != 0.0f);
+        if (key == "gfx_gamma_setting" && v > 0.1f) o.gamma = v;
+        else if (key == "gfx_brightness_setting" && v > 0.0f) o.brightness = v;
+        else if (key == "gfx_vignette") o.vignette = on;
+        else if (key == "gfx_ssao") o.ssao = on;
+        else if (key == "gfx_distortion") o.distortion = on;
+        else if (key == "gfx_depth_of_field") o.depth_of_field = int(v);
+        else if (key == "gfx_shadow_quality") o.shadow_quality = std::clamp(int(v), 0, 3);
     }
+    return o;
+}
+
+void read_output_settings(float& gamma, float& brightness) {
+    const GraphicsOptions o = read_graphics_options();
+    gamma = o.gamma;
+    brightness = o.brightness;
 }
 
 EnvironmentParams blend_environments(const EnvironmentParams& a, const EnvironmentParams& b, float t) {

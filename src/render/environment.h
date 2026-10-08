@@ -91,7 +91,15 @@ constexpr float kSkyHdrScale = 5000.0f / 1200.0f;
 // ASSUMPTION: the engine's lighting-environment cross-fade interpolates the same way.
 EnvironmentParams blend_environments(const EnvironmentParams& a, const EnvironmentParams& b, float t);
 
-// gfx_gamma_setting / gfx_brightness_setting from %APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt
+// The player's graphics options (%APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt) that change
+// how weather renders: gamma/brightness (colorimetry), vignette (lens-flare vignette pass), depth of field, SSAO,
+// distortion and shadow quality (selects the cascade split row, see Renderer::pass_shadows).
+struct GraphicsOptions {
+    float gamma = 2.2f, brightness = 1.0f;
+    bool vignette = true, ssao = true, distortion = true;
+    int depth_of_field = 1, shadow_quality = 3;
+};
+GraphicsOptions read_graphics_options();
 void read_output_settings(float& gamma, float& brightness);
 
 // sRGB-ish colour from the files to linear light. ASSUMPTION: pow 2.2.
