@@ -13,7 +13,7 @@ Goal: when the editor changes pixels, the saved file must be what TEd/BOB would 
 
 ## TIFF (`blend_map.tif`, TEd/BOB-written `lf_heights.tif`)
 
-Little-endian, header offset 8, 15 IFD entries, uncompressed, one strip at offset 242, no software/XMP tags; `blend_map.tif` is 16 samples per pixel x 16 bit. Files from Photoshop (`lf_sea_colour.tif`, map-level `lf_heights.tif` with XMP/EXIF) have other layouts: pass-through. A writer is a fixed header template + raw samples; to verify against the 1,690 `blend_map.tif` files (parse header, regenerate, compare).
+Little-endian, header offset 8, 15 IFD entries, uncompressed, one strip at offset 242, no software/XMP tags; `blend_map.tif` is 16 samples per pixel x 16 bit. Files from Photoshop (`lf_sea_colour.tif`, map-level `lf_heights.tif` with XMP/EXIF) have other layouts: pass-through. Measured on the 1,690 `blend_map.tif` files: 1,334 have the TEd layout (15 IFD entries, strip at 242, photometric 1), 58 a 16-entry/222 layout (photometric 2), about 300 are Photoshop-saved (21-23 entries, strip at 17-27 KB) and are pass-through. In the 242-byte layout only 13 header bytes vary between files (offsets 30-31, 42-43, 126-127, 139-141, 226-227, 234-235 = width, height, strip byte count and offsets derived from them), so a writer is a fixed template with those fields patched plus the raw 16-bit samples; the file size equals 242 + w*h*16*2 for 1,391 files.
 
 ## DDS
 

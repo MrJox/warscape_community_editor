@@ -51,8 +51,10 @@ def main():
         if c[11] != "in" or not c[2].endswith(".png") or int(c[3]) > 40_000_000:
             continue
         name = os.path.basename(c[2])
-        if name not in ("height_map_0.png", "ground_type_map.png", "nogo.png", "lf_influence_map.png"):
+        if "--all" not in sys.argv and name not in ("height_map_0.png", "ground_type_map.png", "nogo.png", "lf_influence_map.png"):
             continue
+        if "--all" in sys.argv:
+            name = "/".join(c[2].split("/")[-2:-1]) if "/raw/" in c[2] or "/wm/" in c[2] else name
         seen[name] += 1
         if seen[name] > limit:
             continue
@@ -78,7 +80,9 @@ def main():
     for name, cnt in results.items():
         print("==", name, "files sampled", sum(cnt.values()))
         for k, n in cnt.most_common():
-            print("  ", n, "match(level,mem,strategy)=", k[0], "idat chunk sizes", k[1], "chunks", k[2])
+            print("  ", n, "match(level,mem,strategy)=", k[0], "idat chunk sizes", k[1], "chunks", k[2]) if "--all" not in sys.argv else None
+        if "--all" in sys.argv:
+            hit = sum(n for k, n in cnt.items() if k[0]); print("   matched", hit, "of", sum(cnt.values()))
 
 
 if __name__ == "__main__":
