@@ -19,7 +19,7 @@ add_library(attila_core STATIC
     ${WE}/formats/variation_io.cpp)
 target_include_directories(attila_core PUBLIC ${WE})
 
-add_library(tile_formats STATIC src/formats/registry.cpp src/formats/xml_format.cpp src/formats/fastbin_tile.cpp)
+add_library(tile_formats STATIC src/formats/registry.cpp src/formats/xml_format.cpp src/formats/fastbin_tile.cpp src/formats/bmd_bin.cpp)
 target_include_directories(tile_formats PUBLIC src)
 target_link_libraries(tile_formats PUBLIC attila_core)
 
