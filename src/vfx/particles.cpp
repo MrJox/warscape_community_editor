@@ -401,9 +401,33 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
         // once per emitter instance (live snowflake emitters: 0.71 and 0.95); per frame dt is capped at 0.1 s.
         if (st.rate_blend < 0) st.rate_blend = rand01();
         float rate = std::max(0.0f, lerp(emin ? emin->eval(t_norm) : 0.0f, emax ? emax->eval(t_norm) : 0.0f, st.rate_blend));
+        // Burst gate (fn 0x1180c680 / 0x1180bf70).
+        float bi_lo, bi_hi, bl_lo, bl_hi;
+        d.range("BurstInterval", bi_lo, bi_hi, 0, 0);
+        d.range("BurstIntervalLength", bl_lo, bl_hi, 0, 0);
+        auto roll_burst = [&] {
+            st.burst_interval = lerp(bi_lo, bi_hi, rand01());
+            st.burst_length = lerp(bl_lo, bl_hi, rand01());
+        };
+        if (st.burst_interval < 0) roll_burst();
+        float gate = 1;
+        if (st.burst_interval > 0) {
+            gate = st.burst_timer <= st.burst_length ? 1.0f : 0.0f;
+            if (st.burst_length + st.burst_interval <= st.burst_timer) {
+                roll_burst();
+                st.burst_timer = 0;
+            } else {
+                st.burst_timer += f.dt;
+            }
+        }
+        // Accumulate rate * time (dt capped at 0.1 s, fn 0x1188e240), spawn floor(gate * floor(accum)) and drop
+        // floor(accum): while the burst gate is closed the accumulated particles are discarded, as in the game.
+        // NOTE: fn 0x1188e240 either accumulates or spawns per call; that alternation is not modelled because the
+        // rain dump's live count (8426) matches accumulating every frame.
         st.rate_accum += rate * (st.started && window <= f.dt ? std::min(window, 0.1f) : window);
-        uint32_t count = uint32_t(st.rate_accum);
-        st.rate_accum -= float(count);
+        const float whole = std::floor(st.rate_accum);
+        uint32_t count = uint32_t(std::floor(gate * whole));
+        st.rate_accum -= whole;
 
         auto box_curve = [&](const char* n) { const VfxCurve* c = d.curve("SpawnAreaBox", n); return c ? c->eval(t_norm) : 0.0f; };
         float box_lo[3] = {box_curve("x_min"), box_curve("y_min"), box_curve("z_min")};

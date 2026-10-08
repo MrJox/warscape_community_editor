@@ -78,6 +78,10 @@ private:
     struct EmitterState {
         float rate_accum = 0;
         float rate_blend = -1; // emission min->max blend, random once per emitter instance (game: instance +0x100)
+        // Burst gate (fn 0x1180c680, instance +0x104 timer, +0x108 interval, +0x10c length, +0xf4 gate): with a
+        // BurstInterval > 0 the emitter only spawns while timer <= length, then waits `interval`; both re-rolled
+        // from BurstInterval / BurstIntervalLength each cycle (fn 0x1180bf70).
+        float burst_timer = 0, burst_interval = -1, burst_length = 0;
         std::deque<std::pair<float, uint32_t>> deaths; // (latest death time, count) per spawned batch
         float3 last_pos;
         bool started = false;

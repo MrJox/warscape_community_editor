@@ -165,6 +165,12 @@ hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified 
   while accum >= 1. Instance: +0xdc emitter life, +0xe0 age, +0xf8 accumulator, +0xfc cached rate, +0x100 f.
 - f is random per emitter instance, not per frame: the two live lens-snowflake emitters in the snow dump have
   f = 0.71 and 0.95 (rates 21.1 and 28.4 /s, owner multipliers 1, emitter at the origin with a 90 degree X rotation).
-- So the game emits ~49 lens flakes/s in that battle as well; the far smaller number visible in game is not the rate.
-  Still open: what hides or moves them (spawn placement, follow-emitter delta, or size).
+- Burst gate (solved 2026-10-08): fn 0x1180c680 sets instance +0xf4 = 1 while timer (+0x104) <= length (+0x10c),
+  else 0; after length + interval (+0x108) the timer restarts and fn 0x1180bf70 re-rolls interval from BurstInterval
+  and length from BurstIntervalLength (no gate when the interval is 0). fn 0x1188e240 spawns floor(+0xf4 * floor(accum))
+  and still removes floor(accum). The lens snowflakes have BurstInterval 1..5 s and BurstIntervalLength 0.1..0.2 s, so
+  they come in ~0.15 s bursts every 1-5 s; both snow-dump instances were between bursts (timer 2.48 / 2.46, length
+  0.14 / 0.13, interval 4.74 / 3.39, gate 0). That is the frequency difference against the game.
+- fn 0x1188e240 either accumulates or spawns per call; not modelled (the rain dump's live count matches accumulating
+  every frame, accumulator 9.025 at rate 3000 is unexplained).
 
