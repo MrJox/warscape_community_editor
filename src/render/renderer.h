@@ -120,7 +120,18 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> amb_staging_[2];
     float amb_faces_[6][3] = {};
     bool amb_valid_ = false;
+    uint64_t amb_frame_ = 0;
     void readback_ambient();
+    // Environment cube ("EnvMapGen", fn 0x118e00e0): the whole scene rendered from 50 m above the origin into a cube;
+    // s_environment for reflections and, through its face averages, the ambient cube of non-custom lighting.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> env_cube_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> env_face_rtv_[6];
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> env_cube_srv_;
+    Target env_gb_[5], env_hdr_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> env_depth_tex_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> env_dsv_;
+    bool env_pass_ = false, env_valid_ = false;
+    void render_env_cube(const TestScene* scene, const EnvironmentParams& env, float time_s);
     void apply_engine_ambient(const EnvironmentParams& env);
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cube_vb_, cube_ib_, instance_vb_;

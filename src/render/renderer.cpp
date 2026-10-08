@@ -250,6 +250,29 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         dev_->CreateRenderTargetView(sky_cube_.Get(), &rd, &sky_face_rtv_[f]);
     }
     dev_->CreateShaderResourceView(sky_cube_.Get(), nullptr, &sky_cube_srv_);
+    // Environment cube (EnvMapGen) and its 256^2 G-buffer / HDR / depth targets.
+    dev_->CreateTexture2D(&cd, nullptr, &env_cube_);
+    for (int f = 0; f < 6; ++f) {
+        D3D11_RENDER_TARGET_VIEW_DESC rd{};
+        rd.Format = cd.Format;
+        rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+        rd.Texture2DArray.FirstArraySlice = f;
+        rd.Texture2DArray.ArraySize = 1;
+        dev_->CreateRenderTargetView(env_cube_.Get(), &rd, &env_face_rtv_[f]);
+    }
+    dev_->CreateShaderResourceView(env_cube_.Get(), nullptr, &env_cube_srv_);
+    {
+        const int n = kSkyCube;
+        env_gb_[0] = make_target(n, n, DXGI_FORMAT_R8G8B8A8_UNORM);
+        env_gb_[1] = make_target(n, n, DXGI_FORMAT_R8G8B8A8_UNORM);
+        env_gb_[2] = make_target(n, n, DXGI_FORMAT_R8G8B8A8_UNORM);
+        env_gb_[3] = make_target(n, n, DXGI_FORMAT_R32_FLOAT);
+        env_gb_[4] = make_target(n, n, DXGI_FORMAT_R32_UINT);
+        env_hdr_ = make_target(n, n, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        D3D11_TEXTURE2D_DESC td{UINT(n), UINT(n), 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL};
+        dev_->CreateTexture2D(&td, nullptr, &env_depth_tex_);
+        dev_->CreateDepthStencilView(env_depth_tex_.Get(), nullptr, &env_dsv_);
+    }
     for (auto& s : amb_staging_) {
         D3D11_TEXTURE2D_DESC sd{1, 1, 1, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0};
         dev_->CreateTexture2D(&sd, nullptr, &s);
@@ -472,6 +495,58 @@ void Renderer::pass_sky_cube(const EnvironmentParams& env, float time_s) {
     }
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
     ctx_->GenerateMips(sky_cube_srv_.Get());
+}
+
+// EnvMapGen (fn 0x118e00e0): six 90-degree views from (0, ground + 50, 0), far plane 972800, through the normal scene
+// passes; then every face's lowest mip is read back (readback_ambient). While it renders, the lighting uses the XML
+// ambient (no computed cube exists yet in the engine at that point, fn 0x178a300) and no shadows (ASSUMPTION).
+void Renderer::render_env_cube(const TestScene* scene, const EnvironmentParams& env, float time_s) {
+    const int n = kSkyCube;
+    std::swap(gb_, env_gb_);
+    std::swap(hdr_, env_hdr_);
+    std::swap(dsv_, env_dsv_);
+    const int save_w = w_, save_h = h_;
+    ID3D11ShaderResourceView* save_ao = ao_result_;
+    const float save_dt = cloud_dt_;
+    w_ = h_ = n;
+    ao_result_ = white_srv_.Get();
+    cloud_dt_ = 0;
+    env_pass_ = true;
+    cbs_.set_f("shadowmap_PS", "g_iSplitCount", {0.0f});
+    const float4x4 proj = perspective_lh(3.14159265f / 2, 1, 1.0f, 972800.0f);
+    const float3 eye{0, 50, 0}; // test map ground at 0
+    const float clear[4] = {0, 0, 0, 0};
+    for (int f = 0; f < 6; ++f) {
+        const float4x4 view = face_view(f) * translation(-eye);
+        set_camera(view, proj, eye, n, n, time_s);
+        cbs_.upload(dev_, ctx_);
+        D3D11_VIEWPORT vp{0, 0, float(n), float(n), 0, 1};
+        ctx_->RSSetViewports(1, &vp);
+        ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+        // No sun disc: with it the +x face of the dry file is 10x the game's value; without it the side faces match
+        // the dump within 10-25% (dry dump, 2026-10-08).
+        pass_gbuffer(scene);
+        ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
+        pass_sky_forward();
+        pass_clouds(env);
+        pass_directional_light();
+        pass_fog();
+        ctx_->OMSetRenderTargets(0, nullptr, nullptr);
+        ctx_->CopySubresourceRegion(env_cube_.Get(), D3D11CalcSubresource(0, f, 9), 0, 0, 0, hdr_.tex.Get(), 0, nullptr);
+    }
+    ctx_->GenerateMips(env_cube_srv_.Get());
+    env_valid_ = true;
+    cbs_.set_f("shadowmap_PS", "g_iSplitCount", {shadows ? 4.0f : 0.0f});
+    env_pass_ = false;
+    cloud_dt_ = save_dt;
+    ao_result_ = save_ao;
+    w_ = save_w;
+    h_ = save_h;
+    std::swap(gb_, env_gb_);
+    std::swap(hdr_, env_hdr_);
+    std::swap(dsv_, env_dsv_);
+    ID3D11ShaderResourceView* nulls[16] = {};
+    ctx_->PSSetShaderResources(0, 16, nulls);
     readback_ambient();
 }
 
@@ -491,10 +566,10 @@ float half_to_float(uint16_t h) {
 // Face averages of the sky cube: copy each face's 1x1 mip into this frame's staging texture, read the previous one.
 void Renderer::readback_ambient() {
     const UINT mips = 9; // 256 -> 1
-    ID3D11Texture2D* dst = amb_staging_[frame_ & 1].Get();
-    for (UINT f = 0; f < 6; ++f) ctx_->CopySubresourceRegion(dst, f, 0, 0, 0, sky_cube_.Get(), D3D11CalcSubresource(mips - 1, f, mips), nullptr);
-    ID3D11Texture2D* src = amb_staging_[(frame_ + 1) & 1].Get();
-    if (frame_ == 0) return;
+    ID3D11Texture2D* dst = amb_staging_[amb_frame_ & 1].Get();
+    for (UINT f = 0; f < 6; ++f) ctx_->CopySubresourceRegion(dst, f, 0, 0, 0, env_cube_.Get(), D3D11CalcSubresource(mips - 1, f, mips), nullptr);
+    ID3D11Texture2D* src = amb_staging_[(amb_frame_ + 1) & 1].Get();
+    if (amb_frame_++ == 0) return;
     for (UINT f = 0; f < 6; ++f) {
         D3D11_MAPPED_SUBRESOURCE ms;
         if (FAILED(ctx_->Map(src, f, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
@@ -509,7 +584,7 @@ void Renderer::readback_ambient() {
 // the cube is the per-face average (lowest mip) of the environment cube rendered from 50 m above the origin, the bottom
 // face replaced by 0.35 * luma(top) * (0.71, 0.69, 0.66) (fn 0x118f0980, 0.35 = engine variable), times ambient_scale;
 // lr = (+x, -x), tb = (+y, bottom), fb = (+z, -z).
-// ASSUMPTION: the editor's cube holds the sky only; the game's also contains terrain, buildings and clouds.
+// The editor's cube holds what the test map has (ground plane, buildings, sky, sun, clouds); see render_env_cube.
 void Renderer::apply_engine_ambient(const EnvironmentParams& env) {
     if (env.use_custom_ambient || !amb_valid_) return;
     float faces[6][3];
@@ -614,7 +689,7 @@ void Renderer::pass_directional_light() {
     cbs_.upload(dev_, ctx_);
     for (int i = 0; i < 4; ++i) bind_srv(ctx_, *ps, "gbuffer_channel_" + std::to_string(i + 1) + "_sampler", gb_[i].srv.Get());
     bind_srv(ctx_, *ps, "s_ssao", ao_result_ ? ao_result_ : white_srv_.Get());
-    bind_srv(ctx_, *ps, "s_environment", sky_cube_srv_.Get());
+    bind_srv(ctx_, *ps, "s_environment", (env_pass_ || !env_valid_) ? sky_cube_srv_.Get() : env_cube_srv_.Get());
     bind_srv(ctx_, *ps, "s_overlay", black_srv_.Get());
     bind_srv(ctx_, *ps, "s_shroud", white_srv_.Get());
     bind_srv(ctx_, *ps, "g_tShadowBuffer_SM50", shadow_atlas_.srv.Get());
@@ -961,7 +1036,7 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
 void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, const float4x4& proj) {
     const GameShader* vs = shader(kSunVS);
     const GameShader* ps = shader(kSunPS);
-    {   // sun visibility from the queries issued three frames ago
+    if (!env_pass_) {   // sun visibility from the queries issued three frames ago
         auto& old_q = sun_query_[(sun_query_frame_ + 1) % 4];
         UINT64 visible = 0, total = 0;
         if (sun_query_frame_ >= 3 && old_q[0] && old_q[1] &&
@@ -969,9 +1044,9 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
             ctx_->GetData(old_q[1].Get(), &total, sizeof total, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
             sun_visibility_ = total ? float(double(visible) / double(total)) : 0.0f;
     }
-    ++sun_query_frame_;
+    if (!env_pass_) ++sun_query_frame_;
     if (!vs || !ps || !env.has_sky || env.sun_scale <= 0) {
-        sun_visibility_ = 0;
+        if (!env_pass_) sun_visibility_ = 0;
         return;
     }
     std::string tex = "rigidmodels/skybox/" + env.sun_texture;
@@ -1010,15 +1085,19 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
     // ASSUMPTION: sun_occlusion = visible fraction of the sun disc (samples passing the depth test / all samples).
     // Dumps: 0 with the sun off screen. The engine reads it from the sun node (fn 0x1172b1b0, vfunc +0x80).
-    auto& qs = sun_query_[sun_query_frame_ % 4];
-    ctx_->Begin(qs[0].Get());
-    ctx_->Draw(6, 0);
-    ctx_->End(qs[0].Get());
-    ctx_->OMSetBlendState(bs_no_write_.Get(), nullptr, 0xffffffff);
-    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
-    ctx_->Begin(qs[1].Get());
-    ctx_->Draw(6, 0);
-    ctx_->End(qs[1].Get());
+    if (env_pass_) {
+        ctx_->Draw(6, 0);
+    } else {
+        auto& qs = sun_query_[sun_query_frame_ % 4];
+        ctx_->Begin(qs[0].Get());
+        ctx_->Draw(6, 0);
+        ctx_->End(qs[0].Get());
+        ctx_->OMSetBlendState(bs_no_write_.Get(), nullptr, 0xffffffff);
+        ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+        ctx_->Begin(qs[1].Get());
+        ctx_->Draw(6, 0);
+        ctx_->End(qs[1].Get());
+    }
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
     // Back to the main camera for the following passes (the sun pass only touched sun_VS).
 }
@@ -1232,7 +1311,7 @@ void Renderer::pass_display() {
     ctx_->VSSetShader(fs_vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(display_ps_.Get(), nullptr, 0);
     ctx_->PSSetConstantBuffers(0, 1, display_cb_.GetAddressOf());
-    ID3D11ShaderResourceView* srvs[2] = {src, sky_cube_srv_.Get()};
+    ID3D11ShaderResourceView* srvs[2] = {src, env_valid_ ? env_cube_srv_.Get() : sky_cube_srv_.Get()}; // SkyCube view: environment cube
     ctx_->PSSetShaderResources(0, 2, srvs);
     ctx_->PSSetSamplers(0, 1, s_clamp_linear_.GetAddressOf());
     ctx_->Draw(3, 0);
@@ -1282,6 +1361,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     update_weather(env, time_s);
 
     pass_sky_cube(env, time_s);
+    if (frame_ % 4 == 0 || !env_valid_) render_env_cube(scene, env, time_s); // XML ambient while it renders
     apply_engine_ambient(env);
 
     float aspect = float(width) / float(height);

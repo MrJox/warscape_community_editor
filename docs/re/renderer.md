@@ -167,3 +167,21 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
   otherwise the battle camera's values (dumps: 0, 1000, 1) with the plain hdr_to_screen.
 - sample_data_3x3/5x5/9x9 (dump): offsets x / width, y / height, Gaussian weights exp(-(x^2 + y^2) / 8) normalised per
   kernel, w = 1. Only use_DOF='true' files: campaign/porthole lightings and weather/charlemagne/day/1.environment.
+
+## Environment cube (2026-10-08)
+
+The editor now renders EnvMapGen itself (Renderer::render_env_cube): six 256^2 faces from (0, 50, 0) through the
+G-buffer, sky, cloud, directional-light and fog passes (no shadows, XML ambient while rendering, sky cube as
+s_environment). The result is s_environment for reflections and the source of the non-custom ambient cube.
+Dry dump comparison (game computed cube = cbuffer / ambient_scale 0.8):
+
+| face | game | editor, geometry + sky | + clouds | + sun disc |
+| --- | --- | --- | --- | --- |
+| +x | 4.31 4.69 4.63 | 4.05 4.97 4.82 | 7.35 7.55 6.09 | 46.2 46.5 42.4 |
+| -x | 2.88 3.22 3.31 | 2.13 2.88 2.94 | 6.12 6.22 4.75 | |
+| +y | 3.97 4.63 4.88 | 1.54 2.98 4.74 | 7.08 7.09 6.20 | |
+| +z | 2.41 2.81 3.06 | 2.43 3.23 3.30 | 4.88 5.09 3.99 | |
+| -z | 2.69 3.06 3.19 | 2.68 3.51 3.53 | 4.74 4.97 3.87 | |
+
+So the game skips the sun disc. Clouds are needed for the top face but the editor's clouds add about twice the game's
+amount (the dump's cloud layout is random and unknown; horizon_alpha_start's remap is still an assumption). Open.
