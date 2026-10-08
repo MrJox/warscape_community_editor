@@ -955,7 +955,7 @@ void Renderer::pass_clouds(const EnvironmentParams& env) {
 
         // cloud_plane_VS / cloud_plane_PS as the game fills them (memory dump): colours raw except the shadow
         // colour (pow 2.2); horizon_alpha_start remapped (0.7 -> 0.97; ASSUMPTION 1 - (1 - x) / 10).
-        cbs_.set_f("cloud_plane_VS", "g_wind_alignment", {0.0f}); // ASSUMPTION: wind direction angle (dump: -1.076)
+        cbs_.set_f("cloud_plane_VS", "g_wind_alignment", {wind_.alignment()}); // fn 0x191e430 (unused by the shader)
         cbs_.set_f("cloud_plane_VS", "g_cloud_shadow_gradient", {p.shadow_gradient});
         cbs_.set_f("cloud_plane_VS", "g_height_scale", {p.height_scale});
         cbs_.set_f("cloud_plane_PS", "g_sun_direction", {to_sun.x, to_sun.y, to_sun.z});
@@ -1090,6 +1090,35 @@ void Renderer::pass_display() {
     ctx_->Draw(3, 0);
 }
 
+float Renderer::wind_direction_degrees(const EnvironmentParams& env) const {
+    if (!env.wind_dir_random) return env.wind_dir_degrees;
+    uint32_t s = wind_dir_seed;
+    return WindSim::random_direction(s);
+}
+
+// WEATHER node per-frame update (fn 0x18ee0c0): wind simulation, weather_shared, wind_VS, wind_PS.
+void Renderer::update_weather(const EnvironmentParams& env, float time_s) {
+    const WeatherDefinition* def = nullptr;
+    if (particles_) {
+        particles_->set_weather(env.weather_definition, vfx_revision);
+        def = &particles_->effect().definition;
+    }
+    wind_.update(def, wind_direction_degrees(env), time_s, frame_dt_);
+    cbs_.set_f("weather_shared", "g_wind", {wind_.smoothed.x, wind_.smoothed.y});
+    cbs_.set_f("weather_shared", "g_wind_offset", {wind_.offset.x, wind_.offset.y});
+    cbs_.set_f("weather_shared", "g_snowing_intensity", {env.snowing_intensity});
+    cbs_.set_i("weather_shared", "g_weather_type", def ? def->type_index() : 0);
+    cbs_.set_i("weather_shared", "g_season_type", season);
+    cbs_.set_f("weather_shared", "g_snow_mask", {snow_cover ? 1.0f : 0.0f});
+    cbs_.set_f("wind_VS", "wind_direction", {wind_.direction.x, wind_.direction.y});
+    cbs_.set_f("wind_VS", "gust_start_time", {wind_.gust_end});
+    cbs_.set_f("wind_VS", "wind_vegetation_multiplier", {def ? def->wind_vegetation_multiplier : 0.0f});
+    cbs_.set_f("wind_VS", "wind_vegetation_hstrength", {WindSim::kVegetationHStrength});
+    cbs_.set_f("wind_VS", "wind_vegetation_vstrength", {WindSim::kVegetationVStrength});
+    if (cbs_.has("wind_PS", "wind_direction_PS")) // only rivers (rigidriver.hlsl) declare it
+        cbs_.set_f("wind_PS", "wind_direction_PS", {wind_.direction.x, wind_.direction.y});
+}
+
 void Renderer::render(const TestScene* scene, const Camera& cam, const EnvironmentParams& env, int width, int height, float time_s) {
     if (width < 8 || height < 8) return;
     resize(width, height);
@@ -1098,14 +1127,16 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
                           kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS, kCloudVS, kCloudPS, kSsaoPS, kSsaoBlurXPS, kSsaoBlurYPS})
         shader(s);
     apply_environment(env, cbs_);
+    frame_dt_ = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);
+    if (last_time_ >= 0 && time_s < last_time_) wind_.reset(); // clock restarted
+    last_time_ = time_s;
+    cloud_dt_ = frame_dt_;
+    update_weather(env, time_s);
 
     pass_sky_cube(env, time_s);
     apply_engine_ambient(env);
 
     float aspect = float(width) / float(height);
-    frame_dt_ = last_time_ < 0 ? 0.016f : std::max(0.0f, time_s - last_time_);
-    last_time_ = time_s;
-    cloud_dt_ = frame_dt_;
     pass_shadows(scene, cam, aspect, -env.to_sun(), time_s);
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
@@ -1127,13 +1158,13 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     pass_directional_light();
     pass_fog();
     if (particles_) { // weather precipitation (vfx1 of the WEATHER definition), see src/vfx/particles.h
-        particles_->set_weather(env.weather_definition, vfx_revision);
         ParticleSystem::Frame pf;
         pf.eye = cam.eye;
         pf.view = view_m;
         pf.time = time_s;
         pf.dt = frame_dt_;
-        pf.wind_velocity = particles_->wind_velocity();
+        pf.wind_velocity = wind_.vfx_velocity;
+        pf.wind_variance = wind_.vfx_variance;
         pf.target = hdr_.rtv.Get();
         pf.depth = dsv_.Get();
         pf.depth_zw = gb_[3].srv.Get();

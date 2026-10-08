@@ -100,6 +100,10 @@ std::string App::diagnostics() const {
             auto& e = p.effect().emitters[i];
             d += "  emitter: " + e.library + " / " + e.instance + " / " + e.name + ": " + std::to_string(p.alive(i)) + " particles\n";
         }
+        const WindSim& w = renderer_->wind();
+        d += "wind: dir " + std::to_string(renderer_->wind_direction_degrees(last_params_)) + " deg, strength " +
+             std::to_string(w.strength) + ", vfx (" + std::to_string(w.vfx_velocity.x) + " " + std::to_string(w.vfx_velocity.z) +
+             "), g_wind (" + std::to_string(w.smoothed.x) + " " + std::to_string(w.smoothed.y) + ")\n";
         for (auto& n : p.effect().notes) d += "  vfx note: " + n + "\n";
         for (auto& e : p.errors()) d += "  vfx error: " + e + "\n";
     }
@@ -194,6 +198,7 @@ void App::draw_viewport() {
     if (env && other && blend_t_ > 0) params = blend_environments(params, read_environment(other->doc), blend_t_);
     params.output_gamma = output_gamma_;
     params.output_brightness = output_brightness_;
+    last_params_ = params;
     // Camera: orbit around the target.
     float cp = std::cos(cam_pitch_), sp = std::sin(cam_pitch_);
     camera_.target = cam_target_;
@@ -439,19 +444,36 @@ void App::draw_menu() {
         }
         ImGui::EndMenu();
     }
-    if (renderer_ && renderer_->particles() && ImGui::BeginMenu("Precipitation")) {
+    if (renderer_ && renderer_->particles() && ImGui::BeginMenu("Weather")) {
         ParticleSystem& p = *renderer_->particles();
         const WeatherVfx& fx = p.effect();
-        ImGui::Checkbox("Enabled", &p.enabled);
+        const WeatherDefinition& d = fx.definition;
+        const WindSim& w = renderer_->wind();
+        ImGui::Checkbox("Precipitation", &p.enabled);
         ImGui::SameLine();
         if (ImGui::Button("Restart")) p.restart();
-        ImGui::SetNextItemWidth(300);
-        ImGui::SliderFloat("Wind direction (deg)", &p.wind_azimuth_deg, 0, 360, "%.0f");
-        ImGui::TextDisabled("The game picks the wind direction per battle (wind_dir_random).");
         ImGui::Separator();
-        ImGui::Text("Weather definition: %s", fx.definition.name.empty() ? "(none)" : fx.definition.name.c_str());
-        ImGui::Text("Effect: %s", fx.definition.vfx1.empty() ? "(none)" : ("vfx/" + fx.definition.vfx1 + ".xml").c_str());
-        ImGui::Text("Wind size %.3g..%.3g", fx.definition.wind_size_min, fx.definition.wind_size_max);
+        ImGui::Text("Weather definition: %s (%s, severity %d)", d.name.empty() ? "(none)" : d.name.c_str(), d.type.c_str(), d.severity);
+        std::string effects = d.vfx1.empty() ? "(none)" : "vfx/" + d.vfx1 + ".xml";
+        if (!d.vfx2.empty()) effects += ", vfx/" + d.vfx2 + ".xml";
+        ImGui::Text("Effect: %s", effects.c_str());
+        ImGui::Text("Wind direction %.1f deg%s", renderer_->wind_direction_degrees(last_params_),
+                    last_params_.wind_dir_random ? " (wind_dir_random: random per battle)" : "");
+        if (last_params_.wind_dir_random) {
+            ImGui::SameLine();
+            if (ImGui::Button("New battle direction")) renderer_->wind_dir_seed = renderer_->wind_dir_seed * 1103515245u + 12345u;
+        }
+        ImGui::Text("Wind %.3f (min %.3g, max %.3g), last gust %.3f for %.2f s, next roll in %.2f s", w.strength, d.wind_size_min,
+                    d.wind_size_max, w.gust_size, w.gust_duration, std::max(0.0f, w.cooldown));
+        ImGui::Text("VFX wind (%.2f, %.2f, %.2f), g_wind (%.3f, %.3f)", w.vfx_velocity.x, w.vfx_velocity.y, w.vfx_velocity.z,
+                    w.smoothed.x, w.smoothed.y);
+        ImGui::Separator();
+        ImGui::TextUnformatted("Battle (not stored in the weather files):");
+        static const char* seasons[] = {"0", "1", "2", "3 (winter in the snow dump)"};
+        ImGui::SetNextItemWidth(200);
+        ImGui::Combo("Season (g_season_type)", &renderer_->season, seasons, 4);
+        ImGui::Checkbox("Snow on the map (g_snow_mask)", &renderer_->snow_cover);
+        ImGui::Separator();
         ImGui::Text("Particles: %u / %u", p.alive(), p.capacity());
         for (auto& e : fx.emitters) ImGui::BulletText("%s / %s / %s", e.library.c_str(), e.instance.c_str(), e.name.c_str());
         for (auto& n : fx.notes) ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1), "%s", n.c_str());

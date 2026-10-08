@@ -63,8 +63,11 @@ struct EnvironmentParams {
     // SKY_DOME > CLOUD_PLANE_MESH
     std::vector<CloudPlane> cloud_planes;
 
-    // WEATHER
+    // WEATHER (engine block at environment +0x2178: +0x2c wind_dir_random, +0x30 wind_dir_degrees,
+    // +0x34 snowing_intensity -> weather_shared.g_snowing_intensity)
     float snowing_intensity = 0;
+    bool wind_dir_random = false;
+    float wind_dir_degrees = 0;
     std::string weather_definition;
 
     // Output settings (graphics options, not part of the file): preferences.script.txt

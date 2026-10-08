@@ -4,6 +4,7 @@
 #include "render/environment.h"
 #include "render/math.h"
 #include "render/shader_lib.h"
+#include "render/wind.h"
 #include "vfx/particles.h"
 
 #include <d3d11.h>
@@ -35,6 +36,12 @@ public:
     bool ssao = true;
     uint64_t vfx_revision = 0; // changes when an open vfx/ or weather/ XML is edited: particles reload
     uint32_t cloud_seed = 1;
+    // Battle state the engine feeds the weather shaders (not part of the environment files).
+    uint32_t wind_dir_seed = 1;  // wind_dir_random: the battle's random direction comes from this seed
+    int season = 0;              // weather_shared.g_season_type (snow dump: 3 in winter)
+    bool snow_cover = false;     // weather_shared.g_snow_mask (battle map has snow)
+    const WindSim& wind() const { return wind_; }
+    float wind_direction_degrees(const EnvironmentParams& env) const;
     size_t cloud_sprites() const { size_t n = 0; for (auto& p : cloud_gpu_) n += p.count; return n; }
     float luma_black() const { return luma_black_; }
     std::string engine_ambient_faces() const {
@@ -154,6 +161,8 @@ private:
         UINT capacity = 0, count = 0;
     };
     float cloud_dt_ = 0;
+    WindSim wind_;
+    void update_weather(const EnvironmentParams& env, float time_s);
     std::vector<CloudGpu> cloud_gpu_;
     std::map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> sky_textures_;
     ID3D11ShaderResourceView* sky_texture(const std::string& path);

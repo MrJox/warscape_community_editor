@@ -31,7 +31,7 @@ public:
         float3 eye;
         float4x4 view;     // rows 0..2: camera right, up, forward
         float time = 0, dt = 0;
-        float3 wind_velocity, wind_variance;
+        float3 wind_velocity, wind_variance; // cb_vfx_game_simulation_data (render/wind.h)
         ID3D11RenderTargetView* target = nullptr;
         ID3D11DepthStencilView* depth = nullptr;
         ID3D11ShaderResourceView* depth_zw = nullptr; // gbuffer channel 4 (z/w)
@@ -51,7 +51,6 @@ public:
     void render(const Frame& f);
 
     bool enabled = true;
-    float wind_azimuth_deg = 0; // wind_dir_random in the game: the direction is per battle
     const WeatherVfx& effect() const { return effect_; }
     uint32_t alive() const { return alive_; }
     // Upper bound of live particles of one emitter (same estimate as alive()).
@@ -65,10 +64,6 @@ public:
     const std::vector<std::string>& errors() const { return errors_; }
     // Distortion buffer of this frame (heat haze, lens drops), or nullptr when no such emitter drew.
     ID3D11ShaderResourceView* distortion() const { return distortion_active_ ? dist_srv_.Get() : nullptr; }
-
-    // Wind the game feeds cb_vfx_game_simulation_data for this definition.
-    // ASSUMPTION (2 dumps): |wind_velocity| = 22.5 * (wind_size_min + wind_size_max) / 2, no gust variance.
-    float3 wind_velocity() const;
 
 private:
     static constexpr int kWidth = 512;          // particle state and sorted-data textures (kWidth^2 slots)

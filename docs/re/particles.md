@@ -107,8 +107,7 @@ traced in the DLL, marked in the code):
   dumps (rain 3000/s * 1.4 s * 2 references = 8400 vs 8426 alive).
 - Curve texture: scale min row = scale * (1 - ParticleScaleVariation); colour start -> mid at lerp_time -> end; width 64.
 - Emitter instance tint = middle of the reference's tint range; camera-following emitters sit at the camera.
-- Wind: |wind_velocity| = 22.5 * mean(wind_size_min, wind_size_max) (dumps: 5.62 for 0.2..0.3, 7.39 for 0.25..0.4),
-  direction from the UI (the game randomises it per battle), no gust variance.
+- Wind: verified, see "Wind" below (src/render/wind.cpp).
 - Not supported yet: non-continuous_mesh emitters (lightning), soft-edge property name,
   shadow-receiving PS variants.
 
@@ -119,15 +118,31 @@ vs_cell_texture (no_cells_xy), params (cell_blend, loop, row_restricted, randomi
 `vfx_check` result: rain heavy_daytime, rain heavy, rain stormy, snow stormy, snow gusty, dry desert storm all match.
 Particle diffuse maps are 1024^2 DXT5 with 11 mips (glow_cells_a, flame_cells_v1), so the texture array is a plain copy.
 
-## Wind (2026-10-07, partial)
+## Wind (2026-10-08, solved)
 
-- cb_vfx_game_simulation_data.wind_variance_dir has its own angle (rain dump: -0.6775 rad, stored just before
-  wind_velocity in the VFX frame data); |variance| 5.95 (rain) / 7.42 (snow).
-- cloud_plane_VS.g_wind_alignment.x = atan2(wind.z, wind.x) (rain -1.0759, snow 0.2024); the cloud VS does not use it.
-- Weather definition struct (fn 0x1738a60): +0x3c wind_size_min, +0x40 max, +0x44 gust size variation, +0x48 gust
-  duration, +0x4c duration variation, +0x50 gust interval, +0x54 probability, +0x58 curve, +0x5c vegetation multiplier.
-  The update code (gusts, speed) is not traced; the editor keeps |wind| = 22.5 * mean(wind_size) (fits both dumps
-  within 1%).
+Traced in the DLL and checked against all three dumps (src/render/wind.cpp):
+- Weather definition (loader fn 0x1738a60, defaults fn 0x1704210): +0x1c type, +0x20 severity, +0x24 vfx1, +0x30 vfx2,
+  +0x3c wind_size_min (0), +0x40 max (1), +0x44 wind_gust_size_variation (0.5), +0x48 wind_gust_duration (2),
+  +0x4c wind_gust_duration_variation (0.5), +0x50 wind_gust_interval (3), +0x54 wind_gust_probability (1),
+  +0x58 wind_gust_curve (4), +0x5c wind_vegetation_multiplier (0). The older names in .environment files
+  (wind_gust_prob, _rampup, _max, _size_variety, _time_variety, _falloff_div, wind_particle_multiplier) are not read.
+- WEATHER block (environment +0x2178): +0x2c wind_dir_random, +0x30 wind_dir_degrees, +0x34 snowing_intensity.
+  wind_dir_random (fn 0x175d940): degrees = rand16 * 360/65535 once per battle. Direction (fn 0x17958b0) = (cos, sin).
+- Gusts (fn 0x18dfd30, WEATHER node +0x7a0 size, +0x7a4 duration, +0x7a8 strength, +0x7ac cooldown, +0x7cc start):
+  strength = min; when t > start + duration and cooldown <= 0: if rand <= probability, size = (rand * size_var +
+  1 - size_var) * (max - min), duration = (rand * dur_var + 1 - dur_var) * wind_gust_duration, start = t; cooldown =
+  interval either way. During a gust strength = min + exp(-0.5 * ((x - 1) * curve)^2) * size, x = (t - start) / duration
+  (x doubles when engine var +0x2a74990 is set; 0 in every dump), otherwise cooldown -= dt. Dry dump: size 0.0968,
+  duration 1.31, strength 0.1, cooldown 1.27 (all within the formulas for "dry breezy").
+- Shaders (fn 0x18ee0c0): wind = direction * strength; g_wind = running average over 60 s (node +0x80c), blended with
+  the previous period's average, length clamped to 1; g_wind_offset += g_wind * dt; g_snowing_intensity = WEATHER
+  +0x34; g_weather_type = definition type (WT_NONE 0, WT_RAIN 1, WT_SNOW 2); g_season_type and g_snow_mask from the
+  battle (snow dump: 3 and 1). wind_VS (fn 0x1923990): direction, gust_start_time = start + duration of the last gust,
+  vegetation multiplier, h/v strength 0.91 / 0.08. cloud_plane_VS.g_wind_alignment = atan2(dir.y, dir.x) (fn 0x191e430;
+  unused by the shader).
+- VFX (fn 0x18f8b10): wind_velocity = (wind.x, 0, wind.y) * 20 (engine var +0x2a787c8). wind_variance_dir (fn 0x18e51e0):
+  angle += (2 rand - 1) * dt * 5 (var +0x2a776a8), mod 2 pi; vector = (cos, 0, sin) * approx_sqrt(|v|^2), where
+  approx_sqrt halves the float bits around 1.0 (gives 5.954 for 5.624 and 7.416 for 7.393, as in the dumps).
 
 ## Non-custom ambient cube (open)
 

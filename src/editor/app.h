@@ -78,6 +78,7 @@ private:
     std::unique_ptr<TestScene> scene_;
     std::unique_ptr<Renderer> renderer_;
     Camera camera_;
+    EnvironmentParams last_params_; // what the viewport rendered last frame (menus read it)
     float cam_yaw_ = 0.6f, cam_pitch_ = 0.35f, cam_dist_ = 120.0f;
     float3 cam_target_{0, 5, 0};
     int scene_seed_ = 1, scene_count_ = 16;

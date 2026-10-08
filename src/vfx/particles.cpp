@@ -122,12 +122,6 @@ float ParticleSystem::rand01() {
     return float(rng_ >> 8) * (1.0f / 16777216.0f);
 }
 
-float3 ParticleSystem::wind_velocity() const {
-    float speed = 22.5f * 0.5f * (effect_.definition.wind_size_min + effect_.definition.wind_size_max);
-    float a = wind_azimuth_deg * kPi / 180.0f;
-    return float3{std::sin(a), 0, std::cos(a)} * speed;
-}
-
 void ParticleSystem::create_resources() {
     auto make_target = [&](DXGI_FORMAT fmt, int slices) {
         Target t;

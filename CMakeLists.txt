@@ -42,7 +42,7 @@ endif()
 
 add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp
     src/render/texture.cpp src/render/shader_lib.cpp src/render/math.cpp src/render/scene.cpp
-    src/render/environment.cpp src/render/renderer.cpp src/render/image_io.cpp src/render/clouds.cpp src/vfx/particles.cpp)
+    src/render/environment.cpp src/render/renderer.cpp src/render/image_io.cpp src/render/clouds.cpp src/render/wind.cpp src/vfx/particles.cpp)
 target_link_libraries(weather_editor PRIVATE we_core imgui d3d11 dxgi d3dcompiler dxguid comdlg32 dbghelp windowscodecs ole32)
 if(MSVC)
     target_compile_options(weather_editor PRIVATE /Zi)

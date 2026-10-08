@@ -8,6 +8,10 @@
 
 namespace we {
 
+struct float2 {
+    float x = 0, y = 0;
+};
+
 struct float3 {
     float x = 0, y = 0, z = 0;
     float3() = default;

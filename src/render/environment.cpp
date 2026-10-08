@@ -244,6 +244,8 @@ EnvironmentParams read_environment(const XmlDoc& doc) {
 
     Reader w{doc, find_element(doc, "WEATHER")};
     w.f("snowing_intensity", e.snowing_intensity);
+    w.b("wind_dir_random", e.wind_dir_random);
+    w.f("wind_dir_degrees", e.wind_dir_degrees);
     w.s("definition_name", e.weather_definition);
     return e;
 }
@@ -306,8 +308,6 @@ void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs) {
     cbs.set_f("fog_VS_PS", "g_fog_height_strength", {e.fog_height_strength});
     cbs.set_f("fog_VS_PS", "g_fog_colour_blend", {e.fog_colour_blend});
     cbs.set_f("fog_VS_PS", "g_fog_clear_distance", {e.fog_clear_distance});
-
-    cbs.set_f("weather_shared", "g_snowing_intensity", {e.snowing_intensity});
 
     // HDR: the four limits go 1:1 into luma_stats_buffer (names match; used by the GPU luma statistics).
     cbs.set_f("luma_stats_buffer", "g_absolute_luma_black_point", {e.absolute_black_point});
