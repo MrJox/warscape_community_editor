@@ -34,6 +34,8 @@ public:
     bool shadows = true;
     bool clouds = true;
     bool ssao = true;
+    bool lens_flare = true;
+    float sun_visibility() const { return sun_visibility_; }
     uint64_t vfx_revision = 0; // changes when an open vfx/ or weather/ XML is edited: particles reload
     uint32_t cloud_seed = 1;
     // Battle state the engine feeds the weather shaders (not part of the environment files).
@@ -84,6 +86,7 @@ private:
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);
     void pass_to_screen();
+    void pass_lens_flare(const EnvironmentParams& env, const float3& eye, float time_s);
     void fullscreen_to(ID3D11RenderTargetView* rtv, int w, int h, const GameShader& ps);
     void fullscreen(const GameShader& ps);
     const GameShader* shader(const std::string& name);
@@ -165,8 +168,15 @@ private:
     void update_weather(const EnvironmentParams& env, float time_s);
     std::vector<CloudGpu> cloud_gpu_;
     std::map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> sky_textures_;
-    ID3D11ShaderResourceView* sky_texture(const std::string& path);
+    ID3D11ShaderResourceView* sky_texture(const std::string& path, bool srgb = true);
     std::string sun_texture_path_;
+    // Sun visibility for the lens flare (lense_flare_VS.sun_occlusion): occlusion queries of the sun disc with and
+    // without the depth test, read back a few frames later.
+    Microsoft::WRL::ComPtr<ID3D11Query> sun_query_[4][2];
+    int sun_query_frame_ = 0;
+    float sun_visibility_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> flare_vb_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_add_one_, bs_no_write_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> sun_srv_;
     bool fog_enabled_ = true;
 };

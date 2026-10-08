@@ -48,6 +48,13 @@ const char* kCloudVS = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
 const char* kCloudPS = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 constexpr float kSunDistance = 7600.0f; // memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600
 const char* kShadowPS = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
+// Lens flare (LENSE_FLARE_SHADER, fn 0x116de600): four sun sprites and a vignette, drawn after hdr_to_screen.
+const char* kFlareVS[4] = {"dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_0", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_1",
+                           "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_2", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_3"};
+const char* kFlarePS[4] = {"dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_0", "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_1",
+                           "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_2", "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_3"};
+const char* kFlareMainVS = "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_main";
+const char* kVignettePS = "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_vignette";
 
 // Editor-side helpers (not game shaders): full-screen triangle and the debug/temporary display pass.
 const char* kHelperHlsl = R"(
@@ -181,6 +188,17 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_
         D3D11_BUFFER_DESC sbd{sizeof v, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
         D3D11_SUBRESOURCE_DATA ssd{v};
         dev_->CreateBuffer(&sbd, &ssd, &sun_vb_);
+    }
+
+    {   // Lens flare / vignette quad (the engine's full-screen quad): POSITION xy in [-1, 1], COLOR, TEXCOORD0 uv.
+        float q[6][10] = {{-1, -1, 0, 1, 1, 1, 1, 1, 0, 1}, {-1, 1, 0, 1, 1, 1, 1, 1, 0, 0}, {1, 1, 0, 1, 1, 1, 1, 1, 1, 0},
+                          {-1, -1, 0, 1, 1, 1, 1, 1, 0, 1}, {1, 1, 0, 1, 1, 1, 1, 1, 1, 0}, {1, -1, 0, 1, 1, 1, 1, 1, 1, 1}};
+        D3D11_BUFFER_DESC qbd{sizeof q, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+        D3D11_SUBRESOURCE_DATA qsd{q};
+        dev_->CreateBuffer(&qbd, &qsd, &flare_vb_);
+        D3D11_QUERY_DESC qd{D3D11_QUERY_OCCLUSION, 0};
+        for (auto& pair : sun_query_)
+            for (auto& q2 : pair) dev_->CreateQuery(&qd, &q2);
     }
 
     {   // Cloud sprite quad: POSITION xy in [-1, 1] (scaled by the sprite's angular size), TEXCOORD0 uv.
@@ -334,6 +352,14 @@ void Renderer::make_states() {
     // ASSUMPTION: the sun disc adds its texture (weighted by alpha) on top of the sky.
     b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     dev_->CreateBlendState(&b, &bs_additive_alpha_);
+    // Lens flare sprites (fn 0x116de600, blend object +0x6da): ONE / ONE add on colour and alpha.
+    b.RenderTarget[0].SrcBlend = b.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+    b.RenderTarget[0].SrcBlendAlpha = b.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    b.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    dev_->CreateBlendState(&b, &bs_add_one_);
+    D3D11_BLEND_DESC nw{};
+    nw.RenderTarget[0].RenderTargetWriteMask = 0;
+    dev_->CreateBlendState(&nw, &bs_no_write_);
 }
 
 Renderer::Target Renderer::make_target(int w, int h, DXGI_FORMAT fmt) {
@@ -717,6 +743,67 @@ void Renderer::pass_to_screen() {
     fullscreen_to(final_.rtv.Get(), w_, h_, *ps);
 }
 
+// Lens flare and vignette (LENSE_FLARE_SHADER), drawn on the final image after hdr_to_screen (fn 0x1173ec10).
+// Constants as fn 0x1172b1b0 sets them: sun_position = camera + to_sun * 7600 (both dumps), sun_flare = SUN_MESH
+// sun_flare, time = battle clock, half_texel_offset = 0.5 / size, vignette_strength = 1, pos_transform = (1, 1, 0, 0).
+// Textures (fn 0x116dd4e0): lense_flare_1 = green_dot_flare, 2 = streaks_flare, 3 = rays_flare (commontextures).
+void Renderer::pass_lens_flare(const EnvironmentParams& env, const float3& eye, float time_s) {
+    const GameShader* main_vs = shader(kFlareMainVS);
+    const GameShader* vignette = shader(kVignettePS);
+    const GameShader *fvs[4], *fps[4];
+    for (int i = 0; i < 4; ++i) fvs[i] = shader(kFlareVS[i]), fps[i] = shader(kFlarePS[i]);
+    if (!main_vs || !vignette) return;
+    const float3 sun = eye + env.to_sun() * kSunDistance;
+    const float flare = env.has_sky ? std::clamp(env.sun_flare, 0.0f, 1.0f) : 0.0f; // SUN_MESH loader clamps 0..1
+    cbs_.set_f("lense_flare_VS", "sun_occlusion", {sun_visibility_});
+    cbs_.set_f("lense_flare_VS", "sun_position", {sun.x, sun.y, sun.z});
+    cbs_.set_f("lense_flare_VS", "sun_flare", {flare});
+    cbs_.set_f("lense_flare_VS", "pos_transform", {1, 1, 0, 0});
+    cbs_.set_f("lense_flare_PS", "time", {time_s});
+    cbs_.set_f("lense_flare_PS", "half_texel_offset", {0.5f / float(w_), 0.5f / float(h_)});
+    cbs_.set_f("lense_flare_PS", "vignette_strength", {1.0f});
+    cbs_.set_f("lense_flare_PS", "sun_flare_ps", {flare});
+    cbs_.upload(dev_, ctx_);
+    ctx_->OMSetRenderTargets(1, final_.rtv.GetAddressOf(), nullptr);
+    D3D11_VIEWPORT vp{0, 0, float(w_), float(h_), 0, 1};
+    ctx_->RSSetViewports(1, &vp);
+    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+    ctx_->RSSetState(rs_none_.Get());
+    std::vector<D3D11_INPUT_ELEMENT_DESC> el = {{"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                                                {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                                                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+    UINT stride = 40, off = 0;
+    ctx_->IASetVertexBuffers(0, 1, flare_vb_.GetAddressOf(), &stride, &off);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    if (flare > 0 && sun_visibility_ > 0) {
+        static const char* textures[4] = {"commontextures/green_dot_flare.dds", "commontextures/streaks_flare.dds",
+                                          "commontextures/green_dot_flare.dds", "commontextures/rays_flare.dds"};
+        static const char* samplers[4] = {"lense_flare_1_sampler", "lense_flare_2_sampler", "lense_flare_1_sampler", "lense_flare_3_sampler"};
+        ctx_->OMSetBlendState(bs_add_one_.Get(), nullptr, 0xffffffff);
+        for (int i = 0; i < 4; ++i) {
+            const GameShader* vs = fvs[i];
+            const GameShader* ps = fps[i];
+            if (!vs || !ps) continue;
+            ctx_->IASetInputLayout(lib_->layout(*vs, "flare", el));
+            bind_shader(ctx_, *vs, cbs_);
+            bind_shader(ctx_, *ps, cbs_);
+            // The final image is gamma-encoded UNORM; the flare maps add as stored (ASSUMPTION: no sRGB decode).
+            bind_srv(ctx_, *ps, samplers[i], sky_texture(textures[i], false));
+            bind_sampler(ctx_, *ps, samplers[i], s_clamp_linear_.Get());
+            ctx_->Draw(6, 0);
+        }
+    }
+    // Vignette (blend object +0x71f: SRC_ALPHA / INV_SRC_ALPHA, black with alpha = saturate(2 r - 0.9)^1.7).
+    ctx_->OMSetBlendState(bs_alpha_.Get(), nullptr, 0xffffffff);
+    ctx_->IASetInputLayout(lib_->layout(*main_vs, "flare", el));
+    bind_shader(ctx_, *main_vs, cbs_);
+    bind_shader(ctx_, *vignette, cbs_);
+    ctx_->Draw(6, 0);
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+    ID3D11ShaderResourceView* nulls[4] = {};
+    ctx_->PSSetShaderResources(0, 4, nulls);
+}
+
 void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s) {
     const float far_split = std::min(cam.zfar, 1500.0f);
     // Split distances (view depth). ASSUMPTION: practical split scheme (log/uniform blend 0.75); the game's
@@ -836,7 +923,19 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
 void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, const float4x4& proj) {
     const GameShader* vs = shader(kSunVS);
     const GameShader* ps = shader(kSunPS);
-    if (!vs || !ps || !env.has_sky || env.sun_scale <= 0) return;
+    {   // sun visibility from the queries issued three frames ago
+        auto& old_q = sun_query_[(sun_query_frame_ + 1) % 4];
+        UINT64 visible = 0, total = 0;
+        if (sun_query_frame_ >= 3 && old_q[0] && old_q[1] &&
+            ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+            ctx_->GetData(old_q[1].Get(), &total, sizeof total, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
+            sun_visibility_ = total ? float(double(visible) / double(total)) : 0.0f;
+    }
+    ++sun_query_frame_;
+    if (!vs || !ps || !env.has_sky || env.sun_scale <= 0) {
+        sun_visibility_ = 0;
+        return;
+    }
     std::string tex = "rigidmodels/skybox/" + env.sun_texture;
     if (tex != sun_texture_path_) {
         sun_texture_path_ = tex;
@@ -871,21 +970,32 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     bind_shader(ctx_, *ps, cbs_);
     bind_srv(ctx_, *ps, "s_diffuse", sun_srv_.Get());
     for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+    // ASSUMPTION: sun_occlusion = visible fraction of the sun disc (samples passing the depth test / all samples).
+    // Dumps: 0 with the sun off screen. The engine reads it from the sun node (fn 0x1172b1b0, vfunc +0x80).
+    auto& qs = sun_query_[sun_query_frame_ % 4];
+    ctx_->Begin(qs[0].Get());
     ctx_->Draw(6, 0);
+    ctx_->End(qs[0].Get());
+    ctx_->OMSetBlendState(bs_no_write_.Get(), nullptr, 0xffffffff);
+    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+    ctx_->Begin(qs[1].Get());
+    ctx_->Draw(6, 0);
+    ctx_->End(qs[1].Get());
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
     // Back to the main camera for the following passes (the sun pass only touched sun_VS).
 }
 
-ID3D11ShaderResourceView* Renderer::sky_texture(const std::string& path) {
-    auto it = sky_textures_.find(path);
+ID3D11ShaderResourceView* Renderer::sky_texture(const std::string& path, bool srgb) {
+    const std::string key = path + (srgb ? "|srgb" : "|unorm");
+    auto it = sky_textures_.find(key);
     if (it != sky_textures_.end()) return it->second.Get();
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     try {
-        srv = load_dds(dev_, vfs_.read(path), true).srv; // ASSUMPTION: cloud atlases sampled as sRGB like other colour maps
+        srv = load_dds(dev_, vfs_.read(path), srgb).srv; // ASSUMPTION: cloud atlases sampled as sRGB like other colour maps
     } catch (const std::exception& e) {
         error(path + ": " + e.what());
     }
-    sky_textures_[path] = srv;
+    sky_textures_[key] = srv;
     return srv.Get();
 }
 
@@ -1179,7 +1289,10 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->PSSetShaderResources(0, 16, nulls);
     float dt = frame_dt_;
     pass_tonemap(env, dt);
-    if (view == View::Final) pass_to_screen();
+    if (view == View::Final) {
+        pass_to_screen();
+        if (lens_flare) pass_lens_flare(env, cam.eye, time_s);
+    }
     pass_display(); // Final: copies final_ with alpha = 1 for the viewport
     ctx_->PSSetShaderResources(0, 16, nulls);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);

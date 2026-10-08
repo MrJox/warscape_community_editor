@@ -145,3 +145,14 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
   absolute_white_point, auto_exposure_speed, low/high_tones_bias_red/green/blue, lock_rgb_relative_tones. Defaults
   (fn 0x177cd80): 0.01, 2, 6, 40, 0.02, 0.33, 0.66, true. The single low/high_tones_bias, black/white_point and
   high_pass_threshold of older files are in another table (dll+0x1da6034) and do not affect battles.
+
+## Lens flare and vignette (2026-10-08)
+
+- LENSE_FLARE_SHADER (fn 0x116de600, manager +0x34f28): passes sun_flare1..4 (lenseflare.hlsl flare_0..3) and vignette,
+  drawn after hdr_to_screen on the final image (fn 0x1173ec10). Flares: blend ONE/ONE add; vignette: SRC_ALPHA /
+  INV_SRC_ALPHA, black, alpha = saturate(2r - 0.9)^1.7.
+- Textures (fn 0x116dd4e0): lense_flare_1 = commontextures/green_dot_flare.dds, 2 = streaks_flare.dds, 3 = rays_flare.dds.
+- Constants (fn 0x1172b1b0): sun_position = camera + to_sun * 7600 (checked in two dumps), sun_flare = SUN_MESH
+  sun_flare (loader fn 0x118dd040 clamps 0..1), time = battle clock, half_texel_offset = 0.5 / size, vignette_strength 1.
+- sun_occlusion: read from the sun node (vfunc +0x80, not decoded). Editor: visible fraction of the sun disc from two
+  occlusion queries (ASSUMPTION; matches 0 with the sun off screen in the dry dump).

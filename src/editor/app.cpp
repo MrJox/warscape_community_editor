@@ -92,6 +92,7 @@ std::string App::diagnostics() const {
     std::string d = "status: " + status_ + "\n";
     d += "scene objects: " + std::to_string(scene_ ? scene_->objects().size() : 0) + "\n";
     if (renderer_) d += "cloud sprites: " + std::to_string(renderer_->cloud_sprites()) + "\n";
+    if (renderer_) d += "sun visibility (lens flare): " + std::to_string(renderer_->sun_visibility()) + "\n";
     if (renderer_ && renderer_->particles()) {
         const ParticleSystem& p = *renderer_->particles();
         d += "weather vfx: '" + p.effect().definition.name + "' -> " + p.effect().definition.vfx1 + ", " +
