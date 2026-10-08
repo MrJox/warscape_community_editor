@@ -2,6 +2,7 @@
 #include "core/vfs.h"
 #include "render/renderer.h"
 #include "render/scene.h"
+#include "formats/variation_db.h"
 #include "formats/xml_doc.h"
 
 #include <d3d11.h>
@@ -35,6 +36,8 @@ public:
     void set_blend(int doc, float t) { blend_doc_ = doc; blend_t_ = t; }
     void set_orbit(float yaw, float pitch, float dist, float target_y = 5) { cam_yaw_ = yaw; cam_pitch_ = pitch; cam_dist_ = dist; cam_target_.y = target_y; }
     std::string diagnostics() const;
+    void show_picker(bool on) { show_picker_ = on; }
+    void set_pick(const std::string& category, const std::string& value) { pick_overrides_[category] = value; }
     bool confirm_close(); // false = cancel closing
 
 private:
@@ -51,6 +54,8 @@ private:
     void draw_attribute(Document& d, int elem, size_t attr);
     void draw_changes(Document& d);
     void draw_viewport();
+    void draw_picker();
+    void load_variation_db();
     void init_renderer();
     void load_settings();
     void store_settings() const;
@@ -87,6 +92,12 @@ private:
     int blend_doc_ = -1;  // optional second environment for the cross-fade slider
     float blend_t_ = 0;
     float output_gamma_ = 2.2f, output_brightness_ = 1.0f; // from the game's preferences.script.txt
+
+    // "What would the game pick": warscape_asset_variation_db and the current conditions
+    std::unique_ptr<VariationDb> vdb_;
+    std::string vdb_error_, vdb_source_;
+    bool vdb_loaded_ = false, show_picker_ = false;
+    VariationDb::Query pick_query_, pick_overrides_; // overrides: command line --pick, applied when the database loads
 
     std::filesystem::path output_dir_;
     std::filesystem::path settings_path_;

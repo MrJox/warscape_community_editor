@@ -19,7 +19,7 @@ add_executable(xml_roundtrip tools/xml_roundtrip.cpp)
 target_link_libraries(xml_roundtrip PRIVATE we_core)
 
 target_sources(we_core PRIVATE src/formats/fxc.cpp src/core/process.cpp src/core/vfs.cpp src/formats/env_value.cpp src/formats/rmv2.cpp
-    src/vfx/vfx_def.cpp src/vfx/vfx_constants.cpp src/vfx/weather_vfx.cpp)
+    src/vfx/vfx_def.cpp src/vfx/vfx_constants.cpp src/vfx/weather_vfx.cpp src/formats/variation_db.cpp)
 
 add_executable(fxc_dump tools/fxc_dump.cpp)
 target_link_libraries(fxc_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
@@ -57,3 +57,6 @@ target_link_libraries(rmv2_check PRIVATE we_core)
 
 add_executable(env_vs_dump tools/env_vs_dump.cpp src/render/environment.cpp src/render/shader_lib.cpp src/render/math.cpp src/render/clouds.cpp)
 target_link_libraries(env_vs_dump PRIVATE we_core d3d11 d3dcompiler dxguid)
+
+add_executable(variation_check tools/variation_check.cpp)
+target_link_libraries(variation_check PRIVATE we_core)

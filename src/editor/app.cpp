@@ -399,6 +399,7 @@ void App::frame() {
     if (status_error_) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", status_.c_str());
     else ImGui::TextUnformatted(status_.c_str());
     ImGui::End();
+    if (show_picker_) draw_picker();
 
     // Shortcuts
     ImGuiIO& io = ImGui::GetIO();
@@ -464,6 +465,10 @@ void App::draw_menu() {
         }
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Selection")) {
+        ImGui::MenuItem("Weather picker (which environment file the game chooses)", nullptr, &show_picker_);
+        ImGui::EndMenu();
+    }
     if (renderer_ && renderer_->particles() && ImGui::BeginMenu("Weather")) {
         ParticleSystem& p = *renderer_->particles();
         const WeatherVfx& fx = p.effect();
@@ -501,6 +506,125 @@ void App::draw_menu() {
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
+}
+
+void App::load_variation_db() {
+    vdb_loaded_ = true;
+    vdb_.reset();
+    vdb_error_.clear();
+    if (!vfs_) { vdb_error_ = "Packs are not mounted."; return; }
+    const std::string path = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
+    try {
+        auto owner = vfs_->owner(path);
+        if (!owner) throw std::runtime_error(path + " is in no pack");
+        vdb_ = std::make_unique<VariationDb>(VariationDb::parse(vfs_->read(path)));
+        vdb_source_ = vfs_->packs()[*owner].name;
+        pick_query_.clear();
+        for (auto& m : vdb_->metas)
+            if (!m.values.empty()) pick_query_[m.name] = m.values.front();
+        for (auto& [k, v] : pick_overrides_) pick_query_[k] = v;
+    } catch (const std::exception& e) {
+        vdb_error_ = e.what();
+    }
+}
+
+// The candidate list the game builds for a battle (rules and DLL functions: formats/variation_db.h).
+void App::draw_picker() {
+    ImGui::SetNextWindowSize(ImVec2(760, 800), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    if (!ImGui::Begin("Weather picker", &show_picker_)) { ImGui::End(); return; }
+    if (!vdb_loaded_) load_variation_db();
+    if (!vdb_) {
+        ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "Cannot read the variation database: %s", vdb_error_.c_str());
+        if (ImGui::Button("Retry")) vdb_loaded_ = false;
+        ImGui::End();
+        return;
+    }
+    ImGui::TextColored(kDim, "warscape_asset_variation_db.bin from %s", vdb_source_.c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reload")) {
+        vdb_loaded_ = false;
+        ImGui::End();
+        return;
+    }
+    ImGui::Separator();
+    ImGui::TextUnformatted("Battle conditions");
+    for (auto& m : vdb_->metas) {
+        std::string& cur = pick_query_[m.name];
+        ImGui::SetNextItemWidth(260);
+        if (ImGui::BeginCombo(m.name.c_str(), cur.c_str())) {
+            for (auto& v : m.values)
+                if (ImGui::Selectable(v.c_str(), v == cur)) cur = v;
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::TextColored(kDim, "query bits 0x%08X", vdb_->query_mask(pick_query_));
+    ImGui::Separator();
+
+    size_t total_values = 0;
+    for (auto& m : vdb_->metas) total_values += m.values.size();
+    VariationDb::Result r = vdb_->candidates("environment", pick_query_);
+    if (r.used_default_map)
+        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1), "Nothing matched map '%s', so the game asks again with map 'default_map'.", pick_query_["map"].c_str());
+    if (r.candidates.empty()) {
+        ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "The database has no environment file for these conditions.");
+    } else {
+        ImGui::Text("%zu candidate(s); the game picks one uniformly at random (%.1f%% each).", r.candidates.size(), 100.0 / double(r.candidates.size()));
+        if (ImGui::BeginTable("cands", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
+            ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Allowed values", ImGuiTableColumnFlags_WidthFixed, 100);
+            ImGui::TableSetupColumn("Pack", ImGuiTableColumnFlags_WidthFixed, 170);
+            ImGui::TableSetupColumn("##open", ImGuiTableColumnFlags_WidthFixed, 50);
+            ImGui::TableHeadersRow();
+            for (size_t i = 0; i < r.candidates.size(); ++i) {
+                const auto& c = r.candidates[i];
+                const std::string path = Vfs::normalize(c.variation->filename);
+                auto owner = vfs_->owner(path);
+                ImGui::PushID(int(i));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(path.c_str());
+                ImGui::TableSetColumnIndex(1);
+                if (c.variation->flags == 0) ImGui::TextUnformatted("any");
+                else ImGui::Text("%d of %zu", c.allowed_values, total_values);
+                ImGui::TableSetColumnIndex(2);
+                if (owner) ImGui::TextUnformatted(vfs_->packs()[*owner].name.c_str());
+                else ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "missing in all packs");
+                ImGui::TableSetColumnIndex(3);
+                if (owner && ImGui::SmallButton("Open")) open_vfs(path);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    // Reverse lookup for the open document.
+    ImGui::Separator();
+    const Document* d = (active_ >= 0 && active_ < int(docs_.size())) ? docs_[active_].get() : nullptr;
+    if (d && !d->vfs_path.empty() && d->vfs_path.find(".environment") != std::string::npos) {
+        ImGui::Text("Open file: %s", d->vfs_path.c_str());
+        const VariationDb::Entry* env = vdb_->entry("environment");
+        int found = 0;
+        if (env)
+            for (auto& v : env->variations) {
+                if (Vfs::normalize(v.filename) != d->vfs_path) continue;
+                ++found;
+                ImGui::BulletText("selected when:");
+                for (auto& [cat, allowed] : vdb_->decode(v.flags)) {
+                    const VariationDb::Meta* m = vdb_->meta(cat);
+                    std::string s;
+                    if (allowed.empty()) s = "(nothing - never matches)";
+                    else if (m && allowed.size() == m->values.size()) s = "any";
+                    else
+                        for (auto& a : allowed) s += (s.empty() ? "" : ", ") + a;
+                    ImGui::Text("    %-22s %s", cat.c_str(), s.c_str());
+                }
+            }
+        if (!found) ImGui::TextColored(kDim, "No variation refers to this file: weather selection never picks it.");
+    } else {
+        ImGui::TextColored(kDim, "Open an .environment file from the pack list to see the conditions under which the game picks it.");
+    }
+    ImGui::End();
 }
 
 void App::draw_browser() {

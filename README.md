@@ -22,11 +22,13 @@ cmake --build build --config Release
 | `AWE_CACHE` | `%LOCALAPPDATA%\awe` (pack indexes, extracted files, settings) |
 
 Command-line options (also used for automated screenshots): `--open <path>` (repeatable), `--cam <yaw> <pitch> <dist> [target_y]`,
-`--view <n>`, `--blend <t>`, `--frames <n>` and `--shot <file.png>` (saves the window at frame n, plus `.txt` diagnostics and,
+`--view <n>`, `--blend <t>`, `--pick <category>=<value>` (repeatable, opens the Weather picker with those conditions), `--picker x` (opens it), `--frames <n>` and `--shot <file.png>` (saves the window at frame n, plus `.txt` diagnostics and,
 when precipitation uses it, `.distortion.png`). `AWE_D3D_DEBUG=1` enables the D3D debug layer messages in the diagnostics.
 
 Precipitation (Precipitation menu) comes from the WEATHER definition_name of the open environment; open `vfx/*.xml` or
 `weather/weather_definitions.xml` documents are used instead of the pack versions, so their edits show immediately.
+
+Selection > Weather picker shows which `.environment` file the game chooses for a set of battle conditions (map, season, precipitation, time of day, climate change index, snow attrition, battle type, climate) and, for the open file, the conditions under which it is chosen; see [docs/re/variation_db.md](docs/re/variation_db.md).
 
 Edited files are saved as loose files under the output folder (Settings menu), keeping their in-pack path. Unchanged bytes stay identical to the source.
 
@@ -41,6 +43,7 @@ Edited files are saved as loose files under the output folder (Settings menu), k
 | `rmv2_check` | Parses building rigid models |
 | `env_vs_dump <env path or --all> <dump_cbs.txt> [gamma brightness]` | Compares the editor's lighting constants with a game memory dump; `--all` finds which weather file the dump used |
 | `vfx_check "<weather definition>" [rows.txt]` | Builds the precipitation emitters of a weather definition and compares their constants with dumped rows |
+| `variation_check [--xml export.xml]` | Gate: parses `warscape_asset_variation_db.bin`, compares it with an XML export, checks every referenced file exists and every variation is found by its own conditions; reports condition combinations without a file and unreferenced `.environment` files |
 | `tools/re/dump_cbs.py <dmp> [regex] [--array=512]` | Live shader constants from a Task Manager full dump of Attila.exe |
 | `tools/re/schema.py <fn_rva>` | Property names, types and defaults of a schema function in empire.retail.dll |
 
