@@ -37,6 +37,10 @@ const char* kTmToneMap = TM "basic_tone_mapper"; // game's live path (dump: cons
 const char* kToScreenPS = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 // Same shader compiled with ENABLE_DISTORTION: uv += (distortion_sampler.xy - 0.498) * 0.02 (heat haze, lens drops).
 const char* kToScreenDistortPS = "dx11_enable_distortion_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+// ENABLE_DEPTH_OF_FIELD variants: 25-tap blur (sample_data_5x5) scaled by 1 - exp(-(z - min(focus, 500))^2 / focal^2),
+// result = lerp(frame, blurred, blur_kernel_scale).
+const char* kToScreenDofPS = "dx11_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+const char* kToScreenDofDistortPS = "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 const char* kFogPS = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 const char* kShadowVS = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
 const char* kSunVS = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
@@ -722,11 +726,45 @@ void Renderer::pass_tonemap(const EnvironmentParams& env, float dt) {
     fullscreen_to(ldr_.t.rtv.Get(), ldr_.w, ldr_.h, *tm);
 }
 
-void Renderer::pass_to_screen() {
+void Renderer::pass_to_screen(const EnvironmentParams& env) {
     ID3D11ShaderResourceView* distortion = particles_ ? particles_->distortion() : nullptr;
-    const GameShader* ps = distortion ? shader(kToScreenDistortPS) : nullptr;
-    if (!ps) ps = shader(kToScreenPS), distortion = nullptr;
+    const bool dof = env.use_dof;
+    const GameShader* ps = nullptr;
+    if (distortion) ps = shader(dof ? kToScreenDofDistortPS : kToScreenDistortPS);
+    if (!ps) ps = shader(dof ? kToScreenDofPS : kToScreenPS), distortion = nullptr;
+    if (!ps) ps = shader(kToScreenPS);
     if (!ps) return;
+    // DOF constants (fn 0x172aae0): with use_DOF, the environment's DOF block: focus_distance = DOF_focus first value,
+    // focal_length = second value, blur_kernel_scale = DOF_blur_size; otherwise the battle camera's (dump: 0, 1000, 1).
+    if (dof) {
+        cbs_.set_f("hdr_to_screen_PS", "focus_distance", {env.dof_focus[0]});
+        cbs_.set_f("hdr_to_screen_PS", "focal_length", {env.dof_focus[1]});
+        cbs_.set_f("hdr_to_screen_PS", "blur_kernel_scale", {env.dof_blur_size});
+    } else {
+        cbs_.set_f("hdr_to_screen_PS", "focus_distance", {0.0f});
+        cbs_.set_f("hdr_to_screen_PS", "focal_length", {1000.0f});
+        cbs_.set_f("hdr_to_screen_PS", "blur_kernel_scale", {1.0f});
+    }
+    // Blur kernels (dump): offsets in texels (x / width, y / height), Gaussian weights with sigma^2 = 4 normalised
+    // over the kernel, w = 1.
+    auto kernel = [&](const char* name, int n) {
+        std::vector<float> d(size_t(n) * n * 4);
+        double sum = 0;
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) sum += std::exp(-((x - n / 2) * (x - n / 2) + (y - n / 2) * (y - n / 2)) / 8.0);
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                float* e = &d[(size_t(y) * n + x) * 4];
+                e[0] = float(x - n / 2) / float(w_);
+                e[1] = float(y - n / 2) / float(h_);
+                e[2] = float(std::exp(-((x - n / 2) * (x - n / 2) + (y - n / 2) * (y - n / 2)) / 8.0) / sum);
+                e[3] = 1;
+            }
+        cbs_.set("hdr_to_screen_PS", name, d.data(), d.size() * 4);
+    };
+    kernel("sample_data_9x9", 9);
+    kernel("sample_data_5x5", 5);
+    kernel("sample_data_3x3", 3);
     float zero2[2] = {0, 0};
     cbs_.set("shared_fog_of_war_PS", "g_fog_of_war_blend", zero2, 8); // battle: no fog of war
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1290,7 +1328,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     float dt = frame_dt_;
     pass_tonemap(env, dt);
     if (view == View::Final) {
-        pass_to_screen();
+        pass_to_screen(env);
         if (lens_flare) pass_lens_flare(env, cam.eye, time_s);
     }
     pass_display(); // Final: copies final_ with alpha = 1 for the viewport

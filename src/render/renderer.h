@@ -85,7 +85,7 @@ private:
     void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display();
     void pass_tonemap(const EnvironmentParams& env, float dt);
-    void pass_to_screen();
+    void pass_to_screen(const EnvironmentParams& env);
     void pass_lens_flare(const EnvironmentParams& env, const float3& eye, float time_s);
     void fullscreen_to(ID3D11RenderTargetView* rtv, int w, int h, const GameShader& ps);
     void fullscreen(const GameShader& ps);

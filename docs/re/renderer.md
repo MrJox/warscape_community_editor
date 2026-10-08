@@ -156,3 +156,14 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
   sun_flare (loader fn 0x118dd040 clamps 0..1), time = battle clock, half_texel_offset = 0.5 / size, vignette_strength 1.
 - sun_occlusion: read from the sun node (vfunc +0x80, not decoded). Editor: visible fraction of the sun disc from two
   occlusion queries (ASSUMPTION; matches 0 with the sun off screen in the dry dump).
+
+## Depth of field (2026-10-08)
+
+- Battles composite DOF inside hdr_to_screen compiled with ENABLE_DEPTH_OF_FIELD (25 taps of sample_data_5x5 scaled by
+  coc = 1 - exp(-(z - min(focus_distance, 500))^2 / focal_length^2); result = lerp(frame, blur, blur_kernel_scale)).
+  The separate DOF_COC / blur shaders (depth_of_field.hlsl) are another path and are not used by the editor.
+- Constants (fn 0x172aae0): use_DOF -> focus_distance = DOF_focus first value, focal_length = second value,
+  blur_kernel_scale = DOF_blur_size (DOF block at scene +0x20a0: +0 use_DOF, +4/+8 DOF_focus, +0x14 DOF_blur_size);
+  otherwise the battle camera's values (dumps: 0, 1000, 1) with the plain hdr_to_screen.
+- sample_data_3x3/5x5/9x9 (dump): offsets x / width, y / height, Gaussian weights exp(-(x^2 + y^2) / 8) normalised per
+  kernel, w = 1. Only use_DOF='true' files: campaign/porthole lightings and weather/charlemagne/day/1.environment.
