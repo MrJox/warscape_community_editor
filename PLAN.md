@@ -11,7 +11,11 @@
 | 4 Editor core and shell | **Done** (commits `9ab9f55`..`96f6db3`). `docs/editor.md`, Phase 4 deviations below. |
 | 5 Weather tool | **Done** (commit `209fbf3`). `tools/weather`, `docs/editor.md` (Weather tool), Phase 5 deviations below. |
 | 6 Tile tool | **Done, waiting for your go.** `tools/tile`, `docs/editor.md` (Tile tool), Phase 6 deviations below. |
+| Performance pass | **Done, waiting for your go** (between 6 and 7, asked for by you). `docs/performance.md`: Osgiliath at 140 to 270 fps (was 1.7), tile open to first image 0.4 s (0.9 s with an empty cache). |
 | 7 - 9 | Not started. |
+
+Performance pass deviations: `RenderScene` gained `structure_revision` / `terrain_revision` / `moved_since` and `reserve`; `Document` gained `outline_cached` / `outline_stamp`; `ModelCache` / `TextureCache` / `Vfs::extract` are thread safe; `XmlDoc` gained in-place structural edits (`splice`, `bake_pending`, `remove_element_inplace`, `duplicate_element_inplace`) next to the functional ones; `read_file` no longer streams bytes through an iterator;
+terrain meshes are chunked with LODs and skirts and the tile tool shows the height map at full resolution; the two tile captures were re-baselined and the legacy window shots now use the capture tolerance (`docs/baseline.md`). New gates `perf_check`, `xml_splice_check`; `--live` for scripts.
 
 Phase 6 deviations: `tile_studio.exe` is still built from `legacy/tile_editor/src/app` (its own renderer, its shot is still a gate) until Phase 8, the new tool has no renderer of its own; the height map placement was wrong in the Studio (it stretched the map over the tile): the map has a one-cell border,
 measured and documented in `docs/formats/tile_ted.md`; building models resolve in `tools/tile` (key -> `rigidmodels/buildings/<key>/` pieces, boxes with a log line for keys without a drawable model) because `libs/assets` has no model resolution yet; every other instance type is a marker (cross or box), not a model; rotate is `Ctrl+R` (`R` is

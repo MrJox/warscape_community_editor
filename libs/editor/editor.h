@@ -14,6 +14,8 @@
 
 #include <d3d11.h>
 
+#include <algorithm>
+#include <chrono>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -23,6 +25,34 @@
 namespace wce {
 
 class Editor;
+
+// Frame times of the last frames (the app loop records them): the menu bar shows the mean, the `perf` command prints mean / p95 / worst.
+class PerfStats {
+public:
+    static constexpr int kKeep = 600;
+    void record(double frame_ms, double cpu_ms) {
+        frame_[n_ % kKeep] = float(frame_ms);
+        cpu_[n_ % kKeep] = float(cpu_ms);
+        ++n_;
+    }
+    void reset() { n_ = 0; }
+    int count() const { return int(n_ < kKeep ? n_ : kKeep); }
+    double mean_frame_ms(int last = kKeep) const { return mean(frame_, last); }
+    double mean_cpu_ms(int last = kKeep) const { return mean(cpu_, last); }
+    double percentile_frame_ms(double p) const;     // p in 0..1
+    double worst_frame_ms() const;
+    std::string report() const;
+
+private:
+    double mean(const float* v, int last) const {
+        const int n = std::min(count(), last);
+        double s = 0;
+        for (int i = 0; i < n; ++i) s += v[(n_ - 1 - i) % kKeep];
+        return n ? s / n : 0.0;
+    }
+    float frame_[kKeep] = {}, cpu_[kKeep] = {};
+    uint64_t n_ = 0;
+};
 
 enum class GizmoMode { Off, Translate, Rotate, Scale };
 
@@ -99,6 +129,9 @@ public:
     uint64_t frame_number() const { return frame_; }
 
     // ---- state
+    PerfStats perf;
+    std::chrono::steady_clock::time_point wait_loaded_start{};
+    bool vsync = true;                // the app loop presents with it (command `vsync`, environment WCE_VSYNC=0)
     ID3D11Device* device() const { return dev_; }
     ID3D11DeviceContext* context() const { return ctx_; }
     Vfs* vfs() { return vfs_.get(); }

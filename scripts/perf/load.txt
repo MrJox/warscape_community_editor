@@ -1,0 +1,10 @@
+# Performance scenario: run with scripts/perf/run.sh <name> [tile folder]  (%TILE% is the tile folder)
+vsync off
+profile reset
+tile "%TILE%"
+frames 1
+perf
+wait_loaded 60
+perf
+profile
+quit

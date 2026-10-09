@@ -125,29 +125,43 @@ bool ImGuiInspector::edit_choice(const std::string& field, const std::string& la
 
 namespace {
 
-void draw_node(Editor& editor, const OutlinerNode& n) {
+// Nodes below the second level start closed and only an open node draws its children; a long list of leaves is clipped to the rows on screen.
+void draw_node(Editor& editor, const OutlinerNode& n, int depth) {
     Selection& sel = editor.selection();
+    ImGui::PushID(int(n.ref.item));
     if (n.children.empty()) {
         const bool selected = n.selectable && sel.contains(n.ref);
-        if (ImGui::Selectable((n.label + "##" + std::to_string(n.ref.doc) + "_" + std::to_string(n.ref.item)).c_str(), selected) && n.selectable) {
+        if (ImGui::Selectable(n.label.c_str(), selected) && n.selectable) {
             if (ImGui::GetIO().KeyCtrl) sel.toggle(n.ref);
             else sel.set(n.ref);
             editor.documents().set_active(n.ref.doc);
         }
+        ImGui::PopID();
         return;
     }
     const bool selected = n.selectable && sel.contains(n.ref);
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (depth < 2) flags |= ImGuiTreeNodeFlags_DefaultOpen;
     if (selected) flags |= ImGuiTreeNodeFlags_Selected;
-    const bool open = ImGui::TreeNodeEx((n.label + "##" + std::to_string(n.ref.doc) + "_" + std::to_string(n.ref.item)).c_str(), flags);
+    const bool open = ImGui::TreeNodeEx(n.label.c_str(), flags);
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen() && n.selectable) {
         sel.set(n.ref);
         editor.documents().set_active(n.ref.doc);
     }
     if (open) {
-        for (const OutlinerNode& c : n.children) draw_node(editor, c);
+        bool leaves = n.children.size() > 40;
+        for (size_t i = 0; leaves && i < n.children.size(); ++i) leaves = n.children[i].children.empty();
+        if (leaves) {
+            ImGuiListClipper clipper;
+            clipper.Begin(int(n.children.size()));
+            while (clipper.Step())
+                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) draw_node(editor, n.children[size_t(i)], depth + 1);
+        } else {
+            for (const OutlinerNode& c : n.children) draw_node(editor, c, depth + 1);
+        }
         ImGui::TreePop();
     }
+    ImGui::PopID();
 }
 
 } // namespace
@@ -168,7 +182,7 @@ void Panels::outliner(Editor& editor) {
         const bool open = ImGui::CollapsingHeader((title + "###doc").c_str(), ImGuiTreeNodeFlags_DefaultOpen);
         if (id == docs.active_id()) ImGui::PopStyleColor();
         if (ImGui::IsItemClicked()) docs.set_active(id);
-        if (open) draw_node(editor, d->outline());
+        if (open) draw_node(editor, d->outline_cached(), 0);
         ImGui::PopID();
     }
     ImGui::End();

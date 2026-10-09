@@ -126,10 +126,16 @@ so a whole drag is one undo entry. Scale is accepted by the gizmo but a document
 - `scripts/tile_check.sh` (render, `tile_tool_check` in `gates.sh`): `scripts/tile_smoke.txt` twice (select / move / rotate / duplicate / delete / polygons / layers / brush, each with undo and redo, then a save; the saved files and the capture must be identical between the runs),
   `tile_mouse.txt` (click select, G grab, brush drag, polygon drawing with Enter, point handle drag, through the scripted mouse), `tile_roundtrip.txt` (every kind of edit, undo all, save: the files equal the originals byte for byte) and `tile_save.txt` (save in place keeps a `.bak`; undo and save
   again restores the bytes); and the saved tile.ted differs from the original in exactly the edited line, the saved height map only inside the brush.
-- `scripts/shots.sh`: the weather shots (legacy app) and the `wce.exe --capture` references, byte for byte.
+- `perf_check` (fast, no window): thread pool, frustum / LOD / size culling of the draw set, the DDS mip stream plan, the tile document's element index against the plain transform walk on three tiles (77 633 instances on the biggest), the pick grid against a brute-force ray test. `xml_splice_check` (fast): the in-place structural edits of `XmlDoc` against the functional ones, undo and redo of their records exact.
+- `scripts/shots.sh`: the weather shots (legacy app) and the `wce.exe --capture` references (identical, or within one level in under 0.05 % of the pixels; `build/gates_base_perf`).
 
 Scripted runs (`--fixed-step` / `--shot` / `--capture` / `--script`) ignore the real mouse and keys never auto-repeat, and an offscreen capture restarts the renderer's temporal state
 (auto exposure, frame counter), so a capture is a function of the scene only.
+
+## Performance
+
+How the editor stays fast on a 100 000 instance tile (instanced draws and culling, LODs, terrain patches, background loading, mip streaming, in-place structural edits), the measurements and the tools
+(`perf`, `profile`, `gfx`, `wce.exe --live --script`, `scripts/perf/run.sh`) are in [performance.md](performance.md).
 
 ## GPU
 

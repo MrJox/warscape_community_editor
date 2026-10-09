@@ -5,6 +5,8 @@
 #include "vfs/vfs.h"
 #include "foundation/log.h"
 #include "foundation/process.h"
+#include "foundation/profile.h"
+#include "foundation/thread_pool.h"
 
 #include <dxgi.h>
 
@@ -137,6 +139,7 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev
         if (SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dxgi))) && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)))
             Log::info("GPU: " + narrow(desc.Description));
     }
+    gpu_timer_ = std::make_unique<GpuTimer>(dev, ctx);
     lib_ = std::make_unique<ShaderLibrary>(dev, vfs, cbs_);
     particles_ = std::make_unique<ParticleSystem>(dev, ctx, vfs, *lib_, cbs_);
     make_states();
@@ -478,6 +481,9 @@ void Renderer::resize(int w, int h) {
 
 void Renderer::set_camera(const float4x4& view_m, const float4x4& proj, const float3& eye, int w, int h, float time_s) {
     float4x4 vp = proj * view_m;
+    cur_vp_ = vp;
+    cur_eye_ = eye;
+    cur_px_ratio_ = 1.0f / (0.5f * float(h) * proj.m[1][1]);
     cbs_.set_f("camera_VS_PS", "camera_position", {eye.x, eye.y, eye.z});
     cbs_.set_m("camera_VS_PS", "view", view_m.data());
     cbs_.set_m("camera_VS_PS", "projection", proj.data());
@@ -641,6 +647,60 @@ void Renderer::apply_engine_ambient(const EnvironmentParams& env) {
     pair("ambient_cube_fb", 4, 5);
 }
 
+const Renderer::PsSlots& Renderer::slots_of(const GameShader& ps) {
+    auto it = ps_slots_.find(&ps);
+    if (it != ps_slots_.end()) return it->second;
+    PsSlots s;
+    for (int i = 0; i < kTexSlots; ++i) {
+        auto t = ps.textures.find(gpu_texture_name(i));
+        s.slot[i] = t == ps.textures.end() ? -1 : int(t->second);
+    }
+    return ps_slots_.emplace(&ps, s).first->second;
+}
+
+void Renderer::upload_instances(DrawSet* const sets[2], DrawSet::Visible* const viss[2], UINT firsts[2]) {
+    WCE_PROF("render.upload_instances");
+    firsts[0] = firsts[1] = 0;
+    const size_t n0 = viss[0]->instances(), n1 = viss[1]->instances(), n = n0 + n1;
+    if (!n) return;
+    if (n > ring_capacity_) {
+        ring_capacity_ = std::max<size_t>(n * 2, size_t(1) << 16);
+        instance_ring_.Reset();
+        D3D11_BUFFER_DESC bd{UINT(ring_capacity_ * sizeof(RigidInstance)), D3D11_USAGE_DYNAMIC, D3D11_BIND_VERTEX_BUFFER, D3D11_CPU_ACCESS_WRITE};
+        if (FAILED(dev_->CreateBuffer(&bd, nullptr, &instance_ring_))) {
+            error("cannot create the instance buffer");
+            ring_capacity_ = 0;
+            return;
+        }
+        ring_cursor_ = 0;
+        ring_fresh_ = true;
+    }
+    bool discard = ring_fresh_;
+    if (ring_cursor_ + n > ring_capacity_) {
+        ring_cursor_ = 0;
+        discard = true;
+    }
+    D3D11_MAPPED_SUBRESOURCE ms;
+    if (FAILED(ctx_->Map(instance_ring_.Get(), 0, discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE, 0, &ms))) return;
+    RigidInstance* dst = static_cast<RigidInstance*>(ms.pData) + ring_cursor_;
+    sets[0]->gather(*viss[0], dst);
+    sets[1]->gather(*viss[1], dst + n0);
+    ctx_->Unmap(instance_ring_.Get(), 0);
+    ring_fresh_ = false;
+    firsts[0] = UINT(ring_cursor_);
+    firsts[1] = UINT(ring_cursor_ + n0);
+    ring_cursor_ += n;
+}
+
+DrawSet::View Renderer::camera_view(float lod_scale_factor) const {
+    DrawSet::View v;
+    v.frustum = Frustum::from_view_projection(cur_vp_);
+    v.eye = cur_eye_;
+    v.min_ratio = min_pixels * cur_px_ratio_;
+    v.lod_scale = lod_scale * lod_scale_factor;
+    return v;
+}
+
 void Renderer::pass_gbuffer() {
     ID3D11RenderTargetView* rtvs[5] = {gb_[0].rtv.Get(), gb_[1].rtv.Get(), gb_[2].rtv.Get(), gb_[3].rtv.Get(), gb_[4].rtv.Get()};
     const float zero[4] = {0, 0, 0, 0};
@@ -649,7 +709,7 @@ void Renderer::pass_gbuffer() {
     ctx_->OMSetRenderTargets(5, rtvs, dsv_.Get());
     ctx_->OMSetDepthStencilState(ds_gbuffer_.Get(), 1);
     ctx_->RSSetState(rs_back_.Get());
-    if (draws_.empty()) return;
+    if (!draws_.items() && !terrain_draws_.items()) return;
 
     const GameShader* vs = shader(kRigidVS);
     const GameShader* ps_opaque = shader(kRigidGbufferPS);
@@ -671,24 +731,59 @@ void Renderer::pass_gbuffer() {
     bind_shader(ctx_, *vs, cbs_);
     for (auto& [name, slot] : vs->textures) ctx_->VSSetShaderResources(slot, 1, instance_ids_srv_.GetAddressOf());
 
-    for (const Draw& o : draws_) {
-        for (auto& m : o.model->meshes) {
-            RigidInstance inst = rigid_instance(o, m);
-            D3D11_MAPPED_SUBRESOURCE ms;
-            if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-            std::memcpy(ms.pData, &inst, sizeof inst);
-            ctx_->Unmap(instance_vb_.Get(), 0);
-            const GameShader* ps = (m.alpha_mode == 1 && ps_alpha) ? ps_alpha : ps_opaque;
-            bind_shader(ctx_, *ps, cbs_);
-            for (auto& [tname, tex] : m.textures) bind_srv(ctx_, *ps, tname, tex ? tex->srv.Get() : nullptr);
-            bind_srv(ctx_, *ps, "s_fire_map", black_srv_.Get());
-            bind_srv(ctx_, *ps, "s_snow_normals", black_srv_.Get());
-            for (auto& [sname, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_wrap_aniso_.GetAddressOf());
-            ID3D11Buffer* vbs[2] = {m.vb.Get(), instance_vb_.Get()};
-            UINT strides[2] = {32, sizeof(RigidInstance)}, offs[2] = {0, 0};
-            ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
-            ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
-            ctx_->DrawIndexedInstanced(m.index_count, 1, 0, 0, 0);
+    DrawSet* sets[2] = {&terrain_draws_, &draws_};   // the ground first, as the entity order had it (equal depths: the first one drawn wins)
+    DrawSet::Visible* viss[2] = {&vis_terrain_, &vis_};
+    UINT firsts[2] = {0, 0};
+    const DrawSet::View vw = camera_view(env_pass_ ? 0.5f : 1.0f);
+    for (int k = 0; k < 2; ++k) sets[k]->cull(vw, *viss[k]);
+    upload_instances(sets, viss, firsts);
+    for (int k = 0; k < 2; ++k) {
+        ++draw_stats_.views;
+        draw_stats_.instances += viss[k]->instances();
+        if (k == 0 && !env_pass_) draw_stats_.terrain_patches = viss[k]->instances();
+    }
+    ID3D11Buffer* ring = instance_ring_.Get();
+    const UINT inst_stride = sizeof(RigidInstance), zero_off = 0;
+    ctx_->IASetVertexBuffers(1, 1, &ring, &inst_stride, &zero_off);
+
+    WCE_PROF("render.gbuffer.draw");
+    for (int pass = 0; pass < 2; ++pass) {   // opaque meshes, then alpha-tested ones
+        const GameShader* ps = pass == 0 ? ps_opaque : ps_alpha;
+        if (!ps) continue;
+        if (!env_pass_) gpu_timer_->mark(pass == 0 ? "gbuffer opaque" : "gbuffer alpha-tested");
+        const PsSlots& slots = slots_of(*ps);
+        bool bound = false;
+        for (int k = 0; k < 2; ++k) {
+            const DrawSet& set = *sets[k];
+            const DrawSet::Visible& vis = *viss[k];
+            for (uint32_t b : vis.active) {
+                const GpuMesh& m = set.batch_mesh(b);
+                if ((m.alpha_mode == 1 && ps_alpha ? 1 : 0) != pass) continue;
+                if (!bound) {
+                    bind_shader(ctx_, *ps, cbs_);
+                    bind_srv(ctx_, *ps, "s_fire_map", black_srv_.Get());
+                    bind_srv(ctx_, *ps, "s_snow_normals", black_srv_.Get());
+                    for (auto& [sname, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_wrap_aniso_.GetAddressOf());
+                    bound = true;
+                }
+                for (int t = 0; t < kTexSlots; ++t) {
+                    if (slots.slot[t] < 0) continue;
+                    ID3D11ShaderResourceView* srv = m.tex[t] ? m.tex[t]->srv.Get() : nullptr;
+                    ctx_->PSSetShaderResources(UINT(slots.slot[t]), 1, &srv);
+                }
+                ID3D11Buffer* vb = m.vb.Get();
+                const UINT stride = 32;
+                ctx_->IASetVertexBuffers(0, 1, &vb, &stride, &zero_off);
+                ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+                ctx_->DrawIndexedInstanced(m.index_count, vis.count[b], 0, 0, firsts[k] + vis.start[b]);
+                ++draw_stats_.draw_calls;
+                const uint64_t tris = uint64_t(m.index_count / 3) * vis.count[b];
+                draw_stats_.triangles += tris;
+                if (!env_pass_) {
+                    draw_stats_.camera_triangles += tris;
+                    draw_stats_.camera_instances += vis.count[b];
+                }
+            }
         }
     }
 }
@@ -1033,6 +1128,7 @@ void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light
     float matrices[4][16];
     float bounds[4][4] = {{0, 0, 0.5f, 0.5f}, {0.5f, 0, 1, 0.5f}, {0, 0.5f, 0.5f, 1}, {0.5f, 0.5f, 1, 1}};
     float4x4 light_vp[4];
+    float texel_c[4];
     for (int c = 0; c < 4; ++c) {
         // Bounding sphere of the frustum slice (stable size while the camera rotates).
         float3 pts[8];
@@ -1049,6 +1145,7 @@ void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light
         // Snap the centre to shadow texels in light space to avoid shimmering.
         float4x4 lview = look_at_lh(centre - light_dir * 2000.0f, centre, up);
         float texel = 2 * radius / (kShadowSize / 2);
+        texel_c[c] = texel;
         float3 lc = lview.transform_point(centre);
         float sx = std::floor(lc.x / texel) * texel - lc.x, sy = std::floor(lc.y / texel) * texel - lc.y;
         float4x4 snap = translation({sx, sy, 0});
@@ -1069,7 +1166,7 @@ void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
     ctx_->ClearRenderTargetView(shadow_atlas_.rtv.Get(), one);
     ctx_->ClearDepthStencilView(shadow_dsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-    if (vs && ps && !draws_.empty() && shadows) {
+    if (vs && ps && (draws_.items() || terrain_draws_.items()) && shadows) {
         std::vector<D3D11_INPUT_ELEMENT_DESC> el = {
             {"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -1086,6 +1183,7 @@ void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light
         ctx_->OMSetDepthStencilState(ds_sky_.Get(), 0);
         ctx_->OMSetDepthStencilState(ds_gbuffer_.Get(), 0);
         ctx_->RSSetState(rs_shadow_.Get());
+        const UINT inst_stride = sizeof(RigidInstance), zero_off = 0;
         for (int c = 0; c < 4; ++c) {
             D3D11_VIEWPORT vp{bounds[c][0] * kShadowSize, bounds[c][1] * kShadowSize, kShadowSize / 2.0f, kShadowSize / 2.0f, 0, 1};
             ctx_->RSSetViewports(1, &vp);
@@ -1094,19 +1192,37 @@ void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light
             bind_shader(ctx_, *vs, cbs_);
             bind_shader(ctx_, *ps, cbs_);
             for (auto& [name, slot] : vs->textures) ctx_->VSSetShaderResources(slot, 1, instance_ids_srv_.GetAddressOf());
-            for (const Draw& o : draws_) {
-                if (!o.casts_shadow) continue; // receiver only
-                for (auto& m : o.model->meshes) {
-                    RigidInstance inst = rigid_instance(o, m);
-                    D3D11_MAPPED_SUBRESOURCE ms;
-                    if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-                    std::memcpy(ms.pData, &inst, sizeof inst);
-                    ctx_->Unmap(instance_vb_.Get(), 0);
-                    ID3D11Buffer* vbs[2] = {m.vb.Get(), instance_vb_.Get()};
-                    UINT strides[2] = {32, sizeof(RigidInstance)}, offs[2] = {0, 0};
-                    ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
+            DrawSet::View vw;
+            vw.frustum = Frustum::from_view_projection(light_vp[c]);
+            vw.eye = cam.eye;
+            vw.shadow = true;
+            vw.coarser = c;                                   // farther cascades need less detail
+            vw.lod_scale = lod_scale;
+            vw.min_radius = texel_c[c] * shadow_min_texels;   // a caster smaller than a couple of shadow texels leaves no shadow
+            DrawSet* sets[2] = {&terrain_draws_, &draws_};   // the ground first, as the entity order had it (equal depths: the first one drawn wins)
+            DrawSet::Visible* viss[2] = {&vis_terrain_, &vis_};
+            UINT firsts[2] = {0, 0};
+            for (int k = 0; k < 2; ++k) sets[k]->cull(vw, *viss[k]);
+            upload_instances(sets, viss, firsts);
+            for (int k = 0; k < 2; ++k) {
+                ++draw_stats_.views;
+                draw_stats_.instances += viss[k]->instances();
+            }
+            ID3D11Buffer* ring = instance_ring_.Get();
+            ctx_->IASetVertexBuffers(1, 1, &ring, &inst_stride, &zero_off);
+            for (int k = 0; k < 2; ++k) {
+                const DrawSet& set = *sets[k];
+                const DrawSet::Visible& vis = *viss[k];
+                for (uint32_t b : vis.active) {
+                    const GpuMesh& m = set.batch_mesh(b);
+                    ID3D11Buffer* vb = m.vb.Get();
+                    const UINT stride = 32;
+                    ctx_->IASetVertexBuffers(0, 1, &vb, &stride, &zero_off);
                     ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
-                    ctx_->DrawIndexedInstanced(m.index_count, 1, 0, 0, 0);
+                    ctx_->DrawIndexedInstanced(m.index_count, vis.count[b], 0, 0, firsts[k] + vis.start[b]);
+                    ++draw_stats_.draw_calls;
+                    draw_stats_.shadow_instances += vis.count[b];
+                    draw_stats_.shadow_triangles += uint64_t(m.index_count / 3) * vis.count[b];
                 }
             }
         }
@@ -1488,59 +1604,110 @@ void Renderer::update_weather(const EnvironmentParams& env, float time_s) {
         cbs_.set_f("wind_PS", "wind_direction_PS", {wind_.direction.x, wind_.direction.y});
 }
 
-RigidInstance Renderer::rigid_instance(const Draw& d, const GpuMesh& m) {
-    RigidInstance inst{};
-    const float4x4 w = m.has_offset ? d.world * translation(m.offset) : d.world;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 4; ++c) inst.world[r][c] = w.m[r][c];
-    std::memcpy(inst.p4, d.p4, sizeof inst.p4);
-    std::memcpy(inst.p5, d.p5, sizeof inst.p5);
-    std::memcpy(inst.p6, d.p6, sizeof inst.p6);
-    std::memcpy(inst.p7, d.p7, sizeof inst.p7);
-    return inst;
-}
-
-// The mesh and terrain entities of visible layers in scene order (the ground first, then the buildings, as the old test map did).
-void Renderer::build_draws(const RenderScene& scene) {
-    if (draws_scene_ == &scene && draws_revision_ == scene.revision()) return;
-    draws_scene_ = &scene;
-    draws_revision_ = scene.revision();
-    draws_.clear();
+// The terrain patches of visible terrain entities (their own draw set: a brush stroke only rebuilds this one).
+void Renderer::build_terrain_draws(const RenderScene& scene) {
+    WCE_PROF("render.build_terrain_draws");
+    draws_terrain_rev_ = scene.terrain_revision();
+    terrain_draws_.clear();
+    terrain_bounds_.clear();
+    terrain_entities_ = terrain_meshes_ = 0;
     models_.prune_terrain(scene);
     for (const Entity& e : scene.entities()) {
-        if (!scene.drawable(e)) continue;
-        Draw d;
-        d.world = e.world;
-        d.entity = e.id;
-        std::memset(d.p4, 0, sizeof d.p4);
-        std::memset(d.p5, 0, sizeof d.p5);
-        std::memset(d.p6, 0, sizeof d.p6);
-        std::memset(d.p7, 0, sizeof d.p7);
-        if (const MeshInstance* mi = e.get<MeshInstance>()) {
-            d.model = models_.model(mi->model);
-            d.casts_shadow = mi->casts_shadow;
-            std::memcpy(d.p4, mi->p4, sizeof d.p4);
-            std::memcpy(d.p5, mi->p5, sizeof d.p5);
-            std::memcpy(d.p6, mi->p6, sizeof d.p6);
-            std::memcpy(d.p7, mi->p7, sizeof d.p7);
-        } else if (const Terrain* t = e.get<Terrain>()) {
-            d.model = models_.terrain(e.id, *t);
-            d.casts_shadow = t->casts_shadow;
-        } else {
-            continue;
+        const Terrain* t = e.get<Terrain>();
+        if (!t || !scene.drawable(e)) continue;
+        const TerrainGpu* tg = models_.terrain(e.id, *t);
+        if (!tg) continue;
+        EntityBounds eb{e.world, {1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
+        for (const GpuModel& p : tg->patches) {
+            if (p.meshes.empty()) continue;
+            terrain_draws_.add(&p, e.world, nullptr, t->casts_shadow, t->lod, e.id);
+            ++terrain_meshes_;
+            eb.bmin = {std::min(eb.bmin.x, p.bmin.x), std::min(eb.bmin.y, p.bmin.y), std::min(eb.bmin.z, p.bmin.z)};
+            eb.bmax = {std::max(eb.bmax.x, p.bmax.x), std::max(eb.bmax.y, p.bmax.y), std::max(eb.bmax.z, p.bmax.z)};
         }
-        if (d.model) draws_.push_back(d);
+        terrain_bounds_[e.id] = eb;
+        ++terrain_entities_;
     }
 }
 
+// The mesh entities of visible layers, as culling items. Models that are still loading (live runs) are requested nearest first and picked up when
+// they finish; fixed-step runs wait for every model so that frame N is the same every run.
+void Renderer::build_draws(const RenderScene& scene, const float3& eye) {
+    const bool same = draws_scene_ == &scene && draws_revision_ == scene.structure_revision();
+    if (same && (draws_waiting_ == 0 || models_.revision() == draws_model_revision_)) {
+        // nothing structural changed: patch the entities that only moved (a dragged building) instead of rebuilding 100 000 items
+        bool rebuild_terrain = draws_terrain_rev_ != scene.terrain_revision();
+        if (scene.moved_since(moved_cursor_, moved_scratch_)) {
+            WCE_PROF("render.patch_moved");
+            for (EntityId id : moved_scratch_) {
+                const Entity* e = scene.find(id);
+                if (!e) continue;
+                if (e->get<Terrain>()) { rebuild_terrain = true; continue; }
+                if (id >= item_of_entity_.size() || item_of_entity_[id] == kNoItem) continue;
+                draws_.set_world(item_of_entity_[id], e->world);
+            }
+        }
+        if (rebuild_terrain) build_terrain_draws(scene);
+        return;
+    }
+    WCE_PROF("render.build_draws");
+    draws_scene_ = &scene;
+    draws_revision_ = scene.structure_revision();
+    draws_model_revision_ = models_.revision();
+    scene.moved_since(moved_cursor_, moved_scratch_);   // everything is rebuilt from the current state: forget what was logged
+    draws_.clear();
+    item_of_entity_.assign(size_t(scene.entities().empty() ? 0 : scene.entities().back().id) + 1, kNoItem);
+    draw_entities_ = draw_meshes_ = draws_waiting_ = 0;
+    build_terrain_draws(scene);
+    if (deterministic) {   // request every model first: the loads run in parallel, then wait once
+        for (const Entity& e : scene.entities())
+            if (const MeshInstance* mi = e.get<MeshInstance>(); mi && scene.drawable(e)) models_.try_get(mi->model, 0.0f);
+        models_.wait_all();
+    }
+    draws_.reserve(scene.entities().size());
+    std::unordered_map<std::string_view, const GpuModel*> resolved;   // one cache lookup (and one lock) per distinct model per build
+    for (const Entity& e : scene.entities()) {
+        const MeshInstance* mi = e.get<MeshInstance>();
+        if (!mi || !scene.drawable(e)) continue;
+        const GpuModel* m;
+        auto it = resolved.find(mi->model);
+        if (it != resolved.end()) {
+            m = it->second;
+        } else {
+            const float3 d{e.world.m[0][3] - eye.x, e.world.m[1][3] - eye.y, e.world.m[2][3] - eye.z};
+            m = models_.try_get(mi->model, length(d));
+            resolved.emplace(std::string_view(mi->model), m);
+        }
+        if (!m) {
+            if (models_.state(mi->model) != ModelCache::State::Failed) ++draws_waiting_;
+            continue;
+        }
+        const uint32_t item = draws_.add(m, e.world, mi->p4, mi->casts_shadow, mi->lod, e.id);
+        if (e.id < item_of_entity_.size()) item_of_entity_[e.id] = item;
+        ++draw_entities_;
+        draw_meshes_ += m->meshes.size();
+    }
+    draw_stats_.items = draws_.items() + terrain_draws_.items();
+    draw_stats_.batches = draws_.batches() + terrain_draws_.batches();
+    draw_stats_.models = draws_.models() + terrain_draws_.models();
+    draw_stats_.waiting_models = draws_waiting_;
+}
+
 void Renderer::render(const RenderScene& scene, const ViewParams& view_params, RenderTarget& target) {
+    WCE_PROF("render.total");
     const Camera& cam = view_params.camera;
     const float time_s = view_params.time_s;
     const int width = target.width(), height = target.height();
     if (width < 8 || height < 8) return;
     const EnvironmentParams env = scene.environment.resolved();
-    build_draws(scene);
+    textures_.set_streaming(!deterministic);   // fixed-step runs load every texture whole: frame N must be the same every run
+    textures_.pump();
+    build_draws(scene, cam.eye);
+    draw_stats_.views = draw_stats_.instances = draw_stats_.draw_calls = draw_stats_.triangles = draw_stats_.camera_instances = draw_stats_.camera_triangles = draw_stats_.shadow_instances = draw_stats_.shadow_triangles = 0;
+    draw_stats_.waiting_models = draws_waiting_;
     resize(width, height);
+    gpu_timer_->begin_frame();
+    gpu_timer_->mark("setup");
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
                           kTmLumaStats, kTmStatsDown, kTmPoints, kTmHighPass, kTmBlurX, kTmBlurY, kTmToneMap, kToScreenPS, kFogPS, kShadowVS, kShadowPS, kSunVS, kSunPS, kCloudVS, kCloudPS, kSsaoPS, kSsaoBlurXPS, kSsaoBlurYPS})
@@ -1552,12 +1719,15 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     cloud_dt_ = frame_dt_;
     update_weather(env, time_s);
 
+    gpu_timer_->mark("sky cube");
     pass_sky_cube(env, time_s);
-    if (frame_ % 4 == 0 || !env_valid_) render_env_cube(env, time_s); // XML ambient while it renders
+    gpu_timer_->mark("env cube");
+    if (frame_ % 4 == 0 || !env_valid_) { WCE_PROF("render.env_cube"); render_env_cube(env, time_s); } // XML ambient while it renders
     apply_engine_ambient(env);
 
     float aspect = float(width) / float(height);
-    pass_shadows(cam, aspect, -env.to_sun(), time_s);
+    gpu_timer_->mark("shadows");
+    { WCE_PROF("render.shadows"); pass_shadows(cam, aspect, -env.to_sun(), time_s); }
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
     set_camera(view_m, proj, cam.eye, width, height, time_s);
@@ -1567,9 +1737,12 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     ctx_->RSSetViewports(1, &vp);
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 
-    pass_gbuffer();
+    gpu_timer_->mark("gbuffer");
+    { WCE_PROF("render.gbuffer"); pass_gbuffer(); }
+    gpu_timer_->mark("depth + ssao");
     analyse_depth(cam);
     pass_ssao(cam);
+    gpu_timer_->mark("sky/clouds/light/fog");
     D3D11_VIEWPORT main_vp{0, 0, float(width), float(height), 0, 1};
     ctx_->RSSetViewports(1, &main_vp);
     const float clear[4] = {0, 0, 0, 0};
@@ -1600,13 +1773,16 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     ID3D11ShaderResourceView* nulls[16] = {};
     ctx_->PSSetShaderResources(0, 16, nulls);
     float dt = frame_dt_;
+    gpu_timer_->mark("tonemap + post");
     pass_tonemap(env, dt);
     if (view == View::Final) {
         pass_to_screen(env);
         if (lens_flare) pass_lens_flare(env, cam.eye, time_s);
     }
+    gpu_timer_->mark("display + overlay");
     pass_display(target); // Final: copies final_ with alpha = 1 for the viewport
-    if (this->view == View::Final) pass_overlay(scene, target);
+    if (this->view == View::Final) { WCE_PROF("render.overlay"); pass_overlay(scene, target); }
+    gpu_timer_->end_frame();
     ctx_->PSSetShaderResources(0, 16, nulls);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
 }

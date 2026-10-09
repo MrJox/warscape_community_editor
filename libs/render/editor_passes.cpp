@@ -1,5 +1,6 @@
 // Editor-side passes of the renderer: the overlay pass (scene overlays, grid, selection outlines) and entity picking. These are not game
 // shaders: a minimal vertex-colour shader and an id shader, compiled from the strings below.
+#include "foundation/profile.h"
 #include "render/renderer.h"
 
 #include <d3dcompiler.h>
@@ -24,12 +25,16 @@ OvlOut ovl_vs(OvlIn i) { OvlOut o; o.pos = mul(vp, float4(i.pos, 1)); o.col = i.
 float4 ovl_ps(OvlOut i) : SV_Target { return i.col; }
 
 // Same vertex and instance layout as the game's rigid shaders: half4 position, rows of the 3x4 world matrix in POSITION1..3.
-struct PickIn { float4 pos : POSITION0; float4 w0 : POSITION1; float4 w1 : POSITION2; float4 w2 : POSITION3; };
-float4 pick_vs(PickIn i) : SV_Position {
+struct PickIn { float4 pos : POSITION0; float4 w0 : POSITION1; float4 w1 : POSITION2; float4 w2 : POSITION3; uint id : TEXCOORD0; };
+struct PickOut { float4 pos : SV_Position; nointerpolation uint id : TEXCOORD0; };
+PickOut pick_vs(PickIn i) {
     float4 p = float4(i.pos.xyz, 1);
-    return mul(vp, float4(dot(i.w0, p), dot(i.w1, p), dot(i.w2, p), 1));
+    PickOut o;
+    o.pos = mul(vp, float4(dot(i.w0, p), dot(i.w1, p), dot(i.w2, p), 1));
+    o.id = i.id;
+    return o;
 }
-uint pick_ps(float4 p : SV_Position) : SV_Target { return id; }
+uint pick_ps(PickOut i) : SV_Target { return i.id; }
 )";
 
 ComPtr<ID3DBlob> compile_editor(const char* entry, const char* target) {
@@ -66,6 +71,7 @@ void Renderer::create_editor_resources() {
     dev_->CreateVertexShader(pvs->GetBufferPointer(), pvs->GetBufferSize(), nullptr, &pick_vs_);
     std::vector<D3D11_INPUT_ELEMENT_DESC> pel = {{"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0}};
     for (UINT i = 1; i <= 3; ++i) pel.push_back({"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, D3D11_INPUT_PER_INSTANCE_DATA, 1});
+    pel.push_back({"TEXCOORD", 0, DXGI_FORMAT_R32_UINT, 2, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1});   // the entity id of every instance
     HRESULT hr_pil = dev_->CreateInputLayout(pel.data(), UINT(pel.size()), pvs->GetBufferPointer(), pvs->GetBufferSize(), &pick_il_);
     if (FAILED(hr_pil)) errors_.push_back("pick input layout failed");
     auto pps = compile_editor("pick_ps", "ps_5_0");
@@ -122,16 +128,28 @@ bool Renderer::project(const Camera& cam, int w, int h, const float3& p, float& 
 
 void Renderer::pass_overlay(const RenderScene& scene, RenderTarget& target) {
     create_editor_resources();
-    // Four batches: lines / triangles, with and without the depth test.
-    std::vector<OverlayVertex> lines_d, lines_n, tris_d, tris_n;
-    for (const Entity& e : scene.entities()) {
-        const Overlay* o = e.get<Overlay>();
-        if (!o || !scene.drawable(e)) continue;
-        auto& lines = o->depth_test ? lines_d : lines_n;
-        auto& tris = o->depth_test ? tris_d : tris_n;
-        for (const OverlayVertex& v : o->lines) lines.push_back({e.world.transform_point(v.p), v.rgba});
-        for (const OverlayVertex& v : o->triangles) tris.push_back({e.world.transform_point(v.p), v.rgba});
+    // Four batches: lines / triangles, with and without the depth test. The scene's overlays are cached between frames; the grid and the selection outline are added per frame.
+    if (ovl_cache_scene_ != &scene || ovl_cache_rev_ != scene.revision()) {
+        WCE_PROF("render.overlay_rebuild");
+        ovl_cache_scene_ = &scene;
+        ovl_cache_rev_ = scene.revision();
+        for (auto& v : ovl_cache_) v.clear();
+        std::vector<OverlayVertex>& cl_d = ovl_cache_[1];
+        std::vector<OverlayVertex>& cl_n = ovl_cache_[3];
+        std::vector<OverlayVertex>& ct_d = ovl_cache_[0];
+        std::vector<OverlayVertex>& ct_n = ovl_cache_[2];
+        for (const Entity& e : scene.entities()) {
+            const Overlay* o = e.get<Overlay>();
+            if (!o || !scene.drawable(e)) continue;
+            auto& lines = o->depth_test ? cl_d : cl_n;
+            auto& tris = o->depth_test ? ct_d : ct_n;
+            lines.reserve(lines.size() + o->lines.size());
+            tris.reserve(tris.size() + o->triangles.size());
+            for (const OverlayVertex& v : o->lines) lines.push_back({e.world.transform_point(v.p), v.rgba});
+            for (const OverlayVertex& v : o->triangles) tris.push_back({e.world.transform_point(v.p), v.rgba});
+        }
     }
+    std::vector<OverlayVertex> lines_d, lines_n, tris_d, tris_n;   // this frame's extras
     if (show_grid) {
         const int n = int(grid_half_extent / grid_step);
         for (int i = -n; i <= n; ++i) {
@@ -151,8 +169,13 @@ void Renderer::pass_overlay(const RenderScene& scene, RenderTarget& target) {
             const Entity* e = scene.find(id);
             if (!e || !scene.drawable(*e)) continue;
             if (e->get<MeshInstance>() || e->get<Terrain>()) {
-                for (const Draw& d : draws_)
-                    if (d.entity == id) sel.box_wire(d.world, d.model->bmin, d.model->bmax, yellow);
+                if (e->get<Terrain>()) {
+                    if (auto b = terrain_bounds_.find(id); b != terrain_bounds_.end()) sel.box_wire(b->second.world, b->second.bmin, b->second.bmax, yellow);
+                } else if (id < item_of_entity_.size() && item_of_entity_[id] != kNoItem) {
+                    float4x4 w;
+                    float3 lo, hi;
+                    if (draws_.item_box(item_of_entity_[id], w, lo, hi)) sel.box_wire(w, lo, hi, yellow);
+                }
             } else if (const Overlay* o = e->get<Overlay>()) {
                 float3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
                 for (const auto* vs : {&o->lines, &o->triangles})
@@ -165,7 +188,9 @@ void Renderer::pass_overlay(const RenderScene& scene, RenderTarget& target) {
         }
         lines_n.insert(lines_n.end(), sel.lines.begin(), sel.lines.end());
     }
-    const size_t total = lines_d.size() + lines_n.size() + tris_d.size() + tris_n.size();
+    const std::vector<OverlayVertex>* extra[4] = {&tris_d, &lines_d, &tris_n, &lines_n};
+    size_t total = 0;
+    for (int b = 0; b < 4; ++b) total += ovl_cache_[b].size() + extra[b]->size();
     if (!total) return;
 
     if (ovl_vb_capacity_ < total) {
@@ -177,13 +202,15 @@ void Renderer::pass_overlay(const RenderScene& scene, RenderTarget& target) {
     D3D11_MAPPED_SUBRESOURCE ms;
     if (FAILED(ctx_->Map(ovl_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) return;
     OverlayVertex* dst = static_cast<OverlayVertex*>(ms.pData);
-    UINT first[4];
-    const std::vector<OverlayVertex>* batches[4] = {&tris_d, &lines_d, &tris_n, &lines_n};
+    UINT first[4], count[4];
     UINT at = 0;
     for (int b = 0; b < 4; ++b) {
         first[b] = at;
-        if (!batches[b]->empty()) std::memcpy(dst + at, batches[b]->data(), batches[b]->size() * sizeof(OverlayVertex));
-        at += UINT(batches[b]->size());
+        if (!ovl_cache_[b].empty()) std::memcpy(dst + at, ovl_cache_[b].data(), ovl_cache_[b].size() * sizeof(OverlayVertex));
+        at += UINT(ovl_cache_[b].size());
+        if (!extra[b]->empty()) std::memcpy(dst + at, extra[b]->data(), extra[b]->size() * sizeof(OverlayVertex));
+        at += UINT(extra[b]->size());
+        count[b] = at - first[b];
     }
     ctx_->Unmap(ovl_vb_.Get(), 0);
 
@@ -208,10 +235,10 @@ void Renderer::pass_overlay(const RenderScene& scene, RenderTarget& target) {
     const D3D11_PRIMITIVE_TOPOLOGY topo[4] = {D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
                                               D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST};
     for (int b = 0; b < 4; ++b) {
-        if (batches[b]->empty()) continue;
+        if (!count[b]) continue;
         ctx_->OMSetDepthStencilState(b < 2 ? ovl_ds_test_.Get() : ovl_ds_off_.Get(), 0);
         ctx_->IASetPrimitiveTopology(topo[b]);
-        ctx_->Draw(UINT(batches[b]->size()), first[b]);
+        ctx_->Draw(count[b], first[b]);
     }
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
@@ -221,7 +248,7 @@ EntityId Renderer::pick(const RenderScene& scene, const ViewParams& params, cons
     const int w = target.width(), h = target.height();
     if (x < 0 || y < 0 || x >= w || y >= h) return 0;
     create_editor_resources();
-    build_draws(scene);
+    build_draws(scene, params.camera.eye);
     const float4x4 vp_m = view_projection(params.camera, w, h);
 
     // 1. Overlay entities in screen space: the nearest line within 6 px, or a triangle that contains the pixel.
@@ -285,27 +312,58 @@ EntityId Renderer::pick(const RenderScene& scene, const ViewParams& params, cons
     ctx_->VSSetConstantBuffers(0, 1, pick_cb_.GetAddressOf());
     ctx_->PSSetConstantBuffers(0, 1, pick_cb_.GetAddressOf());   // the pixel shader writes `id`
     ctx_->PSSetShader(pick_ps_.Get(), nullptr, 0);
-    for (const Draw& d : draws_) {
-        const Entity* e = scene.find(d.entity);
-        if (!e || !scene.pickable(*e)) continue;
-        D3D11_MAPPED_SUBRESOURCE ms;
-        if (SUCCEEDED(ctx_->Map(pick_cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
-            FrameCb cb{};
-            std::memcpy(cb.vp, vp_m.data(), sizeof cb.vp);
-            cb.id = d.entity;
-            std::memcpy(ms.pData, &cb, sizeof cb);
-            ctx_->Unmap(pick_cb_.Get(), 0);
-        }
-        for (const GpuMesh& m : d.model->meshes) {
-            RigidInstance inst = rigid_instance(d, m);
-            if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-            std::memcpy(ms.pData, &inst, sizeof inst);
-            ctx_->Unmap(instance_vb_.Get(), 0);
-            ID3D11Buffer* vbs[2] = {m.vb.Get(), instance_vb_.Get()};
-            UINT strides[2] = {32, sizeof(RigidInstance)}, offs[2] = {0, 0};
-            ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
-            ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
-            ctx_->DrawIndexedInstanced(m.index_count, 1, 0, 0, 0);
+    {
+        DrawSet::View vw;
+        vw.frustum = Frustum::from_view_projection(vp_m);
+        vw.eye = params.camera.eye;
+        vw.lod_scale = lod_scale;
+        vw.min_ratio = min_pixels * 2.0f * std::tan(params.camera.fov_y * 0.5f) / float(h);
+        for (int k = 0; k < 2; ++k) {
+            DrawSet& set = k == 0 ? draws_ : terrain_draws_;
+            DrawSet::Visible& vis = k == 0 ? vis_ : vis_terrain_;
+            set.cull(vw, vis);
+            set.retain(vis, [&](EntityId id) {   // locked layers cannot be picked (the flag can change without the scene's revision moving)
+                const Entity* e = scene.find(id);
+                return e && scene.pickable(*e);
+            });
+            const size_t n = vis.instances();
+            D3D11_MAPPED_SUBRESOURCE ms;
+            if (n) {
+                if (pick_inst_capacity_ < n) {
+                    pick_inst_capacity_ = std::max<size_t>(n * 2, 4096);
+                    pick_inst_vb_.Reset();
+                    pick_id_vb_.Reset();
+                    D3D11_BUFFER_DESC ib{UINT(pick_inst_capacity_ * sizeof(RigidInstance)), D3D11_USAGE_DYNAMIC, D3D11_BIND_VERTEX_BUFFER, D3D11_CPU_ACCESS_WRITE};
+                    dev_->CreateBuffer(&ib, nullptr, &pick_inst_vb_);
+                    D3D11_BUFFER_DESC db{UINT(pick_inst_capacity_ * 4), D3D11_USAGE_DYNAMIC, D3D11_BIND_VERTEX_BUFFER, D3D11_CPU_ACCESS_WRITE};
+                    dev_->CreateBuffer(&db, nullptr, &pick_id_vb_);
+                }
+                if (pick_inst_vb_ && pick_id_vb_ && SUCCEEDED(ctx_->Map(pick_inst_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                    set.gather(vis, static_cast<RigidInstance*>(ms.pData));
+                    ctx_->Unmap(pick_inst_vb_.Get(), 0);
+                    if (SUCCEEDED(ctx_->Map(pick_id_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                        set.gather_ids(vis, static_cast<uint32_t*>(ms.pData));
+                        ctx_->Unmap(pick_id_vb_.Get(), 0);
+                        if (SUCCEEDED(ctx_->Map(pick_cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                            FrameCb cb{};
+                            std::memcpy(cb.vp, vp_m.data(), sizeof cb.vp);
+                            std::memcpy(ms.pData, &cb, sizeof cb);
+                            ctx_->Unmap(pick_cb_.Get(), 0);
+                        }
+                        ID3D11Buffer* inst[2] = {pick_inst_vb_.Get(), pick_id_vb_.Get()};
+                        const UINT strides[2] = {sizeof(RigidInstance), 4}, offs[2] = {0, 0};
+                        ctx_->IASetVertexBuffers(1, 2, inst, strides, offs);
+                        for (uint32_t b : vis.active) {
+                            const GpuMesh& m = set.batch_mesh(b);
+                            ID3D11Buffer* vb = m.vb.Get();
+                            const UINT stride = 32, zero = 0;
+                            ctx_->IASetVertexBuffers(0, 1, &vb, &stride, &zero);
+                            ctx_->IASetIndexBuffer(m.ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+                            ctx_->DrawIndexedInstanced(m.index_count, vis.count[b], 0, 0, vis.start[b]);
+                        }
+                    }
+                }
+            }
         }
     }
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);

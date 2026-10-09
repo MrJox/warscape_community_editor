@@ -1,0 +1,414 @@
+# Performance scenario: run with scripts/perf/run.sh <name> [tile folder]  (%TILE% is the tile folder)
+vsync off
+tile "%TILE%"
+wait_loaded
+frames 30
+cam 0.8 0.6 150 20
+frames 20
+tile_select BUILDING_INSTANCE
+frames 5
+perf reset
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+tile_move 0.3 0.1
+frames 1
+perf
+perf reset
+profile reset
+brush 15 6 0.7
+paint raise 400.0 500.0 1
+frames 1
+paint raise 400.5 500.0 1
+frames 1
+paint raise 401.0 500.0 1
+frames 1
+paint raise 401.5 500.0 1
+frames 1
+paint raise 402.0 500.0 1
+frames 1
+paint raise 402.5 500.0 1
+frames 1
+paint raise 403.0 500.0 1
+frames 1
+paint raise 403.5 500.0 1
+frames 1
+paint raise 404.0 500.0 1
+frames 1
+paint raise 404.5 500.0 1
+frames 1
+paint raise 405.0 500.0 1
+frames 1
+paint raise 405.5 500.0 1
+frames 1
+paint raise 406.0 500.0 1
+frames 1
+paint raise 406.5 500.0 1
+frames 1
+paint raise 407.0 500.0 1
+frames 1
+paint raise 407.5 500.0 1
+frames 1
+paint raise 408.0 500.0 1
+frames 1
+paint raise 408.5 500.0 1
+frames 1
+paint raise 409.0 500.0 1
+frames 1
+paint raise 409.5 500.0 1
+frames 1
+paint raise 410.0 500.0 1
+frames 1
+paint raise 410.5 500.0 1
+frames 1
+paint raise 411.0 500.0 1
+frames 1
+paint raise 411.5 500.0 1
+frames 1
+paint raise 412.0 500.0 1
+frames 1
+paint raise 412.5 500.0 1
+frames 1
+paint raise 413.0 500.0 1
+frames 1
+paint raise 413.5 500.0 1
+frames 1
+paint raise 414.0 500.0 1
+frames 1
+paint raise 414.5 500.0 1
+frames 1
+paint raise 415.0 500.0 1
+frames 1
+paint raise 415.5 500.0 1
+frames 1
+paint raise 416.0 500.0 1
+frames 1
+paint raise 416.5 500.0 1
+frames 1
+paint raise 417.0 500.0 1
+frames 1
+paint raise 417.5 500.0 1
+frames 1
+paint raise 418.0 500.0 1
+frames 1
+paint raise 418.5 500.0 1
+frames 1
+paint raise 419.0 500.0 1
+frames 1
+paint raise 419.5 500.0 1
+frames 1
+paint raise 420.0 500.0 1
+frames 1
+paint raise 420.5 500.0 1
+frames 1
+paint raise 421.0 500.0 1
+frames 1
+paint raise 421.5 500.0 1
+frames 1
+paint raise 422.0 500.0 1
+frames 1
+paint raise 422.5 500.0 1
+frames 1
+paint raise 423.0 500.0 1
+frames 1
+paint raise 423.5 500.0 1
+frames 1
+paint raise 424.0 500.0 1
+frames 1
+paint raise 424.5 500.0 1
+frames 1
+paint raise 425.0 500.0 1
+frames 1
+paint raise 425.5 500.0 1
+frames 1
+paint raise 426.0 500.0 1
+frames 1
+paint raise 426.5 500.0 1
+frames 1
+paint raise 427.0 500.0 1
+frames 1
+paint raise 427.5 500.0 1
+frames 1
+paint raise 428.0 500.0 1
+frames 1
+paint raise 428.5 500.0 1
+frames 1
+paint raise 429.0 500.0 1
+frames 1
+paint raise 429.5 500.0 1
+frames 1
+perf
+profile
+profile reset
+tile_select BUILDING_INSTANCE
+frames 2
+duplicate
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+duplicate
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+duplicate
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+duplicate
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+delete_item
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+delete_item
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+delete_item
+frames 4
+tile_select BUILDING_INSTANCE
+frames 2
+delete_item
+frames 4
+undo 8
+frames 4
+perf
+profile
+quit

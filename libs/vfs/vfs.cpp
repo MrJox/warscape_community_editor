@@ -1,3 +1,4 @@
+#include "foundation/profile.h"
 #include "vfs/vfs.h"
 
 #include "foundation/process.h"
@@ -5,7 +6,9 @@
 #include "foundation/text_encoding.h"
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstdlib>
+#include <mutex>
 #include <fstream>
 #include <set>
 #include <stdexcept>
@@ -48,8 +51,17 @@ Vfs::Config Vfs::default_config() {
     return c;
 }
 
-Vfs::Vfs(Config cfg) : cfg_(std::move(cfg)) {}
-Vfs::Vfs(Config cfg, std::unique_ptr<PackBackend> backend) : cfg_(std::move(cfg)), backend_(std::move(backend)) {}
+struct Vfs::ExtractQueue {
+    std::mutex m;
+    std::condition_variable cv;
+    std::map<int, std::set<std::string>> wanted;   // pack -> in-pack paths nobody has fetched yet
+    bool busy = false;
+    uint64_t seq = 0, done = 0;
+};
+
+Vfs::Vfs(Config cfg) : queue_(std::make_unique<ExtractQueue>()), cfg_(std::move(cfg)) {}
+Vfs::Vfs(Config cfg, std::unique_ptr<PackBackend> backend) : queue_(std::make_unique<ExtractQueue>()), cfg_(std::move(cfg)), backend_(std::move(backend)) {}
+Vfs::~Vfs() = default;
 
 std::string IVfs::normalize(std::string p) {
     for (char& c : p) {
@@ -82,6 +94,7 @@ PackBackend& Vfs::backend() {
 }
 
 void Vfs::mount() {
+    WCE_PROF("vfs.mount");
     packs_.clear();
     missing_mods_.clear();
     files_.clear();
@@ -134,6 +147,7 @@ std::vector<std::string> Vfs::index_folder(const Pack& p) const {
 }
 
 std::vector<std::string> Vfs::index_pack(const Pack& p) {
+    WCE_PROF("vfs.index_pack");
     fs::path dir = cfg_.cache_dir / "index";
     fs::create_directories(dir);
     fs::path idx = dir / widen(p.name + "." + std::to_string(p.size) + "." + std::to_string(p.mtime) + ".txt");
@@ -182,16 +196,46 @@ fs::path Vfs::extract_root(int pack) const {
 }
 
 void Vfs::extract(int pack, const std::vector<std::string>& paths) {
-    fs::path root = extract_root(pack);
-    fs::create_directories(root);
-    std::vector<std::string> in_pack;
-    in_pack.reserve(paths.size());
+    ExtractQueue& q = *queue_;
+    std::unique_lock<std::mutex> lock(q.m);
     for (auto& p : paths) {
         const std::string n = normalize(p);
-        auto oc = pack_case_[pack].find(n);
-        in_pack.push_back(oc != pack_case_[pack].end() ? oc->second : n);   // the pack stores the path in this case
+        auto oc = pack_case_[size_t(pack)].find(n);
+        q.wanted[pack].insert(oc != pack_case_[size_t(pack)].end() ? oc->second : n);   // the pack stores the path in this case
     }
-    backend().extract(packs_[pack].path, in_pack, root);
+    const uint64_t ticket = ++q.seq;
+    std::exception_ptr failure;
+    while (q.done < ticket) {
+        if (q.busy) {
+            q.cv.wait(lock);
+            continue;
+        }
+        // this thread does the call for everything requested so far
+        q.busy = true;
+        const uint64_t upto = q.seq;
+        std::map<int, std::set<std::string>> batch = std::move(q.wanted);
+        q.wanted.clear();
+        lock.unlock();
+        try {
+            WCE_PROF("vfs.extract (rpfm)");
+            for (auto& [pk, set] : batch) {
+                fs::path root = extract_root(pk);
+                fs::create_directories(root);
+                // what an earlier call (or another process) already left on disk is not asked for again
+                std::vector<std::string> in_pack;
+                for (const std::string& n : set)
+                    if (!fs::exists(root / widen(normalize(n)))) in_pack.push_back(n);
+                if (!in_pack.empty()) backend().extract(packs_[size_t(pk)].path, in_pack, root);
+            }
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        lock.lock();
+        q.busy = false;
+        q.done = upto;
+        q.cv.notify_all();
+    }
+    if (failure) std::rethrow_exception(failure);
 }
 
 std::optional<fs::path> Vfs::fetch_from(int pack, const std::string& path) {
@@ -233,6 +277,7 @@ size_t Vfs::prefetch(const std::vector<std::string>& paths) {
 }
 
 std::vector<uint8_t> Vfs::read(const std::string& path) {
+    WCE_PROF("vfs.read");
     auto disk = fetch(path);
     if (!disk) throw std::runtime_error("not found in any pack: " + path);
     return read_file(disk->string());

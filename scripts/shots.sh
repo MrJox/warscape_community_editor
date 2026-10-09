@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Quick render regression: the three reference weather shots (legacy window), four offscreen captures of wce.exe (weather) and two of tiles, compared byte for byte with the baseline (docs/baseline.md).
-#   scripts/shots.sh [out dir] [reference dir]     (defaults build/shots, build/gates_base_p6)
+# Quick render regression: the three reference weather shots (legacy window), four offscreen captures of wce.exe (weather) and two of tiles, compared with the baseline (docs/baseline.md):
+# identical, or within one level in under 0.05 % of the pixels (GPU float noise, and draw order: instancing draws a mesh's instances together, so surfaces at exactly the same
+# depth can resolve the other way in a few pixels).
+#   scripts/shots.sh [out dir] [reference dir]     (defaults build/shots, build/gates_base_perf)
 # Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; WCE_CONFIG defaults to RelWithDebInfo).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/shots}"
-REF="${2:-$ROOT/build/gates_base_p6}"
+REF="${2:-$ROOT/build/gates_base_perf}"
 BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 mkdir -p "$OUT"
@@ -32,9 +34,7 @@ PY
 for env in dry rain snow; do
     "$BIN/weather_editor.exe" --open "weather/charlemagne/med_sp_land_day_$env.environment" --cam 0.6 0.35 120 --frames 20 \
         --shot "$(cygpath -w "$OUT/shot_weather_$env.png")" || bad=1
-    for f in "shot_weather_$env.png"; do
-        if cmp -s "$OUT/$f" "$REF/$f"; then echo "$f identical"; else echo "$f DIFFERS"; bad=1; fi
-    done
+    same_capture "shot_weather_$env.png" || bad=1
 done
 # offscreen captures through wce.exe (no window shows them): each environment opened in the weather tool, same camera and clock
 for env in dry rain snow; do

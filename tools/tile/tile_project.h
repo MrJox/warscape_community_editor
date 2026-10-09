@@ -29,7 +29,6 @@ public:
     std::filesystem::path dir;
     TileInfo info;
     TedScene scene;
-    std::vector<uint8_t> ted_original;
     bool has_height = false;
     PngFile height_png;
     std::unique_ptr<HeightField> height;

@@ -36,8 +36,13 @@ struct Rmv2Mesh {
     std::vector<std::pair<int32_t, float>> float_params;
     std::vector<std::pair<int32_t, std::array<float, 4>>> vec4_params;
     uint32_t vertex_count = 0, vertex_stride = 0, index_count = 0;
-    std::vector<uint8_t> vertices; // raw, vertex_stride bytes each
+    std::vector<uint8_t> vertices; // raw, vertex_stride bytes each (empty when parsed without copying)
     std::vector<uint16_t> indices;
+    // The geometry inside the parsed buffer (set whenever vertex_stride != 0; valid while that buffer lives). Parsing without copying
+    // leaves `vertices` / `indices` empty and fills only these.
+    const uint8_t* vertex_data = nullptr;
+    const uint8_t* index_data = nullptr;   // index_count 16-bit indices, not necessarily aligned
+    bool has_geometry() const { return vertex_stride != 0 && vertex_data && index_data && vertex_count && index_count; }
 
     const std::string* texture(int32_t param) const;
     int alpha_mode() const;
@@ -55,7 +60,7 @@ struct Rmv2Model {
 
 // Reads the header and all meshes of the requested LODs (-1 = all). Meshes whose material
 // block cannot be parsed keep shader/counts but no geometry (vertex_stride == 0).
-Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod = -1); // throws std::runtime_error
+Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod = -1, bool copy_geometry = true); // throws std::runtime_error
 
 uint32_t rmv2_vertex_stride(uint16_t vertex_format); // 0 if unknown
 

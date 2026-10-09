@@ -1,6 +1,6 @@
 # Dependency direction: foundation <- game <- vfs <- formats <- assets <- render <- scene <- editor <- tools/* <- app.
 # formats and everything below it never include D3D or ImGui.
-add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp foundation/log.cpp)
+add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp foundation/log.cpp foundation/profile.cpp foundation/thread_pool.cpp)
 target_include_directories(wce_foundation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(wce_game STATIC game/game_profile.cpp)
@@ -26,7 +26,7 @@ target_link_libraries(wce_scene PUBLIC wce_formats)
 # D3D11 renderer on the game's own shaders.
 add_library(wce_render STATIC
     render/image_io.cpp render/render_target.cpp render/shader_lib.cpp render/texture.cpp render/wind.cpp render/model_cache.cpp render/particles.cpp render/editor_passes.cpp
-    render/environment_apply.cpp render/renderer.cpp render/gpu_adapter.cpp)
+    render/environment_apply.cpp render/renderer.cpp render/gpu_adapter.cpp render/gpu_timer.cpp render/draw_set.cpp)
 target_link_libraries(wce_render PUBLIC wce_scene wce_assets wce_vfs wce_formats d3d11 dxgi d3dcompiler dxguid)
 
 # The editor shell. editor_core has no ImGui or GPU code (commands, documents, selection, command registry, camera controllers) and is what

@@ -1,3 +1,7 @@
+#include "foundation/thread_pool.h"
+#include "foundation/process.h"
+#include "foundation/text_encoding.h"
+#include "foundation/profile.h"
 #include "tile/tile_project.h"
 
 #include <algorithm>
@@ -10,11 +14,7 @@ namespace fs = std::filesystem;
 
 namespace wce {
 
-static std::vector<uint8_t> slurp(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) throw std::runtime_error("cannot read " + p.string());
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {});
-}
+static std::vector<uint8_t> slurp(const fs::path& p) { return read_file(narrow(p.wstring())); }
 
 static bool spit(const fs::path& p, const std::vector<uint8_t>& b) {
     std::ofstream f(p, std::ios::binary);
@@ -65,19 +65,37 @@ TileInfo find_tile_info(const fs::path& tile_dir) {
 }
 
 std::unique_ptr<TileProject> TileProject::open(const fs::path& tile_dir) {
+    WCE_PROF("tile.open");
     auto p = std::make_unique<TileProject>();
     p->dir = tile_dir;
-    p->info = find_tile_info(tile_dir);
     fs::path ted = tile_dir / "tile.ted";
     if (!fs::exists(ted)) throw std::runtime_error("no tile.ted in " + tile_dir.string());
-    p->ted_original = slurp(ted);
-    p->scene = TedScene::parse(p->ted_original);
-    fs::path hm = tile_dir / "height_map_0.png";
-    if (fs::exists(hm)) {
-        p->height_png = PngFile::parse(slurp(hm));
-        p->height = std::make_unique<HeightField>(HeightField::from_png(p->height_png, p->info.min_height, p->info.scale));
-        p->has_height = true;
-    }
+    // the scene (the long one) and the tile database + height map are independent: read them side by side
+    std::exception_ptr failure[2];
+    compute_pool().parallel_for(2, 1, [&](size_t b, size_t e, int) {
+        for (size_t task = b; task < e; ++task) {
+            try {
+                if (task == 0) {
+                    std::vector<uint8_t> ted_bytes;
+                    { WCE_PROF("tile.open.slurp_ted"); ted_bytes = slurp(ted); }
+                    { WCE_PROF("tile.open.parse_ted"); p->scene = TedScene::parse(std::move(ted_bytes)); }
+                } else {
+                    { WCE_PROF("tile.open.tile_info"); p->info = find_tile_info(tile_dir); }
+                    fs::path hm = tile_dir / "height_map_0.png";
+                    if (fs::exists(hm)) {
+                        WCE_PROF("tile.open.height");
+                        p->height_png = PngFile::parse(slurp(hm));
+                        p->height = std::make_unique<HeightField>(HeightField::from_png(p->height_png, p->info.min_height, p->info.scale));
+                        p->has_height = true;
+                    }
+                }
+            } catch (...) {
+                failure[task] = std::current_exception();
+            }
+        }
+    });
+    for (auto& f : failure)
+        if (f) std::rethrow_exception(f);
     return p;
 }
 

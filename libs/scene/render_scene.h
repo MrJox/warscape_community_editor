@@ -40,6 +40,7 @@ enum class Kind {
 struct MeshInstance {
     std::string model;               // VFS path of the .rigid_model_v2
     bool casts_shadow = true;
+    bool lod = false;                // use the file's LODs by camera distance and skip it when it is too small to see (the sample map keeps LOD 0 always)
     // Per-instance pixel shader inputs of rigidcommon (POSITION4..7, docs/re/renderer.md); zero = the engine's default.
     float p4[4] = {0, 0, 0, 0}, p5[4] = {0, 0, 0, 0}, p6[4] = {0, 0, 0, 0}, p7[4] = {0, 0, 0, 0};
 };
@@ -54,6 +55,7 @@ struct Terrain {
     std::string diffuse = "terrain/textures/battle/default/grass/0_su_diffuse.dds";
     float tile_metres = 8;
     bool casts_shadow = false;       // receiver only
+    bool lod = false;                // patches of 64 x 64 cells switch to coarser index buffers with distance
     uint64_t version = 0;            // change it when heights or the texture change: the renderer rebuilds the mesh
 
     static Terrain flat(float half_size, const std::string& diffuse, float tile_metres);
@@ -143,6 +145,7 @@ public:
     void update(EntityId id, Payload payload);
     void remove(EntityId id);
     void clear_layer(LayerId layer);                       // keeps the layer, drops its entities
+    void clear_layer_except(LayerId layer, EntityId keep); // the same, but one entity stays (a terrain whose meshes are expensive to rebuild)
     void clear();
 
     // All entities in draw order (insertion order); hidden ones are included, see drawable().
@@ -156,18 +159,31 @@ public:
 
     EnvironmentSlot environment;
 
+    void reserve(size_t entities);
+
+    // `revision` changes with everything; `structure_revision` only when entities, layers, visibility or a payload changed (not for a moved entity), so a
+    // consumer that keeps derived data (the renderer's draw set) can patch moved entities instead of rebuilding.
     uint64_t revision() const { return revision_; }
-    void touch() { ++revision_; }
+    uint64_t structure_revision() const { return structure_; }
+    // Changes when the payload of a Terrain entity (its heights) is replaced: the renderer rebuilds only its terrain draw items then.
+    uint64_t terrain_revision() const { return terrain_rev_; }
+    void touch() { ++revision_; ++structure_; }
+    // Entities whose world matrix changed since `cursor` (start from 0, pass the same variable again); false when the log no longer reaches back that far
+    // (rebuild everything then). Afterwards `cursor` is the log's end.
+    bool moved_since(uint64_t& cursor, std::vector<EntityId>& out) const;
 
 private:
     void reindex();
+    static constexpr uint32_t kNone = 0xffffffffu;
 
     std::vector<Layer> layers_;
     std::vector<Entity> entities_;
-    std::unordered_map<EntityId, size_t> index_;
+    std::vector<uint32_t> index_;            // entity id -> position in entities_ (ids are handed out in sequence and never reused)
     LayerId next_layer_ = 1;
     EntityId next_entity_ = 1;
-    uint64_t revision_ = 1;
+    uint64_t revision_ = 1, structure_ = 1, terrain_rev_ = 1;
+    std::vector<EntityId> moved_log_;
+    uint64_t moved_base_ = 0;                // log position of moved_log_[0]
 };
 
 } // namespace wce

@@ -1,3 +1,4 @@
+#include "foundation/profile.h"
 #include "formats/xml_doc.h"
 
 #include <algorithm>
@@ -17,26 +18,66 @@ bool is_name_end(char c) { return is_space(c) || c == '/' || c == '>' || c == '=
 
 } // namespace
 
-XmlDoc XmlDoc::parse(const std::vector<uint8_t>& bytes) {
-    XmlDoc d;
-    d.origin_ = bytes;
-    DecodedText dt = decode_text(bytes);
-    d.text_ = std::move(dt.utf8);
-    d.encoding_ = dt.encoding;
-    const std::string& t = d.text_;
-    const size_t n = t.size();
+XmlDoc XmlDoc::parse(const std::vector<uint8_t>& bytes) { return parse(std::vector<uint8_t>(bytes)); }
+
+namespace {
+
+// Reads the start tag at t[at] ('<'): name, attributes, where the attribute list ends and where the tag does. Returns the offset after the tag.
+size_t parse_start_tag(const std::string& t, size_t n, size_t at_off, XmlElement& el, std::vector<XmlAttr>& scratch) {
+    auto at = [&](size_t i) { return i < n ? t[i] : '\0'; };
+    el.start_off = at_off;
+    size_t s = at_off + 1, e = s;
+    while (!is_name_end(at(e))) ++e;
+    if (e == s) fail(at_off, "empty element name");
+    el.name = t.substr(s, e - s);
+    el.self_closing = false;
+    size_t p = e;
+    for (;;) {
+        while (is_space(at(p))) ++p;
+        char c = at(p);
+        if (c == '\0') fail(at_off, "unterminated start tag");
+        if (c == '/' && at(p + 1) == '>') { el.attrs_end = p; el.self_closing = true; p += 2; break; }
+        if (c == '>') { el.attrs_end = p; p += 1; break; }
+        size_t ns = p;
+        while (!is_name_end(at(p))) ++p;
+        if (p == ns) fail(p, "bad attribute");
+        XmlAttr a;
+        a.name = t.substr(ns, p - ns);
+        while (is_space(at(p))) ++p;
+        if (at(p) != '=') fail(p, "expected '=' after " + a.name);
+        ++p;
+        while (is_space(at(p))) ++p;
+        char q = at(p);
+        if (q != '\'' && q != '"') fail(p, "expected quote for " + a.name);
+        size_t ve = t.find(q, p + 1);
+        if (ve == std::string::npos) fail(p, "unterminated value");
+        a.quote = q;
+        a.value_off = p + 1;
+        a.value_len = ve - (p + 1);
+        scratch.push_back(std::move(a));
+        p = ve + 1;
+    }
+    el.attrs.assign(std::make_move_iterator(scratch.begin()), std::make_move_iterator(scratch.end()));
+    scratch.clear();
+    el.start_end = p;
+    el.end_off = p;
+    return p;
+}
+
+// Reads the elements of t[begin, end) into `elems` (indices continue from elems.size(); top-level ones get parent -1 and are listed in `roots`).
+void parse_range(const std::string& t, size_t begin, size_t n, std::vector<XmlElement>& elems, std::vector<int>& roots) {
     auto at = [&](size_t i) { return i < n ? t[i] : '\0'; };
     auto skip_to = [&](size_t i, std::string_view end) {
         size_t p = t.find(end, i);
         if (p == std::string::npos) fail(i, "unterminated '" + std::string(end) + "'");
         return p + end.size();
     };
-
     std::vector<int> stack;
-    size_t i = 0;
+    std::vector<XmlAttr> scratch;   // the attributes of the tag being read: moved into an exactly sized vector (no growth steps per element)
+    size_t i = begin;
     while (i < n) {
         size_t lt = t.find('<', i);
-        if (lt == std::string::npos) break;
+        if (lt == std::string::npos || lt >= n) break;
         i = lt;
         if (t.compare(i, 4, "<!--") == 0) { i = skip_to(i + 4, "-->"); continue; }
         if (t.compare(i, 9, "<![CDATA[") == 0) { i = skip_to(i + 9, "]]>"); continue; }
@@ -46,67 +87,46 @@ XmlDoc XmlDoc::parse(const std::vector<uint8_t>& bytes) {
         if (at(i + 1) == '/') { // end tag
             size_t s = i + 2, e = s;
             while (!is_name_end(at(e))) ++e;
-            std::string name = t.substr(s, e - s);
+            const std::string_view name(t.data() + s, e - s);
             size_t close = t.find('>', e);
             if (close == std::string::npos) fail(i, "unterminated end tag");
             // Tolerate unbalanced files: pop until the matching name.
             int match = -1;
             for (int k = int(stack.size()) - 1; k >= 0; --k)
-                if (d.elems_[stack[k]].name == name) { match = k; break; }
-            if (match < 0) fail(i, "end tag </" + name + "> without start");
+                if (elems[size_t(stack[size_t(k)])].name == name) { match = k; break; }
+            if (match < 0) fail(i, "end tag </" + std::string(name) + "> without start");
             while (int(stack.size()) > match) {
-                d.elems_[stack.back()].end_off = close + 1;
+                elems[size_t(stack.back())].end_off = close + 1;
                 stack.pop_back();
             }
             i = close + 1;
             continue;
         }
 
-        // start tag
         XmlElement el;
-        el.start_off = i;
-        size_t s = i + 1, e = s;
-        while (!is_name_end(at(e))) ++e;
-        if (e == s) fail(i, "empty element name");
-        el.name = t.substr(s, e - s);
-        size_t p = e;
-        for (;;) {
-            while (is_space(at(p))) ++p;
-            char c = at(p);
-            if (c == '\0') fail(i, "unterminated start tag");
-            if (c == '/' && at(p + 1) == '>') { el.attrs_end = p; el.self_closing = true; p += 2; break; }
-            if (c == '>') { el.attrs_end = p; p += 1; break; }
-            size_t ns = p;
-            while (!is_name_end(at(p))) ++p;
-            if (p == ns) fail(p, "bad attribute");
-            XmlAttr a;
-            a.name = t.substr(ns, p - ns);
-            while (is_space(at(p))) ++p;
-            if (at(p) != '=') fail(p, "expected '=' after " + a.name);
-            ++p;
-            while (is_space(at(p))) ++p;
-            char q = at(p);
-            if (q != '\'' && q != '"') fail(p, "expected quote for " + a.name);
-            size_t ve = t.find(q, p + 1);
-            if (ve == std::string::npos) fail(p, "unterminated value");
-            a.quote = q;
-            a.value_off = p + 1;
-            a.value_len = ve - (p + 1);
-            el.attrs.push_back(std::move(a));
-            p = ve + 1;
-        }
-        el.start_end = p;
-        el.end_off = p;
+        const size_t p = parse_start_tag(t, n, i, el, scratch);
         el.parent = stack.empty() ? -1 : stack.back();
-        int idx = int(d.elems_.size());
+        int idx = int(elems.size());
         bool self_closing = el.self_closing;
-        d.elems_.push_back(std::move(el));
-        if (d.elems_[idx].parent < 0) d.roots_.push_back(idx);
-        else d.elems_[d.elems_[idx].parent].children.push_back(idx);
+        elems.push_back(std::move(el));
+        if (elems[size_t(idx)].parent < 0) roots.push_back(idx);
+        else elems[size_t(elems[size_t(idx)].parent)].children.push_back(idx);
         if (!self_closing) stack.push_back(idx);
         i = p;
     }
-    if (!stack.empty()) fail(n, "unclosed <" + d.elems_[stack.back()].name + ">");
+    if (!stack.empty()) fail(n, "unclosed <" + elems[size_t(stack.back())].name + ">");
+}
+
+} // namespace
+
+XmlDoc XmlDoc::parse(std::vector<uint8_t>&& bytes) {
+    XmlDoc d;
+    d.origin_ = std::move(bytes);
+    DecodedText dt = decode_text(d.origin_);
+    d.text_ = std::move(dt.utf8);
+    d.encoding_ = dt.encoding;
+    d.elems_.reserve(d.text_.size() / 256 + 16);
+    parse_range(d.text_, 0, d.text_.size(), d.elems_, d.roots_);
     return d;
 }
 
@@ -338,6 +358,232 @@ XmlDoc XmlDoc::moved_element(int e, int dir) const {
     std::string t = b.text_.substr(0, ba.ls) + b.text_.substr(bc.ls, bc.le - bc.ls) + b.text_.substr(ba.ls, ba.le - ba.ls) +
                     b.text_.substr(bc.le);
     return b.rebuilt(std::move(t));
+}
+
+// ---- in-place edits
+
+void XmlDoc::reparse_in_place() {
+    XmlDoc fresh;
+    fresh.elems_.reserve(text_.size() / 256 + 16);
+    parse_range(text_, 0, text_.size(), fresh.elems_, fresh.roots_);
+    elems_ = std::move(fresh.elems_);
+    roots_ = std::move(fresh.roots_);
+}
+
+// A replacement of whole elements (removed ones lie completely inside [pos, pos + remove_len); the inserted text holds whole elements) below one parent element.
+bool XmlDoc::patch_elements(size_t pos, size_t remove_len, const std::string& insert) {
+    const size_t end_pos = pos + remove_len;
+    const int n = int(elems_.size());
+    const int a = int(std::partition_point(elems_.begin(), elems_.end(), [&](const XmlElement& e) { return e.start_off < pos; }) - elems_.begin());
+    int b = a;
+    while (b < n && elems_[size_t(b)].start_off < end_pos) {
+        if (elems_[size_t(b)].end_off > end_pos) return false;
+        ++b;
+    }
+    int parent = -1;
+    for (int c = a - 1; c >= 0; c = elems_[size_t(c)].parent) {
+        const XmlElement& e = elems_[size_t(c)];
+        if (!e.self_closing && e.start_end <= pos && pos < e.end_off && end_pos <= e.end_off) { parent = c; break; }
+    }
+    if (parent < 0) return false;
+    for (int i = a; i < b; ++i) {
+        const int p = elems_[size_t(i)].parent;
+        if (p != parent && !(p >= a && p < b)) return false;
+    }
+    std::vector<XmlElement> frag;
+    std::vector<int> froots;
+    if (!insert.empty()) parse_range(insert, 0, insert.size(), frag, froots);   // throws on malformed text
+    const long long delta = (long long)insert.size() - (long long)remove_len;
+    const int m = b - a, k = int(frag.size());
+    auto map = [&](int i) { return i < a ? i : i - m + k; };   // new index of an old element outside the removed range
+    // old elements: indices, offsets
+    for (int i = 0; i < n; ++i) {
+        if (i >= a && i < b) continue;
+        XmlElement& e = elems_[size_t(i)];
+        if (e.parent >= 0) e.parent = map(e.parent);
+        if (i == parent) {
+            std::vector<int> kids;
+            kids.reserve(e.children.size() + size_t(k));
+            bool placed = false;
+            for (int c : e.children) {
+                if (c >= a && c < b) continue;
+                if (!placed && c >= b) {
+                    for (int r : froots) kids.push_back(a + r);
+                    placed = true;
+                }
+                kids.push_back(map(c));
+            }
+            if (!placed)
+                for (int r : froots) kids.push_back(a + r);
+            e.children = std::move(kids);
+        } else {
+            for (int& c : e.children) c = map(c);
+        }
+        if (i >= b) {
+            e.start_off = size_t(ptrdiff_t(e.start_off) + ptrdiff_t(delta));
+            e.attrs_end = size_t(ptrdiff_t(e.attrs_end) + ptrdiff_t(delta));
+            e.start_end = size_t(ptrdiff_t(e.start_end) + ptrdiff_t(delta));
+            e.end_off = size_t(ptrdiff_t(e.end_off) + ptrdiff_t(delta));
+            for (XmlAttr& at : e.attrs) at.value_off = size_t(ptrdiff_t(at.value_off) + ptrdiff_t(delta));
+        }
+    }
+    for (int c = parent; c >= 0; c = elems_[size_t(c)].parent) {   // the containers got longer or shorter
+        XmlElement& e = elems_[size_t(c)];
+        e.end_off = size_t(ptrdiff_t(e.end_off) + ptrdiff_t(delta));
+    }
+    for (XmlElement& e : frag) {
+        e.start_off += pos;
+        e.attrs_end += pos;
+        e.start_end += pos;
+        e.end_off += pos;
+        for (XmlAttr& at : e.attrs) at.value_off += pos;
+        e.parent = e.parent < 0 ? parent : a + e.parent;
+        for (int& c : e.children) c += a;
+    }
+    elems_.erase(elems_.begin() + a, elems_.begin() + b);
+    elems_.insert(elems_.begin() + a, std::make_move_iterator(frag.begin()), std::make_move_iterator(frag.end()));
+    // the roots after the patch (a root element is never inside the replaced range here: its parent would be -1)
+    for (int& r : roots_) r = map(r);
+    return true;
+}
+
+// A replacement inside the start tag of one element (an attribute value, an added attribute): that tag is read again, everything after shifts.
+bool XmlDoc::patch_start_tag(size_t pos, size_t remove_len, const std::string& insert) {
+    const int a = int(std::partition_point(elems_.begin(), elems_.end(), [&](const XmlElement& e) { return e.start_off < pos; }) - elems_.begin());
+    const int c = a - 1;
+    if (c < 0) return false;
+    XmlElement& el = elems_[size_t(c)];
+    if (pos >= el.start_end || pos + remove_len > el.start_end) return false;   // (an insertion right after the tag is content, not part of the tag)
+    const long long delta = (long long)insert.size() - (long long)remove_len;
+    // the tag as it will read: text_ is still the old text here
+    std::string tag = text_.substr(el.start_off, el.start_end - el.start_off);
+    tag.replace(pos - el.start_off, remove_len, insert);
+    XmlElement fresh;
+    std::vector<XmlAttr> scratch;
+    const size_t after = parse_start_tag(tag, tag.size(), 0, fresh, scratch);
+    if (after != tag.size() || fresh.self_closing != el.self_closing || fresh.name != el.name) return false;
+    el.attrs = std::move(fresh.attrs);
+    for (XmlAttr& at : el.attrs) at.value_off += el.start_off;
+    el.attrs_end = fresh.attrs_end + el.start_off;
+    el.start_end = fresh.start_end + el.start_off;
+    el.end_off = size_t(ptrdiff_t(el.end_off) + ptrdiff_t(delta));
+    for (size_t i = size_t(a); i < elems_.size(); ++i) {   // everything after the tag, children included
+        XmlElement& e = elems_[i];
+        e.start_off = size_t(ptrdiff_t(e.start_off) + ptrdiff_t(delta));
+        e.attrs_end = size_t(ptrdiff_t(e.attrs_end) + ptrdiff_t(delta));
+        e.start_end = size_t(ptrdiff_t(e.start_end) + ptrdiff_t(delta));
+        e.end_off = size_t(ptrdiff_t(e.end_off) + ptrdiff_t(delta));
+        for (XmlAttr& at : e.attrs) at.value_off = size_t(ptrdiff_t(at.value_off) + ptrdiff_t(delta));
+    }
+    for (int p = el.parent; p >= 0; p = elems_[size_t(p)].parent) elems_[size_t(p)].end_off = size_t(ptrdiff_t(elems_[size_t(p)].end_off) + ptrdiff_t(delta));
+    return true;
+}
+
+bool XmlDoc::replace_text(size_t pos, size_t remove_len, std::string_view insert, bool structural) {
+    WCE_PROF("xml.replace_text");
+    if (pos > text_.size() || remove_len > text_.size() - pos) throw std::runtime_error("xml: splice outside the text");
+    const std::string ins(insert);
+    bool patched = false;
+    if (has_pending_edits()) throw std::runtime_error("xml: splice with pending attribute edits");
+    try {
+        WCE_PROF("xml.patch_table");
+        patched = patch_start_tag(pos, remove_len, ins) || patch_elements(pos, remove_len, ins);
+    } catch (const std::exception&) {
+        patched = false;
+    }
+    text_.replace(pos, remove_len, ins);
+    if (!patched) reparse_in_place();   // the change is neither whole elements nor inside one tag: read the document again
+    structural_ += structural ? 1 : 0;
+    return patched;
+}
+
+XmlSplice XmlDoc::splice(size_t pos, size_t remove_len, std::string_view insert) {
+    XmlSplice s;
+    s.pos = pos;
+    s.removed = text_.substr(pos, remove_len);
+    s.inserted = std::string(insert);
+    replace_text(pos, remove_len, insert, true);
+    journal_.push_back(s);
+    return s;
+}
+
+void XmlDoc::apply_splice(const XmlSplice& s) {
+    const size_t mark = journal_.size();
+    bake_pending();
+    replace_text(s.pos, s.removed.size(), s.inserted, true);
+    journal_.resize(mark);
+}
+
+void XmlDoc::unapply_splice(const XmlSplice& s) {
+    const size_t mark = journal_.size();
+    bake_pending();
+    replace_text(s.pos, s.inserted.size(), s.removed, false);
+    structural_ = std::max(0, structural_ - 1);
+    journal_.resize(mark);
+}
+
+// Pending value edits go into the text one by one, last first (so the offsets of the earlier ones stay valid); added attributes are inserted before the tag's end.
+void XmlDoc::bake_pending() {
+    if (!has_pending_edits()) return;
+    std::vector<std::pair<size_t, Edit>> value_edits(edits_.begin(), edits_.end());
+    std::vector<std::pair<std::pair<int, size_t>, std::string>> added(appended_values_.begin(), appended_values_.end());
+    struct Op {
+        size_t pos;
+        size_t remove_len;
+        std::string text;
+        int elem = -1;           // for an added attribute: the element, whose attribute becomes a plain one
+        size_t attr = 0;
+    };
+    std::vector<Op> ops;
+    for (auto& [off, ed] : value_edits) ops.push_back({off, ed.len, ed.text});
+    // several added attributes of one element go in as one insertion, in the order they were added
+    std::map<int, std::string> insert_text;
+    for (auto& [key, raw] : added) {
+        const XmlAttr& at = elems_[size_t(key.first)].attrs[key.second];
+        insert_text[key.first] += " " + at.name + "=" + at.quote + raw + at.quote;
+    }
+    for (auto& [elem, text] : insert_text) ops.push_back({elems_[size_t(elem)].attrs_end, 0, text, elem});
+    std::sort(ops.begin(), ops.end(), [](const Op& x, const Op& y) { return x.pos > y.pos; });
+    // the document is edited from here on: the pending maps are consumed (the added attributes are re-read from the new tag text)
+    edits_.clear();
+    appended_values_.clear();
+    for (XmlElement& el : elems_)
+        while (!el.attrs.empty() && el.attrs.back().appended) el.attrs.pop_back();   // gone from the table, back with their text
+    for (const Op& op : ops) {
+        XmlSplice s;
+        s.pos = op.pos;
+        s.removed = text_.substr(op.pos, op.remove_len);
+        s.inserted = op.text;
+        replace_text(op.pos, op.remove_len, op.text, false);
+        journal_.push_back(std::move(s));
+    }
+}
+
+void XmlDoc::remove_element_inplace(int e) {
+    bake_pending();
+    const XmlElement& el = elems_[size_t(e)];
+    if (el.parent < 0 && roots_.size() == 1) throw std::runtime_error("cannot remove the only root element");
+    Block k = block_of(text_, el);
+    if (k.aligned) splice(k.ls, k.le - k.ls, "");
+    else if (k.at_eof && k.ls > 0) {   // also the line break that led to it
+        size_t q = k.ls;
+        if (text_[q - 1] == '\n') --q;
+        if (q > 0 && text_[q - 1] == '\r') --q;
+        splice(q, text_.size() - q, "");
+    } else {
+        splice(el.start_off, el.end_off - el.start_off, "");
+    }
+}
+
+int XmlDoc::duplicate_element_inplace(int e) {
+    bake_pending();
+    const XmlElement& el = elems_[size_t(e)];
+    Block k = block_of(text_, el);
+    const int new_index = e + subtree_size(e);
+    if (k.aligned) splice(k.le, 0, std::string_view(text_).substr(k.ls, k.le - k.ls));
+    else if (k.at_eof) splice(el.end_off, 0, eol_of(text_) + text_.substr(k.ls, el.end_off - k.ls));
+    else splice(el.end_off, 0, std::string_view(text_).substr(el.start_off, el.end_off - el.start_off));
+    return new_index;
 }
 
 XmlDoc XmlDoc::with_child(int parent, std::string_view name, int* new_index) const {

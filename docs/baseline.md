@@ -140,6 +140,21 @@ switched the default adapter between runs, which made every shot differ (a rebui
 the live frames' adaptation (about 1e-6 of GPU noise made two scripted runs differ by a few one-level pixels). The `--open <env> --capture` references of `build/gates_base_p5/` replace the Phase 4 `capture_dry_*` ones (which had no
 environment document open). The whole-window `shot` of `app_check` is compared with a tolerance of two levels: it shows the live viewport. Scripted runs also ignore the real mouse now (a cursor over a splitter changed the shot).
 
+## Performance pass (between Phase 6 and Phase 7)
+
+Numbers and what changed: `docs/performance.md`. Gate results against Phase 6 (`build/gates_p6`):
+
+| Gate | Result |
+|---|---|
+| fast gates, `vfs_compare`, `roundtrip`, `scene_check`, `editor_check`, `app_check`, `weather_tool_check`, `tile_tool_check`, `tile_open_check` | pass; the text outputs are identical except `render_check` |
+| `render_check` | `houses in view 8, picked right 3` is now `picked right 6`: the id pass draws meshes in batches, so equal-depth surfaces tie the other way; the check is a lower bound (at least a third), still satisfied. A locked layer is checked at pick time again |
+| `perf_check` (new, fast), `xml_splice_check` (new, fast) | pass |
+| legacy window shots, `wce` weather captures | within one level in 4, 1 and 1 pixels (dry, rain, snow); the dry captures as in Phase 6 (7 and 94 pixels). Cause: batches draw a mesh's instances together, so surfaces at exactly the same depth can resolve the other way. `scripts/shots.sh` now compares the legacy shots with the same tolerance as the captures |
+| two tile captures | **re-baselined** (`build/gates_base_perf/`): terrain at full resolution (was every third sample), skirts close the pinhole cracks between patches (the black pixels of the old captures), LODs on building models, batch draw order. Checked by eye against `build/gates_base_p6/` |
+| legacy `shot_tile` | identical |
+
+New behaviours checked by the existing scripts: structural edits undo and redo through text splices (`tile_roundtrip`: every edit undone and saved gives the original bytes), models and textures load in the background in live runs and synchronously in fixed-step runs (the two capture runs stay identical).
+
 ## Phase 6 additions
 
 | Gate | Result |

@@ -1,3 +1,4 @@
+#include "foundation/profile.h"
 #include "tile/tile_tool.h"
 #include "tool_factories.h"
 
@@ -210,6 +211,20 @@ void TileTool::update(Editor& editor) {
         editor.selection().clear();
         for (uint64_t item : *hint) editor.selection().add({d->id(), item});
         poly_point_ = -1;
+    }
+    if (Renderer* r = editor.renderer()) {
+        d->poll_models([&](const std::string& piece) {
+            PieceState s;
+            ModelCache::State st;
+            if (const GpuModel* m = r->models().peek(piece, &st)) {
+                s.status = PieceState::Status::Ready;
+                s.bmin = m->bmin;
+                s.bmax = m->bmax;
+            } else if (st == ModelCache::State::Failed) {
+                s.status = PieceState::Status::Failed;
+            }
+            return s;
+        });
     }
     const Camera cam = editor.viewport().camera();
     d->update_view(editor.scene(), layer, cam.eye);
@@ -434,8 +449,8 @@ void TileTool::handle_keys(Editor& editor) {
 
 void TileTool::draw_panels(Editor& editor) {
     handle_keys(editor);
-    draw_tile_panel(editor);
-    draw_layers_panel(editor);
+    { WCE_PROF("panel.tile"); draw_tile_panel(editor); }
+    { WCE_PROF("panel.layers"); draw_layers_panel(editor); }
 }
 
 void TileTool::draw_menus(Editor& editor) {

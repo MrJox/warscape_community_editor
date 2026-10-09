@@ -51,7 +51,7 @@ int Rmv2Mesh::alpha_mode() const {
     return 0;
 }
 
-Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod) {
+Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod, bool copy_geometry) {
     In in{bytes};
     if (in.str(0, 4) != "RMV2") throw std::runtime_error("rmv2: bad signature");
     if (in.get<uint32_t>(4) != 6) throw std::runtime_error("rmv2: version " + std::to_string(in.get<uint32_t>(4)) + " (expected 6)");
@@ -112,10 +112,14 @@ Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod) {
             if (me.vertex_stride && me.vertex_count) {
                 size_t vbytes = size_t(me.vertex_count) * me.vertex_stride;
                 in.need(off + voff, vbytes);
-                me.vertices.assign(bytes.begin() + off + voff, bytes.begin() + off + voff + vbytes);
                 in.need(off + ioff, size_t(me.index_count) * 2);
-                me.indices.resize(me.index_count);
-                std::memcpy(me.indices.data(), &bytes[off + ioff], size_t(me.index_count) * 2);
+                me.vertex_data = &bytes[off + voff];
+                me.index_data = &bytes[off + ioff];
+                if (copy_geometry) {
+                    me.vertices.assign(bytes.begin() + off + voff, bytes.begin() + off + voff + vbytes);
+                    me.indices.resize(me.index_count);
+                    std::memcpy(me.indices.data(), &bytes[off + ioff], size_t(me.index_count) * 2);
+                }
             } else {
                 me.vertex_stride = 0;
             }

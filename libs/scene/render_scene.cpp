@@ -74,6 +74,11 @@ void RenderScene::set_layer_visible(LayerId id, bool visible) {
     }
 }
 
+void RenderScene::reserve(size_t n) {
+    entities_.reserve(entities_.size() + n);
+    index_.reserve(index_.size() + n);
+}
+
 EntityId RenderScene::add(LayerId layer_id, const float4x4& world, Payload payload, SourceRef source) {
     Entity e;
     e.id = next_entity_++;
@@ -81,40 +86,66 @@ EntityId RenderScene::add(LayerId layer_id, const float4x4& world, Payload paylo
     e.world = world;
     e.source = source;
     e.payload = std::move(payload);
-    index_[e.id] = entities_.size();
+    if (index_.size() <= e.id) index_.resize(size_t(e.id) + 1, kNone);
+    index_[e.id] = uint32_t(entities_.size());
     entities_.push_back(std::move(e));
     touch();
     return entities_.back().id;
 }
 
 Entity* RenderScene::find(EntityId id) {
-    auto it = index_.find(id);
-    return it == index_.end() ? nullptr : &entities_[it->second];
+    if (id >= index_.size() || index_[id] == kNone) return nullptr;
+    return &entities_[index_[id]];
 }
 const Entity* RenderScene::find(EntityId id) const { return const_cast<RenderScene*>(this)->find(id); }
 
 void RenderScene::update(EntityId id, const float4x4& world) {
     if (Entity* e = find(id)) {
         e->world = world;
-        touch();
+        ++revision_;
+        if (moved_log_.size() > (size_t(1) << 20)) {   // nobody is following: forget the old entries
+            moved_base_ += moved_log_.size();
+            moved_log_.clear();
+        }
+        moved_log_.push_back(id);
     }
 }
 void RenderScene::update(EntityId id, Payload payload) {
     if (Entity* e = find(id)) {
+        const bool overlay_only = std::holds_alternative<Overlay>(e->payload) && std::holds_alternative<Overlay>(payload);   // nothing the draw set keeps
+        const bool terrain_only = std::holds_alternative<Terrain>(e->payload) && std::holds_alternative<Terrain>(payload);
         e->payload = std::move(payload);
-        touch();
+        if (overlay_only) ++revision_;
+        else if (terrain_only) {
+            ++revision_;
+            ++terrain_rev_;
+        } else touch();
     }
 }
 
+bool RenderScene::moved_since(uint64_t& cursor, std::vector<EntityId>& out) const {
+    out.clear();
+    const uint64_t end = moved_base_ + moved_log_.size();
+    if (cursor < moved_base_ || cursor > end) {
+        cursor = end;
+        return false;
+    }
+    out.assign(moved_log_.begin() + std::ptrdiff_t(cursor - moved_base_), moved_log_.end());
+    cursor = end;
+    return true;
+}
+
 void RenderScene::reindex() {
-    index_.clear();
-    for (size_t i = 0; i < entities_.size(); ++i) index_[entities_[i].id] = i;
+    std::fill(index_.begin(), index_.end(), kNone);
+    for (size_t i = 0; i < entities_.size(); ++i) {
+        if (index_.size() <= entities_[i].id) index_.resize(size_t(entities_[i].id) + 1, kNone);
+        index_[entities_[i].id] = uint32_t(i);
+    }
 }
 
 void RenderScene::remove(EntityId id) {
-    auto it = index_.find(id);
-    if (it == index_.end()) return;
-    entities_.erase(entities_.begin() + std::ptrdiff_t(it->second));
+    if (id >= index_.size() || index_[id] == kNone) return;
+    entities_.erase(entities_.begin() + std::ptrdiff_t(index_[id]));
     reindex();
     touch();
 }
@@ -122,6 +153,15 @@ void RenderScene::remove(EntityId id) {
 void RenderScene::clear_layer(LayerId id) {
     const size_t before = entities_.size();
     entities_.erase(std::remove_if(entities_.begin(), entities_.end(), [&](const Entity& e) { return e.layer == id; }), entities_.end());
+    if (entities_.size() != before) {
+        reindex();
+        touch();
+    }
+}
+
+void RenderScene::clear_layer_except(LayerId id, EntityId keep) {
+    const size_t before = entities_.size();
+    entities_.erase(std::remove_if(entities_.begin(), entities_.end(), [&](const Entity& e) { return e.layer == id && e.id != keep; }), entities_.end());
     if (entities_.size() != before) {
         reindex();
         touch();

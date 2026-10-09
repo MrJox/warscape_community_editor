@@ -35,9 +35,16 @@ struct XmlElement {
     bool self_closing = false;
 };
 
+// One replacement of text: `removed` at `pos` became `inserted`. A list of them is an exact, small undo record of a structural edit.
+struct XmlSplice {
+    size_t pos = 0;
+    std::string removed, inserted;
+};
+
 class XmlDoc {
 public:
     static XmlDoc parse(const std::vector<uint8_t>& bytes); // throws std::runtime_error with offset
+    static XmlDoc parse(std::vector<uint8_t>&& bytes);      // the same, keeping the bytes as origin_bytes() without a copy
     std::vector<uint8_t> save() const;
 
     const std::vector<XmlElement>& elements() const { return elems_; }
@@ -73,6 +80,21 @@ public:
     const std::vector<uint8_t>& origin_bytes() const { return origin_; }
     int subtree_size(int e) const; // the element and all its descendants
 
+    // In-place structural edits for big documents (a 45 MB tile.ted has 130 000 elements: the functional versions above parse the whole file twice and copy it
+    // per edit). They change the same text, but patch the element table instead of re-parsing, and every change is also recorded as an XmlSplice so that a
+    // caller can undo / redo it without keeping whole documents. Pending attribute edits must be baked first (bake_pending), the record of an edit then starts
+    // at journal_mark().
+    void bake_pending();                                  // pending attribute edits become part of the text (journaled, not counted as structural)
+    XmlSplice splice(size_t pos, size_t remove_len, std::string_view insert);   // replaces text; journaled and counted as structural
+    void remove_element_inplace(int e);                   // same text as removed_element
+    int duplicate_element_inplace(int e);                 // same text as duplicated_element; returns the copy's index
+    void apply_splice(const XmlSplice& s);                // redo: not journaled
+    void unapply_splice(const XmlSplice& s);              // undo: not journaled
+    size_t journal_mark() const { return journal_.size(); }
+    std::vector<XmlSplice> journal_since(size_t mark) const { return std::vector<XmlSplice>(journal_.begin() + std::ptrdiff_t(mark), journal_.end()); }
+    void journal_forget(size_t mark) { journal_.resize(mark); }   // the caller took the records
+    bool has_pending_edits() const { return !edits_.empty() || !appended_values_.empty(); }
+
     // Element path like "SCENE/SCENE_NODE_LIST/WEATHER_SCENE_NODE/SKY_DOME/SKYGEN"
     std::string path_of(int elem) const;
 
@@ -81,6 +103,10 @@ public:
 
 private:
     struct Edit { size_t len; std::string text; };
+    bool replace_text(size_t pos, size_t remove_len, std::string_view insert, bool structural);   // the table patch behind splice / apply / unapply
+    bool patch_elements(size_t pos, size_t remove_len, const std::string& insert);
+    bool patch_start_tag(size_t pos, size_t remove_len, const std::string& insert);
+    void reparse_in_place();
     std::string baked_text() const;          // utf-8 text with all attribute edits applied
     XmlDoc rebuilt(std::string utf8) const;  // parse(utf8), carrying origin_ and counting one more structural edit
     XmlDoc baked() const;                    // parse(save()) with origin_ and the counter carried over
@@ -90,6 +116,7 @@ private:
     TextEncoding encoding_ = TextEncoding::Utf8;
     std::vector<XmlElement> elems_;
     std::vector<int> roots_;
+    std::vector<XmlSplice> journal_;
     std::map<size_t, Edit> edits_;             // keyed by original offset; spans never overlap
     std::map<std::pair<int, size_t>, std::string> appended_values_; // (elem, attr index) -> raw value
 };

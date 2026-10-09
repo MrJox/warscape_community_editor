@@ -47,6 +47,18 @@ public:
     virtual void republish(RenderScene& scene, LayerId layer, const CommandStack::Dirty& dirty) { (void)dirty; publish(scene, layer); }
 
     virtual OutlinerNode outline() const { return {title(), {id_, 0}, false, {}}; }
+    // The outline as of the last edit: rebuilt (through outline()) only when the history changed, so a panel can ask every frame.
+    const OutlinerNode& outline_cached() const {
+        if (!outline_valid_ || outline_stamp_ != outline_stamp()) {
+            outline_cache_ = outline();
+            outline_stamp_ = outline_stamp();
+            outline_valid_ = true;
+        }
+        return outline_cache_;
+    }
+    void invalidate_outline() { outline_valid_ = false; }
+    // Changes whenever the outline does (default: with every edit; a document whose edits mostly do not touch the tree overrides it).
+    virtual uint64_t outline_stamp() const { return history_.version(); }
     virtual void inspect(const SourceRef& item, Inspector& inspector) { (void)item; (void)inspector; }
     virtual std::string describe(const SourceRef& item) const { (void)item; return {}; }
     // Identifies the file a document came from (a normalized in-pack path); an open request for the same key activates the open document instead.
@@ -65,6 +77,9 @@ protected:
 
 private:
     DocumentId id_;
+    mutable OutlinerNode outline_cache_;
+    mutable uint64_t outline_stamp_ = 0;
+    mutable bool outline_valid_ = false;
 };
 
 } // namespace wce

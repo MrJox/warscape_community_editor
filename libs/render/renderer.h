@@ -2,6 +2,8 @@
 // Battle renderer built from the game's own shaders. Pass order and shader choices are documented
 // in docs/re/renderer.md; anything not yet confirmed against the game is marked there.
 #include "foundation/math.h"
+#include "render/draw_set.h"
+#include "render/gpu_timer.h"
 #include "render/model_cache.h"
 #include "render/particles.h"
 #include "render/render_target.h"
@@ -15,6 +17,7 @@
 #include <wrl/client.h>
 
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,8 +36,17 @@ class Renderer {
 public:
     enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped, AO };
     float debug_points[4] = {}; int debug_maps = 0;
-    size_t draw_count() const { return draws_.size(); }
-    size_t mesh_count() const { size_t n = 0; for (auto& d : draws_) n += d.model->meshes.size(); return n; }
+    size_t draw_count() const { return draw_entities_ + terrain_entities_; }      // mesh and terrain entities that are ready to draw
+    size_t mesh_count() const { return draw_meshes_ + terrain_meshes_; }         // their LOD 0 meshes (terrain: patches)
+    // What the last frame submitted (all views: camera, shadow cascades, environment cube).
+    struct DrawStats {
+        size_t items = 0, batches = 0, models = 0, waiting_models = 0;
+        uint64_t views = 0, instances = 0, draw_calls = 0, triangles = 0, camera_instances = 0, camera_triangles = 0, shadow_instances = 0, shadow_triangles = 0, terrain_patches = 0;
+    };
+    const DrawStats& draw_stats() const { return draw_stats_; }
+    float lod_scale = 1.0f;                // multiplies every LOD distance (the editor can trade detail for speed)
+    float min_pixels = 0.75f;              // LOD items smaller than this many pixels (radius) are not drawn
+    float shadow_min_texels = 2.0f;        // LOD items smaller than this many shadow-map texels (radius) cast no shadow
     // Fixed-step runs (screenshots, regression, recording): GPU readbacks wait for their data instead of using it a frame later when it
     // happens to be ready, so frame N is the same every run. Set together with a fixed-step Clock.
     bool deterministic = false;
@@ -93,6 +105,7 @@ public:
     View view = View::Final;
     TextureCache& textures() { return textures_; }
     ModelCache& models() { return models_; }
+    GpuTimer& gpu_timer() { return *gpu_timer_; }
 
     ConstantBuffers& cbuffers() { return cbs_; }
     ParticleSystem* particles() { return particles_.get(); }
@@ -145,6 +158,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D11InputLayout> ovl_il_, pick_il_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> ovl_cb_, ovl_vb_, pick_cb_;
     UINT ovl_vb_capacity_ = 0;
+    // The scene's overlays transformed to world space, per batch (triangles / lines with the depth test, then without): rebuilt only when the scene changed.
+    std::vector<OverlayVertex> ovl_cache_[4];
+    const RenderScene* ovl_cache_scene_ = nullptr;
+    uint64_t ovl_cache_rev_ = 0;
     Microsoft::WRL::ComPtr<ID3D11BlendState> ovl_blend_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ovl_ds_test_, ovl_ds_off_, pick_ds_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> ovl_rs_;
@@ -152,22 +169,46 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> pick_id_rtv_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> pick_dsv_;
     int pick_w_ = 0, pick_h_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> pick_inst_vb_, pick_id_vb_;
+    size_t pick_inst_capacity_ = 0;
     TextureCache textures_;
     ModelCache models_;
+    std::unique_ptr<GpuTimer> gpu_timer_;
 
-    // Draw list of the mesh and terrain entities, in scene order; rebuilt when the scene changes.
-    struct Draw {
-        const GpuModel* model = nullptr;
+    // The mesh and terrain entities as culling items (render/draw_set.h); rebuilt when the scene changes or a model finishes loading.
+    DrawSet draws_;                             // model instances
+    DrawSet terrain_draws_;                     // terrain patches: a brush stroke rebuilds only these (a few hundred items)
+    struct EntityBounds {
         float4x4 world;
-        float p4[4], p5[4], p6[4], p7[4];
-        bool casts_shadow = true;
-        EntityId entity = 0;
+        float3 bmin, bmax;
     };
-    std::vector<Draw> draws_;
+    std::unordered_map<EntityId, EntityBounds> terrain_bounds_;
+    size_t draw_entities_ = 0, draw_meshes_ = 0, draws_waiting_ = 0, terrain_entities_ = 0, terrain_meshes_ = 0;
+    uint64_t draws_terrain_rev_ = 0;
+    void build_terrain_draws(const RenderScene& scene);
     const RenderScene* draws_scene_ = nullptr;
-    uint64_t draws_revision_ = 0;
-    void build_draws(const RenderScene& scene);
-    static RigidInstance rigid_instance(const Draw& d, const GpuMesh& m);
+    uint64_t draws_revision_ = 0, draws_model_revision_ = 0;   // the scene's structure revision and the model cache's revision the draw set was built from
+    uint64_t moved_cursor_ = 0;
+    std::vector<uint32_t> item_of_entity_;     // entity id -> item (single-item entities), kNoItem otherwise
+    std::vector<EntityId> moved_scratch_;
+    static constexpr uint32_t kNoItem = 0xffffffffu;
+    void build_draws(const RenderScene& scene, const float3& eye);
+    DrawStats draw_stats_;
+    DrawSet::Visible vis_, vis_terrain_;        // the view being drawn (camera, cascade, environment face), per set
+    float4x4 cur_vp_;                           // set by set_camera: what pass_gbuffer culls with
+    float3 cur_eye_;
+    float cur_px_ratio_ = 0.001f;               // angular size of one pixel (tangent)
+    // Per-view instance data: one dynamic vertex buffer used as a ring, one Map per view.
+    Microsoft::WRL::ComPtr<ID3D11Buffer> instance_ring_;
+    size_t ring_capacity_ = 0, ring_cursor_ = 0;
+    bool ring_fresh_ = true;
+    // Writes the instances of both sets into the ring with one Map (growing or wrapping the ring must not lose what the first set wrote); firsts[k] is the
+    // first instance of set k.
+    void upload_instances(DrawSet* const sets[2], DrawSet::Visible* const viss[2], UINT firsts[2]);
+    DrawSet::View camera_view(float lod_scale_factor) const;
+    struct PsSlots { int slot[kTexSlots]; };
+    std::unordered_map<const GameShader*, PsSlots> ps_slots_;
+    const PsSlots& slots_of(const GameShader& ps);
     std::unique_ptr<ShaderLibrary> lib_;
     std::unique_ptr<ParticleSystem> particles_;
     std::vector<std::string> errors_;

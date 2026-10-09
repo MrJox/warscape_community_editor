@@ -73,81 +73,101 @@ DXGI_FORMAT from_masks(uint32_t bits, uint32_t r, uint32_t g, uint32_t b, uint32
 
 } // namespace
 
-Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
+namespace {
+
+struct DdsLayout {
+    uint32_t width = 0, height = 0, depth = 1, mips = 1, array = 1, faces = 1;
+    DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+    size_t data = 128;
+    bool cube = false, volume = false;
+};
+
+DdsLayout parse_dds_layout(const uint8_t* b, size_t n) {
     auto u32 = [&](size_t o) {
-        if (o + 4 > b.size()) throw std::runtime_error("dds: truncated header");
+        if (o + 4 > n) throw std::runtime_error("dds: truncated header");
         uint32_t v;
-        std::memcpy(&v, &b[o], 4);
+        std::memcpy(&v, b + o, 4);
         return v;
     };
-    if (b.size() < 128 || u32(0) != fourcc('D', 'D', 'S', ' ')) throw std::runtime_error("dds: bad magic");
-    uint32_t height = u32(12), width = u32(16), depth = u32(24), mips = std::max(1u, u32(28));
-    uint32_t pf_flags = u32(80), pf_fourcc = u32(84), bits = u32(88);
-    uint32_t caps2 = u32(112);
-    size_t data = 128;
-    uint32_t array = 1;
-    bool cube = (caps2 & 0x200) != 0;
-    bool volume = (caps2 & 0x200000) != 0 && depth > 1;
-    DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+    if (n < 128 || u32(0) != fourcc('D', 'D', 'S', ' ')) throw std::runtime_error("dds: bad magic");
+    DdsLayout l;
+    l.height = u32(12);
+    l.width = u32(16);
+    l.depth = u32(24);
+    l.mips = std::max(1u, u32(28));
+    const uint32_t pf_flags = u32(80), pf_fourcc = u32(84), bits = u32(88), caps2 = u32(112);
+    l.cube = (caps2 & 0x200) != 0;
+    l.volume = (caps2 & 0x200000) != 0 && l.depth > 1;
     if (pf_flags & 0x4) {
         switch (pf_fourcc) {
-        case fourcc('D', 'X', 'T', '1'): fmt = DXGI_FORMAT_BC1_UNORM; break;
-        case fourcc('D', 'X', 'T', '2'): case fourcc('D', 'X', 'T', '3'): fmt = DXGI_FORMAT_BC2_UNORM; break;
-        case fourcc('D', 'X', 'T', '4'): case fourcc('D', 'X', 'T', '5'): fmt = DXGI_FORMAT_BC3_UNORM; break;
-        case fourcc('A', 'T', 'I', '1'): case fourcc('B', 'C', '4', 'U'): fmt = DXGI_FORMAT_BC4_UNORM; break;
-        case fourcc('A', 'T', 'I', '2'): case fourcc('B', 'C', '5', 'U'): fmt = DXGI_FORMAT_BC5_UNORM; break;
-        case 113: fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
-        case 116: fmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+        case fourcc('D', 'X', 'T', '1'): l.fmt = DXGI_FORMAT_BC1_UNORM; break;
+        case fourcc('D', 'X', 'T', '2'): case fourcc('D', 'X', 'T', '3'): l.fmt = DXGI_FORMAT_BC2_UNORM; break;
+        case fourcc('D', 'X', 'T', '4'): case fourcc('D', 'X', 'T', '5'): l.fmt = DXGI_FORMAT_BC3_UNORM; break;
+        case fourcc('A', 'T', 'I', '1'): case fourcc('B', 'C', '4', 'U'): l.fmt = DXGI_FORMAT_BC4_UNORM; break;
+        case fourcc('A', 'T', 'I', '2'): case fourcc('B', 'C', '5', 'U'): l.fmt = DXGI_FORMAT_BC5_UNORM; break;
+        case 113: l.fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+        case 116: l.fmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
         case fourcc('D', 'X', '1', '0'):
-            fmt = DXGI_FORMAT(u32(128));
-            if (u32(132) == 3 /* TEXTURE2D */) array = std::max(1u, u32(140));
-            if (u32(132) == 4 /* TEXTURE3D */) volume = depth > 1;
-            if (u32(136) & 0x4) cube = true;
-            data = 148;
+            l.fmt = DXGI_FORMAT(u32(128));
+            if (u32(132) == 3 /* TEXTURE2D */) l.array = std::max(1u, u32(140));
+            if (u32(132) == 4 /* TEXTURE3D */) l.volume = l.depth > 1;
+            if (u32(136) & 0x4) l.cube = true;
+            l.data = 148;
             break;
         default: throw std::runtime_error("dds: unsupported fourcc");
         }
     } else {
-        fmt = from_masks(bits, u32(92), u32(96), u32(100), u32(104));
-        if (fmt == DXGI_FORMAT_UNKNOWN) throw std::runtime_error("dds: unsupported uncompressed layout");
+        l.fmt = from_masks(bits, u32(92), u32(96), u32(100), u32(104));
+        if (l.fmt == DXGI_FORMAT_UNKNOWN) throw std::runtime_error("dds: unsupported uncompressed layout");
     }
-    if (!volume) depth = 1;
-    uint32_t faces = cube ? 6 * array : array;
+    if (!l.volume) l.depth = 1;
+    l.faces = l.cube ? 6 * l.array : l.array;
+    return l;
+}
 
+void mip_size(const DdsLayout& l, uint32_t w, uint32_t h, size_t& pitch, size_t& size) {
+    if (is_block(l.fmt)) {
+        pitch = size_t(std::max(1u, (w + 3) / 4)) * block_bytes(l.fmt);
+        size = pitch * std::max(1u, (h + 3) / 4);
+    } else {
+        const uint32_t pb = pixel_bytes(l.fmt);
+        if (!pb) throw std::runtime_error("dds: unsupported format");
+        pitch = size_t(w) * pb;
+        size = pitch * h;
+    }
+}
+
+// Builds the texture from `data` (file bytes from `data_offset` on), leaving out the first `skip` mips of every face.
+Texture build_dds(ID3D11Device* dev, const DdsLayout& l, const uint8_t* data, size_t data_size, size_t data_offset, uint32_t skip, bool srgb) {
     std::vector<D3D11_SUBRESOURCE_DATA> subs;
-    size_t p = data;
-    for (uint32_t f = 0; f < faces; ++f) {
-        uint32_t w = width, h = height, d = depth;
-        for (uint32_t m = 0; m < mips; ++m) {
+    size_t p = l.data;
+    for (uint32_t f = 0; f < l.faces; ++f) {
+        uint32_t w = l.width, h = l.height, d = l.depth;
+        for (uint32_t m = 0; m < l.mips; ++m) {
             size_t pitch, size;
-            if (is_block(fmt)) {
-                pitch = size_t(std::max(1u, (w + 3) / 4)) * block_bytes(fmt);
-                size = pitch * std::max(1u, (h + 3) / 4);
-            } else {
-                uint32_t pb = pixel_bytes(fmt);
-                if (!pb) throw std::runtime_error("dds: unsupported format");
-                pitch = size_t(w) * pb;
-                size = pitch * h;
+            mip_size(l, w, h, pitch, size);
+            if (m >= skip) {
+                if (p < data_offset || p + size * d - data_offset > data_size) throw std::runtime_error("dds: truncated data");
+                subs.push_back({data + (p - data_offset), UINT(pitch), UINT(size)});
             }
-            if (p + size * d > b.size()) throw std::runtime_error("dds: truncated data");
-            subs.push_back({&b[p], UINT(pitch), UINT(size)});
             p += size * d;
             w = std::max(1u, w / 2);
             h = std::max(1u, h / 2);
             d = std::max(1u, d / 2);
         }
     }
+    const uint32_t width = std::max(1u, l.width >> skip), height = std::max(1u, l.height >> skip), mips = l.mips - skip;
 
-    if (volume) {
-        D3D11_TEXTURE3D_DESC vd{width, height, depth, mips, srgb ? to_typeless(fmt) : fmt, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0};
+    if (l.volume) {
+        D3D11_TEXTURE3D_DESC vd{width, height, l.depth, mips, srgb ? to_typeless(l.fmt) : l.fmt, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0};
         Microsoft::WRL::ComPtr<ID3D11Texture3D> tex3;
         if (FAILED(dev->CreateTexture3D(&vd, subs.data(), &tex3))) throw std::runtime_error("dds: CreateTexture3D failed");
         Texture t;
         t.width = width;
         t.height = height;
-        t.depth = depth;
+        t.depth = l.depth;
         t.mips = mips;
-        t.format = srgb ? to_srgb(fmt) : fmt;
+        t.format = srgb ? to_srgb(l.fmt) : l.fmt;
         D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
         sd.Format = t.format;
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
@@ -160,12 +180,12 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
     td.Width = width;
     td.Height = height;
     td.MipLevels = mips;
-    td.ArraySize = faces;
-    td.Format = srgb ? to_typeless(fmt) : fmt;
+    td.ArraySize = l.faces;
+    td.Format = srgb ? to_typeless(l.fmt) : l.fmt;
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_IMMUTABLE;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    td.MiscFlags = cube ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0;
+    td.MiscFlags = l.cube ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
     if (FAILED(dev->CreateTexture2D(&td, subs.data(), &tex))) throw std::runtime_error("dds: CreateTexture2D failed");
 
@@ -173,23 +193,62 @@ Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
     t.width = width;
     t.height = height;
     t.mips = mips;
-    t.cube = cube;
-    t.format = srgb ? to_srgb(fmt) : fmt;
+    t.cube = l.cube;
+    t.format = srgb ? to_srgb(l.fmt) : l.fmt;
     D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
     sd.Format = t.format;
-    if (cube) {
+    if (l.cube) {
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
         sd.TextureCube.MipLevels = mips;
-    } else if (array > 1) {
+    } else if (l.array > 1) {
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
         sd.Texture2DArray.MipLevels = mips;
-        sd.Texture2DArray.ArraySize = array;
+        sd.Texture2DArray.ArraySize = l.array;
     } else {
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         sd.Texture2D.MipLevels = mips;
     }
     if (FAILED(dev->CreateShaderResourceView(tex.Get(), &sd, &t.srv))) throw std::runtime_error("dds: CreateShaderResourceView failed");
     return t;
+}
+
+} // namespace
+
+Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& b, bool srgb) {
+    const DdsLayout l = parse_dds_layout(b.data(), b.size());
+    return build_dds(dev, l, b.data(), b.size(), 0, 0, srgb);
+}
+
+DdsStreamPlan plan_dds_stream(const std::vector<uint8_t>& header, size_t file_size, uint32_t max_dim) {
+    DdsStreamPlan plan;
+    try {
+        const DdsLayout l = parse_dds_layout(header.data(), header.size());
+        plan.width = l.width;
+        plan.height = l.height;
+        if (l.cube || l.volume || l.array > 1 || l.mips < 3 || std::max(l.width, l.height) <= max_dim) return plan;
+        uint32_t skip = 0;
+        while (skip + 1 < l.mips && std::max(l.width >> skip, l.height >> skip) > max_dim) ++skip;
+        if (skip == 0) return plan;
+        size_t p = l.data;
+        uint32_t w = l.width, h = l.height;
+        for (uint32_t m = 0; m < skip; ++m) {
+            size_t pitch, size;
+            mip_size(l, w, h, pitch, size);
+            p += size;
+            w = std::max(1u, w / 2);
+            h = std::max(1u, h / 2);
+        }
+        if (p >= file_size) return plan;
+        plan.ok = true;
+        plan.skip = skip;
+        plan.tail_offset = p;
+    } catch (const std::exception&) {}
+    return plan;
+}
+
+Texture load_dds_tail(ID3D11Device* dev, const std::vector<uint8_t>& header, const std::vector<uint8_t>& tail, const DdsStreamPlan& plan, bool srgb) {
+    const DdsLayout l = parse_dds_layout(header.data(), header.size());
+    return build_dds(dev, l, tail.data(), tail.size(), plan.tail_offset, plan.skip, srgb);
 }
 
 Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba) {

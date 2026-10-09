@@ -10,8 +10,10 @@
 //   --shot <file.png>       save the whole window after that frame and exit
 //   --capture <WxH> <file.png>   render the scene offscreen, no window involved, and exit
 //   --fixed-step <seconds>  simulate that much time per rendered frame (implied by --shot / --capture / --script)
+//   --live                  with --script: keep the live clock, the real mouse and background model loading (performance runs)
 #include "foundation/log.h"
 #include "foundation/process.h"
+#include "foundation/profile.h"
 #include "editor/editor.h"
 #include "render/gpu_adapter.h"
 #include "render/image_io.h"
@@ -28,6 +30,7 @@
 #include <shellapi.h>
 #include <wrl/client.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -104,6 +107,7 @@ struct Options {
     std::wstring shot, capture_path;
     int capture_w = 0, capture_h = 0, frames = 20;
     double fixed_step = 0;
+    bool live = false;   // scripts keep the live clock, the real mouse and background loading (performance runs)
 };
 
 Options parse_args() {
@@ -129,6 +133,7 @@ Options parse_args() {
         else if (a == L"--frames" && more) o.frames = std::max(1, _wtoi(argv[++i]));
         else if (a == L"--shot" && more) o.shot = argv[++i];
         else if (a == L"--fixed-step" && more) o.fixed_step = _wtof(argv[++i]);
+        else if (a == L"--live") o.live = true;
         else if (a == L"--capture" && i + 2 < argc) {
             const std::wstring dims = argv[++i];
             o.capture_w = _wtoi(dims.c_str());
@@ -216,12 +221,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         else if (!opt.shot.empty()) script += "frames " + std::to_string(opt.frames) + "\nshot \"" + wce::narrow(opt.shot) + "\"\nquit\n";
         if (!script.empty()) editor.script().load_text(script);
         double step = opt.fixed_step;
-        if (step <= 0 && (batch || !opt.script_text.empty())) step = 1.0 / 60.0;
+        if (step <= 0 && !opt.live && (batch || !opt.script_text.empty())) step = 1.0 / 60.0;
         if (step > 0) editor.set_fixed_step(step);
         if (step > 0) io.KeyRepeatDelay = 1.0e6f;   // scripted runs: a held key must not auto-repeat when a frame happens to take long
 
+        if (const char* v = std::getenv("WCE_VSYNC"); v && *v == '0') editor.vsync = false;
         bool done = false;
+        auto last_frame = std::chrono::steady_clock::now();
         while (!done) {
+            const auto frame_start = std::chrono::steady_clock::now();
             MSG msg;
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&msg);
@@ -256,7 +264,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                 exit_code = editor.exit_code();
                 done = true;
             }
-            g_swap->Present(batch ? 0 : 1, 0);
+            const auto cpu_end = std::chrono::steady_clock::now();
+            g_swap->Present(batch || !editor.vsync ? 0 : 1, 0);
+            const auto now = std::chrono::steady_clock::now();
+            using ms = std::chrono::duration<double, std::milli>;
+            editor.perf.record(ms(now - last_frame).count(), ms(cpu_end - frame_start).count());
+            last_frame = now;
         }
         if (!batch) editor.save_layout();
         g_editor = nullptr;

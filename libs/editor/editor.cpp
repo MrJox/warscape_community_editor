@@ -4,6 +4,7 @@
 #include "editor/steam_detect.h"
 #include "foundation/log.h"
 #include "foundation/process.h"
+#include "foundation/profile.h"
 #include "foundation/text_encoding.h"
 #include "scene/environment.h"
 
@@ -259,15 +260,16 @@ bool Editor::open_path(const std::string& path, bool from_packs, std::string* me
 // ---- frame
 
 void Editor::frame() {
+    WCE_PROF("editor.frame");
     ++frame_;
     if (script_.done() == false && !script_.failed()) {
         if (!script_.step(commands_)) request_quit(1);
     } else if (script_.failed()) {
         request_quit(1);
     }
-    docs_.update();
+    { WCE_PROF("editor.docs_update"); docs_.update(); }
     if (tools_.empty()) return;
-    if (renderer_) tools_[active_tool_]->update(*this);
+    if (renderer_) { WCE_PROF("editor.tool_update"); tools_[active_tool_]->update(*this); }
 
     ImGuiIO& io = ImGui::GetIO();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -317,18 +319,18 @@ void Editor::frame() {
         }
     }
 
-    draw_panels();
+    { WCE_PROF("editor.draw_panels"); draw_panels(); }
 }
 
 void Editor::draw_panels() {
-    if (panels.viewport) viewport_.draw(*this);
-    if (panels.outliner) Panels::outliner(*this);
-    if (panels.inspector) Panels::inspector(*this);
-    if (panels.assets) Panels::assets(*this);
-    if (panels.log) Panels::log(*this);
-    if (panels.history) Panels::history(*this);
+    if (panels.viewport) { WCE_PROF("panel.viewport"); viewport_.draw(*this); }
+    if (panels.outliner) { WCE_PROF("panel.outliner"); Panels::outliner(*this); }
+    if (panels.inspector) { WCE_PROF("panel.inspector"); Panels::inspector(*this); }
+    if (panels.assets) { WCE_PROF("panel.assets"); Panels::assets(*this); }
+    if (panels.log) { WCE_PROF("panel.log"); Panels::log(*this); }
+    if (panels.history) { WCE_PROF("panel.history"); Panels::history(*this); }
     if (panels.commands) Panels::commands(*this);
-    if (Tool* t = active_tool()) t->draw_panels(*this);
+    if (Tool* t = active_tool()) { WCE_PROF("panel.tool"); t->draw_panels(*this); }
 }
 
 void Editor::draw_toolbar() {
@@ -359,6 +361,28 @@ void Editor::draw_toolbar() {
     ImGui::TextUnformatted(status_.c_str());
     ImGui::PopStyleColor();
     ImGui::Separator();
+}
+
+double PerfStats::percentile_frame_ms(double p) const {
+    const int n = count();
+    if (!n) return 0;
+    std::vector<float> v(frame_, frame_ + n);
+    std::sort(v.begin(), v.end());
+    return v[std::min(n - 1, int(p * n))];
+}
+
+double PerfStats::worst_frame_ms() const {
+    float w = 0;
+    for (int i = 0; i < count(); ++i) w = std::max(w, frame_[i]);
+    return w;
+}
+
+std::string PerfStats::report() const {
+    char b[256];
+    const double m = mean_frame_ms();
+    std::snprintf(b, sizeof b, "  frames: %d  mean %.2f ms (%.1f fps)  p95 %.2f ms  p99 %.2f ms  worst %.2f ms  | CPU mean %.2f ms\n", count(), m, m > 0 ? 1000.0 / m : 0.0,
+                  percentile_frame_ms(0.95), percentile_frame_ms(0.99), worst_frame_ms(), mean_cpu_ms());
+    return b;
 }
 
 void Editor::draw_menu_bar() {
@@ -433,6 +457,14 @@ void Editor::draw_menu_bar() {
     if (ImGui::BeginMenu("Help")) {
         ImGui::MenuItem("Commands", nullptr, &panels.commands);
         ImGui::EndMenu();
+    }
+    if (perf.count() > 10 && !clock_.fixed_step()) {   // frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed)
+        char b[64];
+        const double ms = perf.mean_frame_ms(60);
+        std::snprintf(b, sizeof b, "%.0f fps  %.1f ms", ms > 0 ? 1000.0 / ms : 0.0, ms);
+        const float w = ImGui::CalcTextSize(b).x;
+        ImGui::SameLine(ImGui::GetWindowWidth() - w - 16.0f);
+        ImGui::TextDisabled("%s", b);
     }
     ImGui::EndMenuBar();
 }
@@ -520,6 +552,73 @@ void Editor::register_builtin_commands() {
         for (const auto& w : a) s += (s.empty() ? "" : " ") + w;
         Log::info(s);
         return ok();
+    });
+    commands_.add("perf", "perf [reset | full]", "frame times (mean / p95 / worst) of the last frames, the GPU time per pass and, with `full`, the CPU scope timers", [this, ok](const CommandRegistry::Args& a) {
+        if (!a.empty() && a[0] == "reset") {
+            perf.reset();
+            prof::reset();
+            if (renderer_) renderer_->gpu_timer().reset();
+            return ok("perf counters reset");
+        }
+        std::string r = perf.report();
+        if (renderer_) {
+            const Renderer::DrawStats& s = renderer_->draw_stats();
+            char b[320];
+            std::snprintf(b, sizeof b, "  draw set: %zu items, %zu models, %zu batches, %zu models still loading | last frame: %llu views, %llu instances, %llu draw calls, %.2f M triangles (camera view: %llu instances incl. %llu terrain patches, %.2f M triangles; shadow maps: %llu instances, %.2f M triangles)\n", s.items, s.models, s.batches,
+                          s.waiting_models, (unsigned long long)s.views, (unsigned long long)s.instances, (unsigned long long)s.draw_calls, double(s.triangles) * 1e-6,
+                          (unsigned long long)s.camera_instances, (unsigned long long)s.terrain_patches, double(s.camera_triangles) * 1e-6, (unsigned long long)s.shadow_instances, double(s.shadow_triangles) * 1e-6);
+            r += b;
+            r += renderer_->gpu_timer().report();
+        }
+        if (!a.empty() && a[0] == "full") r += "  CPU scopes:\n" + prof::report(false, 0.05);
+        Log::info("perf:\n" + r);
+        return ok(r);
+    });
+    commands_.add("profile", "profile [reset]", "the CPU scope timers (total, calls, worst) sorted by time", [ok](const CommandRegistry::Args& a) {
+        const bool reset = !a.empty() && a[0] == "reset";
+        const std::string r = prof::report(reset, 0.01);
+        Log::info("profile:\n" + r);
+        return ok(r);
+    });
+    commands_.add("wait_loaded", "wait_loaded [timeout seconds]", "script: wait until every model and texture the scene needs has loaded (reports how long that took)", [this, ok](const CommandRegistry::Args& a) {
+        const auto now = std::chrono::steady_clock::now();
+        if (wait_loaded_start == std::chrono::steady_clock::time_point{}) wait_loaded_start = now;
+        double timeout = 60;
+        if (!a.empty()) timeout = std::atof(a[0].c_str());
+        const double elapsed = std::chrono::duration<double>(now - wait_loaded_start).count();
+        const bool busy = renderer_ && (renderer_->models().pending() > 0 || renderer_->textures().upgrades_pending() > 0);
+        if (busy && elapsed < timeout) {
+            commands_.repeat = true;
+            return ok();
+        }
+        wait_loaded_start = {};
+        char b[96];
+        std::snprintf(b, sizeof b, "%s after %.2f s", busy ? "still loading" : "loaded", elapsed);
+        return ok(b);
+    });
+    commands_.add("gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion> on|off | gfx lod_scale <x> | gfx min_pixels <x>", "renderer features and the detail settings of the tile views (speed against quality)", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (!renderer_) return fail("no renderer");
+        if (a.size() != 2) return fail("usage: gfx <name> on|off");
+        Renderer& r = *renderer_;
+        if (a[0] == "lod_scale") { r.lod_scale = float(std::atof(a[1].c_str())); return ok(); }
+        if (a[0] == "min_pixels") { r.min_pixels = float(std::atof(a[1].c_str())); return ok(); }
+        if (a[0] == "shadow_min_texels") { r.shadow_min_texels = float(std::atof(a[1].c_str())); return ok(); }
+        const bool on = a[1] != "off" && a[1] != "0";
+        if (a[0] == "shadows") r.shadows = on;
+        else if (a[0] == "ssao") r.ssao = on;
+        else if (a[0] == "fog") r.fog = on;
+        else if (a[0] == "clouds") r.clouds = on;
+        else if (a[0] == "lens_flare") r.lens_flare = on;
+        else if (a[0] == "vignette") r.vignette = on;
+        else if (a[0] == "depth_of_field") r.depth_of_field = on;
+        else if (a[0] == "distortion") r.distortion = on;
+        else return fail("unknown feature '" + a[0] + "'");
+        return ok(a[0] + (on ? " on" : " off"));
+    });
+    commands_.add("vsync", "vsync on|off", "present with or without waiting for the monitor (off: frame rate is the real cost of a frame)", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (a.size() != 1) return fail("usage: vsync on|off");
+        vsync = a[0] != "off" && a[0] != "0";
+        return ok(vsync ? "vsync on" : "vsync off");
     });
     commands_.add("frames", "frames N", "script: wait N rendered frames", [this, ok, fail](const CommandRegistry::Args& a) {
         uint64_t n;

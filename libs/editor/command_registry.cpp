@@ -115,6 +115,7 @@ bool ScriptRunner::step(CommandRegistry& registry) {
             line.erase(0, first + 1);
         }
         registry.wait_frames = 0;
+        registry.repeat = false;
         CommandResult r = registry.run(line);
         if (!r.message.empty()) Log::info(line + " -> " + r.message);
         if (!r.ok && !optional) {
@@ -122,6 +123,11 @@ bool ScriptRunner::step(CommandRegistry& registry) {
             error_ = "script line " + std::to_string(next_) + ": " + line + ": " + r.message;
             Log::error(error_);
             return false;
+        }
+        if (registry.repeat) {
+            --next_;
+            registry.repeat = false;
+            return true;
         }
         if (registry.wait_frames > 0) {
             wait_ = registry.wait_frames - 1;   // this frame counts as the first waited

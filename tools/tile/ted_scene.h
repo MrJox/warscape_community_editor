@@ -29,6 +29,7 @@ std::optional<Vec3> parse_vec3(const std::string& text, const char* prefix); // 
 class TedScene {
 public:
     static TedScene parse(const std::vector<uint8_t>& bytes);   // throws std::runtime_error
+    static TedScene parse(std::vector<uint8_t>&& bytes);        // keeps the bytes as the document's origin (no copy)
     std::vector<uint8_t> save() const { return doc_.save(); }
 
     int project_version() const;                                // <project version="17">
@@ -55,7 +56,22 @@ public:
     bool modified() const { return doc_.modified(); }
     void revert_all() { doc_.revert_all(); }
 
-    // Structural edits. Element indices after the edit point shift: re-resolve any stored index.
+    // Structural edits are done in place on the XmlDoc (no re-parse of the file) and recorded as text splices. A caller that wants an undo record brackets them:
+    //     const size_t mark = scene.begin_edit();   // bakes pending attribute edits (they belong to earlier commands)
+    //     ... structural edits and attribute edits ...
+    //     auto record = scene.end_edit(mark);       // bakes the attribute edits of this command too
+    // and undoes / redoes the record with unapply() / apply(). The text a record refers to is the text after the commands before it, which is what the
+    // undo stack guarantees (last in, first out).
+    size_t begin_edit() { doc_.bake_pending(); return doc_.journal_mark(); }
+    std::vector<XmlSplice> end_edit(size_t mark) {
+        doc_.bake_pending();
+        auto record = doc_.journal_since(mark);
+        doc_.journal_forget(mark);
+        return record;
+    }
+    void apply(const std::vector<XmlSplice>& record) { for (const XmlSplice& s : record) doc_.apply_splice(s); }
+    void unapply(const std::vector<XmlSplice>& record) { for (size_t i = record.size(); i-- > 0;) doc_.unapply_splice(record[i]); }
+    // Element indices after the edit point shift: re-resolve any stored index.
     int duplicate(int elem);                                   // copy placed right after `elem`; returns the copy's index
     void remove(int elem);
     using Snapshot = std::shared_ptr<const wce::XmlDoc>;        // whole-document snapshot for undo of structural edits

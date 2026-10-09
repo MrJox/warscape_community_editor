@@ -61,9 +61,11 @@ std::optional<Vec3> parse_vec3(const std::string& text, const char* prefix) {
     return v;
 }
 
-TedScene TedScene::parse(const std::vector<uint8_t>& bytes) {
+TedScene TedScene::parse(const std::vector<uint8_t>& bytes) { return parse(std::vector<uint8_t>(bytes)); }
+
+TedScene TedScene::parse(std::vector<uint8_t>&& bytes) {
     TedScene s;
-    s.doc_ = wce::XmlDoc::parse(bytes);
+    s.doc_ = wce::XmlDoc::parse(std::move(bytes));
     if (s.doc_.roots().empty() || s.doc_.elements()[s.doc_.roots()[0]].name != "project") throw std::runtime_error("not a tile.ted project");
     return s;
 }
@@ -145,13 +147,9 @@ void TedScene::set_flag(int elem, const char* flag, bool on) {
     doc_.set(elem, "flags", f);
 }
 
-int TedScene::duplicate(int elem) {
-    int copy = -1;
-    doc_ = doc_.duplicated_element(elem, &copy);
-    return copy;
-}
+int TedScene::duplicate(int elem) { return doc_.duplicate_element_inplace(elem); }
 
-void TedScene::remove(int elem) { doc_ = doc_.removed_element(elem); }
+void TedScene::remove(int elem) { doc_.remove_element_inplace(elem); }
 
 
 namespace {
@@ -184,13 +182,13 @@ void TedScene::require_element(int elem, const char* what) const {
 
 int TedScene::add_layer(int parent_layer, const std::string& name) {
     require_element(parent_layer, "layer");
-    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
-    std::string t = d.original_text();
+    doc_.bake_pending();
+    const std::string& t = doc_.original_text();
     int wrapper = -1;
-    for (int c : d.elements()[parent_layer].children)
-        if (d.elements()[c].name == "children") wrapper = c;
+    for (int c : doc_.elements()[size_t(parent_layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") wrapper = c;
     if (wrapper < 0) throw std::runtime_error("layer has no children element");
-    const auto& w = d.elements()[wrapper];
+    const auto& w = doc_.elements()[size_t(wrapper)];
     // insertion point: start of the line that holds </children>
     size_t close = t.rfind("</children>", w.end_off);
     size_t at = line_start(t, close);
@@ -199,29 +197,28 @@ int TedScene::add_layer(int parent_layer, const std::string& name) {
     std::string snippet = ind + "<LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"" +
                           wce::XmlDoc::encode_entities(name, '"') + "\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">" + nl +
                           ind + "    <children>" + nl + ind + "    </children>" + nl + ind + "</LayerInstance>" + nl;
-    t.insert(at, snippet);
-    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    doc_.splice(at, 0, snippet);
     int w2 = -1;
-    for (int c : doc_.elements()[parent_layer].children)
-        if (doc_.elements()[c].name == "children") w2 = c;
-    return doc_.elements()[w2].children.back();
+    for (int c : doc_.elements()[size_t(parent_layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") w2 = c;
+    return doc_.elements()[size_t(w2)].children.back();
 }
 
 int TedScene::move_to_layer(int elem, int layer) {
     require_element(elem, "element");
     require_element(layer, "layer");
     if (elem == layer || is_descendant(layer, elem)) throw std::runtime_error("cannot move a layer into itself");
-    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
-    std::string t = d.original_text();
-    const auto& e = d.elements()[elem];
-    int sub = d.subtree_size(elem);
+    doc_.bake_pending();
+    const std::string& t = doc_.original_text();
+    const auto& e = doc_.elements()[size_t(elem)];
+    int sub = doc_.subtree_size(elem);
     size_t cut_a = line_start(t, e.start_off), cut_b = line_end(t, e.end_off - 1);
     std::string piece = t.substr(cut_a, cut_b - cut_a);
     int wrapper = -1;
-    for (int c : d.elements()[layer].children)
-        if (d.elements()[c].name == "children") wrapper = c;
+    for (int c : doc_.elements()[size_t(layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") wrapper = c;
     if (wrapper < 0) throw std::runtime_error("target layer has no children element");
-    const auto& w = d.elements()[wrapper];
+    const auto& w = doc_.elements()[size_t(wrapper)];
     size_t close = t.rfind("</children>", w.end_off);
     size_t at = line_start(t, close);
     // re-indent the piece to the target depth
@@ -239,15 +236,14 @@ int TedScene::move_to_layer(int elem, int layer) {
         }
     }
     // apply the later edit first so the earlier offsets stay valid
-    if (cut_a < at) { t.insert(at, moved); t.erase(cut_a, cut_b - cut_a); }
-    else { t.erase(cut_a, cut_b - cut_a); t.insert(at, moved); }
-    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    if (cut_a < at) { doc_.splice(at, 0, moved); doc_.splice(cut_a, cut_b - cut_a, ""); }
+    else { doc_.splice(cut_a, cut_b - cut_a, ""); doc_.splice(at, 0, moved); }
     // the moved element is the last child of the target layer's children; the layer's own index shifts down when the cut was before it
     int new_layer = layer - (elem < layer ? sub : 0);
     int w2 = -1;
-    for (int c : doc_.elements()[new_layer].children)
-        if (doc_.elements()[c].name == "children") w2 = c;
-    return doc_.elements()[w2].children.back();
+    for (int c : doc_.elements()[size_t(new_layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") w2 = c;
+    return doc_.elements()[size_t(w2)].children.back();
 }
 
 std::vector<int> TedScene::polygon_points(int elem) const {
@@ -289,8 +285,7 @@ void TedScene::set_polygon_point(int elem, size_t index, const Vec3& local) {
 void TedScene::insert_polygon_point(int elem, size_t after_index, const Vec3& local) {
     auto pts = polygon_points(elem);
     if (pts.empty() || after_index >= pts.size()) throw std::runtime_error("point index out of range");
-    int copy = -1;
-    doc_ = doc_.duplicated_element(pts[after_index], &copy);
+    const int copy = doc_.duplicate_element_inplace(pts[after_index]);
     doc_.set(copy, "position", format_general(local[0]) + "," + format_general(local[1]) + "," + format_general(local[2]));
     refresh_area(*this, elem);
 }
@@ -298,7 +293,7 @@ void TedScene::insert_polygon_point(int elem, size_t after_index, const Vec3& lo
 bool TedScene::remove_polygon_point(int elem, size_t index) {
     auto pts = polygon_points(elem);
     if (pts.size() <= 2 || index >= pts.size()) return false;
-    doc_ = doc_.removed_element(pts[index]);
+    doc_.remove_element_inplace(pts[index]);
     refresh_area(*this, elem);
     return true;
 }
@@ -326,8 +321,9 @@ int TedScene::add_polygon(int layer, const std::string& type, const std::string&
     for (size_t i = 0; i < local.size(); ++i) { const Vec3& p = local[i]; const Vec3& q = local[(i + 1) % local.size()]; area += p[0] * q[2] - q[0] * p[2]; }
     a["area"] = format_ted_number(std::fabs(area) / 2);
 
-    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
-    std::string t = d.original_text();
+    doc_.bake_pending();
+    const wce::XmlDoc& d = doc_;
+    const std::string& t = d.original_text();
     int wrapper = -1;
     for (int ch : d.elements()[layer].children)
         if (d.elements()[ch].name == "children") wrapper = ch;
@@ -346,8 +342,7 @@ int TedScene::add_polygon(int layer, const std::string& type, const std::string&
     snippet += ">" + nl + ind + "    <points>" + nl;
     for (auto& p : local) snippet += ind + "        <point position=\"" + format_general(p[0]) + "," + format_general(p[1]) + "," + format_general(p[2]) + "\"/>" + nl;
     snippet += ind + "    </points>" + nl + ind + "</" + type + ">" + nl;
-    t.insert(at, snippet);
-    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    doc_.splice(at, 0, snippet);
     int w2 = -1;
     for (int ch : doc_.elements()[layer].children)
         if (doc_.elements()[ch].name == "children") w2 = ch;

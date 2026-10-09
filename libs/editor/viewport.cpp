@@ -1,6 +1,7 @@
 #include "editor/editor.h"
 
 #include "foundation/log.h"
+#include "foundation/profile.h"
 #include "scene/environment.h"
 
 #include <ImGuizmo.h>
@@ -43,6 +44,7 @@ void Viewport::use_fly() {
 }
 
 void Viewport::render(Editor& editor, int w, int h) {
+    WCE_PROF("viewport.render");
     Renderer* r = editor.renderer();
     if (!r) return;
     RenderScene& scene = editor.scene();
@@ -73,6 +75,7 @@ void Viewport::render(Editor& editor, int w, int h) {
 }
 
 EntityId Viewport::pick(Editor& editor, int x, int y) {
+    WCE_PROF("viewport.pick");
     Renderer* r = editor.renderer();
     if (!r || !target_.valid()) return 0;
     return r->pick(editor.scene(), ViewParams{controller_->camera(), float(editor.clock().time())}, target_, x, y);

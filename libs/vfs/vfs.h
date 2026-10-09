@@ -85,6 +85,7 @@ public:
 
     explicit Vfs(Config cfg);
     Vfs(Config cfg, std::unique_ptr<PackBackend> backend);   // a given backend, for tests and the backend comparison
+    ~Vfs();
     void mount();                    // builds the pack list and indexes; throws on failure
 
     // Which backend serves the packs (after the first use), and why the fallback was taken if it was.
@@ -109,6 +110,9 @@ private:
     std::filesystem::path extract_root(int pack) const;
     void extract(int pack, const std::vector<std::string>& in_pack_paths);
 
+    struct ExtractQueue;
+    // Extraction goes through one thread at a time (the pack tool is one connection) and combines the requests that pile up meanwhile into one call.
+    std::unique_ptr<ExtractQueue> queue_;
     Config cfg_;
     std::unique_ptr<PackBackend> backend_;
     std::string backend_note_;

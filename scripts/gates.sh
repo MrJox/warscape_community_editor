@@ -53,6 +53,8 @@ run vfx_check_rain    "$WB/vfx_check.exe" "rain heavy"
 
 # ---- tile_editor gates
 # monte_rosa's tile.ted has no SCENE_GRAPH (it crashed unit_tests before the Phase 1 fix, docs/baseline.md): the second file checks that
+run perf_check        "$WB/perf_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE"
+run xml_splice_check  "$WB/xml_splice_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
 run unit_tests        "$TB/unit_tests.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" "$TILE/tile.ted"
 run height_check      "$TB/height_check.exe" "$TILE/height_map_0.png"
 run weather_check     "$TB/weather_check.exe" "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"

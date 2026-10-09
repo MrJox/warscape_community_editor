@@ -39,6 +39,8 @@ public:
 
     // Set by the `frames` command: the script runner waits this many rendered frames before the next line.
     int wait_frames = 0;
+    // Set by a command that wants to run again after the next frame (`wait_loaded`): the script runner does not move on.
+    bool repeat = false;
 
 private:
     std::map<std::string, Entry> entries_;

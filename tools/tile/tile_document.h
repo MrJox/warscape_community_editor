@@ -13,6 +13,9 @@
 #include "tile/tile_project.h"
 #include "tile/world_transform.h"
 
+#include <array>
+#include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -41,8 +44,21 @@ struct TileDisplay {
 
 struct BuildingModel {
     std::vector<std::string> pieces;       // VFS paths of the rigid models (intact state of every piece)
+    float3 bmin{0, 0, 0}, bmax{0, 0, 0};   // union of the pieces' bounds once they have loaded
+    bool ok = false;                       // at least one drawable piece (assumed while the pieces load in the background)
+    bool resolved = false;                 // every piece has loaded or failed
+};
+
+// What the renderer's model cache says about one piece (the tool fills it in; the document does not know the renderer).
+struct PieceState {
+    enum class Status { Loading, Ready, Failed } status = Status::Loading;
     float3 bmin{0, 0, 0}, bmax{0, 0, 0};
-    bool ok = false;                       // at least one drawable piece
+};
+
+struct TileTypeStyle {
+    uint32_t color;
+    float size;
+    bool cross;       // many small instances: three lines instead of a box
 };
 
 class TileDocument : public Document {
@@ -67,6 +83,7 @@ public:
     void publish(RenderScene& scene, LayerId layer) override;
     void republish(RenderScene& scene, LayerId layer, const CommandStack::Dirty& dirty) override;
     OutlinerNode outline() const override;
+    uint64_t outline_stamp() const override { return structure_version_; }
     void inspect(const SourceRef& item, Inspector& inspector) override;
     std::string describe(const SourceRef& item) const override;
     std::string source_key() const override;
@@ -78,6 +95,9 @@ public:
     static int elem_of(uint64_t item) { return item == 0 ? -1 : int(item - 1); }
     SourceRef ref_of(int elem) const { return {id(), item_of(elem)}; }
     bool is_instance(int elem) const;                  // an instance with a position (not a layer, not a polygon point)
+    // Per frame: looks at the building pieces that were still loading; true when a building turned out to have no drawable model (it is a box
+    // now: the markers were rebuilt).
+    bool poll_models(const std::function<PieceState(const std::string&)>& peek);
     bool is_polygon(int elem) const;
     int layer_of(int elem) const;                      // nearest layer at or above `elem` (the scene graph for loose ones)
     double extent_x() const { return project_->extent_x(); }
@@ -90,6 +110,7 @@ public:
     const std::map<std::string, int>& type_counts() const { return type_counts_; }
     const std::vector<int>& instances() const { return instances_; }
     const BuildingModel* building_model(const std::string& key) const;
+    const BuildingModel* model_of(int elem) const;      // of a BUILDING_INSTANCE element, nullptr for other elements
     const std::vector<std::string>& model_fallbacks() const { return fallbacks_; }
     // The nearest instance along a ray (spheres around the instances), or -1.
     int pick_instance(const float3& origin, const float3& dir, bool visible_only = true) const;
@@ -135,30 +156,44 @@ public:
 
 private:
     friend class TedMoveCommand;
-    friend class TedSnapshotCommand;
+    friend class TedSpliceCommand;
     friend class BrushStepCommand;
 
-    struct Marker {
-        int elem = 0;
-        float3 pos;
-        float size = 2;
-        uint32_t color = 0xffffffffu;
-        bool cross = false;
-        std::string type;
-    };
+    using TypeStyle = TileTypeStyle;
+    enum : uint8_t { kLayerBit = 1, kInstanceBit = 2, kPolygonBit = 4 };
+    // Structure of arrays over the elements of the scene (element index = array index): what the document asks about every instance (is it one, where
+    // is it, which building). Built in one parallel pass over the XML elements plus one sequential pass for the parent chains, instead of walking and
+    // re-parsing the ancestors of every instance; rebuilt after structural edits, patched for one element after an attribute edit.
+    struct Index {
+        std::vector<uint16_t> type;                 // into type_names
+        std::vector<uint8_t> kind;                  // kLayerBit | kInstanceBit | kPolygonBit
+        std::vector<uint32_t> slot;                 // into world: the nearest ancestor-or-self that has a position or an orientation
+        std::vector<WorldTransform> world;          // dense; world[0] is the identity
+        std::vector<std::array<float, 3>> scale;
+        std::vector<int32_t> key;                   // building key id (into keys) of BUILDING_INSTANCE elements, -1 otherwise
+        std::vector<std::string> type_names, keys;
+        std::vector<TypeStyle> style;               // per type id
+        bool valid = false;
+    } idx_;
+    void build_index();
+    void index_edited(int elem);                    // the position / orientation of one element changed
     void resolve_buildings();
-    void rebuild_items();                       // instances_, type counts, markers (from the scene)
+    void rebuild_items(bool reindex = true);    // instances_, type counts, markers (from the scene and the index)
+    void log_fallbacks();
     void add_item_entities(RenderScene& scene, LayerId layer, int elem);
     void refresh_item(RenderScene& scene, int elem);
     void update_terrain(RenderScene& scene, bool first);
-    void rebuild_batch(RenderScene& scene, const std::string& type);
+    void rebuild_batch(RenderScene& scene, uint16_t type);
+    void publish_items(RenderScene& scene, LayerId layer, bool keep_terrain);
     void rebuild_polygon(RenderScene& scene, LayerId layer, int elem);
     float lod_distance(const std::string& type) const;
+    void build_pick_grid() const;
     bool save_scene_needed() const;
     bool height_modified() const;
     void apply_brush(BrushKind kind, float x, float z, const BrushSettings& s, float dt);
-    void push_snapshot(const std::string& name, const TedScene::Snapshot& before, std::vector<uint64_t> sel_before, std::vector<uint64_t> sel_after);
-    TedScene::Snapshot snap() const { return project_->scene.snapshot(); }
+    // A structural edit is recorded as the text splices it made (TedScene::begin_edit / end_edit): `mark` is what begin_edit returned.
+    void push_splice(const std::string& name, size_t mark, std::vector<uint64_t> sel_before, std::vector<uint64_t> sel_after);
+    bool is_instance_slow(int elem) const;                // the element's own attributes, not the index (which is stale right after a structural edit)
 
     std::unique_ptr<TileProject> project_;
     IVfs* vfs_ = nullptr;
@@ -171,16 +206,42 @@ private:
     uint64_t terrain_version_ = 1;
     int terrain_stride_ = 1;
     std::vector<int> instances_;
-    std::vector<Marker> markers_;
-    std::unordered_map<int, size_t> marker_of_;                       // elem -> index in markers_
+    // The markers (instances without a model), grouped by type: group t is [group_begin[t], group_begin[t + 1]) of the parallel arrays.
+    struct Markers {
+        std::vector<int32_t> elem;
+        std::vector<float> x, y, z;
+        std::vector<uint32_t> group_begin;
+        std::vector<int32_t> slot;                  // per element: index into the arrays, -1 when it has no marker
+    } markers_;
     std::map<std::string, int> type_counts_;
-    std::map<std::string, EntityId> batch_entity_;
-    std::set<std::string> dirty_types_;
-    std::unordered_map<int, std::vector<EntityId>> item_entities_;    // building pieces and polygon outlines by element
+    std::vector<EntityId> batch_entity_;                              // per type id: the overlay entity of that type's markers
+    std::vector<uint8_t> dirty_type_;                                 // per type id: rebuild the overlay at the next update
+    std::vector<EntityId> first_entity_;                              // per element: its first model piece entity (the pieces have consecutive ids), 0 for none
+    std::vector<uint8_t> entity_count_;
+    std::unordered_map<int, EntityId> outline_entity_;                // polygon outlines by element
     std::map<std::string, BuildingModel> models_;
+    std::vector<const BuildingModel*> key_model_;                     // per building key id
+    std::vector<int> unresolved_;                                     // key ids whose pieces are still loading
     std::vector<std::string> fallbacks_;
+    std::future<void> prefetch_;                                      // background extraction of the pieces and textures (first open of a tile only)
     bool markers_dirty_ = true, polygons_dirty_ = false;
+    size_t hidden_signature_ = 0;
     float3 lod_eye_{1e30f, 1e30f, 1e30f};
+    // pick grid: the instances in cells of the ground plane, for the ray test of a click or a hover
+    struct PickGrid {
+        bool valid = false;
+        float cell = 64, x0 = 0, z0 = 0;
+        int nx = 0, nz = 0;
+        std::vector<uint32_t> start;                // nx * nz + 1
+        std::vector<uint32_t> items;                // indices into the arrays below
+        std::vector<int32_t> elem;
+        std::vector<float> x, y, z, r;
+        std::vector<uint16_t> type;
+        std::vector<uint32_t> stamp;
+        uint32_t stamp_counter = 0;
+    };
+    mutable PickGrid grid_;
+    mutable bool grid_dirty_ = true;
     Overlay last_highlight_;
     bool have_highlight_ = false;
 
