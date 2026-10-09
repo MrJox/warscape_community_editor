@@ -20,6 +20,13 @@ void CommandStack::push(std::unique_ptr<Command> c) {
     merge_open_ = entries_.back()->merge_key() != 0;
 }
 
+void CommandStack::drop_redo() {
+    if (position_ >= entries_.size()) return;
+    if (saved_valid_ && saved_position_ > position_) saved_valid_ = false;
+    entries_.resize(position_);
+    merge_open_ = false;
+}
+
 bool CommandStack::undo() {
     if (!can_undo()) return false;
     merge_open_ = false;
@@ -50,6 +57,7 @@ void CommandStack::clear() {
     saved_valid_ = false;
     merge_open_ = false;
     last_dirty_ = Dirty{};
+    pending_ = Dirty{};
     ++version_;
 }
 

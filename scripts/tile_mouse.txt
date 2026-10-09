@@ -1,0 +1,84 @@
+# The tile tool driven by the (scripted) mouse and keys: the same events a user sends. %TILE% is a kit tile with two buildings.
+tile "%TILE%"
+frames 3
+assert_tool tile
+assert_mode select
+assert_modified 0
+
+# click selects a building through the viewport; ctrl+click toggles; clicking the ground clears
+tile_select BUILDING_INSTANCE
+focus
+frames 3
+select none
+assert_selected 0
+tile_click 7
+frames 2
+assert_selected 1
+assert_selected_type BUILDING_INSTANCE
+mouse click 5% 5%
+frames 3
+assert_selected 0
+
+# G grabs the selected building onto the ground under the mouse, the click confirms; one undo entry; Esc cancels
+tile_select BUILDING_INSTANCE
+mouse move 70% 65%
+frames 3
+key G
+frames 2
+assert_grabbing 1
+mouse move 60% 62%
+frames 3
+mouse click 60% 62%
+frames 2
+assert_grabbing 0
+assert_at_cursor 0.6
+assert_history 1 1
+key G
+frames 2
+mouse move 40% 70%
+frames 3
+key Escape
+frames 2
+assert_grabbing 0
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+
+# brush mode: the drag paints and the camera stays; one undo entry per stroke
+tile_mode raise
+mouse move 50% 55%
+frames 3
+mouse drag 42% 55% 58% 55% 8
+frames 2
+assert_history 1 1
+assert_mode raise
+undo
+assert_modified 0
+tile_mode select
+
+# drawing a polygon with the mouse: clicks add points, Enter finishes
+select none
+draw_polygon AI_HINT_POLYGON_INSTANCE AIH_AMBUSH_FOREST
+mouse click 40% 60%
+mouse click 60% 60%
+mouse click 55% 75%
+mouse click 42% 72%
+key Enter
+frames 3
+assert_selected_type AI_HINT_POLYGON_INSTANCE
+assert_instances 3
+assert_history 1 1
+
+# a point handle is dragged with the mouse (one undo entry for the whole drag), shift+click on an edge inserts a point
+tile_drag_point 1 462 484
+frames 3
+assert_history 2 2
+undo
+frames 2
+assert_history 2 1
+undo
+frames 2
+assert_instances 2
+assert_modified 0
+quit

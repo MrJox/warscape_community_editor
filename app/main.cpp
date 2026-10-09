@@ -79,7 +79,9 @@ void create_rtv() {
 }
 
 LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
+    // scripted runs ignore the real mouse (Editor::inject_input replaces it)
+    const bool real_mouse = msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST;
+    if (!(real_mouse && g_editor && g_editor->scripted_input()) && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     switch (msg) {
     case WM_SIZE:
         if (wp != SIZE_MINIMIZED) {
@@ -115,6 +117,7 @@ Options parse_args() {
         const bool more = i + 1 < argc;
         if (a == L"--tool" && more) o.tool = utf8(++i);
         else if (a == L"--open" && more) add("open \"" + utf8(++i) + "\"\nframes 2");
+        else if (a == L"--tile" && more) add("tile \"" + utf8(++i) + "\"\nframes 2");
         else if (a == L"--open-disk" && more) add("open \"" + utf8(++i) + "\" disk\nframes 2");
         else if (a == L"--cam" && i + 3 < argc) {
             std::string line = "cam " + utf8(i + 1) + " " + utf8(i + 2) + " " + utf8(i + 3);
@@ -134,6 +137,11 @@ Options parse_args() {
             o.capture_path = argv[++i];
         } else if (a.rfind(L"--", 0) == 0) {   // any other --name args... runs the command `name args...` (the old weather_editor flags: --view, --blend, --pick, ...)
             std::string line = utf8(i).substr(2);
+            // the old Tile Studio flags whose names are taken by generic commands or use hyphens
+            static const std::pair<const char*, const char*> kAlias[] = {{"select", "tile_select"}, {"move", "tile_move"}, {"delete", "delete_item"}, {"add", "add_building"},
+                {"add-polygon", "add_polygon"}, {"polygon-point", "polygon_point"}, {"new-layer", "new_layer"}, {"move-to-layer", "move_to_layer"}, {"save-to", "save_to"}};
+            for (const auto& [from, to] : kAlias)
+                if (line == from) line = to;
             while (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0) line += " \"" + utf8(++i) + "\"";
             add(line);
         }
@@ -210,7 +218,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         double step = opt.fixed_step;
         if (step <= 0 && (batch || !opt.script_text.empty())) step = 1.0 / 60.0;
         if (step > 0) editor.set_fixed_step(step);
-        if (step > 0) io.ConfigFlags |= ImGuiConfigFlags_NoMouse;   // scripted runs ignore the real cursor (a hovered splitter changes the shot); commands do not use the mouse
         if (step > 0) io.KeyRepeatDelay = 1.0e6f;   // scripted runs: a held key must not auto-repeat when a frame happens to take long
 
         bool done = false;
@@ -231,6 +238,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             editor.pre_frame();
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
+            editor.inject_input();   // scripted runs: the `mouse` commands replace the real cursor (a hovered splitter changes a shot)
             ImGui::NewFrame();
             editor.frame();
             ImGui::Render();

@@ -17,7 +17,9 @@ class CommandRegistry;
 
 // What the viewport tells the active tool about the mouse.
 struct ViewportEvent {
-    enum class Kind { Click, Drag, Hover } kind = Kind::Hover;
+    // Click: a press and release without moving (the default selects). Press / Drag / Release: the left button, every frame it is held; a tool that
+    // returns true from Press owns the gesture (no camera rotation, no click). Hover: every frame the cursor is over the viewport.
+    enum class Kind { Click, Press, Drag, Release, Hover } kind = Kind::Hover;
     int x = 0, y = 0;                // pixel in the viewport image
     bool ctrl = false, shift = false, alt = false;
     EntityId hit = 0;                // what is under the cursor (clicks only), 0 for nothing
@@ -39,6 +41,9 @@ public:
     virtual void draw_menus(Editor& editor) { (void)editor; }
     // Return true when the event was handled (the default click-to-select is then skipped).
     virtual bool viewport_input(Editor& editor, const ViewportEvent& event) { (void)editor; (void)event; return false; }
+    // True while the left mouse button belongs to the tool (a brush is active, a polygon is being drawn): Press always goes to the tool, the left
+    // button does not rotate the camera and a click does not select.
+    virtual bool claims_left_button(Editor& editor) const { (void)editor; return false; }
     virtual void register_commands(Editor& editor, CommandRegistry& commands) { (void)editor; (void)commands; }
     // Once per frame while the tool is active, after the documents were re-published and before the viewport renders: put the tool's
     // documents into the scene's environment slot, refresh anything the renderer reads.

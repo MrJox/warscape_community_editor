@@ -171,6 +171,27 @@ void Editor::release_test_keys() {
     test_keys_.erase(std::remove_if(test_keys_.begin(), test_keys_.end(), [](const HeldKey& k) { return k.frames_left <= 0; }), test_keys_.end());
 }
 
+void Editor::inject_input() {
+    if (!clock_.fixed_step()) return;
+    ImGuiIO& io = ImGui::GetIO();
+    if (!mouse_active_) {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);   // the real cursor is ignored
+        for (int b = 0; b < 3; ++b) io.AddMouseButtonEvent(b, false);
+        return;
+    }
+    if (!mouse_queue_.empty()) {
+        mouse_cur_ = mouse_queue_.front();
+        mouse_queue_.pop_front();
+    }
+    const ImVec2 o = viewport_.image_origin();
+    io.AddMousePosEvent(o.x + mouse_cur_.x, o.y + mouse_cur_.y);
+    for (int b = 0; b < 3; ++b) io.AddMouseButtonEvent(b, mouse_cur_.down[b]);
+    if (mouse_cur_.wheel != 0) {
+        io.AddMouseWheelEvent(0, mouse_cur_.wheel);
+        mouse_cur_.wheel = 0;
+    }
+}
+
 void Editor::pre_frame() {
     release_test_keys();
     if (tools_.empty()) return;
@@ -548,13 +569,19 @@ void Editor::register_builtin_commands() {
         for (auto& m : msgs) s += (s.empty() ? "" : "; ") + m;
         return all ? ok(s) : fail(s);
     });
-    commands_.add("undo", "undo", "undo the last edit of the active document", [this, ok, fail](const CommandRegistry::Args&) {
+    commands_.add("undo", "undo [n]", "undo the last edit (or n edits) of the active document", [this, ok, fail](const CommandRegistry::Args& a) {
         Document* d = docs_.active();
-        return d && d->history().undo() ? ok() : fail("nothing to undo");
+        const int n = a.empty() ? 1 : std::max(1, std::atoi(a[0].c_str()));
+        bool any = false;
+        for (int i = 0; d && i < n; ++i) any = d->history().undo() || any;
+        return any ? ok() : fail("nothing to undo");
     });
-    commands_.add("redo", "redo", "redo", [this, ok, fail](const CommandRegistry::Args&) {
+    commands_.add("redo", "redo [n]", "redo (n edits)", [this, ok, fail](const CommandRegistry::Args& a) {
         Document* d = docs_.active();
-        return d && d->history().redo() ? ok() : fail("nothing to redo");
+        const int n = a.empty() ? 1 : std::max(1, std::atoi(a[0].c_str()));
+        bool any = false;
+        for (int i = 0; d && i < n; ++i) any = d->history().redo() || any;
+        return any ? ok() : fail("nothing to redo");
     });
     commands_.add("select", "select none | select [add] <item>...", "select items of the active document", [this, ok, fail](const CommandRegistry::Args& a) {
         Document* d = docs_.active();
@@ -695,7 +722,72 @@ void Editor::register_builtin_commands() {
         if (selection_.empty()) return fail("nothing is selected");
         return selection_.items()[0].item == item ? ok() : fail("selected item is " + std::to_string(selection_.items()[0].item));
     });
-    commands_.add("key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape>", "press a key combination (held for two frames), as the keyboard would", [this, ok, fail](const CommandRegistry::Args& a) {
+    commands_.add("mouse", "mouse move x y | click x y [left|right|middle] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off",
+                  "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame", [this, ok, fail](const CommandRegistry::Args& a) {
+        // pixels, or "50%" of the viewport image's width (x) / height (y): the tests do not know the window size
+        int axis = 0;
+        auto num = [this, &axis](const std::string& t, float& v) {
+            char* e = nullptr;
+            v = std::strtof(t.c_str(), &e);
+            if (e && e != t.c_str() && *e == '%' && e[1] == 0) {
+                v = v * 0.01f * float(axis == 0 ? viewport_.width() : viewport_.height());
+                return true;
+            }
+            return e && e != t.c_str() && *e == 0;
+        };
+        auto button = [](const CommandRegistry::Args& args, size_t at) { return at < args.size() && args[at] == "right" ? 1 : at < args.size() && args[at] == "middle" ? 2 : 0; };
+        if (a.empty()) return fail("usage: mouse move|click|drag|wheel|off ...");
+        MouseState m = mouse_cur_;
+        float x0, y0, x1, y1;
+        int frames = 0;
+        if (a[0] == "off") { park_mouse(); return ok(); }
+        if (a[0] == "wheel" && a.size() > 1 && (axis = 0, num(a[1], x0))) { m.wheel = x0; queue_mouse(m); commands_.wait_frames = 2; return ok(); }
+        auto xy = [&](size_t at, float& x, float& y) { axis = 0; if (at + 1 >= a.size() || !num(a[at], x)) return false; axis = 1; return num(a[at + 1], y); };
+        if (a[0] == "move" && a.size() > 2 && xy(1, x0, y0)) {
+            m.x = x0; m.y = y0;
+            queue_mouse(m);
+            commands_.wait_frames = 2;
+            return ok();
+        }
+        if (a[0] == "click" && a.size() > 2 && xy(1, x0, y0)) {
+            const int b = button(a, 3);
+            m.x = x0; m.y = y0;
+            for (int i = 0; i < 4; ++i) {
+                m.down[b] = i == 1 || i == 2;
+                queue_mouse(m);
+                ++frames;
+            }
+            commands_.wait_frames = frames + 2;
+            return ok();
+        }
+        if (a[0] == "drag" && a.size() > 4 && xy(1, x0, y0) && xy(3, x1, y1)) {
+            float n = 8;
+            axis = 0;
+            if (a.size() > 5) num(a[5], n);
+            n = std::max(1.0f, n);
+            const int b = button(a, 6);
+            m.x = x0; m.y = y0;
+            m.down[b] = false;
+            queue_mouse(m);
+            m.down[b] = true;
+            queue_mouse(m);
+            frames = 2;
+            for (int i = 1; i <= int(n); ++i) {
+                m.x = x0 + (x1 - x0) * float(i) / n;
+                m.y = y0 + (y1 - y0) * float(i) / n;
+                queue_mouse(m);
+                ++frames;
+            }
+            queue_mouse(m);
+            m.down[b] = false;
+            queue_mouse(m);
+            frames += 2;
+            commands_.wait_frames = frames + 2;
+            return ok();
+        }
+        return fail("usage: mouse move x y | click x y [button] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off");
+    });
+    commands_.add("key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab>", "press a key combination (held for two frames), as the keyboard would", [this, ok, fail](const CommandRegistry::Args& a) {
         if (a.empty()) return fail("usage: key Ctrl+1");
         ImGuiIO& io = ImGui::GetIO();
         std::string rest = a[0];
@@ -712,6 +804,9 @@ void Editor::register_builtin_commands() {
         else if (rest.size() == 1 && std::isalpha(static_cast<unsigned char>(rest[0]))) key = ImGuiKey(ImGuiKey_A + (std::toupper(static_cast<unsigned char>(rest[0])) - 'A'));
         else if (lower(rest) == "delete") key = ImGuiKey_Delete;
         else if (lower(rest) == "escape") key = ImGuiKey_Escape;
+        else if (lower(rest) == "enter" || lower(rest) == "return") key = ImGuiKey_Enter;
+        else if (lower(rest) == "space") key = ImGuiKey_Space;
+        else if (lower(rest) == "tab") key = ImGuiKey_Tab;
         else if (rest.size() >= 2 && (rest[0] == 'F' || rest[0] == 'f')) {
             const int n = std::atoi(rest.c_str() + 1);
             if (n >= 1 && n <= 12) key = ImGuiKey(ImGuiKey_F1 + n - 1);

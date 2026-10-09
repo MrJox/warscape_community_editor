@@ -78,6 +78,34 @@ EntityId Viewport::pick(Editor& editor, int x, int y) {
     return r->pick(editor.scene(), ViewParams{controller_->camera(), float(editor.clock().time())}, target_, x, y);
 }
 
+bool Viewport::ray(int x, int y, float3& origin, float3& direction) const {
+    if (!target_.valid()) return false;
+    const Camera cam = controller_->camera();
+    const float3 fwd = normalize(cam.target - cam.eye);
+    const float3 right = normalize(cross({0, 1, 0}, fwd));
+    const float3 up = cross(fwd, right);
+    const float th = std::tan(cam.fov_y * 0.5f), aspect = float(target_.width()) / float(target_.height());
+    const float nx = 2.0f * (float(x) + 0.5f) / float(target_.width()) - 1.0f, ny = 1.0f - 2.0f * (float(y) + 0.5f) / float(target_.height());
+    origin = cam.eye;
+    direction = normalize(fwd + right * (nx * th * aspect) + up * (ny * th));
+    return true;
+}
+
+bool Viewport::project(const float3& world, float& x, float& y) const {
+    if (!target_.valid()) return false;
+    const Camera cam = controller_->camera();
+    const float3 fwd = normalize(cam.target - cam.eye);
+    const float3 right = normalize(cross({0, 1, 0}, fwd));
+    const float3 up = cross(fwd, right);
+    const float3 rel = world - cam.eye;
+    const float z = dot(rel, fwd);
+    if (z <= cam.znear) return false;
+    const float th = std::tan(cam.fov_y * 0.5f), aspect = float(target_.width()) / float(target_.height());
+    x = (dot(rel, right) / (z * th * aspect) * 0.5f + 0.5f) * float(target_.width()) - 0.5f;
+    y = (0.5f - dot(rel, up) / (z * th) * 0.5f) * float(target_.height()) - 0.5f;
+    return true;
+}
+
 bool Viewport::capture(Editor& editor, int w, int h, int frames, const std::wstring& path) {
     Renderer* r = editor.renderer();
     if (!r || w < 16 || h < 16) return false;
@@ -146,6 +174,7 @@ void Viewport::draw(Editor& editor) {
     if (!target_.valid()) { ImGui::End(); return; }
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
+    image_origin_ = origin;
     ImGui::Image(ImTextureID(target_.srv()), size);
     ImGui::SetCursorScreenPos(origin);
     ImGui::InvisibleButton("##viewport", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
@@ -153,11 +182,13 @@ void Viewport::draw(Editor& editor) {
     const bool active = ImGui::IsItemActive();
     ImGuiIO& io = ImGui::GetIO();
 
-    // ---- gizmo
+    // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
+    Tool* tool = editor.active_tool();
+    const bool claims = tool && tool->claims_left_button(editor);
     Document* gizmo_doc = nullptr;
     float4x4 world;
     SourceRef primary;
-    if (gizmo != GizmoMode::Off && !fly_active_ && !editor.selection().empty()) {
+    if (gizmo != GizmoMode::Off && !fly_active_ && !claims && !editor.selection().empty()) {
         primary = editor.selection().items()[0];
         gizmo_doc = editor.documents().find(primary.doc);
         if (gizmo_doc && !gizmo_doc->item_transform(primary, world)) gizmo_doc = nullptr;
@@ -194,6 +225,33 @@ void Viewport::draw(Editor& editor) {
     gizmo_was_using_ = using_gizmo;
     const bool over_gizmo = using_gizmo || (gizmo_doc && ImGuizmo::IsOver());
 
+    // ---- the active tool's mouse events (hover every frame, the left button's press / drag / release)
+    auto tool_event = [&](ViewportEvent::Kind kind) {
+        ViewportEvent ev;
+        ev.kind = kind;
+        ev.x = int(io.MousePos.x - origin.x);
+        ev.y = int(io.MousePos.y - origin.y);
+        ev.ctrl = io.KeyCtrl;
+        ev.shift = io.KeyShift;
+        ev.alt = io.KeyAlt;
+        return tool->viewport_input(editor, ev);
+    };
+    if (tool && hovered && !over_gizmo) {
+        tool_event(ViewportEvent::Kind::Hover);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !fly_active_) {
+            const bool taken = tool_event(ViewportEvent::Kind::Press);
+            if (taken || claims) tool_drag_ = true;
+        }
+    }
+    if (tool && tool_drag_) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) tool_event(ViewportEvent::Kind::Drag);
+        else {
+            tool_event(ViewportEvent::Kind::Release);
+            tool_drag_ = false;
+            pressed_ = false;
+        }
+    }
+
     // ---- camera
     CameraInput in;
     in.dt = io.DeltaTime;
@@ -202,8 +260,8 @@ void Viewport::draw(Editor& editor) {
         in.dy = io.MouseDelta.y;
         in.wheel = hovered ? io.MouseWheel : 0;
         if (!over_gizmo) {
-            in.rotate = fly_active_ ? ImGui::IsMouseDown(ImGuiMouseButton_Right) && active
-                                    : (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right)) && active;
+            const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && !tool_drag_ && !claims;
+            in.rotate = fly_active_ ? ImGui::IsMouseDown(ImGuiMouseButton_Right) && active : (left || ImGui::IsMouseDown(ImGuiMouseButton_Right)) && active;
             in.pan = ImGui::IsMouseDown(ImGuiMouseButton_Middle) && active;
         }
         if (fly_active_ && ImGui::IsMouseDown(ImGuiMouseButton_Right) && !io.WantTextInput) {
@@ -219,7 +277,7 @@ void Viewport::draw(Editor& editor) {
     controller_->update(in);
 
     // ---- click: a press and release without moving selects what is under the cursor
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !over_gizmo) {
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !over_gizmo && !tool_drag_ && !claims) {
         press_ = {io.MousePos.x, io.MousePos.y};
         pressed_ = true;
     }
@@ -237,7 +295,6 @@ void Viewport::draw(Editor& editor) {
             ev.alt = io.KeyAlt;
             ev.hit = pick(editor, x, y);
             if (const Entity* e = editor.scene().find(ev.hit)) ev.hit_source = e->source;
-            Tool* tool = editor.active_tool();
             if (!(tool && tool->viewport_input(editor, ev))) {
                 if (ev.hit_source.doc == 0) {
                     if (!ev.ctrl) editor.selection().clear();

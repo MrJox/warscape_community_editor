@@ -53,6 +53,35 @@ the new baseline and clears the history, so the saved bytes differ from the pack
 Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` is still built from `legacy/weather_editor`
 (window shots stay its render regression) until Phase 8; it shares the sample map, XML and picker code with the tool. `scripts/weather_check.sh` supersedes `variation_e2e.ps1` (which only knew the legacy build folder).
 
+## Tile tool (`tools/tile`)
+
+Opens a tile folder (the one with `tile.ted`): File > Open file / Tile > Open tile... on a `tile.ted`, `--tile <folder>`, the `tile <folder>` command. A `TileDocument` wraps a `TileProject` (the lossless `TedScene` and the `HeightField`), and everything it does is a `Command` on the document's stack:
+attribute edits on the scene (moves, rotations, polygon points) merge per gesture, structural edits (duplicate, delete, add building, polygons, layers) keep whole-document snapshots, and a brush stroke is one entry however many steps it took. Items are element indices + 1 (item 0 is the terrain), so the shared
+outliner, selection, inspector, gizmo and history work on them. Save writes `tile.ted` and `height_map_0.png` in place (a one-time `.bak` of each), only what changed: the edited spans of `tile.ted`, the kit-exact PNG encoder for the height map; `save_to <folder>` writes both elsewhere.
+
+What it shows: the terrain from the height map (patches of the shared terrain pass), BUILDING_INSTANCEs as their real models (`rigidmodels/buildings/<key>/` pieces; a key without a drawable model is a wire box and is listed in the log), every other instance as a small marker batched per type
+with distance culling (vegetation 450 m, decals 300 m, others 3000 m, adjustable in the Tile menu), polygon outlines, the tile's rectangle, and highlights for the selection (box, axes, polygon point handles) and the brush ring. Where the height map sits is in `docs/formats/tile_ted.md`.
+
+| Tile Studio (legacy) | Tile tool |
+|---|---|
+| RMB orbit, MMB pan, wheel zoom | the shared orbit / fly camera |
+| LMB select; Raise / Lower / Smooth / Flatten / Level brushes | **Tile** panel: mode, radius, strength, falloff, flatten height; in a brush mode the left button paints (and does not orbit); Esc returns to Select |
+| `G` grab on the ground, click confirms, Esc / right click cancels | same (`G`; grid snap in the panel); the gizmo steps aside while a grab or brush owns the button |
+| Ctrl+Z / Ctrl+Y, Ctrl+S | shared (terrain strokes and instance edits share the document's one history) |
+| `Ctrl+D` duplicate, `Del` delete | same; `R` rotate is now **Ctrl+R** (Ctrl+Shift+R reverses) because `R` is the shared scale-gizmo key; step in the panel |
+| layers: right-click a layer (new layer, move selected here, rename, delete) | **Layers** panel (same context menus; per-type visibility checkboxes) next to the shared Outliner |
+| building add by key | **Tile** panel: key + Add, `add_building <key> [x z]` |
+| polygons / AI hints: draw, point handles, shift+click inserts, `Del` removes, hint combo, `area` recomputed | same (panel, mouse, Inspector's hint combo) |
+| weather picker (which environment the game picks for the map) | **Weather / climate** section of the Tile panel (data only; Phase 7 lights the tile with the result) |
+| inspector: position, euler, Drop to terrain, attributes | shared Inspector (position in scene units, euler in degrees, attributes read-only), Drop to terrain in the panel |
+| wireframe terrain | not ported (the renderer has no wireframe mode) |
+| script flags `--tile --paint --select --move --duplicate --delete --rotate --add --add-polygon --polygon-point --new-layer --move-to-layer --save-to --undo --redo --cam --shot --frames` | the same flags of `wce.exe` (a flag is the command of that name: `tile`, `paint`, `tile_select`, `tile_move`, `duplicate`, `delete_item`, `rotate`, `add_building`, `add_polygon`, `polygon_point`, `new_layer`, `move_to_layer`, `save_to`, `undo [n]`, `redo [n]`); `--cam yaw pitch dist` uses the shared orbit camera's convention (target = tile centre) |
+
+Extra commands: `tile_mode`, `brush`, `grab_to x z`, `tile_click`, `tile_click_ground`, `tile_drag_point`, `draw_polygon`, `tile_diagnostics` and the tests `assert_instances`, `assert_type_count`, `assert_world`, `assert_world_xz`, `assert_height`, `mark_height` / `assert_height_delta`, `assert_selected_type`,
+`assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored.
+
+`tile_studio.exe` stays built from `legacy/tile_editor` (own renderer, its shot is still a gate) until Phase 8.
+
 ## Layouts
 
 ImGui runs with docking and no ini file. Each tool has its own layout file `<settings folder>/layouts/<tool id>.ini` (the settings folder is
@@ -94,6 +123,9 @@ so a whole drag is one undo entry. Scale is accepted by the gizmo but a document
   documents, the asset browser, a whole-window shot and an offscreen capture; the shot and the capture must be identical between the runs) and `scripts/app_firstrun.txt` once without any settings.
 - `scripts/weather_check.sh` (render, `weather_tool_check` in `gates.sh`): `scripts/weather_smoke.txt` twice in throw-away folders: open, attribute edit with undo and redo, structural edits, save (exactly one line differs
   from the pack file, both runs save the same bytes), a second environment and cross-fade, view modes, the weather picker, a database edit saved as XML and FASTBIN (they convert into each other byte for byte), an offscreen capture.
+- `scripts/tile_check.sh` (render, `tile_tool_check` in `gates.sh`): `scripts/tile_smoke.txt` twice (select / move / rotate / duplicate / delete / polygons / layers / brush, each with undo and redo, then a save; the saved files and the capture must be identical between the runs),
+  `tile_mouse.txt` (click select, G grab, brush drag, polygon drawing with Enter, point handle drag, through the scripted mouse), `tile_roundtrip.txt` (every kind of edit, undo all, save: the files equal the originals byte for byte) and `tile_save.txt` (save in place keeps a `.bak`; undo and save
+  again restores the bytes); and the saved tile.ted differs from the original in exactly the edited line, the saved height map only inside the brush.
 - `scripts/shots.sh`: the weather shots (legacy app) and the `wce.exe --capture` references, byte for byte.
 
 Scripted runs (`--fixed-step` / `--shot` / `--capture` / `--script`) ignore the real mouse and keys never auto-repeat, and an offscreen capture restarts the renderer's temporal state

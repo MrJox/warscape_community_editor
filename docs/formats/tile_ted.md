@@ -13,3 +13,8 @@ BUILDING_INSTANCE attributes: key (battlefield_buildings key), building_tech_lev
 
 ## Editing
 Attribute edits only (the text outside the edited value is untouched); setting a value equal to the current one (as float32) is a no-op; `revert_all` restores the original bytes. Structural edits (add / remove / duplicate instances) go through `XmlDoc::{with_child, removed_element, duplicated_element}`.
+
+## Where the height map sits (measured in Phase 6)
+`height_map_0.png` is not stretched over the tile. It has a border of one cell (128 m) on every side: its size is `(cells + 2) * ppc` pixels per axis (`cells` = TILE `width` / `height` of the tile database, `ppc` = pixels per cell: 128 for the settlement tiles, 32 for monte_rosa), one pixel per `128 / ppc` metres, pixel (0, 0) at (-128, -128) m in the tile's frame (x = scene x / 2, z = scene z / 2), rows run along +z, no flip.
+Evidence: on `western_city_rome/medium` (8 x 8 cells, 1280 px) the instance heights of the 94,000 buildings and trees sit on the height map with a mean error of 0.68 m (median 0.06 m) at offset 128 m / 1 m per pixel, against 1.9 m when the map is stretched over the 1024 m tile; a search over offsets and scales has its minimum at exactly that offset and scale, and flipping z makes it worse (1.7 m). `TileProject::pixel_x / pixel_z / height_at` implement it; without a tile database entry the map is stretched over the tile as the Phase 1 code did.
+Instance orientations: `euler(a, b, c)` is `Rz(c) * Ry(a) * Rx(-b)` (above); the tile tool draws the building models with that matrix and the buildings of the Rome tile line up along the streets, but the handedness of the game's frame against TEd's (building_list.xml flips z) is not checked pixel for pixel.

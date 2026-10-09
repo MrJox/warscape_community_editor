@@ -117,7 +117,10 @@ void WeatherTool::activated(Editor& editor) {
     }
     bool has_sample = false;
     for (DocumentId id : editor.documents().order())
-        if (dynamic_cast<SampleMapDocument*>(editor.documents().find(id))) has_sample = true;
+        if (dynamic_cast<SampleMapDocument*>(editor.documents().find(id))) {
+            has_sample = true;
+            editor.documents().set_visible(id, true);
+        }
     if (!has_sample) reroll(editor);
 }
 

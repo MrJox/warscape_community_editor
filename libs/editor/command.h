@@ -32,6 +32,8 @@ public:
     bool can_undo() const { return position_ > 0; }
     bool can_redo() const { return position_ < entries_.size(); }
     void break_merge() { merge_open_ = false; }
+    // Forgets the entries that were undone (a cancelled gesture must not leave a redo behind).
+    void drop_redo();
 
     // The history, oldest first; entries [0, position) are applied.
     size_t size() const { return entries_.size(); }
@@ -51,12 +53,21 @@ public:
         std::vector<uint64_t> items;
     };
     const Dirty& last_dirty() const { return last_dirty_; }
+    // Everything touched since the last call (several commands can move in one frame: a multi-step undo, jump_to): the union of their items, or all
+    // when any of them did not say. This is what a document re-publishes from.
+    Dirty take_dirty() {
+        Dirty d = pending_;
+        pending_ = Dirty{false, {}};
+        return d;
+    }
     void clear();
 
 private:
     void note(const Command& c) {
         last_dirty_.items = c.dirty_items();
         last_dirty_.all = last_dirty_.items.empty();
+        if (last_dirty_.all) pending_.all = true;
+        else if (!pending_.all) pending_.items.insert(pending_.items.end(), last_dirty_.items.begin(), last_dirty_.items.end());
         ++version_;
     }
 
@@ -67,6 +78,7 @@ private:
     bool merge_open_ = false;
     uint64_t version_ = 0;
     Dirty last_dirty_;
+    Dirty pending_{false, {}};
 };
 
 } // namespace wce

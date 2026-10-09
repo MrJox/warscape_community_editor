@@ -1,0 +1,29 @@
+# Edit a tile every way there is, undo all of it, save: the files must equal the originals byte for byte (minimal edit / round trip never regresses).
+tile "%TILE%"
+frames 3
+tile_select BUILDING_INSTANCE
+tile_move 12 -7
+rotate 45
+duplicate
+add_building khazad_fort_wall_small_straight 460 470
+add_polygon "NOGO_REGION_POLYGON_INSTANCE|AIH_COVER_LINE|440,470;450,470;450,480"
+new_layer Test
+paint raise 457 478 25
+paint smooth 457 478 10
+paint flatten 440 470 5
+frames 2
+assert_modified 1
+undo 99
+frames 2
+assert_modified 0
+assert_instances 2
+save_to "%OUT%/restored"
+# and the redone state, opened again from what was saved
+redo 99
+frames 2
+assert_instances 5
+save_to "%OUT%/edited"
+tile "%OUT%/edited"
+frames 3
+assert_instances 5
+quit

@@ -81,18 +81,18 @@ std::unique_ptr<TileProject> TileProject::open(const fs::path& tile_dir) {
     return p;
 }
 
-bool TileProject::save(const fs::path& out_dir, std::string* message) const {
+bool TileProject::save(const fs::path& out_dir, std::string* message, bool force_scene, bool force_height) const {
     std::string msg;
     bool wrote = false;
     fs::create_directories(out_dir);
-    if (scene.modified()) {
+    if (scene.modified() || force_scene) {
         fs::path target = out_dir / "tile.ted";
         if (fs::exists(target) && !fs::exists(target.string() + ".bak")) fs::copy_file(target, target.string() + ".bak");
         if (!spit(target, scene.save())) { if (message) *message = "could not write " + target.string(); return false; }
         msg += "tile.ted saved. ";
         wrote = true;
     }
-    if (has_height && height_dirty) {
+    if (has_height && (height_dirty || force_height)) {
         fs::path target = out_dir / "height_map_0.png";
         if (fs::exists(target) && !fs::exists(target.string() + ".bak")) fs::copy_file(target, target.string() + ".bak");
         PngFile png = height->to_png(height_png);

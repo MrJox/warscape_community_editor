@@ -14,6 +14,7 @@
 
 #include <d3d11.h>
 
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -33,6 +34,10 @@ public:
     // Offscreen: `frames` fixed-step frames of the scene at w x h, last one written as PNG. No window is involved.
     bool capture(Editor& editor, int w, int h, int frames, const std::wstring& path);
     EntityId pick(Editor& editor, int x, int y);                      // in the last rendered image
+    // The camera ray through a pixel of the last rendered image (world space, direction normalized). False before the first frame.
+    bool ray(int x, int y, float3& origin, float3& direction) const;
+    // Where a world point is in the last rendered image (pixels). False when it is behind the camera or there was no frame yet.
+    bool project(const float3& world, float& x, float& y) const;
     void focus_selection(Editor& editor);
 
     CameraController& controller() { return *controller_; }
@@ -42,6 +47,7 @@ public:
     Camera camera() const { return controller_->camera(); }
     RenderTarget& target() { return target_; }
     int width() const { return target_.width(); }
+    ImVec2 image_origin() const { return image_origin_; }          // screen position of the viewport image's top-left corner (last frame)
     int height() const { return target_.height(); }
 
     GizmoMode gizmo = GizmoMode::Translate;
@@ -70,6 +76,8 @@ private:
     float4x4 gizmo_matrix_;
     float2 press_{0, 0};
     bool pressed_ = false;
+    bool tool_drag_ = false;          // the active tool owns the current left-button gesture
+    ImVec2 image_origin_{0, 0};
 };
 
 class Editor {
@@ -106,6 +114,18 @@ public:
     const std::vector<std::unique_ptr<Tool>>& tools() const { return tools_; }
     Tool* active_tool() { return tools_.empty() ? nullptr : tools_[active_tool_].get(); }
     int active_tool_index() const { return active_tool_; }
+
+    // ---- scripted mouse (fixed-step runs ignore the real mouse; the `mouse` commands drive the same ImGui events). Positions are pixels of the viewport image.
+    struct MouseState {
+        float x = 0, y = 0;
+        bool down[3] = {false, false, false};
+        float wheel = 0;
+    };
+    void queue_mouse(const MouseState& s) { mouse_queue_.push_back(s); mouse_active_ = true; }
+    void park_mouse() { mouse_queue_.clear(); mouse_active_ = false; mouse_cur_ = MouseState{}; }
+    // Called by the app between the platform's NewFrame and ImGui::NewFrame: replays the scripted mouse (or parks the cursor) in fixed-step runs.
+    void inject_input();
+    bool scripted_input() const { return clock_.fixed_step(); }
 
     // ---- actions (also reachable as commands)
     bool set_tool(const std::string& id);            // takes effect in the next pre_frame
@@ -170,6 +190,9 @@ private:
         ImGuiKey key;
         int frames_left;
     };
+    std::deque<MouseState> mouse_queue_;
+    MouseState mouse_cur_;
+    bool mouse_active_ = false;
     std::vector<HeldKey> test_keys_;   // keys the `key` command holds down for a couple of frames
     std::string first_run_game_, first_run_rpfm_, first_run_message_;
     friend class Viewport;

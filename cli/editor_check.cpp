@@ -142,6 +142,12 @@ int main() {
         g.history().jump_to(3);
         CHECK(g.values[0] == 12, "jump_to forward");
         CHECK(g.history().last_dirty().items == std::vector<uint64_t>{0} && !g.history().last_dirty().all, "the stack reports the touched items");
+        {
+            const CommandStack::Dirty d = g.history().take_dirty();   // everything since the stack was made: several steps of undo and redo in one frame add up
+            CHECK(!d.all && !d.items.empty() && d.items.front() == 0, "take_dirty collects the items of every step since the last call");
+            const CommandStack::Dirty again = g.history().take_dirty();
+            CHECK(!again.all && again.items.empty(), "take_dirty starts over after it was taken");
+        }
     }
 
     // ---- documents and the scene

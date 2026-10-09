@@ -1,0 +1,16 @@
+# Save in place (the tile folder of the test is a copy): one changed line, a .bak of the original, undo and save again restores the bytes.
+tile "%TILE%"
+frames 3
+tile_select BUILDING_INSTANCE
+tile_move 5 5
+paint raise 457 478 10
+assert_modified 1
+save
+assert_modified 0
+assert_file_exists "%TILE%/tile.ted.bak"
+assert_file_exists "%TILE%/height_map_0.png.bak"
+undo 99
+assert_modified 1
+save
+assert_modified 0
+quit

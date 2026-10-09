@@ -63,7 +63,7 @@ void DocumentManager::update() {
     for (Entry& e : entries_) {
         const uint64_t v = e.doc->history().version();
         if (v == e.published_version) continue;
-        e.doc->republish(scene_, e.layer, e.doc->history().last_dirty());
+        e.doc->republish(scene_, e.layer, e.doc->history().take_dirty());
         e.published_version = v;
     }
 }

@@ -9,8 +9,14 @@
 | 2 VFS / rpfm_server | **Done** (commit `6de91c4`). See `docs/vfs.md`. |
 | 3 Render core, RenderScene | **Done** (commit `fad7ab7`). See the Phase 3 deviations below and `docs/re/terrain.md`. |
 | 4 Editor core and shell | **Done** (commits `9ab9f55`..`96f6db3`). `docs/editor.md`, Phase 4 deviations below. |
-| 5 Weather tool | **Done, waiting for your go.** `tools/weather`, `docs/editor.md` (Weather tool), Phase 5 deviations below. |
-| 6 - 9 | Not started. |
+| 5 Weather tool | **Done** (commit `209fbf3`). `tools/weather`, `docs/editor.md` (Weather tool), Phase 5 deviations below. |
+| 6 Tile tool | **Done, waiting for your go.** `tools/tile`, `docs/editor.md` (Tile tool), Phase 6 deviations below. |
+| 7 - 9 | Not started. |
+
+Phase 6 deviations: `tile_studio.exe` is still built from `legacy/tile_editor/src/app` (its own renderer, its shot is still a gate) until Phase 8, the new tool has no renderer of its own; the height map placement was wrong in the Studio (it stretched the map over the tile): the map has a one-cell border,
+measured and documented in `docs/formats/tile_ted.md`; building models resolve in `tools/tile` (key -> `rigidmodels/buildings/<key>/` pieces, boxes with a log line for keys without a drawable model) because `libs/assets` has no model resolution yet; every other instance type is a marker (cross or box), not a model; rotate is `Ctrl+R` (`R` is
+the shared scale-gizmo key); the wireframe terrain option is not ported; the Studio flags that clash with generic commands got new command names (`--select` = `tile_select`, `--move` = `tile_move`, `--delete` = `delete_item`, `--add` = `add_building`); the Layers panel stays next to the shared Outliner because the Outliner has no context menus yet;
+the weather picker panel is data only until Phase 7. Shell changes: tools get Press / Drag / Release / Hover mouse events and can own the left button, the viewport has ray and project helpers, fixed-step runs take a scripted mouse (`mouse` command) instead of ignoring the real one, `CommandStack::take_dirty` accumulates, `undo [n]` / `redo [n]`.
 
 Phase 5 deviations: `weather_editor.exe` is still built from `legacy/weather_editor` (main.cpp and app.cpp only; the sample map, XML documents and the picker are shared with the tool) because its window shots are the render regression until Phase 8;
 `variation_e2e.ps1` is replaced by `scripts/weather_check.sh` (gate `weather_tool_check`); the XML documents live in `wce_weather` (links `wce_editor_core`, no ImGui) and the widgets in `wce_weather_ui` / `wce_tools`; scripted runs ignore the real mouse;

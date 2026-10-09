@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# The tile tool of wce.exe, scripted (scripts/tile_smoke.txt, tile_roundtrip.txt, tile_save.txt) on a small kit tile, in throw-away settings and output folders:
+#  - the edits and their undo / redo behave (assert_* lines), twice, with an identical offscreen capture and identical saved files;
+#  - the saved tile.ted differs from the original in exactly the edited line, the saved height map only inside the brush;
+#  - the mouse and key paths work (scripts/tile_mouse.txt: click select, G grab, brush drag, polygon drawing, handle drag);
+#  - everything undone and saved equals the originals byte for byte;
+#  - save in place keeps a .bak, and undo + save puts the original bytes back.
+#   scripts/tile_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo), WCE_GAME
+set -u
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="${1:-$ROOT/build/tile_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
+BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
+GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
+KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
+SRC="$KIT/assembly_kit/khazad_wall_test/battlefield"
+bad=0
+fail() { echo "FAILED: $*"; bad=1; }
+
+run_script() { # run_script <script name> <run> <tile dir> -> $OUT/<name><run>/
+    local name="$1" run="$2" tile="$3" dir="$OUT/$1$2"
+    rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/wce.ini" "$dir/settings/" 2>/dev/null
+    sed -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
+    WCE_SETTINGS_DIR="$(cygpath -w "$dir/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$dir/script.txt")" > "$dir/run.log" 2>&1
+    local rc=$?
+    echo "$name run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -E "error|FAILED" "$dir/run.log" | head -5; }
+}
+
+for run in 1 2; do run_script tile_smoke $run "$SRC"; done
+for f in saved/tile.ted saved/height_map_0.png capture.png; do
+    cmp -s "$OUT/tile_smoke1/$f" "$OUT/tile_smoke2/$f" && [ -s "$OUT/tile_smoke1/$f" ] && echo "$f identical between runs" || fail "$f differs between runs (or missing)"
+done
+# the mouse and the keys (select, grab, brush, polygon drawing, handle drag)
+run_script tile_mouse 1 "$SRC"
+# minimal edit
+changed=$(diff <(tr -d '\r' < "$SRC/tile.ted") <(tr -d '\r' < "$OUT/tile_smoke1/saved/tile.ted") | grep -c '^>')
+[ "$changed" = 1 ] && echo "saved tile.ted differs from the original in exactly the moved building's line" || fail "saved tile.ted differs in $changed lines (expected 1)"
+python - "$SRC/height_map_0.png" "$OUT/tile_smoke1/saved/height_map_0.png" <<'PY' || bad=1
+import sys
+import numpy as np
+from PIL import Image
+a = np.asarray(Image.open(sys.argv[1])).astype(int); b = np.asarray(Image.open(sys.argv[2])).astype(int)
+d = a != b
+ys, xs = np.nonzero(d)
+# the stroke is at (440, 470) m = pixel (568, 598) with a 12 px brush; the earlier raise at (457, 478) was undone
+ok = d.any() and xs.min() >= 568 - 13 and xs.max() <= 568 + 13 and ys.min() >= 598 - 13 and ys.max() <= 598 + 13
+print("saved height map: %d samples changed, inside the brush: %s" % (d.sum(), "yes" if ok else "NO"))
+sys.exit(0 if ok else 1)
+PY
+# everything undone: the saved files equal the originals
+run_script tile_roundtrip 1 "$SRC"
+for f in tile.ted height_map_0.png; do
+    cmp -s "$SRC/$f" "$OUT/tile_roundtrip1/restored/$f" && echo "undo all + save: $f equals the original" || fail "undo all + save: $f differs from the original"
+done
+[ -s "$OUT/tile_roundtrip1/edited/tile.ted" ] && echo "edited tile written and opened again" || fail "no edited tile"
+# save in place on a copy of the kit tile
+COPY="$OUT/kit/terrain/tiles/battle"
+rm -rf "$OUT/kit"; mkdir -p "$COPY/assembly_kit/khazad_wall_test" "$COPY/_tile_database/TILES"
+cp -r "$SRC" "$COPY/assembly_kit/khazad_wall_test/battlefield"
+cp "$KIT/_tile_database/TILES/assembly_kit_khazad_wall_test.xml" "$COPY/_tile_database/TILES/"
+run_script tile_save 1 "$COPY/assembly_kit/khazad_wall_test/battlefield"
+for f in tile.ted height_map_0.png; do
+    cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f" && echo "save in place, undo, save: $f equals the original" || fail "save in place, undo, save: $f differs from the original"
+    cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f.bak" && echo "$f.bak is the original" || fail "$f.bak is not the original"
+done
+exit $bad

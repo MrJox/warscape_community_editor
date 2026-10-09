@@ -60,12 +60,14 @@ run tdb_build         "$TB/tdb_build.exe" "$BKIT/raw_data/terrain/tiles/battle/_
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     "$TB/roundtrip.exe" "$MANIFEST" "$GAME"
     run scene_check   "$TB/scene_check.exe" "$MANIFEST" "$GAME"
+    run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
 fi
 
 # ---- reference screenshots (fixed camera and inputs; see docs/baseline.md for what is deterministic)
 if [ "$RENDER" = 1 ]; then
     run app_check     env WCE_BIN="$WB" bash "$ROOT/scripts/app_check.sh" "$OUT/app_check"   # wce.exe scripted: tools, documents, selection, gizmo edits, undo, layouts, first run, capture; two runs identical
     run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
+    run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
     run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
     for env in dry rain snow; do
         case $env in

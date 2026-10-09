@@ -139,3 +139,19 @@ switched the default adapter between runs, which made every shot differ (a rebui
 **Capture references re-baselined (second time).** An offscreen capture now restarts the renderer's temporal state (auto exposure snaps on its first frame, readback ring, wind clock) so it is a function of the scene only; before, it inherited
 the live frames' adaptation (about 1e-6 of GPU noise made two scripted runs differ by a few one-level pixels). The `--open <env> --capture` references of `build/gates_base_p5/` replace the Phase 4 `capture_dry_*` ones (which had no
 environment document open). The whole-window `shot` of `app_check` is compared with a tolerance of two levels: it shows the live viewport. Scripted runs also ignore the real mouse now (a cursor over a splitter changed the shot).
+
+## Phase 6 additions
+
+| Gate | Result |
+|---|---|
+| fast gates, `vfs_compare`, `roundtrip`, `scene_check`, `render_check`, `editor_check` | output identical to Phase 5 (`build/gates_p5`); `roundtrip` keeps its documented expected failures |
+| `tile_tool_check` (new, render; `scripts/tile_check.sh`) | the tile tool of `wce.exe` on `khazad_wall_test`: `tile_smoke` twice (select, move, rotate, duplicate, delete, polygons and their points, layers, brush strokes; each undone and redone; then saved) with identical saved files and capture; `tile_mouse` (click select, G grab with confirm and cancel, brush drag = one undo entry, polygon drawing with the mouse and Enter, point handle drag = one entry); the saved tile.ted differs from the original in exactly the moved building's line; the saved height map differs only inside the brush (437 samples around pixel 568, 598 = (440, 470) m: the height map placement is confirmed); `tile_roundtrip` (every edit, undo all, save: both files equal the originals byte for byte, and the redone state opens again); `tile_save` (save in place keeps a `.bak` of the original; undo and save again puts the original bytes back) |
+| `tile_open_check` (new, corpus; `scripts/tile_open_check.sh`) | one tile of every tile set of both kits (128 sets: 83 battle, 45 campaign, 1.33 million instances) opens in `wce.exe` and renders a frame without an error, about 8 minutes |
+| `app_check`, `weather_tool_check` | pass (the scripted mouse replaced the "ignore the real mouse" flag: `shot identical between runs`) |
+| `scripts/shots.sh` | the three legacy window shots byte-identical to `build/gates_base_p3/`; the weather captures of `wce.exe` as in Phase 5; two new tile captures (monte_rosa terrain with polygons, the Rome settlement with its real models) in `build/gates_base_p6/`, identical on every run |
+| legacy `shot_tile` (Tile Studio's own renderer) | identical pixels to the Phase 0 / 3 baseline |
+
+**Wce captures are compared with a tolerance.** The dry weather captures of Phase 5 now differ from a fresh run in 7 (1280x720) and 94 (800x600) pixels by one level, identically in three runs; rain and snow are byte-identical. Nothing in Phase 6 touches the renderer, so this is GPU float noise
+of the kind Phase 5 documented for the legacy dry shot. `scripts/shots.sh` accepts a wce capture that is byte-identical or within one level in under 0.05 % of the pixels; the legacy window shots stay byte-exact.
+
+**Fixes found by the new tests:** `CommandStack::last_dirty` only described the last command, so a multi-step undo (`undo 3`, a jump in the History panel) re-published only what the last step touched and left structural changes unrendered; documents now re-publish from `take_dirty()`, which accumulates (checked in `editor_check`). A cancelled grab leaves no redo entry (`CommandStack::drop_redo`).
