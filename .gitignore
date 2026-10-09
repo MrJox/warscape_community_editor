@@ -1,0 +1,9 @@
+/build/
+/out/
+.vs/
+*.user
+imgui.ini
+__pycache__/
+scratch/
+manifest/
+third_party/_dl/
