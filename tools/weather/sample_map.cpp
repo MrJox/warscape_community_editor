@@ -107,6 +107,7 @@ SampleMapResult publish_sample_map(IVfs& vfs, RenderScene& scene, LayerId layer,
             mi.model = piece.path;
             scene.add(layer, world, std::move(mi), SourceRef{doc, uint64_t(i + 1)});
         }
+        res.centres.push_back({cx, 0, cz});
         res.bounds_min = {std::min(res.bounds_min.x, cx - cell * 0.5f), 0, std::min(res.bounds_min.z, cz - cell * 0.5f)};
         res.bounds_max = {std::max(res.bounds_max.x, cx + cell * 0.5f), std::max(res.bounds_max.y, b.bmax.y - b.bmin.y), std::max(res.bounds_max.z, cz + cell * 0.5f)};
     }

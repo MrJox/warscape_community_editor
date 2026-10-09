@@ -1,3 +1,4 @@
+#include "foundation/log.h"
 #include "foundation/process.h"
 #include "vfs/mcp_client.h"
 #include "vfs/pack_backend.h"
@@ -80,6 +81,7 @@ public:
                 // "There were N errors while extracting.": some requested files are not in the pack. The others were written;
                 // like rpfm_cli, the caller finds out by looking for the file.
                 if (std::string(e.what()).find("errors while extracting") == std::string::npos) throw;
+                Log::warn("rpfm_server: " + std::string(e.what()) + " (" + slashes(pack.filename()) + ")");
             }
         }
     }

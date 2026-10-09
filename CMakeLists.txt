@@ -18,6 +18,7 @@ add_subdirectory(third_party)
 add_subdirectory(libs)
 add_subdirectory(tools)
 add_subdirectory(cli)
+add_subdirectory(app)
 
 # Migration scaffolding (PLAN.md, Phase 8 removes it): the two editors keep building from the code that moved into libs/ and tools/
 # until wce.exe reaches parity.

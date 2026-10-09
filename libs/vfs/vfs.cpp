@@ -89,6 +89,11 @@ void Vfs::mount() {
     pack_case_.clear();
     if (cfg_.game_dir.empty() || !fs::exists(cfg_.game_dir))
         throw std::runtime_error("the game folder is not set or does not exist (game_dir in wce.ini, or the environment variable WCE_GAME)");
+    // rpfm_server and rpfm_cli run in another working directory: every path handed to them must be absolute.
+    cfg_.game_dir = fs::absolute(cfg_.game_dir);
+    cfg_.cache_dir = fs::absolute(cfg_.cache_dir);
+    if (!cfg_.rpfm_cli.empty()) cfg_.rpfm_cli = fs::absolute(cfg_.rpfm_cli);
+    for (fs::path& f : cfg_.overlay_folders) f = fs::absolute(f);
 
     for (const fs::path& folder : cfg_.overlay_folders) {
         Pack pk;

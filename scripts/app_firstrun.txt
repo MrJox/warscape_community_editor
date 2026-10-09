@@ -1,0 +1,10 @@
+# First run: no wce.ini and no environment settings, so the editor starts without the game; `setup` is what the dialog's button does.
+assert_mounted 0
+assert_documents 0
+frames 3
+setup "%GAME%" "%RPFM%"
+frames 4
+assert_mounted 1
+assert_documents 1
+assert_log_errors 1
+quit

@@ -147,6 +147,8 @@ public:
 
     // All entities in draw order (insertion order); hidden ones are included, see drawable().
     const std::vector<Entity>& entities() const { return entities_; }
+    // The entities that show one element of a document (a building has one entity per model piece), in draw order.
+    std::vector<EntityId> entities_of(const SourceRef& ref) const;
     // Visible entity in a visible layer.
     bool drawable(const Entity& e) const;
     // Entities of a visible layer that picking may hit.

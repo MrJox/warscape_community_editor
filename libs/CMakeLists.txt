@@ -1,6 +1,6 @@
 # Dependency direction: foundation <- game <- vfs <- formats <- assets <- render <- scene <- editor <- tools/* <- app.
 # formats and everything below it never include D3D or ImGui.
-add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp)
+add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp foundation/log.cpp)
 target_include_directories(wce_foundation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(wce_game STATIC game/game_profile.cpp)
@@ -28,3 +28,11 @@ add_library(wce_render STATIC
     render/image_io.cpp render/render_target.cpp render/shader_lib.cpp render/texture.cpp render/wind.cpp render/model_cache.cpp render/particles.cpp render/editor_passes.cpp
     render/environment_apply.cpp render/renderer.cpp)
 target_link_libraries(wce_render PUBLIC wce_scene wce_assets wce_vfs wce_formats d3d11 dxgi d3dcompiler dxguid)
+
+# The editor shell. editor_core has no ImGui or GPU code (commands, documents, selection, command registry, camera controllers) and is what
+# editor_check tests; editor is the dockspace, panels, viewport and gizmos on top.
+add_library(wce_editor_core STATIC editor/command.cpp editor/document_manager.cpp editor/command_registry.cpp editor/camera_controller.cpp)
+target_link_libraries(wce_editor_core PUBLIC wce_scene wce_foundation)
+
+add_library(wce_editor STATIC editor/editor.cpp editor/viewport.cpp editor/panels.cpp editor/steam_detect.cpp)
+target_link_libraries(wce_editor PUBLIC wce_editor_core wce_render wce_vfs wce_game imgui imguizmo ole32 shell32 advapi32)

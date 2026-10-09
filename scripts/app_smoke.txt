@@ -1,0 +1,102 @@
+# wce.exe smoke test: tools, documents, selection, picking, gizmo edits, undo, layouts, capture. Run by scripts/app_check.sh.
+# Every assert_* fails the script (exit code 1) when it does not hold.
+tool weather
+frames 3
+assert_tool weather
+assert_documents 1
+assert_history 0 0
+assert_modified 0
+cam 0.6 0.35 120
+
+# selection by clicking in the viewport
+click_item 13
+frames 2
+assert_selected 1
+assert_selected_item 13
+-click 5 5
+assert_selected 0
+
+# an edit is one undo entry; undo and redo
+select 3
+move 3 5 0 2
+assert_offset 3 5 0 2
+assert_modified 1
+assert_history 1 1
+move 3 1 0 0
+assert_history 2 2
+undo
+assert_offset 3 5 0 2
+undo
+assert_offset 3 0 0 0
+assert_modified 0
+redo
+redo
+assert_offset 3 6 0 2
+assert_modified 1
+frames 2
+
+# the selection is outlined and the gizmo draws; look at the result from the other camera too
+gizmo translate
+grid on
+frames 3
+camera fly
+frames 2
+camera orbit
+frames 2
+
+# keyboard: tool switch, undo, redo, focus
+key Ctrl+2
+frames 4
+assert_tool tile
+key Ctrl+1
+frames 4
+assert_tool weather
+key Ctrl+Z
+frames 4
+assert_history 2 1
+key Ctrl+Y
+frames 4
+assert_history 2 2
+key F
+frames 3
+
+# tools: switching keeps the document, placeholders register
+tool tile
+frames 3
+assert_tool tile
+tool unit
+frames 2
+assert_tool unit
+tool cinematic
+frames 2
+tool weather
+frames 3
+assert_tool weather
+assert_documents 1
+assert_modified 1
+assert_selected 1
+
+# layouts and panels
+panel log off
+panel log on
+layout save
+layout reset
+frames 3
+
+# two documents, closing one
+sample 7 8
+frames 3
+assert_documents 2
+close
+assert_documents 1
+frames 2
+
+# the asset browser, then a whole-window shot (the UI is deterministic under the fixed-step clock) and an offscreen capture
+show_panel assets
+frames 4
+shot "%SHOT%"
+frames 2
+# offscreen capture, no window involved
+capture 640x360 "%CAPTURE%" 8
+assert_log_errors 0
+quit

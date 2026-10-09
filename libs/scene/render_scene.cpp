@@ -135,6 +135,13 @@ void RenderScene::clear() {
     touch();
 }
 
+std::vector<EntityId> RenderScene::entities_of(const SourceRef& ref) const {
+    std::vector<EntityId> out;
+    for (const Entity& e : entities_)
+        if (e.source.doc == ref.doc && e.source.item == ref.item) out.push_back(e.id);
+    return out;
+}
+
 bool RenderScene::drawable(const Entity& e) const {
     const Layer* l = layer(e.layer);
     return e.visible && l && l->visible;

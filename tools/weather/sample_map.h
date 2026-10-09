@@ -15,6 +15,7 @@ class IVfs;
 struct SampleMapResult {
     int buildings = 0;
     float3 bounds_min, bounds_max;          // footprint of the grid, tallest building as y
+    std::vector<float3> centres;            // grid centre (x, 0, z) of building i + 1, where its pieces were placed
     std::vector<std::string> errors;
 };
 

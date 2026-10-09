@@ -7,3 +7,11 @@ target_link_libraries(wce_tile PUBLIC wce_formats)
 add_library(wce_weather STATIC weather/sample_map.cpp)
 target_include_directories(wce_weather PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_weather PUBLIC wce_scene wce_vfs wce_formats)
+
+# The tools as editor plug-ins (Tool + Documents). Placeholders for the future tools register today so that the switcher, the layout
+# files and document routing are exercised.
+add_library(wce_tools STATIC
+    weather/sample_map_document.cpp weather/weather_tool.cpp
+    tile/tile_tool.cpp unit/unit_tool.cpp vfx/vfx_tool.cpp terrain/terrain_tool.cpp cinematic/cinematic_tool.cpp)
+target_include_directories(wce_tools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(wce_tools PUBLIC wce_weather wce_editor)
