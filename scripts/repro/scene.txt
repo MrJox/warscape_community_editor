@@ -1,0 +1,28 @@
+# The Scene panel (Phase 1): the layer tree like TEd's Scene tab, driven by the scripted mouse (pixels of the viewport image; the panel is on its left, x < 0).
+tile "%TILE%"
+frames 60
+show_panel Scene
+frames 5
+shot "%OUT%/scene_0.png"
+# open the Buildings layer by its arrow, select its row, hide it with its eye, lock it with its cursor arrow
+mouse click -312 124
+frames 4
+shot "%OUT%/scene_1_open.png"
+mouse click -250 124
+frames 3
+assert_selected 1
+mouse click -66 124
+frames 4
+assert_flag Buildings visible 0
+assert_history 1 1
+shot "%OUT%/scene_2_hidden.png"
+mouse click -44 124
+frames 4
+assert_flag Buildings active 0
+assert_history 2 2
+shot "%OUT%/scene_3_locked.png"
+undo 2
+frames 3
+assert_flag Buildings visible 1
+assert_flag Buildings active 1
+quit

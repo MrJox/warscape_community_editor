@@ -32,6 +32,7 @@ run_script tile_gizmo 1 "$SRC"
 # layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB)
 OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
 run_script tile_layers 1 "$OSG"
+run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del
 cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"
 for run in 1 2; do run_script tile_smoke $run "$SRC"; done
 for f in saved/tile.ted saved/height_map_0.png capture.png; do

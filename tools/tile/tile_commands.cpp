@@ -563,7 +563,7 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         if (e < 0) return fail("no such layer or element");
         return d->selectable(e) == (a[1] == "1") ? ok() : fail(a[0] + (d->selectable(e) ? " is selectable" : " is locked"));
     });
-    commands.add("assert_layer", "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>", "test: facts of a layer (children = its direct children, instances and layers)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+    commands.add("assert_layer", "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>", "test: facts of a layer (children n | exists 0|1 | export Type | child <index> <name>)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d) || a.size() < 2) return fail("usage: assert_layer <layer path> <children n | exists 0|1 | export Type>");
         const int e = element_arg(*d, *this, *ed, a[0]);
@@ -574,6 +574,12 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
             return n == size_t(std::atoi(a[2].c_str())) ? ok() : fail("children: " + std::to_string(n));
         }
         if (a[1] == "export" && a.size() > 2) return d->export_type(e) == a[2] ? ok() : fail("export type " + d->export_type(e));
+        if (a[1] == "child" && a.size() > 3) {   // the direct child at an index (counted from 0) has this name
+            const auto kids = d->tscene().children(e);
+            const size_t i = size_t(std::atoi(a[2].c_str()));
+            const std::string got = i < kids.size() ? d->tscene().name(kids[i]) : "(none)";
+            return got == a[3] ? ok() : fail("child " + a[2] + " is '" + got + "'");
+        }
         return fail("usage: assert_layer <layer path> <children n | exists 0|1 | export Type>");
     });
     commands.add("assert_selection_names", "assert_selection_names <name>...", "test: the selected elements have exactly these names, in selection order", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {

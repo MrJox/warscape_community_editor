@@ -203,7 +203,7 @@ void TileTool::default_layout(ImGuiID dockspace) {
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.18f, nullptr, &center);
     ImGui::DockBuilderDockWindow("Viewport", center);
     ImGui::DockBuilderDockWindow("Tiles", left);
-    ImGui::DockBuilderDockWindow("Layers", left);
+    ImGui::DockBuilderDockWindow("Scene", left);
     ImGui::DockBuilderDockWindow("Outliner", left);
     ImGui::DockBuilderDockWindow("Tile", right);
     ImGui::DockBuilderDockWindow("Inspector", right);
@@ -512,6 +512,12 @@ void TileTool::handle_keys(Editor& editor) {
             status = copy >= 0 ? "duplicated" : err;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_R, false) && sel >= 0 && !grabbing_) d->rotate(sel, io.KeyShift ? -angle_step_ : angle_step_);
+        if (ImGui::IsKeyPressed(ImGuiKey_G, false) && !selected(editor).empty() && !grabbing_) {
+            std::string err;
+            const int l = d->group_items(selected(editor), "New layer", &err);
+            status = l >= 0 ? "grouped into a new layer" : err;
+            if (l >= 0) begin_rename_next_ = true;
+        }
         return;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_G, false) && sel >= 0) begin_grab(editor);
@@ -522,8 +528,7 @@ void TileTool::handle_keys(Editor& editor) {
             else status = err;
             poly_point_ = -1;
         } else if (!selected(editor).empty()) {
-            for (int e : selected(editor)) { d->remove(e); break; }   // one structural edit at a time: indices move
-            status = "deleted";
+            request_delete(editor);   // layers and instances together, one undo entry (asks before a big layer goes)
         }
     }
     if (drawing_ && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) finish_polygon(editor);
@@ -916,78 +921,6 @@ void TileTool::draw_weather_panel(Editor& editor) {
         }
     }
     ImGui::EndChild();
-}
-
-void TileTool::draw_layers_panel(Editor& editor) {
-    ImGui::SetNextWindowSize(ImVec2(380, 600), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Layers")) { ImGui::End(); return; }
-    TileDocument* d = document(editor);
-    if (!d) { ImGui::TextDisabled("No tile open."); ImGui::End(); return; }
-    if (ImGui::CollapsingHeader("Instance types", ImGuiTreeNodeFlags_DefaultOpen)) {
-        TileDisplay& v = d->display();
-        for (const auto& [t, n] : d->type_counts()) {
-            bool vis = v.hidden_types.count(t) == 0;
-            char l[200];
-            std::snprintf(l, sizeof l, "%s (%d)##t", t.c_str(), n);
-            if (ImGui::Checkbox(l, &vis)) {
-                if (vis) v.hidden_types.erase(t); else v.hidden_types.insert(t);
-                d->display_changed();
-            }
-        }
-    }
-    if (ImGui::CollapsingHeader("Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const int g = d->tscene().scene_graph();
-        if (g >= 0) draw_layer_node(editor, *d, g, 0);
-        else ImGui::TextDisabled("This tile has no SCENE_GRAPH.");
-    }
-    ImGui::End();
-}
-
-void TileTool::draw_layer_node(Editor& editor, TileDocument& d, int elem, int depth) {
-    TedScene& sc = d.tscene();
-    const auto kids = sc.children(elem);
-    const bool layer = sc.is_layer(elem) || !kids.empty();
-    std::string label = sc.name(elem);
-    if (label.empty()) label = sc.type(elem);
-    char buf[300];
-    std::snprintf(buf, sizeof buf, "%s  [%s%s]###n%d", label.c_str(), sc.type(elem).c_str(), kids.empty() ? "" : (", " + std::to_string(kids.size())).c_str(), elem);
-    const bool is_sel = editor.selection().contains(d.ref_of(elem));
-    ImGuiTreeNodeFlags fl = ImGuiTreeNodeFlags_SpanAvailWidth | (layer ? 0 : ImGuiTreeNodeFlags_Leaf) | (is_sel ? ImGuiTreeNodeFlags_Selected : 0);
-    if (depth < 1) fl |= ImGuiTreeNodeFlags_DefaultOpen;
-    const bool open = ImGui::TreeNodeEx(buf, fl);
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) select_elem(editor, elem);
-    if (ImGui::BeginPopupContextItem()) {
-        const bool is_layer = sc.is_layer(elem);
-        const int sel = primary(editor);
-        std::string err;
-        if (is_layer && ImGui::MenuItem("New layer inside")) {
-            const int l = d.add_layer(elem, "New layer", &err);
-            status = l >= 0 ? "layer added" : err;
-        }
-        if (is_layer && sel >= 0 && sel != elem && ImGui::MenuItem("Move selected here")) {
-            status = d.move_to_layer(sel, elem, &err) ? "moved to layer " + sc.name(elem) : err;
-        }
-        if (is_layer && sc.type(elem) != "SCENE_GRAPH") {
-            if (ImGui::BeginMenu("Rename")) {
-                if (ImGui::IsWindowAppearing()) std::snprintf(rename_buf_, sizeof rename_buf_, "%s", sc.name(elem).c_str());
-                if (ImGui::InputText("##rename", rename_buf_, sizeof rename_buf_, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    d.rename(elem, rename_buf_);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("Delete layer and contents")) { d.remove_layer(elem); status = "layer deleted"; }
-        }
-        ImGui::EndPopup();
-    }
-    if (open) {
-        size_t shown = 0;
-        for (int k : kids) {
-            if (++shown > 300) { ImGui::TextDisabled("... %zu more", kids.size() - 300); break; }
-            draw_layer_node(editor, d, k, depth + 1);
-        }
-        ImGui::TreePop();
-    }
 }
 
 std::unique_ptr<Tool> make_tile_tool() { return std::make_unique<TileTool>(); }

@@ -22,6 +22,6 @@ target_link_libraries(wce_weather_ui PUBLIC wce_formats wce_vfs imgui)
 # files and document routing are exercised.
 add_library(wce_tools STATIC
     weather/weather_tool.cpp weather/weather_commands.cpp weather/weather_picker.cpp
-    tile/tile_tool.cpp tile/tile_commands.cpp unit/unit_tool.cpp vfx/vfx_tool.cpp terrain/terrain_tool.cpp cinematic/cinematic_tool.cpp)
+    tile/tile_tool.cpp tile/tile_commands.cpp tile/tile_scene_panel.cpp unit/unit_tool.cpp vfx/vfx_tool.cpp terrain/terrain_tool.cpp cinematic/cinematic_tool.cpp)
 target_include_directories(wce_tools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_tools PUBLIC wce_weather wce_weather_ui wce_tile_editor wce_editor)

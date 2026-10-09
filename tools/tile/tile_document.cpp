@@ -839,7 +839,7 @@ void TileDocument::refresh_item(RenderScene& scene, int elem) {
         markers_.z[s] = p.z;
         dirty_type_[idx_.type[size_t(elem)]] = 1;
     }
-    if (is_polygon(elem) && display_.show_polygons) rebuild_polygon(scene, layer_, elem);
+    if (is_polygon(elem) && display_.show_polygons && shown(elem)) rebuild_polygon(scene, layer_, elem);
 }
 
 void TileDocument::republish(RenderScene& scene, LayerId layer, const CommandStack::Dirty& dirty) {
@@ -905,7 +905,7 @@ void TileDocument::update_view(RenderScene& scene, LayerId layer, const float3& 
     if (polygons_dirty_) {
         polygons_dirty_ = false;
         for (int e : instances_) {
-            if (!is_polygon(e)) continue;
+            if (!is_polygon(e) || !shown(e)) continue;
             if (display_.show_polygons) rebuild_polygon(scene, layer_, e);
             else if (auto it = outline_entity_.find(e); it != outline_entity_.end()) {
                 // hide: an empty outline

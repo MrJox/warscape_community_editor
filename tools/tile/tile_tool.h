@@ -10,6 +10,7 @@
 
 #include <map>
 #include <memory>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -63,7 +64,10 @@ private:
     friend struct TileCommands;
     void draw_tile_panel(Editor& editor);
     void draw_layers_panel(Editor& editor);
-    void draw_layer_node(Editor& editor, TileDocument& d, int elem, int depth);
+    void rebuild_tree(TileDocument& d);
+    void request_delete(Editor& editor);
+    void begin_rename(Editor& editor, int elem);
+    std::string tree_key_of(int elem) const;
     void draw_polygon_panel(Editor& editor, TileDocument& d);
     void draw_weather_panel(Editor& editor);
     void draw_browser_panel(Editor& editor);
@@ -81,6 +85,15 @@ private:
     float grid_m_ = 6.0f, angle_step_ = 15.0f;
     char building_key_[128] = {};
     char rename_buf_[128] = {};
+    // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range
+    struct TreeRow { int elem; int depth; std::string key; bool layer; bool open; size_t kids; };
+    std::vector<TreeRow> tree_rows_;
+    std::unordered_set<std::string> tree_open_;
+    DocumentId tree_doc_ = 0;
+    uint64_t tree_version_ = ~0ull, tree_open_version_ = 0, tree_open_version_seen_ = ~0ull;
+    int rename_elem_ = -1, anchor_ = -1, rename_wait_ = 0;
+    bool rename_focus_ = false, rename_active_seen_ = false, begin_rename_next_ = false, delete_confirm_ = false;
+    size_t delete_weight_ = 0;
 
     // cursor on the terrain (from the last hover / press)
     bool terrain_hit_ = false;
