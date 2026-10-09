@@ -127,7 +127,11 @@ Options parse_args() {
         const bool more = i + 1 < argc;
         if (a == L"--tool" && more) o.tool = utf8(++i);
         else if (a == L"--open" && more) add("open \"" + utf8(++i) + "\"\nframes 2");
-        else if (a == L"--tile" && more) add("tile \"" + utf8(++i) + "\"\nframes 2");
+        else if (a == L"--tile" && more) {   // an entry file, a tile name, a folder or a tile.ted, and optionally the variation
+            std::string line = "tile \"" + utf8(++i) + "\"";
+            if (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0) line += " \"" + utf8(++i) + "\"";
+            add(line + "\nframes 2");
+        }
         else if (a == L"--open-disk" && more) add("open \"" + utf8(++i) + "\" disk\nframes 2");
         else if (a == L"--cam" && i + 3 < argc) {
             std::string line = "cam " + utf8(i + 1) + " " + utf8(i + 2) + " " + utf8(i + 3);

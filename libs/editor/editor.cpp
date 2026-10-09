@@ -1003,6 +1003,20 @@ void Editor::register_builtin_commands() {
         o->set_orbit(yaw, pitch, dist, {o->target.x, ty, o->target.z});
         return ok();
     });
+    commands_.add("cam_info", "cam_info", "test: log the camera, the first selected item's position and the active document's history (for repro scripts)", [this](const CommandRegistry::Args&) {
+        const Camera c = viewport_.camera();
+        char b[320];
+        std::snprintf(b, sizeof b, "camera eye %.2f %.2f %.2f target %.2f %.2f %.2f", c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
+        std::string s = b;
+        Document* d = selection_.empty() ? nullptr : documents().find(selection_.items()[0].doc);
+        float4x4 w;
+        if (d && d->item_transform(selection_.items()[0], w)) {
+            std::snprintf(b, sizeof b, "; item %llu at %.3f %.3f %.3f", (unsigned long long)selection_.items()[0].item, w.m[0][3], w.m[1][3], w.m[2][3]);
+            s += b;
+        }
+        if (Document* a = docs_.active()) s += "; history " + std::to_string(a->history().size()) + "/" + std::to_string(a->history().position());
+        return CommandResult::success(s);
+    });
     commands_.add("camera", "camera orbit|fly", "camera controller", [this, ok, fail](const CommandRegistry::Args& a) {
         if (a.empty()) return fail("usage: camera orbit|fly");
         if (a[0] == "fly") viewport_.use_fly();
@@ -1077,6 +1091,36 @@ void Editor::register_builtin_commands() {
         if (!viewport_.target().valid() || !Renderer::project(viewport_.camera(), viewport_.width(), viewport_.height(), {world.m[0][3], world.m[1][3], world.m[2][3]}, px, py))
             return fail("the item is not in view");
         return commands_.run("click", {std::to_string(int(px)), std::to_string(int(py)), a.size() > 1 ? a[1] : ""});
+    });
+    commands_.add("gizmo_drag", "gizmo_drag <x|y|z> <pixels> [steps]", "test: drag the translate handle of the first selected item along a world axis with the scripted mouse (aimed from the projected axis tip, not guessed)",
+                  [this, ok, fail](const CommandRegistry::Args& a) {
+        Document* d = selection_.empty() ? nullptr : documents().find(selection_.items()[0].doc);
+        float4x4 world;
+        if (a.size() < 2 || !d || !d->item_transform(selection_.items()[0], world) || !viewport_.target().valid()) return fail("usage: gizmo_drag <x|y|z> <pixels> [steps] (something with a transform is selected)");
+        const int ax = a[0] == "x" ? 0 : a[0] == "y" ? 1 : a[0] == "z" ? 2 : -1;
+        if (ax < 0) return fail("axis must be x, y or z");
+        const Camera cam = viewport_.camera();
+        const float3 o{world.m[0][3], world.m[1][3], world.m[2][3]};
+        const float3 fwd = normalize(cam.target - cam.eye), right = normalize(cross({0, 1, 0}, fwd));
+        float ox, oy, rx, ry;
+        if (!viewport_.project(o, ox, oy) || !viewport_.project(o + right, rx, ry)) return fail("the item is not in view");
+        // ImGuizmo: the handle is 0.1 of the clip space (in units of half the viewport height) long, along the axis, from the item's origin
+        const float unit_px = std::max(1e-3f, std::hypot(rx - ox, ry - oy));
+        const float len = 0.05f * float(viewport_.height()) / unit_px;
+        float3 axis{0, 0, 0};
+        (ax == 0 ? axis.x : ax == 1 ? axis.y : axis.z) = 1.0f;
+        float tx, ty, hx, hy;
+        if (!viewport_.project(o + axis * (len * 0.7f), tx, ty) || !viewport_.project(o + axis * len, hx, hy)) return fail("the handle is not in view");
+        const float dx = hx - ox, dy = hy - oy, dl = std::max(1e-3f, std::hypot(dx, dy));
+        const float px = std::strtof(a[1].c_str(), nullptr);
+        char b[6][32];
+        std::snprintf(b[0], 32, "%.1f", tx);
+        std::snprintf(b[1], 32, "%.1f", ty);
+        std::snprintf(b[2], 32, "%.1f", tx + dx / dl * px);
+        std::snprintf(b[3], 32, "%.1f", ty + dy / dl * px);
+        std::snprintf(b[4], 32, "%s", a.size() > 2 ? a[2].c_str() : "10");
+        commands_.run("mouse", {"move", b[0], b[1]});
+        return commands_.run("mouse", {"drag", b[0], b[1], b[2], b[3], b[4]});
     });
     commands_.add("assert_selected_item", "assert_selected_item <item>", "test: the first selected item of the active document is <item>", [this, ok, fail](const CommandRegistry::Args& a) {
         uint64_t item;
@@ -1191,6 +1235,10 @@ void Editor::register_builtin_commands() {
                 ImGui::SetWindowFocus(titles[i]);
                 return ok();
             }
+        if (ImGui::FindWindowByName(a[0].c_str())) {   // a panel of the active tool, by its title (Tile, Layers, Tiles, ...)
+            ImGui::SetWindowFocus(a[0].c_str());
+            return ok();
+        }
         return fail("no panel '" + a[0] + "'");
     });
     commands_.add("setup", "setup <game folder> [rpfm folder]", "what the first-run dialog's button does: store the folders in wce.ini and mount", [this, ok, fail](const CommandRegistry::Args& a) {

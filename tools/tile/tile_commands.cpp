@@ -12,6 +12,7 @@
 #include "editor/editor.h"
 #include "foundation/log.h"
 #include "foundation/process.h"
+#include "formats/tile_index.h"
 #include "tile/tile_tool.h"
 
 #include <algorithm>
@@ -45,6 +46,19 @@ std::vector<std::string> split(const std::string& s, char sep) {
     return out;
 }
 
+// A browser row matches when every word (from args[first]) is in its location, file name, set or variation names, in any case.
+bool matches_words(const TileIndexEntry& e, const std::vector<std::string>& args, size_t first) {
+    std::string hay = e.key + " " + e.name + " " + e.tile_set;
+    for (const std::string& v : e.variations) hay += " " + v;
+    for (char& c : hay) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (size_t i = first; i < args.size(); ++i) {
+        std::string w = args[i];
+        for (char& c : w) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (hay.find(w) == std::string::npos) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
@@ -54,10 +68,110 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
     // Every command works on the active tile and says so when there is none.
     auto need = [this, ed](TileDocument*& d) { d = document(*ed); return d != nullptr; };
 
-    commands.add("tile", "tile <folder>", "open a tile folder (the one with tile.ted) and switch to the tile tool", [this, ed, ok, fail](const CommandRegistry::Args& a) {
-        if (a.empty()) return fail("usage: tile <folder>");
+    // The index of the kits' tile database entries keeps its rows in the settings folder between runs.
+    TileIndex::set_cache_dir(editor.settings().file().parent_path() / "tile_index");
+
+    commands.add("tile", "tile <entry xml | tile name | folder | tile.ted> [variation]",
+                 "open a tile by its database entry (a TILES/*.xml, or a name like assembly_kit/osgiliath_test), by a variation folder or by its tile.ted, and switch to the tile tool",
+                 [this, ed, ok, fail](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: tile <entry xml | tile name | folder | tile.ted> [variation]");
         std::string msg;
-        return open_folder(*ed, a[0], &msg) ? ok(msg) : fail(msg);
+        return open_tile(*ed, a[0], a.size() > 1 ? a[1] : std::string(), &msg) ? ok(msg) : fail(msg);
+    });
+
+    commands.add("tiles", "tiles [filter words]", "list the tile database entries of the kits (the tile browser's rows), optionally filtered; says how many", [this, ed, ok, fail](const CommandRegistry::Args& a) {
+        const std::vector<fs::path> roots = kit_roots(*ed);
+        if (roots.empty()) return fail("no assembly kit found");
+        std::string out;
+        size_t total = 0, shown = 0;
+        for (const fs::path& root : roots) {
+            const auto index = TileIndex::shared(root);
+            total += index->entries().size();
+            for (const TileIndexEntry& e : index->entries()) {
+                if (!matches_words(e, a, 0)) continue;
+                if (++shown <= 40) {
+                    std::string vars;
+                    for (const std::string& v : e.variations) vars += (vars.empty() ? "" : ",") + v;
+                    char b[400];
+                    std::snprintf(b, sizeof b, "%s  %ux%u  [%s]  %s\n", e.key.c_str(), e.width, e.height, vars.c_str(), root.parent_path().filename().string().c_str());
+                    out += b;
+                }
+            }
+        }
+        return ok(std::to_string(shown) + " of " + std::to_string(total) + " tiles" + (shown ? "\n" + out : std::string()));
+    });
+    commands.add("assert_tiles", "assert_tiles <n> [filter words]", "test: the tile browser lists n entries for the filter (over all kits)", [this, ed, ok, fail](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: assert_tiles <n> [filter words]");
+        size_t shown = 0;
+        for (const fs::path& root : kit_roots(*ed))
+            for (const TileIndexEntry& e : TileIndex::shared(root)->entries())
+                if (matches_words(e, a, 1)) ++shown;
+        return shown == size_t(std::atoi(a[0].c_str())) ? ok() : fail(std::to_string(shown) + " tiles, expected " + a[0]);
+    });
+
+    commands.add("tile_entry", "tile_entry", "log the active tile's database entry (location, size, colour, ground groups, variations, links)", [need, fail, ok](const CommandRegistry::Args&) {
+        TileDocument* d;
+        if (!need(d)) return fail("no tile open");
+        const TileProject& p = d->project();
+        if (!p.entry) return ok("no tile database entry" + (p.warning.empty() ? std::string() : ": " + p.warning));
+        const TileEntry& e = *p.entry;
+        const TileTextureGroup g = e.texture_group();
+        char b[600];
+        std::snprintf(b, sizeof b, "%s: %s set %s, %u x %u cells, colour %.0f %.0f %.0f, ground %s/%s/%s/%s, %zu variations (open: %s), %zu links, %zu targets", e.file().filename().string().c_str(),
+                      e.location_generic().c_str(), e.tile_set().c_str(), e.width(), e.height(), e.red(), e.green(), e.blue(), g.red.c_str(), g.green.c_str(), g.blue.c_str(), g.alpha.c_str(),
+                      e.variations().size(), p.info.variation.c_str(), e.links().size(), e.link_targets().size());
+        return ok(b);
+    });
+    commands.add("assert_entry", "assert_entry <field> <value>",
+                 "test: a field of the active tile's database entry (set, location, name, kind, width, height, red, green, blue, ground_red/green/blue/alpha, variations, variation, min_height, scale, "
+                 "normal_strength, overlap_border_size, raw_data_tri_density, links, targets, scalable, random_rotatable; `entry none` / `entry present`)",
+                 [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_entry <field> <value> (with a tile open)");
+        const TileProject& p = d->project();
+        if (a[0] == "entry") return (a[1] == "none") == (p.entry == nullptr) ? ok() : fail(p.entry ? "the tile has an entry" : "the tile has no entry");
+        if (!p.entry) return fail("the tile has no database entry");
+        const TileEntry& e = *p.entry;
+        const TileTextureGroup g = e.texture_group();
+        const std::vector<TileVariation> vars = e.variations();
+        const TileVariation* v = p.variation >= 0 && size_t(p.variation) < vars.size() ? &vars[size_t(p.variation)] : nullptr;
+        std::string got;
+        double num = 0;
+        bool numeric = true;
+        const std::string& f = a[0];
+        if (f == "set") { got = e.tile_set(); numeric = false; }
+        else if (f == "location") { got = e.location_generic(); numeric = false; }
+        else if (f == "name") { got = e.file().stem().string(); numeric = false; }
+        else if (f == "kind") { got = e.kind(); numeric = false; }
+        else if (f == "width") num = e.width();
+        else if (f == "height") num = e.height();
+        else if (f == "red") num = e.red();
+        else if (f == "green") num = e.green();
+        else if (f == "blue") num = e.blue();
+        else if (f == "ground_red") { got = g.red; numeric = false; }
+        else if (f == "ground_green") { got = g.green; numeric = false; }
+        else if (f == "ground_blue") { got = g.blue; numeric = false; }
+        else if (f == "ground_alpha") { got = g.alpha; numeric = false; }
+        else if (f == "variations") num = double(vars.size());
+        else if (f == "variation") { got = p.info.variation; numeric = false; }
+        else if (f == "links") num = double(e.links().size());
+        else if (f == "targets") num = double(e.link_targets().size());
+        else if (f == "scalable") { got = e.scalable() ? "true" : "false"; numeric = false; }
+        else if (f == "random_rotatable") { got = e.random_rotatable() ? "true" : "false"; numeric = false; }
+        else if (v && f == "min_height") num = v->min_height;
+        else if (v && f == "scale") num = v->scale;
+        else if (v && f == "normal_strength") num = v->normal_strength;
+        else if (v && f == "overlap_border_size") num = v->overlap_border_size;
+        else if (v && f == "raw_data_tri_density") num = v->raw_data_tri_density;
+        else return fail("unknown field '" + f + "'" + (v ? "" : " (or the open folder is not one of the entry's variations)"));
+        if (numeric) {
+            char* end = nullptr;
+            const double want = std::strtod(a[1].c_str(), &end);
+            char b[160];
+            std::snprintf(b, sizeof b, "%s is %.6g, expected %s", f.c_str(), num, a[1].c_str());
+            return end && *end == 0 && std::fabs(num - want) <= 1e-4 ? ok() : fail(b);
+        }
+        return got == a[1] ? ok() : fail(f + " is '" + got + "', expected '" + a[1] + "'");
     });
 
     commands.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level", "what the left mouse button does in the viewport", [this, fail, ok](const CommandRegistry::Args& a) {

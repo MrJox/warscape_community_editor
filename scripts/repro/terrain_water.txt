@@ -1,0 +1,10 @@
+# Phase 0 repro, complaints 2 and 3: terrain without climate / blend, no water. Overview and a close view of the river end points (tile edge x=0 and x=1024 m, z about 384-512 m).
+tile "%TILE%"
+frames 120
+cam 0.6 0.55 900
+frames 20
+shot "%OUT%/terrain_overview.png"
+cam 1.57 0.35 260 0
+frames 20
+shot "%OUT%/terrain_low.png"
+quit

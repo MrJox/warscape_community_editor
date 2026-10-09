@@ -1,0 +1,10 @@
+# Phase 0 repro: the shared Outliner shows the tile's tree read-only; a right-click offers the document actions only (no layer actions, no eye per layer).
+tile "%TILE%"
+frames 120
+show_panel Outliner
+frames 4
+shot "%OUT%/outliner_0.png"
+mouse click -300 120 right
+frames 5
+shot "%OUT%/outliner_1_menu.png"
+quit

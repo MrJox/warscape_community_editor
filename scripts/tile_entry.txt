@@ -1,0 +1,71 @@
+# Phase 0b: the tile database entry as the root of a tile. %KIT% is the battle kit's raw_data/terrain/tiles/battle folder, %OUT% a scratch folder.
+# Open by name (the entry's set/tile), by the entry file, by variation folder and by tile.ted; the numbers come from the entry.
+tiles osgiliath
+assert_tiles 2 osgiliath
+tile assembly_kit/osgiliath_test
+frames 3
+assert_tool tile
+assert_entry entry present
+assert_entry set assembly_kit
+assert_entry location terrain/tiles/battle/assembly_kit/osgiliath_test
+assert_entry width 8
+assert_entry height 8
+assert_entry red 100
+assert_entry green 195
+assert_entry blue 161
+assert_entry ground_red settlement_1
+assert_entry ground_alpha forest
+assert_entry variations 1
+assert_entry variation battlefield
+assert_entry min_height -14
+assert_entry scale 24
+assert_entry normal_strength 2
+assert_entry overlap_border_size 1
+assert_entry raw_data_tri_density 128
+assert_entry targets 2
+assert_entry links 2
+assert_height 100 100 -14 30
+tile_entry
+frames 2
+show_panel Tile
+frames 3
+shot "%OUT%/entry_osgiliath.png"
+show_panel Tiles
+frames 3
+shot "%OUT%/entry_browser.png"
+close
+# the same tile by its entry file, by its variation folder and by its tile.ted: one tile each time
+tile "%KIT%/_tile_database/TILES/assembly_kit_osgiliath_test.xml" battlefield
+frames 2
+assert_entry name assembly_kit_osgiliath_test
+assert_entry min_height -14
+close
+tile "%KIT%/assembly_kit/osgiliath_test/battlefield"
+frames 2
+assert_entry name assembly_kit_osgiliath_test
+close
+tile "%KIT%/assembly_kit/osgiliath_test/battlefield/tile.ted"
+frames 2
+assert_entry name assembly_kit_osgiliath_test
+close
+# a tile with several variations: a variation by name and by number; one that does not exist is an error that lists them
+tiles dunedain_city_osgiliath
+expect_fail tile tdd_settlement_dunedain_cities/dunedain_city_osgiliath nonexistent
+tile tdd_settlement_dunedain_cities/dunedain_city_osgiliath minor
+frames 2
+assert_entry variation minor
+assert_entry min_height -12.3143
+assert_entry scale 22.3143
+close
+tile tdd_settlement_dunedain_cities/dunedain_city_osgiliath 1
+frames 2
+assert_entry variation small
+close
+# a tile folder that holds its variations opens the first one
+tile "%KIT%/tdd_settlement_dunedain_cities/dunedain_city_osgiliath"
+frames 2
+assert_entry variation minor
+close
+# no such tile
+expect_fail tile no_such_set/no_such_tile
+quit

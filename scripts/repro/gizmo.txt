@@ -1,0 +1,23 @@
+# Phase 0 repro, complaint "gizmo drags orbit the camera": select a building, translate gizmo, drag the arrow of each axis (aimed from the projected axis
+# tip by gizmo_drag), and see whether the item moved (History entry, world position) or the camera orbited.
+tile "%TILE%"
+frames 120
+tile_select BUILDING_INSTANCE
+focus
+gizmo translate
+frames 10
+shot "%OUT%/gizmo_before.png"
+cam_info
+gizmo_drag x 60
+frames 6
+shot "%OUT%/gizmo_x.png"
+cam_info
+gizmo_drag z 60
+frames 6
+cam_info
+gizmo_drag y 40
+frames 6
+shot "%OUT%/gizmo_y.png"
+cam_info
+documents
+quit

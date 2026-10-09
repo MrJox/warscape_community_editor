@@ -1,0 +1,24 @@
+# Phase 0 repro, complaint 1: the Layers panel (a tab behind the Outliner; the "Instance types" list sits on top, the layer tree below it).
+# Coordinates are pixels of the viewport image (its top-left is at about x 351, y 66 of the 1584 x 921 window): negative x reaches the panels on its left.
+tile "%TILE%"
+frames 120
+shot "%OUT%/layers_0_start.png"
+# right-click the layer "rivers": the menu offers New layer inside / Rename / Delete only (nothing is selected, so no "Move selected here"), no eye, no lock
+mouse click -283 640 right
+frames 5
+shot "%OUT%/layers_1_menu.png"
+# New layer inside (first menu entry)
+mouse click -250 655
+frames 8
+shot "%OUT%/layers_2_after_new.png"
+# Delete layer and contents (third entry) on "rivers": gone with its splines and the new layer, no confirmation
+mouse click -283 640 right
+frames 5
+mouse click -250 689
+frames 8
+shot "%OUT%/layers_3_after_delete.png"
+show_panel History
+frames 4
+shot "%OUT%/layers_4_history.png"
+cam_info
+quit

@@ -1,0 +1,5 @@
+# Phase 0 repro: the default Tile layout on the kit's osgiliath_test tile (what the user sees on opening). %TILE% %OUT% are filled in by scripts/tile_repro.sh
+tile "%TILE%"
+frames 120
+shot "%OUT%/layout.png"
+quit

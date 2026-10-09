@@ -12,7 +12,8 @@ target_link_libraries(wce_vfs PUBLIC wce_game wce_foundation winhttp)
 add_library(wce_formats STATIC
     formats/xml_doc.cpp formats/env_value.cpp formats/fxc.cpp formats/rmv2.cpp formats/variation_db.cpp formats/variation_io.cpp
     formats/registry.cpp formats/xml_format.cpp formats/fastbin_tile.cpp formats/bmd_bin.cpp formats/markers.cpp
-    formats/image_containers.cpp formats/chmf.cpp formats/png_file.cpp formats/tile_database.cpp formats/opaque_formats.cpp)
+    formats/image_containers.cpp formats/chmf.cpp formats/png_file.cpp formats/tile_database.cpp formats/opaque_formats.cpp
+    formats/tile_entry.cpp formats/tile_index.cpp)
 target_link_libraries(wce_formats PUBLIC wce_foundation zlib_vendor)
 
 # CPU asset loading on top of the VFS (weather vfx definitions; models and materials join later).

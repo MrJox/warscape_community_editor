@@ -4,6 +4,7 @@
 // visibility and distance culling. Everything goes through the shared selection, gizmo, CommandStack and overlay pass; every action is a command too
 // (tools/tile/tile_commands.cpp), so scripts and menus use the same code.
 #include "editor/tool.h"
+#include "formats/tile_index.h"
 #include "formats/variation_db.h"
 #include "tile/tile_document.h"
 
@@ -37,6 +38,11 @@ public:
     TileDocument* document(Editor& editor);
     // What the commands and the panels both do.
     bool open_folder(Editor& editor, const std::string& dir, std::string* message);
+    // Opens a tile by its database entry (an _tile_database/TILES/*.xml path, or a name like "assembly_kit/osgiliath_test" / the entry's file name), by a
+    // variation folder, a tile folder or a tile.ted. `variation` picks one of the entry's variations (a leaf folder name or a number; empty = the first).
+    bool open_tile(Editor& editor, const std::string& target, const std::string& variation, std::string* message);
+    // The raw_data folders the tile browser lists: `tile_kits` in wce.ini (';' separated), else the assembly kits under game_dir.
+    std::vector<std::filesystem::path> kit_roots(Editor& editor) const;
     int primary(Editor& editor);                           // first selected instance element, -1 for none
     std::vector<int> selected(Editor& editor);
     void select_elem(Editor& editor, int elem, bool add = false);
@@ -60,6 +66,8 @@ private:
     void draw_layer_node(Editor& editor, TileDocument& d, int elem, int depth);
     void draw_polygon_panel(Editor& editor, TileDocument& d);
     void draw_weather_panel(Editor& editor);
+    void draw_browser_panel(Editor& editor);
+    void draw_entry_section(Editor& editor, TileDocument& d);
     void handle_keys(Editor& editor);
     void load_environment_map(const std::string& tile_dir);
     bool cursor_ray(Editor& editor, int x, int y, float3& o, float3& d) const;
@@ -92,6 +100,19 @@ private:
     int new_poly_type_ = 0, new_hint_ = 0;
     DocumentId camera_set_for_ = 0;
     std::map<std::string, float> marks_;      // mark_height values for the tests
+
+    // The tile browser (Tiles panel) and the entry a pending open comes from (consumed by open())
+    char browse_filter_[96] = {};
+    int browse_kit_ = 0, browse_kind_ = 0;                // kit index into kit_roots, kind filter (all / battle / campaign)
+    std::string browse_selected_;                         // the entry's key (normalised location) selected in the list
+    std::filesystem::path pending_entry_;                 // entry xml + variation for the open() that follows
+    int pending_variation_ = -1;
+    std::string index_note_;                              // how the last index was built (log / status)
+    std::vector<std::filesystem::path> browse_roots_;       // kit_roots, looked up at most every two seconds (the panel draws every frame)
+    double browse_roots_time_ = -1e9;
+    std::vector<const TileIndexEntry*> browse_rows_;      // the filtered, listed rows (rebuilt when the kit, kind, filter or index changed)
+    std::string browse_rows_key_;
+    std::shared_ptr<const TileIndex> browse_index_;
 
     // weather picker (data only: which .environment file the game picks for this map)
     std::unique_ptr<VariationDb> env_;

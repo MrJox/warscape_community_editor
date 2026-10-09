@@ -57,11 +57,15 @@ run perf_check        "$WB/perf_check.exe" "$BKIT/raw_data/terrain/tiles/battle/
 run xml_splice_check  "$WB/xml_splice_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
 run unit_tests        "$TB/unit_tests.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" "$TILE/tile.ted"
 run height_check      "$TB/height_check.exe" "$TILE/height_map_0.png"
+# the tile database entry as the root of a tile: entry round trip (both kits), the index and its cache, open by entry = by folder = by tile.ted, a tile.ted outside the kit (plains/3x1/3x1_aa has a corrupt height map: it must fail the same way each time)
+run tile_entry_check  "$TB/tile_entry_check.exe" "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
 run weather_check     "$TB/weather_check.exe" "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 run tdb_build         "$TB/tdb_build.exe" "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     "$TB/roundtrip.exe" "$MANIFEST" "$GAME"
     run scene_check   "$TB/scene_check.exe" "$MANIFEST" "$GAME"
+    run tile_entry_check_all "$TB/tile_entry_check.exe" "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
+    run placement_check "$TB/placement_check.exe" "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
 fi
 
@@ -70,6 +74,7 @@ if [ "$RENDER" = 1 ]; then
     run app_check     env WCE_BIN="$WB" bash "$ROOT/scripts/app_check.sh" "$OUT/app_check"   # wce.exe scripted: tools, documents, selection, gizmo edits, undo, layouts, first run, capture; two runs identical
     run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
     run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
+    run tile_entry_script env WCE_BIN="$WB" bash "$ROOT/scripts/tile_entry_run.sh" "$OUT/tile_entry_script"   # the tile tool opens tiles by entry, name, folder and tile.ted; assert_entry; the tile browser's rows
     run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile and a weather file open at once, the weather previewed on the tile, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
     run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
 fi
