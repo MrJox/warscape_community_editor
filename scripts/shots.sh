@@ -16,11 +16,10 @@ for env in dry rain snow; do
         if cmp -s "$OUT/$f" "$REF/$f"; then echo "$f identical"; else echo "$f DIFFERS"; bad=1; fi
     done
 done
-# offscreen capture (no window shows it): another size, same determinism
-for spec in "dry 1280x720" "snow 800x600"; do
-    set -- $spec
-    name="capture_$1_$2.png"
-    "$BIN/weather_editor.exe" --open "weather/charlemagne/med_sp_land_day_$1.environment" --cam 0.6 0.35 120 --frames 20         --capture "$2" "$(cygpath -w "$OUT/$name")" || bad=1
+# offscreen capture through wce.exe (no window shows it): the sample map in the weather tool, two sizes, same determinism
+for size in 1280x720 800x600; do
+    name="capture_dry_$size.png"
+    "$BIN/wce.exe" --tool weather --cam 0.6 0.35 120 --frames 20 --capture "$size" "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
     if cmp -s "$OUT/$name" "$REF/$name"; then echo "$name identical"; else echo "$name DIFFERS"; bad=1; fi
 done
 exit $bad

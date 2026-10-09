@@ -7,8 +7,15 @@
 | 0 Freeze and new repo | **Done.** Baseline in `docs/baseline.md` and `docs/baseline/`. |
 | 1 foundation, formats libs | **Done** (commit `8dfa720`). |
 | 2 VFS / rpfm_server | **Done** (commit `6de91c4`). See `docs/vfs.md`. |
-| 3 Render core, RenderScene | **Done, waiting for your go.** See the Phase 3 deviations below and `docs/re/terrain.md`. |
-| 4 - 9 | Not started. |
+| 3 Render core, RenderScene | **Done** (commit `fad7ab7`). See the Phase 3 deviations below and `docs/re/terrain.md`. |
+| 4 Editor core and shell | **Done, waiting for your go.** `docs/editor.md`, Phase 4 deviations below. |
+| 5 - 9 | Not started. |
+
+Phase 4 deviations: the Weather tool is a host for the sample-map sandbox document until Phase 5 (the old `weather_editor` stays the real weather tool, and its window shots stay the render regression); Tile, Unit, VFX,
+Terrain and Cinematic are `PlaceholderTool`s; the editor library is split in `wce_editor_core` (no ImGui or GPU, tested by `editor_check`) and `wce_editor`; layouts are ImGui ini files per tool, swapped on tool switch, instead of one
+shared ini; ImGuizmo's scale mode exists but the sample map document ignores scale. `Vfs` now makes its paths absolute (rpfm runs in another working directory: a relative cache folder extracted into the server's directory). The
+Phase 3 offscreen capture references came from `weather_editor --capture`, which rendered with the default environment (the legacy app only picks the active environment inside its UI frame); they are replaced by `wce.exe --capture` references
+(explicit re-baseline, `build/gates_base_p3/capture_dry_*.png`). ImGui is the 1.91.9 docking tag and ImGuizmo master of 2026-08-08 (see `THIRD_PARTY.md`).
 
 Phase 3 deviations: the dependency order is `... formats <- assets <- scene <- render ...` (scene below render): `Renderer::render` takes a `RenderScene`, which holds
 paths and plain data, never GPU objects; `libs/assets` only has the weather vfx definitions for now (models and materials stay in `render/ModelCache` until the

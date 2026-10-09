@@ -41,6 +41,7 @@ run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit co
 # ---- weather_editor gates
 run xml_roundtrip     "$WB/xml_roundtrip.exe" "$CACHE"
 run foundation_check  "$WB/foundation_check.exe"
+run editor_check      "$WB/editor_check.exe"
 run vfs_compare       "$WB/vfs_probe.exe" --compare   # cold mount through rpfm_server and rpfm_cli: same pack order, winners and bytes (needs a running or startable rpfm_server)
 run format_check      "$WB/format_check.exe" "$CACHE"
 run variation_check   "$WB/variation_check.exe"
@@ -61,6 +62,7 @@ fi
 
 # ---- reference screenshots (fixed camera and inputs; see docs/baseline.md for what is deterministic)
 if [ "$RENDER" = 1 ]; then
+    run app_check     env WCE_BIN="$WB" bash "$ROOT/scripts/app_check.sh" "$OUT/app_check"   # wce.exe scripted: tools, documents, selection, gizmo edits, undo, layouts, first run, capture; two runs identical
     run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
     for env in dry rain snow; do
         case $env in

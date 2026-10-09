@@ -51,6 +51,7 @@ void Tool::default_layout(ImGuiID dockspace) {
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Log", bottom);
     ImGui::DockBuilderDockWindow("History", bottom);
+    ImGui::DockBuilderDockWindow(title(), right);   // a tool's main panel, when it has one named like the tool, tabs with the inspector
 }
 
 void PlaceholderTool::draw_panels(Editor& editor) {

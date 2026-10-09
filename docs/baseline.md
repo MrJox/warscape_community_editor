@@ -110,3 +110,14 @@ re-baselined explicitly in its commit. The tile shot still comes from Tile Studi
 |---|---|
 | `render_check` (label `render`, runs in `gates.sh --render`) | headless D3D11: two renderers give the same pixels; sample map picking (sky 0, ground = terrain entity, 3 of 8 house centres hit their own house; the rest hit other pieces, empty air or ground); locked and hidden layers; hill terrain in 64-cell patches; overlays in their own colour, depth tested, selection outline, grid; PNG capture equals the target. Output: `houses in view 8, picked right 3` and `all passed` |
 | `scripts/shots.sh` | the three weather shots and two offscreen captures (`--capture 1280x720`, `800x600`) byte-identical to `build/gates_base_p3/` |
+
+## Phase 4 additions
+
+| Gate | Result |
+|---|---|
+| `editor_check` (fast) | all passed (command stack, documents, selection, registry, scripts, cameras, inspector gestures) |
+| `app_check` (render) | `wce.exe` runs `scripts/app_smoke.txt` twice (exit 0 both) and `scripts/app_firstrun.txt` once; `capture identical between runs`, `shot identical between runs`, `first run: ok (wce.ini written)` |
+| `scripts/shots.sh` | the three weather shots byte-identical to `build/gates_base_p3/`; two `wce.exe --capture` references (`capture_dry_1280x720.png`, `capture_dry_800x600.png`) |
+
+**Capture references re-baselined.** The Phase 3 captures (`weather_editor --capture`) were taken with the default environment, because the legacy app only picks the active environment while it draws its UI. They are replaced by captures of
+`wce.exe`, where the weather tool lights the sample map with `med_sp_land_day_dry.environment` (sky, clouds and shadows render as in the window shots). Weather window shots are unchanged.
