@@ -1,11 +1,15 @@
 #pragma once
 // Battle renderer built from the game's own shaders. Pass order and shader choices are documented
 // in docs/re/renderer.md; anything not yet confirmed against the game is marked there.
-#include "scene/environment.h"
 #include "foundation/math.h"
+#include "render/model_cache.h"
+#include "render/particles.h"
+#include "render/render_target.h"
 #include "render/shader_lib.h"
 #include "render/wind.h"
-#include "render/particles.h"
+#include "scene/camera.h"
+#include "scene/environment.h"
+#include "scene/render_scene.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -18,18 +22,19 @@
 namespace wce {
 
 class IVfs;
-class TestScene;
 
-struct Camera {
-    float3 eye{0, 30, -80}, target{0, 5, 0};
-    // The game's battle camera (memory dump): near 1, far 13000, vertical FOV 1.13446 rad (65 degrees).
-    float fov_y = 1.13446f, znear = 1.0f, zfar = 13000.0f;
+// What one frame needs besides the scene: the camera and the time (from the Clock).
+struct ViewParams {
+    Camera camera;
+    float time_s = 0;
 };
 
 class Renderer {
 public:
     enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped, AO };
     float debug_points[4] = {}; int debug_maps = 0;
+    size_t draw_count() const { return draws_.size(); }
+    size_t mesh_count() const { size_t n = 0; for (auto& d : draws_) n += d.model->meshes.size(); return n; }
     // Fixed-step runs (screenshots, regression, recording): GPU readbacks wait for their data instead of using it a frame later when it
     // happens to be ready, so frame N is the same every run. Set together with a fixed-step Clock.
     bool deterministic = false;
@@ -67,9 +72,11 @@ public:
     Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs);
     ~Renderer();
 
-    void render(const TestScene* scene, const Camera& cam, const EnvironmentParams& env, int width, int height, float time_s);
-    ID3D11ShaderResourceView* output() const { return out_srv_.Get(); }
+    // Draws `scene` (lit by scene.environment.resolved()) as seen by `view.camera` into `target`, at the target's size.
+    void render(const RenderScene& scene, const ViewParams& view, RenderTarget& target);
     View view = View::Final;
+    TextureCache& textures() { return textures_; }
+    ModelCache& models() { return models_; }
 
     ConstantBuffers& cbuffers() { return cbs_; }
     ParticleSystem* particles() { return particles_.get(); }
@@ -86,7 +93,7 @@ private:
     void make_states();
     void set_camera(const float4x4& view, const float4x4& proj, const float3& eye, int w, int h, float time_s);
     void pass_sky_cube(const EnvironmentParams& env, float time_s);
-    void pass_gbuffer(const TestScene* scene);
+    void pass_gbuffer();
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
@@ -99,8 +106,8 @@ private:
     uint64_t depth_frame_ = 0;
     bool depth_range_valid_ = false;
     float depth_min_ = 1, depth_max_ = 781;
-    void pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s);
-    void pass_display();
+    void pass_shadows(const Camera& cam, float aspect, const float3& light_dir, float time_s);
+    void pass_display(RenderTarget& target);
     void pass_tonemap(const EnvironmentParams& env, float dt);
     void pass_to_screen(const EnvironmentParams& env);
     void pass_lens_flare(const EnvironmentParams& env, const float3& eye, float time_s);
@@ -113,17 +120,32 @@ private:
     ID3D11DeviceContext* ctx_;
     IVfs& vfs_;
     ConstantBuffers cbs_;
+    TextureCache textures_;
+    ModelCache models_;
+
+    // Draw list of the mesh and terrain entities, in scene order; rebuilt when the scene changes.
+    struct Draw {
+        const GpuModel* model = nullptr;
+        float4x4 world;
+        float p4[4], p5[4], p6[4], p7[4];
+        bool casts_shadow = true;
+        EntityId entity = 0;
+    };
+    std::vector<Draw> draws_;
+    const RenderScene* draws_scene_ = nullptr;
+    uint64_t draws_revision_ = 0;
+    void build_draws(const RenderScene& scene);
+    static RigidInstance rigid_instance(const Draw& d, const GpuMesh& m);
     std::unique_ptr<ShaderLibrary> lib_;
     std::unique_ptr<ParticleSystem> particles_;
     std::vector<std::string> errors_;
 
     int w_ = 0, h_ = 0;
     Target gb_[5];   // gbuffer channels 1..4 + per-instance id
-    Target hdr_, out_, final_, ao_, ao_tmp_, ao_blur_; // ao_: full-res resolve; ao_tmp_/ao_blur_: half-res blur
+    Target hdr_, final_, ao_, ao_tmp_, ao_blur_; // ao_: full-res resolve; ao_tmp_/ao_blur_: half-res blur
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> jitter_srv_;
     ID3D11ShaderResourceView* ao_result_ = nullptr;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> s_wrap_point_; // final_: hdr_to_screen output (its alpha is the refraction mask)
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> out_srv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> depth_tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> depth_srv_;
@@ -148,7 +170,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> env_depth_tex_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> env_dsv_;
     bool env_pass_ = false, env_valid_ = false;
-    void render_env_cube(const TestScene* scene, const EnvironmentParams& env, float time_s);
+    void render_env_cube(const EnvironmentParams& env, float time_s);
     void apply_engine_ambient(const EnvironmentParams& env);
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cube_vb_, cube_ib_, instance_vb_;

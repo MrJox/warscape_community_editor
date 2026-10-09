@@ -90,7 +90,9 @@ void App::open_path(const std::string& path) {
 
 std::string App::diagnostics() const {
     std::string d = "status: " + status_ + "\n";
-    d += "scene objects: " + std::to_string(scene_ ? scene_->objects().size() : 0) + "\n";
+    d += "scene objects: " + std::to_string(scene_.entities().size()) + "\n";
+    d += "viewport sizes:" + viewport_trace_ + " x" + std::to_string(trace_n_) + "\n";
+    if (renderer_) d += "draws: " + std::to_string(renderer_->draw_count()) + ", meshes: " + std::to_string(renderer_->mesh_count()) + "\n";
     if (renderer_) d += "cloud sprites: " + std::to_string(renderer_->cloud_sprites()) + "\n";
     if (renderer_) d += "sun visibility (lens flare): " + std::to_string(renderer_->sun_visibility()) + "\n";
     if (renderer_ && renderer_->particles()) {
@@ -108,10 +110,11 @@ std::string App::diagnostics() const {
         for (auto& n : p.effect().notes) d += "  vfx note: " + n + "\n";
         for (auto& e : p.errors()) d += "  vfx error: " + e + "\n";
     }
-    if (scene_)
-        for (auto& e : scene_->errors()) d += "scene error: " + e + "\n";
-    if (textures_)
-        for (auto& e : textures_->errors()) d += "texture error: " + e + "\n";
+    for (auto& e : sample_.errors) d += "scene error: " + e + "\n";
+    if (renderer_) {
+        for (auto& e : renderer_->models().errors()) d += "scene error: " + e + "\n";
+        for (auto& e : renderer_->textures().errors()) d += "texture error: " + e + "\n";
+    }
     if (renderer_) {
         d += "points readback: " + std::to_string(renderer_->debug_maps) + " maps, raw " + std::to_string(renderer_->debug_points[0]) + " " +
              std::to_string(renderer_->debug_points[1]) + " " + std::to_string(renderer_->debug_points[2]) + " " + std::to_string(renderer_->debug_points[3]) + "\n";
@@ -126,8 +129,6 @@ std::string App::diagnostics() const {
 void App::init_renderer() {
     if (!vfs_) return;
     try {
-        textures_ = std::make_unique<TextureCache>(dev_, *vfs_);
-        scene_ = std::make_unique<TestScene>(dev_, *vfs_, *textures_);
         renderer_ = std::make_unique<Renderer>(dev_, ctx_, *vfs_);
         // Precipitation reads open documents first, so edits to vfx/*.xml and weather_definitions.xml show live.
         renderer_->particles()->set_reader([this](const std::string& path) {
@@ -142,8 +143,10 @@ void App::init_renderer() {
             output_brightness_ = go.brightness;
             if (renderer_) renderer_->apply_graphics_options(go);
         }
-        int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
-        float3 ext = scene_->bounds_max() - scene_->bounds_min();
+        sample_layer_ = scene_.add_layer(1, "Sample map");
+        sample_ = publish_sample_map(*vfs_, scene_, sample_layer_, 1, uint32_t(scene_seed_), scene_count_);
+        int n = sample_.buildings;
+        float3 ext = sample_.bounds_max - sample_.bounds_min;
         cam_dist_ = std::max(60.0f, std::max(ext.x, ext.z) * 0.9f);
         clock_.restart();
         set_status(status_ + " Test map: " + std::to_string(n) + " buildings.", status_error_);
@@ -171,7 +174,8 @@ void App::draw_viewport() {
     scene_count_ = std::clamp(scene_count_, 1, 100);
     ImGui::SameLine();
     if (ImGui::Button("Re-roll")) {
-        int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
+        sample_ = publish_sample_map(*vfs_, scene_, sample_layer_, 1, uint32_t(scene_seed_), scene_count_);
+        int n = sample_.buildings;
         set_status("Test map: " + std::to_string(n) + " buildings.");
     }
     ImGui::SameLine();
@@ -180,6 +184,12 @@ void App::draw_viewport() {
 
     ImVec2 size = ImGui::GetContentRegionAvail();
     int w = int(size.x), h = int(size.y);
+    if (w >= 16 && h >= 16 && (w != trace_w_ || h != trace_h_) && viewport_trace_.size() < 400) {
+        if (trace_n_) viewport_trace_ += " x" + std::to_string(trace_n_) + ",";
+        viewport_trace_ += " " + std::to_string(w) + "x" + std::to_string(h);
+        trace_w_ = w, trace_h_ = h, trace_n_ = 0;
+    }
+    ++trace_n_;
     if (w < 16 || h < 16) return;
 
     // Cross-fade: second environment + slider.
@@ -200,11 +210,21 @@ void App::draw_viewport() {
         ImGui::SliderFloat("##t", &blend_t_, 0.0f, 1.0f, "blend %.2f");
     }
 
-    EnvironmentParams params = env ? read_environment(env->doc) : EnvironmentParams{};
-    if (env && other && blend_t_ > 0) params = blend_environments(params, read_environment(other->doc), blend_t_);
-    params.output_gamma = output_gamma_;
-    params.output_brightness = output_brightness_;
-    last_params_ = params;
+    // The environment slot of the scene: the active document, optionally cross-faded with a second one.
+    EnvironmentParams active = env ? read_environment(env->doc) : EnvironmentParams{};
+    active.output_gamma = output_gamma_;
+    active.output_brightness = output_brightness_;
+    scene_.environment.active = active;
+    scene_.environment.blend.reset();
+    scene_.environment.blend_t = 0;
+    if (env && other && blend_t_ > 0) {
+        EnvironmentParams b = read_environment(other->doc);
+        b.output_gamma = output_gamma_;
+        b.output_brightness = output_brightness_;
+        scene_.environment.blend = b;
+        scene_.environment.blend_t = blend_t_;
+    }
+    last_params_ = scene_.environment.resolved();
     // Camera: orbit around the target.
     float cp = std::cos(cam_pitch_), sp = std::sin(cam_pitch_);
     camera_.target = cam_target_;
@@ -219,14 +239,15 @@ void App::draw_viewport() {
     try {
         clock_.tick();
         renderer_->deterministic = clock_.fixed_step();
-        renderer_->render(scene_.get(), camera_, params, w, h, float(clock_.time()));
+        if (!target_.resize(dev_, w, h)) throw std::runtime_error("cannot create the viewport surface");
+        renderer_->render(scene_, ViewParams{camera_, float(clock_.time())}, target_);
     } catch (const std::exception& e) {
         set_status(std::string("Render error: ") + e.what(), true);
     }
-    if (!renderer_->output()) return;
+    if (!target_.valid()) return;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImGui::Image(ImTextureID(renderer_->output()), size);
+    ImGui::Image(ImTextureID(target_.srv()), size);
     ImGui::SetCursorScreenPos(pos);
     ImGui::InvisibleButton("##vp", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     ImGuiIO& io = ImGui::GetIO();

@@ -2,7 +2,9 @@
 #include "foundation/clock.h"
 #include "vfs/vfs.h"
 #include "render/renderer.h"
-#include "render/scene.h"
+#include "render/render_target.h"
+#include "scene/render_scene.h"
+#include "weather/sample_map.h"
 #include "editor/variation_editor.h"
 #include "formats/variation_db.h"
 #include "formats/xml_doc.h"
@@ -107,8 +109,12 @@ private:
     char new_name_[96] = {}, new_value_[256] = {}; // inputs of the element context menu
 
     // 3D preview
-    std::unique_ptr<TextureCache> textures_;
-    std::unique_ptr<TestScene> scene_;
+    RenderScene scene_;                       // what the viewport shows: the sample map layer and the active environment
+    LayerId sample_layer_ = 0;
+    SampleMapResult sample_;
+    RenderTarget target_;
+    std::string viewport_trace_;               // run-length list of the viewport sizes rendered so far (diagnostics: a size change mid-run changes the simulation)
+    int trace_w_ = 0, trace_h_ = 0, trace_n_ = 0;
     std::unique_ptr<Renderer> renderer_;
     Camera camera_;
     EnvironmentParams last_params_; // what the viewport rendered last frame (menus read it)

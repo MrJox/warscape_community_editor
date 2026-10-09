@@ -3,7 +3,6 @@
 #include "render/environment_apply.h"
 
 #include "vfs/vfs.h"
-#include "render/scene.h"
 
 #include <d3dcompiler.h>
 
@@ -126,7 +125,7 @@ float4x4 face_view(int face) {
 
 } // namespace
 
-Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs) {
+Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs), textures_(dev, vfs), models_(dev, vfs, textures_) {
     lib_ = std::make_unique<ShaderLibrary>(dev, vfs, cbs_);
     particles_ = std::make_unique<ParticleSystem>(dev, ctx, vfs, *lib_, cbs_);
     make_states();
@@ -434,13 +433,11 @@ void Renderer::resize(int w, int h) {
     gb_[3] = make_target(w, h, DXGI_FORMAT_R32_FLOAT);      // z / w
     gb_[4] = make_target(w, h, DXGI_FORMAT_R32_UINT);       // per-instance value (uint output, debug layer)
     hdr_ = make_target(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
-    out_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
     final_ = make_target(w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
     // SSAOX_RESOLVE / BLUR_X / BLUR_Y RTs: TTF_R16F (fn 0x11766de0).
     ao_ = make_target(w, h, DXGI_FORMAT_R16_FLOAT);
     ao_tmp_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R16_FLOAT); // blur at half resolution (dump)
     ao_blur_ = make_target(std::max(1, w / 2), std::max(1, h / 2), DXGI_FORMAT_R16_FLOAT);
-    out_srv_ = out_.srv;
 
     auto sized = [&](int tw, int th, DXGI_FORMAT f) {
         SizedTarget s;
@@ -527,7 +524,7 @@ void Renderer::pass_sky_cube(const EnvironmentParams& env, float time_s) {
 // passes; then every face's lowest mip is read back (readback_ambient). While it renders, the lighting uses the XML
 // ambient (no computed cube exists yet in the engine at that point, fn 0x178a300) and no shadows (measured: binding the
 // main-camera shadow map changes the faces by < 1%, so the choice does not matter).
-void Renderer::render_env_cube(const TestScene* scene, const EnvironmentParams& env, float time_s) {
+void Renderer::render_env_cube(const EnvironmentParams& env, float time_s) {
     const int n = kSkyCube;
     std::swap(gb_, env_gb_);
     std::swap(hdr_, env_hdr_);
@@ -552,7 +549,7 @@ void Renderer::render_env_cube(const TestScene* scene, const EnvironmentParams& 
         ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
         // No sun disc: with it the +x face of the dry file is 10x the game's value; without it the side faces match
         // the dump within 10-25% (dry dump, 2026-10-08).
-        pass_gbuffer(scene);
+        pass_gbuffer();
         ctx_->ClearRenderTargetView(hdr_.rtv.Get(), clear);
         pass_sky_forward();
         // Only the top (+y) face receives clouds: the game's side faces equal the cloud-free scene within 10-15% (dry dump,
@@ -633,7 +630,7 @@ void Renderer::apply_engine_ambient(const EnvironmentParams& env) {
     pair("ambient_cube_fb", 4, 5);
 }
 
-void Renderer::pass_gbuffer(const TestScene* scene) {
+void Renderer::pass_gbuffer() {
     ID3D11RenderTargetView* rtvs[5] = {gb_[0].rtv.Get(), gb_[1].rtv.Get(), gb_[2].rtv.Get(), gb_[3].rtv.Get(), gb_[4].rtv.Get()};
     const float zero[4] = {0, 0, 0, 0};
     for (auto* r : rtvs) ctx_->ClearRenderTargetView(r, zero);
@@ -641,7 +638,7 @@ void Renderer::pass_gbuffer(const TestScene* scene) {
     ctx_->OMSetRenderTargets(5, rtvs, dsv_.Get());
     ctx_->OMSetDepthStencilState(ds_gbuffer_.Get(), 1);
     ctx_->RSSetState(rs_back_.Get());
-    if (!scene || scene->objects().empty()) return;
+    if (draws_.empty()) return;
 
     const GameShader* vs = shader(kRigidVS);
     const GameShader* ps_opaque = shader(kRigidGbufferPS);
@@ -663,15 +660,13 @@ void Renderer::pass_gbuffer(const TestScene* scene) {
     bind_shader(ctx_, *vs, cbs_);
     for (auto& [name, slot] : vs->textures) ctx_->VSSetShaderResources(slot, 1, instance_ids_srv_.GetAddressOf());
 
-    for (auto& o : scene->objects()) {
-        RigidInstance inst{};
-        for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 4; ++c) inst.world[r][c] = o.world.m[r][c];
-        D3D11_MAPPED_SUBRESOURCE ms;
-        if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-        std::memcpy(ms.pData, &inst, sizeof inst);
-        ctx_->Unmap(instance_vb_.Get(), 0);
+    for (const Draw& o : draws_) {
         for (auto& m : o.model->meshes) {
+            RigidInstance inst = rigid_instance(o, m);
+            D3D11_MAPPED_SUBRESOURCE ms;
+            if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
+            std::memcpy(ms.pData, &inst, sizeof inst);
+            ctx_->Unmap(instance_vb_.Get(), 0);
             const GameShader* ps = (m.alpha_mode == 1 && ps_alpha) ? ps_alpha : ps_opaque;
             bind_shader(ctx_, *ps, cbs_);
             for (auto& [tname, tex] : m.textures) bind_srv(ctx_, *ps, tname, tex ? tex->srv.Get() : nullptr);
@@ -990,7 +985,7 @@ void Renderer::analyse_depth(const Camera& cam) {
     }
 }
 
-void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float aspect, const float3& light_dir, float time_s) {
+void Renderer::pass_shadows(const Camera& cam, float aspect, const float3& light_dir, float time_s) {
     // Battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps):
     //   far   = camera near + sum(row)  with the quality row (30, 90, 210, 450) -> 781 (fn 0x11751fc0, table dll+0x1c88aa0)
     //   range = depth-buffer analysis (min, max visible view depth, max clamped to far), max *=
@@ -1063,7 +1058,7 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
     ctx_->ClearRenderTargetView(shadow_atlas_.rtv.Get(), one);
     ctx_->ClearDepthStencilView(shadow_dsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-    if (vs && ps && scene && shadows) {
+    if (vs && ps && !draws_.empty() && shadows) {
         std::vector<D3D11_INPUT_ELEMENT_DESC> el = {
             {"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -1088,16 +1083,14 @@ void Renderer::pass_shadows(const TestScene* scene, const Camera& cam, float asp
             bind_shader(ctx_, *vs, cbs_);
             bind_shader(ctx_, *ps, cbs_);
             for (auto& [name, slot] : vs->textures) ctx_->VSSetShaderResources(slot, 1, instance_ids_srv_.GetAddressOf());
-            for (auto& o : scene->objects()) {
-                if (o.model->path == "(ground)") continue; // receiver only
-                RigidInstance inst{};
-                for (int r = 0; r < 3; ++r)
-                    for (int k = 0; k < 4; ++k) inst.world[r][k] = o.world.m[r][k];
-                D3D11_MAPPED_SUBRESOURCE ms;
-                if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-                std::memcpy(ms.pData, &inst, sizeof inst);
-                ctx_->Unmap(instance_vb_.Get(), 0);
+            for (const Draw& o : draws_) {
+                if (!o.casts_shadow) continue; // receiver only
                 for (auto& m : o.model->meshes) {
+                    RigidInstance inst = rigid_instance(o, m);
+                    D3D11_MAPPED_SUBRESOURCE ms;
+                    if (FAILED(ctx_->Map(instance_vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
+                    std::memcpy(ms.pData, &inst, sizeof inst);
+                    ctx_->Unmap(instance_vb_.Get(), 0);
                     ID3D11Buffer* vbs[2] = {m.vb.Get(), instance_vb_.Get()};
                     UINT strides[2] = {32, sizeof(RigidInstance)}, offs[2] = {0, 0};
                     ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
@@ -1424,8 +1417,9 @@ void Renderer::pass_fog() {
     ctx_->PSSetShaderResources(0, 8, nulls);
 }
 
-void Renderer::pass_display() {
-    ctx_->OMSetRenderTargets(1, out_.rtv.GetAddressOf(), nullptr);
+void Renderer::pass_display(RenderTarget& target) {
+    ID3D11RenderTargetView* target_rtv = target.rtv();
+    ctx_->OMSetRenderTargets(1, &target_rtv, nullptr);
     ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
     struct { int mode; float exposure; float pad[2]; } dc{0, 1.0f, {}};
     ID3D11ShaderResourceView* src = hdr_.srv.Get();
@@ -1483,8 +1477,58 @@ void Renderer::update_weather(const EnvironmentParams& env, float time_s) {
         cbs_.set_f("wind_PS", "wind_direction_PS", {wind_.direction.x, wind_.direction.y});
 }
 
-void Renderer::render(const TestScene* scene, const Camera& cam, const EnvironmentParams& env, int width, int height, float time_s) {
+RigidInstance Renderer::rigid_instance(const Draw& d, const GpuMesh& m) {
+    RigidInstance inst{};
+    const float4x4 w = m.has_offset ? d.world * translation(m.offset) : d.world;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 4; ++c) inst.world[r][c] = w.m[r][c];
+    std::memcpy(inst.p4, d.p4, sizeof inst.p4);
+    std::memcpy(inst.p5, d.p5, sizeof inst.p5);
+    std::memcpy(inst.p6, d.p6, sizeof inst.p6);
+    std::memcpy(inst.p7, d.p7, sizeof inst.p7);
+    return inst;
+}
+
+// The mesh and terrain entities of visible layers in scene order (the ground first, then the buildings, as the old test map did).
+void Renderer::build_draws(const RenderScene& scene) {
+    if (draws_scene_ == &scene && draws_revision_ == scene.revision()) return;
+    draws_scene_ = &scene;
+    draws_revision_ = scene.revision();
+    draws_.clear();
+    models_.prune_terrain(scene);
+    for (const Entity& e : scene.entities()) {
+        if (!scene.drawable(e)) continue;
+        Draw d;
+        d.world = e.world;
+        d.entity = e.id;
+        std::memset(d.p4, 0, sizeof d.p4);
+        std::memset(d.p5, 0, sizeof d.p5);
+        std::memset(d.p6, 0, sizeof d.p6);
+        std::memset(d.p7, 0, sizeof d.p7);
+        if (const MeshInstance* mi = e.get<MeshInstance>()) {
+            d.model = models_.model(mi->model);
+            d.casts_shadow = mi->casts_shadow;
+            std::memcpy(d.p4, mi->p4, sizeof d.p4);
+            std::memcpy(d.p5, mi->p5, sizeof d.p5);
+            std::memcpy(d.p6, mi->p6, sizeof d.p6);
+            std::memcpy(d.p7, mi->p7, sizeof d.p7);
+        } else if (const Terrain* t = e.get<Terrain>()) {
+            d.model = models_.terrain(e.id, *t);
+            d.casts_shadow = t->casts_shadow;
+        } else {
+            continue;
+        }
+        if (d.model) draws_.push_back(d);
+    }
+}
+
+void Renderer::render(const RenderScene& scene, const ViewParams& view_params, RenderTarget& target) {
+    const Camera& cam = view_params.camera;
+    const float time_s = view_params.time_s;
+    const int width = target.width(), height = target.height();
     if (width < 8 || height < 8) return;
+    const EnvironmentParams env = scene.environment.resolved();
+    build_draws(scene);
     resize(width, height);
     // Make sure every cbuffer this frame needs is declared before values are written.
     for (const char* s : {kSkyVS, kSkyGenPS, kSkyPS, kRigidVS, kRigidGbufferPS, kRigidGbufferAlphaPS, kDirLightPS, kTmDownLuma,
@@ -1498,11 +1542,11 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     update_weather(env, time_s);
 
     pass_sky_cube(env, time_s);
-    if (frame_ % 4 == 0 || !env_valid_) render_env_cube(scene, env, time_s); // XML ambient while it renders
+    if (frame_ % 4 == 0 || !env_valid_) render_env_cube(env, time_s); // XML ambient while it renders
     apply_engine_ambient(env);
 
     float aspect = float(width) / float(height);
-    pass_shadows(scene, cam, aspect, -env.to_sun(), time_s);
+    pass_shadows(cam, aspect, -env.to_sun(), time_s);
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
     set_camera(view_m, proj, cam.eye, width, height, time_s);
@@ -1511,7 +1555,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->RSSetViewports(1, &vp);
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 
-    pass_gbuffer(scene);
+    pass_gbuffer();
     analyse_depth(cam);
     pass_ssao(cam);
     D3D11_VIEWPORT main_vp{0, 0, float(width), float(height), 0, 1};
@@ -1549,7 +1593,7 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
         pass_to_screen(env);
         if (lens_flare) pass_lens_flare(env, cam.eye, time_s);
     }
-    pass_display(); // Final: copies final_ with alpha = 1 for the viewport
+    pass_display(target); // Final: copies final_ with alpha = 1 for the viewport
     ctx_->PSSetShaderResources(0, 16, nulls);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
 }
