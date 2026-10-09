@@ -130,7 +130,7 @@ std::vector<uint8_t> PngFile::encode() const {
     uLongf bound = compressBound(uLong(filtered.size()));
     std::vector<uint8_t> z(bound);
     z_stream zs{};
-    if (deflateInit2(&zs, 6, Z_DEFLATED, 15, 8, Z_DEFAULT_STRATEGY) != Z_OK) throw std::runtime_error("deflateInit2");
+    if (deflateInit2(&zs, 6, Z_DEFLATED, 15, 8, Z_FILTERED) != Z_OK) throw std::runtime_error("deflateInit2");
     zs.next_in = filtered.data(); zs.avail_in = uInt(filtered.size());
     zs.next_out = z.data(); zs.avail_out = uInt(z.size());
     int rc = deflate(&zs, Z_FINISH);

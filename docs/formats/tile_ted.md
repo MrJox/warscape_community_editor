@@ -1,0 +1,15 @@
+# tile.ted (scene graph of a tile)
+
+XML, `<project version="N">` with N in {1, 6, 8, 9, 11, 12, 14, 15, 16, 17} (850 files are v16, 52 v17). Read and edited with `src/scene/ted_scene.*` on top of the lossless `XmlDoc`; gate `tools/scene_check` (1,393 files, 1.47 M instances, 3.24 M numbers).
+
+Structure: `modules` (`Vegetation` generation_seed(s), `Grass`, `Particle_Effects_VFX` seeds), `scene` > `SCENE_GRAPH` > `children` > layers and instances, `camera`. Layers: `LayerInstance` (export_type `LayerExportType_Normal|Escalation1..3`), `UserInstanceGroup`, `INSTANCE_GROUP`, `LAYER_INSTANCE_GROUP` (older). Every instance has `flags` (`OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE...`), `lf_offset`, `name`, `position`, `orientation`, `surface_mode` (`MSM_FREEFORM`, `MSM_LANDSCAPE`).
+
+Instance types in the corpus (count of instances with a position, files up to 12 MB): VEGETATION_INSTANCE 427k, BUILDING_INSTANCE 347k, ProjectedDecalInstance 310k, UserInstanceGroup 339k, VFXInstance 7.3k, SIEGE_AI_POLYGON_INSTANCE 7.1k, AI_HINT_POLYGON_INSTANCE 5.7k, POINT_LIGHT_INSTANCE 5.4k, VegetationExclusionPolygonInstance 2.9k, NOGO_REGION_POLYGON_INSTANCE 2.4k, SIMPLE_MESH_INSTANCE 1.3k, SiegeAINode/EdgeInstance 1.3k/1.8k, ZONE_POLYGON_INSTANCE, DEPLOYMENT_ZONE_POLYGON_INSTANCE, DeploymentZonePolygonInstanceGroup, CaptureLocationInstance + CaptureLocationPolygonInstance, CivilianDeploymentZone, CivilianShelter, GO_REGION_POLYGON_INSTANCE, AISeparatorInstance, SplineRiverInstance, SEGMENTED_SPLINE_INSTANCE, LiteBuildingZone. Polygons carry a `points` child (`<point position="x,y,z"/>`); rivers carry points with width / foam_amount / alpha_fade / flow_speed / controlIn / controlOut / terrain_offset.
+
+BUILDING_INSTANCE attributes: key (battlefield_buildings key), building_tech_level, burn, burn_amount, destruction_level, dirt_level, glow_amount, indestructible, toggleable, opacity, bounds_colour. VEGETATION_INSTANCE: key, scale. ProjectedDecalInstance: key, parallax_scale, scale, tiled. VFXInstance: vfx, autoplay, scale, seasons, use_in_outfield.
+
+## Number formatting (reproduced for 100% of 3,244,021 values)
+`vector(x,y,z)`, `euler(x,y,z)` (radians), uniform or vector `scale`, `area`, `radius`, `opacity`, `flag_position/flag_facing`: float32, `%.6f` rounded **half away from zero**, trailing zeros and a trailing `.` removed (`-0.000000` stays `-0`). `<point position="x,y,z">`: `%g` (6 significant digits, e.g. `-6.86646e-05`). Colours `argb(a,r,g,b)` use the same rule.
+
+## Editing
+Attribute edits only (the text outside the edited value is untouched); setting a value equal to the current one (as float32) is a no-op; `revert_all` restores the original bytes. Structural edits (add / remove / duplicate instances) go through `XmlDoc::{with_child, removed_element, duplicated_element}`.

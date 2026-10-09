@@ -46,6 +46,25 @@ std::vector<uint8_t> DdsFile::write() const {
     return o;
 }
 
+DdsFile DdsFile::make_r32f(uint32_t width, uint32_t height, std::vector<uint8_t> float_payload) {
+    DdsFile d;
+    d.header.fill(0);
+    d.header[0] = 124;
+    d.header[2] = height;
+    d.header[3] = width;
+    d.header[18] = 32;   // pixel format size (dword 18 of the 31 after the magic)
+    d.header[19] = 4;    // DDPF_FOURCC
+    d.header[20] = 114;  // D3DFMT_R32F
+    d.header[21] = 32;   // bit count
+    d.payload = std::move(float_payload);
+    return d;
+}
+
+bool DdsFile::is_r32f_template() const {
+    DdsFile t = make_r32f(width(), height(), {});
+    return !has_dx10 && header == t.header && payload.size() == size_t(width()) * height() * 4;
+}
+
 // ---- TGA
 TgaFile TgaFile::parse(const std::vector<uint8_t>& b) {
     if (b.size() < 18) throw std::runtime_error("truncated TGA");
@@ -98,6 +117,38 @@ std::vector<uint8_t> TiffFile::write() const {
     return o;
 }
 
+std::vector<uint8_t> TiffFile::ted_header(uint32_t width, uint32_t height) {
+    std::vector<uint8_t> o{'I', 'I', 42, 0, 8, 0, 0, 0};
+    auto p16 = [&](uint32_t v) { o.push_back(uint8_t(v)); o.push_back(uint8_t(v >> 8)); };
+    auto p32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) o.push_back(uint8_t(v >> (8 * i))); };
+    auto entry = [&](uint16_t tag, uint16_t type, uint32_t count, uint32_t value) { p16(tag); p16(type); p32(count); p32(value); };
+    p16(15);
+    entry(254, 4, 1, 0);
+    entry(256, 3, 1, width);
+    entry(257, 3, 1, height);
+    entry(258, 3, 16, 194);
+    entry(259, 3, 1, 1);
+    entry(262, 3, 1, 1);
+    entry(273, 4, 1, 242);
+    entry(274, 3, 1, 1);
+    entry(277, 3, 1, 16);
+    entry(278, 3, 1, height);
+    entry(279, 4, 1, width * height * 32);
+    entry(282, 5, 1, 226);
+    entry(283, 5, 1, 234);
+    entry(284, 3, 1, 1);
+    entry(296, 3, 1, 1);
+    p32(0);
+    for (int i = 0; i < 16; ++i) p16(16);
+    p32(width); p32(1);
+    p32(height); p32(1);
+    return o;
+}
+
+bool TiffFile::header_is_regenerable() const {
+    return ted_layout && header == ted_header(width, height) && pixels.size() == size_t(width) * height * 32;
+}
+
 // ---- registry
 static bool ends_with_ci(const std::string& s, const char* t) {
     size_t n = std::strlen(t);
@@ -132,7 +183,25 @@ static Format make_format(const char* name, const char* ext, const char* magic, 
 void register_image_container_formats() {
     formats().push_back(make_format<DdsFile>("dds", ".dds", "DDS ", 4));
     formats().push_back(make_format<TgaFile>("tga", ".tga", "", 0));
-    formats().push_back(make_format<TiffFile>("tiff", ".tif", "II*\0", 4));
+    Format tiff = make_format<TiffFile>("tiff", ".tif", "II*\0", 4);
+    tiff.round_trip = [](const std::vector<uint8_t>& bytes) {
+        RoundTripResult r;
+        try {
+            TiffFile t = TiffFile::parse(bytes);
+            if (t.ted_layout) {
+                // TEd/BOB layout: the header must be the generated one, so a writer needs only the pixels
+                if (!t.header_is_regenerable()) { r.error = "TEd-layout header differs from the generated one"; return r; }
+                t.header = TiffFile::ted_header(t.width, t.height);
+            }
+            r.output = t.write();
+            r.ok = r.output == bytes;
+            if (!r.ok) r.error = describe_diff(bytes, r.output);
+        } catch (const std::exception& e) {
+            r.error = std::string("parse: ") + e.what();
+        }
+        return r;
+    };
+    formats().push_back(std::move(tiff));
 }
 
 } // namespace te

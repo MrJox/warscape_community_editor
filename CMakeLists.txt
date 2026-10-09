@@ -39,3 +39,12 @@ add_executable(order_test tools/order_test.cpp)
 
 add_executable(tdb_build tools/tdb_build.cpp)
 target_link_libraries(tdb_build PRIVATE tile_formats)
+
+add_executable(png_debug tools/png_debug.cpp)
+target_link_libraries(png_debug PRIVATE tile_formats)
+
+add_library(tile_scene STATIC src/scene/ted_scene.cpp)
+target_include_directories(tile_scene PUBLIC src)
+target_link_libraries(tile_scene PUBLIC attila_core)
+add_executable(scene_check tools/scene_check.cpp)
+target_link_libraries(scene_check PRIVATE tile_scene)

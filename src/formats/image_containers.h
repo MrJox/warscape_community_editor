@@ -25,6 +25,11 @@ struct DdsFile {
 
     static DdsFile parse(const std::vector<uint8_t>& bytes); // throws std::runtime_error
     std::vector<uint8_t> write() const;
+
+    // The header TEd/BOB write for single-channel float textures (final_*.dds, protection_map.dds):
+    // flags 0, no mips, no caps, pixel format fourcc 114 (D3DFMT_R32F), 32 bits. 5,099 shipped files equal this + payload.
+    static DdsFile make_r32f(uint32_t width, uint32_t height, std::vector<uint8_t> float_payload);
+    bool is_r32f_template() const;   // header equals make_r32f(width, height) and payload is width * height * 4 bytes
 };
 
 struct TgaFile {
@@ -49,6 +54,10 @@ struct TiffFile {
 
     static TiffFile parse(const std::vector<uint8_t>& bytes);
     std::vector<uint8_t> write() const;
+    // The 242-byte header TEd/BOB write for a blend map of 16 x 16-bit samples per pixel (width x height pixels).
+    static std::vector<uint8_t> ted_header(uint32_t width, uint32_t height);
+    // A TEd-layout file whose header equals ted_header(width, height) can be rebuilt from the pixels alone.
+    bool header_is_regenerable() const;
 };
 
 } // namespace te
