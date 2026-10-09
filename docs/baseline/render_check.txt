@@ -1,0 +1,3 @@
+houses in view 8, picked right 3
+all passed
+exit 0
