@@ -8,8 +8,13 @@
 | 1 foundation, formats libs | **Done** (commit `8dfa720`). |
 | 2 VFS / rpfm_server | **Done** (commit `6de91c4`). See `docs/vfs.md`. |
 | 3 Render core, RenderScene | **Done** (commit `fad7ab7`). See the Phase 3 deviations below and `docs/re/terrain.md`. |
-| 4 Editor core and shell | **Done, waiting for your go.** `docs/editor.md`, Phase 4 deviations below. |
-| 5 - 9 | Not started. |
+| 4 Editor core and shell | **Done** (commits `9ab9f55`..`96f6db3`). `docs/editor.md`, Phase 4 deviations below. |
+| 5 Weather tool | **Done, waiting for your go.** `tools/weather`, `docs/editor.md` (Weather tool), Phase 5 deviations below. |
+| 6 - 9 | Not started. |
+
+Phase 5 deviations: `weather_editor.exe` is still built from `legacy/weather_editor` (main.cpp and app.cpp only; the sample map, XML documents and the picker are shared with the tool) because its window shots are the render regression until Phase 8;
+`variation_e2e.ps1` is replaced by `scripts/weather_check.sh` (gate `weather_tool_check`); the XML documents live in `wce_weather` (links `wce_editor_core`, no ImGui) and the widgets in `wce_weather_ui` / `wce_tools`; scripted runs ignore the real mouse;
+captures restart the renderer's temporal state and the `wce` capture references were re-baselined (`docs/baseline.md`); the GPU is chosen explicitly (`WCE_GPU`) because the reference pixels come from one of the machine's two GPUs.
 
 Phase 4 deviations: the Weather tool is a host for the sample-map sandbox document until Phase 5 (the old `weather_editor` stays the real weather tool, and its window shots stay the render regression); Tile, Unit, VFX,
 Terrain and Cinematic are `PlaceholderTool`s; the editor library is split in `wce_editor_core` (no ImGui or GPU, tested by `editor_check`) and `wce_editor`; layouts are ImGui ini files per tool, swapped on tool switch, instead of one

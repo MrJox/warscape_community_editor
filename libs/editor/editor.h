@@ -51,6 +51,9 @@ public:
     bool show_grid = false;
     bool hovered = false;
     uint64_t frames_rendered = 0;
+    // Run-length list of the sizes rendered so far ("694x824 x1, 680x824 x19"): a size change mid-run changes what exposure adaptation sees, so
+    // two runs that differ in it are not expected to match pixel for pixel.
+    const std::string& size_trace() const { return trace_; }
 
 private:
     void render(Editor& editor, int w, int h);
@@ -60,6 +63,8 @@ private:
     bool fly_active_ = false;
     RenderTarget target_;
     // gizmo drag
+    std::string trace_;
+    int trace_w_ = 0, trace_h_ = 0, trace_n_ = 0;
     bool gizmo_was_using_ = false;
     uint64_t gesture_ = 0;
     float4x4 gizmo_matrix_;
@@ -108,6 +113,9 @@ public:
     // Stores the game (and RPFM) folder in wce.ini and mounts: what the first-run dialog's button does, also the `setup` command.
     bool setup(const std::string& game_dir, const std::string& rpfm_dir, std::string* message);
     void request_quit(int exit_code = 0) { quit_ = true; exit_code_ = exit_code; }
+    // Where "Save" writes loose files (under their in-pack path): output_dir in wce.ini, else <Documents>\AttilaWeatherEditor\out as the old weather editor did.
+    std::filesystem::path output_dir() const;
+    void set_output_dir(const std::filesystem::path& dir, bool persist);
     void save_layout();
     void reset_layout();
     std::filesystem::path layout_file(const std::string& tool_id) const;

@@ -6,6 +6,7 @@
 #include "formats/xml_doc.h"
 #include "foundation/clock.h"
 #include "foundation/text_encoding.h"
+#include "render/gpu_adapter.h"
 #include "render/renderer.h"
 #include "scene/render_scene.h"
 #include "vfs/vfs.h"
@@ -38,7 +39,8 @@ struct Gpu {
 bool make_device(Gpu& g) {
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0, got{};
     const char* dbg = std::getenv("WCE_D3D_DEBUG");   // needs the Windows "Graphics Tools" feature
-    return SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, dbg && *dbg == '1' ? D3D11_CREATE_DEVICE_DEBUG : 0, &fl, 1, D3D11_SDK_VERSION, &g.dev, &got, &g.ctx));
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter = wce::choose_adapter();
+    return SUCCEEDED(D3D11CreateDevice(adapter.Get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, dbg && *dbg == '1' ? D3D11_CREATE_DEVICE_DEBUG : 0, &fl, 1, D3D11_SDK_VERSION, &g.dev, &got, &g.ctx));
 }
 
 Camera orbit(float yaw, float pitch, float dist, float3 target) {

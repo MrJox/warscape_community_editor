@@ -40,6 +40,9 @@ public:
     // Return true when the event was handled (the default click-to-select is then skipped).
     virtual bool viewport_input(Editor& editor, const ViewportEvent& event) { (void)editor; (void)event; return false; }
     virtual void register_commands(Editor& editor, CommandRegistry& commands) { (void)editor; (void)commands; }
+    // Once per frame while the tool is active, after the documents were re-published and before the viewport renders: put the tool's
+    // documents into the scene's environment slot, refresh anything the renderer reads.
+    virtual void update(Editor& editor) { (void)editor; }
     // The tool became the active one (open a default document, set the camera, ...).
     virtual void activated(Editor& editor) { (void)editor; }
     // Opens a file of the packs or a disk file this tool claims; nullptr when it cannot.

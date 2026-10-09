@@ -13,6 +13,9 @@ namespace wce {
 
 // ---- ImGuiInspector
 
+// The value column starts after the longest label that fits: 40% of the panel, at least 110 px.
+static float label_column() { return std::max(110.0f, ImGui::GetContentRegionAvail().x * 0.4f); }
+
 bool ImGuiInspector::item_deactivated_after_edit() { return ImGui::IsItemDeactivatedAfterEdit(); }
 
 void ImGuiInspector::section(const std::string& title) {
@@ -22,13 +25,13 @@ void ImGuiInspector::section(const std::string& title) {
 void ImGuiInspector::text(const std::string& field, const std::string& label, const std::string& value) {
     (void)field;
     ImGui::TextDisabled("%s", label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     ImGui::TextUnformatted(value.c_str());
 }
 
 bool ImGuiInspector::edit_float(const std::string& field, const std::string& label, float& v, float speed, float lo, float hi) {
     ImGui::TextUnformatted(label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     ImGui::SetNextItemWidth(-1);
     const bool changed = ImGui::DragFloat(id(field).c_str(), &v, speed, lo, hi, "%.3f");
     finish_widget();
@@ -37,16 +40,52 @@ bool ImGuiInspector::edit_float(const std::string& field, const std::string& lab
 
 bool ImGuiInspector::edit_float3(const std::string& field, const std::string& label, float v[3], float speed) {
     ImGui::TextUnformatted(label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     ImGui::SetNextItemWidth(-1);
     const bool changed = ImGui::DragFloat3(id(field).c_str(), v, speed, 0, 0, "%.3f");
     finish_widget();
     return changed;
 }
 
+bool ImGuiInspector::edit_float2(const std::string& field, const std::string& label, float v[2], float speed) {
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(label_column());
+    ImGui::SetNextItemWidth(-1);
+    const bool changed = ImGui::DragFloat2(id(field).c_str(), v, speed, 0, 0, "%.6g");
+    finish_widget();
+    return changed;
+}
+
+bool ImGuiInspector::edit_int(const std::string& field, const std::string& label, int64_t& v, float speed) {
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(label_column());
+    ImGui::SetNextItemWidth(-1);
+    const bool changed = ImGui::DragScalar(id(field).c_str(), ImGuiDataType_S64, &v, speed);
+    finish_widget();
+    return changed;
+}
+
+bool ImGuiInspector::edit_color3(const std::string& field, const std::string& label, float v[3]) {
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(label_column());
+    ImGui::SetNextItemWidth(-1);
+    const bool changed = ImGui::ColorEdit3(id(field).c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+    finish_widget();
+    return changed;
+}
+
+bool ImGuiInspector::edit_color4(const std::string& field, const std::string& label, float v[4]) {
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(label_column());
+    ImGui::SetNextItemWidth(-1);
+    const bool changed = ImGui::ColorEdit4(id(field).c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_AlphaBar);
+    finish_widget();
+    return changed;
+}
+
 bool ImGuiInspector::edit_bool(const std::string& field, const std::string& label, bool& v) {
     ImGui::TextUnformatted(label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     const bool changed = ImGui::Checkbox(id(field).c_str(), &v);
     ended_ = changed;
     return changed;
@@ -54,7 +93,7 @@ bool ImGuiInspector::edit_bool(const std::string& field, const std::string& labe
 
 bool ImGuiInspector::edit_string(const std::string& field, const std::string& label, std::string& v) {
     ImGui::TextUnformatted(label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     ImGui::SetNextItemWidth(-1);
     char buf[512];
     std::snprintf(buf, sizeof buf, "%s", v.c_str());
@@ -66,7 +105,7 @@ bool ImGuiInspector::edit_string(const std::string& field, const std::string& la
 
 bool ImGuiInspector::edit_choice(const std::string& field, const std::string& label, int& index, const std::vector<std::string>& choices) {
     ImGui::TextUnformatted(label.c_str());
-    ImGui::SameLine(110);
+    ImGui::SameLine(label_column());
     ImGui::SetNextItemWidth(-1);
     bool changed = false;
     const char* shown = index >= 0 && index < int(choices.size()) ? choices[size_t(index)].c_str() : "";

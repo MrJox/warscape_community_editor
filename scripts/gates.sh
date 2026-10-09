@@ -26,6 +26,8 @@ MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
 TILE="$BKIT/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa"
 
+# The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
+export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 mkdir -p "$OUT"
 FAILED=()
 run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit code appended
@@ -63,6 +65,7 @@ fi
 # ---- reference screenshots (fixed camera and inputs; see docs/baseline.md for what is deterministic)
 if [ "$RENDER" = 1 ]; then
     run app_check     env WCE_BIN="$WB" bash "$ROOT/scripts/app_check.sh" "$OUT/app_check"   # wce.exe scripted: tools, documents, selection, gizmo edits, undo, layouts, first run, capture; two runs identical
+    run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
     run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
     for env in dry rain snow; do
         case $env in

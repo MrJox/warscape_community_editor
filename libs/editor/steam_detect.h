@@ -12,6 +12,8 @@ std::vector<std::filesystem::path> steam_library_folders();
 std::filesystem::path detect_attila_folder();
 // A folder that holds rpfm_cli.exe, looked for in the game folder's parent, the user's Downloads and Program Files, or empty.
 std::filesystem::path detect_rpfm_folder(const std::filesystem::path& game_dir);
+// Open or save file dialog (`filter` is the Win32 list of NUL-separated pairs, see OPENFILENAME); empty when cancelled.
+std::filesystem::path file_dialog(bool save, const std::filesystem::path& initial, const wchar_t* filter);
 // Folder picker (IFileDialog); empty when cancelled.
 std::filesystem::path pick_folder(const std::wstring& title);
 

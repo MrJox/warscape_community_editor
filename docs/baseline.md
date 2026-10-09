@@ -121,3 +121,21 @@ re-baselined explicitly in its commit. The tile shot still comes from Tile Studi
 
 **Capture references re-baselined.** The Phase 3 captures (`weather_editor --capture`) were taken with the default environment, because the legacy app only picks the active environment while it draws its UI. They are replaced by captures of
 `wce.exe`, where the weather tool lights the sample map with `med_sp_land_day_dry.environment` (sky, clouds and shadows render as in the window shots). Weather window shots are unchanged.
+
+## Phase 5 additions
+
+| Gate | Result |
+|---|---|
+| fast gates (`xml_roundtrip`, `format_check`, `variation_check`, `rmv2_check`, `vfx_check_rain`, `env_vs_dump_all`, `unit_tests`, `height_check`, `weather_check`, `tdb_build`, `vfs_compare`, `editor_check`, `foundation_check`) | output identical to Phase 4 (`build/gates_p4`) |
+| `roundtrip`, `scene_check` | same as Phase 4 (`roundtrip` keeps its documented expected failures; `scene_check` passes) |
+| `weather_tool_check` (new, render; `scripts/weather_check.sh`) | the weather tool of `wce.exe`, scripted twice: attribute edit, undo/redo, structural edits, save (exactly one line differs from the pack file; both runs save the same bytes), cross-fade, view modes, the picker, a database edit saved as XML and FASTBIN (convert into each other byte for byte). Replaces `variation_e2e.ps1`, which only knew the legacy build folder |
+| `app_check`, `render_check` | pass; `capture` identical between runs, `shot` identical between runs |
+| `scripts/shots.sh` | the three legacy window shots **byte-identical** to `build/gates_base_p3/`; four `wce.exe --open ... --capture` references in `build/gates_base_p5/` (dry, rain, snow at 1280x720, dry at 800x600), identical on every run |
+
+**The reference GPU.** This machine has two GPUs (NVIDIA RTX 4070 Ti SUPER, AMD Radeon(TM) Graphics) and the baseline pixels (Phase 3 on) were rendered on the **AMD** one, the adapter Windows used by default at that time. Windows later
+switched the default adapter between runs, which made every shot differ (a rebuilt Phase 4 commit differed the same way: not a code change) and made runs differ from each other by GPU float noise. Since then `libs/render/gpu_adapter` picks the adapter
+(`WCE_GPU=<part of the name>`, else the high-performance GPU; the renderer logs `GPU: <name>`), and `gates.sh`, `shots.sh`, `app_check.sh` and `weather_check.sh` default `WCE_GPU` to `AMD Radeon`. Pixels are only comparable on one adapter.
+
+**Capture references re-baselined (second time).** An offscreen capture now restarts the renderer's temporal state (auto exposure snaps on its first frame, readback ring, wind clock) so it is a function of the scene only; before, it inherited
+the live frames' adaptation (about 1e-6 of GPU noise made two scripted runs differ by a few one-level pixels). The `--open <env> --capture` references of `build/gates_base_p5/` replace the Phase 4 `capture_dry_*` ones (which had no
+environment document open). The whole-window `shot` of `app_check` is compared with a tolerance of two levels: it shows the live viewport. Scripted runs also ignore the real mouse now (a cursor over a splitter changed the shot).

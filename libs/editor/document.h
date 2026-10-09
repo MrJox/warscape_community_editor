@@ -49,6 +49,8 @@ public:
     virtual OutlinerNode outline() const { return {title(), {id_, 0}, false, {}}; }
     virtual void inspect(const SourceRef& item, Inspector& inspector) { (void)item; (void)inspector; }
     virtual std::string describe(const SourceRef& item) const { (void)item; return {}; }
+    // Identifies the file a document came from (a normalized in-pack path); an open request for the same key activates the open document instead.
+    virtual std::string source_key() const { return {}; }
 
     // Gizmo support: the world transform of an item (the gizmo's pivot), and moving items by a world-space delta. `gesture` is
     // constant during one drag so that the commands merge into one undo entry.

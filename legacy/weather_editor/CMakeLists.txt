@@ -3,9 +3,9 @@ project(attila_weather_editor LANGUAGES CXX)
 
 # Migration scaffolding: the editor application (Phase 5 moves it to tools/weather and app/). Compile options and the language
 # standard come from the root CMakeLists.
-add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp src/editor/variation_editor.cpp)
+add_executable(weather_editor WIN32 src/editor/main.cpp src/editor/app.cpp )
 target_include_directories(weather_editor PRIVATE src)
-target_link_libraries(weather_editor PRIVATE wce_weather wce_render imgui comdlg32 dbghelp)
+target_link_libraries(weather_editor PRIVATE wce_weather wce_weather_ui wce_render imgui comdlg32 dbghelp)
 if(MSVC)
     target_compile_options(weather_editor PRIVATE /Zi)
     target_link_options(weather_editor PRIVATE /DEBUG)

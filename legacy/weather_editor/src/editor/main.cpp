@@ -1,6 +1,7 @@
 // Attila Weather Editor: window, D3D11 device and the ImGui frame loop.
 #include "foundation/process.h"
 #include "editor/app.h"
+#include "render/gpu_adapter.h"
 #include "render/image_io.h"
 
 #include "imgui.h"
@@ -108,8 +109,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     flags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
     if (const char* d = std::getenv("AWE_D3D_DEBUG"); d && *d == '1') flags |= D3D11_CREATE_DEVICE_DEBUG; // needs Windows "Graphics Tools"
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter = wce::choose_adapter();   // the same GPU every run (docs/baseline.md)
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
-    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &sd, &g_swap, &g_device, nullptr, &g_ctx))) {
+    if (FAILED(D3D11CreateDeviceAndSwapChain(adapter.Get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &sd, &g_swap, &g_device, nullptr, &g_ctx))) {
         MessageBoxW(hwnd, L"Could not create a Direct3D 11 device.", L"Attila Weather Editor", MB_ICONERROR);
         return 1;
     }

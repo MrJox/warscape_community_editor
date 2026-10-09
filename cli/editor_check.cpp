@@ -32,6 +32,10 @@ public:
         return true;
     }
     bool edit_float3(const std::string& f, const std::string&, float*, float) override { calls.push_back("float3 " + path(f).to_string()); return false; }
+    bool edit_float2(const std::string& f, const std::string&, float*, float) override { calls.push_back("float2 " + path(f).to_string()); return false; }
+    bool edit_int(const std::string& f, const std::string&, int64_t&, float) override { calls.push_back("int " + path(f).to_string()); return false; }
+    bool edit_color3(const std::string& f, const std::string&, float*) override { calls.push_back("color3 " + path(f).to_string()); return false; }
+    bool edit_color4(const std::string& f, const std::string&, float*) override { calls.push_back("color4 " + path(f).to_string()); return false; }
     bool edit_bool(const std::string& f, const std::string&, bool&) override { calls.push_back("bool " + path(f).to_string()); return false; }
     bool edit_string(const std::string& f, const std::string&, std::string&) override { calls.push_back("string " + path(f).to_string()); return false; }
     bool edit_choice(const std::string& f, const std::string&, int&, const std::vector<std::string>&) override { calls.push_back("choice " + path(f).to_string()); return false; }

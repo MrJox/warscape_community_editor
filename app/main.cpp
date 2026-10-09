@@ -13,6 +13,7 @@
 #include "foundation/log.h"
 #include "foundation/process.h"
 #include "editor/editor.h"
+#include "render/gpu_adapter.h"
 #include "render/image_io.h"
 #include "tool_factories.h"
 
@@ -97,8 +98,7 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 struct Options {
-    std::string tool, open, script_text;
-    bool open_disk = false;
+    std::string tool, script_text;
     std::wstring shot, capture_path;
     int capture_w = 0, capture_h = 0, frames = 20;
     double fixed_step = 0;
@@ -114,8 +114,8 @@ Options parse_args() {
         const std::wstring a = argv[i];
         const bool more = i + 1 < argc;
         if (a == L"--tool" && more) o.tool = utf8(++i);
-        else if (a == L"--open" && more) o.open = utf8(++i);
-        else if (a == L"--open-disk" && more) { o.open = utf8(++i); o.open_disk = true; }
+        else if (a == L"--open" && more) add("open \"" + utf8(++i) + "\"\nframes 2");
+        else if (a == L"--open-disk" && more) add("open \"" + utf8(++i) + "\" disk\nframes 2");
         else if (a == L"--cam" && i + 3 < argc) {
             std::string line = "cam " + utf8(i + 1) + " " + utf8(i + 2) + " " + utf8(i + 3);
             i += 3;
@@ -132,6 +132,10 @@ Options parse_args() {
             const size_t x = dims.find(L'x');
             o.capture_h = x == std::wstring::npos ? 0 : _wtoi(dims.c_str() + x + 1);
             o.capture_path = argv[++i];
+        } else if (a.rfind(L"--", 0) == 0) {   // any other --name args... runs the command `name args...` (the old weather_editor flags: --view, --blend, --pick, ...)
+            std::string line = utf8(i).substr(2);
+            while (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0) line += " \"" + utf8(++i) + "\"";
+            add(line);
         }
     }
     LocalFree(argv);
@@ -161,8 +165,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     UINT flags = 0;
     if (const char* d = std::getenv("WCE_D3D_DEBUG"); d && *d == '1') flags |= D3D11_CREATE_DEVICE_DEBUG;   // needs the Windows "Graphics Tools" feature
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter = wce::choose_adapter();   // the same GPU every run (docs/baseline.md)
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
-    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &sd, &g_swap, &g_device, nullptr, &g_ctx))) {
+    if (FAILED(D3D11CreateDeviceAndSwapChain(adapter.Get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &sd, &g_swap, &g_device, nullptr, &g_ctx))) {
         MessageBoxW(hwnd, L"Could not create a Direct3D 11 device.", L"Warscape Community Editor", MB_ICONERROR);
         return 1;
     }
@@ -197,7 +202,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         // Everything the command line asked for becomes a script; `frames` lines give the editor time to render in between.
         std::string script;
         if (!opt.tool.empty()) script += "tool " + opt.tool + "\nframes 2\n";
-        if (!opt.open.empty()) script += "open \"" + opt.open + "\"" + (opt.open_disk ? " disk" : "") + "\nframes 2\n";
         script += opt.script_text;
         const bool batch = !opt.shot.empty() || !opt.capture_path.empty();
         if (!opt.capture_path.empty()) script += "frames 2\ncapture " + std::to_string(opt.capture_w) + "x" + std::to_string(opt.capture_h) + " \"" + wce::narrow(opt.capture_path) + "\" " + std::to_string(opt.frames) + "\nquit\n";
@@ -206,6 +210,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         double step = opt.fixed_step;
         if (step <= 0 && (batch || !opt.script_text.empty())) step = 1.0 / 60.0;
         if (step > 0) editor.set_fixed_step(step);
+        if (step > 0) io.ConfigFlags |= ImGuiConfigFlags_NoMouse;   // scripted runs ignore the real cursor (a hovered splitter changes the shot); commands do not use the mouse
+        if (step > 0) io.KeyRepeatDelay = 1.0e6f;   // scripted runs: a held key must not auto-repeat when a frame happens to take long
 
         bool done = false;
         while (!done) {

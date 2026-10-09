@@ -31,6 +31,11 @@ public:
     // the drag or typing ends, which is where merged commands are closed (CommandStack::break_merge).
     virtual bool edit_float(const std::string& field, const std::string& label, float& v, float speed = 0.1f, float lo = -1e9f, float hi = 1e9f) = 0;
     virtual bool edit_float3(const std::string& field, const std::string& label, float v[3], float speed = 0.1f) = 0;
+    virtual bool edit_float2(const std::string& field, const std::string& label, float v[2], float speed = 0.01f) = 0;
+    virtual bool edit_int(const std::string& field, const std::string& label, int64_t& v, float speed = 0.2f) = 0;
+    // Colours are linear values that may exceed 1 (HDR); alpha is a fourth component.
+    virtual bool edit_color3(const std::string& field, const std::string& label, float v[3]) = 0;
+    virtual bool edit_color4(const std::string& field, const std::string& label, float v[4]) = 0;
     virtual bool edit_bool(const std::string& field, const std::string& label, bool& v) = 0;
     virtual bool edit_string(const std::string& field, const std::string& label, std::string& v) = 0;
     virtual bool edit_choice(const std::string& field, const std::string& label, int& index, const std::vector<std::string>& choices) = 0;

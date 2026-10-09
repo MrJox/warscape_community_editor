@@ -23,6 +23,10 @@ public:
     void text(const std::string& field, const std::string& label, const std::string& value) override;
     bool edit_float(const std::string& field, const std::string& label, float& v, float speed, float lo, float hi) override;
     bool edit_float3(const std::string& field, const std::string& label, float v[3], float speed) override;
+    bool edit_float2(const std::string& field, const std::string& label, float v[2], float speed) override;
+    bool edit_int(const std::string& field, const std::string& label, int64_t& v, float speed) override;
+    bool edit_color3(const std::string& field, const std::string& label, float v[3]) override;
+    bool edit_color4(const std::string& field, const std::string& label, float v[4]) override;
     bool edit_bool(const std::string& field, const std::string& label, bool& v) override;
     bool edit_string(const std::string& field, const std::string& label, std::string& v) override;
     bool edit_choice(const std::string& field, const std::string& label, int& index, const std::vector<std::string>& choices) override;

@@ -1,0 +1,91 @@
+# Weather tool on the shared shell: environment documents, edits and undo, structural edits, save, cross-fade, the weather picker.
+# Run by scripts/weather_check.sh (the output folder and the expected values are filled in there).
+output_dir "%OUT%" temp
+tool weather
+frames 3
+assert_tool weather
+open "weather/charlemagne/med_sp_land_day_dry.environment"
+frames 3
+assert_documents 2
+assert_modified 0
+assert_env sun_elevation 26
+assert_xml_elements %ELEMENTS%
+
+# an attribute edit lights the scene on the next frame, is one undo entry, undo restores the file
+edit_attr LIGHTING sun_direction_elevation 40
+frames 3
+assert_env sun_elevation 40
+assert_modified 1
+assert_attr LIGHTING sun_direction_elevation 40
+assert_history 1 1
+edit_attr FOG fog_distance_start 0.8
+assert_history 2 2
+undo
+assert_attr FOG fog_distance_start 0.52
+undo
+frames 2
+assert_env sun_elevation 26
+assert_modified 0
+redo
+redo
+assert_attr FOG fog_distance_start 0.8
+undo
+undo
+
+# structural edits: duplicate, add, move, remove each undo to the same file
+xml_op duplicate CLOUD_ELEMENT
+assert_xml_elements %ELEMENTS_PLUS_1%
+assert_modified 1
+xml_op add_child FOG extra
+xml_op add_attr FOG note hello
+xml_op down CLOUD_ELEMENT
+undo
+undo
+undo
+undo
+assert_xml_elements %ELEMENTS%
+assert_modified 0
+xml_op duplicate CLOUD_ELEMENT
+revert_xml
+assert_xml_elements %ELEMENTS%
+assert_modified 0
+assert_history 0 0
+
+# save: loose file under the output folder, modified marker gone, history cleared
+edit_attr LIGHTING sun_direction_elevation 41
+save
+assert_saved weather/charlemagne/med_sp_land_day_dry.environment
+assert_modified 0
+assert_history 0 0
+frames 2
+assert_env sun_elevation 41
+
+# a second environment, cross-fade, the view modes
+open "weather/charlemagne/med_sp_land_day_rain.environment"
+frames 3
+assert_documents 3
+blend 0.5
+frames 3
+assert_env blend_t 0.5
+blend 0
+view 5
+frames 2
+view 0
+frames 2
+
+# the weather selection database: the picker finds files, an edit is saved as XML and FASTBIN
+picker pick
+pick map=default_map
+pick climate=ROME_Med
+pick season=su
+pick precipitation=dry
+pick time_of_day=day
+pick battle_types=land
+pick snow_attrition=snow_attrition_off
+assert_candidates %CANDIDATES%
+vdb-script "add-value:climate=ROME_W5;add-variation:weather\w5\test.environment;save:both"
+assert_saved warscape_asset_variation_db/warscape_asset_variation_db.xml
+assert_saved warscape_asset_variation_db/warscape_asset_variation_db.bin
+frames 3
+assert_log_errors 0
+quit

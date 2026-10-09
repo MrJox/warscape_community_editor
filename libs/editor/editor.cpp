@@ -118,6 +118,17 @@ bool Editor::start() {
 
 fs::path Editor::layout_file(const std::string& tool_id) const { return Settings::default_dir() / "layouts" / widen(tool_id + ".ini"); }
 
+std::filesystem::path Editor::output_dir() const {
+    if (auto v = settings_.get("output_dir", "WCE_OUTPUT_DIR")) return fs::path(widen(*v));
+    const char* profile = std::getenv("USERPROFILE");
+    return fs::path(widen(profile ? profile : "C:\\")) / "Documents" / "AttilaWeatherEditor" / "out";
+}
+
+void Editor::set_output_dir(const std::filesystem::path& dir, bool persist) {
+    settings_.set("output_dir", narrow(dir.wstring()));
+    if (persist) settings_.save();
+}
+
 void Editor::save_layout() {
     if (tools_.empty()) return;
     const fs::path p = layout_file(tools_[active_tool_]->id());
@@ -197,6 +208,15 @@ bool Editor::open_path(const std::string& path, bool from_packs, std::string* me
         if (message) *message = "no tool opens '" + ext + "' files";
         return false;
     }
+    if (from_packs) {   // already open: just show it
+        const std::string key = Vfs::normalize(path);
+        for (DocumentId id : docs_.order())
+            if (const Document* d = docs_.find(id); d && d->source_key() == key) {
+                docs_.set_active(id);
+                if (message) *message = "already open: " + path;
+                return true;
+            }
+    }
     std::unique_ptr<Document> doc;
     try {
         doc = tool->open(*this, path, from_packs);
@@ -226,6 +246,7 @@ void Editor::frame() {
     }
     docs_.update();
     if (tools_.empty()) return;
+    if (renderer_) tools_[active_tool_]->update(*this);
 
     ImGuiIO& io = ImGui::GetIO();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -324,9 +345,37 @@ void Editor::draw_menu_bar() {
     Document* doc = docs_.active();
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open from the game packs...")) panels.assets = true;
+        if (ImGui::MenuItem("Open file...")) {
+            std::wstring filter = L"Files this editor opens";
+            filter.push_back(L'\0');
+            std::wstring exts;
+            for (auto& t : tools_)
+                for (const std::string& e : t->opens()) {
+                    const std::wstring w = L"*" + widen(e);
+                    if (exts.find(w) == std::wstring::npos) exts += (exts.empty() ? L"" : L";") + w;
+                }
+            filter += exts.empty() ? L"*.*" : exts;
+            filter.push_back(L'\0');
+            filter += L"All files";
+            filter.push_back(L'\0');
+            filter += L"*.*";
+            filter.push_back(L'\0');
+            const fs::path p = file_dialog(false, output_dir() / "x", filter.c_str());
+            std::string msg;
+            if (!p.empty()) status(open_path(narrow(p.wstring()), false, &msg) ? msg : "open failed: " + msg, false);
+        }
         if (ImGui::MenuItem("Save", "Ctrl+S", false, doc && doc->can_save() && doc->modified())) commands_.run("save");
+        if (ImGui::MenuItem("Save as...", nullptr, false, doc && doc->can_save())) {
+            const fs::path p = file_dialog(true, output_dir() / widen(doc->title()), L"All files\0*.*\0");
+            std::string msg;
+            if (!p.empty()) {
+                if (doc->save({p}, &msg)) doc->history().mark_saved();
+                status(msg, false);
+            }
+        }
         if (ImGui::MenuItem("Save all", "Ctrl+Shift+S", false, docs_.any_modified())) commands_.run("save_all");
         if (ImGui::MenuItem("Close document", nullptr, false, doc != nullptr)) commands_.run("close");
+        if (ImGui::MenuItem("Remount packs")) commands_.run("remount");
         ImGui::Separator();
         if (ImGui::MenuItem("Save layout")) save_layout();
         if (ImGui::MenuItem("Reset layout")) reset_layout();
@@ -613,8 +662,8 @@ void Editor::register_builtin_commands() {
         const int frames = a.size() > 2 ? std::max(1, std::atoi(a[2].c_str())) : 20;
         return viewport_.capture(*this, w, h, frames, widen(a[1])) ? ok() : fail("capture failed");
     });
-    commands_.add("pick", "pick x y", "log the entity under a viewport pixel (of the last frame)", [this, ok, fail](const CommandRegistry::Args& a) {
-        if (a.size() < 2) return fail("usage: pick x y");
+    commands_.add("pick_pixel", "pick_pixel x y", "log the entity under a viewport pixel (of the last frame)", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (a.size() < 2) return fail("usage: pick_pixel x y");
         const EntityId id = viewport_.pick(*this, std::atoi(a[0].c_str()), std::atoi(a[1].c_str()));
         const Entity* e = scene_.find(id);
         return ok(e ? "entity " + std::to_string(id) + " doc " + std::to_string(e->source.doc) + " item " + std::to_string(e->source.item) : "nothing");
@@ -695,6 +744,12 @@ void Editor::register_builtin_commands() {
     commands_.add("assert_mounted", "assert_mounted 0|1", "test: the game packs are (not) mounted", [this, ok, fail](const CommandRegistry::Args& a) {
         const bool want = a.empty() || a[0] != "0";
         return (vfs_ != nullptr) == want ? ok() : fail(vfs_ ? "mounted" : "not mounted");
+    });
+    commands_.add("remount", "remount", "read the packs again (after the team edited one) and rebuild the renderer", [this, ok, fail](const CommandRegistry::Args&) {
+        const bool again = start();
+        if (!again) return fail("mount failed");
+        for (auto& t : tools_) t->activated(*this);
+        return ok(status_);
     });
     commands_.add("script", "script <file>", "run a script file", [this, ok, fail](const CommandRegistry::Args& a) {
         if (a.empty()) return fail("usage: script <file>");

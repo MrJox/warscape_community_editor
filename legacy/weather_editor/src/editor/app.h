@@ -6,7 +6,7 @@
 #include "render/render_target.h"
 #include "scene/render_scene.h"
 #include "weather/sample_map.h"
-#include "editor/variation_editor.h"
+#include "weather/variation_editor.h"
 #include "formats/variation_db.h"
 #include "formats/xml_doc.h"
 

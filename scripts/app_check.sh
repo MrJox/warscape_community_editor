@@ -8,6 +8,8 @@ OUT="$(cd "$(dirname "${1:-$ROOT/build/app_check/x}")" 2>/dev/null && pwd)/$(bas
 [ -n "${1:-}" ] || OUT="$ROOT/build/app_check"
 BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+# The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
+export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 mkdir -p "$OUT"
 bad=0
 for run in 1 2; do
@@ -29,7 +31,16 @@ text="$(cat "$ROOT/scripts/app_firstrun.txt")"; text="${text//%GAME%/$GAME}"; te
 env -u WCE_GAME -u ATTILA_DIR WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/firstrun.txt")" > "$OUT/run_first.log" 2>&1
 rc=$?
 if [ $rc = 0 ] && [ -f "$dir/wce.ini" ]; then echo "first run: ok (wce.ini written)"; else echo "first run: FAILED (exit $rc)"; tail -5 "$OUT/run_first.log"; bad=1; fi
-for f in capture shot; do
-    if cmp -s "$OUT/${f}1.png" "$OUT/${f}2.png" && [ -s "$OUT/${f}1.png" ]; then echo "$f identical between runs"; else echo "$f DIFFERS between runs (or missing)"; bad=1; fi
-done
+# The offscreen capture restarts the renderer's temporal state, so it is a pure function of the scene: byte-identical.
+# The whole-window shot shows the live viewport, whose auto exposure carries about 1e-6 of GPU float noise from frame to frame:
+# a few pixels differ by one level (docs/baseline.md), so it is compared with a tolerance of 2 levels.
+if cmp -s "$OUT/capture1.png" "$OUT/capture2.png" && [ -s "$OUT/capture1.png" ]; then echo "capture identical between runs"; else echo "capture DIFFERS between runs (or missing)"; bad=1; fi
+if cmp -s "$OUT/shot1.png" "$OUT/shot2.png" && [ -s "$OUT/shot1.png" ]; then echo "shot identical between runs"
+elif [ -s "$OUT/shot1.png" ] && [ -s "$OUT/shot2.png" ] && python -c "
+import sys
+import numpy as np
+from PIL import Image
+a = np.asarray(Image.open(sys.argv[1]).convert('RGB'), dtype=int); b = np.asarray(Image.open(sys.argv[2]).convert('RGB'), dtype=int)
+sys.exit(0 if a.shape == b.shape and np.abs(a - b).max() <= 2 else 1)" "$OUT/shot1.png" "$OUT/shot2.png"; then echo "shot within 2 levels between runs (live exposure noise)"
+else echo "shot DIFFERS between runs (or missing)"; bad=1; fi
 exit $bad

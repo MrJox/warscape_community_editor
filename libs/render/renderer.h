@@ -82,6 +82,8 @@ public:
         return s;
     }
     float luma_white() const { return luma_white_; }
+    // Forgets what earlier frames left behind (auto exposure, tone mapper limits, frame counter, clock), so the next frames depend on the scene only.
+    void restart_temporal() { frame_ = 0; last_time_ = -1; luma_black_ = 0.001f; luma_white_ = 9.0f; env_valid_ = false; }
 
     Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs);
     ~Renderer();

@@ -64,6 +64,12 @@ void Viewport::render(Editor& editor, int w, int h) {
     }
     r->render(scene, ViewParams{controller_->camera(), float(clock.time())}, target_);
     ++frames_rendered;
+    if (w != trace_w_ || h != trace_h_) {
+        if (trace_n_) trace_ += " x" + std::to_string(trace_n_) + ",";
+        if (trace_.size() < 600) trace_ += " " + std::to_string(w) + "x" + std::to_string(h);
+        trace_w_ = w, trace_h_ = h, trace_n_ = 0;
+    }
+    ++trace_n_;
 }
 
 EntityId Viewport::pick(Editor& editor, int x, int y) {
@@ -81,6 +87,7 @@ bool Viewport::capture(Editor& editor, int w, int h, int frames, const std::wstr
     if (!out.create(editor.device(), w, h)) return false;
     Clock clock = Clock::fixed(1.0 / 60.0);
     r->deterministic = true;
+    r->restart_temporal();   // a capture is a function of the scene, not of the live frames before it
     r->show_grid = show_grid;
     r->selection = editor.selection().entities(scene);
     try {

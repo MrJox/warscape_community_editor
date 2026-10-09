@@ -3,6 +3,7 @@
 #include "foundation/process.h"
 
 #include <windows.h>
+#include <commdlg.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
 
@@ -74,6 +75,21 @@ fs::path detect_rpfm_folder(const fs::path& game_dir) {
         }
     }
     return {};
+}
+
+fs::path file_dialog(bool save, const fs::path& initial, const wchar_t* filter) {
+    wchar_t buf[MAX_PATH * 4] = {};
+    const std::wstring init = initial.filename().wstring();
+    wcsncpy(buf, init.c_str(), std::size(buf) - 1);
+    const std::wstring dir = initial.parent_path().wstring();
+    OPENFILENAMEW ofn{sizeof ofn};
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = buf;
+    ofn.nMaxFile = DWORD(std::size(buf));
+    ofn.lpstrInitialDir = dir.empty() ? nullptr : dir.c_str();
+    ofn.Flags = OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+    const BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
+    return ok ? fs::path(buf) : fs::path();
 }
 
 fs::path pick_folder(const std::wstring& title) {

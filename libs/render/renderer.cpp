@@ -3,6 +3,10 @@
 #include "render/environment_apply.h"
 
 #include "vfs/vfs.h"
+#include "foundation/log.h"
+#include "foundation/process.h"
+
+#include <dxgi.h>
 
 #include <d3dcompiler.h>
 
@@ -126,6 +130,13 @@ float4x4 face_view(int face) {
 } // namespace
 
 Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs), textures_(dev, vfs), models_(dev, vfs, textures_) {
+    {   // which GPU renders matters for reproducing pixels (two adapters: results differ between them)
+        Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
+        Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dxgi))) && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)))
+            Log::info("GPU: " + narrow(desc.Description));
+    }
     lib_ = std::make_unique<ShaderLibrary>(dev, vfs, cbs_);
     particles_ = std::make_unique<ParticleSystem>(dev, ctx, vfs, *lib_, cbs_);
     make_states();
