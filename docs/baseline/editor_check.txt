@@ -1,0 +1,2 @@
+all passed
+exit 0
