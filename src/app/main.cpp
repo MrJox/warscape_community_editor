@@ -115,6 +115,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             else if (a == L"--delete") studio.script_delete();
             else if (a == L"--rotate" && i + 1 < argc) studio.script_rotate(float(_wtof(argv[++i])));
             else if (a == L"--add" && i + 1 < argc) studio.script_add(narrow(argv[++i]));
+            else if (a == L"--new-layer" && i + 1 < argc) studio.script_new_layer(narrow(argv[++i]));
+            else if (a == L"--move-to-layer" && i + 1 < argc) studio.script_move_selected_to_layer(narrow(argv[++i]));
             else if (a == L"--save-to" && i + 1 < argc) { std::string msg; bool ok = studio.save_to(narrow(argv[++i]), &msg); std::fprintf(stderr, "save: %s (%s)\n", ok ? "ok" : "failed", msg.c_str()); }
             else if (a == L"--cam" && i + 3 < argc) { float y = float(_wtof(argv[i + 1])), p = float(_wtof(argv[i + 2])), dd = float(_wtof(argv[i + 3])); studio.set_camera(y, p, dd); i += 3; }
         }

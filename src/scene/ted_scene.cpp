@@ -153,6 +153,95 @@ int TedScene::duplicate(int elem) {
 
 void TedScene::remove(int elem) { doc_ = doc_.removed_element(elem); }
 
+
+namespace {
+// Offset of the first byte of the line that holds `pos` (start of its indentation).
+size_t line_start(const std::string& t, size_t pos) {
+    while (pos > 0 && t[pos - 1] != '\n') --pos;
+    return pos;
+}
+size_t line_end(const std::string& t, size_t pos) {      // just after the newline that ends the line containing pos
+    size_t e = t.find('\n', pos);
+    return e == std::string::npos ? t.size() : e + 1;
+}
+std::string indent_of(const std::string& t, size_t pos) {
+    size_t a = line_start(t, pos), b = a;
+    while (b < t.size() && (t[b] == ' ' || t[b] == '\t')) ++b;
+    return t.substr(a, b - a);
+}
+} // namespace
+
+bool TedScene::is_descendant(int elem, int ancestor) const {
+    for (int p = doc_.elements()[elem].parent; p >= 0; p = doc_.elements()[p].parent)
+        if (p == ancestor) return true;
+    return false;
+}
+
+int TedScene::add_layer(int parent_layer, const std::string& name) {
+    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    std::string t = d.original_text();
+    int wrapper = -1;
+    for (int c : d.elements()[parent_layer].children)
+        if (d.elements()[c].name == "children") wrapper = c;
+    if (wrapper < 0) throw std::runtime_error("layer has no children element");
+    const auto& w = d.elements()[wrapper];
+    // insertion point: start of the line that holds </children>
+    size_t close = t.rfind("</children>", w.end_off);
+    size_t at = line_start(t, close);
+    std::string ind = indent_of(t, close) + "    ";
+    std::string nl = t.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    std::string snippet = ind + "<LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"" +
+                          we::XmlDoc::encode_entities(name, '"') + "\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">" + nl +
+                          ind + "    <children>" + nl + ind + "    </children>" + nl + ind + "</LayerInstance>" + nl;
+    t.insert(at, snippet);
+    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    int w2 = -1;
+    for (int c : doc_.elements()[parent_layer].children)
+        if (doc_.elements()[c].name == "children") w2 = c;
+    return doc_.elements()[w2].children.back();
+}
+
+int TedScene::move_to_layer(int elem, int layer) {
+    if (elem == layer || is_descendant(layer, elem)) throw std::runtime_error("cannot move a layer into itself");
+    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    std::string t = d.original_text();
+    const auto& e = d.elements()[elem];
+    int sub = d.subtree_size(elem);
+    size_t cut_a = line_start(t, e.start_off), cut_b = line_end(t, e.end_off - 1);
+    std::string piece = t.substr(cut_a, cut_b - cut_a);
+    int wrapper = -1;
+    for (int c : d.elements()[layer].children)
+        if (d.elements()[c].name == "children") wrapper = c;
+    if (wrapper < 0) throw std::runtime_error("target layer has no children element");
+    const auto& w = d.elements()[wrapper];
+    size_t close = t.rfind("</children>", w.end_off);
+    size_t at = line_start(t, close);
+    // re-indent the piece to the target depth
+    std::string old_ind = indent_of(t, e.start_off), new_ind = indent_of(t, close) + "    ";
+    std::string moved;
+    {
+        size_t pos = 0;
+        while (pos < piece.size()) {
+            size_t eol = piece.find('\n', pos);
+            size_t stop = eol == std::string::npos ? piece.size() : eol + 1;
+            std::string line = piece.substr(pos, stop - pos);
+            if (line.compare(0, old_ind.size(), old_ind) == 0) line = new_ind + line.substr(old_ind.size());
+            moved += line;
+            pos = stop;
+        }
+    }
+    // apply the later edit first so the earlier offsets stay valid
+    if (cut_a < at) { t.insert(at, moved); t.erase(cut_a, cut_b - cut_a); }
+    else { t.erase(cut_a, cut_b - cut_a); t.insert(at, moved); }
+    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    // the moved element is the last child of the target layer's children; the layer's own index shifts down when the cut was before it
+    int new_layer = layer - (elem < layer ? sub : 0);
+    int w2 = -1;
+    for (int c : doc_.elements()[new_layer].children)
+        if (doc_.elements()[c].name == "children") w2 = c;
+    return doc_.elements()[w2].children.back();
+}
+
 std::vector<int> TedScene::find_all(const std::string& type) const {
     std::vector<int> out;
     for (size_t i = 0; i < doc_.elements().size(); ++i)

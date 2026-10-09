@@ -61,6 +61,11 @@ public:
     Snapshot snapshot() const { return std::make_shared<we::XmlDoc>(doc_); }
     void restore(const Snapshot& s) { doc_ = *s; }
 
+    // Layer operations (text splices on the saved document, then a re-parse: element indices change, the result is returned).
+    int add_layer(int parent_layer, const std::string& name);   // empty LayerInstance appended to the parent's children; returns its index
+    int move_to_layer(int elem, int layer);                     // moves the element (with its subtree) to the end of the layer's children; returns the new index
+    bool is_descendant(int elem, int ancestor) const;
+
     // All instances (depth first) of a given element name, e.g. "BUILDING_INSTANCE".
     std::vector<int> find_all(const std::string& type) const;
     // Layer path "Logic/Go Zones" of an element.

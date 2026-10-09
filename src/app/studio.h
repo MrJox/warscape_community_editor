@@ -50,6 +50,8 @@ public:
     bool script_delete();
     bool script_rotate(float degrees);                                                                       // selected instance, about world Y
     bool script_add(const std::string& building_key);
+    bool script_new_layer(const std::string& name);                                                          // new layer under the root, selected
+    bool script_move_selected_to_layer(const std::string& layer_name);
     void script_undo(int n);
     void script_redo(int n);
     bool save_to(const std::string& dir, std::string* message);

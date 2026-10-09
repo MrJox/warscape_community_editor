@@ -1,4 +1,5 @@
 #include "app/studio.h"
+#include "weather/environment_map.h"
 
 #include "imgui.h"
 
@@ -10,6 +11,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <unordered_map>
 
 using namespace DirectX;
@@ -148,13 +151,65 @@ struct Studio::Impl {
     bool grabbing = false;
     te::Vec3 grab_old_pos{};
     double grab_y_offset = 0;
-    bool show_vegetation = true, show_decals = true, show_wire = false, show_polys = true;
+    bool show_wire = false, show_polys = true, lod_cull = true;
+    float veg_distance = 450.f, decal_distance = 300.f, other_distance = 3000.f;
+    UINT drawn_instances = 0;
     bool dirty_flag_scene = false;
 
     // undo
     std::vector<Action> undo, redo;
     Action pending{};                            // inspector edit in progress
     bool pending_open = false;
+
+    // weather picker (data only: which .environment file the game would use)
+    std::unique_ptr<te::EnvironmentMap> env;
+    te::WeatherQuery wq;
+    std::string env_status;
+
+    void load_environment_map(const std::string& tile_dir) {
+        env.reset();
+        std::string g = tile_dir;
+        for (char& c : g) if (c == char(92)) c = '/';
+        size_t at = g.find("/raw_data/");
+        if (at == std::string::npos) { env_status = "no raw_data folder in the tile path"; return; }
+        fs::path p = fs::path(g.substr(0, at + 10)) / "warscape_asset_variation_db" / "environment_map.xml";
+        try {
+            std::ifstream in(p, std::ios::binary);
+            std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            env = std::make_unique<te::EnvironmentMap>(te::EnvironmentMap::parse(b));
+            env_status = std::to_string(env->files().size()) + " environment files";
+        } catch (const std::exception& e) { env_status = std::string("environment_map.xml: ") + e.what(); }
+    }
+
+    bool pick_combo(const char* label, const char* category, std::string& value) {
+        bool changed = false;
+        auto vals = env->values(category);
+        if (ImGui::BeginCombo(label, value.empty() ? "(any)" : value.c_str())) {
+            if (ImGui::Selectable("(any)", value.empty())) { value.clear(); changed = true; }
+            for (const auto& v : vals) if (ImGui::Selectable(v.c_str(), v == value)) { value = v; changed = true; }
+            ImGui::EndCombo();
+        }
+        return changed;
+    }
+
+    void weather_panel() {
+        if (!ImGui::CollapsingHeader("Weather / climate (which environment the game picks)")) return;
+        if (!env) { ImGui::TextDisabled("%s", env_status.c_str()); return; }
+        pick_combo("map", "map", wq.map);
+        pick_combo("climate", "climate", wq.climate);
+        pick_combo("season", "season", wq.season);
+        pick_combo("climate change", "climate_change_index", wq.climate_change_index);
+        pick_combo("precipitation", "precipitation", wq.precipitation);
+        pick_combo("time of day", "time_of_day", wq.time_of_day);
+        pick_combo("battle type", "battle_types", wq.battle_type);
+        pick_combo("snow attrition", "snow_attrition", wq.snow_attrition);
+        bool dflt = false;
+        auto m = env->match(wq, &dflt);
+        ImGui::Text("%zu matching files%s, each picked with probability 1/%zu", m.size(), dflt ? " (after the default_map retry)" : "", m.empty() ? size_t(1) : m.size());
+        ImGui::BeginChild("envlist", ImVec2(0, 140), true);
+        for (const auto* e : m) ImGui::TextUnformatted(e->filename.c_str());
+        ImGui::EndChild();
+    }
 
     float last_dt = 0.016f;
     std::string diag;
@@ -422,8 +477,15 @@ struct Studio::Impl {
     }
 
     // ---------------------------------------------------------------------------------------------- drawing
+    // distance LOD + frustum culling: vegetation and decals drop out first, everything else stays visible far away
+    float draw_distance_of(const std::string& t) const {
+        if (t == "VEGETATION_INSTANCE") return veg_distance;
+        if (t == "ProjectedDecalInstance") return decal_distance;
+        return other_distance;
+    }
+
     void upload_instances() {
-        if (instances.empty()) { instance_count = 0; return; }
+        if (instances.empty()) { instance_count = 0; drawn_instances = 0; return; }
         UINT n = UINT(instances.size());
         if (n > instance_capacity) {
             instance_capacity = n + n / 4 + 64;
@@ -434,15 +496,32 @@ struct Studio::Impl {
         D3D11_MAPPED_SUBRESOURCE m;
         if (FAILED(ctx->Map(instance_vb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
         auto* out = static_cast<InstanceData*>(m.pData);
+        XMFLOAT3 e3;
+        XMStoreFloat3(&e3, eye());
+        XMVECTOR fwd = XMVector3Normalize(XMLoadFloat3(&target) - eye());
+        XMFLOAT3 f3;
+        XMStoreFloat3(&f3, fwd);
+        float cos_half = std::cos(XMConvertToRadians(55.f) * 0.5f * (float(surf_w) / std::max(1, surf_h)) * 0.9f + 0.35f);
+        UINT drawn = 0;
         for (const Instance& in : instances) {
+            if (lod_cull && in.elem != selected) {
+                float dx = in.pos.x - e3.x, dy = in.pos.y - e3.y, dz = in.pos.z - e3.z;
+                float d2 = dx * dx + dy * dy + dz * dz;
+                float lim = draw_distance_of(in.type);
+                if (d2 > lim * lim) continue;
+                float d = std::sqrt(d2);
+                if (d > in.size * 2 && (dx * f3.x + dy * f3.y + dz * f3.z) / d < cos_half * 0.0f - 0.2f) continue;   // behind the camera
+            }
             InstanceData d{};
             d.pos[0] = in.pos.x; d.pos[1] = in.pos.y; d.pos[2] = in.pos.z;
             d.size = in.size * (in.elem == selected ? 1.4f : 1.f);
             unpack(in.elem == selected ? pack_color(1, 1, 0.2f) : in.color, d.col);
             *out++ = d;
+            ++drawn;
         }
         ctx->Unmap(instance_vb.Get(), 0);
-        instance_count = n;
+        instance_count = drawn;
+        drawn_instances = drawn;
     }
 
     void draw_lines(const std::vector<LineVertex>& v) {
@@ -710,6 +789,45 @@ struct Studio::Impl {
         scene_dirty = true;
     }
 
+    // ---- layers
+    char rename_buf[128] = {0};
+
+    void new_layer(int parent) {
+        if (!project) return;
+        auto before = project->scene.snapshot();
+        int old = selected;
+        int layer = project->scene.add_layer(parent, "New layer");
+        selected = layer;
+        commit_struct(before, old);
+        status = "layer added";
+    }
+
+    void move_selected_to_layer(int layer) {
+        if (!project || selected < 0 || selected == layer) return;
+        auto& sc = project->scene;
+        if (sc.is_descendant(layer, selected)) { status = "cannot move a layer into itself"; return; }
+        auto before = sc.snapshot();
+        int old = selected;
+        te::WorldTransform w = te::world_transform(sc, selected);
+        bool has_pos = sc.position(selected).has_value();
+        int moved = sc.move_to_layer(selected, layer);
+        selected = moved;
+        if (has_pos) te::set_world_position(sc, moved, w.position);     // keep the world position and orientation
+        if (sc.euler(moved)) te::set_world_rotation(sc, moved, w.rotation);
+        commit_struct(before, old);
+        status = "moved to layer " + sc.name(sc.doc().elements()[moved].parent >= 0 ? sc.doc().elements()[sc.doc().elements()[moved].parent].parent : layer);
+    }
+
+    void delete_layer(int layer) {
+        if (!project) return;
+        auto before = project->scene.snapshot();
+        int old = selected;
+        project->scene.remove(layer);
+        selected = -1;
+        commit_struct(before, old);
+        status = "layer deleted";
+    }
+
     void begin_grab() {
         auto& sc = project->scene;
         auto p = sc.position(selected);
@@ -756,6 +874,25 @@ struct Studio::Impl {
         if (depth < 1) fl |= ImGuiTreeNodeFlags_DefaultOpen;
         bool open = ImGui::TreeNodeEx(buf, fl);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) selected = elem;
+        if (ImGui::BeginPopupContextItem()) {
+            bool is_layer = sc.is_layer(elem);
+            if (is_layer && ImGui::MenuItem("New layer inside")) new_layer(elem);
+            if (is_layer && selected >= 0 && selected != elem && ImGui::MenuItem("Move selected here")) move_selected_to_layer(elem);
+            if (is_layer && sc.type(elem) != "SCENE_GRAPH") {
+                if (ImGui::BeginMenu("Rename")) {
+                    if (ImGui::IsWindowAppearing()) std::snprintf(rename_buf, sizeof rename_buf, "%s", sc.name(elem).c_str());
+                    if (ImGui::InputText("##rename", rename_buf, sizeof rename_buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        auto before = sc.snapshot();
+                        sc.set_attr(elem, "name", rename_buf);
+                        commit_struct(before, selected);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem("Delete layer and contents")) delete_layer(elem);
+            }
+            ImGui::EndPopup();
+        }
         if (open) {
             size_t shown = 0;
             for (int k : kids) {
@@ -840,6 +977,7 @@ struct Studio::Impl {
             }
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Wireframe terrain", nullptr, &show_wire);
+                ImGui::MenuItem("Distance LOD / culling", nullptr, &lod_cull);
                 if (ImGui::MenuItem("Polygon outlines", nullptr, &show_polys)) scene_dirty = true;
                 ImGui::EndMenu();
             }
@@ -887,7 +1025,8 @@ struct Studio::Impl {
                 ImGui::Text("height map %ux%u, %.2f..%.2f m (min %.3f scale %.3f)%s", h.width(), h.height(), h.min_height(), h.min_height() + h.scale(), project->info.min_height, project->info.scale, project->info.found ? "" : "  [tile database entry NOT found]");
             } else ImGui::TextDisabled("no height_map_0.png");
             ImGui::Text("tile %u x %u cells, %.0f m", project->info.cells_x, project->info.cells_y, extent());
-            ImGui::Text("tile.ted v%d, %zu instances shown%s", project->scene.project_version(), instances.size(), project->scene_modified() ? "  (modified)" : "");
+            ImGui::Text("tile.ted v%d, %zu instances (%u drawn)%s", project->scene.project_version(), instances.size(), drawn_instances, project->scene_modified() ? "  (modified)" : "");
+            if (ImGui::TreeNode("draw distances (LOD)")) { ImGui::DragFloat("vegetation (m)", &veg_distance, 5.f, 20.f, 20000.f); ImGui::DragFloat("decals (m)", &decal_distance, 5.f, 20.f, 20000.f); ImGui::DragFloat("others (m)", &other_distance, 5.f, 20.f, 40000.f); ImGui::TreePop(); }
             ImGui::Text("undo %zu / redo %zu%s", undo.size(), redo.size(), project->height_dirty ? "  height modified" : "");
             ImGui::Separator();
             ImGui::Checkbox("snap to grid", &snap_grid);
@@ -899,6 +1038,8 @@ struct Studio::Impl {
             ImGui::InputText("building key", new_key, sizeof new_key);
             ImGui::SameLine();
             if (ImGui::Button("Add")) add_building(new_key);
+            ImGui::Separator();
+            weather_panel();
             ImGui::Separator();
             inspector();
         }
@@ -921,6 +1062,7 @@ bool Studio::open_tile(const std::string& dir, std::string* error) {
         return false;
     }
     d->path_input = dir;
+    d->load_environment_map(dir);
     std::snprintf(d->path_buf, sizeof d->path_buf, "%s", dir.c_str());
     d->selected = -1;
     d->undo.clear(); d->redo.clear();
@@ -986,6 +1128,20 @@ bool Studio::script_move(float dx, float dz) {
 bool Studio::script_duplicate() { if (!d->project || d->selected < 0) return false; d->duplicate_selected(); return true; }
 bool Studio::script_delete() { if (!d->project || d->selected < 0) return false; d->delete_selected(); return true; }
 bool Studio::script_rotate(float degrees) { if (!d->project || d->selected < 0) return false; d->rotate_selected(degrees); return true; }
+bool Studio::script_new_layer(const std::string& name) {
+    if (!d->project) return false;
+    int root = d->project->scene.scene_graph();
+    if (root < 0) return false;
+    d->new_layer(root);
+    if (d->selected >= 0) d->project->scene.set_attr(d->selected, "name", name);
+    return true;
+}
+bool Studio::script_move_selected_to_layer(const std::string& layer_name) {
+    if (!d->project || d->selected < 0) return false;
+    for (size_t i = 0; i < d->project->scene.doc().elements().size(); ++i)
+        if (d->project->scene.is_layer(int(i)) && d->project->scene.name(int(i)) == layer_name) { d->move_selected_to_layer(int(i)); return true; }
+    return false;
+}
 bool Studio::script_add(const std::string& key) { if (!d->project) return false; d->add_building(key.c_str()); return true; }
 void Studio::script_undo(int n) { for (int i = 0; i < n; ++i) d->do_undo(); }
 void Studio::script_redo(int n) { for (int i = 0; i < n; ++i) d->do_redo(); }

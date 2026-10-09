@@ -72,6 +72,29 @@ int main(int argc, char** argv) {
         te::WorldTransform w3 = te::world_transform(sc, b);
         CHECK(std::fabs(w3.position[0] - (w0.position[0] + 6)) < 1e-3 && std::fabs(w3.position[2] - (w0.position[2] - 6)) < 1e-3, "set_world_position");
         sc.revert_all();
+        // layers: add, move an instance into it, restore
+        {
+            te::TedScene s2 = te::TedScene::parse(bytes);
+            int root = s2.scene_graph();
+            auto kids = s2.children(root);
+            CHECK(!kids.empty(), "root has layers");
+            int before_count = int(s2.find_all("BUILDING_INSTANCE").size());
+            int layer = s2.add_layer(root, "Test layer");
+            CHECK(layer >= 0 && s2.name(layer) == "Test layer" && s2.type(layer) == "LayerInstance", "add_layer creates the layer");
+            CHECK(s2.children(layer).empty(), "new layer is empty");
+            auto bs = s2.find_all("BUILDING_INSTANCE");
+            int victim = bs[bs.size() / 3];
+            std::string vkey = s2.doc().get(victim, "key").value_or("");
+            std::string old_path = s2.layer_path(victim);
+            int moved = s2.move_to_layer(victim, layer);
+            CHECK(s2.type(moved) == "BUILDING_INSTANCE" && s2.doc().get(moved, "key").value_or("") == vkey, "moved instance keeps its key");
+            CHECK(int(s2.find_all("BUILDING_INSTANCE").size()) == before_count, "move keeps the instance count");
+            CHECK(s2.layer_path(moved).find("Test layer") != std::string::npos, "moved instance is in the new layer");
+            CHECK(s2.layer_path(moved) != old_path, "layer path changed");
+            // the saved text re-parses
+            te::TedScene s3 = te::TedScene::parse(s2.save());
+            CHECK(int(s3.find_all("BUILDING_INSTANCE").size()) == before_count, "saved text re-parses with the same count");
+        }
     }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

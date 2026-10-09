@@ -42,6 +42,13 @@ Vec3 euler_from_matrix(const Mat3& m) {
     return {a, -beta, c};
 }
 
+void set_world_rotation(TedScene& scene, int elem, const Mat3& world) {
+    int parent = scene.doc().elements()[elem].parent;
+    WorldTransform pw;
+    if (parent >= 0) pw = world_transform(scene, parent);
+    scene.set_euler(elem, euler_from_matrix(mat_mul(mat_transpose(pw.rotation), world)));
+}
+
 void rotate_world_yaw(TedScene& scene, int elem, double delta) {
     int parent = scene.doc().elements()[elem].parent;
     WorldTransform pw;

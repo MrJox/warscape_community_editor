@@ -32,6 +32,9 @@ Mat3 rotation_y(double angle);
 // Sets the local orientation of `elem` so that its world rotation becomes Ry(world_yaw_delta) * (current world rotation).
 void rotate_world_yaw(TedScene& scene, int elem, double delta);
 
+// Sets the local orientation of `elem` so that its world rotation becomes `world` (ancestors unchanged).
+void set_world_rotation(TedScene& scene, int elem, const Mat3& world);
+
 // Sets the local position of `elem` so that its world position becomes `world` (ancestors unchanged).
 void set_world_position(TedScene& scene, int elem, const Vec3& world);
 
