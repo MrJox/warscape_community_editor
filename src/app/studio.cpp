@@ -600,6 +600,24 @@ struct Studio::Impl {
                 l.push_back({{in.pos.x, in.pos.y, in.pos.z}, {0.2f, 1, 0.2f, 1}}); l.push_back({{in.pos.x, in.pos.y + a, in.pos.z}, {0.2f, 1, 0.2f, 1}});
                 l.push_back({{in.pos.x, in.pos.y, in.pos.z}, {0.3f, 0.5f, 1, 1}}); l.push_back({{in.pos.x, in.pos.y, in.pos.z + a}, {0.3f, 0.5f, 1, 1}});
             }
+        // polygon handles and the polygon being drawn
+        auto cross = [&](const Float3& p, const float* c, float r) {
+            l.push_back({{p.x - r, p.y + 0.4f, p.z}, {c[0], c[1], c[2], 1}}); l.push_back({{p.x + r, p.y + 0.4f, p.z}, {c[0], c[1], c[2], 1}});
+            l.push_back({{p.x, p.y + 0.4f, p.z - r}, {c[0], c[1], c[2], 1}}); l.push_back({{p.x, p.y + 0.4f, p.z + r}, {c[0], c[1], c[2], 1}});
+            l.push_back({{p.x, p.y, p.z}, {c[0], c[1], c[2], 1}}); l.push_back({{p.x, p.y + r * 1.5f, p.z}, {c[0], c[1], c[2], 1}});
+        };
+        if (project && selected_is_polygon()) {
+            auto pts = polygon_world_points(selected);
+            const float normal[4] = {1, 1, 1, 1}, hot[4] = {1, 0.9f, 0.1f, 1};
+            for (size_t i = 0; i < pts.size(); ++i) cross(pts[i], int(i) == poly_point ? hot : normal, std::max(0.8f, dist * 0.012f));
+        }
+        if (drawing) {
+            const float hot[4] = {1, 0.9f, 0.1f, 1};
+            for (size_t i = 0; i < draw_pts.size(); ++i) {
+                cross(draw_pts[i], hot, std::max(0.8f, dist * 0.012f));
+                if (i) { l.push_back({{draw_pts[i - 1].x, draw_pts[i - 1].y + 0.4f, draw_pts[i - 1].z}, {1, 0.9f, 0.1f, 1}}); l.push_back({{draw_pts[i].x, draw_pts[i].y + 0.4f, draw_pts[i].z}, {1, 0.9f, 0.1f, 1}}); }
+            }
+        }
         // tile border
         float e = float(extent());
         const float bc[4] = {0.9f, 0.9f, 0.9f, 1};
@@ -614,6 +632,7 @@ struct Studio::Impl {
 
     void do_undo() {
         if (undo.empty() || !project) return;
+        poly_point = -1;
         Action a = undo.back(); undo.pop_back();
         if (a.kind == Action::Height) { if (project->height->undo()) { terrain_dirty = true; scene_dirty = true; } }
         else if (a.kind == Action::Struct) { project->scene.restore(a.before); selected = a.sel_before; scene_dirty = true; }
@@ -623,6 +642,7 @@ struct Studio::Impl {
 
     void do_redo() {
         if (redo.empty() || !project) return;
+        poly_point = -1;
         Action a = redo.back(); redo.pop_back();
         if (a.kind == Action::Height) { if (project->height->redo()) { terrain_dirty = true; scene_dirty = true; } }
         else if (a.kind == Action::Struct) { project->scene.restore(a.after); selected = a.sel_after; scene_dirty = true; }
@@ -649,11 +669,177 @@ struct Studio::Impl {
         terrain_dirty = true;
     }
 
+    // ---- polygon editing (AI hints, zones, ...)
+    int poly_point = -1;                        // selected point of the selected polygon
+    bool point_drag = false, point_moved = false;
+    te::TedScene::Snapshot point_before;
+    int point_sel_before = -1;
+    bool drawing = false;
+    std::vector<Float3> draw_pts;
+    int new_poly_type = 0, new_hint = 0;
+
+    static const char* poly_type_name(int i) {
+        static const char* n[] = {"AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"};
+        return n[i];
+    }
+    static const char* hint_name(int i) {
+        static const char* n[] = {"AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
+                                  "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_FIREBALL_LINE", "AIH_BEACH_LANDING",
+                                  "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH"};
+        return n[i];
+    }
+    static constexpr int hint_count = 16, poly_type_count = 5;
+
+    bool selected_is_polygon() const { return project && selected >= 0 && !project->scene.polygon_points(selected).empty(); }
+
+    Float3 point_world(int elem, const te::Vec3& local) const {
+        te::WorldTransform w = te::world_transform(project->scene, elem);
+        te::Vec3 r = te::rotate_vec(w.rotation, local);
+        double u = unit();
+        return {float((w.position[0] + r[0]) / u), float(w.position[1] + r[1]), float((w.position[2] + r[2]) / u)};
+    }
+    te::Vec3 to_local(int elem, const Float3& world) const {        // world metres -> local scene units of `elem`
+        te::WorldTransform w = te::world_transform(project->scene, elem);
+        double u = unit();
+        te::Vec3 d{world.x * u - w.position[0], world.y - w.position[1], world.z * u - w.position[2]};
+        return te::rotate_vec(te::mat_transpose(w.rotation), d);
+    }
+    std::vector<Float3> polygon_world_points(int elem) const {
+        std::vector<Float3> out;
+        for (int p : project->scene.polygon_points(elem))
+            if (auto v = project->scene.point_position(p)) out.push_back(point_world(elem, *v));
+        return out;
+    }
+
+    int pick_poly_point(XMVECTOR o, XMVECTOR d) const {
+        if (!selected_is_polygon()) return -1;
+        auto pts = polygon_world_points(selected);
+        int best = -1;
+        float best_t = 1e30f;
+        for (size_t i = 0; i < pts.size(); ++i) {
+            XMVECTOR c = XMVectorSet(pts[i].x, pts[i].y, pts[i].z, 0);
+            float t = XMVectorGetX(XMVector3Dot(c - o, d));
+            if (t <= 0) continue;
+            float perp = XMVectorGetX(XMVector3Length(c - (o + d * t)));
+            if (perp < std::max(1.2f, t * 0.015f) && t < best_t) { best_t = t; best = int(i); }
+        }
+        return best;
+    }
+
+    void move_point_to(const Float3& world) {
+        project->scene.set_polygon_point(selected, size_t(poly_point), to_local(selected, world));
+        point_moved = true;
+        scene_dirty = true;
+    }
+
+    void insert_point_at_cursor() {
+        if (!selected_is_polygon() || !terrain_hit) return;
+        auto pts = polygon_world_points(selected);
+        size_t best = 0;
+        float bd = 1e30f;
+        bool closed = project->scene.doc().get(selected, "polygon_closed").value_or("1") != "0";
+        for (size_t i = 0; i < pts.size(); ++i) {
+            if (i + 1 == pts.size() && !closed) break;
+            const Float3 &a = pts[i], &b = pts[(i + 1) % pts.size()];
+            float abx = b.x - a.x, abz = b.z - a.z, l2 = abx * abx + abz * abz;
+            float t = l2 > 1e-6f ? std::clamp(((brush_world.x - a.x) * abx + (brush_world.z - a.z) * abz) / l2, 0.f, 1.f) : 0.f;
+            float dx = a.x + abx * t - brush_world.x, dz = a.z + abz * t - brush_world.z, dd = dx * dx + dz * dz;
+            if (dd < bd) { bd = dd; best = i; }
+        }
+        auto before = project->scene.snapshot();
+        int old = selected;
+        project->scene.insert_polygon_point(selected, best, to_local(selected, {brush_world.x, hit_height, brush_world.z}));
+        poly_point = int(best) + 1;
+        commit_struct(before, old);
+        status = "point inserted";
+    }
+
+    void remove_poly_point() {
+        if (!selected_is_polygon() || poly_point < 0) return;
+        auto before = project->scene.snapshot();
+        int old = selected;
+        if (!project->scene.remove_polygon_point(selected, size_t(poly_point))) { status = "a polygon needs at least 2 points"; return; }
+        poly_point = -1;
+        commit_struct(before, old);
+        status = "point removed";
+    }
+
+    int layer_of(int elem) const {
+        const auto& sc = project->scene;
+        for (int p = elem; p >= 0; p = sc.doc().elements()[p].parent)
+            if (sc.is_layer(p)) return p;
+        return sc.scene_graph();
+    }
+
+    void finish_polygon() {
+        if (!drawing) return;
+        drawing = false;
+        if (!project || draw_pts.size() < 2) { status = "polygon needs at least 2 points"; draw_pts.clear(); return; }
+        auto before = project->scene.snapshot();
+        int old = selected;
+        int layer = selected >= 0 ? layer_of(selected) : project->scene.scene_graph();
+        std::vector<te::Vec3> pts;
+        for (const Float3& p : draw_pts) pts.push_back(to_local(layer, p));
+        std::map<std::string, std::string> extra;
+        if (new_poly_type == 0) extra["hint_type"] = hint_name(new_hint);
+        std::string name = new_poly_type == 0 ? std::string("AI hint polygon") : std::string("Polygon");
+        selected = project->scene.add_polygon(layer, poly_type_name(new_poly_type), name, pts, extra);
+        poly_point = -1;
+        draw_pts.clear();
+        commit_struct(before, old);
+        status = std::string("added ") + poly_type_name(new_poly_type) + " in " + project->scene.layer_path(selected);
+    }
+
+    void polygon_panel() {
+        if (!project) return;
+        if (ImGui::CollapsingHeader("Polygons / AI hints", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SetNextItemWidth(260);
+            if (ImGui::BeginCombo("type", poly_type_name(new_poly_type))) {
+                for (int i = 0; i < poly_type_count; ++i) if (ImGui::Selectable(poly_type_name(i), i == new_poly_type)) new_poly_type = i;
+                ImGui::EndCombo();
+            }
+            if (new_poly_type == 0) {
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo("hint", hint_name(new_hint))) {
+                    for (int i = 0; i < hint_count; ++i) if (ImGui::Selectable(hint_name(i), i == new_hint)) new_hint = i;
+                    ImGui::EndCombo();
+                }
+            }
+            if (!drawing) { if (ImGui::Button("Draw polygon")) { drawing = true; draw_pts.clear(); status = "click the terrain to add points; Enter finishes, Esc cancels"; } }
+            else {
+                ImGui::Text("%zu points", draw_pts.size());
+                ImGui::SameLine();
+                if (ImGui::Button("Finish")) finish_polygon();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) { drawing = false; draw_pts.clear(); }
+            }
+            if (selected_is_polygon()) {
+                const auto& sc = project->scene;
+                ImGui::Text("selected: %zu points, area %.1f%s", sc.polygon_points(selected).size(), sc.polygon_area(selected), poly_point >= 0 ? "" : "");
+                if (poly_point >= 0) ImGui::Text("point %d: drag to move, Delete removes, shift+click edge inserts", poly_point);
+                else ImGui::TextDisabled("click a point handle to edit; shift+click near an edge inserts a point");
+                if (sc.type(selected) == "AI_HINT_POLYGON_INSTANCE") {
+                    std::string cur = sc.doc().get(selected, "hint_type").value_or("");
+                    ImGui::SetNextItemWidth(260);
+                    if (ImGui::BeginCombo("hint type", cur.c_str())) {
+                        for (int i = 0; i < hint_count; ++i)
+                            if (ImGui::Selectable(hint_name(i), cur == hint_name(i)) && cur != hint_name(i)) {
+                                auto before = project->scene.snapshot();
+                                project->scene.set_attr(selected, "hint_type", hint_name(i));
+                                commit_struct(before, selected);
+                            }
+                        ImGui::EndCombo();
+                    }
+                }
+            }
+        }
+    }
+
     void handle_input() {
         ImGuiIO& io = ImGui::GetIO();
         last_dt = io.DeltaTime;
         bool over_ui = io.WantCaptureMouse;
-        XMVECTOR o, d;
+        XMVECTOR o = XMVectorZero(), d = XMVectorSet(0, -1, 0, 0);
         terrain_hit = false;
         brush_active = false;
         if (!over_ui && mouse_ray(o, d) && project) {
@@ -679,7 +865,9 @@ struct Studio::Impl {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) do_redo();
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && project) save();
             if (ImGui::IsKeyPressed(ImGuiKey_G, false) && selected >= 0 && !grabbing && project) begin_grab();
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && selected >= 0 && !grabbing) delete_selected();
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && selected >= 0 && !grabbing) { if (poly_point >= 0) remove_poly_point(); else delete_selected(); }
+            if (drawing && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) finish_polygon();
+            if (drawing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { drawing = false; draw_pts.clear(); }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && selected >= 0 && !grabbing) duplicate_selected();
             if (ImGui::IsKeyPressed(ImGuiKey_R, false) && selected >= 0 && !grabbing) rotate_selected(io.KeyShift ? -angle_step_deg : angle_step_deg);
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && grabbing) cancel_grab();
@@ -699,11 +887,25 @@ struct Studio::Impl {
         }
         // left button
         if (!over_ui && project) {
-            if (tool == Tool::Select) {
-                if (io.MouseClicked[0]) selected = hover_inst;
+            if (drawing) {
+                if (io.MouseClicked[0] && terrain_hit) draw_pts.push_back({brush_world.x, hit_height, brush_world.z});
+            } else if (tool == Tool::Select) {
+                if (io.MouseClicked[0]) {
+                    int pp = pick_poly_point(o, d);
+                    if (pp >= 0) { poly_point = pp; point_drag = true; point_moved = false; point_before = project->scene.snapshot(); point_sel_before = selected; }
+                    else if (io.KeyShift && selected_is_polygon()) insert_point_at_cursor();
+                    else { selected = hover_inst; poly_point = -1; }
+                }
             } else if (project->has_height) {
                 if (io.MouseClicked[0] && terrain_hit) { project->height->begin_edit(); painting = true; }
                 if (painting && io.MouseDown[0] && terrain_hit) paint(brush_world);
+            }
+        }
+        if (point_drag) {
+            if (io.MouseDown[0]) { if (terrain_hit) move_point_to({brush_world.x, hit_height, brush_world.z}); }
+            else {
+                point_drag = false;
+                if (point_moved) commit_struct(point_before, point_sel_before);
             }
         }
         if (painting && !io.MouseDown[0]) {
@@ -1039,6 +1241,8 @@ struct Studio::Impl {
             ImGui::SameLine();
             if (ImGui::Button("Add")) add_building(new_key);
             ImGui::Separator();
+            polygon_panel();
+            ImGui::Separator();
             weather_panel();
             ImGui::Separator();
             inspector();
@@ -1128,6 +1332,50 @@ bool Studio::script_move(float dx, float dz) {
 bool Studio::script_duplicate() { if (!d->project || d->selected < 0) return false; d->duplicate_selected(); return true; }
 bool Studio::script_delete() { if (!d->project || d->selected < 0) return false; d->delete_selected(); return true; }
 bool Studio::script_rotate(float degrees) { if (!d->project || d->selected < 0) return false; d->rotate_selected(degrees); return true; }
+bool Studio::script_add_polygon(const std::string& spec) {
+    // "TYPE|HINT|x,z;x,z;..." with x, z in metres; selects the new polygon
+    if (!d->project) return false;
+    size_t a = spec.find('|'), b = a == std::string::npos ? a : spec.find('|', a + 1);
+    if (b == std::string::npos) return false;
+    std::string type = spec.substr(0, a), hint = spec.substr(a + 1, b - a - 1), pts = spec.substr(b + 1);
+    d->drawing = true;
+    d->draw_pts.clear();
+    size_t pos = 0;
+    while (pos < pts.size()) {
+        size_t end = pts.find(';', pos);
+        if (end == std::string::npos) end = pts.size();
+        std::string item = pts.substr(pos, end - pos);
+        size_t comma = item.find(',');
+        if (comma != std::string::npos) {
+            float x = float(std::atof(item.substr(0, comma).c_str())), z = float(std::atof(item.substr(comma + 1).c_str()));
+            d->draw_pts.push_back({x, d->terrain_height(x, z), z});
+        }
+        pos = end + 1;
+    }
+    d->new_poly_type = 0;
+    for (int i = 0; i < Impl::poly_type_count; ++i) if (type == Impl::poly_type_name(i)) d->new_poly_type = i;
+    for (int i = 0; i < Impl::hint_count; ++i) if (hint == Impl::hint_name(i)) d->new_hint = i;
+    d->finish_polygon();
+    return d->selected_is_polygon();
+}
+bool Studio::script_polygon_point(const std::string& op, int index, float x, float z) {
+    if (!d->selected_is_polygon()) return false;
+    auto& sc = d->project->scene;
+    size_t n = sc.polygon_points(d->selected).size();
+    auto before = sc.snapshot();
+    int old = d->selected;
+    if (op == "move") {
+        if (index < 0 || size_t(index) >= n) return false;
+        sc.set_polygon_point(d->selected, size_t(index), d->to_local(d->selected, {x, d->terrain_height(x, z), z}));
+    } else if (op == "insert") {
+        if (index < 0 || size_t(index) >= n) return false;
+        sc.insert_polygon_point(d->selected, size_t(index), d->to_local(d->selected, {x, d->terrain_height(x, z), z}));
+    } else if (op == "remove") {
+        if (index < 0 || !sc.remove_polygon_point(d->selected, size_t(index))) return false;
+    } else return false;
+    d->commit_struct(before, old);
+    return true;
+}
 bool Studio::script_new_layer(const std::string& name) {
     if (!d->project) return false;
     int root = d->project->scene.scene_graph();

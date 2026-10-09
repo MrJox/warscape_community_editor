@@ -30,3 +30,10 @@ Mouse: RMB orbit, MMB pan, wheel zoom, LMB select (Select tool) or paint (Raise 
 Scripted use (same code paths as the mouse): `--select <type or element index> --move <dx> <dz> --paint <raise|lower|smooth|flatten|level> <x m> <z m> <steps> --undo <n> --save-to <folder> --cam <yaw> <pitch> <dist> --shot <png> --frames <n>`.
 
 Scene units: x / z are half metres (unit scale 2), y metres; the tile is `cells * 128` m square (see `docs/formats/tile_ted.md`). Known gap: for settlement tiles the instance heights do not line up with `height_map_0.png` (they sit on the LF terrain), so buildings may float or sink in the viewer.
+
+### Studio features (overnight additions)
+- Layers: right-click a layer in the tree (new layer, move selected here, rename, delete). Scripted: `--new-layer <name> --move-to-layer <name>`.
+- Instances: `G` grab, `Ctrl+D` duplicate, `Del` delete, `R` rotate (Shift reverses), grid and angle snap, building add by key (`--add <key>`), `--duplicate --delete --rotate <deg>`.
+- Weather picker (which environment the game picks per climate/season), distance LOD (vegetation 450 m, decals 300 m, others 3000 m, adjustable).
+- Polygons and AI hints: pick a type and hint in "Polygons / AI hints", click *Draw polygon*, click the terrain, Enter finishes. Select a polygon to get point handles: drag to move, shift+click near an edge inserts, `Del` removes the selected point, the hint type is editable in a combo. `area` is recomputed (shoelace in scene units). Scripted: `--add-polygon "TYPE|HINT|x,z;x,z;..."` (metres) and `--polygon-point <move|insert|remove> <index> <x> <z>`.
+

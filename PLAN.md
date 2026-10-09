@@ -208,3 +208,6 @@ Camera-based LOD in the editor viewport (not in shipped data, so no byte constra
 ## Open questions (assumptions made, shout if wrong)
 - **Campaign scope:** assumed = campaign tiles (`terrain/tiles/campaign`, tile DB, `tile_upgrades.xml`) plus reading the campaign map raw inputs; campaign map outputs (`map_data.esf`, `pathfinding.ppd`, trade routes, `.terry` editing) are out unless you want them (they are Terry/TWeak territory).
 - Packs are produced with `rpfm_cli`, not by reimplementing BOB's Pack processor.
+
+Status 2026-10-09 (overnight, later): Studio has layers, weather picker, distance LOD, instance ops and polygon / AI-hint editing (TedScene polygon API + unit tests, point handles, draw mode, hint-type combo). Still open: stage-A exporter in C++, markers payloads, BOB stage B, vegetation, asset browser, gizmo.
+

@@ -115,6 +115,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             else if (a == L"--delete") studio.script_delete();
             else if (a == L"--rotate" && i + 1 < argc) studio.script_rotate(float(_wtof(argv[++i])));
             else if (a == L"--add" && i + 1 < argc) studio.script_add(narrow(argv[++i]));
+            else if (a == L"--add-polygon" && i + 1 < argc) { if (!studio.script_add_polygon(narrow(argv[++i]))) std::fprintf(stderr, "add-polygon failed\n"); }
+            else if (a == L"--polygon-point" && i + 4 < argc) { if (!studio.script_polygon_point(narrow(argv[i + 1]), _wtoi(argv[i + 2]), float(_wtof(argv[i + 3])), float(_wtof(argv[i + 4])))) std::fprintf(stderr, "polygon-point failed\n"); i += 4; }
             else if (a == L"--new-layer" && i + 1 < argc) studio.script_new_layer(narrow(argv[++i]));
             else if (a == L"--move-to-layer" && i + 1 < argc) studio.script_move_selected_to_layer(narrow(argv[++i]));
             else if (a == L"--save-to" && i + 1 < argc) { std::string msg; bool ok = studio.save_to(narrow(argv[++i]), &msg); std::fprintf(stderr, "save: %s (%s)\n", ok ? "ok" : "failed", msg.c_str()); }

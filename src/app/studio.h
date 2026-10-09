@@ -50,6 +50,8 @@ public:
     bool script_delete();
     bool script_rotate(float degrees);                                                                       // selected instance, about world Y
     bool script_add(const std::string& building_key);
+    bool script_add_polygon(const std::string& spec);                                                       // "TYPE|HINT|x,z;x,z" metres
+    bool script_polygon_point(const std::string& op, int index, float x, float z);                          // op: move | insert | remove on the selected polygon
     bool script_new_layer(const std::string& name);                                                          // new layer under the root, selected
     bool script_move_selected_to_layer(const std::string& layer_name);
     void script_undo(int n);
