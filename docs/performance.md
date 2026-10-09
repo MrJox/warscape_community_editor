@@ -89,6 +89,7 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
 ## Not done / ideas
 
 * Occlusion culling. Frustum, size and LOD culling were enough (4 to 7 ms); the hardware path would be a Hi-Z from the previous frame's depth.
-* The XML parse (120 ms for 45 MB) is the largest piece of opening that is left; it could be split at layer boundaries and parsed in parallel.
+* Done after the pass: the XML parse (125 ms for 45 MB) now reads the text in up to 32 pieces on the compute pool (`parse_in_pieces`: pieces start at a '<' after a line break, the merge checks
+  that nothing crosses a boundary and falls back to the one-go parse otherwise) and the UTF-8 copy is parallel: parse 32 ms, `tile.open` 134 ms to 58 ms. `xml_splice_check` compares both parsers.
 * The shadow cascades cost 3.5 ms on the discrete GPU and 25 ms on the integrated one: casters are drawn into every cascade they touch.
 * `XmlElement` is a heavy structure (strings and vectors per element): a flat attribute array and interned names would halve the memory of an open tile.

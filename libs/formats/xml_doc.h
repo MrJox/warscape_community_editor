@@ -44,7 +44,9 @@ struct XmlSplice {
 class XmlDoc {
 public:
     static XmlDoc parse(const std::vector<uint8_t>& bytes); // throws std::runtime_error with offset
-    static XmlDoc parse(std::vector<uint8_t>&& bytes);      // the same, keeping the bytes as origin_bytes() without a copy
+    // The same, keeping the bytes as origin_bytes() without a copy. A text of `parallel_min` bytes or more is read in pieces on the compute pool (the same
+    // element table as reading it in one go; SIZE_MAX reads it in one go).
+    static XmlDoc parse(std::vector<uint8_t>&& bytes, size_t parallel_min = 4u << 20);
     std::vector<uint8_t> save() const;
 
     const std::vector<XmlElement>& elements() const { return elems_; }

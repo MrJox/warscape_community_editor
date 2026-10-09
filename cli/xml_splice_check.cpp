@@ -48,6 +48,13 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const int rounds = argc > 2 ? std::atoi(argv[2]) : 40;
     const std::vector<uint8_t> bytes = read_file(argv[1]);
+    {   // reading the text in pieces side by side gives the table of reading it in one go
+        std::string why0;
+        const XmlDoc one = XmlDoc::parse(std::vector<uint8_t>(bytes), SIZE_MAX);
+        const XmlDoc many = XmlDoc::parse(std::vector<uint8_t>(bytes), 1);
+        CHECK(same_table(one, many, &why0), ("parallel parse: " + why0).c_str());
+        std::printf("parallel parse: %zu elements\n", many.elements().size());
+    }
     XmlDoc fast = XmlDoc::parse(bytes), slow = XmlDoc::parse(bytes);
     const XmlDoc original = XmlDoc::parse(bytes);
     std::mt19937 rng(12345);

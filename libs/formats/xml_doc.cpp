@@ -1,7 +1,9 @@
 #include "foundation/profile.h"
+#include "foundation/thread_pool.h"
 #include "formats/xml_doc.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <stdexcept>
 
@@ -64,8 +66,17 @@ size_t parse_start_tag(const std::string& t, size_t n, size_t at_off, XmlElement
     return p;
 }
 
-// Reads the elements of t[begin, end) into `elems` (indices continue from elems.size(); top-level ones get parent -1 and are listed in `roots`).
-void parse_range(const std::string& t, size_t begin, size_t n, std::vector<XmlElement>& elems, std::vector<int>& roots) {
+// What a chunk of a bigger document leaves open for its neighbours: end tags that close elements started before the chunk (`ext`, with the number of top-level
+// elements read before them) and the elements still open at its end (`open`, outermost first).
+struct ChunkTail {
+    struct Close { size_t after_tops; std::string name; size_t end; };
+    std::vector<Close> ext;
+    std::vector<int> open;
+};
+
+// Reads the elements of t[begin, end) into `elems` (indices continue from elems.size(); top-level ones get parent -1 and are listed in `roots`). Returns the
+// offset after the last construct read. With a `tail` the range may start and stop in the middle of the element tree.
+size_t parse_range(const std::string& t, size_t begin, size_t n, std::vector<XmlElement>& elems, std::vector<int>& roots, ChunkTail* tail = nullptr) {
     auto at = [&](size_t i) { return i < n ? t[i] : '\0'; };
     auto skip_to = [&](size_t i, std::string_view end) {
         size_t p = t.find(end, i);
@@ -94,7 +105,14 @@ void parse_range(const std::string& t, size_t begin, size_t n, std::vector<XmlEl
             int match = -1;
             for (int k = int(stack.size()) - 1; k >= 0; --k)
                 if (elems[size_t(stack[size_t(k)])].name == name) { match = k; break; }
-            if (match < 0) fail(i, "end tag </" + std::string(name) + "> without start");
+            if (match < 0) {
+                if (tail && stack.empty()) {   // closes an element of an earlier chunk: the merge resolves it
+                    tail->ext.push_back({roots.size(), std::string(name), close + 1});
+                    i = close + 1;
+                    continue;
+                }
+                fail(i, "end tag </" + std::string(name) + "> without start");
+            }
             while (int(stack.size()) > match) {
                 elems[size_t(stack.back())].end_off = close + 1;
                 stack.pop_back();
@@ -114,17 +132,108 @@ void parse_range(const std::string& t, size_t begin, size_t n, std::vector<XmlEl
         if (!self_closing) stack.push_back(idx);
         i = p;
     }
-    if (!stack.empty()) fail(n, "unclosed <" + elems[size_t(stack.back())].name + ">");
+    if (!stack.empty()) {
+        if (!tail) fail(n, "unclosed <" + elems[size_t(stack.back())].name + ">");
+        tail->open = stack;
+    }
+    return i;
+}
+
+// Reads the whole text in pieces side by side. The pieces start at '<' after a line break; the merge checks that no construct (comment, CDATA, attribute value)
+// crosses a piece boundary and that every end tag that leaves its piece closes the innermost open element, which is true for every well formed file. Anything
+// else returns false and the caller reads the text in one go (which also gives the proper error message).
+bool parse_in_pieces(const std::string& t, size_t pieces, std::vector<XmlElement>& out, std::vector<int>& roots) {
+    const size_t size = t.size();
+    std::vector<size_t> cut{0};
+    for (size_t k = 1; k < pieces; ++k) {
+        size_t p = std::max(cut.back() + 1, size / pieces * k);
+        for (;;) {
+            p = t.find('\n', p);
+            if (p == std::string::npos) break;
+            size_t q = p + 1;
+            while (q < size && (t[q] == ' ' || t[q] == '\t')) ++q;
+            if (q < size && t[q] == '<') { p = q; break; }
+            p = q;
+        }
+        if (p == std::string::npos) break;
+        cut.push_back(p);
+    }
+    cut.push_back(size);
+    const size_t count = cut.size() - 1;
+    if (count < 2) return false;
+    struct Piece { std::vector<XmlElement> elems; std::vector<int> tops; ChunkTail tail; size_t base = 0; };
+    std::vector<Piece> piece(count);
+    std::atomic<bool> bad{false};
+    compute_pool().parallel_for(count, 1, [&](size_t b, size_t e, int) {
+        for (size_t k = b; k < e; ++k) {
+            Piece& pc = piece[k];
+            try {
+                pc.elems.reserve((cut[k + 1] - cut[k]) / 256 + 16);
+                const size_t end = parse_range(t, cut[k], cut[k + 1], pc.elems, pc.tops, &pc.tail);
+                if (end > cut[k + 1]) bad = true;   // a construct reaches over the boundary
+            } catch (const std::exception&) {
+                bad = true;
+            }
+        }
+    });
+    if (bad) return false;
+    size_t total = 0;
+    for (Piece& pc : piece) { pc.base = total; total += pc.elems.size(); }
+    out.clear();
+    out.resize(total);
+    compute_pool().parallel_for(count, 1, [&](size_t b, size_t e, int) {
+        for (size_t k = b; k < e; ++k) {
+            Piece& pc = piece[k];
+            const int base = int(pc.base);
+            for (size_t i = 0; i < pc.elems.size(); ++i) {
+                XmlElement& x = pc.elems[i];
+                if (x.parent >= 0) x.parent += base;
+                for (int& c : x.children) c += base;
+                out[pc.base + i] = std::move(x);
+            }
+        }
+    });
+    // the elements that sit at a boundary: parents from the open elements of the pieces before, and the end tags that leave a piece
+    std::vector<int> open;
+    for (Piece& pc : piece) {
+        size_t ti = 0;
+        auto open_top = [&](int local) {
+            const int g = int(pc.base) + local;
+            const int parent = open.empty() ? -1 : open.back();
+            out[size_t(g)].parent = parent;
+            if (parent < 0) roots.push_back(g);
+            else out[size_t(parent)].children.push_back(g);
+        };
+        for (const ChunkTail::Close& c : pc.tail.ext) {
+            while (ti < c.after_tops) open_top(pc.tops[ti++]);
+            if (open.empty() || out[size_t(open.back())].name != c.name) return false;
+            out[size_t(open.back())].end_off = c.end;
+            open.pop_back();
+        }
+        while (ti < pc.tops.size()) open_top(pc.tops[ti++]);
+        for (int l : pc.tail.open) open.push_back(int(pc.base) + l);
+    }
+    return open.empty();
 }
 
 } // namespace
 
-XmlDoc XmlDoc::parse(std::vector<uint8_t>&& bytes) {
+XmlDoc XmlDoc::parse(std::vector<uint8_t>&& bytes, size_t parallel_min) {
     XmlDoc d;
     d.origin_ = std::move(bytes);
-    DecodedText dt = decode_text(d.origin_);
-    d.text_ = std::move(dt.utf8);
-    d.encoding_ = dt.encoding;
+    {
+        WCE_PROF("xml.parse.decode");
+        DecodedText dt = decode_text(d.origin_);
+        d.text_ = std::move(dt.utf8);
+        d.encoding_ = dt.encoding;
+    }
+    WCE_PROF("xml.parse.scan");
+    if (d.text_.size() >= parallel_min) {
+        const size_t pieces = std::clamp<size_t>(d.text_.size() / std::max<size_t>(parallel_min / 4, 1024), 2, 32);
+        if (parse_in_pieces(d.text_, pieces, d.elems_, d.roots_)) return d;
+        d.elems_.clear();
+        d.roots_.clear();
+    }
     d.elems_.reserve(d.text_.size() / 256 + 16);
     parse_range(d.text_, 0, d.text_.size(), d.elems_, d.roots_);
     return d;

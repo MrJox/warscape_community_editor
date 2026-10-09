@@ -1,9 +1,11 @@
 #include "foundation/text_encoding.h"
 #include "foundation/process.h"
+#include "foundation/thread_pool.h"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 
@@ -52,7 +54,13 @@ DecodedText decode_text(const std::vector<uint8_t>& b) {
         r.encoding = TextEncoding::Utf8Bom;
         start = 3;
     }
-    r.utf8.assign(b.begin() + start, b.end());
+    const size_t n = b.size() - start;
+    if (n < (1u << 20)) {
+        r.utf8.assign(b.begin() + std::ptrdiff_t(start), b.end());
+        return r;
+    }
+    r.utf8.resize(n);   // a big copy: the pieces go side by side
+    compute_pool().parallel_for(n, 1u << 20, [&](size_t from, size_t to, int) { std::memcpy(r.utf8.data() + from, b.data() + start + from, to - from); });
     return r;
 }
 
