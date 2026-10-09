@@ -1,6 +1,6 @@
 # Battle renderer: passes, shaders and findings
 
-Status legend: **verified** (disassembly of the shader and/or empire.retail.dll), **assumption** (to check against a memory dump with `tools/re/dump_cbs.py`), **todo**.
+Status legend: **verified** (disassembly of the shader and/or empire.retail.dll), **assumption** (to check against a memory dump with `scripts/re/dump_cbs.py`), **todo**.
 
 ## Frame (as implemented in `src/render/renderer.cpp`)
 
@@ -63,7 +63,7 @@ A battle building is a folder of pieces; `<name>_pieceNN_destruct01.rigid_model_
 
 ## Verified against a memory dump (2026-10-06, med_sp_land_day_dry.environment, tdd_pack6)
 
-`tools/env_vs_dump` compares the editor's mapping with `tools/re/dump_cbs.py` output. All file-driven values match:
+`cli/env_vs_dump` compares the editor's mapping with `scripts/re/dump_cbs.py` output. All file-driven values match:
 sky (pow 2.2 * scale * 7.5; horizon decay *-0.5, circumsolar *-10, backscatter as is), sun colour (pow 2.2 * scale * 5000),
 sun direction (cos el sin az, sin el, cos el cos az), fog (argb = r,g,b,a; start - precipitation modifier; top >= 0.001),
 colour_matrix, water colours, colorimetry (= gfx_gamma_setting / gfx_brightness_setting from preferences.script.txt).
@@ -119,7 +119,7 @@ Ambient (use_custom_ambient_cube_colours = false), not yet located:
   fn 0x18e3700-style factors + sun from LIGHTING +0x38) into one colour (* constant at 0x1b2b7b4). Candidate input.
 
 Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_scan.py` (4-byte patterns) miss them;
-`tools/re/bias_scan.py` disassembles functions and handles them.
+`scripts/re/bias_scan.py` disassembles functions and handles them.
 
 ## Non-custom ambient cube: solved (2026-10-08, Ghidra)
 

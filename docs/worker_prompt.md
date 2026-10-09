@@ -118,7 +118,7 @@ not re-open them.
   - Build generator: Visual Studio 17 2022, x64.
 - Attila RE: code section file offset = RVA - 0xc00, data = RVA - 0x1000. Many engine functions are vtable-only (find
   them via the object's vtable in a dump; DLL base 0x78040000 in the three dumps). RenderDoc crashes Attila, so use
-  Task Manager full dumps + `legacy/weather_editor/tools/re/dump_cbs.py`. Ghidra project and scripts are in
+  Task Manager full dumps + `scripts/re/dump_cbs.py`. Ghidra project and scripts are in
   `TDD Claude\tools\`.
 - The attila-toolkit skills (`attila-file-formats`, `attila-battle-terrain`, `attila-bob-cli`, `attila-rpfm`) hold
   format and terrain facts. Load them when a phase touches those areas (RMV2/anim/skeleton for the Unit-editor seams,

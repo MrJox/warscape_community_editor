@@ -1,6 +1,6 @@
 # Image encoders: what reproduces the kit's bytes
 
-Goal: when the editor changes pixels, the saved file must be what TEd/BOB would have written. Findings (2026-10-08), scripts in `tools/proto/`.
+Goal: when the editor changes pixels, the saved file must be what TEd/BOB would have written. Findings (2026-10-08), scripts in `scripts/proto/`.
 
 ## PNG (`height_map_0.png`, `ground_type_map.png`, `nogo.png`, `lf_influence_map.png`)
 

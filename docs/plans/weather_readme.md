@@ -48,8 +48,8 @@ Edited files are saved as loose files under the output folder (Settings menu), k
 | `variation_check` | Gate on `warscape_asset_variation_db` in every pack that has it: FASTBIN writer identical, XML and bin equal, XML to bin identical, canonical XML output, editing operations; also every referenced file exists, every variation found by its own conditions; reports condition combinations without a file and unreferenced `.environment` files |
 | `variation_convert <in> <out> [--force]` | Converts the weather selection database between `.xml` and `.bin` (FASTBIN0) by file extension, validating it first |
 | `tools/variation_e2e.ps1` | End to end: edit in the editor (scripted), save XML and FASTBIN, convert both ways, compare byte for byte |
-| `tools/re/dump_cbs.py <dmp> [regex] [--array=512]` | Live shader constants from a Task Manager full dump of Attila.exe |
-| `tools/re/schema.py <fn_rva>` | Property names, types and defaults of a schema function in empire.retail.dll |
+| `scripts/re/dump_cbs.py <dmp> [regex] [--array=512]` | Live shader constants from a Task Manager full dump of Attila.exe |
+| `scripts/re/schema.py <fn_rva>` | Property names, types and defaults of a schema function in empire.retail.dll |
 
 ## Decompiler (reverse engineering)
 

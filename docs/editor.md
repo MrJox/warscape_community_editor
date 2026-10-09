@@ -36,7 +36,7 @@ Opens `.environment`, `.lighting` and `.xml` (weather definitions, vfx) from the
 remove attribute) are snapshot commands. Save writes a loose file under the output folder (File > Set output folder, `output_dir`; the game's `data` folder is never touched), re-reads it as
 the new baseline and clears the history, so the saved bytes differ from the pack file in the edited spans only.
 
-| Legacy feature (`legacy/weather_editor/current-state.md`) | Where it is now |
+| Old weather_editor feature (`docs/plans/weather_current_state.md`) | Where it is now |
 |---|---|
 | Files browser with filter and categories | **Files** panel (and the shared Assets panel, filtered to the tool's types) |
 | Properties tree with typed editors, search, per-attribute revert, add / remove | **Properties** panel (tree) and the shared **Inspector** (typed editors for bool, int, float, colour, variance, euler, string) |
@@ -50,8 +50,7 @@ the new baseline and clears the history, so the saved bytes differ from the pack
 | Weather selection database: Pick and Edit tabs, `.xml` and `.bin` | **Selection > Weather picker** (`WeatherPicker`, `VariationEditor`), `picker`, `pick k=v`, `vdb-script` |
 | CLI `--open`, `--open-disk`, `--cam`, `--frames`, `--shot`, `--capture`, `--view`, `--blend`, `--pick`, `--picker`, `--vdb-script`, `--no-flare` | same flags of `wce.exe`; the weather ones are commands of the tool (`--name args` runs the command `name`) |
 
-Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` is still built from `legacy/weather_editor`
-(window shots stay its render regression) until Phase 8; it shares the sample map, XML and picker code with the tool. `scripts/weather_check.sh` supersedes `variation_e2e.ps1` (which only knew the legacy build folder).
+Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` was removed in Phase 8; the render regression is the `wce.exe` captures (`scripts/shots.sh`). `scripts/weather_check.sh` supersedes `variation_e2e.ps1`.
 
 ## Tile tool (`tools/tile`)
 
@@ -80,7 +79,7 @@ with distance culling (vegetation 450 m, decals 300 m, others 3000 m, adjustable
 Extra commands: `tile_mode`, `brush`, `grab_to x z`, `tile_click`, `tile_click_ground`, `tile_drag_point`, `draw_polygon`, `tile_diagnostics` and the tests `assert_instances`, `assert_type_count`, `assert_world`, `assert_world_xz`, `assert_height`, `mark_height` / `assert_height_delta`, `assert_selected_type`,
 `assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored.
 
-`tile_studio.exe` stays built from `legacy/tile_editor` (own renderer, its shot is still a gate) until Phase 8.
+`tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 
 ## Cross-tool composition (Phase 7)
 

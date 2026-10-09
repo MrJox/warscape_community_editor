@@ -11,8 +11,6 @@
 #   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
 #   WCE_BIN    folder with the built executables (default build/dev/bin/$WCE_CONFIG; WCE_CONFIG defaults to RelWithDebInfo)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
-#   WCE_SKIP_LEGACY_SHOTS=1  skip the four window shots of the legacy apps (weather_editor.exe, tile_studio.exe): their windows take the focus for a few seconds
-#              (wce.exe's own unattended runs never do). The wce gates cover the same scenes; run the legacy shots before Phase 8 removes them.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/gates}"; shift || true
@@ -42,7 +40,7 @@ run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit co
     [ "$rc" = 0 ] || FAILED+=("$name")
 }
 
-# ---- weather_editor gates
+# ---- weather gates
 run xml_roundtrip     "$WB/xml_roundtrip.exe" "$CACHE"
 run foundation_check  "$WB/foundation_check.exe"
 run editor_check      "$WB/editor_check.exe"
@@ -53,7 +51,7 @@ run rmv2_check        "$WB/rmv2_check.exe"
 run vfx_check_rain    "$WB/vfx_check.exe" "rain heavy"
 [ -f "$CBS" ] && run env_vs_dump_all "$WB/env_vs_dump.exe" --all "$CBS"
 
-# ---- tile_editor gates
+# ---- tile gates
 # monte_rosa's tile.ted has no SCENE_GRAPH (it crashed unit_tests before the Phase 1 fix, docs/baseline.md): the second file checks that
 run perf_check        "$WB/perf_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE"
 run xml_splice_check  "$WB/xml_splice_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
@@ -67,22 +65,13 @@ if [ "$CORPUS" = 1 ]; then
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
 fi
 
-# ---- reference screenshots (fixed camera and inputs; see docs/baseline.md for what is deterministic)
+# ---- render gates (fixed camera and inputs; see docs/baseline.md for what is deterministic; the pixel regression is scripts/shots.sh)
 if [ "$RENDER" = 1 ]; then
     run app_check     env WCE_BIN="$WB" bash "$ROOT/scripts/app_check.sh" "$OUT/app_check"   # wce.exe scripted: tools, documents, selection, gizmo edits, undo, layouts, first run, capture; two runs identical
     run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
     run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
     run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile and a weather file open at once, the weather previewed on the tile, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
     run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
-    [ "${WCE_SKIP_LEGACY_SHOTS:-0}" = 1 ] || for env in dry rain snow; do
-        case $env in
-            dry)  f="weather/charlemagne/med_sp_land_day_dry.environment" ;;
-            rain) f="weather/charlemagne/med_sp_land_day_rain.environment" ;;
-            snow) f="weather/charlemagne/med_sp_land_day_snow.environment" ;;
-        esac
-        run "shot_weather_$env" "$WB/weather_editor.exe" --open "$f" --cam 0.6 0.35 120 --frames 20 --shot "$(cygpath -w "$OUT/shot_weather_$env.png")"
-    done
-    [ "${WCE_SKIP_LEGACY_SHOTS:-0}" = 1 ] || run shot_tile         "$TB/tile_studio.exe" --tile "$(cygpath -w "$TILE")" --cam 0.6 0.6 400 --frames 10 --shot "$(cygpath -w "$OUT/shot_tile.png")"
 fi
 
 echo "outputs in $OUT"

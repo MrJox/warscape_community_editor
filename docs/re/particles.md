@@ -1,7 +1,7 @@
 # VFX particles (precipitation and effects)
 
 Status: reverse-engineering in progress (2026-10-07). Sources: `particle_vfx_*.hlsl` disassembly (sm_4_0),
-the rain and snow battle dumps (`Attila (2).DMP`, `Attila (3).DMP`), `tools/re/dump_cbs.py --array=512`.
+the rain and snow battle dumps (`Attila (2).DMP`, `Attila (3).DMP`), `scripts/re/dump_cbs.py --array=512`.
 
 ## From weather file to emitters
 
@@ -79,7 +79,7 @@ dump (`dump_cbs.py <dmp> cb_vfx_emitter_constants --array=512`). Result (2026-10
 texture-array slot. Note: dump arrays must be read row by row (`Dump.read` fails across memory-region boundaries;
 ps_lighting_params straddles one).
 
-The emitter property schema with defaults (fn 0x17ee510, "Emitter Properties") is printed by `tools/re/schema.py 0x17ee510`;
+The emitter property schema with defaults (fn 0x17ee510, "Emitter Properties") is printed by `scripts/re/schema.py 0x17ee510`;
 fn 0x17c1c20 copies the named properties into the emitter descriptor.
 
 Spawn PS (per sub-step of 0.2 * dt): velocity += gravity (lerp min..max by seed, * -0.01962), wind

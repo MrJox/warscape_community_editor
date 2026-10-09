@@ -1,6 +1,6 @@
 """Apply exact-text source edits listed in a spec file (line-ending agnostic, fails if any text is absent).
 
-    python tools/apply_edits.py <spec.py>
+    python scripts/apply_edits.py <spec.py>
 
 The spec is a Python file defining EDITS = [(path, old, new), ...]. Used for multi-file changes that are
 awkward through shell heredocs.

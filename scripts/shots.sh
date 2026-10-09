@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quick render regression: the three reference weather shots (legacy window), four offscreen captures of wce.exe (weather) and two of tiles, compared with the baseline (docs/baseline.md):
+# Quick render regression: four offscreen captures of wce.exe (weather) and two of tiles, compared with the baseline (docs/baseline.md):
 # identical, or within one level in under 0.05 % of the pixels (GPU float noise, and draw order: instancing draws a mesh's instances together, so surfaces at exactly the same
 # depth can resolve the other way in a few pixels).
 #   scripts/shots.sh [out dir] [reference dir]     (defaults build/shots, build/gates_base_perf)
@@ -31,11 +31,6 @@ PY
     ) && { echo "$1 within one level ($r)"; return 0; }
     echo "$1 DIFFERS ($r)"; return 1
 }
-for env in dry rain snow; do
-    "$BIN/weather_editor.exe" --open "weather/charlemagne/med_sp_land_day_$env.environment" --cam 0.6 0.35 120 --frames 20 \
-        --shot "$(cygpath -w "$OUT/shot_weather_$env.png")" || bad=1
-    same_capture "shot_weather_$env.png" || bad=1
-done
 # offscreen captures through wce.exe (no window shows them): each environment opened in the weather tool, same camera and clock
 for env in dry rain snow; do
     name="capture_${env}_1280x720.png"

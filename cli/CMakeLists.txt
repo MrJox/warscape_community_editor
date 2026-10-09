@@ -24,6 +24,8 @@ wce_cli(png_debug wce_formats)
 wce_cli(scene_check wce_tile)
 wce_cli(unit_tests wce_tile)
 wce_cli(height_check wce_tile)
+wce_cli(vfx_check wce_assets)
+wce_cli(env_vs_dump wce_render)
 
 # ---- CTest. Inputs come from the environment (WCE_GAME, WCE_CACHE, WCE_CBS) like scripts/gates.sh; the defaults are this machine's.
 # Labels: fast (seconds), corpus (minutes), render (needs the engine dump of the constant buffers), oracle (BOB runs, later phases).

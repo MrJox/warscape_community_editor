@@ -155,6 +155,10 @@ Numbers and what changed: `docs/performance.md`. Gate results against Phase 6 (`
 
 New behaviours checked by the existing scripts: structural edits undo and redo through text splices (`tile_roundtrip`: every edit undone and saved gives the original bytes), models and textures load in the background in live runs and synchronously in fixed-step runs (the two capture runs stay identical).
 
+## Phase 8: legacy apps retired
+
+The window shots of `weather_editor.exe` and `tile_studio.exe` (the "Screenshots" section above) are no longer produced: the apps are gone. The render regression is `scripts/shots.sh` (`wce.exe --capture`, same environments, cameras and frame counts; tolerance as in that script), and `app_check` covers the window path. `vfx_check` and `env_vs_dump` build from `cli/`; their gate output is unchanged.
+
 ## Phase 6 additions
 
 | Gate | Result |

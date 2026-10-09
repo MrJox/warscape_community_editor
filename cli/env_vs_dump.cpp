@@ -4,7 +4,7 @@
 //   env_vs_dump --all <dump_cbs.py output.txt> [gamma brightness]
 //
 // Prints, for every variable the editor writes that also appears in the dump: both values and OK / DIFF.
-// The dump file is the text written by tools/re/dump_cbs.py ("cbuffer.var  v0 v1 v2 ...").
+// The dump file is the text written by scripts/re/dump_cbs.py ("cbuffer.var  v0 v1 v2 ...").
 // --all ranks every .environment file in the packs by how many of those variables match: the dump does not
 // say which weather file the battle used, but its sun / sky / fog constants identify it.
 #include "vfs/vfs.h"

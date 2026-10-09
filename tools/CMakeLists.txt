@@ -13,7 +13,7 @@ add_library(wce_weather STATIC weather/sample_map.cpp weather/sample_map_documen
 target_include_directories(wce_weather PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_weather PUBLIC wce_scene wce_vfs wce_formats wce_editor_core)
 
-# The weather selection database editor widgets (also used by the legacy weather_editor until Phase 8).
+# The weather selection database editor widgets.
 add_library(wce_weather_ui STATIC weather/variation_editor.cpp)
 target_include_directories(wce_weather_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_weather_ui PUBLIC wce_formats wce_vfs imgui)

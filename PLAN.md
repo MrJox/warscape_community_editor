@@ -13,7 +13,13 @@
 | 6 Tile tool | **Done, waiting for your go.** `tools/tile`, `docs/editor.md` (Tile tool), Phase 6 deviations below. |
 | Performance pass | **Done, waiting for your go** (between 6 and 7, asked for by you). `docs/performance.md`: Osgiliath at 140 to 270 fps (was 1.7), tile open to first image 0.4 s (0.9 s with an empty cache). |
 | 7 Cross-tool composition | **Done, waiting for your go.** `docs/editor.md` (Cross-tool composition), gate `cross_tool_check`, Phase 7 deviations below. |
-| 8 - 9 | Not started (Phase 8 needs your explicit confirmation). |
+| 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
+| 9 | Not started. |
+
+Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;
+`vfx_check` and `env_vs_dump` moved to `cli/`; `legacy/weather_editor/tools/re` is `scripts/re`, the tile survey scripts are `scripts/proto`, the other Python helpers are in `scripts/`; the old READMEs and `current-state.md` are in `docs/plans/` next to the two plans (`weather.md`, `tile.md`);
+`variation_e2e.ps1` was deleted (superseded by `scripts/weather_check.sh`). `..\weather_editor` and `..\tile_editor` hold `ARCHIVED.md` and a pointer at the top of their README, and their files are read-only (`build/` and `scratch/` stay writable; undo with `attrib -R /S`). The attila-toolkit sources named no old path; the memory notes did and were updated.
+Open finding: `scripts/shots.sh` reports the two dry captures (1280x720 and 800x600) as differing from `build/gates_base_perf` by up to 2 levels in about 3 % of the pixels (39,661 px in the 1280x720 one); every `shots_perf*` run of the performance pass shows the same difference, so it predates Phases 7 and 8, and rain, snow and both tile captures are identical or within one level. The reference was not re-baselined.
 
 Phase 7 deviations: most of the plan's list existed already from Phases 4 to 6 (one `DocumentManager` with a layer and a modified marker per document, per-document visibility and Save all in the Outliner / File menu); what was missing and is new: the weather of an open `.environment` / `.lighting` can light the scene of any tool
 (`Editor::set_weather_preview`, `Document::environment`, `Tool::lights_scene`; the preview is explicit and off by default, so the tile captures did not change), the tile and the weather file share the Outliner with tool tags and a context menu, the sample map is a stand-in scene that a tile hides (`Document::stand_in` / `shows_scene`),

@@ -1,4 +1,4 @@
-// Round-trip gate over the corpus manifest (tools/corpus_inventory.py).
+// Round-trip gate over the corpus manifest (scripts/corpus_inventory.py).
 //
 //   roundtrip <manifest.tsv> <kits_parent_dir> [--format NAME] [--max-size MB] [--limit N]
 //
