@@ -210,7 +210,22 @@ void App::draw_viewport() {
         ImGui::SliderFloat("##t", &blend_t_, 0.0f, 1.0f, "blend %.2f");
     }
 
-    // The environment slot of the scene: the active document, optionally cross-faded with a second one.
+    prepare_scene();
+    try {
+        clock_.tick();
+        renderer_->deterministic = clock_.fixed_step();
+        if (!target_.resize(dev_, w, h)) throw std::runtime_error("cannot create the viewport surface");
+        renderer_->render(scene_, ViewParams{camera_, float(clock_.time())}, target_);
+    } catch (const std::exception& e) {
+        set_status(std::string("Render error: ") + e.what(), true);
+    }
+    draw_viewport_image(size);
+}
+
+// The environment slot of the scene (the active document, optionally cross-faded with a second one), the camera and the vfx edit state.
+void App::prepare_scene() {
+    const Document* env = env_doc_ >= 0 && env_doc_ < int(docs_.size()) ? docs_[env_doc_].get() : nullptr;
+    const Document* other = blend_doc_ >= 0 && blend_doc_ < int(docs_.size()) && blend_doc_ != env_doc_ ? docs_[blend_doc_].get() : nullptr;
     EnvironmentParams active = env ? read_environment(env->doc) : EnvironmentParams{};
     active.output_gamma = output_gamma_;
     active.output_brightness = output_brightness_;
@@ -236,14 +251,30 @@ void App::draw_viewport() {
             vfx_rev = vfx_rev * 1000003u + std::hash<std::string>{}(d->vfs_path) + d->undo.size() * 7919u + d->redo.size() * 104729u +
                       (d->doc.modified() ? 1u : 0u);
     renderer_->vfx_revision = vfx_rev;
+}
+
+// Offscreen capture: renders `frames` fixed-step frames of the current scene into a w x h surface that no window shows, and saves the last as a PNG.
+bool App::capture(int w, int h, int frames, const std::wstring& path) {
+    if (!renderer_ || w < 16 || h < 16) return false;
+    if (!clock_.fixed_step()) clock_ = Clock::fixed(1.0 / 60.0);
+    clock_.restart();
+    renderer_->deterministic = true;
+    RenderTarget out;
+    if (!out.create(dev_, w, h)) return false;
+    prepare_scene();
     try {
-        clock_.tick();
-        renderer_->deterministic = clock_.fixed_step();
-        if (!target_.resize(dev_, w, h)) throw std::runtime_error("cannot create the viewport surface");
-        renderer_->render(scene_, ViewParams{camera_, float(clock_.time())}, target_);
+        for (int i = 0; i < frames; ++i) {
+            clock_.tick();
+            renderer_->render(scene_, ViewParams{camera_, float(clock_.time())}, out);
+        }
     } catch (const std::exception& e) {
         set_status(std::string("Render error: ") + e.what(), true);
+        return false;
     }
+    return out.save_png(dev_, ctx_, path);
+}
+
+void App::draw_viewport_image(const ImVec2& size) {
     if (!target_.valid()) return;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();

@@ -133,6 +133,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g_app = &app;
     std::wstring shot_path; // --shot <file.png>: save the window after a few frames and exit
     int shot_frame = 20;    // --frames <n>: rendered frame to save (particles need time to fill)
+    std::wstring capture_path; // --capture <w>x<h> <file.png>: offscreen, no window involved; --frames sets the frame count
+    int capture_w = 0, capture_h = 0;
     double fixed_step = 0;  // --fixed-step <seconds>: simulate that much per rendered frame; implied (1/60) by --shot
     {   // --open <path> (repeatable)
         int argc = 0;
@@ -143,6 +145,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             else if (a == L"--shot") shot_path = argv[++i];
             else if (a == L"--frames") shot_frame = std::max(1, _wtoi(argv[++i]));
             else if (a == L"--fixed-step") fixed_step = _wtof(argv[++i]);
+            else if (a == L"--capture" && i + 2 < argc) {
+                std::wstring dims = argv[++i];
+                capture_w = _wtoi(dims.c_str());
+                capture_h = _wtoi(dims.substr(dims.find(L'x') == std::wstring::npos ? 0 : dims.find(L'x') + 1).c_str());
+                capture_path = argv[++i];
+            }
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
             else if (a == L"--vdb-script") { app.set_vdb_script(wce::narrow(argv[++i])); app.show_picker(true); } // see App::run_vdb_script
             else if (a == L"--pick") { // --pick <category>=<value> (repeatable): conditions of the Weather picker, which opens
@@ -164,6 +172,18 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LocalFree(argv);
     }
     int frame_no = 0;
+    if (!capture_path.empty()) {
+        if (fixed_step <= 0) fixed_step = 1.0 / 60.0;
+        app.set_fixed_step(fixed_step);
+        const bool ok = app.capture(capture_w, capture_h, shot_frame, capture_path);
+        if (FILE* t = _wfopen((capture_path + L".txt").c_str(), L"w")) { fputs(app.diagnostics().c_str(), t); fclose(t); }
+        g_app = nullptr;
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        DestroyWindow(hwnd);
+        return ok ? 0 : 1;
+    }
     if (fixed_step <= 0 && !shot_path.empty()) fixed_step = 1.0 / 60.0;
     if (fixed_step > 0) app.set_fixed_step(fixed_step);
 

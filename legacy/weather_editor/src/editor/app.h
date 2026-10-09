@@ -1,5 +1,6 @@
 #pragma once
 #include "foundation/clock.h"
+#include "imgui.h"
 #include "vfs/vfs.h"
 #include "render/renderer.h"
 #include "render/render_target.h"
@@ -57,6 +58,8 @@ public:
     // Fixed-step simulation (--fixed-step, implied by --shot): every rendered frame advances the clock by `step`, so frame N is the same every run.
     void set_fixed_step(double step) { clock_ = Clock::fixed(step); }
     uint64_t frames_rendered() const { return clock_.frames(); }
+    // Renders the open documents into an offscreen w x h surface for `frames` fixed-step frames and writes the last one as PNG (--capture).
+    bool capture(int w, int h, int frames, const std::wstring& path);
     std::string diagnostics() const;
     void set_vdb_script(const std::string& s) { vdb_script_ = s; }
     void show_picker(bool on, bool edit_tab = false) { show_picker_ = on; if (edit_tab) vdb_select_pick_ = false; }
@@ -79,6 +82,8 @@ private:
     void apply_pending(Document& d);
     void undo_redo(Document& d, bool undo);
     void draw_viewport();
+    void draw_viewport_image(const ImVec2& size);
+    void prepare_scene();
     void draw_picker();
     void load_variation_db();
     void load_vdb_source(int index);
