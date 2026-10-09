@@ -29,6 +29,12 @@ run_script() { # run_script <script name> <run> <tile dir> -> $OUT/<name><run>/
 }
 
 run_script tile_gizmo 1 "$SRC"
+# placement modes (Phase 2): landscape follows the terrain, freeform is free, a height stroke carries the landscape ones; all undone and saved equals the original
+DESERT="$KIT/terrain_rugged_hills_desert/1x1/aa"
+run_script tile_placement 1 "$DESERT"
+for f in tile.ted height_map_0.png; do
+    cmp -s "$DESERT/$f" "$OUT/tile_placement1/restored/$f" && echo "placement: undo all + save: $f equals the original" || fail "placement: undo all + save: $f differs from the original"
+done
 # layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB)
 OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
 run_script tile_layers 1 "$OSG"

@@ -63,6 +63,7 @@ struct TileTypeStyle {
 
 class TileDocument : public Document {
 public:
+    enum class Placement { None, Landscape, Freeform };   // surface_mode of an element, see "Placement" below
     static constexpr uint64_t kTerrain = 0;
 
     TileDocument(std::unique_ptr<TileProject> project, IVfs* vfs);
@@ -131,7 +132,8 @@ public:
     bool rotate(int elem, float degrees);                                                                    // about the world Y axis
     int duplicate(int elem, std::string* error = nullptr);                                                   // copy 4 m to the side, returns its element
     bool remove(int elem);
-    int add_building(const std::string& key, int template_elem, const float3* at, std::string* error = nullptr);
+    // `mode` None: the new building has the template's placement; a landscape one is put on the terrain at `at`.
+    int add_building(const std::string& key, int template_elem, const float3* at, std::string* error = nullptr, Placement mode = Placement::None);
     int add_polygon(int layer, const std::string& type, const std::string& hint, const std::vector<float3>& world_points, std::string* error = nullptr);
     bool polygon_point(int elem, const std::string& op, int index, const float3& world, std::string* error = nullptr, uint64_t gesture = 0);   // move | insert | remove
     int add_layer(int parent, const std::string& name, std::string* error = nullptr);
@@ -154,6 +156,21 @@ public:
     int find_layer(const std::string& path) const;             // "Walls/Standard_Walls": names from the scene graph down, -1 when there is none
     std::string export_type(int layer) const;                  // LayerExportType_Normal | Escalation1..3
 
+    // Placement (docs/formats/tile_ted.md, "Placement modes, measured in TEd"): a Landscape instance (`surface_mode="MSM_LANDSCAPE"`) stands on the terrain; a
+    // Freeform one has any y. `lf_offset` is not used: it is 0 in every TEd-written tile and its meaning in the older tiles (where it equals the y) is unknown. As in TEd: moving a landscape instance in x / z puts it on the terrain at the new place and
+    // a y that is asked for is ignored; freeform y is free; Landscape -> Freeform keeps y, Freeform -> Landscape snaps it; a height brush stroke carries the
+    // landscape instances under the brush with the terrain (the same undo entry as the stroke). Items without a `surface_mode` behave as freeform.
+    Placement placement(int elem) const;                        // the element's own surface_mode
+    float landscape_y(int, float x, float z) const { return terrain_height(x, z); }
+    std::vector<int> instances_below(const std::vector<int>& elems) const;   // the instances among `elems` and below them (layers are walked, not returned)
+    // Set the mode of the instances among `elems` (layers: everything below); Landscape snaps y. One undo entry; returns how many instances changed.
+    int set_placement(const std::vector<int>& elems, Placement mode);
+    int snap_to_terrain(const std::vector<int>& elems, bool include_freeform = false);   // y = the terrain height; returns how many moved
+    struct OffTerrain { int elem; float dy; };                                // dy = y - the terrain height
+    std::vector<OffTerrain> off_terrain(float tolerance, const std::vector<int>* among = nullptr) const;   // landscape instances further from the terrain than tolerance, worst first
+    struct PlacementCounts { size_t landscape = 0, freeform = 0, other = 0; };
+    PlacementCounts placement_counts() const;
+
     // Local polygon point of a world position / world positions of the points.
     Vec3 to_local(int elem, const float3& world) const;
     std::vector<float3> polygon_world_points(int elem) const;
@@ -175,6 +192,18 @@ private:
     friend class TedSpliceCommand;
     friend class TedFlagCommand;
     friend class BrushStepCommand;
+    friend class TedPlacementCommand;
+
+    // A landscape instance that follows a height stroke: its local position before and after.
+    struct Follow {
+        int elem;
+        Vec3 before, after;
+    };
+    // The brush step of BrushStepCommand: the landscape instances under the brush move with the terrain (y += the change of the height under each).
+    void apply_brush_following(BrushKind kind, float x, float z, const BrushSettings& s, float dt, std::vector<Follow>& moved);
+    void put_positions(const std::vector<Follow>& moved, bool after);
+    Placement placement_of_attr(int elem) const;                // placement() from the text, for elements the index does not know yet (a copy made in this edit)
+    Vec3 local_for_world_y(int elem, double world_y) const;   // local position of `elem` with its world y replaced (x, z kept)
 
     using TypeStyle = TileTypeStyle;
     enum : uint8_t { kLayerBit = 1, kInstanceBit = 2, kPolygonBit = 4 };
@@ -188,6 +217,7 @@ private:
         std::vector<WorldTransform> world;          // dense; world[0] is the identity
         std::vector<std::array<float, 3>> scale;
         std::vector<int32_t> key;                   // building key id (into keys) of BUILDING_INSTANCE elements, -1 otherwise
+        std::vector<uint8_t> mode;                  // surface_mode of instances: 0 none, 1 landscape, 2 freeform
         std::vector<uint8_t> state;                 // per element: bit 0 shown (OIF_VISIBLE here and in every ancestor), bit 1 selectable (OIF_ACTIVE likewise)
         std::vector<std::string> type_names, keys;
         std::vector<TypeStyle> style;               // per type id

@@ -18,17 +18,24 @@ gizmo_drag x -50
 frames 4
 assert_history 2 2
 assert_cam_same
+# the building is a landscape one: it stands on the terrain, so the y handle does nothing (no undo entry); as a freeform one it moves up
 gizmo_drag y 30
 frames 4
-assert_history 3 3
+assert_history 2 2
 assert_cam_same
-undo 3
+tile_placement selected freeform
+frames 2
+gizmo_drag y 30
+frames 4
+assert_history 4 4
+assert_cam_same
+undo 4
 assert_modified 0
 # a left drag over empty ground: no orbit while the gizmo is shown
 mouse drag 10% 80% 30% 80% 6
 frames 3
 assert_cam_same
-assert_history 3 0
+assert_history 4 0
 # the right button still orbits
 mouse drag 50% 80% 60% 80% 6 right
 frames 3

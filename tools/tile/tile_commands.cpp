@@ -247,7 +247,9 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         p.x += dx;
         p.z += dz;
         p.y = d->terrain_height(p.x, p.z) + above;
-        return d->set_world_metres(e, p, 0) ? ok() : fail("cannot move this element");
+        if (!d->is_instance(e)) return fail("cannot move this element");
+        d->set_world_metres(e, p, 0);
+        return ok();
     });
 
     commands.add("grab_to", "grab_to <x m> <z m>", "the G grab: put the selected instance on the ground at a point (grid snap applies)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
@@ -624,6 +626,96 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
     });
 
     // ---- tests
+    // ---- placement (Phase 2): landscape / freeform, snapping, the off-terrain report
+    commands.add("tile_placement", "tile_placement <path | #elem | selected> landscape|freeform", "set the surface mode of the instances (layers: everything below); landscape snaps them to the terrain",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: tile_placement <path | #elem | selected> landscape|freeform");
+        std::vector<int> what = a[0] == "selected" ? selected(*ed) : std::vector<int>{element_arg(*d, *this, *ed, a[0])};
+        if (what.empty() || what[0] < 0) return fail("no such layer or element '" + a[0] + "'");
+        const auto mode = a[1] == "landscape" ? TileDocument::Placement::Landscape : a[1] == "freeform" ? TileDocument::Placement::Freeform : TileDocument::Placement::None;
+        if (mode == TileDocument::Placement::None) return fail("the mode is landscape or freeform");
+        return ok(std::to_string(d->set_placement(what, mode)) + " changed");
+    });
+    commands.add("tile_snap", "tile_snap <path | #elem | selected | all> [freeform]", "put landscape instances (with `freeform`: every instance) on the terrain; `all` is every instance of the tile", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_snap <path | #elem | selected | all> [freeform]");
+        std::vector<int> what;
+        if (a[0] == "all") what = {d->tscene().scene_graph()};
+        else what = a[0] == "selected" ? selected(*ed) : std::vector<int>{element_arg(*d, *this, *ed, a[0])};
+        if (what.empty() || what[0] < 0) return fail("no such layer or element '" + a[0] + "'");
+        return ok(std::to_string(d->snap_to_terrain(what, a.size() > 1 && a[1] == "freeform")) + " moved");
+    });
+    commands.add("tile_set_world", "tile_set_world <x m> <y m> <z m>", "type a world position for the selected instance (the Inspector's X / Y / Z fields)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float x, y, z;
+        if (!need(d) || a.size() < 3 || !number(a[0], x) || !number(a[1], y) || !number(a[2], z)) return fail("usage: tile_set_world <x m> <y m> <z m>");
+        const int e = primary(*ed);
+        if (e < 0 || !d->is_instance(e)) return fail("no instance selected");
+        d->set_world_metres(e, {x, y, z}, 0);
+        d->history().break_merge();
+        return ok();
+    });
+    commands.add("tile_report_off_terrain", "tile_report_off_terrain [tolerance m] [layer path]", "log the landscape instances that are more than the tolerance (default 0.5) off the terrain, worst first",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d)) return fail("no tile open");
+        float tol = 0.5f;
+        if (!a.empty() && !number(a[0], tol)) return fail("usage: tile_report_off_terrain [tolerance m] [layer path]");
+        std::vector<int> among;
+        if (a.size() > 1) {
+            const int l = d->find_layer(a[1]);
+            if (l < 0) return fail("no such layer '" + a[1] + "'");
+            among = d->instances_below({l});
+        }
+        const auto list = d->off_terrain(tol, a.size() > 1 ? &among : nullptr);
+        std::string s = std::to_string(list.size()) + " landscape instance(s) more than " + std::to_string(tol) + " m off the terrain";
+        for (size_t i = 0; i < list.size() && i < 8; ++i) s += "\n  #" + std::to_string(list[i].elem) + " " + d->tscene().type(list[i].elem) + " '" + d->tscene().name(list[i].elem) + "' " + std::to_string(list[i].dy) + " m";
+        return ok(s);
+    });
+    commands.add("assert_placement", "assert_placement <path | #elem | selected> landscape|freeform|none", "test: the element's surface mode", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_placement <path | #elem | selected> landscape|freeform|none");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0) return fail("no such element '" + a[0] + "'");
+        const auto p = d->placement(e);
+        const std::string got = p == TileDocument::Placement::Landscape ? "landscape" : p == TileDocument::Placement::Freeform ? "freeform" : "none";
+        return got == a[1] ? ok() : fail("placement is " + got + ", expected " + a[1]);
+    });
+    commands.add("assert_on_terrain", "assert_on_terrain <path | #elem | selected> 0|1 [tolerance m]", "test: the instance (any placement mode) stands on the terrain (y = the terrain height) or not; for a layer, all instances below it",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_on_terrain <path | #elem | selected> 0|1 [tolerance m]");
+        float tol = 0.001f;
+        if (a.size() > 2 && !number(a[2], tol)) return fail("bad tolerance");
+        std::vector<int> what = a[0] == "selected" ? selected(*ed) : std::vector<int>{element_arg(*d, *this, *ed, a[0])};
+        if (what.empty() || what[0] < 0) return fail("no such element '" + a[0] + "'");
+        size_t off = 0;
+        float worst = 0;
+        for (int e : d->instances_below(what)) {   // any mode: the instance's y against the terrain at its x / z
+            const float3 p = d->world_position(e);
+            const float dy = p.y - d->landscape_y(e, p.x, p.z);
+            if (std::fabs(dy) > tol) { ++off; if (std::fabs(dy) > std::fabs(worst)) worst = dy; }
+        }
+        const bool on = off == 0;
+        if (on != (a[1] == "1")) return fail(std::string(on ? "all stand on the terrain" : std::to_string(off) + " off the terrain, worst " + std::to_string(worst) + " m") + ", expected " + (a[1] == "1" ? "on" : "off"));
+        return ok();
+    });
+    commands.add("assert_off_terrain_count", "assert_off_terrain_count <tolerance m> <n>", "test: n landscape instances of the tile are more than the tolerance off the terrain", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float tol, n;
+        if (!need(d) || a.size() < 2 || !number(a[0], tol) || !number(a[1], n)) return fail("usage: assert_off_terrain_count <tolerance m> <n>");
+        const size_t got = d->off_terrain(tol).size();
+        return got == size_t(n) ? ok() : fail(std::to_string(got) + " instances off the terrain, expected " + a[1]);
+    });
+    commands.add("assert_placement_counts", "assert_placement_counts <landscape n> <freeform n>", "test: how many instances are landscape / freeform", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float l, f;
+        if (!need(d) || a.size() < 2 || !number(a[0], l) || !number(a[1], f)) return fail("usage: assert_placement_counts <landscape n> <freeform n>");
+        const auto c = d->placement_counts();
+        return c.landscape == size_t(l) && c.freeform == size_t(f) ? ok() : fail("landscape " + std::to_string(c.landscape) + ", freeform " + std::to_string(c.freeform));
+    });
+
     commands.add("assert_instances", "assert_instances <n>", "test: the tile has n instances", [need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d) || a.empty()) return fail("usage: assert_instances <n> (with a tile open)");

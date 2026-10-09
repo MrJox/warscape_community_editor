@@ -64,6 +64,7 @@ private:
     friend struct TileCommands;
     void draw_tile_panel(Editor& editor);
     void draw_layers_panel(Editor& editor);
+    void draw_placement_section(Editor& editor, TileDocument& d);
     void rebuild_tree(TileDocument& d);
     void request_delete(Editor& editor);
     void begin_rename(Editor& editor, int elem);
@@ -84,6 +85,12 @@ private:
     bool snap_grid_ = false;
     float grid_m_ = 6.0f, angle_step_ = 15.0f;
     char building_key_[128] = {};
+    // placement (Phase 2): the mode of new buildings, the off-terrain report of the Tile panel
+    TileDocument::Placement new_placement_ = TileDocument::Placement::Landscape;
+    float off_tol_ = 0.5f;
+    std::vector<TileDocument::OffTerrain> off_list_;
+    uint64_t off_doc_version_ = ~0ull;
+    DocumentId off_doc_ = 0;
     char rename_buf_[128] = {};
     // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range
     struct TreeRow { int elem; int depth; std::string key; bool layer; bool open; size_t kids; };

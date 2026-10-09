@@ -110,6 +110,7 @@ private:
     void set(const std::optional<Vec3>& p, const std::optional<Vec3>& e) {
         if (p) doc_.tscene().set_position(elem_, *p);
         if (e) doc_.tscene().set_euler(elem_, *e);
+        doc_.index_edited(elem_);   // what asks for the world position before the next republish sees the move
     }
     TileDocument& doc_;
     int elem_;
@@ -205,8 +206,46 @@ private:
     std::vector<std::optional<std::string>> old_, new_;
 };
 
+// Placement edits of several instances at once: surface_mode and the local position of each (a landscape instance is snapped to the terrain when it becomes one). Undo puts the old attribute texts back.
+class TedPlacementCommand : public Command {
+public:
+    struct Item {
+        int elem;
+        std::optional<std::string> mode_old, mode_new;
+        std::optional<Vec3> pos_old, pos_new;
+        uint8_t idx_old, idx_new;
+    };
+    TedPlacementCommand(TileDocument& d, std::string name, std::vector<Item> items) : doc_(d), name_(std::move(name)), items_(std::move(items)) {}
+    std::string name() const override { return name_; }
+    void apply() override { put(true); }
+    void revert() override { put(false); }
+    std::vector<uint64_t> dirty_items() const override {
+        std::vector<uint64_t> v;
+        v.reserve(items_.size());
+        for (const Item& i : items_) v.push_back(TileDocument::item_of(i.elem));
+        return v;
+    }
+
+private:
+    void put(bool forward) {
+        TedScene& sc = doc_.tscene();
+        for (const Item& i : items_) {
+            const auto& mode = forward ? i.mode_new : i.mode_old;
+            const auto& pos = forward ? i.pos_new : i.pos_old;
+            if (mode) sc.set_attr(i.elem, "surface_mode", *mode);
+            if (pos) sc.set_position(i.elem, *pos);
+            if (doc_.idx_.valid && size_t(i.elem) < doc_.idx_.mode.size()) doc_.idx_.mode[size_t(i.elem)] = forward ? i.idx_new : i.idx_old;
+            if (pos) doc_.index_edited(i.elem);
+        }
+    }
+    TileDocument& doc_;
+    std::string name_;
+    std::vector<Item> items_;
+};
+
 // One brush step; the steps of a stroke merge into one entry. The first step runs when pushed; undo and redo use the height field's own records
-// (HeightField::end_edit stores them, so a stroke is closed before it can be undone).
+// (HeightField::end_edit stores them, so a stroke is closed before it can be undone). The landscape instances under the brush move with the terrain: the
+// command keeps their local positions before the stroke and after its last step.
 class BrushStepCommand : public Command {
 public:
     BrushStepCommand(TileDocument& d, BrushKind kind, float x, float z, BrushSettings s, float dt, uint64_t stroke)
@@ -218,19 +257,42 @@ public:
     void apply() override {
         if (first_) {
             first_ = false;
-            doc_.apply_brush(kind_, x_, z_, s_, dt_);
+            doc_.apply_brush_following(kind_, x_, z_, s_, dt_, moved_);
         } else {
             doc_.end_stroke();
             doc_.project_->height->redo();
+            doc_.put_positions(moved_, true);
         }
     }
     void revert() override {
         doc_.end_stroke();
         doc_.project_->height->undo();
+        doc_.put_positions(moved_, false);
     }
     uint64_t merge_key() const override { return stroke_; }
-    bool merge_from(const Command& next) override { return dynamic_cast<const BrushStepCommand*>(&next) != nullptr; }
-    std::vector<uint64_t> dirty_items() const override { return {TileDocument::kTerrain}; }
+    bool merge_from(const Command& next) override {
+        const auto* n = dynamic_cast<const BrushStepCommand*>(&next);
+        if (!n) return false;
+        if (where_.size() != moved_.size()) index_first();
+        for (const TileDocument::Follow& f : n->moved_) {
+            auto it = where_.find(f.elem);
+            if (it == where_.end()) {
+                where_[f.elem] = moved_.size();
+                moved_.push_back(f);
+            } else moved_[it->second].after = f.after;
+        }
+        return true;
+    }
+    std::vector<uint64_t> dirty_items() const override {
+        std::vector<uint64_t> v;
+        v.reserve(moved_.size() + 1);
+        v.push_back(TileDocument::kTerrain);
+        for (const TileDocument::Follow& f : moved_) v.push_back(TileDocument::item_of(f.elem));
+        return v;
+    }
+    void index_first() {
+        for (size_t i = 0; i < moved_.size(); ++i) where_[moved_[i].elem] = i;
+    }
 
 private:
     TileDocument& doc_;
@@ -240,6 +302,8 @@ private:
     float dt_;
     uint64_t stroke_;
     bool first_ = true;
+    std::vector<TileDocument::Follow> moved_;
+    std::unordered_map<int, size_t> where_;
 };
 
 // ------------------------------------------------------------------------------------------------ document
@@ -383,6 +447,7 @@ void TileDocument::build_index() {
     ix.slot.assign(n, 0);
     ix.scale.assign(n, {1.0f, 1.0f, 1.0f});
     ix.key.assign(n, -1);
+    ix.mode.assign(n, 0);
     // element type names -> small ids
     {
         std::unordered_map<std::string_view, uint16_t> ids;
@@ -430,6 +495,10 @@ void TileDocument::build_index() {
             if (doc.find_attr(int(i), "orientation", &k)) l.has_eul = parse_triple(doc.attr_raw(int(i), k), "euler", l.eul) ? 1 : 0;
             if (!kind && l.has_pos) {
                 kind |= kInstanceBit;
+                if (doc.find_attr(int(i), "surface_mode", &k)) {
+                    const std::string_view m = doc.attr_raw(int(i), k);
+                    ix.mode[i] = m == "MSM_LANDSCAPE" ? 1 : m == "MSM_FREEFORM" ? 2 : 0;
+                }
                 if (doc.find_attr(int(i), "scale", &k)) {
                     double s3[3];
                     const std::string_view raw = doc.attr_raw(int(i), k);
@@ -1038,6 +1107,20 @@ void TileDocument::inspect(const SourceRef& item, Inspector& ins) {
         if (ins.edit_float3("position_world", "position (world, m)", v, 0.05f)) set_world_metres(e, {v[0], v[1], v[2]}, base + 2);
         if (ins.gesture_ended()) history_.break_merge();
     }
+    if (is_instance(e) && sc.doc().get(e, "surface_mode")) {   // TEd's surface_mode combo ("Landscape: Above" / "Freeform")
+        static const std::vector<std::string> modes = {"Landscape: Above", "Freeform"};
+        int idx = placement(e) == Placement::Freeform ? 1 : 0;
+        if (ins.edit_choice("surface_mode", "placement", idx, modes)) set_placement({e}, idx == 0 ? Placement::Landscape : Placement::Freeform);
+        if (placement(e) == Placement::Landscape) {
+            const float3 w = world_position(e);
+            const float dy = w.y - landscape_y(e, w.x, w.z);
+            if (std::fabs(dy) > 0.005f) {
+                char b[96];
+                std::snprintf(b, sizeof b, "%+.3f m from the terrain", dy);
+                ins.text("off_terrain", "off the terrain", b);
+            }
+        }
+    }
     if (auto p = sc.position(e)) {
         float v[3] = {float((*p)[0]), float((*p)[1]), float((*p)[2])};
         if (ins.edit_float3("position", "position (scene)", v, 0.5f)) set_local(e, Vec3{v[0], v[1], v[2]}, std::nullopt, base);
@@ -1090,7 +1173,11 @@ void TileDocument::transform_items(const std::vector<SourceRef>& items, const fl
         }();
         const double u = unit();
         // new world position in scene units, local to the parent
-        const Vec3 wp{double(now.m[0][3]) * u, double(now.m[1][3]), double(now.m[2][3]) * u};
+        Vec3 wp{double(now.m[0][3]) * u, double(now.m[1][3]), double(now.m[2][3]) * u};
+        if (placement(e) == Placement::Landscape) {   // as in TEd: x / z move it over the terrain, y is the terrain's (a y handle does nothing)
+            const bool same_xz = std::fabs(now.m[0][3] - before.m[0][3]) < 2e-4 && std::fabs(now.m[2][3] - before.m[2][3]) < 2e-4;   // float32 noise of a y-axis drag at 1000 m is 6e-5
+            wp[1] = same_xz ? double(before.m[1][3]) : double(landscape_y(e, now.m[0][3], now.m[2][3]));
+        }
         const Vec3 d{wp[0] - pw.position[0], wp[1] - pw.position[1], wp[2] - pw.position[2]};
         const Vec3 lp = rotate_vec(mat_transpose(pw.rotation), d);
         Mat3 wr, br;
@@ -1103,6 +1190,8 @@ void TileDocument::transform_items(const std::vector<SourceRef>& items, const fl
         for (int k = 0; k < 9; ++k) dr = std::max(dr, std::fabs(wr[k] - br[k]));
         std::optional<Vec3> le;
         if (dr > 1e-5) le = euler_from_matrix(mat_mul(mat_transpose(pw.rotation), wr));
+        if (!le)
+            if (const auto cur = tscene().position(e); cur && std::fabs((*cur)[0] - lp[0]) < 2e-4 && std::fabs((*cur)[1] - lp[1]) < 2e-4 && std::fabs((*cur)[2] - lp[2]) < 2e-4) continue;   // a y drag on a landscape instance: nothing changed
         set_local(e, lp, le, gesture);
     }
 }
@@ -1294,13 +1383,20 @@ bool TileDocument::set_local(int elem, std::optional<Vec3> position, std::option
     return true;
 }
 
-bool TileDocument::set_world_metres(int elem, const float3& p, uint64_t gesture) {
+bool TileDocument::set_world_metres(int elem, const float3& p_in, uint64_t gesture) {
     if (!is_instance(elem)) return false;
+    float3 p = p_in;
+    if (placement(elem) == Placement::Landscape) {   // TEd: x / z move it over the terrain, a y that is typed or dragged is ignored
+        const float3 cur = world_position(elem);
+        p.y = (std::fabs(p.x - cur.x) < 1e-4f && std::fabs(p.z - cur.z) < 1e-4f) ? cur.y : landscape_y(elem, p.x, p.z);
+    }
     const int parent = tscene().doc().elements()[elem].parent;
     const WorldTransform pw = parent >= 0 ? world_transform(tscene(), parent) : WorldTransform{};
     const double u = unit();
     const Vec3 d{double(p.x) * u - pw.position[0], double(p.y) - pw.position[1], double(p.z) * u - pw.position[2]};
-    return set_local(elem, rotate_vec(mat_transpose(pw.rotation), d), std::nullopt, gesture);
+    const Vec3 lp = rotate_vec(mat_transpose(pw.rotation), d);
+    if (const auto cur = tscene().position(elem); cur && std::fabs((*cur)[0] - lp[0]) < 2e-4 && std::fabs((*cur)[1] - lp[1]) < 2e-4 && std::fabs((*cur)[2] - lp[2]) < 2e-4) return false;   // nothing to do: no empty undo entry
+    return set_local(elem, lp, std::nullopt, gesture);
 }
 
 void TileDocument::push_splice(const std::string& name, size_t mark, std::vector<uint64_t> sel_before, std::vector<uint64_t> sel_after) {
@@ -1335,7 +1431,9 @@ int TileDocument::duplicate(int elem, std::string* error) {
     if (copy < 0) { if (error) *error = "cannot duplicate this element"; return -1; }
     if (is_instance_slow(copy)) {
         const WorldTransform w = world_transform(tscene(), copy);
-        set_world_position(tscene(), copy, {w.position[0] + 4.0 * unit(), w.position[1], w.position[2]});
+        double y = w.position[1];
+        if (placement_of_attr(copy) == Placement::Landscape) y = landscape_y(copy, float((w.position[0] + 4.0 * unit()) / unit()), float(w.position[2] / unit()));   // the copy stands on the terrain
+        set_world_position(tscene(), copy, {w.position[0] + 4.0 * unit(), y, w.position[2]});
     }
     push_splice("Duplicate " + tscene().type(copy), mark, {item_of(elem)}, {item_of(copy)});
     return copy;
@@ -1351,7 +1449,7 @@ bool TileDocument::remove(int elem) {
     return true;
 }
 
-int TileDocument::add_building(const std::string& key, int template_elem, const float3* at, std::string* error) {
+int TileDocument::add_building(const std::string& key, int template_elem, const float3* at, std::string* error, Placement mode) {
     if (key.empty()) return -1;
     int tmpl = -1;
     if (template_elem >= 0 && tscene().type(template_elem) == "BUILDING_INSTANCE") tmpl = template_elem;
@@ -1361,7 +1459,11 @@ int TileDocument::add_building(const std::string& key, int template_elem, const 
     const int copy = tscene().duplicate(tmpl);
     tscene().set_attr(copy, "key", key);
     tscene().set_attr(copy, "name", key);
-    if (at) set_world_position(tscene(), copy, {double(at->x) * unit(), double(at->y), double(at->z) * unit()});
+    if (mode != Placement::None && tscene().doc().get(copy, "surface_mode")) tscene().set_attr(copy, "surface_mode", mode == Placement::Landscape ? "MSM_LANDSCAPE" : "MSM_FREEFORM");
+    if (at) {
+        const float y = placement_of_attr(copy) == Placement::Landscape ? landscape_y(copy, at->x, at->z) : at->y;
+        set_world_position(tscene(), copy, {double(at->x) * unit(), double(y), double(at->z) * unit()});
+    }
     push_splice("Add " + key, mark, {template_elem >= 0 ? item_of(template_elem) : 0}, {item_of(copy)});
     return copy;
 }
@@ -1637,6 +1739,151 @@ int TileDocument::duplicate_layer(int layer, std::string* error) {
     tscene().set_attr(copy, "name", tscene().name(layer) + " copy");
     push_splice("Duplicate layer", mark, {item_of(layer)}, {item_of(copy)});
     return copy;
+}
+
+// ---- placement
+
+TileDocument::Placement TileDocument::placement(int elem) const {
+    if (idx_.valid && elem >= 0 && size_t(elem) < idx_.mode.size()) return idx_.mode[size_t(elem)] == 1 ? Placement::Landscape : idx_.mode[size_t(elem)] == 2 ? Placement::Freeform : Placement::None;
+    return placement_of_attr(elem);
+}
+
+TileDocument::Placement TileDocument::placement_of_attr(int elem) const {
+    if (elem < 0 || elem >= int(tscene().doc().elements().size())) return Placement::None;
+    const auto m = tscene().doc().get(elem, "surface_mode");
+    return !m ? Placement::None : *m == "MSM_LANDSCAPE" ? Placement::Landscape : *m == "MSM_FREEFORM" ? Placement::Freeform : Placement::None;
+}
+
+std::vector<int> TileDocument::instances_below(const std::vector<int>& elems) const {
+    std::vector<int> out;
+    std::set<int> seen;
+    std::function<void(int)> walk = [&](int e) {
+        if (!seen.insert(e).second) return;
+        if (is_instance(e)) out.push_back(e);
+        for (int c : tscene().doc().elements()[size_t(e)].children) walk(c);
+    };
+    for (int e : elems)
+        if (e >= 0 && e < int(tscene().doc().elements().size())) walk(e);
+    return out;
+}
+
+Vec3 TileDocument::local_for_world_y(int elem, double world_y) const {
+    const int parent = tscene().doc().elements()[size_t(elem)].parent;
+    const WorldTransform pw = parent >= 0 ? world_transform(tscene(), parent) : WorldTransform{};
+    WorldTransform w = world_transform(tscene(), elem);
+    w.position[1] = world_y;
+    const Vec3 d{w.position[0] - pw.position[0], w.position[1] - pw.position[1], w.position[2] - pw.position[2]};
+    return rotate_vec(mat_transpose(pw.rotation), d);
+}
+
+int TileDocument::set_placement(const std::vector<int>& elems, Placement mode) {
+    if (mode == Placement::None) return 0;
+    std::vector<TedPlacementCommand::Item> items;
+    const char* text = mode == Placement::Landscape ? "MSM_LANDSCAPE" : "MSM_FREEFORM";
+    for (int e : instances_below(elems)) {
+        if (!tscene().doc().get(e, "surface_mode")) continue;
+        const Placement cur = placement(e);
+        TedPlacementCommand::Item it{};
+        it.elem = e;
+        it.idx_old = cur == Placement::Landscape ? 1 : cur == Placement::Freeform ? 2 : 0;
+        it.idx_new = mode == Placement::Landscape ? 1 : 2;
+        if (cur != mode) {
+            it.mode_old = tscene().doc().get(e, "surface_mode");
+            it.mode_new = text;
+        }
+        if (mode == Placement::Landscape) {   // Freeform -> Landscape snaps (TEd writes the terrain height)
+            const float3 p = world_position(e);
+            const float y = landscape_y(e, p.x, p.z);
+            if (cur != mode || std::fabs(y - p.y) > 1e-5f) {
+                it.pos_old = tscene().position(e);
+                it.pos_new = local_for_world_y(e, y);
+            }
+        }
+        if (it.mode_new || it.pos_new) items.push_back(std::move(it));
+    }
+    if (items.empty()) return 0;
+    const size_t n = items.size();
+    const std::string name = std::string(mode == Placement::Landscape ? "Landscape placement" : "Freeform placement") + (n == 1 ? "" : " (" + std::to_string(n) + " items)");
+    history_.push(std::make_unique<TedPlacementCommand>(*this, name, std::move(items)));
+    return int(n);
+}
+
+int TileDocument::snap_to_terrain(const std::vector<int>& elems, bool include_freeform) {
+    std::vector<TedPlacementCommand::Item> items;
+    for (int e : instances_below(elems)) {
+        const Placement cur = placement(e);
+        if (cur != Placement::Landscape && !(include_freeform && cur != Placement::None)) continue;
+        const float3 p = world_position(e);
+        const float y = landscape_y(e, p.x, p.z);
+        if (std::fabs(y - p.y) < 1e-5f) continue;
+        TedPlacementCommand::Item it{};
+        it.elem = e;
+        it.idx_old = it.idx_new = cur == Placement::Landscape ? 1 : 2;
+        it.pos_old = tscene().position(e);
+        it.pos_new = local_for_world_y(e, y);
+        items.push_back(std::move(it));
+    }
+    if (items.empty()) return 0;
+    const size_t n = items.size();
+    history_.push(std::make_unique<TedPlacementCommand>(*this, "Snap to terrain" + (n == 1 ? std::string() : " (" + std::to_string(n) + " items)"), std::move(items)));
+    return int(n);
+}
+
+std::vector<TileDocument::OffTerrain> TileDocument::off_terrain(float tolerance, const std::vector<int>* among) const {
+    std::vector<OffTerrain> out;
+    const std::vector<int>& list = among ? *among : instances_;
+    for (int e : list) {
+        if (placement(e) != Placement::Landscape) continue;
+        const float3 p = world_position(e);
+        const float dy = p.y - landscape_y(e, p.x, p.z);
+        if (std::fabs(dy) > tolerance) out.push_back({e, dy});
+    }
+    std::sort(out.begin(), out.end(), [](const OffTerrain& a, const OffTerrain& b) { return std::fabs(a.dy) > std::fabs(b.dy); });
+    return out;
+}
+
+TileDocument::PlacementCounts TileDocument::placement_counts() const {
+    PlacementCounts c;
+    for (int e : instances_) {
+        const Placement p = placement(e);
+        (p == Placement::Landscape ? c.landscape : p == Placement::Freeform ? c.freeform : c.other)++;
+    }
+    return c;
+}
+
+void TileDocument::apply_brush_following(BrushKind kind, float x, float z, const BrushSettings& s, float dt, std::vector<Follow>& moved) {
+    struct Cand {
+        int elem;
+        float x, z, h;
+    };
+    std::vector<Cand> cands;
+    const float r = s.radius_m + 2.f * float(project_->mpp_x()) + 1.f;
+    for (int e : instances_) {
+        if (placement(e) != Placement::Landscape) continue;
+        const float3 p = world_position(e);
+        if (std::fabs(p.x - x) > r || std::fabs(p.z - z) > r) continue;
+        cands.push_back({e, p.x, p.z, terrain_height(p.x, p.z)});
+    }
+    apply_brush(kind, x, z, s, dt);
+    for (const Cand& c : cands) {
+        const float dh = terrain_height(c.x, c.z) - c.h;
+        if (std::fabs(dh) < 1e-6f) continue;
+        const auto before = tscene().position(c.elem);
+        if (!before) continue;
+        const Vec3 after = local_for_world_y(c.elem, double(world_position(c.elem).y) + double(dh));
+        tscene().set_position(c.elem, after);
+        moved.push_back({c.elem, *before, after});
+    }
+    if (!moved.empty()) {
+        for (const Follow& f : moved) index_edited(f.elem);
+    }
+}
+
+void TileDocument::put_positions(const std::vector<Follow>& moved, bool after) {
+    for (const Follow& f : moved) {
+        tscene().set_position(f.elem, after ? f.after : f.before);
+        index_edited(f.elem);
+    }
 }
 
 // ---- height strokes

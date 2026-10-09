@@ -111,7 +111,7 @@ frames 2
 assert_layer Walls/Standard_Walls/two_buildings exists 0
 tile_select 11
 assert_world 476.5 1.967 379 0.01
-tile_move_to Buildings root before #7
+tile_move_to Buildings root before "#7"
 assert_layer root children 13
 undo 99
 assert_modified 0

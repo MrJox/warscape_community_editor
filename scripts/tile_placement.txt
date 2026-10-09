@@ -1,0 +1,141 @@
+# Placement modes (Phase 2 of docs/plans/tile_ted_parity.md; the rules were measured in TEd, see docs/formats/tile_ted.md): a landscape instance stands on the terrain
+# (x / z typed or dragged put it on the terrain at the new place, a typed y is ignored), a freeform one has any y; Landscape -> Freeform keeps y, Freeform -> Landscape
+# snaps it; a height stroke carries the landscape instances under the brush (the same undo entry) and leaves the freeform ones alone. %TILE% is the kit tile
+# terrain_rugged_hills_desert/1x1/aa (5 landscape rocks #8..#12, 2 freeform ones #13 and #14), %OUT% a folder for the restored files.
+tile "%TILE%"
+frames 3
+assert_instances 7
+assert_placement_counts 5 2
+# the file's landscape rocks sit 0.2 to 0.4 m under the terrain (a CA tile: its lf_offset is the y, TEd-written tiles have 0; the terrain is the height map's)
+assert_off_terrain_count 0.05 5
+assert_modified 0
+tile_select 8
+assert_placement selected landscape
+assert_placement "#13" freeform
+
+# x / z typed: y follows the terrain; the same x / z with another y: nothing happens
+tile_set_world 90 50 60
+frames 2
+assert_world_xz 90 60 0.01
+assert_on_terrain selected 1 0.001
+assert_history 1 1
+tile_set_world 90 80 60
+assert_history 1 1
+assert_on_terrain selected 1 0.001
+undo
+frames 2
+assert_modified 0
+assert_world 82.779 0.424 53.793 0.002
+
+# freeform: y is free, one undo entry per typed position
+tile_select 13
+assert_placement selected freeform
+tile_set_world 70 25 30
+frames 2
+assert_world 70 25 30 0.001
+assert_history 1 1
+undo
+frames 2
+assert_world 65.602 -0.233 31.065 0.002
+assert_modified 0
+
+# Freeform -> Landscape snaps; undo gives y and the mode back; Landscape -> Freeform keeps y
+tile_set_world 70 25 30
+tile_placement selected landscape
+frames 2
+assert_placement selected landscape
+assert_on_terrain selected 1 0.001
+assert_world_xz 70 30 0.01
+assert_history 2 2
+undo
+frames 2
+assert_placement selected freeform
+assert_world 70 25 30 0.001
+undo
+frames 2
+assert_modified 0
+tile_placement "#8" freeform
+frames 2
+assert_placement "#8" freeform
+tile_select 8
+assert_world 82.779 0.424 53.793 0.002
+tile_set_world 82.779 20 53.793
+frames 2
+assert_world 82.779 20 53.793 0.002
+assert_history 2 2
+undo 2
+frames 2
+assert_placement "#8" landscape
+assert_world 82.779 0.424 53.793 0.002
+assert_modified 0
+
+# batches: the whole tile at once (the scene graph is #6), snap all
+tile_placement "#6" freeform
+assert_placement_counts 0 7
+assert_history 1 1
+undo
+frames 2
+assert_placement_counts 5 2
+tile_snap all
+frames 2
+assert_off_terrain_count 0.001 0
+assert_history 1 1
+undo
+frames 2
+assert_off_terrain_count 0.05 5
+assert_modified 0
+
+# the report and the freeform ones: `tile_snap all freeform` puts them on the terrain too
+tile_snap all freeform
+assert_on_terrain "#13" 1 0.001
+assert_on_terrain "#14" 1 0.001
+assert_placement "#13" freeform
+undo
+frames 2
+tile_select 13
+assert_world 65.602 -0.233 31.065 0.002
+
+# a height stroke carries the landscape instances under the brush, in the same undo entry; the freeform ones stay
+tile_snap all
+assert_off_terrain_count 0.002 0
+mark_height a 82.8 53.8
+mark_height b 65.6 30
+paint raise 82.8 53.8 8
+frames 2
+assert_height_delta a 82.8 53.8 0.05 100
+assert_off_terrain_count 0.002 0
+assert_history 2 2
+tile_select 13
+paint raise 65.6 30 8
+frames 2
+assert_height_delta b 65.6 30 0.05 100
+assert_off_terrain_count 0.002 0
+assert_world 65.602 -0.233 31.065 0.002
+assert_history 3 3
+undo
+frames 2
+assert_off_terrain_count 0.002 0
+assert_height_delta b 65.6 30 -0.001 0.001
+redo
+frames 2
+assert_off_terrain_count 0.002 0
+assert_height_delta b 65.6 30 0.05 100
+undo 3
+frames 2
+assert_off_terrain_count 0.05 5
+assert_world 65.602 -0.233 31.065 0.002
+assert_modified 0
+assert_history 3 0
+
+# a copy of a landscape instance stands on the terrain at its new place
+tile_select 8
+duplicate
+frames 2
+assert_instances 8
+assert_on_terrain selected 1 0.001
+undo
+frames 2
+assert_instances 7
+assert_modified 0
+save_to "%OUT%/restored"
+quit

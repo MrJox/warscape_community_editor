@@ -615,10 +615,17 @@ void TileTool::draw_tile_panel(Editor& editor) {
     ImGui::DragFloat("rotate step (deg)", &angle_step_, 1.f, 1.f, 180.f);
     ImGui::InputText("building key", building_key_, sizeof building_key_);
     ImGui::SameLine();
+    {
+        int np = new_placement_ == TileDocument::Placement::Freeform ? 1 : 0;
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::Combo("##new_placement", &np, "Landscape Freeform ")) new_placement_ = np == 1 ? TileDocument::Placement::Freeform : TileDocument::Placement::Landscape;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("placement of a new building: landscape stands on the terrain, freeform keeps the height it is given");
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Add")) {
         std::string err;
         const int sel = primary(editor);
-        const int e = d->add_building(building_key_, sel, terrain_hit_ ? &cursor_ : nullptr, &err);
+        const int e = d->add_building(building_key_, sel, terrain_hit_ ? &cursor_ : nullptr, &err, new_placement_);
         status = e >= 0 ? std::string("added ") + building_key_ : err;
     }
     const int sel = primary(editor);
@@ -626,9 +633,10 @@ void TileTool::draw_tile_panel(Editor& editor) {
     if (ImGui::Button("Grab on ground (G)")) begin_grab(editor);
     ImGui::SameLine();
     if (ImGui::Button("Drop to terrain") && sel >= 0) {
-        float3 w = d->world_position(sel);
-        w.y = d->terrain_height(w.x, w.z);
-        d->set_world_metres(sel, w, 0);
+        // landscape instances stand on it by themselves; a freeform one is put on it (its mode stays)
+        const std::vector<int> items = selected(editor);
+        const int n = d->snap_to_terrain(items, true);
+        status = n ? "on the terrain: " + std::to_string(n) + " item(s)" : "already on the terrain";
     }
     if (ImGui::Button("Duplicate (Ctrl+D)")) { std::string err; if (d->duplicate(sel, &err) < 0) status = err; }
     ImGui::SameLine();
@@ -636,6 +644,8 @@ void TileTool::draw_tile_panel(Editor& editor) {
     ImGui::SameLine();
     if (ImGui::Button("Rotate (Ctrl+R)")) d->rotate(sel, angle_step_);
     ImGui::EndDisabled();
+    ImGui::Separator();
+    draw_placement_section(editor, *d);
     ImGui::Separator();
     draw_polygon_panel(editor, *d);
     ImGui::Separator();
@@ -645,6 +655,59 @@ void TileTool::draw_tile_panel(Editor& editor) {
         ImGui::TextWrapped("%s", status.c_str());
     }
     ImGui::End();
+}
+
+// Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The buttons act on the selection (layers: everything
+// below); the report lists the landscape instances that are off the terrain.
+void TileTool::draw_placement_section(Editor& editor, TileDocument& d) {
+    if (!ImGui::CollapsingHeader("Placement")) return;
+    const auto c = d.placement_counts();
+    ImGui::Text("%zu landscape, %zu freeform, %zu without a mode", c.landscape, c.freeform, c.other);
+    const std::vector<int> sel = selected(editor);
+    ImGui::BeginDisabled(sel.empty());
+    if (ImGui::Button("Landscape")) { const int n = d.set_placement(sel, TileDocument::Placement::Landscape); status = std::to_string(n) + " set to landscape (snapped to the terrain)"; }
+    ImGui::SameLine();
+    if (ImGui::Button("Freeform")) { const int n = d.set_placement(sel, TileDocument::Placement::Freeform); status = std::to_string(n) + " set to freeform"; }
+    ImGui::SameLine();
+    if (ImGui::Button("Snap to terrain")) { const int n = d.snap_to_terrain(sel); status = std::to_string(n) + " landscape item(s) snapped"; }
+    ImGui::EndDisabled();
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragFloat("tolerance (m)", &off_tol_, 0.05f, 0.001f, 50.f);
+    ImGui::SameLine();
+    if (ImGui::Button("Report off-terrain")) {
+        off_list_ = d.off_terrain(off_tol_);
+        off_doc_ = d.id();
+        off_doc_version_ = d.history().version();
+    }
+    if (off_doc_ == d.id() && off_doc_version_ != ~0ull) {
+        if (off_doc_version_ != d.history().version()) ImGui::TextDisabled("(the tile changed since: press Report again)");
+        ImGui::Text("%zu landscape instance(s) more than %.3g m off the terrain", off_list_.size(), off_tol_);
+        std::vector<int> elems;
+        for (const auto& o : off_list_) elems.push_back(o.elem);
+        ImGui::BeginDisabled(elems.empty());
+        if (ImGui::Button("Select them")) {
+            editor.selection().clear();
+            for (int e : elems) editor.selection().add(d.ref_of(e));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Snap them")) {
+            const int n = d.snap_to_terrain(elems);
+            status = std::to_string(n) + " snapped to the terrain";
+            off_list_.clear();
+            off_doc_version_ = d.history().version();
+        }
+        ImGui::EndDisabled();
+        const size_t shown = std::min<size_t>(off_list_.size(), 12);
+        for (size_t i = 0; i < shown; ++i) {
+            const auto& o = off_list_[i];
+            std::string n = d.tscene().name(o.elem);
+            if (n.empty()) n = d.tscene().type(o.elem);
+            char b[200];
+            std::snprintf(b, sizeof b, "%+.2f m  %s##off%d", o.dy, n.c_str(), o.elem);
+            if (ImGui::Selectable(b)) { editor.selection().set(d.ref_of(o.elem)); }
+        }
+        if (off_list_.size() > shown) ImGui::TextDisabled("... %zu more", off_list_.size() - shown);
+    }
 }
 
 // The tile browser: the entries of the kit's tile database (an index, not a scan), a swatch of the tile's colour, its size and variations. A double-click
