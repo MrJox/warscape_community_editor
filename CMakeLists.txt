@@ -54,3 +54,20 @@ target_include_directories(tile_terrain PUBLIC src)
 target_link_libraries(tile_terrain PUBLIC tile_formats)
 add_executable(height_check tools/height_check.cpp)
 target_link_libraries(height_check PRIVATE tile_terrain)
+
+# ---- Tile Studio (viewer / editor). Dear ImGui and the PNG screenshot helper are compiled from weather_editor in place.
+set(WEDIT ${CMAKE_CURRENT_SOURCE_DIR}/../weather_editor)
+add_library(imgui_studio STATIC
+    ${WEDIT}/third_party/imgui/imgui.cpp ${WEDIT}/third_party/imgui/imgui_draw.cpp ${WEDIT}/third_party/imgui/imgui_tables.cpp
+    ${WEDIT}/third_party/imgui/imgui_widgets.cpp ${WEDIT}/third_party/imgui/imgui_demo.cpp
+    ${WEDIT}/third_party/imgui/backends/imgui_impl_dx11.cpp ${WEDIT}/third_party/imgui/backends/imgui_impl_win32.cpp)
+target_include_directories(imgui_studio PUBLIC ${WEDIT}/third_party/imgui ${WEDIT}/third_party/imgui/backends)
+if(MSVC)
+    target_compile_options(imgui_studio PRIVATE /W0)
+endif()
+add_library(tile_project STATIC src/project/tile_project.cpp src/scene/world_transform.cpp)
+target_include_directories(tile_project PUBLIC src)
+target_link_libraries(tile_project PUBLIC tile_formats tile_scene tile_terrain)
+add_executable(tile_studio WIN32 src/app/main.cpp src/app/studio.cpp ${WE}/render/image_io.cpp)
+target_include_directories(tile_studio PRIVATE ${WE})
+target_link_libraries(tile_studio PRIVATE tile_project imgui_studio d3d11 dxgi d3dcompiler dxguid windowscodecs ole32 comdlg32)

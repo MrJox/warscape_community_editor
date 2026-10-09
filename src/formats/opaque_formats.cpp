@@ -56,7 +56,7 @@ void register_opaque_formats() {
     Format tdb;
     tdb.name = "tile_database_bin";
     tdb.claims = [](const std::string& p, const std::vector<uint8_t>& head) {
-        return p.size() >= 16 && p.compare(p.size() - 16, 16, "tile_database.bin") == 0 && head.size() >= 8 && std::memcmp(head.data(), "FASTBIN0", 8) == 0;
+        return p.size() >= 17 && p.compare(p.size() - 17, 17, "tile_database.bin") == 0 && head.size() >= 8 && std::memcmp(head.data(), "FASTBIN0", 8) == 0;
     };
     tdb.round_trip = [](const std::vector<uint8_t>& bytes) {
         RoundTripResult r;
