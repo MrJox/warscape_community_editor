@@ -49,11 +49,12 @@ int main(int argc, char** argv) {
     }
     std::string only_format;
     double max_mb = 64;
-    size_t limit = SIZE_MAX;
+    size_t limit = SIZE_MAX, max_failures = 25;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--format") && i + 1 < argc) only_format = argv[++i];
         else if (!std::strcmp(argv[i], "--max-size") && i + 1 < argc) max_mb = std::atof(argv[++i]);
         else if (!std::strcmp(argv[i], "--limit") && i + 1 < argc) limit = std::strtoull(argv[++i], nullptr, 10);
+        else if (!std::strcmp(argv[i], "--all-failures")) max_failures = SIZE_MAX;
     }
     te::register_all_formats();
 
@@ -81,7 +82,7 @@ int main(int argc, char** argv) {
         if (r.ok) ++s.ok;
         else {
             ++s.failed;
-            if (s.failures.size() < 25) s.failures.push_back(c[0] + "/" + c[1] + "/" + c[2] + ": " + r.error);
+            if (s.failures.size() < max_failures) s.failures.push_back(c[0] + "/" + c[1] + "/" + c[2] + ": " + r.error);
         }
     }
     int rc = 0;

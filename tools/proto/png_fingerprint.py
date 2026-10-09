@@ -59,8 +59,13 @@ def main():
         if seen[name] > limit:
             continue
         b = open(os.path.join(root, c[0], c[1], c[2]), "rb").read()
-        idats = [d for t, d, _ in chunks(b) if t == b"IDAT"]
-        types = [t.decode() for t, _, _ in chunks(b)]
+        try:
+            idats = [d for t, d, _ in chunks(b) if t == b"IDAT"]
+            types = [t.decode() for t, _, _ in chunks(b)]
+            zlib.decompress(b"".join(idats))
+        except Exception as e:  # noqa
+            results["(unreadable: " + str(e)[:30] + ")"][(None, (), (c[2],))] += 1
+            continue
         sizes = {len(d) for d in idats[:-1]} or {len(idats[0])}
         raw = zlib.decompress(b"".join(idats))
         best = None

@@ -6,6 +6,9 @@ void register_xml_format();
 void register_fastbin_tile_formats();
 void register_bmd_bin_format();
 void register_markers_format();
+void register_image_container_formats();
+void register_chmf_format();
+void register_png_format();
 
 std::vector<Format>& formats() {
     static std::vector<Format> f;
@@ -20,6 +23,9 @@ void register_all_formats() {
     register_fastbin_tile_formats();
     register_bmd_bin_format();
     register_markers_format();
+    register_image_container_formats();
+    register_chmf_format();
+    register_png_format();
 }
 
 const Format* find_format(const std::string& path, const std::vector<uint8_t>& head) {
