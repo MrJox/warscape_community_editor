@@ -3,6 +3,7 @@
 #include "formats/env_value.h"
 #include "foundation/process.h"
 #include "foundation/text_encoding.h"
+#include "scene/environment.h"
 
 #include <algorithm>
 #include <cmath>
@@ -82,6 +83,12 @@ std::string XmlFileDocument::kind() const {
     if (source_.vfs_path.rfind("vfx/", 0) == 0) return "vfx";
     if (source_.vfs_path.rfind("weather/", 0) == 0) return "weather_definitions";
     return "xml";
+}
+
+bool XmlFileDocument::environment(EnvironmentParams* out) const {
+    if (!is_environment()) return false;
+    if (out) *out = read_environment(xml_);
+    return true;
 }
 
 bool XmlFileDocument::is_environment() const {

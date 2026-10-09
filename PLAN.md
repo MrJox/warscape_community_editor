@@ -12,7 +12,13 @@
 | 5 Weather tool | **Done** (commit `209fbf3`). `tools/weather`, `docs/editor.md` (Weather tool), Phase 5 deviations below. |
 | 6 Tile tool | **Done, waiting for your go.** `tools/tile`, `docs/editor.md` (Tile tool), Phase 6 deviations below. |
 | Performance pass | **Done, waiting for your go** (between 6 and 7, asked for by you). `docs/performance.md`: Osgiliath at 140 to 270 fps (was 1.7), tile open to first image 0.4 s (0.9 s with an empty cache). |
-| 7 - 9 | Not started. |
+| 7 Cross-tool composition | **Done, waiting for your go.** `docs/editor.md` (Cross-tool composition), gate `cross_tool_check`, Phase 7 deviations below. |
+| 8 - 9 | Not started (Phase 8 needs your explicit confirmation). |
+
+Phase 7 deviations: most of the plan's list existed already from Phases 4 to 6 (one `DocumentManager` with a layer and a modified marker per document, per-document visibility and Save all in the Outliner / File menu); what was missing and is new: the weather of an open `.environment` / `.lighting` can light the scene of any tool
+(`Editor::set_weather_preview`, `Document::environment`, `Tool::lights_scene`; the preview is explicit and off by default, so the tile captures did not change), the tile and the weather file share the Outliner with tool tags and a context menu, the sample map is a stand-in scene that a tile hides (`Document::stand_in` / `shows_scene`),
+and closing, closing all, quitting and the window's close button ask about unsaved changes (modal; commands `close ... save|discard`, `close_prompt`, `quit_prompt`, `answer`). `quit` and `--shot` runs still leave at once, as scripts expect. The "outliner groups items by document" and "layer visibility per document" items already held and are now covered by commands and the gate.
+Not done on purpose: vfx files stay `.xml` documents of the weather tool (the VFX tool is still a placeholder), and the cross-fade partner is still chosen in the weather tool only. Unattended runs (`--script` / `--shot` / `--capture`) no longer take the focus: the window is non-activating and sent behind the others (`--foreground` restores the old behaviour). A pre-existing undefined shift (`1u << 40`) in the `move` command's gesture base was fixed.
 
 Performance pass deviations: `RenderScene` gained `structure_revision` / `terrain_revision` / `moved_since` and `reserve`; `Document` gained `outline_cached` / `outline_stamp`; `ModelCache` / `TextureCache` / `Vfs::extract` are thread safe; `XmlDoc` gained in-place structural edits (`splice`, `bake_pending`, `remove_element_inplace`, `duplicate_element_inplace`) next to the functional ones; `read_file` no longer streams bytes through an iterator;
 terrain meshes are chunked with LODs and skirts and the tile tool shows the height map at full resolution; the two tile captures were re-baselined and the legacy window shots now use the capture tolerance (`docs/baseline.md`). New gates `perf_check`, `xml_splice_check`; `--live` for scripts.

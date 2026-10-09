@@ -45,6 +45,9 @@ public:
     // button does not rotate the camera and a click does not select.
     virtual bool claims_left_button(Editor& editor) const { (void)editor; return false; }
     virtual void register_commands(Editor& editor, CommandRegistry& commands) { (void)editor; (void)commands; }
+    // True when update() puts the lighting into the scene's environment slot itself (the weather tool). For every other tool the editor lights the scene:
+    // with the previewed weather document if there is one, the default environment otherwise.
+    virtual bool lights_scene() const { return false; }
     // Once per frame while the tool is active, after the documents were re-published and before the viewport renders: put the tool's
     // documents into the scene's environment slot, refresh anything the renderer reads.
     virtual void update(Editor& editor) { (void)editor; }

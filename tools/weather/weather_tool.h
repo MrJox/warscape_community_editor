@@ -22,6 +22,7 @@ public:
     std::vector<std::string> opens() const override { return {".environment", ".lighting", ".xml"}; }
     void default_layout(ImGuiID dockspace) override;
     void register_commands(Editor& editor, CommandRegistry& commands) override;
+    bool lights_scene() const override { return true; }
     void activated(Editor& editor) override;
     void update(Editor& editor) override;
     void draw_panels(Editor& editor) override;
@@ -45,6 +46,8 @@ private:
     void draw_changes(XmlFileDocument& d);
     void apply_pending(Editor& editor, XmlFileDocument& d);
     void reroll(Editor& editor);
+    void ensure_sample_map(Editor& editor);
+    bool tile_was_open_ = false;
 
     // lighting the scene
     EnvironmentParams default_env_;

@@ -11,6 +11,8 @@
 //   --capture <WxH> <file.png>   render the scene offscreen, no window involved, and exit
 //   --fixed-step <seconds>  simulate that much time per rendered frame (implied by --shot / --capture / --script)
 //   --live                  with --script: keep the live clock, the real mouse and background model loading (performance runs)
+//   --background / --foreground   scripted and --shot / --capture runs never take the focus (non-activating window behind the others); an interactive run does.
+//                           These flags (or WCE_FOREGROUND=1/0) override either default.
 #include "foundation/log.h"
 #include "foundation/process.h"
 #include "foundation/profile.h"
@@ -95,6 +97,9 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SYSCOMMAND:
         if ((wp & 0xfff0) == SC_KEYMENU) return 0;
         break;
+    case WM_CLOSE:   // unsaved changes: the editor asks first (it quits itself with the answer)
+        if (g_editor && g_editor->window_close_requested()) return 0;
+        break;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -108,6 +113,7 @@ struct Options {
     int capture_w = 0, capture_h = 0, frames = 20;
     double fixed_step = 0;
     bool live = false;   // scripts keep the live clock, the real mouse and background loading (performance runs)
+    int foreground = -1; // -1: the window takes focus only for an interactive run; --foreground / --background (or WCE_FOREGROUND=1 / 0) force it
 };
 
 Options parse_args() {
@@ -134,6 +140,8 @@ Options parse_args() {
         else if (a == L"--shot" && more) o.shot = argv[++i];
         else if (a == L"--fixed-step" && more) o.fixed_step = _wtof(argv[++i]);
         else if (a == L"--live") o.live = true;
+        else if (a == L"--foreground") o.foreground = 1;
+        else if (a == L"--background") o.foreground = 0;
         else if (a == L"--capture" && i + 2 < argc) {
             const std::wstring dims = argv[++i];
             o.capture_w = _wtoi(dims.c_str());
@@ -166,7 +174,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     WNDCLASSEXW wc{sizeof wc, CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"WarscapeCommunityEditor", nullptr};
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Warscape Community Editor", WS_OVERLAPPEDWINDOW, 100, 100, 1600, 960, nullptr, nullptr, inst, nullptr);
+    // Scripted and screenshot runs are unattended: their window must not take the focus from whatever the user is doing (a game, say). It is created
+    // non-activating, kept out of the taskbar and Alt-Tab, shown without activation and put behind the other windows.
+    bool take_focus = opt.shot.empty() && opt.capture_path.empty() && opt.script_text.empty();
+    if (opt.foreground >= 0) take_focus = opt.foreground == 1;
+    else if (const char* f = std::getenv("WCE_FOREGROUND"); f && *f) take_focus = *f != '0';
+    HWND hwnd = CreateWindowExW(take_focus ? 0 : WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, wc.lpszClassName, L"Warscape Community Editor", WS_OVERLAPPEDWINDOW, 100, 100, 1600, 960,
+                                nullptr, nullptr, inst, nullptr);
 
     DXGI_SWAP_CHAIN_DESC sd{};
     sd.BufferCount = 2;
@@ -185,7 +199,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 1;
     }
     create_rtv();
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    if (take_focus) {
+        ShowWindow(hwnd, SW_SHOWDEFAULT);
+    } else {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    }
     UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION();

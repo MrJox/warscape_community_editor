@@ -59,7 +59,7 @@ private:
     void draw_layers_panel(Editor& editor);
     void draw_layer_node(Editor& editor, TileDocument& d, int elem, int depth);
     void draw_polygon_panel(Editor& editor, TileDocument& d);
-    void draw_weather_panel();
+    void draw_weather_panel(Editor& editor);
     void handle_keys(Editor& editor);
     void load_environment_map(const std::string& tile_dir);
     bool cursor_ray(Editor& editor, int x, int y, float3& o, float3& d) const;

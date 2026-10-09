@@ -77,6 +77,7 @@ public:
     // ---- Document
     std::string title() const override;
     std::string kind() const override { return "tile"; }
+    bool shows_scene() const override { return true; }
     bool can_save() const override { return true; }
     bool modified() const override;
     bool save(const SaveTarget& target, std::string* message) override;

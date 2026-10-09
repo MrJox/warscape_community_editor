@@ -125,7 +125,6 @@ void TileTool::default_layout(ImGuiID dockspace) {
 }
 
 void TileTool::activated(Editor& editor) {
-    editor.scene().environment = EnvironmentSlot{};   // the default environment until a weather document or the picker lights it (Phase 7)
     if (editor.viewport().is_fly()) editor.viewport().use_orbit();
     if (auto* orbit = dynamic_cast<OrbitCamera*>(&editor.viewport().controller())) orbit->min_eye_height = -1e6f;
 }
@@ -197,9 +196,6 @@ void TileTool::update(Editor& editor) {
         if (auto* orbit = dynamic_cast<OrbitCamera*>(&editor.viewport().controller()))
             orbit->set_orbit(0.8f, 0.6f, float(std::max(ex, ez) * 1.2), {float(ex * 0.5), 0.f, float(ez * 0.5)});
         load_environment_map(narrow(d->project().dir.wstring()));
-        // the weather tool's sample map would show its ground plane through the tile (the weather tool shows it again when it becomes active)
-        for (DocumentId id : editor.documents().order())
-            if (const Document* o = editor.documents().find(id); o && o->kind() == "sample_map") editor.documents().set_visible(id, false);
         poly_point_ = -1;
         drawing_ = false;
         grabbing_ = false;
@@ -545,7 +541,7 @@ void TileTool::draw_tile_panel(Editor& editor) {
     ImGui::Separator();
     draw_polygon_panel(editor, *d);
     ImGui::Separator();
-    draw_weather_panel();
+    draw_weather_panel(editor);
     if (!status.empty()) {
         ImGui::Separator();
         ImGui::TextWrapped("%s", status.c_str());
@@ -589,8 +585,24 @@ void TileTool::draw_polygon_panel(Editor& editor, TileDocument& d) {
     }
 }
 
-void TileTool::draw_weather_panel() {
+void TileTool::draw_weather_panel(Editor& editor) {
     if (!ImGui::CollapsingHeader("Weather / climate (which environment the game picks)")) return;
+    // "Preview this weather on this tile": any open .environment / .lighting file lights the tile, live while it is edited
+    {
+        const DocumentId now = editor.weather_preview();
+        const Document* shown = now ? editor.documents().find(now) : nullptr;
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::BeginCombo("preview weather", shown ? shown->title().c_str() : "(none: default light)")) {
+            if (ImGui::Selectable("(none: default light)", !shown)) editor.set_weather_preview(0);
+            for (DocumentId id : editor.documents().order()) {
+                const Document* o = editor.documents().find(id);
+                if (!o || !o->environment(nullptr)) continue;
+                if (ImGui::Selectable((o->title() + "##pv" + std::to_string(id)).c_str(), id == now)) editor.set_weather_preview(id);
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled("Open a weather file (Assets, or the Weather tool) to list it here. Double-click a file below to open and preview it.");
+    }
     if (!env_) { ImGui::TextDisabled("%s", env_status_.c_str()); return; }
     auto combo = [&](const char* label, const char* category) {
         std::string& value = wq_[category];
@@ -618,7 +630,21 @@ void TileTool::draw_weather_panel() {
     const auto& m = res.candidates;
     ImGui::Text("%zu matching files%s, each picked with probability 1/%zu", m.size(), res.used_default_map ? " (after the default_map retry)" : "", m.empty() ? size_t(1) : m.size());
     ImGui::BeginChild("envlist", ImVec2(0, 140), true);
-    for (const auto& c : m) ImGui::TextUnformatted(c.variation->filename.c_str());
+    for (const auto& c : m) {
+        const std::string& file = c.variation->filename;
+        if (ImGui::Selectable(file.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(0)) {
+            std::string msg;
+            const std::string key = Vfs::normalize(file);
+            const DocumentId before = editor.documents().active_id();   // the tile stays the document being edited
+            DocumentId found = 0;
+            for (DocumentId id : editor.documents().order())
+                if (const Document* o = editor.documents().find(id); o && o->source_key() == key) found = id;
+            if (!found && editor.open_path(file, true, &msg, false)) found = editor.documents().active_id();
+            const bool previewing = found && editor.set_weather_preview(found, &msg);
+            if (before) editor.documents().set_active(before);
+            editor.status(msg, !previewing);
+        }
+    }
     ImGui::EndChild();
 }
 

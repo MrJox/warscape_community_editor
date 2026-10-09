@@ -1,7 +1,7 @@
 # The editor shell (`libs/editor`, `app/`)
 
 `wce.exe` is one window with one renderer and one shared scene; tools are modes of it. Phase 4 built the shell, Phase 5 moved the Weather tool onto it
-(`tools/weather`, see below); the Tile tool follows in Phase 6.
+(`tools/weather`, see below), Phase 6 the Tile tool, Phase 7 lets the tools share documents (see Cross-tool composition).
 
 ## Pieces
 
@@ -9,13 +9,13 @@
 |---|---|---|
 | `Command`, `CommandStack` | `editor/command.h` | undo/redo per document; a drag gesture pushes many commands with one merge key and ends as one entry (`break_merge` when the gesture ends); `modified()` follows the saved position |
 | `Document` | `editor/document.h` | one thing a tool edits, with its lossless model inside: `publish` into its scene layer, `outline`, `inspect`, `item_transform` / `transform_items` for the gizmo, `save` |
-| `DocumentManager` | `editor/document_manager.h` | owns the open documents, one `RenderScene` layer each, re-publishes a document when its stack moved |
+| `DocumentManager` | `editor/document_manager.h` | owns the open documents, one `RenderScene` layer each, re-publishes a document when its stack moved; `unsaved`, `save_one`, `save_all`, layer visibility, the stand-in scene rule |
 | `Selection` | `editor/selection.h` | a set of `SourceRef` (document, item); the scene entities that show them come from `RenderScene::entities_of` |
 | `Inspector` | `editor/inspector.h` | the documents describe an item through this interface; every property has a `PropertyPath` (document, item, field), the seam the Cinematic editor animates through; `panels.cpp` has the ImGui implementation |
 | `CommandRegistry`, `ScriptRunner` | `editor/command_registry.h` | every action is a named command; menus, `--cmd`, `--script` and tests all run the same entries |
 | `OrbitCamera`, `FlyCamera` | `editor/camera_controller.h` | viewport cameras on the game's battle lens (FOV 65 degrees, near 1, far 13000) |
 | `Viewport` | `editor/editor.h`, `viewport.cpp` | renders the scene into a `RenderTarget`, camera input, click to select (through `Renderer::pick`), the ImGuizmo gizmo (translate/rotate/scale, snap), offscreen `capture` |
-| panels | `editor/panels.cpp` | Outliner (per document, visibility), Inspector, Assets (the VFS tree, filter, only the tool's file types, double-click opens), Log, History (click to jump), Commands (console) |
+| panels | `editor/panels.cpp` | Outliner (per document: tool tag, eye, `*`, context menu, Save all), Inspector, Assets (the VFS tree, filter, only the tool's file types, double-click opens), Log, History (click to jump), Commands (console) |
 | `Editor` | `editor/editor.h` | the host window with menu bar, tool switcher and dockspace; owns VFS, renderer, scene, documents, selection, clock; layouts; first run |
 | `Tool` | `editor/tool.h` | a mode: opens, panels, menus, viewport input, default layout, commands; `PlaceholderTool` for the future ones |
 
@@ -72,7 +72,7 @@ with distance culling (vegetation 450 m, decals 300 m, others 3000 m, adjustable
 | layers: right-click a layer (new layer, move selected here, rename, delete) | **Layers** panel (same context menus; per-type visibility checkboxes) next to the shared Outliner |
 | building add by key | **Tile** panel: key + Add, `add_building <key> [x z]` |
 | polygons / AI hints: draw, point handles, shift+click inserts, `Del` removes, hint combo, `area` recomputed | same (panel, mouse, Inspector's hint combo) |
-| weather picker (which environment the game picks for the map) | **Weather / climate** section of the Tile panel (data only; Phase 7 lights the tile with the result) |
+| weather picker (which environment the game picks for the map) | **Weather / climate** section of the Tile panel; a double-click on a candidate opens that file and previews it on the tile (Cross-tool composition) |
 | inspector: position, euler, Drop to terrain, attributes | shared Inspector (position in scene units, euler in degrees, attributes read-only), Drop to terrain in the panel |
 | wireframe terrain | not ported (the renderer has no wireframe mode) |
 | script flags `--tile --paint --select --move --duplicate --delete --rotate --add --add-polygon --polygon-point --new-layer --move-to-layer --save-to --undo --redo --cam --shot --frames` | the same flags of `wce.exe` (a flag is the command of that name: `tile`, `paint`, `tile_select`, `tile_move`, `duplicate`, `delete_item`, `rotate`, `add_building`, `add_polygon`, `polygon_point`, `new_layer`, `move_to_layer`, `save_to`, `undo [n]`, `redo [n]`); `--cam yaw pitch dist` uses the shared orbit camera's convention (target = tile centre) |
@@ -81,6 +81,24 @@ Extra commands: `tile_mode`, `brush`, `grab_to x z`, `tile_click`, `tile_click_g
 `assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored.
 
 `tile_studio.exe` stays built from `legacy/tile_editor` (own renderer, its shot is still a gate) until Phase 8.
+
+## Cross-tool composition (Phase 7)
+
+Every open file is a `Document` in the one `DocumentManager`, whichever tool opened it: a tile and an `.environment` (and vfx files) are open at once, each with its own history, modified marker and layer. Opening a file of another tool
+switches to that tool (`open_path(..., switch_tool = false)` does not); `activate <id|kind|title>` and a click on a document in the Outliner choose which one the menus, History and `save` act on; a double-click there (or *Edit in its tool*) switches to its tool.
+
+| What | How |
+|---|---|
+| Preview this weather on this tile | An `.environment` / `.lighting` document says what it would light the scene with (`Document::environment`). `Editor::set_weather_preview(id)` (command `preview_weather <doc\|none>`, Outliner context menu, the combo in the Tile panel's Weather section, a double-click on a candidate of the tile's weather picker) lights the scene of every tool but the weather tool with it, live while the file is edited (`Editor::update_lighting`, after the tool's `update`). Without a preview the scene has the default light as before. The weather tool keeps lighting its own scene with the last active weather file (`Tool::lights_scene`). The preview ends when the document closes. |
+| Stand-in scene | The weather tool's sample map is `stand_in()`; a tile is `shows_scene()`. The document manager hides the stand-in when the first tile opens and shows it again when the last one closes (your own eye toggles in between stay). The weather tool does not move the camera or make a sample map while a tile is open. |
+| Save All | File > Save all (Ctrl+Shift+S; the count of unsaved documents is in the label), the Outliner button, `save_all`: every modified document is saved in place by its own `save` (the weather file as a loose file under the output folder, the tile as `tile.ted` / `height_map_0.png` with a one-time `.bak`), each only in the edited spans. A failing document is reported and the others are still saved. |
+| Dirty markers | `*` after the title and the amber colour in the Outliner, in the File menu's Save all count and in the unsaved-changes prompt. |
+| Close prompts | File > Close document / Close all documents, the Outliner's *Close*, File > Quit and the window's close button ask when something is unsaved: **Save** (and close), **Discard** (close without saving), **Cancel**. If a save fails nothing closes and the prompt says why. Scripts: `close [doc] save\|discard`, `close_all save\|discard` (they fail with unsaved changes and no answer), `close_prompt`, `quit_prompt` open the prompt like the menu and `answer save\|discard\|cancel` answers it; `quit` leaves at once, as scripts expect. |
+| Outliner | The documents of all tools are listed together: `[Tool] title *`, the checkbox is the document's layer visibility (`layer_visible <doc> 0\|1`), the context menu has Save, Close, Edit in its tool, Preview / Stop previewing this weather, Show only this document, Show all documents. |
+| Test commands | `expect_fail <command...>`, `documents`, `activate`, `assert_preview`, `assert_prompt none\|close\|quit [N]`, `assert_layer_visible`. |
+
+Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile and `med_sp_land_day_dry.environment` open at once, the weather previewed on the tile (the capture differs, follows an edit, equals the default light again with `preview_weather none` and after the document closed), one edit in each, the prompts
+(close and quit, cancel, discard), Save All, and then `scripts/span_diff.py` shows that the saved `.environment` differs from the pack file in exactly the one value, `tile.ted` in exactly one span inside one tag, every other file of the tile is untouched and the `.bak` is the original; two runs write the same bytes and captures.
 
 ## Layouts
 
@@ -99,8 +117,11 @@ mounts and starts the active tool.
 
 ```
 wce.exe [--tool <id>] [--open <path> | --open-disk <file>] [--cam yaw pitch dist [target_y]] [--cmd "<command>"]... [--script <file>]
-        [--frames N] [--shot <file.png>] [--capture WxH <file.png>] [--fixed-step <seconds>]
+        [--frames N] [--shot <file.png>] [--capture WxH <file.png>] [--fixed-step <seconds>] [--live] [--background | --foreground]
 ```
+
+`--shot`, `--capture` and `--script` runs are unattended: their window is created non-activating, kept out of the taskbar and Alt-Tab and put behind the other windows, so a test run never takes the focus from a game or an editor in use. `--foreground` (or `WCE_FOREGROUND=1`) brings back
+the normal window, `--background` (`WCE_FOREGROUND=0`) makes an interactive run quiet too.
 
 Everything becomes a script: `--tool` and `--open` first, then `--cmd` / `--script` in order, then `frames N` + `shot` (the whole window after N rendered frames) or
 `capture` (the scene offscreen, no window involved), then `quit`. Shots, captures and scripts run on the fixed-step clock (1/60 s per rendered frame), so the same
@@ -126,6 +147,7 @@ so a whole drag is one undo entry. Scale is accepted by the gizmo but a document
 - `scripts/tile_check.sh` (render, `tile_tool_check` in `gates.sh`): `scripts/tile_smoke.txt` twice (select / move / rotate / duplicate / delete / polygons / layers / brush, each with undo and redo, then a save; the saved files and the capture must be identical between the runs),
   `tile_mouse.txt` (click select, G grab, brush drag, polygon drawing with Enter, point handle drag, through the scripted mouse), `tile_roundtrip.txt` (every kind of edit, undo all, save: the files equal the originals byte for byte) and `tile_save.txt` (save in place keeps a `.bak`; undo and save
   again restores the bytes); and the saved tile.ted differs from the original in exactly the edited line, the saved height map only inside the brush.
+- `scripts/cross_tool_check.sh` (render, `cross_tool_check` in `gates.sh`): see Cross-tool composition. `editor_check` also covers the document manager's unsaved list, `save_one` and the stand-in scene rule.
 - `perf_check` (fast, no window): thread pool, frustum / LOD / size culling of the draw set, the DDS mip stream plan, the tile document's element index against the plain transform walk on three tiles (77 633 instances on the biggest), the pick grid against a brute-force ray test. `xml_splice_check` (fast): the in-place structural edits of `XmlDoc` against the functional ones, undo and redo of their records exact.
 - `scripts/shots.sh`: the weather shots (legacy app) and the `wce.exe --capture` references (identical, or within one level in under 0.05 % of the pixels; `build/gates_base_perf`).
 

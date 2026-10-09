@@ -96,6 +96,19 @@ private:
     uint64_t key_;
 };
 
+// A document that brings its own ground (a tile), and the stand-in scene a tool shows while there is none (the weather tool's sample map).
+class GroundDoc : public NumberDoc {
+public:
+    using NumberDoc::NumberDoc;
+    bool shows_scene() const override { return true; }
+};
+class StandInDoc : public NumberDoc {
+public:
+    using NumberDoc::NumberDoc;
+    bool stand_in() const override { return true; }
+    bool can_save() const override { return false; }
+};
+
 void NumberDoc::set(size_t i, float v, uint64_t key) { history_.push(std::make_unique<SetCommand>(*this, i, values[i], v, key)); }
 
 } // namespace
@@ -175,6 +188,38 @@ int main() {
         docs.set_visible(ia, false);
         CHECK(!scene.drawable(*scene.find(scene.entities_of({ia, 0})[0])), "a hidden document's entities are not drawable");
         CHECK(docs.close(ia) && scene.entities().size() == 2 && docs.active_id() == ib, "closing removes the layer and its entities");
+    }
+
+    // ---- cross-tool composition: unsaved documents, saving one, stand-in scenes
+    {
+        RenderScene scene;
+        DocumentManager docs(scene);
+        auto stand = std::make_unique<StandInDoc>(2);
+        const DocumentId is = docs.add(std::move(stand), "weather");
+        CHECK(docs.visible(is) && !docs.shows_scene(), "a stand-in scene is shown while no document brings its own ground");
+        auto ground = std::make_unique<GroundDoc>(3);
+        NumberDoc* pg = ground.get();
+        const DocumentId ig = docs.add(std::move(ground), "tile");
+        CHECK(docs.shows_scene() && !docs.visible(is) && docs.visible(ig), "opening a tile hides the stand-in scene");
+        auto other = std::make_unique<NumberDoc>(1);
+        NumberDoc* po = other.get();
+        const DocumentId io = docs.add(std::move(other), "weather");
+        CHECK(docs.unsaved().empty(), "nothing is unsaved after opening");
+        docs.set_visible(is, true);   // the user shows it again: it stays shown until the last tile closes and opens again
+        docs.update();
+        CHECK(docs.visible(is), "a toggle of the user's stays");
+        auto stand2 = std::make_unique<StandInDoc>(1);
+        const DocumentId is2 = docs.add(std::move(stand2), "weather");
+        CHECK(!docs.visible(is2), "a stand-in scene added while a tile is open starts hidden");
+        pg->set(0, 1, 0);
+        po->set(0, 2, 0);
+        CHECK(docs.unsaved() == (std::vector<DocumentId>{ig, io}), "unsaved lists the modified documents in opening order");
+        std::string msg;
+        CHECK(docs.save_one(io, &msg) && po->saves == 1 && pg->saves == 0 && docs.unsaved() == std::vector<DocumentId>{ig}, "save_one saves one document and marks it saved");
+        CHECK(!docs.save_one(is, &msg) && msg.find("cannot be saved") != std::string::npos, "a document that cannot be saved says so");
+        CHECK(!docs.save_one(9999, &msg), "no such document");
+        CHECK(docs.close(ig), "close the tile");
+        CHECK(!docs.shows_scene() && docs.visible(is) && docs.visible(is2), "closing the last tile shows the stand-in scenes again");
     }
 
     // ---- selection

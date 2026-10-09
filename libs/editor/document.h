@@ -64,6 +64,14 @@ public:
     // Identifies the file a document came from (a normalized in-pack path); an open request for the same key activates the open document instead.
     virtual std::string source_key() const { return {}; }
 
+    // Cross-tool composition. A document that can light the scene (an .environment or .lighting file) says what it would light it with; any tool's scene
+    // can then be previewed under it (Editor::set_weather_preview).
+    virtual bool environment(EnvironmentParams* out) const { (void)out; return false; }
+    // True for a document that brings its own ground and objects (a tile). A stand-in scene (the weather tool's sample map) is hidden while one is open
+    // and shown again when the last one closes; the user's own visibility toggles in between stay.
+    virtual bool shows_scene() const { return false; }
+    virtual bool stand_in() const { return false; }
+
     // Gizmo support: the world transform of an item (the gizmo's pivot), and moving items by a world-space delta. `gesture` is
     // constant during one drag so that the commands merge into one undo entry.
     virtual bool item_transform(const SourceRef& item, float4x4& world) const { (void)item; (void)world; return false; }

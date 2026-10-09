@@ -1,0 +1,117 @@
+# Cross-tool composition (Phase 7): a tile and a weather file open at once, the weather previewed on the tile, one edit in each, unsaved-changes prompts, Save All.
+# Run by scripts/cross_tool_check.sh (%TILE% is a copy of a kit tile, %OUT% a folder for the captures and the loose files).
+output_dir "%OUT%/saved" temp
+
+# the weather tool starts with its sample map; opening a tile hides that stand-in scene and puts the tile tool on top
+frames 3
+assert_documents 1
+assert_layer_visible sample_map 1
+tile "%TILE%"
+frames 3
+assert_tool tile
+assert_documents 2
+assert_layer_visible sample_map 0
+assert_layer_visible tile 1
+capture 640x360 "%OUT%/tile_default.png" 6
+
+# a weather file opens next to it (the weather tool takes over); back in the tile tool it is a document of the same editor
+open "weather/charlemagne/med_sp_land_day_dry.environment"
+frames 3
+assert_tool weather
+assert_documents 3
+assert_layer_visible sample_map 0
+tool tile
+frames 3
+assert_tool tile
+documents
+expect_fail assert_env sun_elevation 26
+
+# Preview this weather on this tile: the tile is lit by the open environment, live while the file is edited
+expect_fail preview_weather tile
+assert_preview none
+preview_weather environment
+assert_preview environment
+frames 3
+assert_env sun_elevation 26
+capture 640x360 "%OUT%/tile_previewed.png" 6
+activate environment
+edit_attr LIGHTING sun_direction_elevation 41
+frames 3
+assert_env sun_elevation 41
+assert_modified 1
+capture 640x360 "%OUT%/tile_edited_light.png" 6
+preview_weather none
+assert_preview none
+frames 3
+capture 640x360 "%OUT%/tile_none.png" 6
+preview_weather environment
+frames 3
+
+# one edit in the tile; every document knows its own state
+activate tile
+tile_select BUILDING_INSTANCE
+tile_move 5 5
+frames 2
+assert_modified 1
+assert_history 1 1
+activate environment
+assert_modified 1
+assert_history 1 1
+
+# closing and quitting ask first; a script says what to do with the changes
+expect_fail close tile
+expect_fail close environment
+expect_fail close_all
+assert_documents 3
+close_prompt tile
+assert_prompt close 1
+frames 2
+answer cancel
+assert_prompt none
+assert_documents 3
+quit_prompt
+assert_prompt quit 2
+frames 2
+answer cancel
+assert_prompt none
+expect_fail answer save
+
+# Save All writes both documents; the files are checked against the originals by the script
+save_all
+assert_modified 0
+activate tile
+assert_modified 0
+assert_saved weather/charlemagne/med_sp_land_day_dry.environment
+assert_file_exists "%TILE%/tile.ted.bak"
+
+# hiding the environment's layer and the tile's, per document
+layer_visible tile 0
+assert_layer_visible tile 0
+layer_visible tile 1
+assert_layer_visible tile 1
+
+# the preview ends with the previewed document: close it with a discarded edit
+preview_weather none
+frames 3
+capture 640x360 "%OUT%/tile_moved_default.png" 6
+preview_weather environment
+frames 2
+activate environment
+edit_attr FOG fog_distance_start 0.8
+assert_modified 1
+close environment discard
+frames 3
+assert_documents 2
+assert_preview none
+capture 640x360 "%OUT%/tile_after_close.png" 6
+
+# the window's close button with an unsaved edit: the prompt, then discard (the tile on disk keeps what Save All wrote)
+activate tile
+tile_select BUILDING_INSTANCE
+tile_move 1 1
+quit_prompt
+assert_prompt quit 1
+frames 2
+answer discard
+frames 3
+echo not reached: the discard answer quits

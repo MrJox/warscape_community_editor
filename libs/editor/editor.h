@@ -162,7 +162,30 @@ public:
 
     // ---- actions (also reachable as commands)
     bool set_tool(const std::string& id);            // takes effect in the next pre_frame
-    bool open_path(const std::string& path, bool from_packs, std::string* message);   // routed to the tool that claims the extension
+    // Routed to the tool that claims the extension; that tool becomes the active one unless `switch_tool` is false (opening a weather file to preview it
+    // on the tile being edited).
+    bool open_path(const std::string& path, bool from_packs, std::string* message, bool switch_tool = true);
+
+    // ---- cross-tool composition
+    // The scene is lit by the document the weather tool edits while the weather tool is active. In every other tool, `id` (an .environment or .lighting
+    // document, 0 for none) lights it: "Preview this weather on this tile". The preview follows the document's edits live and ends when it is closed.
+    bool set_weather_preview(DocumentId id, std::string* message = nullptr);
+    DocumentId weather_preview() const { return preview_doc_; }
+    // Closing and quitting ask about unsaved changes. The request closes at once when nothing is unsaved; otherwise the prompt opens (a modal in the
+    // window, `answer` in scripts) and the closing happens with the answer.
+    enum class Answer { Save, Discard, Cancel };
+    enum class PromptKind { None, Close, Quit };
+    void ask_close(DocumentId id);
+    void ask_close_all();
+    void ask_quit();                                 // `quit` (the command) leaves at once, as scripts expect
+    PromptKind prompt_kind() const { return prompt_; }
+    const std::vector<DocumentId>& prompt_documents() const { return prompt_docs_; }
+    // Applies the answer to the open prompt (Save: save the documents it lists, then close / quit; if one cannot be saved nothing closes).
+    bool answer_prompt(Answer a, std::string* message);
+    // Closes a document without asking (the selection drops its items too).
+    void close_document(DocumentId id);
+    // The window's close button: true when the prompt took over (there are unsaved changes), false to let the window close.
+    bool window_close_requested();
     // Stores the game (and RPFM) folder in wce.ini and mounts: what the first-run dialog's button does, also the `setup` command.
     bool setup(const std::string& game_dir, const std::string& rpfm_dir, std::string* message);
     void request_quit(int exit_code = 0) { quit_ = true; exit_code_ = exit_code; }
@@ -192,6 +215,8 @@ private:
     void draw_toolbar();
     void draw_panels();
     void draw_first_run();
+    void draw_prompt();
+    void update_lighting();
     void apply_tool_switch();
     void release_test_keys();
 
@@ -219,6 +244,12 @@ private:
     std::string status_;
     bool status_error_ = false;
     bool first_run_ = false;
+    DocumentId preview_doc_ = 0;
+    float output_gamma_ = 2.2f, output_brightness_ = 1.0f;   // the game's preferences.script.txt, read when the packs are mounted
+    PromptKind prompt_ = PromptKind::None;
+    std::vector<DocumentId> prompt_docs_;                    // the unsaved documents the prompt asks about
+    std::vector<DocumentId> prompt_close_;                   // Close: every document the request closes (unsaved ones and the others)
+    std::string prompt_error_;                               // why the last Save answer failed
     struct HeldKey {
         ImGuiKey key;
         int frames_left;

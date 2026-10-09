@@ -90,7 +90,10 @@ bool Editor::start() {
         v->mount();
         vfs_ = std::move(v);
         renderer_ = std::make_unique<Renderer>(dev_, ctx_, *vfs_);
-        renderer_->apply_graphics_options(read_graphics_options());
+        const GraphicsOptions go = read_graphics_options();
+        renderer_->apply_graphics_options(go);
+        output_gamma_ = go.gamma;
+        output_brightness_ = go.brightness;
         first_run_ = false;
         std::string msg = "Mounted " + std::to_string(vfs_->packs().size()) + " packs, " + std::to_string(vfs_->files().size()) + " files.";
         for (auto& m : vfs_->missing_mods()) msg += " Missing mod: " + m + ".";
@@ -214,7 +217,7 @@ void Editor::pre_frame() {
 
 // ---- documents
 
-bool Editor::open_path(const std::string& path, bool from_packs, std::string* message) {
+bool Editor::open_path(const std::string& path, bool from_packs, std::string* message, bool switch_tool) {
     const size_t dot = path.rfind('.');
     const std::string ext = dot == std::string::npos ? std::string() : lower(path.substr(dot));
     auto claims = [&](const Tool& t) {
@@ -252,9 +255,161 @@ bool Editor::open_path(const std::string& path, bool from_packs, std::string* me
     }
     const std::string tid = tool->id();
     docs_.add(std::move(doc), tid);
-    if (tid != active_tool()->id()) set_tool(tid);
+    if (switch_tool && tid != active_tool()->id()) set_tool(tid);
     if (message) *message = "opened " + path;
     return true;
+}
+
+// ---- cross-tool composition
+
+bool Editor::set_weather_preview(DocumentId id, std::string* message) {
+    if (id == 0) {
+        preview_doc_ = 0;
+        if (message) *message = "weather preview off";
+        return true;
+    }
+    const Document* d = docs_.find(id);
+    EnvironmentParams p;
+    if (!d || !d->environment(&p)) {
+        if (message) *message = d ? d->title() + " does not light the scene" : "no such document";
+        return false;
+    }
+    preview_doc_ = id;
+    if (message) *message = "previewing " + d->title();
+    return true;
+}
+
+// The scene's lighting outside the weather tool: the previewed weather document, else the default environment.
+void Editor::update_lighting() {
+    Tool* t = active_tool();
+    if (!t || t->lights_scene()) return;
+    EnvironmentSlot& slot = scene_.environment;
+    const Document* d = preview_doc_ ? docs_.find(preview_doc_) : nullptr;
+    EnvironmentParams p;
+    if (d && d->environment(&p)) {
+        p.output_gamma = output_gamma_;
+        p.output_brightness = output_brightness_;
+        slot.active = p;
+        slot.blend.reset();
+        slot.blend_t = 0;
+        slot.owner = d->id();
+    } else {
+        if (preview_doc_ && !d) preview_doc_ = 0;   // the previewed document was closed
+        slot = EnvironmentSlot{};
+    }
+}
+
+// ---- closing and quitting
+
+void Editor::close_document(DocumentId id) {
+    selection_.remove_document(id);
+    if (id == preview_doc_) preview_doc_ = 0;
+    docs_.close(id);
+}
+
+void Editor::ask_close(DocumentId id) {
+    if (!docs_.find(id)) return;
+    if (!docs_.find(id)->modified()) {
+        close_document(id);
+        return;
+    }
+    prompt_ = PromptKind::Close;
+    prompt_error_.clear();
+    prompt_close_ = {id};
+    prompt_docs_ = {id};
+}
+
+void Editor::ask_close_all() {
+    const std::vector<DocumentId> all = docs_.order();
+    prompt_docs_ = docs_.unsaved();
+    if (prompt_docs_.empty()) {
+        for (DocumentId id : all) close_document(id);
+        return;
+    }
+    prompt_ = PromptKind::Close;
+    prompt_error_.clear();
+    prompt_close_ = all;
+}
+
+void Editor::ask_quit() {
+    prompt_docs_ = docs_.unsaved();
+    if (prompt_docs_.empty()) {
+        request_quit();
+        return;
+    }
+    prompt_ = PromptKind::Quit;
+    prompt_error_.clear();
+    prompt_close_.clear();
+}
+
+bool Editor::window_close_requested() {
+    if (docs_.unsaved().empty()) return false;
+    ask_quit();
+    return true;
+}
+
+bool Editor::answer_prompt(Answer a, std::string* message) {
+    if (prompt_ == PromptKind::None) {
+        if (message) *message = "no prompt is open";
+        return false;
+    }
+    const PromptKind kind = prompt_;
+    prompt_error_.clear();
+    if (a == Answer::Cancel) {
+        prompt_ = PromptKind::None;
+        if (message) *message = "cancelled";
+        return true;
+    }
+    if (a == Answer::Save) {
+        std::string saved;
+        for (DocumentId id : prompt_docs_) {
+            std::string m;
+            if (!docs_.save_one(id, &m)) {   // nothing closes; the prompt stays so that the user can discard or cancel
+                prompt_error_ = "cannot save " + (docs_.find(id) ? docs_.find(id)->title() : std::string("a document")) + ": " + m;
+                if (message) *message = prompt_error_;
+                Log::error(prompt_error_);
+                return false;
+            }
+            saved += (saved.empty() ? "" : ", ") + m;
+        }
+        if (message) *message = saved;
+    } else if (message) {
+        *message = "discarded " + std::to_string(prompt_docs_.size()) + " unsaved document(s)";
+    }
+    prompt_ = PromptKind::None;
+    if (kind == PromptKind::Close)
+        for (DocumentId id : prompt_close_) close_document(id);
+    else
+        request_quit();
+    prompt_docs_.clear();
+    prompt_close_.clear();
+    return true;
+}
+
+void Editor::draw_prompt() {
+    if (prompt_ == PromptKind::None) return;
+    const bool quit = prompt_ == PromptKind::Quit;
+    ImGui::OpenPopup("Unsaved changes");
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    bool open = true;
+    if (!ImGui::BeginPopupModal("Unsaved changes", &open, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted(quit ? "These documents have unsaved changes:" : "This document has unsaved changes:");
+    for (DocumentId id : prompt_docs_)
+        if (const Document* d = docs_.find(id)) ImGui::BulletText("%s  (%s)", d->title().c_str(), d->kind().c_str());
+    if (!prompt_error_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "%s", prompt_error_.c_str());
+    ImGui::Spacing();
+    std::string msg;
+    if (ImGui::Button(quit ? "Save all and quit" : "Save and close")) answer_prompt(Answer::Save, &msg);
+    ImGui::SameLine();
+    if (ImGui::Button(quit ? "Quit without saving" : "Discard changes")) answer_prompt(Answer::Discard, &msg);
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || !open || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ImGui::CloseCurrentPopup();
+        answer_prompt(Answer::Cancel, &msg);
+    }
+    if (prompt_ == PromptKind::None) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 // ---- frame
@@ -269,7 +424,7 @@ void Editor::frame() {
     }
     { WCE_PROF("editor.docs_update"); docs_.update(); }
     if (tools_.empty()) return;
-    if (renderer_) { WCE_PROF("editor.tool_update"); tools_[active_tool_]->update(*this); }
+    if (renderer_) { WCE_PROF("editor.tool_update"); tools_[active_tool_]->update(*this); update_lighting(); }
 
     ImGuiIO& io = ImGui::GetIO();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -320,6 +475,7 @@ void Editor::frame() {
     }
 
     { WCE_PROF("editor.draw_panels"); draw_panels(); }
+    draw_prompt();
 }
 
 void Editor::draw_panels() {
@@ -418,14 +574,17 @@ void Editor::draw_menu_bar() {
                 status(msg, false);
             }
         }
-        if (ImGui::MenuItem("Save all", "Ctrl+Shift+S", false, docs_.any_modified())) commands_.run("save_all");
-        if (ImGui::MenuItem("Close document", nullptr, false, doc != nullptr)) commands_.run("close");
+        const size_t unsaved = docs_.unsaved().size();
+        const std::string save_all_label = unsaved ? "Save all (" + std::to_string(unsaved) + ")" : "Save all";
+        if (ImGui::MenuItem(save_all_label.c_str(), "Ctrl+Shift+S", false, unsaved > 0)) commands_.run("save_all");
+        if (ImGui::MenuItem("Close document", nullptr, false, doc != nullptr)) ask_close(doc->id());
+        if (ImGui::MenuItem("Close all documents", nullptr, false, !docs_.order().empty())) ask_close_all();
         if (ImGui::MenuItem("Remount packs")) commands_.run("remount");
         ImGui::Separator();
         if (ImGui::MenuItem("Save layout")) save_layout();
         if (ImGui::MenuItem("Reset layout")) reset_layout();
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit")) request_quit();
+        if (ImGui::MenuItem("Quit")) ask_quit();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -646,20 +805,124 @@ void Editor::register_builtin_commands() {
         const bool packs = !(a.size() > 1 && a[1] == "disk");
         return open_path(a[0], packs, &msg) ? ok(msg) : fail(msg);
     });
-    commands_.add("close", "close", "close the active document", [this, ok, fail](const CommandRegistry::Args&) {
-        Document* d = docs_.active();
+    // A document is named by its id, "active", its kind (the first one: tile, environment, ...) or part of its title.
+    auto resolve_doc = [this](const std::string& spec) -> Document* {
+        if (spec.empty() || spec == "active") return docs_.active();
+        uint64_t id;
+        if (parse_u64(spec, id)) return docs_.find(DocumentId(id));
+        for (DocumentId d : docs_.order())
+            if (docs_.find(d)->kind() == spec) return docs_.find(d);
+        const std::string want = lower(spec);
+        for (DocumentId d : docs_.order())
+            if (lower(docs_.find(d)->title()).find(want) != std::string::npos) return docs_.find(d);
+        return nullptr;
+    };
+    // Closing asks about unsaved changes (the menu opens a prompt; a script says what to do with them).
+    commands_.add("close", "close [document] [save|discard]", "close a document (default the active one); with unsaved changes it needs `save` or `discard`", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        std::string how;
+        std::string spec;
+        for (const std::string& w : a) (w == "save" || w == "discard" ? how : spec) = w;
+        Document* d = resolve_doc(spec);
         if (!d) return fail("no document");
-        selection_.remove_document(d->id());
-        docs_.close(d->id());
+        if (d->modified()) {
+            if (how.empty()) return fail(d->title() + " has unsaved changes: close save | close discard");
+            if (how == "save") {
+                std::string msg;
+                if (!docs_.save_one(d->id(), &msg)) return fail(msg);
+            }
+        }
+        close_document(d->id());
         return ok();
     });
-    commands_.add("save", "save", "save the active document", [this, ok, fail](const CommandRegistry::Args&) {
-        Document* d = docs_.active();
+    commands_.add("close_all", "close_all [save|discard]", "close every document; with unsaved changes it needs `save` or `discard`", [this, ok, fail](const CommandRegistry::Args& a) {
+        const std::vector<DocumentId> unsaved = docs_.unsaved();
+        if (!unsaved.empty() && a.empty()) return fail(std::to_string(unsaved.size()) + " document(s) have unsaved changes: close_all save | close_all discard");
+        if (!unsaved.empty() && a[0] == "save") {
+            std::vector<std::string> msgs;
+            if (!docs_.save_all(&msgs)) return fail(msgs.empty() ? "cannot save" : msgs.back());
+        }
+        for (DocumentId id : std::vector<DocumentId>(docs_.order())) close_document(id);
+        return ok();
+    });
+    commands_.add("close_prompt", "close_prompt [document]", "what File > Close document does: closes at once, or opens the unsaved-changes prompt", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        Document* d = resolve_doc(a.empty() ? std::string() : a[0]);
+        if (!d) return fail("no document");
+        ask_close(d->id());
+        return ok();
+    });
+    commands_.add("quit_prompt", "quit_prompt", "what File > Quit and the window's close button do: quits at once, or opens the unsaved-changes prompt", [this, ok](const CommandRegistry::Args&) {
+        ask_quit();
+        return ok();
+    });
+    commands_.add("answer", "answer save|discard|cancel", "answer the unsaved-changes prompt", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: answer save|discard|cancel");
+        const Answer ans = a[0] == "save" ? Answer::Save : a[0] == "discard" ? Answer::Discard : Answer::Cancel;
+        if (a[0] != "save" && a[0] != "discard" && a[0] != "cancel") return fail("usage: answer save|discard|cancel");
+        std::string msg;
+        return answer_prompt(ans, &msg) ? ok(msg) : fail(msg);
+    });
+    commands_.add("assert_prompt", "assert_prompt none|close|quit [N]", "test: the unsaved-changes prompt is closed / asking about closing / asking about quitting (about N documents)", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: assert_prompt none|close|quit [N]");
+        const PromptKind want = a[0] == "close" ? PromptKind::Close : a[0] == "quit" ? PromptKind::Quit : PromptKind::None;
+        if (prompt_ != want) return fail(std::string("the prompt is ") + (prompt_ == PromptKind::Close ? "close" : prompt_ == PromptKind::Quit ? "quit" : "closed"));
+        if (a.size() > 1 && prompt_docs_.size() != std::strtoull(a[1].c_str(), nullptr, 10)) return fail("the prompt lists " + std::to_string(prompt_docs_.size()) + " documents");
+        return ok();
+    });
+    commands_.add("expect_fail", "expect_fail <command...>", "test: the command fails (the script goes on)", [this, ok, fail](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: expect_fail <command...>");
+        const CommandResult r = commands_.run(a[0], CommandRegistry::Args(a.begin() + 1, a.end()));
+        return r.ok ? fail("'" + a[0] + "' succeeded: " + r.message) : ok(r.message);
+    });
+    commands_.add("activate", "activate <document>", "make a document the active one (id, kind or part of the title); `tool` switches the tool", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: activate <id|kind|title>");
+        Document* d = resolve_doc(a[0]);
+        if (!d) return fail("no document '" + a[0] + "'");
+        docs_.set_active(d->id());
+        return ok(d->title());
+    });
+    commands_.add("documents", "documents", "list the open documents (id, tool, kind, title, unsaved, visible)", [this, ok](const CommandRegistry::Args&) {
+        std::string s;
+        for (DocumentId id : docs_.order()) {
+            const Document* d = docs_.find(id);
+            s += std::to_string(id) + "  " + docs_.tool_of(id) + "  " + d->kind() + "  " + d->title() + (d->modified() ? "  *" : "") + (docs_.visible(id) ? "" : "  (hidden)") + (id == docs_.active_id() ? "  <active>" : "") +
+                 (id == preview_doc_ ? "  <weather preview>" : "") + "\n";
+        }
+        Log::info("documents:\n" + s);
+        return ok(s);
+    });
+    commands_.add("layer_visible", "layer_visible <document> 0|1", "show or hide the layer of a document (the outliner's checkbox)", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        if (a.size() < 2) return fail("usage: layer_visible <document> 0|1");
+        Document* d = resolve_doc(a[0]);
+        if (!d) return fail("no document '" + a[0] + "'");
+        docs_.set_visible(d->id(), a[1] != "0");
+        return ok();
+    });
+    commands_.add("assert_layer_visible", "assert_layer_visible <document> 0|1", "test: the layer of a document is (not) shown", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        if (a.size() < 2) return fail("usage: assert_layer_visible <document> 0|1");
+        Document* d = resolve_doc(a[0]);
+        if (!d) return fail("no document '" + a[0] + "'");
+        return docs_.visible(d->id()) == (a[1] != "0") ? ok() : fail(std::string("the layer is ") + (docs_.visible(d->id()) ? "shown" : "hidden"));
+    });
+    commands_.add("preview_weather", "preview_weather <environment document | none>", "light the scene (in any tool but the weather tool) with an open .environment / .lighting document: 'Preview this weather on this tile'; it follows the document's edits", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: preview_weather <document|none>");
+        std::string msg;
+        if (a[0] == "none") return set_weather_preview(0, &msg) ? ok(msg) : fail(msg);
+        Document* d = resolve_doc(a[0]);
+        if (!d) return fail("no document '" + a[0] + "'");
+        return set_weather_preview(d->id(), &msg) ? ok(msg) : fail(msg);
+    });
+    commands_.add("assert_preview", "assert_preview <document | none>", "test: the weather preview is this document (or off)", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        if (a.empty()) return fail("usage: assert_preview <document|none>");
+        if (a[0] == "none") return preview_doc_ == 0 ? ok() : fail("a document is previewed");
+        Document* d = resolve_doc(a[0]);
+        return d && d->id() == preview_doc_ ? ok() : fail("the preview is document " + std::to_string(preview_doc_));
+    });
+    commands_.add("save", "save [document]", "save a document (default the active one)", [this, ok, fail, resolve_doc](const CommandRegistry::Args& a) {
+        Document* d = resolve_doc(a.empty() ? std::string() : a[0]);
         if (!d) return fail("no document");
         std::string msg;
-        if (!d->save({}, &msg)) return fail(msg);
-        d->history().mark_saved();
-        return ok("saved " + d->title());
+        if (!docs_.save_one(d->id(), &msg)) return fail(msg);
+        return ok(msg);
     });
     commands_.add("save_all", "save_all", "save every modified document", [this, ok, fail](const CommandRegistry::Args&) {
         std::vector<std::string> msgs;
@@ -704,7 +967,7 @@ void Editor::register_builtin_commands() {
         float v[3];
         if (!d || a.size() < 4 || !parse_u64(a[0], item) || !parse_float(a[1], v[0]) || !parse_float(a[2], v[1]) || !parse_float(a[3], v[2]))
             return fail("usage: move <item> dx dy dz");
-        static uint64_t gesture = 1u << 40;
+        static uint64_t gesture = 1ull << 40;
         d->transform_items({SourceRef{d->id(), item}}, translation({v[0], v[1], v[2]}), ++gesture);
         d->history().break_merge();
         return ok();

@@ -170,20 +170,61 @@ void Panels::outliner(Editor& editor) {
     if (!ImGui::Begin("Outliner", &editor.panels.outliner)) { ImGui::End(); return; }
     DocumentManager& docs = editor.documents();
     if (docs.order().empty()) ImGui::TextDisabled("No document open.");
-    for (DocumentId id : docs.order()) {
+    const size_t unsaved = docs.unsaved().size();
+    if (docs.order().size() > 1 || unsaved) {
+        ImGui::BeginDisabled(!unsaved);
+        const std::string label = unsaved ? "Save all (" + std::to_string(unsaved) + ")" : "Save all";
+        if (ImGui::SmallButton(label.c_str())) editor.commands().run("save_all");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu documents", docs.order().size());
+    }
+    // The documents of every tool, grouped by document: eye = layer visibility, * = unsaved changes, the tag names the tool, the colour the active one.
+    for (DocumentId id : std::vector<DocumentId>(docs.order())) {
         Document* d = docs.find(id);
         if (!d) continue;
         ImGui::PushID(int(id));
-        bool visible = editor.scene().layer(docs.layer_of(id)) ? editor.scene().layer(docs.layer_of(id))->visible : true;
+        bool visible = docs.visible(id);
         if (ImGui::Checkbox("##vis", &visible)) docs.set_visible(id, visible);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show or hide this document in the viewport");
         ImGui::SameLine();
-        std::string title = d->title() + (d->modified() ? " *" : "");
-        if (id == docs.active_id()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
+        std::string tag;
+        for (const auto& t : editor.tools())
+            if (docs.tool_of(id) == t->id()) tag = t->title();
+        const std::string title = (tag.empty() ? "" : "[" + tag + "] ") + d->title() + (d->modified() ? " *" : "") + (id == editor.weather_preview() ? "  (weather preview)" : "");
+        const bool active = id == docs.active_id();
+        if (active) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
+        else if (d->modified()) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
         const bool open = ImGui::CollapsingHeader((title + "###doc").c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-        if (id == docs.active_id()) ImGui::PopStyleColor();
+        if (active || d->modified()) ImGui::PopStyleColor();
         if (ImGui::IsItemClicked()) docs.set_active(id);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) editor.set_tool(docs.tool_of(id));   // edit it in its own tool
+        bool close = false;
+        if (ImGui::BeginPopupContextItem("docctx")) {
+            std::string msg;
+            if (ImGui::MenuItem("Save", nullptr, false, d->can_save() && d->modified())) {
+                const bool saved = docs.save_one(id, &msg);
+                editor.status(msg, !saved);
+            }
+            if (ImGui::MenuItem("Close")) close = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Edit in its tool", nullptr, false, !docs.tool_of(id).empty())) editor.set_tool(docs.tool_of(id));
+            if (d->environment(nullptr)) {
+                const bool previewing = id == editor.weather_preview();
+                if (ImGui::MenuItem(previewing ? "Stop previewing this weather" : "Preview this weather on the scene")) {
+                    editor.set_weather_preview(previewing ? 0 : id, &msg);
+                    editor.status(msg);
+                }
+            }
+            if (docs.order().size() > 1 && ImGui::MenuItem("Show only this document"))
+                for (DocumentId other : docs.order()) docs.set_visible(other, other == id);
+            if (docs.order().size() > 1 && ImGui::MenuItem("Show all documents"))
+                for (DocumentId other : docs.order()) docs.set_visible(other, true);
+            ImGui::EndPopup();
+        }
         if (open) draw_node(editor, d->outline_cached(), 0);
         ImGui::PopID();
+        if (close) editor.ask_close(id);
     }
     ImGui::End();
 }

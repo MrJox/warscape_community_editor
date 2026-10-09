@@ -24,6 +24,7 @@ public:
 
     std::string title() const override;
     std::string kind() const override { return "sample_map"; }
+    bool stand_in() const override { return true; }   // hidden while a tile is open
     void publish(RenderScene& scene, LayerId layer) override;
     OutlinerNode outline() const override;
     void inspect(const SourceRef& item, Inspector& inspector) override;

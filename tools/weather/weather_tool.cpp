@@ -115,13 +115,15 @@ void WeatherTool::activated(Editor& editor) {
         });
         reader_for_ = editor.renderer();
     }
-    bool has_sample = false;
+    ensure_sample_map(editor);
+}
+
+// The sample map is the stand-in scene of this tool: made when nothing else brings a ground (an open tile does), hidden and shown again by the document manager.
+void WeatherTool::ensure_sample_map(Editor& editor) {
+    if (!editor.vfs() || editor.documents().shows_scene()) return;
     for (DocumentId id : editor.documents().order())
-        if (dynamic_cast<SampleMapDocument*>(editor.documents().find(id))) {
-            has_sample = true;
-            editor.documents().set_visible(id, true);
-        }
-    if (!has_sample) reroll(editor);
+        if (dynamic_cast<SampleMapDocument*>(editor.documents().find(id))) return;
+    reroll(editor);
 }
 
 void WeatherTool::reroll(Editor& editor) {
@@ -137,13 +139,17 @@ void WeatherTool::reroll(Editor& editor) {
     const DocumentId previous = editor.documents().active_id();
     editor.documents().add(std::move(doc), "weather");
     if (previous) editor.documents().set_active(previous);   // the environment document being edited stays the active one
-    editor.viewport().use_orbit();
-    static_cast<OrbitCamera&>(editor.viewport().controller()).set_orbit(0.6f, 0.35f, std::max(60.0f, std::max(ext.x, ext.z) * 0.9f), {0, 5, 0});
+    if (!editor.documents().shows_scene()) {                  // with a tile open the camera stays on the tile
+        editor.viewport().use_orbit();
+        static_cast<OrbitCamera&>(editor.viewport().controller()).set_orbit(0.6f, 0.35f, std::max(60.0f, std::max(ext.x, ext.z) * 0.9f), {0, 5, 0});
+    }
     editor.status("Test map: " + std::to_string(n) + " buildings.");
 }
 
 void WeatherTool::update(Editor& editor) {
     DocumentManager& docs = editor.documents();
+    if (tile_was_open_ && !docs.shows_scene()) ensure_sample_map(editor);   // the last tile closed: the stand-in scene is back
+    tile_was_open_ = docs.shows_scene();
     if (auto* x = active_xml(editor); x && x->is_environment()) env_doc_ = x->id();
     XmlFileDocument* env = find_xml(editor, env_doc_);
     if (!env) env_doc_ = 0;

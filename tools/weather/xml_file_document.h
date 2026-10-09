@@ -31,6 +31,7 @@ public:
     void inspect(const SourceRef& item, Inspector& inspector) override;
     std::string describe(const SourceRef& item) const override;
     std::string source_key() const override { return source_.vfs_path; }
+    bool environment(EnvironmentParams* out) const override;   // an .environment / .lighting file can light any scene (Editor::set_weather_preview)
 
     const XmlDoc& xml() const { return xml_; }
     const Source& source() const { return source_; }
