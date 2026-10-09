@@ -15,6 +15,8 @@
 #include "formats/tile_index.h"
 #include "tile/tile_tool.h"
 
+#include <functional>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -57,6 +59,14 @@ bool matches_words(const TileIndexEntry& e, const std::vector<std::string>& args
         if (hay.find(w) == std::string::npos) return false;
     }
     return true;
+}
+
+// An element named on a command line: "#123" (an element index), a layer path ("Walls/Standard_Walls"), "selected" (the first selected item).
+int element_arg(TileDocument& d, TileTool& tool, Editor& ed, const std::string& a) {
+    if (a.empty()) return -1;
+    if (a == "selected") return tool.primary(ed);
+    if (a[0] == '#') return std::atoi(a.c_str() + 1);
+    return d.find_layer(a);
 }
 
 } // namespace
@@ -441,6 +451,140 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
     });
     commands.add("assert_grabbing", "assert_grabbing 0|1", "test: whether a G grab is in progress", [this, fail, ok](const CommandRegistry::Args& a) {
         return !a.empty() && (a[0] == "1") == grabbing_ ? ok() : fail(grabbing_ ? "grabbing" : "not grabbing");
+    });
+
+    // ---- layers (Phase 1): flags, structure, export type. A layer is named by its path from the scene graph ("Walls/Standard_Walls"), "#n" is an element index.
+    commands.add("tile_flag", "tile_flag <layer path | #elem | selected> visible|active on|off", "the eye (OIF_VISIBLE) or the cursor arrow (OIF_ACTIVE, selectable) of a layer or instance", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 3) return fail("usage: tile_flag <layer path | #elem | selected> visible|active on|off");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0 || e >= int(d->tscene().doc().elements().size())) return fail("no such layer or element '" + a[0] + "'");
+        const char* flag = a[1] == "visible" ? "OIF_VISIBLE" : a[1] == "active" ? "OIF_ACTIVE" : nullptr;
+        if (!flag) return fail("the flag is visible or active");
+        std::vector<int> targets = {e};
+        if (a[0] == "selected") targets = selected(*ed);
+        return d->set_flags(targets, flag, a[2] == "on") ? ok() : ok("already " + a[2]);
+    });
+    commands.add("tile_new_layer", "tile_new_layer <name> [parent layer path]", "a new layer in a layer (the scene graph by default), selected", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_new_layer <name> [parent layer path]");
+        const int parent = a.size() > 1 ? d->find_layer(a[1]) : d->tscene().scene_graph();
+        std::string err;
+        return d->add_layer(parent, a[0], &err) >= 0 ? ok() : fail(err.empty() ? "no such parent layer" : err);
+    });
+    commands.add("tile_rename", "tile_rename <layer path | #elem | selected> <name>", "rename a layer or an instance", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: tile_rename <layer path | #elem | selected> <name>");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        return e >= 0 && d->rename(e, a[1]) ? ok() : fail("no such layer or element '" + a[0] + "'");
+    });
+    commands.add("tile_move_to", "tile_move_to <what: path | #elem | selected> <target layer path> [before <path | #elem>]", "move layers / instances into a layer (in front of a sibling): the selection when `selected`",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: tile_move_to <path | #elem | selected> <target layer path> [before <path | #elem>]");
+        std::vector<int> what = a[0] == "selected" ? selected(*ed) : std::vector<int>{element_arg(*d, *this, *ed, a[0])};
+        const int layer = element_arg(*d, *this, *ed, a[1]);
+        int before = -1;
+        if (a.size() > 3 && a[2] == "before") before = element_arg(*d, *this, *ed, a[3]);
+        if (what.empty() || what[0] < 0 || layer < 0) return fail("nothing to move, or no such target layer");
+        std::string err;
+        return d->move_items(what, layer, before, &err) ? ok() : fail(err);
+    });
+    commands.add("tile_group", "tile_group <new layer name>", "put the selected items into a new layer next to the first one", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_group <new layer name>");
+        std::string err;
+        return d->group_items(selected(*ed), a[0], &err) >= 0 ? ok() : fail(err);
+    });
+    commands.add("tile_delete", "tile_delete <layer path | #elem | selected>", "delete layers / instances (with everything below)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_delete <layer path | #elem | selected>");
+        std::vector<int> what = a[0] == "selected" ? selected(*ed) : std::vector<int>{element_arg(*d, *this, *ed, a[0])};
+        return !what.empty() && what[0] >= 0 && d->remove_items(what) ? ok() : fail("nothing to delete");
+    });
+    commands.add("tile_duplicate_layer", "tile_duplicate_layer <layer path>", "duplicate a layer with everything in it (named '<name> copy')", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_duplicate_layer <layer path>");
+        std::string err;
+        return d->duplicate_layer(element_arg(*d, *this, *ed, a[0]), &err) >= 0 ? ok() : fail(err);
+    });
+    commands.add("tile_export_type", "tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3", "the export type of a layer", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0 || !d->tscene().is_layer(e)) return fail("no such layer");
+        return d->set_attribute(e, "export_type", "LayerExportType_" + a[1]) ? ok() : fail("cannot set it");
+    });
+    commands.add("tile_select_layer", "tile_select_layer <layer path | #elem>", "select a layer or an element in the scene tree", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_select_layer <layer path | #elem>");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0) return fail("no such layer or element");
+        select_elem(*ed, e);
+        return ok();
+    });
+    commands.add("tile_tree", "tile_tree [depth]", "log the scene tree from the root down to a depth (default 2) with each layer's flags and child count", [this, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d)) return fail("no tile open");
+        const int depth = a.empty() ? 2 : std::atoi(a[0].c_str());
+        std::string out;
+        std::function<void(int, int)> walk = [&](int e, int level) {
+            const auto kids = d->tscene().children(e);
+            char b[300];
+            std::snprintf(b, sizeof b, "%*s#%d %s '%s' %s%s%s %zu\n", level * 2, "", e, d->tscene().type(e).c_str(), d->tscene().name(e).c_str(), d->own_flag(e, "OIF_VISIBLE") ? "V" : "-", d->own_flag(e, "OIF_ACTIVE") ? "A" : "-",
+                          (d->tscene().is_layer(e) ? " export=" + d->export_type(e) : std::string()).c_str(), kids.size());
+            out += b;
+            if (level < depth)
+                for (int k : kids)
+                    if (d->tscene().is_layer(k)) walk(k, level + 1);
+        };
+        if (d->tscene().scene_graph() >= 0) walk(d->tscene().scene_graph(), 0);
+        return ok(out);
+    });
+    commands.add("assert_flag", "assert_flag <layer path | #elem> visible|active 0|1", "test: the element's own eye / cursor arrow", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 3) return fail("usage: assert_flag <layer path | #elem> visible|active 0|1");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0) return fail("no such layer or element");
+        const bool v = d->own_flag(e, a[1] == "visible" ? "OIF_VISIBLE" : "OIF_ACTIVE");
+        return v == (a[2] == "1") ? ok() : fail(a[0] + " " + a[1] + " is " + (v ? "1" : "0"));
+    });
+    commands.add("assert_shown", "assert_shown <layer path | #elem> 0|1", "test: the element is drawn (visible itself and in every layer above)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_shown <layer path | #elem> 0|1");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0) return fail("no such layer or element");
+        return d->shown(e) == (a[1] == "1") ? ok() : fail(a[0] + (d->shown(e) ? " is shown" : " is hidden"));
+    });
+    commands.add("assert_selectable", "assert_selectable <layer path | #elem> 0|1", "test: the element can be picked (active itself and in every layer above)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_selectable <layer path | #elem> 0|1");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (e < 0) return fail("no such layer or element");
+        return d->selectable(e) == (a[1] == "1") ? ok() : fail(a[0] + (d->selectable(e) ? " is selectable" : " is locked"));
+    });
+    commands.add("assert_layer", "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>", "test: facts of a layer (children = its direct children, instances and layers)", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: assert_layer <layer path> <children n | exists 0|1 | export Type>");
+        const int e = element_arg(*d, *this, *ed, a[0]);
+        if (a[1] == "exists") return (e >= 0) == (a.size() > 2 && a[2] == "1") ? ok() : fail(e >= 0 ? "the layer exists" : "no such layer");
+        if (e < 0) return fail("no such layer '" + a[0] + "'");
+        if (a[1] == "children" && a.size() > 2) {
+            const size_t n = d->tscene().children(e).size();
+            return n == size_t(std::atoi(a[2].c_str())) ? ok() : fail("children: " + std::to_string(n));
+        }
+        if (a[1] == "export" && a.size() > 2) return d->export_type(e) == a[2] ? ok() : fail("export type " + d->export_type(e));
+        return fail("usage: assert_layer <layer path> <children n | exists 0|1 | export Type>");
+    });
+    commands.add("assert_selection_names", "assert_selection_names <name>...", "test: the selected elements have exactly these names, in selection order", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d)) return fail("no tile open");
+        const std::vector<int> sel = selected(*ed);
+        std::string got;
+        for (int e : sel) got += (got.empty() ? "" : ",") + d->tscene().name(e);
+        std::string want;
+        for (const std::string& n : a) want += (want.empty() ? "" : ",") + n;
+        return got == want ? ok() : fail("selected: " + got);
     });
 
     // ---- tests

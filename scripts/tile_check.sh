@@ -29,6 +29,10 @@ run_script() { # run_script <script name> <run> <tile dir> -> $OUT/<name><run>/
 }
 
 run_script tile_gizmo 1 "$SRC"
+# layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB)
+OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
+run_script tile_layers 1 "$OSG"
+cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"
 for run in 1 2; do run_script tile_smoke $run "$SRC"; done
 for f in saved/tile.ted saved/height_map_0.png capture.png; do
     cmp -s "$OUT/tile_smoke1/$f" "$OUT/tile_smoke2/$f" && [ -s "$OUT/tile_smoke1/$f" ] && echo "$f identical between runs" || fail "$f differs between runs (or missing)"

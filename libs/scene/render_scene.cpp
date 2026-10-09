@@ -189,7 +189,7 @@ bool RenderScene::drawable(const Entity& e) const {
 
 bool RenderScene::pickable(const Entity& e) const {
     const Layer* l = layer(e.layer);
-    return e.visible && l && l->visible && !l->locked;
+    return e.visible && !e.locked && l && l->visible && !l->locked;
 }
 
 } // namespace wce

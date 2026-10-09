@@ -139,6 +139,21 @@ public:
     bool rename(int elem, const std::string& name);
     bool set_attribute(int elem, const std::string& attr, const std::string& value);
     bool remove_layer(int layer);
+    // Layer flags (docs/formats/tile_ted.md, from toggling them in TEd): the eye is OIF_VISIBLE, the cursor arrow OIF_ACTIVE (selectable). A hidden layer hides
+    // everything below it (not drawn, not picked, still exported); an inactive one cannot be picked or moved with the gizmo.
+    bool own_flag(int elem, const char* flag) const;           // this element's own flags attribute (true when it has none)
+    bool shown(int elem) const;                                // visible itself and in every ancestor
+    bool selectable(int elem) const;                           // active itself and in every ancestor
+    bool set_flag(int elem, const char* flag, bool on) { return set_flags({elem}, flag, on); }
+    bool set_flags(const std::vector<int>& elems, const char* flag, bool on);   // one undo entry
+    // Structure (each one undo entry; the selection afterwards is the moved / new / remaining items):
+    bool move_items(const std::vector<int>& elems, int layer, int before, std::string* error = nullptr);   // into a layer, in front of `before` (-1: the end)
+    int group_items(const std::vector<int>& elems, const std::string& name, std::string* error = nullptr);   // a new layer next to the first item holding all of them
+    bool remove_items(const std::vector<int>& elems);
+    int duplicate_layer(int layer, std::string* error = nullptr);
+    int find_layer(const std::string& path) const;             // "Walls/Standard_Walls": names from the scene graph down, -1 when there is none
+    std::string export_type(int layer) const;                  // LayerExportType_Normal | Escalation1..3
+
     // Local polygon point of a world position / world positions of the points.
     Vec3 to_local(int elem, const float3& world) const;
     std::vector<float3> polygon_world_points(int elem) const;
@@ -158,6 +173,7 @@ public:
 private:
     friend class TedMoveCommand;
     friend class TedSpliceCommand;
+    friend class TedFlagCommand;
     friend class BrushStepCommand;
 
     using TypeStyle = TileTypeStyle;
@@ -172,6 +188,7 @@ private:
         std::vector<WorldTransform> world;          // dense; world[0] is the identity
         std::vector<std::array<float, 3>> scale;
         std::vector<int32_t> key;                   // building key id (into keys) of BUILDING_INSTANCE elements, -1 otherwise
+        std::vector<uint8_t> state;                 // per element: bit 0 shown (OIF_VISIBLE here and in every ancestor), bit 1 selectable (OIF_ACTIVE likewise)
         std::vector<std::string> type_names, keys;
         std::vector<TypeStyle> style;               // per type id
         bool valid = false;

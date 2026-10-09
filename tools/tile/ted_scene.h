@@ -80,7 +80,9 @@ public:
 
     // Layer operations (text splices on the saved document, then a re-parse: element indices change, the result is returned).
     int add_layer(int parent_layer, const std::string& name);   // empty LayerInstance appended to the parent's children; returns its index
-    int move_to_layer(int elem, int layer);                     // moves the element (with its subtree) to the end of the layer's children; returns the new index
+    int move_to_layer(int elem, int layer);
+    int move_element(int elem, int layer, int before);
+    std::vector<int> move_elements(std::vector<int> elems, int layer, int before);   // several at once, keeping their order; returns their new indices          // the same, in front of the child `before` of the layer (-1: at the end); also reorders inside one layer                     // moves the element (with its subtree) to the end of the layer's children; returns the new index
     bool is_descendant(int elem, int ancestor) const;
 
     // Polygons (instances with a <points> child): AI hints, no-go / go zones, vegetation exclusion, siege AI, deployment ...

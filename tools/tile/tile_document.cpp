@@ -170,6 +170,41 @@ private:
     bool first_ = true;
 };
 
+// The eye / cursor of one or more layers or instances: the flags text is replaced, so undo restores the original bytes. Visibility changes what is drawn below the
+// element, so the document republishes everything (no dirty items).
+class TedFlagCommand : public Command {
+public:
+    TedFlagCommand(TileDocument& d, std::vector<int> elems, const char* flag, bool on) : doc_(d), elems_(std::move(elems)), flag_(flag), on_(on) {
+        for (int e : elems_) {
+            old_.push_back(d.tscene().doc().get(e, "flags"));
+            d.tscene().set_flag(e, flag, on);
+            new_.push_back(d.tscene().doc().get(e, "flags"));
+            d.tscene().set_attr(e, "flags", old_.back().value_or(""));   // the stack applies it
+        }
+    }
+    std::string name() const override {
+        const bool eye = flag_ == "OIF_VISIBLE";
+        std::string n = elems_.size() == 1 ? doc_.tscene().name(elems_[0]) : std::to_string(elems_.size()) + " items";
+        if (n.empty() && elems_.size() == 1) n = doc_.tscene().type(elems_[0]);
+        return std::string(eye ? (on_ ? "Show " : "Hide ") : (on_ ? "Unlock " : "Lock ")) + n;
+    }
+    void apply() override { put(new_); }
+    void revert() override { put(old_); }
+
+private:
+    void put(const std::vector<std::optional<std::string>>& v) {
+        for (size_t i = 0; i < elems_.size(); ++i)
+            if (v[i]) doc_.tscene().set_attr(elems_[i], "flags", *v[i]);
+        doc_.idx_.valid = false;
+        ++doc_.structure_version_;
+    }
+    TileDocument& doc_;
+    std::vector<int> elems_;
+    std::string flag_;
+    bool on_;
+    std::vector<std::optional<std::string>> old_, new_;
+};
+
 // One brush step; the steps of a stroke merge into one entry. The first step runs when pushed; undo and redo use the height field's own records
 // (HeightField::end_edit stores them, so a stroke is closed before it can be undone).
 class BrushStepCommand : public Command {
@@ -377,6 +412,8 @@ void TileDocument::build_index() {
         uint8_t has_pos, has_eul;
     };
     std::vector<Local> local(n);
+    std::vector<uint8_t> flagbits(n, 0);   // 1: has a flags attribute, 2: OIF_VISIBLE, 4: OIF_ACTIVE
+    ix.state.assign(n, 3);
     compute_pool().parallel_for(n, 2048, [&](size_t b, size_t e, int) {
         for (size_t i = b; i < e; ++i) {
             Local& l = local[i];
@@ -385,6 +422,10 @@ void TileDocument::build_index() {
             uint8_t kind = layer_type[t] ? kLayerBit : 0;
             if (plain_type[t] && !kind) continue;   // points, wrappers: nothing to parse (a point's position is a plain triple, not a vector)
             size_t k;
+            if (doc.find_attr(int(i), "flags", &k)) {
+                const std::string_view fv = doc.attr_raw(int(i), k);
+                flagbits[i] = uint8_t(1 | (fv.find("OIF_VISIBLE") != std::string_view::npos ? 2 : 0) | (fv.find("OIF_ACTIVE") != std::string_view::npos ? 4 : 0));
+            }
             if (doc.find_attr(int(i), "position", &k)) l.has_pos = parse_triple(doc.attr_raw(int(i), k), "vector", l.pos) ? 1 : 0;
             if (doc.find_attr(int(i), "orientation", &k)) l.has_eul = parse_triple(doc.attr_raw(int(i), k), "euler", l.eul) ? 1 : 0;
             if (!kind && l.has_pos) {
@@ -416,6 +457,10 @@ void TileDocument::build_index() {
     std::unordered_map<std::string, int32_t> key_ids;
     for (size_t i = 0; i < n; ++i) {
         const int p = els[i].parent;
+        {   // visibility and selectability are inherited from the ancestors
+            const uint8_t ps = p >= 0 ? ix.state[size_t(p)] : uint8_t(3), fb = flagbits[i];
+            ix.state[i] = fb ? uint8_t(ps & ((fb & 2 ? 1 : 0) | (fb & 4 ? 2 : 0))) : ps;
+        }
         uint32_t slot = p >= 0 ? ix.slot[size_t(p)] : 0;
         const Local& l = local[i];
         if (l.has_pos || l.has_eul) {
@@ -586,6 +631,7 @@ void TileDocument::rebuild_items(bool reindex) {
         if (!(ix.kind[i] & kInstanceBit)) continue;
         ++counts[ix.type[i]];
         instances_.push_back(int(i));
+        if (!(ix.state[i] & 1)) continue;   // hidden by its layer: no marker, no model entity
         if (ix.key[i] >= 0) {
             const BuildingModel* m = key_model_[size_t(ix.key[i])];
             if (m && m->ok) continue;   // drawn as a model
@@ -663,6 +709,7 @@ void TileDocument::update_terrain(RenderScene& scene, bool first) {
 }
 
 void TileDocument::add_item_entities(RenderScene& scene, LayerId layer, int elem) {
+    if (!shown(elem)) return;
     if (const BuildingModel* m = model_of(elem); m && m->ok) {
         const float4x4 w = world_matrix(elem);
         EntityId first = 0;
@@ -677,6 +724,9 @@ void TileDocument::add_item_entities(RenderScene& scene, LayerId layer, int elem
         }
         first_entity_[size_t(elem)] = first;
         entity_count_[size_t(elem)] = count;
+        if (!selectable(elem))
+            for (uint8_t k = 0; k < count; ++k)
+                if (Entity* en = scene.find(first + k)) en->locked = true;
     }
     if (display_.show_polygons && is_polygon(elem)) rebuild_polygon(scene, layer, elem);
 }
@@ -966,7 +1016,28 @@ void TileDocument::inspect(const SourceRef& item, Inspector& ins) {
         ins.text("key", "key", v);
     }
     ins.text("layer", "layer", sc.layer_path(e));
+    if (sc.doc().get(e, "flags")) {   // TEd's eye and cursor arrow of the Scene tab
+        bool vis = own_flag(e, "OIF_VISIBLE"), act = own_flag(e, "OIF_ACTIVE");
+        if (ins.edit_bool("flag_visible", "visible (eye)", vis)) set_flag(e, "OIF_VISIBLE", vis);
+        if (ins.edit_bool("flag_active", "selectable (cursor)", act)) set_flag(e, "OIF_ACTIVE", act);
+        if (!shown(e)) ins.text("hidden", "", "hidden by a layer above");
+        else if (!selectable(e)) ins.text("locked", "", "locked by a layer above");
+    }
+    if (sc.is_layer(e) && sc.type(e) != "SCENE_GRAPH" && sc.doc().get(e, "export_type")) {
+        static const std::vector<std::string> kinds = {"Normal", "Escalation1", "Escalation2", "Escalation3"};
+        const std::string cur = export_type(e);
+        int idx = 0;
+        for (size_t i = 0; i < kinds.size(); ++i)
+            if (kinds[i] == cur) idx = int(i);
+        if (ins.edit_choice("export_type", "export type", idx, kinds) && kinds[size_t(idx)] != cur) set_attribute(e, "export_type", "LayerExportType_" + kinds[size_t(idx)]);
+    }
     const uint64_t base = (uint64_t(id()) << 40) ^ (uint64_t(e) << 8) ^ 0x31;
+    if (is_instance(e)) {   // TEd's X / Y / Z fields: the world position in metres
+        const float3 w = world_position(e);
+        float v[3] = {w.x, w.y, w.z};
+        if (ins.edit_float3("position_world", "position (world, m)", v, 0.05f)) set_world_metres(e, {v[0], v[1], v[2]}, base + 2);
+        if (ins.gesture_ended()) history_.break_merge();
+    }
     if (auto p = sc.position(e)) {
         float v[3] = {float((*p)[0]), float((*p)[1]), float((*p)[2])};
         if (ins.edit_float3("position", "position (scene)", v, 0.5f)) set_local(e, Vec3{v[0], v[1], v[2]}, std::nullopt, base);
@@ -1001,7 +1072,7 @@ void TileDocument::inspect(const SourceRef& item, Inspector& ins) {
 bool TileDocument::item_transform(const SourceRef& item, float4x4& world) const {
     if (item.doc != id()) return false;
     const int e = elem_of(item.item);
-    if (!is_instance(e)) return false;
+    if (!is_instance(e) || !shown(e) || !selectable(e)) return false;   // a locked item has no gizmo
     const WorldTransform w = world_transform(tscene(), e);
     world = matrix_of(w, unit(), std::nullopt);   // the pivot: no scale
     return true;
@@ -1042,7 +1113,11 @@ void TileDocument::build_pick_grid() const {
     WCE_PROF("tile.pick_grid");
     PickGrid& g = grid_;
     g.valid = true;
-    const size_t m = instances_.size();
+    std::vector<int> pickable;   // shown and selectable instances
+    pickable.reserve(instances_.size());
+    for (int e : instances_)
+        if (shown(e) && selectable(e)) pickable.push_back(e);
+    const size_t m = pickable.size();
     g.elem.resize(m);
     g.x.resize(m);
     g.y.resize(m);
@@ -1053,7 +1128,7 @@ void TileDocument::build_pick_grid() const {
     g.stamp_counter = 0;
     float minx = 1e30f, maxx = -1e30f, minz = 1e30f, maxz = -1e30f;
     for (size_t i = 0; i < m; ++i) {
-        const int e = instances_[i];
+        const int e = pickable[i];
         const float3 p = world_position(e);
         g.elem[i] = e;
         g.x[i] = p.x;
@@ -1387,6 +1462,181 @@ bool TileDocument::set_attribute(int elem, const std::string& attr, const std::s
 bool TileDocument::remove_layer(int layer) {
     if (!tscene().is_layer(layer) || tscene().type(layer) == "SCENE_GRAPH") return false;
     return remove(layer);
+}
+
+// ---- layer flags and structure
+
+bool TileDocument::own_flag(int elem, const char* flag) const {
+    const auto f = tscene().doc().get(elem, "flags");
+    return !f || f->find(flag) != std::string::npos;
+}
+
+bool TileDocument::shown(int elem) const {
+    if (idx_.valid && elem >= 0 && size_t(elem) < idx_.state.size()) return (idx_.state[size_t(elem)] & 1) != 0;
+    for (int p = elem; p >= 0; p = tscene().doc().elements()[size_t(p)].parent)
+        if (!own_flag(p, "OIF_VISIBLE")) return false;
+    return true;
+}
+
+bool TileDocument::selectable(int elem) const {
+    if (idx_.valid && elem >= 0 && size_t(elem) < idx_.state.size()) return (idx_.state[size_t(elem)] & 2) != 0;
+    for (int p = elem; p >= 0; p = tscene().doc().elements()[size_t(p)].parent)
+        if (!own_flag(p, "OIF_ACTIVE")) return false;
+    return true;
+}
+
+bool TileDocument::set_flags(const std::vector<int>& elems, const char* flag, bool on) {
+    std::vector<int> todo;
+    for (int e : elems)
+        if (e >= 0 && e < int(tscene().doc().elements().size()) && own_flag(e, flag) != on) todo.push_back(e);
+    if (todo.empty()) return false;
+    history_.push(std::make_unique<TedFlagCommand>(*this, std::move(todo), flag, on));
+    return true;
+}
+
+std::string TileDocument::export_type(int layer) const {
+    std::string t = tscene().doc().get(layer, "export_type").value_or("LayerExportType_Normal");
+    const std::string prefix = "LayerExportType_";
+    return t.compare(0, prefix.size(), prefix) == 0 ? t.substr(prefix.size()) : t;
+}
+
+int TileDocument::find_layer(const std::string& path) const {
+    const TedScene& sc = tscene();
+    int cur = sc.scene_graph();
+    if (cur < 0) return -1;
+    size_t at = 0;
+    while (at <= path.size()) {
+        size_t e = path.find('/', at);
+        if (e == std::string::npos) e = path.size();
+        const std::string part = path.substr(at, e - at);
+        at = e + 1;
+        if (part.empty() || part == "root") continue;
+        int next = -1;
+        for (int c : sc.children(cur))
+            if (sc.is_layer(c) && sc.name(c) == part) { next = c; break; }
+        if (next < 0) return -1;
+        cur = next;
+    }
+    return cur;
+}
+
+// The elements of `elems` that are not below another element of it, in document order.
+static std::vector<int> top_level(const TedScene& sc, std::vector<int> elems) {
+    std::sort(elems.begin(), elems.end());
+    elems.erase(std::unique(elems.begin(), elems.end()), elems.end());
+    std::vector<int> top;
+    for (int e : elems) {
+        bool nested = false;
+        for (int p = sc.doc().elements()[size_t(e)].parent; p >= 0 && !nested; p = sc.doc().elements()[size_t(p)].parent) nested = std::binary_search(elems.begin(), elems.end(), p);
+        if (!nested) top.push_back(e);
+    }
+    return top;
+}
+
+bool TileDocument::move_items(const std::vector<int>& elems_in, int layer, int before, std::string* error) {
+    TedScene& sc = tscene();
+    if (elems_in.empty() || !sc.is_layer(layer)) { if (error) *error = "nothing to move, or the target is not a layer"; return false; }
+    for (int e : elems_in)
+        if (e < 0 || e >= int(sc.doc().elements().size()) || sc.type(e) == "SCENE_GRAPH") { if (error) *error = "cannot move this element"; return false; }
+    const std::vector<int> top = top_level(sc, elems_in);
+    std::vector<WorldTransform> worlds;
+    std::vector<uint64_t> sel_before;
+    for (int e : top) {
+        worlds.push_back(world_transform(sc, e));
+        sel_before.push_back(item_of(e));
+    }
+    const size_t mark = sc.begin_edit();
+    std::vector<int> moved;
+    try {
+        moved = sc.move_elements(top, layer, before);
+    } catch (const std::exception& ex) {
+        if (error) *error = ex.what();
+        sc.unapply(sc.end_edit(mark));
+        return false;
+    }
+    if (moved.empty()) { sc.end_edit(mark); return false; }
+    // every moved element stays where it was in the world (its parents changed)
+    std::vector<uint64_t> sel_after;
+    for (size_t i = 0; i < moved.size(); ++i) {
+        if (sc.position(moved[i])) set_world_position(sc, moved[i], worlds[i].position);
+        if (sc.euler(moved[i])) set_world_rotation(sc, moved[i], worlds[i].rotation);
+        sel_after.push_back(item_of(moved[i]));
+    }
+    push_splice(moved.size() == 1 ? "Move to layer" : "Move " + std::to_string(moved.size()) + " items to layer", mark, std::move(sel_before), std::move(sel_after));
+    return true;
+}
+
+int TileDocument::group_items(const std::vector<int>& elems_in, const std::string& name, std::string* error) {
+    TedScene& sc = tscene();
+    if (elems_in.empty()) { if (error) *error = "nothing selected"; return -1; }
+    for (int e : elems_in)
+        if (e < 0 || e >= int(sc.doc().elements().size()) || sc.type(e) == "SCENE_GRAPH") { if (error) *error = "cannot group this element"; return -1; }
+    const std::vector<int> top = top_level(sc, elems_in);
+    int parent = -1;
+    for (int p = sc.doc().elements()[size_t(top[0])].parent; p >= 0; p = sc.doc().elements()[size_t(p)].parent)
+        if (sc.is_layer(p)) { parent = p; break; }
+    if (parent < 0) { if (error) *error = "the selection is not inside a layer"; return -1; }
+    for (int e : top)
+        if (e == parent || sc.is_descendant(parent, e)) { if (error) *error = "cannot group a layer into a layer inside itself"; return -1; }
+    std::vector<WorldTransform> worlds;
+    std::vector<uint64_t> sel_before;
+    for (int e : top) {
+        worlds.push_back(world_transform(sc, e));
+        sel_before.push_back(item_of(e));
+    }
+    const size_t mark = sc.begin_edit();
+    std::vector<int> moved;
+    try {
+        const int layer = sc.add_layer(parent, name.empty() ? "New layer" : name);   // appended to the parent: the elements after it shift by its size
+        const int shift = sc.doc().subtree_size(layer);
+        std::vector<int> shifted;
+        for (int e : top) shifted.push_back(e >= layer ? e + shift : e);
+        moved = sc.move_elements(shifted, layer, -1);
+    } catch (const std::exception& ex) {
+        if (error) *error = ex.what();
+        sc.unapply(sc.end_edit(mark));
+        return -1;
+    }
+    for (size_t i = 0; i < moved.size(); ++i) {
+        if (sc.position(moved[i])) set_world_position(sc, moved[i], worlds[i].position);
+        if (sc.euler(moved[i])) set_world_rotation(sc, moved[i], worlds[i].rotation);
+    }
+    // moved[0] sits in <children> of the new layer
+    const int new_layer = sc.doc().elements()[size_t(sc.doc().elements()[size_t(moved[0])].parent)].parent;
+    push_splice("Group into layer", mark, std::move(sel_before), {item_of(new_layer)});
+    return new_layer;
+}
+
+bool TileDocument::remove_items(const std::vector<int>& elems_in) {
+    TedScene& sc = tscene();
+    std::vector<int> elems;
+    for (int e : elems_in)
+        if (e >= 0 && e < int(sc.doc().elements().size()) && sc.type(e) != "SCENE_GRAPH") elems.push_back(e);
+    std::sort(elems.begin(), elems.end());
+    elems.erase(std::unique(elems.begin(), elems.end()), elems.end());
+    std::vector<int> top;
+    for (int e : elems) {
+        bool nested = false;
+        for (int p = sc.doc().elements()[size_t(e)].parent; p >= 0 && !nested; p = sc.doc().elements()[size_t(p)].parent) nested = std::binary_search(elems.begin(), elems.end(), p);
+        if (!nested) top.push_back(e);
+    }
+    if (top.empty()) return false;
+    std::vector<uint64_t> sel_before;
+    for (int e : top) sel_before.push_back(item_of(e));
+    const size_t mark = sc.begin_edit();
+    for (size_t i = top.size(); i-- > 0;) sc.remove(top[i]);   // from the last one: the indices of the others stay
+    push_splice(top.size() == 1 ? "Delete " + sc.type(top[0]) : "Delete " + std::to_string(top.size()) + " items", mark, std::move(sel_before), {});
+    return true;
+}
+
+int TileDocument::duplicate_layer(int layer, std::string* error) {
+    if (!tscene().is_layer(layer) || tscene().type(layer) == "SCENE_GRAPH") { if (error) *error = "not a layer"; return -1; }
+    const size_t mark = tscene().begin_edit();
+    const int copy = tscene().duplicate(layer);
+    if (copy < 0) { if (error) *error = "cannot duplicate this layer"; return -1; }
+    tscene().set_attr(copy, "name", tscene().name(layer) + " copy");
+    push_splice("Duplicate layer", mark, {item_of(layer)}, {item_of(copy)});
+    return copy;
 }
 
 // ---- height strokes

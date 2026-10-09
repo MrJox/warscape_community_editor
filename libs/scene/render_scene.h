@@ -101,6 +101,7 @@ struct Entity {
     float4x4 world;
     SourceRef source;
     bool visible = true;
+    bool locked = false;             // not pickable (an inactive layer's instances)
     Payload payload;
 
     Kind kind() const;

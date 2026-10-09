@@ -1,5 +1,7 @@
 #include "tile/ted_scene.h"
 
+#include <algorithm>
+
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -133,18 +135,33 @@ void TedScene::translate(int elem, const Vec3& delta) {
     set_position(elem, {(*p)[0] + delta[0], (*p)[1] + delta[1], (*p)[2] + delta[2]});
 }
 
+// TEd writes the flags as " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE" (a leading space, always in that order; " " when none is set; checked by toggling the eye and the
+// cursor of a layer in TEd and diffing the saved .ted, docs/formats/tile_ted.md), so that a flag toggled here changes the same bytes TEd changes.
 void TedScene::set_flag(int elem, const char* flag, bool on) {
-    std::string f = doc_.get(elem, "flags").value_or("");
-    bool has = f.find(flag) != std::string::npos;
-    if (has == on) return;
-    if (on) f += (f.empty() || f.back() == ' ' ? "" : "|") + std::string(flag);
-    else {
-        size_t p = f.find(flag);
-        size_t len = std::strlen(flag);
-        if (p > 0 && f[p - 1] == '|') { --p; ++len; } else if (p + len < f.size() && f[p + len] == '|') ++len;
-        f.erase(p, len);
+    const std::string f = doc_.get(elem, "flags").value_or("");
+    std::vector<std::string> tokens;
+    for (size_t at = 0; at <= f.size();) {
+        size_t e = f.find('|', at);
+        if (e == std::string::npos) e = f.size();
+        size_t b = at, en = e;
+        while (b < en && f[b] == ' ') ++b;
+        while (en > b && f[en - 1] == ' ') --en;
+        if (en > b) tokens.push_back(f.substr(b, en - b));
+        at = e + 1;
     }
-    doc_.set(elem, "flags", f);
+    const auto it = std::find(tokens.begin(), tokens.end(), flag);
+    const bool has = it != tokens.end();
+    if (has == on) return;
+    if (on) tokens.push_back(flag);
+    else tokens.erase(it);
+    static const char* kOrder[] = {"OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"};
+    std::stable_sort(tokens.begin(), tokens.end(), [](const std::string& a, const std::string& b) {
+        auto rank = [](const std::string& x) { for (int i = 0; i < 3; ++i) if (x == kOrder[i]) return i; return 3; };
+        return rank(a) < rank(b);
+    });
+    std::string out = " ";
+    for (size_t i = 0; i < tokens.size(); ++i) out += (i ? "|" : "") + tokens[i];
+    doc_.set(elem, "flags", out);
 }
 
 int TedScene::duplicate(int elem) { return doc_.duplicate_element_inplace(elem); }
@@ -204,10 +221,14 @@ int TedScene::add_layer(int parent_layer, const std::string& name) {
     return doc_.elements()[size_t(w2)].children.back();
 }
 
-int TedScene::move_to_layer(int elem, int layer) {
+int TedScene::move_to_layer(int elem, int layer) { return move_element(elem, layer, -1); }
+
+// Moves `elem` (with its subtree) into the children of `layer`, in front of the child `before` (-1: at the end). Returns the moved element's new index.
+int TedScene::move_element(int elem, int layer, int before) {
     require_element(elem, "element");
     require_element(layer, "layer");
     if (elem == layer || is_descendant(layer, elem)) throw std::runtime_error("cannot move a layer into itself");
+    if (before >= 0 && (before == elem || is_descendant(before, elem))) throw std::runtime_error("cannot move an element in front of itself");
     doc_.bake_pending();
     const std::string& t = doc_.original_text();
     const auto& e = doc_.elements()[size_t(elem)];
@@ -219,10 +240,28 @@ int TedScene::move_to_layer(int elem, int layer) {
         if (doc_.elements()[size_t(c)].name == "children") wrapper = c;
     if (wrapper < 0) throw std::runtime_error("target layer has no children element");
     const auto& w = doc_.elements()[size_t(wrapper)];
-    size_t close = t.rfind("</children>", w.end_off);
-    size_t at = line_start(t, close);
-    // re-indent the piece to the target depth
-    std::string old_ind = indent_of(t, e.start_off), new_ind = indent_of(t, close) + "    ";
+    // where it goes: in front of `before` (the start of its line), or in front of </children>; k = its position among the target's children afterwards
+    size_t at, ref_off;
+    int k = 0;
+    {
+        const auto& kids = w.children;
+        const int pos_elem = int(std::find(kids.begin(), kids.end(), elem) - kids.begin());
+        if (before >= 0) {
+            const int pos_before = int(std::find(kids.begin(), kids.end(), before) - kids.begin());
+            if (pos_before >= int(kids.size())) throw std::runtime_error("the element to put it in front of is not in that layer");
+            k = pos_before - (pos_elem < pos_before ? 1 : 0);
+            at = line_start(t, doc_.elements()[size_t(before)].start_off);
+            ref_off = doc_.elements()[size_t(before)].start_off;
+        } else {
+            k = int(kids.size()) - (pos_elem < int(kids.size()) ? 1 : 0);
+            const size_t close = t.rfind("</children>", w.end_off);
+            at = line_start(t, close);
+            ref_off = close;
+        }
+    }
+    if (at == cut_a || at == cut_b) return elem;   // already there
+    const std::string old_ind = indent_of(t, e.start_off);
+    const std::string new_ind = before >= 0 ? indent_of(t, ref_off) : indent_of(t, ref_off) + "    ";
     std::string moved;
     {
         size_t pos = 0;
@@ -238,12 +277,94 @@ int TedScene::move_to_layer(int elem, int layer) {
     // apply the later edit first so the earlier offsets stay valid
     if (cut_a < at) { doc_.splice(at, 0, moved); doc_.splice(cut_a, cut_b - cut_a, ""); }
     else { doc_.splice(cut_a, cut_b - cut_a, ""); doc_.splice(at, 0, moved); }
-    // the moved element is the last child of the target layer's children; the layer's own index shifts down when the cut was before it
+    // the layer's own index shifts down when the cut was before it
     int new_layer = layer - (elem < layer ? sub : 0);
     int w2 = -1;
     for (int c : doc_.elements()[size_t(new_layer)].children)
         if (doc_.elements()[size_t(c)].name == "children") w2 = c;
-    return doc_.elements()[size_t(w2)].children.back();
+    return doc_.elements()[size_t(w2)].children[size_t(k)];
+}
+
+// Moves several elements (with their subtrees) into `layer`, in front of the child `before` (-1: at the end), keeping their document order. All the cuts and the one
+// insertion are computed against the same text and applied from the highest offset down, so none of them disturbs the offsets of the others. Returns the new
+// indices of the moved elements in that order (elements below one that is also moved go with it and are not listed).
+std::vector<int> TedScene::move_elements(std::vector<int> elems, int layer, int before) {
+    require_element(layer, "layer");
+    std::sort(elems.begin(), elems.end());
+    elems.erase(std::unique(elems.begin(), elems.end()), elems.end());
+    for (int e : elems) {
+        require_element(e, "element");
+        if (e == layer || is_descendant(layer, e)) throw std::runtime_error("cannot move a layer into itself");
+    }
+    // an element whose ancestor is moved too goes with it
+    std::vector<int> top;
+    for (int e : elems) {
+        bool nested = false;
+        for (int p = doc_.elements()[size_t(e)].parent; p >= 0 && !nested; p = doc_.elements()[size_t(p)].parent) nested = std::binary_search(elems.begin(), elems.end(), p);
+        if (!nested) top.push_back(e);
+    }
+    elems = top;
+    if (elems.empty()) return {};
+    for (int e : elems)
+        if (before >= 0 && (before == e || is_descendant(before, e))) throw std::runtime_error("cannot move an element in front of itself");
+    doc_.bake_pending();
+    const std::string& t = doc_.original_text();
+    int wrapper = -1;
+    for (int c : doc_.elements()[size_t(layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") wrapper = c;
+    if (wrapper < 0) throw std::runtime_error("target layer has no children element");
+    const auto& w = doc_.elements()[size_t(wrapper)];
+    size_t at, ref_off;
+    if (before >= 0) {
+        if (std::find(w.children.begin(), w.children.end(), before) == w.children.end()) throw std::runtime_error("the element to put it in front of is not in that layer");
+        ref_off = doc_.elements()[size_t(before)].start_off;
+        at = line_start(t, ref_off);
+    } else {
+        ref_off = t.rfind("</children>", w.end_off);
+        at = line_start(t, ref_off);
+    }
+    const std::string new_ind = before >= 0 ? indent_of(t, ref_off) : indent_of(t, ref_off) + "    ";
+    struct Edit { size_t pos, len; std::string text; };
+    std::vector<Edit> edits;
+    std::string inserted;
+    int cut_in_target = 0, cut_before_target = 0;
+    for (int e : elems) {
+        const auto& el = doc_.elements()[size_t(e)];
+        const size_t a = line_start(t, el.start_off), b = line_end(t, el.end_off - 1);
+        std::string piece = t.substr(a, b - a);
+        const std::string old_ind = indent_of(t, el.start_off);
+        size_t pos = 0;
+        while (pos < piece.size()) {
+            size_t eol = piece.find('\n', pos);
+            size_t stop = eol == std::string::npos ? piece.size() : eol + 1;
+            std::string line = piece.substr(pos, stop - pos);
+            if (line.compare(0, old_ind.size(), old_ind) == 0) line = new_ind + line.substr(old_ind.size());
+            inserted += line;
+            pos = stop;
+        }
+        if (at > a && at < b) throw std::runtime_error("the target position is inside a moved element");
+        edits.push_back({a, b - a, {}});
+        if (std::find(w.children.begin(), w.children.end(), e) != w.children.end()) ++cut_in_target;
+        if (e < layer) cut_before_target += doc_.subtree_size(e);
+    }
+    // position of the moved block among the target's children afterwards
+    int k = 0;
+    for (size_t i = 0; i < w.children.size(); ++i) {
+        const int c = w.children[i];
+        if (before >= 0 && c == before) break;
+        if (!std::binary_search(elems.begin(), elems.end(), c)) ++k;
+    }
+    (void)cut_in_target;
+    edits.push_back({at, 0, inserted});
+    std::stable_sort(edits.begin(), edits.end(), [](const Edit& x, const Edit& y) { return x.pos > y.pos; });
+    for (const Edit& ed : edits) doc_.splice(ed.pos, ed.len, ed.text);
+    const int new_layer = layer - cut_before_target;
+    int w2 = -1;
+    for (int c : doc_.elements()[size_t(new_layer)].children)
+        if (doc_.elements()[size_t(c)].name == "children") w2 = c;
+    std::vector<int> out;
+    for (size_t i = 0; i < elems.size(); ++i) out.push_back(doc_.elements()[size_t(w2)].children[size_t(k) + i]);
+    return out;
 }
 
 std::vector<int> TedScene::polygon_points(int elem) const {

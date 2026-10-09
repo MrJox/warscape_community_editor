@@ -1,0 +1,97 @@
+# Layers (Phase 1 of docs/plans/tile_ted_parity.md): the eye (OIF_VISIBLE) and cursor arrow (OIF_ACTIVE) of a layer hide and lock everything below it, and the structure
+# commands (new, rename, move, group, duplicate, delete, export type), each with undo and redo, on a kit tile. %TILE% is osgiliath_test (layers Walls, Fort_Logic, rivers, ...).
+tile "%TILE%"
+frames 3
+tile_tree 1
+assert_layer rivers exists 1
+# the file itself hides rivers (flags " OIF_ACTIVE") and shows Buildings (" OIF_VISIBLE|OIF_ACTIVE"), as TEd's Scene tab does
+assert_flag rivers visible 0
+assert_flag rivers active 1
+assert_shown rivers 0
+assert_flag Buildings visible 1
+assert_shown Buildings 1
+assert_selectable Buildings 1
+assert_modified 0
+
+# hide: the layer and its children are not drawn; one undo entry
+tile_flag Buildings visible off
+assert_flag Buildings visible 0
+assert_shown Buildings 0
+assert_history 1 1
+assert_modified 1
+frames 2
+undo
+assert_flag Buildings visible 1
+assert_shown Buildings 1
+assert_modified 0
+redo
+assert_shown Buildings 0
+undo
+assert_modified 0
+tile_flag rivers visible on
+assert_shown rivers 1
+undo
+assert_shown rivers 0
+
+# lock: not selectable (and not picked); undo / redo
+tile_flag Buildings active off
+assert_selectable Buildings 0
+assert_shown Buildings 1
+frames 2
+undo
+assert_selectable Buildings 1
+
+# structure: a new layer, rename, a second one inside it, moving a layer in front of another, grouping the selection, duplicate, export type, delete
+tile_new_layer probe
+assert_layer probe exists 1
+assert_layer probe children 0
+tile_rename probe probe_renamed
+assert_layer probe exists 0
+assert_layer probe_renamed exists 1
+tile_new_layer inner probe_renamed
+assert_layer probe_renamed/inner exists 1
+assert_layer probe_renamed children 1
+tile_move_to rivers probe_renamed
+assert_layer probe_renamed children 2
+assert_layer rivers exists 0
+assert_layer probe_renamed/rivers exists 1
+tile_export_type probe_renamed Escalation2
+assert_layer probe_renamed export Escalation2
+tile_duplicate_layer probe_renamed
+assert_layer "probe_renamed copy" exists 1
+tile_delete "probe_renamed copy"
+assert_layer "probe_renamed copy" exists 0
+tile_delete probe_renamed
+assert_layer probe_renamed exists 0
+# moving an instance keeps it where it is in the world; grouping two selected buildings; reorder in front of a sibling
+tile_select 11
+assert_world 476.5 1.967 379 0.01
+tile_move_to selected Buildings
+frames 2
+assert_world 476.5 1.967 379 0.01
+assert_layer Buildings children 184
+undo
+frames 2
+tile_select 11
+assert_world 476.5 1.967 379 0.01
+assert_layer Buildings children 183
+tile_select 11
+tile_select 12 add
+tile_group two_buildings
+assert_layer Walls/Standard_Walls/two_buildings children 2
+frames 2
+assert_selected 1
+assert_selection_names two_buildings
+undo
+frames 2
+assert_layer Walls/Standard_Walls/two_buildings exists 0
+tile_select 11
+assert_world 476.5 1.967 379 0.01
+tile_move_to Buildings root before #7
+assert_layer root children 13
+undo 99
+assert_modified 0
+assert_layer rivers exists 1
+# every edit undone: the saved tile.ted is the original, byte for byte
+save_to "%OUT%/layers_restored"
+quit
