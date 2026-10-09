@@ -79,4 +79,24 @@ ProcessResult run_process(const std::wstring& exe, const std::vector<std::wstrin
     return r;
 }
 
+bool start_detached(const std::wstring& exe, const std::vector<std::wstring>& args) {
+    std::wstring cmd;
+    append_quoted(cmd, exe);
+    for (auto& a : args) {
+        cmd += L' ';
+        append_quoted(cmd, a);
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    // The working directory is the program's own folder: rpfm_server finds its data next to itself.
+    std::wstring dir = exe.substr(0, exe.find_last_of(L"\\/"));
+    BOOL ok = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr,
+                             dir.empty() || dir == exe ? nullptr : dir.c_str(), &si, &pi);
+    if (!ok) return false;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return true;
+}
+
 } // namespace wce

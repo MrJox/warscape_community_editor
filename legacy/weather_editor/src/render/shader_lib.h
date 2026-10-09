@@ -15,7 +15,7 @@
 
 namespace wce {
 
-class Vfs;
+class IVfs;
 
 enum class Stage { VS, PS, GS, CS, HS, DS };
 
@@ -62,7 +62,7 @@ private:
 
 class ShaderLibrary {
 public:
-    ShaderLibrary(ID3D11Device* dev, Vfs& vfs, ConstantBuffers& cbs) : dev_(dev), vfs_(vfs), cbs_(cbs) {}
+    ShaderLibrary(ID3D11Device* dev, IVfs& vfs, ConstantBuffers& cbs) : dev_(dev), vfs_(vfs), cbs_(cbs) {}
     // name: fxc file name without folder/extension, e.g. "dx11_sm_3_0_skydome.hlsl_ps_ps30_skygen". Throws.
     const GameShader& get(const std::string& name);
     // Input layout for a vertex shader (cached per shader + layout id).
@@ -70,7 +70,7 @@ public:
 
 private:
     ID3D11Device* dev_;
-    Vfs& vfs_;
+    IVfs& vfs_;
     ConstantBuffers& cbs_;
     std::map<std::string, std::unique_ptr<GameShader>> cache_;
     std::map<std::string, Microsoft::WRL::ComPtr<ID3D11InputLayout>> layouts_;

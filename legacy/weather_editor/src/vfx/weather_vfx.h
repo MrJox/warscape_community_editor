@@ -12,7 +12,7 @@
 
 namespace wce {
 
-class Vfs;
+class IVfs;
 
 struct ActiveEmitter {
     std::string library, instance, name; // library file, reference inst_name, emitter id
@@ -50,6 +50,6 @@ using VfxReader = std::function<std::vector<uint8_t>(const std::string& path)>;
 
 // Reads weather/weather_definitions.xml (empty name = "none"); no vfx1/vfx2 gives an effect without emitters.
 WeatherVfx load_weather_vfx(const VfxReader& read, const std::string& definition_name);
-WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name);
+WeatherVfx load_weather_vfx(IVfs& vfs, const std::string& definition_name);
 
 } // namespace wce

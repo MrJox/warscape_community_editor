@@ -17,7 +17,7 @@
 
 namespace wce {
 
-class Vfs;
+class IVfs;
 class TestScene;
 
 struct Camera {
@@ -61,7 +61,7 @@ public:
     }
     float luma_white() const { return luma_white_; }
 
-    Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs);
+    Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs);
     ~Renderer();
 
     void render(const TestScene* scene, const Camera& cam, const EnvironmentParams& env, int width, int height, float time_s);
@@ -108,7 +108,7 @@ private:
 
     ID3D11Device* dev_;
     ID3D11DeviceContext* ctx_;
-    Vfs& vfs_;
+    IVfs& vfs_;
     ConstantBuffers cbs_;
     std::unique_ptr<ShaderLibrary> lib_;
     std::unique_ptr<ParticleSystem> particles_;

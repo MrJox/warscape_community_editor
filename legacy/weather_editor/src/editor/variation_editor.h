@@ -19,6 +19,6 @@ struct VariationEditState {
 };
 
 // Draws the editor; returns true when the database changed this frame.
-bool draw_variation_editor(VariationDb& db, VariationEditState& st, const Vfs* vfs);
+bool draw_variation_editor(VariationDb& db, VariationEditState& st, const IVfs* vfs);
 
 } // namespace wce

@@ -1,14 +1,13 @@
 #include "vfs/vfs.h"
 
 #include "foundation/process.h"
+#include "foundation/settings.h"
 #include "foundation/text_encoding.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
-#include <regex>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -17,39 +16,42 @@ namespace wce {
 
 namespace {
 
-fs::path env_path(const char* name, const fs::path& fallback) {
-    if (const char* v = std::getenv(name); v && *v) return fs::path(widen(v));
-    return fallback;
-}
-
-std::vector<std::string> rpfm_lines(const std::string& out) {
-    // rpfm_cli prints log lines ("hh:mm:ss [INFO] ...") before the payload.
-    static const std::regex log(R"(^\d\d:\d\d:\d\d .*\[)");
-    std::vector<std::string> lines;
-    std::istringstream is(out);
-    std::string l;
-    while (std::getline(is, l)) {
-        if (!l.empty() && l.back() == '\r') l.pop_back();
-        if (l.empty() || std::regex_search(l, log)) continue;
-        lines.push_back(l);
-    }
-    return lines;
+std::optional<std::string> env(const char* name) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return std::nullopt;
+    return std::string(v);
 }
 
 } // namespace
 
 Vfs::Config Vfs::default_config() {
     Config c;
-    c.game_dir = env_path("ATTILA_DIR", LR"(D:\SteamLibrary\steamapps\common\Total War Attila)");
-    c.rpfm_cli = env_path("RPFM_CLI", LR"(C:\Users\Khaiali\Downloads\rpfm-v4.3.14-x86_64-pc-windows-msvc\rpfm_cli.exe)");
-    fs::path local = env_path("LOCALAPPDATA", fs::temp_directory_path());
-    c.cache_dir = env_path("AWE_CACHE", local / "awe");
+    Settings s = Settings::load();
+    c.cache_dir = s.cache_dir();
+    if (auto g = s.get("game_dir", "WCE_GAME")) c.game_dir = fs::path(widen(*g));
+    else if (auto a = env("ATTILA_DIR")) c.game_dir = fs::path(widen(*a));
+
+    fs::path rpfm_dir;
+    if (auto d = s.get("rpfm_dir", "WCE_RPFM_DIR")) rpfm_dir = fs::path(widen(*d));
+    if (auto e = s.get("rpfm_cli", "RPFM_CLI")) c.rpfm_cli = fs::path(widen(*e));
+    else if (!rpfm_dir.empty()) c.rpfm_cli = rpfm_dir / "rpfm_cli.exe";
+
+    if (auto e = s.get("rpfm_server_exe", "WCE_RPFM_SERVER")) c.server.exe = fs::path(widen(*e));
+    else if (!rpfm_dir.empty()) c.server.exe = rpfm_dir / "rpfm_server.exe";
+    if (auto p = s.get("rpfm_server_port", "WCE_RPFM_PORT")) c.server.port = std::atoi(p->c_str());
+    if (auto a = s.get("rpfm_server_autostart", "WCE_RPFM_AUTOSTART")) c.server.autostart = *a != "0" && *a != "false" && *a != "off";
+    if (auto b = s.get("rpfm_backend", "WCE_RPFM_BACKEND")) {
+        if (*b == "server") c.backend = BackendMode::Server;
+        else if (*b == "cli") c.backend = BackendMode::Cli;
+    }
+    c.server.game_key = c.profile.key;
     return c;
 }
 
 Vfs::Vfs(Config cfg) : cfg_(std::move(cfg)) {}
+Vfs::Vfs(Config cfg, std::unique_ptr<PackBackend> backend) : cfg_(std::move(cfg)), backend_(std::move(backend)) {}
 
-std::string Vfs::normalize(std::string p) {
+std::string IVfs::normalize(std::string p) {
     for (char& c : p) {
         if (c == '\\') c = '/';
         else c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -57,56 +59,73 @@ std::string Vfs::normalize(std::string p) {
     return p;
 }
 
+PackBackend& Vfs::backend() {
+    if (backend_) return *backend_;
+    const std::string& game = cfg_.profile.key;
+    switch (cfg_.backend) {
+    case BackendMode::Server: backend_ = make_rpfm_server_backend(cfg_.server); break;
+    case BackendMode::Cli: backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, game); break;
+    case BackendMode::Auto:
+        try {
+            backend_ = make_rpfm_server_backend(cfg_.server);
+        } catch (const std::exception& server_error) {
+            try {
+                backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, game);
+            } catch (const std::exception& cli_error) {
+                throw std::runtime_error(std::string("no way to read packs: ") + server_error.what() + "; " + cli_error.what());
+            }
+            backend_note_ = std::string("rpfm_server unavailable (") + server_error.what() + "); using rpfm_cli";
+        }
+        break;
+    }
+    return *backend_;
+}
+
 void Vfs::mount() {
     packs_.clear();
     missing_mods_.clear();
     files_.clear();
     all_owners_.clear();
-    original_case_.clear();
-    const fs::path data = cfg_.game_dir / "data";
+    pack_case_.clear();
+    if (cfg_.game_dir.empty() || !fs::exists(cfg_.game_dir))
+        throw std::runtime_error("the game folder is not set or does not exist (game_dir in wce.ini, or the environment variable WCE_GAME)");
 
-    auto add = [&](const std::string& name, bool is_mod) {
-        fs::path p = data / widen(name);
-        if (!fs::exists(p)) {
-            if (is_mod) missing_mods_.push_back(name);
-            return;
-        }
-        for (auto& q : packs_)
-            if (normalize(q.name) == normalize(name)) return;
+    for (const fs::path& folder : cfg_.overlay_folders) {
         Pack pk;
-        pk.name = name;
-        pk.path = p;
-        pk.is_mod = is_mod;
-        pk.size = fs::file_size(p);
-        pk.mtime = fs::last_write_time(p).time_since_epoch().count();
+        pk.name = narrow(folder.filename().wstring());
+        pk.path = folder;
+        pk.loose = true;
         packs_.push_back(std::move(pk));
-    };
-
-    if (cfg_.use_mods) {
-        std::ifstream um(cfg_.game_dir / "used_mods.txt");
-        static const std::regex re(R"re(^\s*mod\s+"([^"]+)"\s*;)re");
-        std::string l;
-        std::smatch m;
-        while (std::getline(um, l))
-            if (std::regex_search(l, m, re)) add(m[1], true);
     }
-    for (auto& n : cfg_.extra_vanilla) add(n, false);
-    {
-        std::ifstream mf(data / "manifest.txt");
-        std::string l;
-        while (std::getline(mf, l)) {
-            std::string name = l.substr(0, l.find('\t'));
-            if (name.size() > 5 && normalize(name).ends_with(".pack") && name.find('/') == std::string::npos) add(name, false);
-        }
+    GameProfile::PackOrder order = cfg_.profile.pack_order(cfg_.game_dir, cfg_.use_mods);
+    missing_mods_ = std::move(order.missing_mods);
+    for (const GameProfile::PackRef& r : order.packs) {
+        Pack pk;
+        pk.name = r.name;
+        pk.path = r.path;
+        pk.is_mod = r.is_mod;
+        pk.size = fs::file_size(r.path);
+        pk.mtime = fs::last_write_time(r.path).time_since_epoch().count();
+        packs_.push_back(std::move(pk));
     }
 
+    pack_case_.resize(packs_.size());
     for (int i = 0; i < int(packs_.size()); ++i) {
-        for (auto& f : index_pack(packs_[i])) {
+        for (auto& f : packs_[i].loose ? index_folder(packs_[i]) : index_pack(packs_[i])) {
             std::string n = normalize(f);
+            if (n != f) pack_case_[i].emplace(n, f);
             all_owners_[n].push_back(i);
-            if (files_.emplace(n, i).second) original_case_[n] = f;
+            files_.emplace(n, i);
         }
     }
+}
+
+std::vector<std::string> Vfs::index_folder(const Pack& p) const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(p.path, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) out.push_back(narrow(it->path().lexically_relative(p.path).generic_wstring()));
+    return out;
 }
 
 std::vector<std::string> Vfs::index_pack(const Pack& p) {
@@ -120,9 +139,7 @@ std::vector<std::string> Vfs::index_pack(const Pack& p) {
         while (std::getline(f, l)) lines.push_back(l);
         return lines;
     }
-    ProcessResult r = run_process(cfg_.rpfm_cli, {L"--game", L"attila", L"pack", L"list", L"--pack-path", p.path.wstring()});
-    if (r.exit_code != 0) throw std::runtime_error("rpfm_cli list failed for " + p.name + ": " + r.out.substr(0, 400));
-    lines = rpfm_lines(r.out);
+    lines = backend().list(p.path);
     // Drop stale indexes of the same pack.
     for (auto& de : fs::directory_iterator(dir))
         if (de.path().filename().string().rfind(p.name + ".", 0) == 0) fs::remove(de.path());
@@ -162,37 +179,28 @@ fs::path Vfs::extract_root(int pack) const {
 void Vfs::extract(int pack, const std::vector<std::string>& paths) {
     fs::path root = extract_root(pack);
     fs::create_directories(root);
-    const size_t kMaxCmd = 30000;
-    std::vector<std::wstring> args;
-    size_t len = 0;
-    auto flush = [&] {
-        if (args.empty()) return;
-        std::vector<std::wstring> full = {L"--game", L"attila", L"pack", L"extract", L"--pack-path", packs_[pack].path.wstring()};
-        full.insert(full.end(), args.begin(), args.end());
-        ProcessResult r = run_process(cfg_.rpfm_cli, full);
-        if (r.exit_code != 0) throw std::runtime_error("rpfm_cli extract failed for " + packs_[pack].name + ": " + r.out.substr(0, 400));
-        args.clear();
-        len = 0;
-    };
+    std::vector<std::string> in_pack;
+    in_pack.reserve(paths.size());
     for (auto& p : paths) {
-        auto oc = original_case_.find(normalize(p));
-        std::string in_pack = oc != original_case_.end() ? oc->second : p;
-        std::wstring a = widen(in_pack) + L";" + root.wstring();
-        if (len + a.size() + 8 > kMaxCmd) flush();
-        args.push_back(L"-f");
-        args.push_back(a);
-        len += a.size() + 8;
+        const std::string n = normalize(p);
+        auto oc = pack_case_[pack].find(n);
+        in_pack.push_back(oc != pack_case_[pack].end() ? oc->second : n);   // the pack stores the path in this case
     }
-    flush();
+    backend().extract(packs_[pack].path, in_pack, root);
 }
 
 std::optional<fs::path> Vfs::fetch_from(int pack, const std::string& path) {
+    if (packs_[pack].loose) {
+        fs::path disk = packs_[pack].path / widen(normalize(path));
+        if (fs::exists(disk)) return disk;
+        return std::nullopt;
+    }
     fs::path disk = extract_root(pack) / widen(normalize(path));
     if (fs::exists(disk)) return disk;
     extract(pack, {path});
     if (fs::exists(disk)) return disk;
     if (disk.native().size() >= 260)
-        throw std::runtime_error("path too long for rpfm_cli (MAX_PATH): " + narrow(disk.native()));
+        throw std::runtime_error("path too long for rpfm (MAX_PATH): " + narrow(disk.native()));
     return std::nullopt;
 }
 
@@ -208,7 +216,7 @@ size_t Vfs::prefetch(const std::vector<std::string>& paths) {
     for (auto& p : paths) {
         auto o = owner(p);
         if (!o) continue;
-        if (fs::exists(extract_root(*o) / widen(normalize(p)))) { ++have; continue; }
+        if (packs_[*o].loose || fs::exists(extract_root(*o) / widen(normalize(p)))) { ++have; continue; }
         by_pack[*o].push_back(p);
     }
     for (auto& [pk, list] : by_pack) {

@@ -53,7 +53,7 @@ const VfxChain* render_chain(const VfxFile& lib, const std::string& emitter, con
 
 } // namespace
 
-WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name) {
+WeatherVfx load_weather_vfx(IVfs& vfs, const std::string& definition_name) {
     return load_weather_vfx([&vfs](const std::string& p) { return vfs.read(p); }, definition_name);
 }
 

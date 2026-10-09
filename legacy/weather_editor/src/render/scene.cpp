@@ -10,7 +10,7 @@
 
 namespace wce {
 
-TextureCache::TextureCache(ID3D11Device* dev, Vfs& vfs) : dev_(dev), vfs_(vfs) {
+TextureCache::TextureCache(ID3D11Device* dev, IVfs& vfs) : dev_(dev), vfs_(vfs) {
     white_ = make_solid_texture(dev, 0xffffffff);
     black_ = make_solid_texture(dev, 0x00000000);
     flat_normal_ = make_solid_texture(dev, 0xff80ff80); // DXT5nm-style: x in .a, y in .g

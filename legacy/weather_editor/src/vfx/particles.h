@@ -20,7 +20,7 @@
 
 namespace wce {
 
-class Vfs;
+class IVfs;
 class ShaderLibrary;
 class ConstantBuffers;
 struct GameShader;
@@ -39,7 +39,7 @@ public:
         int width = 0, height = 0;
     };
 
-    ParticleSystem(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs, ShaderLibrary& lib, ConstantBuffers& cbs);
+    ParticleSystem(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs, ShaderLibrary& lib, ConstantBuffers& cbs);
     ~ParticleSystem();
 
     // Loads the effect of a weather definition (no-op when unchanged). Restarts the simulation.
@@ -102,7 +102,7 @@ private:
 
     ID3D11Device* dev_;
     ID3D11DeviceContext* ctx_;
-    Vfs& vfs_;
+    IVfs& vfs_;
     ShaderLibrary& lib_;
     ConstantBuffers& cbs_;
     std::vector<std::string> errors_;

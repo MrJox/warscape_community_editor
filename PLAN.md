@@ -1,5 +1,18 @@
 # Warscape Community Editor: plan to merge weather_editor and tile_editor
 
+## Status (updated 2026-10-09)
+
+| Phase | State |
+|---|---|
+| 0 Freeze and new repo | **Done.** Baseline in `docs/baseline.md` and `docs/baseline/`. |
+| 1 foundation, formats libs | **Done** (commit `8dfa720`). |
+| 2 VFS / rpfm_server | **Done, waiting for your go.** See `docs/vfs.md`. |
+| 3 - 9 | Not started. |
+
+Phase 2 deviations: the spike showed that rpfm_server state is per MCP session, so the editor shares the running server with the attila-toolkit bridge (no second instance; the port cannot be changed anyway); the pack backends sit below `Vfs` (which keeps pack priority and both caches) instead of being implementations of `IVfs`; `libs/foundation` gained `json` and `settings` (no JSON library was approved, so the reader is our own); loose overlay folders are part of `Vfs`, not a third backend.
+
+Phase 1 deviations from this plan: gates moved to `cli/` already (only `vfx_check` and `env_vs_dump` stay under `legacy/weather_editor/tools/`, they need the vfx and render code of Phase 3); `libs/game` (GameProfile) is built in Phase 2 together with the VFS because `extra_vanilla` is part of the VFS config; vfx stays in `legacy/weather_editor/src/vfx` until Phase 3; `image_io` (the D3D readback) moved to `libs/render` and writes through `png_file`, so screenshot file bytes changed (pixels checked); the assembly kit's `environment_map.xml` is a different XML from the variation db's, so `VariationDb::parse_environment_map` was added instead of reusing `parse_xml`.
+
 ## Agreed scope (2026-10-09, 10 questions + follow-ups)
 
 | Topic | Decision |

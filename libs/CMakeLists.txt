@@ -1,10 +1,13 @@
 # Dependency direction: foundation <- game <- vfs <- formats <- assets <- render <- scene <- editor <- tools/* <- app.
 # formats and everything below it never include D3D or ImGui.
-add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp)
+add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp)
 target_include_directories(wce_foundation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_library(wce_vfs STATIC vfs/vfs.cpp)
-target_link_libraries(wce_vfs PUBLIC wce_foundation)
+add_library(wce_game STATIC game/game_profile.cpp)
+target_link_libraries(wce_game PUBLIC wce_foundation)
+
+add_library(wce_vfs STATIC vfs/vfs.cpp vfs/mcp_client.cpp vfs/rpfm_server_backend.cpp vfs/rpfm_cli_backend.cpp)
+target_link_libraries(wce_vfs PUBLIC wce_game wce_foundation winhttp)
 
 add_library(wce_formats STATIC
     formats/xml_doc.cpp formats/env_value.cpp formats/fxc.cpp formats/rmv2.cpp formats/variation_db.cpp formats/variation_io.cpp

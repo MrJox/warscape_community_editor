@@ -255,6 +255,7 @@ void App::mount() {
         vfs_ = std::move(v);
         std::string msg = "Mounted " + std::to_string(vfs_->packs().size()) + " packs, " + std::to_string(vfs_->files().size()) + " files.";
         for (auto& m : vfs_->missing_mods()) msg += " Missing mod: " + m + ".";
+        if (!vfs_->backend_note().empty()) msg += " " + vfs_->backend_note() + ".";
         set_status(msg, !vfs_->missing_mods().empty());
     } catch (const std::exception& e) {
         set_status(std::string("Mount failed: ") + e.what(), true);

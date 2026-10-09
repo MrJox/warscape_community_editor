@@ -105,7 +105,7 @@ struct TextureArrayBuilder {
 
 } // namespace
 
-ParticleSystem::ParticleSystem(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs, ShaderLibrary& lib, ConstantBuffers& cbs)
+ParticleSystem::ParticleSystem(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs, ShaderLibrary& lib, ConstantBuffers& cbs)
     : dev_(dev), ctx_(ctx), vfs_(vfs), lib_(lib), cbs_(cbs), reader_([&vfs](const std::string& p) { return vfs.read(p); }) {
     create_resources();
     build_emitter_gpu();

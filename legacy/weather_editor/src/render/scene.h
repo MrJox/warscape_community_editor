@@ -14,7 +14,7 @@
 
 namespace wce {
 
-class Vfs;
+class IVfs;
 
 struct GpuMesh {
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb, ib;
@@ -46,7 +46,7 @@ struct SceneObject {
 
 class TextureCache {
 public:
-    TextureCache(ID3D11Device* dev, Vfs& vfs);
+    TextureCache(ID3D11Device* dev, IVfs& vfs);
     const Texture* get(const std::string& path, bool srgb); // nullptr if missing/unreadable
     const Texture* white() const { return &white_; }
     const Texture* black() const { return &black_; }
@@ -55,7 +55,7 @@ public:
 
 private:
     ID3D11Device* dev_;
-    Vfs& vfs_;
+    IVfs& vfs_;
     std::map<std::string, std::unique_ptr<Texture>> cache_;
     Texture white_, black_, flat_normal_;
     std::vector<std::string> errors_;
@@ -63,7 +63,7 @@ private:
 
 class TestScene {
 public:
-    TestScene(ID3D11Device* dev, Vfs& vfs, TextureCache& tex) : dev_(dev), vfs_(vfs), tex_(tex) {}
+    TestScene(ID3D11Device* dev, IVfs& vfs, TextureCache& tex) : dev_(dev), vfs_(vfs), tex_(tex) {}
     // Picks `count` random building models (seeded), lays them out on a grid. Returns models loaded.
     int generate(uint32_t seed, int count, const std::string& prefix = "rigidmodels/buildings/");
     const std::vector<SceneObject>& objects() const { return objects_; }
@@ -80,7 +80,7 @@ private:
     std::unique_ptr<GpuModel> ground_;
 
     ID3D11Device* dev_;
-    Vfs& vfs_;
+    IVfs& vfs_;
     TextureCache& tex_;
     std::map<std::string, std::unique_ptr<GpuModel>> models_;
     std::vector<SceneObject> objects_;

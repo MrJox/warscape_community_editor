@@ -74,3 +74,21 @@ Rules until Phase 3:
   point, explicitly, and say so in the commit.
 - Screenshot files are written by `formats/png_file` since Phase 1 (the WIC encoder was dropped). The pixels are what `imgcmp.py` compares, so
   the file bytes are expected to differ from this baseline; `imgcmp.py` reports "identical pixels" in that case.
+
+## Added in Phase 2
+
+New gates, with their reference output in `docs/baseline/`:
+
+| Gate | Exit | Result |
+|---|---|---|
+| `foundation_check` | 0 | all passed (JSON reader and writer, settings precedence) |
+| `vfs_compare` | 0 | 27 packs (6 mod packs, 0 missing mods), 212,243 files, same pack order and winners through rpfm_server and rpfm_cli; 135 sample files (302.8 MB) in 21 packs and 20 shadowed paths byte-identical |
+
+Timing, weather tool startup set (`scripts/vfs_timing.sh`, the dry screenshot command; empty cache = cold):
+
+| Backend | Cold | Warm |
+|---|---|---|
+| rpfm_server | 6.5 s | 2.8 s |
+| rpfm_cli | 10.4 s | 2.7 s |
+
+Cold mount of all 27 pack indexes alone (`vfs_probe --compare --time`): rpfm_server 1.3 s, rpfm_cli 2.3 s.

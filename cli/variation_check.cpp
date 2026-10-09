@@ -43,7 +43,7 @@ std::string without_blank_lines(const std::string& t) {
 }
 
 // Pack-by-pack file gates; returns the number of failures.
-int check_pack_files(Vfs& vfs, const std::string& bin_path, const std::string& xml_path) {
+int check_pack_files(IVfs& vfs, const std::string& bin_path, const std::string& xml_path) {
     int bad = 0;
     for (int pack : vfs.owners(bin_path)) {
         const std::string name = vfs.packs()[pack].name;

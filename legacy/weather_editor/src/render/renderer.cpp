@@ -124,7 +124,7 @@ float4x4 face_view(int face) {
 
 } // namespace
 
-Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, Vfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs) {
+Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev_(dev), ctx_(ctx), vfs_(vfs) {
     lib_ = std::make_unique<ShaderLibrary>(dev, vfs, cbs_);
     particles_ = std::make_unique<ParticleSystem>(dev, ctx, vfs, *lib_, cbs_);
     make_states();

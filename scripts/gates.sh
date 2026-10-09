@@ -40,6 +40,8 @@ run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit co
 
 # ---- weather_editor gates
 run xml_roundtrip     "$WB/xml_roundtrip.exe" "$CACHE"
+run foundation_check  "$WB/foundation_check.exe"
+run vfs_compare       "$WB/vfs_probe.exe" --compare   # cold mount through rpfm_server and rpfm_cli: same pack order, winners and bytes (needs a running or startable rpfm_server)
 run format_check      "$WB/format_check.exe" "$CACHE"
 run variation_check   "$WB/variation_check.exe"
 run rmv2_check        "$WB/rmv2_check.exe"

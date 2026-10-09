@@ -1,0 +1,5 @@
+rpfm_server  cold mount: 27 packs, 212243 files, read by rpfm_server
+rpfm_cli     cold mount: 27 packs, 212243 files, read by rpfm_cli
+same pack order (6 mod packs, 0 missing mods), 212243 files, same winners: yes
+compared 135 sample files (302.8 MB) in 21 packs, 20 shadowed paths: identical
+exit 0

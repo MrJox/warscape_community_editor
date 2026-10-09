@@ -27,7 +27,7 @@ std::string summary(const VariationDb& db, uint32_t flags) {
 
 } // namespace
 
-bool draw_variation_editor(VariationDb& db, VariationEditState& st, const Vfs* vfs) {
+bool draw_variation_editor(VariationDb& db, VariationEditState& st, const IVfs* vfs) {
     bool changed = false;
 
     // ---- Categories and their values
