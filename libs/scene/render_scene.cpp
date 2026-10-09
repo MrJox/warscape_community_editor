@@ -14,9 +14,12 @@ Terrain Terrain::flat(float half_size, const std::string& diffuse_texture, float
     return t;
 }
 
-void Overlay::box_wire(const float3& lo, const float3& hi, uint32_t rgba) {
-    const float3 c[8] = {{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, lo.y, hi.z}, {lo.x, lo.y, hi.z},
-                         {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z}};
+void Overlay::box_wire(const float3& lo, const float3& hi, uint32_t rgba) { box_wire(float4x4{}, lo, hi, rgba); }
+
+void Overlay::box_wire(const float4x4& m, const float3& lo, const float3& hi, uint32_t rgba) {
+    const float3 c[8] = {m.transform_point({lo.x, lo.y, lo.z}), m.transform_point({hi.x, lo.y, lo.z}), m.transform_point({hi.x, lo.y, hi.z}),
+                         m.transform_point({lo.x, lo.y, hi.z}), m.transform_point({lo.x, hi.y, lo.z}), m.transform_point({hi.x, hi.y, lo.z}),
+                         m.transform_point({hi.x, hi.y, hi.z}), m.transform_point({lo.x, hi.y, hi.z})};
     for (int i = 0; i < 4; ++i) {
         line(c[i], c[(i + 1) % 4], rgba);          // bottom ring
         line(c[4 + i], c[4 + (i + 1) % 4], rgba);  // top ring

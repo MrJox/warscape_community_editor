@@ -61,6 +61,7 @@ fi
 
 # ---- reference screenshots (fixed camera and inputs; see docs/baseline.md for what is deterministic)
 if [ "$RENDER" = 1 ]; then
+    run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
     for env in dry rain snow; do
         case $env in
             dry)  f="weather/charlemagne/med_sp_land_day_dry.environment" ;;

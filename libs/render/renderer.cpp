@@ -1550,6 +1550,7 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     float4x4 view_m = look_at_lh(cam.eye, cam.target, {0, 1, 0});
     float4x4 proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
     set_camera(view_m, proj, cam.eye, width, height, time_s);
+    view_proj_ = proj * view_m;
     cbs_.upload(dev_, ctx_);
     D3D11_VIEWPORT vp{0, 0, float(width), float(height), 0, 1};
     ctx_->RSSetViewports(1, &vp);
@@ -1594,6 +1595,7 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
         if (lens_flare) pass_lens_flare(env, cam.eye, time_s);
     }
     pass_display(target); // Final: copies final_ with alpha = 1 for the viewport
+    if (this->view == View::Final) pass_overlay(scene, target);
     ctx_->PSSetShaderResources(0, 16, nulls);
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
 }

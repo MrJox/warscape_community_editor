@@ -85,6 +85,7 @@ struct Overlay {
         triangles.push_back({a, rgba}); triangles.push_back({b, rgba}); triangles.push_back({c, rgba});
     }
     void box_wire(const float3& lo, const float3& hi, uint32_t rgba);
+    void box_wire(const float4x4& m, const float3& lo, const float3& hi, uint32_t rgba);   // oriented: the box corners go through m
     void polygon_outline(const std::vector<float3>& points, bool closed, uint32_t rgba);
 };
 

@@ -52,6 +52,20 @@ public:
         shadow_quality = o.shadow_quality;
     }
     float sun_visibility() const { return sun_visibility_; }
+
+    // ---- editor overlays and picking (editor_passes.cpp)
+    // Overlay entities of the scene (lines, triangles) are drawn after the final image, depth tested against the scene unless the
+    // overlay says otherwise. On top of them the renderer draws its own helpers:
+    bool show_grid = false;                    // a line grid on y = 0
+    float grid_step = 10.0f, grid_half_extent = 200.0f;
+    std::vector<EntityId> selection;           // entities whose bounds are outlined (yellow, on top)
+    // The entity under pixel (x, y) of `target` as `view` sees the scene, 0 for none. Mesh and terrain entities are found with an
+    // id pass of their own (the game's G-buffer id target is fed by an engine-private lookup table); overlay entities are picked in
+    // screen space (within 6 px of a line, inside a triangle) and win over meshes. Layers marked locked are skipped.
+    EntityId pick(const RenderScene& scene, const ViewParams& view, const RenderTarget& target, int x, int y);
+    // World point to pixel of a w x h view; false when the point is behind the camera.
+    static bool project(const Camera& cam, int w, int h, const float3& p, float& px, float& py);
+    static float4x4 view_projection(const Camera& cam, int w, int h);
     uint64_t vfx_revision = 0; // changes when an open vfx/ or weather/ XML is edited: particles reload
     uint32_t cloud_seed = 1;
     // Battle state the engine feeds the weather shaders (not part of the environment files).
@@ -108,6 +122,8 @@ private:
     float depth_min_ = 1, depth_max_ = 781;
     void pass_shadows(const Camera& cam, float aspect, const float3& light_dir, float time_s);
     void pass_display(RenderTarget& target);
+    void pass_overlay(const RenderScene& scene, RenderTarget& target);
+    void create_editor_resources();
     void pass_tonemap(const EnvironmentParams& env, float dt);
     void pass_to_screen(const EnvironmentParams& env);
     void pass_lens_flare(const EnvironmentParams& env, const float3& eye, float time_s);
@@ -120,6 +136,20 @@ private:
     ID3D11DeviceContext* ctx_;
     IVfs& vfs_;
     ConstantBuffers cbs_;
+    float4x4 view_proj_;                      // of the frame being drawn (overlay pass)
+    // overlay pass and id pass (editor_passes.cpp), created on first use
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> ovl_vs_, pick_vs_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ovl_ps_, pick_ps_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> ovl_il_, pick_il_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> ovl_cb_, ovl_vb_, pick_cb_;
+    UINT ovl_vb_capacity_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> ovl_blend_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ovl_ds_test_, ovl_ds_off_, pick_ds_;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> ovl_rs_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> pick_id_tex_, pick_depth_tex_, pick_staging_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> pick_id_rtv_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> pick_dsv_;
+    int pick_w_ = 0, pick_h_ = 0;
     TextureCache textures_;
     ModelCache models_;
 
