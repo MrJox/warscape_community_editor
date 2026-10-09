@@ -1,0 +1,8 @@
+entries: 1852 files round-trip byte for byte, 0 unknown attributes or children, 0 without variations, 2716 variations, 834 with links, 827 with link targets
+assembly_kit_campaign_tilemap: location claimed twice: terrain/tiles/campaign/river_mouth/12x33
+index: 1852 rows in both kits, the plain, cold-cache and warm-cache builds agree, 2716 variation folders resolve to their entry, 1 locations claimed twice
+cannot be opened, the same error through all three ways: not a PNG
+open: 1516 tiles opened by folder, by tile.ted and by entry, 0 differ, 1 cannot be opened (identical errors)
+outside a kit: opens without an entry, info.found 0, warning: yes
+all passed
+exit 0

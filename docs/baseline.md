@@ -174,3 +174,16 @@ The window shots of `weather_editor.exe` and `tile_studio.exe` (the "Screenshots
 of the kind Phase 5 documented for the legacy dry shot. `scripts/shots.sh` accepts a wce capture that is byte-identical or within one level in under 0.05 % of the pixels; the legacy window shots stay byte-exact.
 
 **Fixes found by the new tests:** `CommandStack::last_dirty` only described the last command, so a multi-step undo (`undo 3`, a jump in the History panel) re-published only what the last step touched and left structural changes unrendered; documents now re-publish from `take_dirty()`, which accumulates (checked in `editor_check`). A cancelled grab leaves no redo entry (`CommandStack::drop_redo`).
+
+## Phase 0 / 0b of the TEd parity plan (`docs/plans/tile_ted_parity.md`, 2026-10-09)
+
+Built in the private tree `build/work2` (`WCE_BIN=build/work2/bin/RelWithDebInfo`). `scripts/gates.sh build/<out> --corpus --render` against the Phase 8 baseline: **every earlier gate gives the same output** (`diff -r docs/baseline build/<out>` shows only the new gates, and `render_check`'s `picked right 6` which the performance pass already documented). `tdb_build`: 0 bytes differ from BOB's output, unchanged.
+
+| Gate | Group | Result |
+|---|---|---|
+| `tile_entry_check` (new) | fast | 1,852 entries (700 battle kit, 1,152 campaign kit) round-trip byte for byte, 0 unknown attributes or children, 2,716 variations, 834 entries with links, 827 with link targets; the index built plain, with a cold cache and with the warm cache gives the same rows (the warm one parses nothing), all 2,716 variation folders resolve (and `tile.ted`, and the tile folder), one location claimed twice (a stray campaign entry in the campaign kit's `battle` folder); three kit tiles (`khazad_wall_test`, `custom_monte_rosa`, and `plains/3x1/3x1_aa` whose `height_map_0.png` is damaged in the kit and fails the same way each time) open identically by folder, by `tile.ted` and by entry; a copy of a tile outside the kit opens with a warning and no entry |
+| `tile_entry_check --all` (new) | corpus | all 1,516 kit tiles that have a `tile.ted` and an entry open as the same document by folder, `tile.ted` and entry (about 80 s); 1 cannot be opened (the damaged PNG above) |
+| `tile_entry_script` (new) | render | `scripts/tile_entry.txt`: open by name, entry file, variation folder, `tile.ted`, tile folder; `assert_entry` on `osgiliath_test` and `dunedain_city_osgiliath` (minor / small); a missing variation lists the real ones |
+| `placement_check` (new) | corpus | the tool's building transforms against TEd's `building_list.xml` over the kit (73 tiles, 357,666 buildings): x / z 0.0001 m, rotation 0.00 degrees, y exact except 15 crates; landscape buildings sit on `min_height + scale * raw / 65535` with a median of 0.000 m. Output in `docs/baseline/placement_check.txt` (it reports; the exit code is always 0) |
+
+New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_panel <tool panel title>`, `tile` / `tiles` / `tile_entry` / `assert_entry` / `assert_tiles`. No screenshot baseline changed (the Tile panel and the left dock gained a tab; the offscreen captures of `scripts/shots.sh` do not show panels).

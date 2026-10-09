@@ -1,0 +1,190 @@
+placement_check: 73 tiles with a TEd building_list.xml
+
+tile                                                              list   match order  landsc. med e_abs med above  freef. abs med above    max xz  max rot
+assembly_kit/generic_northmen_unwalled/battlefield                2489    2489   yes  2195       -0.000    -0.000      0.000    -0.137    0.0001    0.000
+assembly_kit/khazad_wall_test/battlefield                            2       2   yes  2           0.000     0.000      0.000     0.000    0.0000    0.000
+assembly_kit/osgiliath_test/battlefield                          28791   28791    no  21126      -0.000     0.000     -0.000    -0.030    0.0001    0.000
+tdd_custom_dead_marshes/1x1/aa                                      45      45   yes  45          0.000     1.808      0.000     0.000    0.0000    0.000
+tdd_custom_dead_marshes/2x2/aa                                     340     340   yes  340        -0.000     0.221      0.000     0.000    0.0000    0.000
+tdd_custom_dead_marshes/8x8/aa                                    7654    7654   yes  7628       -0.000     0.000     -0.000    -1.861    0.0001    0.000
+tdd_custom_dead_marshes/8x8/ab                                     164     164   yes  11         -0.000    -0.000      0.000     1.199    0.0000    0.000
+tdd_custom_lothlorien/1x1/aa                                        17      17   yes  16         -0.000   -12.185     -0.000    -6.151    0.0000    0.000
+tdd_custom_lothlorien/2x2/aa                                        42      42   yes  35          0.000    -9.910     -0.000    -2.539    0.0000    0.000
+tdd_custom_lothlorien/4x4/aa                                       445     445   yes  346         0.000     0.000     -0.000    -1.141    0.0000    0.000
+tdd_custom_lothlorien/8x8/aa                                      1026    1026   yes  921        -0.000     0.000     -0.000    -1.141    0.0000    0.000
+tdd_custom_lothlorien/8x8/ab                                      1848    1848   yes  1306       -0.000     0.000      0.000    -0.455    0.0001    0.000
+tdd_custom_tile/barrow_downs/8x8                                   408     408   yes  34          0.000     0.000     -0.000    -9.600    0.0001    0.000
+tdd_custom_tile/house_of_tom_bombadil/8x8                           50      50   yes  4           0.000     0.000     -0.000    -0.296    0.0000    0.000
+tdd_custom_tile/mountain_pass/8x8                                   80      80   yes  80         -0.000     0.000      0.000     0.000    0.0000    0.000
+tdd_settlement_dunedain_cities/dunedain_city_b/medium             7378    7378    no  5682        0.000     0.000      0.000    -0.172    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_b/minor              7170    7170   yes  5642       -0.000     0.000     -0.000    -0.354    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_b/small              6834    6834    no  5332        0.000     0.000      0.000    -0.322    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_cair_andros/minor    3972    3972   yes  269         0.000     0.000      0.000     0.000    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_cair_andros/small    4053    4053   yes  281         0.000     0.000      0.000     0.000    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor     26984   26984   yes  21311      -0.000    -0.000     -0.000     0.000    0.0001    0.000
+tdd_settlement_dunedain_cities/dunedain_city_osgiliath/small     22646   22646    no  17564      -0.000     0.000     -0.000     0.000    0.0001    0.000
+tdd_settlement_dunedain_ports/dunedain_port_a/medium              2748    2748    no  871         0.000     0.000      0.000    -0.203    0.0001    0.000
+tdd_settlement_dunedain_ports/dunedain_port_a/minor               1153    1153   yes  416        -0.000     0.000      0.000    -1.799    0.0001    0.000
+tdd_settlement_dunedain_ports/dunedain_port_a/small               1295    1295    no  433        -0.000     0.000      0.000    -1.012    0.0001    0.000
+tdd_settlement_dunedain_ports/dunedain_port_dol_amroth/medium     7649    7649   yes  2567        0.000     0.000      0.000    -0.026    0.0001    0.000
+tdd_settlement_dunedain_ports/dunedain_port_dol_amroth/small      7649    7649   yes  2567        0.000     0.000      0.000    -0.026    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_a/medium               1137    1137    no  269         0.000     0.000     -0.000     0.001    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_a/minor                 723     723   yes  94          0.000     0.000     -0.000     0.001    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_a/small                 869     869    no  144         0.000     0.000      0.000     0.001    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_b/medium               1795    1795    no  816         0.000     0.000      0.000    -0.149    0.0001    0.002
+tdd_settlement_dwarven_cities/dwarven_city_b/minor                 964     964   yes  552         0.000     0.000      0.000    -0.522    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_b/small                1316    1316    no  688         0.000     0.000      0.000    -0.197    0.0001    0.000
+tdd_settlement_dwarven_cities/dwarven_city_erebor/minor            104     104   yes  6          -0.000     0.000     -0.000    -3.790    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_a/medium         2946    2946    no  2510        0.000     0.000      0.000    -0.006    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_a/minor          2655    2655   yes  2316        0.000     0.000     -0.000    -0.237    0.0000    0.000
+tdd_settlement_middle_men_cities/middle_men_city_a/small          2690    2690    no  2277       -0.000     0.000      0.000    -0.035    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_b/medium         4708    4708    no  3866        0.000     0.000      0.000     0.000    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_b/minor          3338    3338   yes  2985        0.000     0.000     -0.000    -0.074    0.0000    0.000
+tdd_settlement_middle_men_cities/middle_men_city_b/small          3493    3493    no  3022        0.000     0.000      0.000    -0.042    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_dale/medium      6595    6595   yes  4184       -0.000     0.000     -0.000    -0.954    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_dale/small       6595    6595   yes  4184       -0.000     0.000     -0.000    -0.954    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_dunharrow/minor    2702    2702   yes  1628        0.000     0.000      0.000    -3.415    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_edoras/medium    9626    9626   yes  6598       -0.000     0.000      0.000    -0.001    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_edoras/small     9626    9626   yes  6598       -0.000     0.000      0.000    -0.001    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor   12298   12298   yes  71          0.000     0.000      0.000    11.242    0.0001    0.000
+tdd_settlement_middle_men_cities/middle_men_city_hornburg/medium    1286    1286   yes  8           0.000     0.000      0.000    22.681    0.0001    0.002
+tdd_settlement_middle_men_cities/middle_men_city_hornburg/small    1286    1286   yes  8           0.000     0.000      0.000    22.681    0.0001    0.002
+tdd_settlement_middle_men_ports/middle_men_port_a/medium          6052    6052    no  3267        0.000     0.000      0.000    -0.670    0.0001    0.000
+tdd_settlement_middle_men_ports/middle_men_port_a/minor           5556    5556    no  2716        0.000     0.000     -0.000    -0.713    0.0001    0.000
+tdd_settlement_middle_men_ports/middle_men_port_a/small           6041    6041    no  3107        0.000     0.000     -0.000    -0.717    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_a/medium                       7323    7323    no  359         0.000     0.000      0.000    -0.053    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_a/minor                        3955    3955   yes  184         0.000     0.000      0.000    -0.047    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_a/small                        5916    5916    no  358         0.000     0.000      0.000    -0.049    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_b/medium                      11170   11170    no  6405       -0.000     0.000      0.000     0.005    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_b/minor                        4066    4066    no  2355       -0.000     0.000      0.000     0.001    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_b/small                        8709    8709    no  5139       -0.000     0.000      0.000     0.003    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_isengard/medium                 336     336   yes  79         -0.000     0.000      0.000    -0.135    0.0001    0.000
+tdd_settlement_orc_cities/orc_city_isengard/small                  336     336   yes  79         -0.000     0.000      0.000    -0.135    0.0001    0.000
+tdd_settlement_orc_ports/orc_port_a/medium                       13089   13089    no  2337        0.000     0.000      0.000    -0.043    0.0001    0.000
+tdd_settlement_orc_ports/orc_port_a/minor                        10281   10281   yes  3974       -0.000     0.000     -0.000     0.000    0.0001    0.000
+tdd_settlement_orc_ports/orc_port_a/small                        11856   11856    no  3581       -0.000     0.000     -0.000     0.000    0.0001    0.000
+tdd_settlement_wildmen_cities/wildmen_city_a/medium              11730   11730    no  8021        0.000    -0.000      0.000    -0.609    0.0001    0.000
+tdd_settlement_wildmen_cities/wildmen_city_a/minor               11690   11690   yes  8021        0.000    -0.000     -0.000    -0.564    0.0001    0.000
+tdd_settlement_wildmen_cities/wildmen_city_a/small               11636   11636    no  8017        0.000    -0.000     -0.000    -0.592    0.0001    0.000
+tdd_settlement_wildmen_cities/wildmen_city_dunburg/medium         4156    4156   yes  2533        0.000     0.000      0.000    -0.288    0.0001    0.000
+tdd_settlement_wildmen_cities/wildmen_city_dunburg/small          3620    3620   yes  2384        0.000     0.000      0.000    -0.284    0.0001    0.000
+tdd_terrain_mordor_wasteland/1x1/aa                                 15      15   yes  0           0.000     0.000      0.000   -12.505    0.0000    0.000
+tdd_terrain_mordor_wasteland/2x2/aa                                 34      34   yes  0           0.000     0.000     -0.000   -13.964    0.0000    0.000
+tdd_terrain_mordor_wasteland/2x3/aa                                 18      18   yes  9           0.000    -0.019     -0.000    -5.000    0.0000    0.000
+tdd_terrain_mordor_wasteland/4x4/aa                                 92      92   yes  0           0.000     0.000     -0.000   -11.071    0.0000    0.000
+tdd_terrain_mordor_wasteland/8x8/aa                                171     171   yes  56          0.000     0.000      0.000    -3.700    0.0001    0.000
+tdd_terrain_mordor_wasteland/8x8/bb                                134     134   yes  0           0.000     0.000     -0.000    -4.623    0.0001    0.000
+
+tiles: 47 in the same order as the export, 26 paired by key and position, 0 without a tile database entry
+buildings: 357666 paired, 75337 of the tiles unpaired, 0 of the exports unpaired
+
+landscape buildings: y = min + scale * raw / 65535 fitted per tile against the tile database entry (tiles whose fit differs from the entry by more than 5 cm at the low end or 0.5 % of the scale)
+  assembly_kit/osgiliath_test/battlefield                      n  21126  fit min  -13.6229 scale   23.3619 (rms 0.236 m) | entry min  -14.0000 scale   24.0000 | d min   0.3771 d scale  -0.6381
+  tdd_custom_dead_marshes/1x1/aa                               n     45  fit min   -4.1640 scale    4.3803 (rms 0.509 m) | entry min   -8.3703 scale   17.9334 | d min   4.2064 d scale -13.5531
+  tdd_custom_dead_marshes/2x2/aa                               n    340  fit min   -9.1032 scale   11.2232 (rms 1.427 m) | entry min  -13.9173 scale   26.0250 | d min   4.8140 d scale -14.8019
+  tdd_custom_lothlorien/1x1/aa                                 n     16  fit min   -2.6874 scale   25.7840 (rms 5.795 m) | entry min    0.9998 scale   50.0002 | d min  -3.6872 d scale -24.2162
+  tdd_custom_lothlorien/2x2/aa                                 n     35  fit min  -10.1294 scale   50.7705 (rms 8.843 m) | entry min    0.4014 scale   50.5986 | d min -10.5308 d scale   0.1720
+  tdd_custom_lothlorien/4x4/aa                                 n    346  fit min   -0.0344 scale   46.4541 (rms 4.906 m) | entry min    0.4014 scale   50.5986 | d min  -0.4359 d scale  -4.1445
+  tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor n  21311  fit min  -11.6525 scale   21.2161 (rms 0.297 m) | entry min  -12.3143 scale   22.3143 | d min   0.6618 d scale  -1.0982
+  tdd_settlement_dunedain_cities/dunedain_city_osgiliath/small n  17564  fit min  -11.6276 scale   21.1168 (rms 0.325 m) | entry min  -12.3682 scale   22.3682 | d min   0.7406 d scale  -1.2514
+  tdd_settlement_dunedain_ports/dunedain_port_a/medium         n    871  fit min  -25.3502 scale  221.7245 (rms 0.404 m) | entry min  -25.0000 scale  221.1137 | d min  -0.3502 d scale   0.6108
+  tdd_settlement_middle_men_cities/middle_men_city_a/medium    n   2510  fit min    1.1062 scale  110.1585 (rms 0.162 m) | entry min    1.2009 scale  110.0421 | d min  -0.0947 d scale   0.1164
+  tdd_settlement_middle_men_cities/middle_men_city_a/minor     n   2316  fit min    1.1061 scale  110.1586 (rms 0.169 m) | entry min    1.2009 scale  110.0421 | d min  -0.0948 d scale   0.1165
+  tdd_settlement_middle_men_cities/middle_men_city_a/small     n   2277  fit min    1.1061 scale  110.1583 (rms 0.170 m) | entry min    1.2009 scale  110.0421 | d min  -0.0948 d scale   0.1162
+  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor n     71  fit min   -2.5871 scale  -53.3325 (rms 0.000 m) | entry min  -14.8431 scale   34.8431 | d min  12.2560 d scale -88.1756
+  tdd_settlement_orc_ports/orc_port_a/medium                   n   2337  fit min  -20.2424 scale   86.3620 (rms 0.567 m) | entry min  -20.0000 scale   85.9227 | d min  -0.2424 d scale   0.4393
+  tdd_settlement_orc_ports/orc_port_a/minor                    n   3974  fit min  -20.0645 scale   74.0985 (rms 0.318 m) | entry min  -20.0000 scale   74.0000 | d min  -0.0645 d scale   0.0985
+  tdd_settlement_orc_ports/orc_port_a/small                    n   3581  fit min  -20.1775 scale   77.3160 (rms 0.393 m) | entry min  -20.0000 scale   77.0000 | d min  -0.1775 d scale   0.3160
+  16 of 64 fitted tiles differ; the other 48 agree with the entry's min_height and scale
+
+by surface mode and depth in groups (units: metres, degrees)
+all                                n  357666 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 2.701 | world y above the tool's terrain (min_height + scale * raw): mean|d| 1.736 med|d| 0.000 max 590.917, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1310.469 | rot as is: mean 0.000 max 0.00, z mirrored: mean 90.048 max 180.00
+MSM_LANDSCAPE                      n  202829 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.042 med|d| 0.000 max 38.149, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1395.078 | rot as is: mean 0.000 max 0.00, z mirrored: mean 88.948 max 180.00
+MSM_LANDSCAPE, depth 0             n   40049 | xz mean 0.0000 max 0.0000 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.041 med|d| 0.000 max 38.149, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 802.251 | rot as is: mean 0.000 max 0.00, z mirrored: mean 78.516 max 180.00
+MSM_LANDSCAPE, depth 1             n   96132 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.034 med|d| 0.000 max 14.004, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1396.945 | rot as is: mean 0.000 max 0.00, z mirrored: mean 91.376 max 180.00
+MSM_LANDSCAPE, depth 2             n   32415 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.038 med|d| 0.000 max 7.488, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1395.057 | rot as is: mean 0.000 max 0.00, z mirrored: mean 91.387 max 180.00
+MSM_LANDSCAPE, depth 3+            n   34233 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.070 med|d| 0.000 max 8.334, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1505.540 | rot as is: mean 0.000 max 0.00, z mirrored: mean 92.023 max 180.00
+MSM_FREEFORM                       n  154837 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.001 med|e| 0.000 max 2.701 | world y above the tool's terrain (min_height + scale * raw): mean|d| 3.955 med|d| 0.587 max 590.917, signed median -0.014 | above raw * 3000 / 65535 - 20: med|d| 1160.073 | rot as is: mean 0.000 max 0.00, z mirrored: mean 91.489 max 180.00
+MSM_FREEFORM, depth 0              n   41216 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 5.670 med|d| 0.818 max 166.187, signed median -0.065 | above raw * 3000 / 65535 - 20: med|d| 1061.544 | rot as is: mean 0.000 max 0.00, z mirrored: mean 86.119 max 180.00
+MSM_FREEFORM, depth 1              n   63371 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 3.276 med|d| 0.314 max 590.917, signed median -0.000 | above raw * 3000 / 65535 - 20: med|d| 1107.623 | rot as is: mean 0.000 max 0.00, z mirrored: mean 93.625 max 180.00
+MSM_FREEFORM, depth 2              n   38841 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.001 med|e| 0.000 max 2.701 | world y above the tool's terrain (min_height + scale * raw): mean|d| 2.472 med|d| 0.667 max 263.462, signed median -0.231 | above raw * 3000 / 65535 - 20: med|d| 1441.054 | rot as is: mean 0.000 max 0.00, z mirrored: mean 93.658 max 180.00
+MSM_FREEFORM, depth 3+             n   11409 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.005 med|e| 0.000 max 0.905 | world y above the tool's terrain (min_height + scale * raw): mean|d| 6.573 med|d| 6.984 max 34.900, signed median 5.417 | above raw * 3000 / 65535 - 20: med|d| 397.293 | rot as is: mean 0.000 max 0.00, z mirrored: mean 91.644 max 180.00
+
+by the mode of the nearest group (depth >= 1) against the building's own
+own LANDSCAPE / group LANDSCAPE    n   75516 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.049 med|d| 0.000 max 14.004, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1303.570 | rot as is: mean 0.000 max 0.00, z mirrored: mean 92.271 max 180.00
+own LANDSCAPE / group FREEFORM     n   87264 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.036 med|d| 0.000 max 7.443, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1626.474 | rot as is: mean 0.000 max 0.00, z mirrored: mean 90.859 max 180.00
+own LANDSCAPE / group (none)       n   40049 | xz mean 0.0000 max 0.0000 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.041 med|d| 0.000 max 38.149, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 802.251 | rot as is: mean 0.000 max 0.00, z mirrored: mean 78.516 max 180.00
+own FREEFORM / group LANDSCAPE     n   37212 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.002 med|e| 0.000 max 2.701 | world y above the tool's terrain (min_height + scale * raw): mean|d| 0.864 med|d| 0.498 max 13.794, signed median -0.344 | above raw * 3000 / 65535 - 20: med|d| 1517.086 | rot as is: mean 0.000 max 0.00, z mirrored: mean 92.157 max 180.00
+own FREEFORM / group FREEFORM      n   76409 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.001 med|e| 0.000 max 0.905 | world y above the tool's terrain (min_height + scale * raw): mean|d| 4.534 med|d| 0.754 max 590.917, signed median 0.059 | above raw * 3000 / 65535 - 20: med|d| 933.308 | rot as is: mean 0.000 max 0.00, z mirrored: mean 94.061 max 180.00
+own FREEFORM / group (none)        n   41216 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 5.670 med|d| 0.818 max 166.187, signed median -0.065 | above raw * 3000 / 65535 - 20: med|d| 1061.544 | rot as is: mean 0.000 max 0.00, z mirrored: mean 86.119 max 180.00
+
+by lf_offset
+lf_offset = 0                      n  357662 | xz mean 0.0000 max 0.0001 | y absolute: mean|e| 0.000 med|e| 0.000 max 2.701 | world y above the tool's terrain (min_height + scale * raw): mean|d| 1.735 med|d| 0.000 max 590.917, signed median 0.000 | above raw * 3000 / 65535 - 20: med|d| 1310.469 | rot as is: mean 0.000 max 0.00, z mirrored: mean 90.048 max 180.00
+lf_offset != 0                     n       4 | xz mean 0.0000 max 0.0000 | y absolute: mean|e| 0.000 med|e| 0.000 max 0.000 | world y above the tool's terrain (min_height + scale * raw): mean|d| 41.514 med|d| 35.696 max 85.107, signed median -32.468 | above raw * 3000 / 65535 - 20: med|d| 754.031 | rot as is: mean 0.000 max 0.00, z mirrored: mean 92.030 max 170.99
+
+worst 20 by |y error| under the better hypothesis
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.738  dxz 0.0000 0.0001 rot 0.00 / 148.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.739  dxz -0.0000 0.0001 rot 0.00 / 91.74
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.738  dxz 0.0000 -0.0000 rot 0.00 / 28.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.738  dxz 0.0000 0.0001 rot 0.00 / 148.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.738  dxz 0.0000 -0.0000 rot 0.00 / 28.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.739  dxz 0.0000 -0.0000 rot 0.00 / 148.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.739  dxz 0.0000 -0.0000 rot 0.00 / 148.26
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.793 list 50.495 terrain 47.739  dxz -0.0000 0.0001 rot 0.00 / 91.74
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.792 list 50.493 terrain 47.737  dxz -0.0000 -0.0001 rot 0.00 / 28.54
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.792 list 50.493 terrain 47.737  dxz 0.0000 -0.0000 rot 0.00 / 38.54
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.792 list 50.493 terrain 47.737  dxz 0.0000 -0.0000 rot 0.00 / 38.54
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.792 list 50.493 terrain 47.737  dxz -0.0000 -0.0001 rot 0.00 / 28.54
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.766 list 50.468 terrain 47.737  dxz 0.0000 -0.0001 rot 0.00 / 141.46
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/medium    crate                              FREEFORM       depth 2  y world 47.766 list 50.468 terrain 47.737  dxz 0.0000 -0.0001 rot 0.00 / 141.46
+      2.701  assembly_kit/osgiliath_test/battlefield                crate                              FREEFORM       depth 2  y world 2.043 list 4.744 terrain 1.988  dxz -0.0000 -0.0000 rot 0.00 / 80.00
+      2.701  assembly_kit/osgiliath_test/battlefield                crate                              FREEFORM       depth 2  y world 2.018 list 4.719 terrain 1.990  dxz 0.0000 -0.0000 rot 0.00 / 120.00
+      2.701  assembly_kit/osgiliath_test/battlefield                crate                              FREEFORM       depth 2  y world 2.043 list 4.744 terrain 1.989  dxz -0.0000 0.0001 rot 0.00 / 50.00
+      2.701  assembly_kit/osgiliath_test/battlefield                crate                              FREEFORM       depth 2  y world 2.043 list 4.744 terrain 1.989  dxz -0.0000 0.0001 rot 0.00 / 180.00
+      2.701  assembly_kit/osgiliath_test/battlefield                crate                              FREEFORM       depth 2  y world 2.017 list 4.719 terrain 1.988  dxz -0.0000 -0.0000 rot 0.00 / 140.00
+      2.701  tdd_settlement_wildmen_cities/wildmen_city_a/small     crate                              FREEFORM       depth 2  y world 47.771 list 50.473 terrain 47.737  dxz 0.0001 0.0000 rot 0.00 / 21.46
+
+worst 20 by xz error
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_dunharrow/minor marchingcamp_tent03                LANDSCAPE      depth 5  y world 4.988 list 4.988 terrain 4.988  dxz -0.0001 0.0001 rot 0.00 / 48.00
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor stock                              FREEFORM       depth 7  y world 1.541 list 1.541 terrain -10.000  dxz -0.0001 0.0001 rot 0.00 / 26.00
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor lt_house_05                        FREEFORM       depth 5  y world 1.285 list 1.285 terrain -10.000  dxz -0.0001 0.0001 rot 0.00 / 140.00
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 0.0001 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_dunharrow/minor marchingcamp_tent03                LANDSCAPE      depth 5  y world 4.988 list 4.988 terrain 4.988  dxz -0.0001 0.0001 rot 0.00 / 48.00
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor stock                              FREEFORM       depth 7  y world 1.519 list 1.519 terrain -10.000  dxz -0.0001 0.0001 rot 0.00 / 25.92
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 5  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 0.0001 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 8  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 -0.0000 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 0.0000 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 -0.0000 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz -0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 8  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 0.0000 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz -0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 8  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 -0.0000 rot 0.00 / 0.04
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor crate                              FREEFORM       depth 7  y world 2.817 list 2.817 terrain -10.000  dxz -0.0001 0.0000 rot 0.00 / 36.08
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 6  y world 1.000 list 1.000 terrain -10.000  dxz 0.0000 -0.0001 rot 0.00 / 179.96
+      0.000  tdd_settlement_middle_men_cities/middle_men_city_esgaroth/minor laketown_platform_16x16            FREEFORM       depth 7  y world 1.000 list 1.000 terrain -10.000  dxz 0.0001 -0.0000 rot 0.00 / 0.04
+
+worst 20 by rotation error (degrees, better of as is / mirrored)
+      0.002  tdd_settlement_dwarven_cities/dwarven_city_b/medium    khazad_house_02                    FREEFORM       depth 2  y world 51.842 list 51.842 terrain 35.336  dxz -0.0000 -0.0000 rot 0.00 / 0.41
+      0.002  tdd_settlement_dwarven_cities/dwarven_city_b/medium    khazad_house_02                    FREEFORM       depth 2  y world 51.842 list 51.842 terrain 33.705  dxz -0.0000 -0.0000 rot 0.00 / 0.41
+      0.002  tdd_settlement_dwarven_cities/dwarven_city_b/medium    khazad_house_02                    FREEFORM       depth 2  y world 51.842 list 51.842 terrain 33.045  dxz 0.0000 -0.0000 rot 0.00 / 0.41
+      0.002  tdd_settlement_middle_men_cities/middle_men_city_hornburg/small hd_mountain_generic_1              FREEFORM       depth 0  y world 220.313 list 220.313 terrain 216.231  dxz -0.0000 0.0000 rot 0.00 / 17.75
+      0.002  tdd_settlement_middle_men_cities/middle_men_city_hornburg/medium hd_mountain_generic_1              FREEFORM       depth 0  y world 220.313 list 220.313 terrain 216.231  dxz -0.0000 0.0000 rot 0.00 / 17.75
+      0.000  tdd_settlement_dwarven_cities/dwarven_city_b/medium    khazad_house_02                    FREEFORM       depth 2  y world 51.842 list 51.842 terrain 32.405  dxz -0.0000 0.0000 rot 0.00 / 9.35
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/minor global_ground_pathborder           FREEFORM       depth 2  y world 0.320 list 0.320 terrain 1.233  dxz 0.0000 -0.0000 rot 0.00 / 100.00
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/small global_ground_pathborder           FREEFORM       depth 2  y world 0.320 list 0.320 terrain 1.233  dxz 0.0000 -0.0000 rot 0.00 / 100.00
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/medium global_ground_pathborder           FREEFORM       depth 2  y world -0.309 list -0.309 terrain 0.603  dxz 0.0000 -0.0000 rot 0.00 / 100.00
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/medium global_ground_pathborder           FREEFORM       depth 2  y world 45.850 list 45.850 terrain 46.916  dxz -0.0000 -0.0000 rot 0.00 / 61.27
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/small global_ground_pathborder           FREEFORM       depth 2  y world 46.405 list 46.405 terrain 47.470  dxz -0.0000 -0.0000 rot 0.00 / 61.27
+      0.000  tdd_settlement_middle_men_ports/middle_men_port_a/minor global_ground_pathborder           FREEFORM       depth 2  y world 46.405 list 46.405 terrain 47.470  dxz -0.0000 -0.0000 rot 0.00 / 61.27
+      0.000  tdd_settlement_wildmen_cities/wildmen_city_a/minor     lowfence_2                         LANDSCAPE      depth 1  y world 13.766 list 13.766 terrain 13.766  dxz 0.0000 0.0000 rot 0.00 / 137.14
+      0.000  tdd_settlement_wildmen_cities/wildmen_city_a/small     lowfence_2                         LANDSCAPE      depth 1  y world 13.766 list 13.766 terrain 13.766  dxz 0.0000 0.0000 rot 0.00 / 137.14
+      0.000  tdd_settlement_wildmen_cities/wildmen_city_a/medium    lowfence_2                         LANDSCAPE      depth 1  y world 13.766 list 13.766 terrain 13.766  dxz 0.0000 0.0000 rot 0.00 / 137.14
+      0.000  assembly_kit/osgiliath_test/battlefield                vines_pillar                       LANDSCAPE      depth 1  y world -0.671 list -0.671 terrain -0.671  dxz -0.0000 0.0000 rot 0.00 / 97.43
+      0.000  tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor vines_pillar                       LANDSCAPE      depth 1  y world -1.802 list -1.802 terrain -1.802  dxz -0.0000 0.0000 rot 0.00 / 97.43
+      0.000  tdd_settlement_dunedain_cities/dunedain_city_osgiliath/small vines_pillar                       LANDSCAPE      depth 1  y world -1.802 list -1.802 terrain -1.802  dxz -0.0000 0.0000 rot 0.00 / 97.43
+      0.000  tdd_settlement_wildmen_cities/wildmen_city_a/minor     lowfence_2                         LANDSCAPE      depth 1  y world 13.853 list 13.853 terrain 13.853  dxz -0.0000 0.0000 rot 0.00 / 77.46
+      0.000  tdd_settlement_wildmen_cities/wildmen_city_a/small     lowfence_2                         LANDSCAPE      depth 1  y world 13.853 list 13.853 terrain 13.853  dxz -0.0000 0.0000 rot 0.00 / 77.46
+exit 0
