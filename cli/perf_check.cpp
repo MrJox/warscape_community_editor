@@ -191,6 +191,7 @@ static void tile_index_checks(const std::filesystem::path& dir) {
         int best = -1;
         float best_t = 1e30f;
         for (int e : doc.instances()) {
+            if (!doc.shown(e) || !doc.selectable(e)) continue;   // the grid only holds what can be picked (hidden / locked layers are left out)
             float3 q = doc.world_position(e);
             const float r = doc.marker_radius(e);
             if (sc.type(e) == "BUILDING_INSTANCE") q.y += r * 0.5f;

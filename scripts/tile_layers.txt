@@ -41,6 +41,30 @@ frames 2
 undo
 assert_selectable Buildings 1
 
+# a locked layer's instances cannot be picked with the mouse, an unlocked one's can; a hidden layer's cannot either
+tile_select_in Buildings BUILDING_INSTANCE frame
+frames 4
+select none
+tile_select_in Buildings BUILDING_INSTANCE click
+frames 4
+assert_selected 1
+select none
+tile_flag Buildings active off
+frames 3
+tile_select_in Buildings BUILDING_INSTANCE click
+frames 4
+assert_selected 0
+undo
+frames 3
+tile_flag Buildings visible off
+frames 3
+tile_select_in Buildings BUILDING_INSTANCE click
+frames 4
+assert_selected 0
+undo
+frames 3
+select none
+
 # structure: a new layer, rename, a second one inside it, moving a layer in front of another, grouping the selection, duplicate, export type, delete
 tile_new_layer probe
 assert_layer probe exists 1

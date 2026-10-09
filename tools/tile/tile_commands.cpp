@@ -523,6 +523,36 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         select_elem(*ed, e);
         return ok();
     });
+    commands.add("tile_select_in", "tile_select_in <layer path> <type> [frame|click]", "select the first instance of a type below a layer; `frame` points the camera at it, `click` clicks its pixel with the scripted mouse (frame it and wait some frames first)",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.size() < 2) return fail("usage: tile_select_in <layer path> <type> [click]");
+        const int layer = element_arg(*d, *this, *ed, a[0]);
+        if (layer < 0) return fail("no such layer");
+        int found = -1;
+        for (int e : d->instances())
+            if (d->tscene().type(e) == a[1] && d->tscene().is_descendant(e, layer)) { found = e; break; }
+        if (found < 0) return fail("no " + a[1] + " in " + a[0]);
+        if (a.size() > 2 && a[2] == "click") {
+            const float3 p = d->world_position(found);
+            float3 q = p;
+            if (d->tscene().type(found) == "BUILDING_INSTANCE") q.y += d->marker_radius(found) * 0.5f;
+            float x, y;
+            if (!ed->viewport().project(q, x, y)) return fail("the instance is not in view");
+            char x_s[32], y_s[32];
+            std::snprintf(x_s, sizeof x_s, "%.1f", x);
+            std::snprintf(y_s, sizeof y_s, "%.1f", y);
+            ed->commands().run("mouse", {"click", x_s, y_s});
+            return ok("clicked element " + std::to_string(found));
+        }
+        if (a.size() > 2 && a[2] == "frame") {   // the camera looks at it (wait a few frames before clicking)
+            const float3 p = d->world_position(found);
+            if (auto* orbit = dynamic_cast<OrbitCamera*>(&ed->viewport().controller())) orbit->set_orbit(0.8f, 0.7f, 60.0f, {p.x, p.y, p.z});
+            return ok("framed element " + std::to_string(found));
+        }
+        select_elem(*ed, found);
+        return ok("element " + std::to_string(found));
+    });
     commands.add("tile_tree", "tile_tree [depth]", "log the scene tree from the root down to a depth (default 2) with each layer's flags and child count", [this, need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d)) return fail("no tile open");
