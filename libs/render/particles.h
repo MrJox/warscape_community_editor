@@ -7,7 +7,7 @@
 // not reverse-engineered yet, see the ASSUMPTION notes in particles.cpp.
 #include "foundation/math.h"
 #include "render/texture.h"
-#include "vfx/weather_vfx.h"
+#include "assets/weather_vfx.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>

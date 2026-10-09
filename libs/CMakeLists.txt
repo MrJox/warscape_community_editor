@@ -15,6 +15,16 @@ add_library(wce_formats STATIC
     formats/image_containers.cpp formats/chmf.cpp formats/png_file.cpp formats/tile_database.cpp formats/opaque_formats.cpp)
 target_link_libraries(wce_formats PUBLIC wce_foundation zlib_vendor)
 
-# D3D helpers that need no scene yet (the renderer joins in Phase 3).
-add_library(wce_render STATIC render/image_io.cpp)
-target_link_libraries(wce_render PUBLIC wce_formats d3d11)
+# CPU asset loading on top of the VFS (weather vfx definitions; models and materials join later).
+add_library(wce_assets STATIC assets/vfx_def.cpp assets/vfx_constants.cpp assets/weather_vfx.cpp)
+target_link_libraries(wce_assets PUBLIC wce_vfs wce_formats)
+
+# The shared render/editor scene and the data it carries (no GPU objects).
+add_library(wce_scene STATIC scene/environment.cpp scene/clouds.cpp)
+target_link_libraries(wce_scene PUBLIC wce_formats)
+
+# D3D11 renderer on the game's own shaders.
+add_library(wce_render STATIC
+    render/image_io.cpp render/shader_lib.cpp render/texture.cpp render/wind.cpp render/scene.cpp render/particles.cpp
+    render/environment_apply.cpp render/renderer.cpp)
+target_link_libraries(wce_render PUBLIC wce_scene wce_assets wce_vfs wce_formats d3d11 dxgi d3dcompiler dxguid)

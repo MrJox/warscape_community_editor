@@ -1,4 +1,4 @@
-#include "vfx_def.h"
+#include "assets/vfx_def.h"
 
 #include "formats/xml_doc.h"
 

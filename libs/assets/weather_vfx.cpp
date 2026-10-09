@@ -1,4 +1,4 @@
-#include "weather_vfx.h"
+#include "assets/weather_vfx.h"
 
 #include "vfs/vfs.h"
 #include "formats/xml_doc.h"

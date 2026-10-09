@@ -1,6 +1,6 @@
 #include "render/wind.h"
 
-#include "vfx/weather_vfx.h"
+#include "assets/weather_vfx.h"
 
 #include <algorithm>
 #include <cmath>

@@ -1,4 +1,4 @@
-#include "scene.h"
+#include "render/scene.h"
 
 #include "vfs/vfs.h"
 #include "formats/rmv2.h"

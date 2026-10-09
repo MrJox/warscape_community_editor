@@ -1,4 +1,4 @@
-#include "particles.h"
+#include "render/particles.h"
 
 #include "vfs/vfs.h"
 #include "render/shader_lib.h"

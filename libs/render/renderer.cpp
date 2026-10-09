@@ -1,4 +1,6 @@
-#include "renderer.h"
+#include "render/renderer.h"
+
+#include "render/environment_apply.h"
 
 #include "vfs/vfs.h"
 #include "render/scene.h"

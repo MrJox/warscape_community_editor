@@ -2,8 +2,8 @@
 // Precipitation and weather particles of one weather definition:
 //   .environment WEATHER definition_name -> weather/weather_definitions.xml WEATHER_DEFINITION (vfx1, wind)
 //   -> vfx/<vfx1>.xml -> vfx_references -> library emitters (enable / tint overrides) + behaviour chains.
-#include "vfx_constants.h"
-#include "vfx_def.h"
+#include "assets/vfx_constants.h"
+#include "assets/vfx_def.h"
 
 #include <cstdint>
 #include <functional>

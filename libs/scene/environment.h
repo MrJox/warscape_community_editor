@@ -4,7 +4,7 @@
 // Reading: every value comes from the XmlDoc, so edits in the inspector show up on the next frame.
 // Mapping: apply_environment() writes the cbuffers. Every transform that is not yet verified against
 // the game is marked ASSUMPTION here and listed in docs/re/environment_to_shader.md.
-#include "render/clouds.h"
+#include "scene/clouds.h"
 #include "foundation/math.h"
 
 #include <string>
@@ -13,7 +13,6 @@
 namespace wce {
 
 class XmlDoc;
-class ConstantBuffers;
 
 struct EnvironmentParams {
     // LIGHTING
@@ -104,9 +103,6 @@ void read_output_settings(float& gamma, float& brightness);
 
 // sRGB-ish colour from the files to linear light: pow 2.2 (verified against the sun, sky, fog and ambient constants of 3 dumps).
 float3 colour_to_linear(const float3& c);
-
-// Writes skydome_PS, lighting_VS_PS, fog_VS_PS, weather_shared, auto exposure / tone mapping cbuffers.
-void apply_environment(const EnvironmentParams& e, ConstantBuffers& cbs);
 
 // POST_PROCESSING -> hdr_to_screen_PS.colour_matrix (row-major, rows = output r, g, b, w).
 float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness = 1.0f);

@@ -1,6 +1,6 @@
-#include "vfx_constants.h"
+#include "assets/vfx_constants.h"
 
-#include "vfx_def.h"
+#include "assets/vfx_def.h"
 
 #include <algorithm>
 #include <cctype>

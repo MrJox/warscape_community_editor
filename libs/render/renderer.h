@@ -1,11 +1,11 @@
 #pragma once
 // Battle renderer built from the game's own shaders. Pass order and shader choices are documented
 // in docs/re/renderer.md; anything not yet confirmed against the game is marked there.
-#include "render/environment.h"
+#include "scene/environment.h"
 #include "foundation/math.h"
 #include "render/shader_lib.h"
 #include "render/wind.h"
-#include "vfx/particles.h"
+#include "render/particles.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>

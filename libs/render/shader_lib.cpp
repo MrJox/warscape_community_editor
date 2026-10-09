@@ -1,4 +1,4 @@
-#include "shader_lib.h"
+#include "render/shader_lib.h"
 
 #include "vfs/vfs.h"
 #include "formats/fxc.h"

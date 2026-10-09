@@ -1,4 +1,4 @@
-#include "clouds.h"
+#include "scene/clouds.h"
 
 #include "formats/env_value.h"
 #include "formats/xml_doc.h"

@@ -9,7 +9,8 @@
 // say which weather file the battle used, but its sun / sky / fog constants identify it.
 #include "vfs/vfs.h"
 #include "formats/xml_doc.h"
-#include "render/environment.h"
+#include "render/environment_apply.h"
+#include "scene/environment.h"
 #include "render/shader_lib.h"
 
 #include <d3d11.h>

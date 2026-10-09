@@ -4,7 +4,7 @@
 #include "formats/env_value.h"
 
 #include "imgui.h"
-#include "render/environment.h"
+#include "scene/environment.h"
 
 #include <windows.h>
 #include <commdlg.h>
