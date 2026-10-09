@@ -103,3 +103,10 @@ whenever it happens to be ready. Two runs of the dry, rain and snow shots are no
 the new reference (`build/gates_base/` keeps the Phase 0 originals). The new dry shot is 43 dB from the old one, rain 45 dB, snow 27 dB (rain and snow particles
 used to depend on the frame times). From here on a weather shot must be **bit-identical** to `build/gates_base_p3/`; any difference must be explained and
 re-baselined explicitly in its commit. The tile shot still comes from Tile Studio (own renderer until Phase 6) and keeps the Phase 0 tolerance rule.
+
+### Phase 3 additions
+
+| Gate | Result |
+|---|---|
+| `render_check` (label `render`, runs in `gates.sh --render`) | headless D3D11: two renderers give the same pixels; sample map picking (sky 0, ground = terrain entity, 3 of 8 house centres hit their own house; the rest hit other pieces, empty air or ground); locked and hidden layers; hill terrain in 64-cell patches; overlays in their own colour, depth tested, selection outline, grid; PNG capture equals the target. Output: `houses in view 8, picked right 3` and `all passed` |
+| `scripts/shots.sh` | the three weather shots and two offscreen captures (`--capture 1280x720`, `800x600`) byte-identical to `build/gates_base_p3/` |

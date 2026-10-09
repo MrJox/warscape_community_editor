@@ -6,8 +6,16 @@
 |---|---|
 | 0 Freeze and new repo | **Done.** Baseline in `docs/baseline.md` and `docs/baseline/`. |
 | 1 foundation, formats libs | **Done** (commit `8dfa720`). |
-| 2 VFS / rpfm_server | **Done, waiting for your go.** See `docs/vfs.md`. |
-| 3 - 9 | Not started. |
+| 2 VFS / rpfm_server | **Done** (commit `6de91c4`). See `docs/vfs.md`. |
+| 3 Render core, RenderScene | **Done, waiting for your go.** See the Phase 3 deviations below and `docs/re/terrain.md`. |
+| 4 - 9 | Not started. |
+
+Phase 3 deviations: the dependency order is `... formats <- assets <- scene <- render ...` (scene below render): `Renderer::render` takes a `RenderScene`, which holds
+paths and plain data, never GPU objects; `libs/assets` only has the weather vfx definitions for now (models and materials stay in `render/ModelCache` until the
+Unit editor needs them on the CPU). Picking uses an id pass of its own (the game's G-buffer id target is fed by an engine-private lookup table), so the G-buffer
+passes are unchanged. The terrain RE spike found that the game ships readable GLSL translations of every shader: `docs/re/terrain.md` has the pass structure; the pixel-close
+terrain pass is not built, the interim pass draws `Terrain` entities in patches. The weather screenshots were re-baselined once, at the fixed-step clock (see `docs/baseline.md`).
+The old docs moved to `docs/re`, `docs/formats` and `docs/plans`.
 
 Phase 2 deviations: the spike showed that rpfm_server state is per MCP session, so the editor shares the running server with the attila-toolkit bridge (no second instance; the port cannot be changed anyway); the pack backends sit below `Vfs` (which keeps pack priority and both caches) instead of being implementations of `IVfs`; `libs/foundation` gained `json` and `settings` (no JSON library was approved, so the reader is our own); loose overlay folders are part of `Vfs`, not a third backend.
 
