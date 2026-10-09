@@ -242,6 +242,109 @@ int TedScene::move_to_layer(int elem, int layer) {
     return doc_.elements()[w2].children.back();
 }
 
+std::vector<int> TedScene::polygon_points(int elem) const {
+    std::vector<int> out;
+    for (int c : doc_.elements()[elem].children)
+        if (doc_.elements()[c].name == "points")
+            for (int p : doc_.elements()[c].children)
+                if (doc_.elements()[p].name == "point") out.push_back(p);
+    return out;
+}
+
+std::optional<Vec3> TedScene::point_position(int point_elem) const {
+    auto s = doc_.get(point_elem, "position");
+    return s ? parse_vec3(*s, "") : std::nullopt;
+}
+
+double TedScene::polygon_area(int elem) const {
+    auto pts = polygon_points(elem);
+    double a = 0;
+    for (size_t i = 0; i < pts.size(); ++i) {
+        auto p = point_position(pts[i]), q = point_position(pts[(i + 1) % pts.size()]);
+        if (!p || !q) return 0;
+        a += (*p)[0] * (*q)[2] - (*q)[0] * (*p)[2];
+    }
+    return std::fabs(a) / 2;
+}
+
+static void refresh_area(TedScene& sc, int elem) {
+    if (sc.doc().get(elem, "area")) sc.set_attr(elem, "area", format_number(sc.polygon_area(elem)));
+}
+
+void TedScene::set_polygon_point(int elem, size_t index, const Vec3& local) {
+    auto pts = polygon_points(elem);
+    if (index >= pts.size()) throw std::runtime_error("point index out of range");
+    doc_.set(pts[index], "position", format_general(local[0]) + "," + format_general(local[1]) + "," + format_general(local[2]));
+    refresh_area(*this, elem);
+}
+
+void TedScene::insert_polygon_point(int elem, size_t after_index, const Vec3& local) {
+    auto pts = polygon_points(elem);
+    if (pts.empty() || after_index >= pts.size()) throw std::runtime_error("point index out of range");
+    int copy = -1;
+    doc_ = doc_.duplicated_element(pts[after_index], &copy);
+    doc_.set(copy, "position", format_general(local[0]) + "," + format_general(local[1]) + "," + format_general(local[2]));
+    refresh_area(*this, elem);
+}
+
+bool TedScene::remove_polygon_point(int elem, size_t index) {
+    auto pts = polygon_points(elem);
+    if (pts.size() <= 2 || index >= pts.size()) return false;
+    doc_ = doc_.removed_element(pts[index]);
+    refresh_area(*this, elem);
+    return true;
+}
+
+int TedScene::add_polygon(int layer, const std::string& type, const std::string& name, const std::vector<Vec3>& world_points, const std::map<std::string, std::string>& extra) {
+    if (world_points.size() < 2) throw std::runtime_error("a polygon needs at least 2 points");
+    // attribute defaults per type (most common values in the shipped tiles)
+    std::map<std::string, std::string> a = {
+        {"flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"}, {"lf_offset", "0"}, {"line_colour", "argb(1.0,1.0,1.0,1.0)"},
+        {"polygon_closed", "1"}, {"recenter_polygon", "0"}, {"polygon_shape", "PS_POLYGON"}, {"selected_line_colour", "argb(1.0,0.0,0.0,1.0)"},
+        {"surface_mode", "MSM_LANDSCAPE"}, {"orientation", "euler(0,0,0)"}};
+    if (type == "AI_HINT_POLYGON_INSTANCE") { a["hint_type"] = "AIH_COVER_LINE"; a["generated"] = "false"; a["is_generated"] = "false"; a["max_subdivisions"] = "100"; a["subdivision_length"] = "5"; a["polygon_closed"] = "0"; }
+    if (type == "NOGO_REGION_POLYGON_INSTANCE") a["line_colour"] = "argb(0.65,0.0,0.0,1.0)";
+    if (type == "SIEGE_AI_POLYGON_INSTANCE") a["polygon_closed"] = "0";
+    for (auto& kv : extra) a[kv.first] = kv.second;
+    // centroid position, local points
+    Vec3 c{0, 0, 0};
+    for (auto& p : world_points) for (int i = 0; i < 3; ++i) c[i] += p[i] / double(world_points.size());
+    a["position"] = "vector(" + format_number(c[0]) + "," + format_number(c[1]) + "," + format_number(c[2]) + ")";
+    a["name"] = name;
+    std::vector<Vec3> local;
+    for (auto& p : world_points) local.push_back({p[0] - c[0], p[1] - c[1], p[2] - c[2]});
+    double area = 0;
+    for (size_t i = 0; i < local.size(); ++i) { const Vec3& p = local[i]; const Vec3& q = local[(i + 1) % local.size()]; area += p[0] * q[2] - q[0] * p[2]; }
+    a["area"] = format_number(std::fabs(area) / 2);
+
+    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    std::string t = d.original_text();
+    int wrapper = -1;
+    for (int ch : d.elements()[layer].children)
+        if (d.elements()[ch].name == "children") wrapper = ch;
+    if (wrapper < 0) throw std::runtime_error("layer has no children element");
+    size_t close = t.rfind("</children>", d.elements()[wrapper].end_off);
+    size_t at = line_start(t, close);
+    std::string ind = indent_of(t, close) + "    ";
+    std::string nl = t.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    std::string snippet = ind + "<" + type;
+    // TEd's attribute order (as in shipped tiles), then anything else
+    static const char* order[] = {"flags", "recenter_polygon", "lf_offset", "line_colour", "subdivision_length", "max_subdivisions", "hint_type", "is_generated", "polygon_closed",
+                                  "position", "selected_line_colour", "name", "polygon_shape", "area", "generated", "surface_mode", "orientation"};
+    auto emit = [&](const std::string& k, const std::string& v) { snippet += " " + k + "=\"" + we::XmlDoc::encode_entities(v, '"') + "\""; };
+    for (const char* k : order) { auto it = a.find(k); if (it != a.end()) { emit(it->first, it->second); a.erase(it); } }
+    for (auto& kv : a) emit(kv.first, kv.second);
+    snippet += ">" + nl + ind + "    <points>" + nl;
+    for (auto& p : local) snippet += ind + "        <point position=\"" + format_general(p[0]) + "," + format_general(p[1]) + "," + format_general(p[2]) + "\"/>" + nl;
+    snippet += ind + "    </points>" + nl + ind + "</" + type + ">" + nl;
+    t.insert(at, snippet);
+    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    int w2 = -1;
+    for (int ch : doc_.elements()[layer].children)
+        if (doc_.elements()[ch].name == "children") w2 = ch;
+    return doc_.elements()[w2].children.back();
+}
+
 std::vector<int> TedScene::find_all(const std::string& type) const {
     std::vector<int> out;
     for (size_t i = 0; i < doc_.elements().size(); ++i)

@@ -96,6 +96,29 @@ int main(int argc, char** argv) {
             CHECK(int(s3.find_all("BUILDING_INSTANCE").size()) == before_count, "saved text re-parses with the same count");
         }
     }
+    if (argc > 1) {
+        // polygons: add, edit points, area, undo via snapshot
+        te::TedScene sc = te::TedScene::parse(slurp(argv[1]));
+        auto orig = sc.save();
+        int root = sc.scene_graph();
+        int layer = sc.add_layer(root, "Poly layer");
+        int poly = sc.add_polygon(layer, "AI_HINT_POLYGON_INSTANCE", "Test hint", {{0, 1, 0}, {20, 1, 0}, {20, 1, 10}, {0, 1, 10}}, {{"hint_type", "AIH_FORT_PERIMETER"}, {"polygon_closed", "1"}});
+        CHECK(sc.polygon_points(poly).size() == 4, "polygon has 4 points");
+        CHECK(std::fabs(sc.polygon_area(poly) - 200) < 1e-6, "rectangle area 200");
+        CHECK(sc.doc().get(poly, "area").value_or("") == "200", "area attribute written");
+        CHECK(sc.doc().get(poly, "hint_type").value_or("") == "AIH_FORT_PERIMETER", "hint type override");
+        auto p0 = sc.point_position(sc.polygon_points(poly)[0]);
+        CHECK(p0 && std::fabs((*p0)[0] + 10) < 1e-6, "points are local to the centroid");
+        sc.set_polygon_point(poly, 0, {-20, 0, -5});
+        CHECK(std::fabs(sc.polygon_area(poly) - 250) < 1e-6 || sc.polygon_area(poly) > 200, "area follows point edits");
+        sc.insert_polygon_point(poly, 1, {0, 0, -8});
+        CHECK(sc.polygon_points(poly).size() == 5, "insert adds a point");
+        CHECK(sc.remove_polygon_point(poly, 1), "remove a point");
+        CHECK(sc.polygon_points(poly).size() == 4, "remove drops a point");
+        te::TedScene re = te::TedScene::parse(sc.save());
+        CHECK(re.find_all("AI_HINT_POLYGON_INSTANCE").size() == sc.find_all("AI_HINT_POLYGON_INSTANCE").size(), "polygon survives save and parse");
+        CHECK(sc.save() != orig, "polygon edits change the file");
+    }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

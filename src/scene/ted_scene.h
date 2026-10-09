@@ -12,6 +12,7 @@
 #include "formats/xml_doc.h"
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -65,6 +66,17 @@ public:
     int add_layer(int parent_layer, const std::string& name);   // empty LayerInstance appended to the parent's children; returns its index
     int move_to_layer(int elem, int layer);                     // moves the element (with its subtree) to the end of the layer's children; returns the new index
     bool is_descendant(int elem, int ancestor) const;
+
+    // Polygons (instances with a <points> child): AI hints, no-go / go zones, vegetation exclusion, siege AI, deployment ...
+    std::vector<int> polygon_points(int elem) const;             // element indices of the <point> children
+    std::optional<Vec3> point_position(int point_elem) const;    // local offset from the instance position (scene units)
+    double polygon_area(int elem) const;                         // shoelace on x,z of the local points (what TEd stores in `area`)
+    void set_polygon_point(int elem, size_t index, const Vec3& local);   // also refreshes `area`
+    void insert_polygon_point(int elem, size_t after_index, const Vec3& local);
+    bool remove_polygon_point(int elem, size_t index);           // refuses below 2 points
+    // New polygon in `layer`, points in scene space (world). type: AI_HINT_POLYGON_INSTANCE, NOGO_REGION_POLYGON_INSTANCE, GO_REGION_POLYGON_INSTANCE,
+    // VegetationExclusionPolygonInstance, SIEGE_AI_POLYGON_INSTANCE. `extra` overrides attributes (hint_type, polygon_closed ...).
+    int add_polygon(int layer, const std::string& type, const std::string& name, const std::vector<Vec3>& world_points, const std::map<std::string, std::string>& extra = {});
 
     // All instances (depth first) of a given element name, e.g. "BUILDING_INSTANCE".
     std::vector<int> find_all(const std::string& type) const;
