@@ -15,9 +15,10 @@ The full battle weather pipeline renders with values taken from the game's DLL, 
 - **Environment cube:** generated from the scene (EnvMapGen) every 4th frame.
 - **Graphics options:** read from `preferences.script.txt` and adjustable in the Settings menu.
 
-Everything is committed (latest commit `991811e`), and the working tree is clean.
+Everything is committed. The project is frozen (2026-10-09): development continues in `../warscape_community_editor` (see its PLAN.md).
 
 ## Completed (verified against DLL code and dumps)
+- **Structural edits (2026-10-08):** `XmlDoc::{duplicated,removed,moved}_element`, `with_child`, `with_attr_added`, `without_attr`, with a context menu in the Properties tree and snapshot undo. `xml_roundtrip` checks, on a sample of elements of every file, that duplicate+remove, move+move back, add attribute+remove and add child+remove restore the exact bytes (621 files, 0 failed). Not covered: schema-aware defaults for new elements (a new child is empty; duplicate an existing one to get a full `CLOUD_ELEMENT`), and interactive UI testing.
 - **Weather selection database (Phase 4):** `variation_db` parser, matcher and FASTBIN/XML conversion both ways (byte-identical to the game's files), editing with flag remapping, Selection > Weather picker (Pick and Edit tabs, loads and saves .xml and .bin), `variation_convert`, `variation_check` and `variation_e2e.ps1` gates. See `docs/re/variation_db.md`. A general DB table editor was tried and dropped (not needed).
 - **Wind:** gusts, random battle direction, `weather_shared` / `wind_VS` / `wind_PS` constants, VFX wind and variance. Every `WEATHER_DEFINITION` field is supported, including `vfx2`.
 - **HDR:** S-curve tone LUT (per-channel cubic Bezier, RGBA16F); battle HDR property names and engine defaults.

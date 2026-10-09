@@ -30,6 +30,8 @@ Precipitation (Precipitation menu) comes from the WEATHER definition_name of the
 
 Selection > Weather picker works on the weather selection database (`warscape_asset_variation_db`). The Pick tab shows which `.environment` file the game chooses for a set of battle conditions (map, season, precipitation, time of day, climate change index, snow attrition, battle type, climate) and, for the open file, the conditions under which it is chosen. The Edit tab edits the value lists and the variations (file name and allowed conditions per variation). The Source box loads the `.bin` or the `.xml` of any pack, or a loose file; Save XML / Save FASTBIN / Save both write them as loose files under the output folder, `warscape_asset_variation_db\`. See [docs/re/variation_db.md](docs/re/variation_db.md).
 
+Structural edits: right-click an element in the Properties tree to duplicate, delete, move up/down, add a child element, add an attribute or rename it (`name`); right-click an attribute to remove it. All of them undo/redo with Ctrl+Z / Ctrl+Y. The new text is spliced into the original, so everything outside the edited lines stays byte-identical; after a structural edit "Revert all" returns to the file as first loaded, and the Changes tab compares against the state after the last structural edit.
+
 Edited files are saved as loose files under the output folder (Settings menu), keeping their in-pack path. Unchanged bytes stay identical to the source.
 
 ## Tools

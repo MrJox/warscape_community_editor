@@ -405,18 +405,8 @@ void App::frame() {
     ImGuiIO& io = ImGui::GetIO();
     if (active_ >= 0 && active_ < int(docs_.size()) && io.KeyCtrl && !ImGui::IsAnyItemActive()) {
         Document& d = *docs_[active_];
-        if (ImGui::IsKeyPressed(ImGuiKey_Z) && !d.undo.empty()) {
-            auto c = d.undo.back();
-            d.undo.pop_back();
-            d.doc.set_attr_raw(c.elem, c.attr, c.before);
-            d.redo.push_back(c);
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Y) && !d.redo.empty()) {
-            auto c = d.redo.back();
-            d.redo.pop_back();
-            d.doc.set_attr_raw(c.elem, c.attr, c.after);
-            d.undo.push_back(c);
-        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Z) && !d.undo.empty()) undo_redo(d, true);
+        if (ImGui::IsKeyPressed(ImGuiKey_Y) && !d.redo.empty()) undo_redo(d, false);
         if (ImGui::IsKeyPressed(ImGuiKey_S)) save(d, default_save_path(d));
     }
 }
@@ -831,7 +821,8 @@ void App::draw_document(Document& d) {
     ImGui::SameLine();
     ImGui::BeginDisabled(!d.doc.modified());
     if (ImGui::Button("Revert all")) {
-        d.doc.revert_all();
+        if (d.doc.structural_edits() > 0) d.doc = XmlDoc::parse(d.doc.origin_bytes());
+        else d.doc.revert_all();
         d.undo.clear();
         d.redo.clear();
     }
@@ -847,6 +838,7 @@ void App::draw_document(Document& d) {
             ImGui::BeginChild("tree");
             for (int r : d.doc.roots()) draw_element(d, r);
             ImGui::EndChild();
+            apply_pending(d);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Changes")) {
@@ -865,6 +857,65 @@ void App::draw_element(Document& d, int e) {
     if (any_mod) ImGui::PushStyleColor(ImGuiCol_Text, kModified);
     bool open = ImGui::TreeNodeEx("##el", el.parent < 0 ? ImGuiTreeNodeFlags_DefaultOpen : 0, "%s", element_label(d.doc, e).c_str());
     if (any_mod) ImGui::PopStyleColor();
+    if (e == d.select_after) {
+        ImGui::SetScrollHereY();
+        d.select_after = -1;
+    }
+    if (ImGui::BeginPopupContextItem("elctx")) {
+        using K = Document::PendingOp;
+        ImGui::TextDisabled("%s", el.name.c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Duplicate")) d.pending = {K::Duplicate, e};
+        if (ImGui::MenuItem("Delete")) d.pending = {K::Remove, e};
+        if (ImGui::MenuItem("Move up")) d.pending = {K::MoveUp, e};
+        if (ImGui::MenuItem("Move down")) d.pending = {K::MoveDown, e};
+        if (ImGui::BeginMenu("Add child element")) {
+            ImGui::SetNextItemWidth(220);
+            bool go = ImGui::InputTextWithHint("##cn", "element name, Enter to add", new_name_, sizeof new_name_, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (go && *new_name_) {
+                d.pending = {K::AddChild, e, 0, new_name_};
+                *new_name_ = 0;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Add attribute")) {
+            ImGui::SetNextItemWidth(220);
+            ImGui::InputTextWithHint("##an", "attribute name", new_name_, sizeof new_name_);
+            ImGui::SetNextItemWidth(220);
+            bool go = ImGui::InputTextWithHint("##av", "value, Enter to add", new_value_, sizeof new_value_, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (go && *new_name_) {
+                d.pending = {K::AddAttr, e, 0, new_name_, new_value_};
+                *new_name_ = *new_value_ = 0;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Rename (name attribute)")) {
+            if (ImGui::IsWindowAppearing()) {
+                auto cur = d.doc.get(e, "name");
+                strncpy(new_value_, cur ? cur->c_str() : "", sizeof new_value_ - 1);
+            }
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::InputText("##rn", new_value_, sizeof new_value_, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                size_t k;
+                if (d.doc.find_attr(e, "name", &k)) {
+                    std::string before(d.doc.attr_raw(e, k));
+                    d.doc.set_attr_raw(e, k, XmlDoc::encode_entities(new_value_, d.doc.elements()[e].attrs[k].quote));
+                    std::string after(d.doc.attr_raw(e, k));
+                    if (before != after) {
+                        d.undo.push_back({e, k, before, after});
+                        d.redo.clear();
+                    }
+                } else {
+                    d.pending = {K::AddAttr, e, 0, "name", new_value_};
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndPopup();
+    }
     if (open) {
         bool has_attrs = false;
         for (size_t a = 0; a < el.attrs.size(); ++a)
@@ -940,15 +991,53 @@ void App::draw_attribute(Document& d, int e, size_t a) {
             d.redo.clear();
         }
     }
-    if (modified && ImGui::BeginPopupContextItem("ctx")) {
-        if (ImGui::MenuItem("Revert to original")) {
+    if (ImGui::BeginPopupContextItem("ctx")) {
+        if (ImGui::MenuItem("Revert to original", nullptr, false, modified)) {
             std::string before(d.doc.attr_raw(e, a));
             d.doc.set_attr_raw(e, a, std::string(d.doc.original_raw(e, a)));
             d.undo.push_back({e, a, before, std::string(d.doc.original_raw(e, a))});
         }
+        if (ImGui::MenuItem("Remove attribute")) d.pending = {Document::PendingOp::RemoveAttr, e, a};
         ImGui::EndPopup();
     }
     ImGui::PopID();
+}
+
+void App::undo_redo(Document& d, bool undo) {
+    auto& from = undo ? d.undo : d.redo;
+    auto& to = undo ? d.redo : d.undo;
+    Document::Change c = std::move(from.back());
+    from.pop_back();
+    if (c.doc_before) d.doc = undo ? *c.doc_before : *c.doc_after;
+    else d.doc.set_attr_raw(c.elem, c.attr, undo ? c.before : c.after);
+    to.push_back(std::move(c));
+}
+
+void App::apply_pending(Document& d) {
+    using K = Document::PendingOp;
+    if (d.pending.kind == K::None) return;
+    K op = std::move(d.pending);
+    d.pending = {};
+    try {
+        int sel = op.elem;
+        XmlDoc next;
+        switch (op.kind) {
+        case K::Remove: next = d.doc.removed_element(op.elem); sel = d.doc.elements()[op.elem].parent; break;
+        case K::Duplicate: next = d.doc.duplicated_element(op.elem, &sel); break;
+        case K::MoveUp: next = d.doc.moved_element(op.elem, -1); break;
+        case K::MoveDown: next = d.doc.moved_element(op.elem, +1); break;
+        case K::AddChild: next = d.doc.with_child(op.elem, op.name, &sel); break;
+        case K::AddAttr: next = d.doc.with_attr_added(op.elem, op.name, op.value); break;
+        case K::RemoveAttr: next = d.doc.without_attr(op.elem, op.attr); break;
+        default: return;
+        }
+        d.undo.push_back({op.elem, 0, {}, {}, std::make_shared<XmlDoc>(d.doc), std::make_shared<XmlDoc>(next)});
+        d.redo.clear();
+        d.doc = std::move(next);
+        d.select_after = op.kind == K::MoveUp || op.kind == K::MoveDown ? -1 : sel;
+    } catch (const std::exception& e) {
+        set_status(std::string("Edit failed: ") + e.what(), true);
+    }
 }
 
 void App::draw_changes(Document& d) {
@@ -956,6 +1045,9 @@ void App::draw_changes(Document& d) {
         ImGui::TextColored(kDim, "No changes.");
         return;
     }
+    if (d.doc.structural_edits() > 0)
+        ImGui::TextColored(kModified, "%d structural edit(s): elements or attributes added, removed or moved. Attribute changes below are relative to the last of them.",
+                           d.doc.structural_edits());
     if (ImGui::BeginTable("chg", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn("attribute");
         ImGui::TableSetupColumn("original");

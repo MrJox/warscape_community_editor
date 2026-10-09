@@ -1,5 +1,7 @@
 #include "xml_doc.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 namespace we {
@@ -17,6 +19,7 @@ bool is_name_end(char c) { return is_space(c) || c == '/' || c == '>' || c == '=
 
 XmlDoc XmlDoc::parse(const std::vector<uint8_t>& bytes) {
     XmlDoc d;
+    d.origin_ = bytes;
     DecodedText dt = decode_text(bytes);
     d.text_ = std::move(dt.utf8);
     d.encoding_ = dt.encoding;
@@ -107,8 +110,10 @@ XmlDoc XmlDoc::parse(const std::vector<uint8_t>& bytes) {
     return d;
 }
 
-std::vector<uint8_t> XmlDoc::save() const {
-    if (edits_.empty() && appended_values_.empty()) return encode_text(text_, encoding_);
+std::vector<uint8_t> XmlDoc::save() const { return encode_text(baked_text(), encoding_); }
+
+std::string XmlDoc::baked_text() const {
+    if (edits_.empty() && appended_values_.empty()) return text_;
 
     // Merge value edits and attribute insertions into one ordered list of span replacements.
     std::map<size_t, Edit> ops = edits_;
@@ -128,7 +133,7 @@ std::vector<uint8_t> XmlDoc::save() const {
         pos = off + op.len;
     }
     out.append(text_, pos, std::string::npos);
-    return encode_text(out, encoding_);
+    return out;
 }
 
 std::string_view XmlDoc::attr_raw(int elem, size_t attr) const {
@@ -225,6 +230,163 @@ std::string XmlDoc::encode_entities(std::string_view text, char quote) {
         else out += c;
     }
     return out;
+}
+
+} // namespace we
+
+// ---- structural edits ----------------------------------------------------------------------------------------
+
+namespace we {
+
+namespace {
+
+// The lines an element occupies. aligned: it starts a line (after indentation) and ends a line, so the whole
+// lines [ls, le) can be cut or copied; at_eof: it starts a line and ends the file; otherwise only the element
+// itself is touched.
+struct Block { size_t ls, le; bool aligned; bool at_eof; };
+
+Block block_of(const std::string& t, const XmlElement& el) {
+    Block b{el.start_off, el.end_off, false, false};
+    size_t ls = el.start_off;
+    while (ls > 0 && (t[ls - 1] == ' ' || t[ls - 1] == '\t')) --ls;
+    bool lead = ls == 0 || t[ls - 1] == '\n';
+    size_t p = el.end_off;
+    while (p < t.size() && (t[p] == ' ' || t[p] == '\t')) ++p;
+    if (p < t.size() && t[p] == '\r') ++p;
+    if (lead && p < t.size() && t[p] == '\n') { b.ls = ls; b.le = p + 1; b.aligned = true; }
+    else if (lead && p >= t.size()) { b.ls = ls; b.at_eof = true; }
+    return b;
+}
+
+std::string eol_of(const std::string& t) { return t.find("\r\n") != std::string::npos ? "\r\n" : "\n"; }
+
+std::string line_indent(const std::string& t, size_t off) { // leading whitespace of the line holding off
+    size_t ls = off;
+    while (ls > 0 && t[ls - 1] != '\n') --ls;
+    size_t e = ls;
+    while (e < off && (t[e] == ' ' || t[e] == '\t')) ++e;
+    return t.substr(ls, e - ls);
+}
+
+bool valid_name(std::string_view n) {
+    if (n.empty() || std::isdigit(uint8_t(n[0])) || n[0] == '-' || n[0] == '.') return false;
+    for (char c : n)
+        if (!(std::isalnum(uint8_t(c)) || c == '_' || c == '-' || c == '.' || c == ':')) return false;
+    return true;
+}
+
+} // namespace
+
+XmlDoc XmlDoc::baked() const {
+    XmlDoc b = parse(save());
+    b.origin_ = origin_;
+    b.structural_ = structural_;
+    return b;
+}
+
+XmlDoc XmlDoc::rebuilt(std::string utf8) const {
+    XmlDoc d = parse(encode_text(utf8, encoding_));
+    d.origin_ = origin_;
+    d.structural_ = structural_ + 1;
+    return d;
+}
+
+int XmlDoc::subtree_size(int e) const {
+    int n = 1;
+    for (int c : elems_[e].children) n += subtree_size(c);
+    return n;
+}
+
+XmlDoc XmlDoc::removed_element(int e) const {
+    XmlDoc b = baked();
+    const XmlElement& el = b.elems_[e];
+    if (el.parent < 0 && b.roots_.size() == 1) throw std::runtime_error("cannot remove the only root element");
+    Block k = block_of(b.text_, el);
+    std::string t = b.text_;
+    if (k.aligned) t.erase(k.ls, k.le - k.ls);
+    else if (k.at_eof && k.ls > 0) { // also the line break that led to it
+        size_t q = k.ls;
+        if (t[q - 1] == '\n') --q;
+        if (q > 0 && t[q - 1] == '\r') --q;
+        t.erase(q);
+    }
+    else t.erase(el.start_off, el.end_off - el.start_off);
+    return b.rebuilt(std::move(t));
+}
+
+XmlDoc XmlDoc::duplicated_element(int e, int* new_index) const {
+    XmlDoc b = baked();
+    const XmlElement& el = b.elems_[e];
+    Block k = block_of(b.text_, el);
+    std::string t = b.text_;
+    if (k.aligned) t.insert(k.le, b.text_, k.ls, k.le - k.ls);
+    else if (k.at_eof) t.insert(el.end_off, eol_of(b.text_) + b.text_.substr(k.ls, el.end_off - k.ls));
+    else t.insert(el.end_off, b.text_, el.start_off, el.end_off - el.start_off);
+    if (new_index) *new_index = e + b.subtree_size(e);
+    return b.rebuilt(std::move(t));
+}
+
+XmlDoc XmlDoc::moved_element(int e, int dir) const {
+    XmlDoc b = baked();
+    const XmlElement& el = b.elems_[e];
+    const std::vector<int>& sib = el.parent < 0 ? b.roots_ : b.elems_[el.parent].children;
+    auto it = std::find(sib.begin(), sib.end(), e);
+    if (dir < 0 ? it == sib.begin() : it + 1 == sib.end()) throw std::runtime_error("no sibling to swap with");
+    int a = dir < 0 ? *(it - 1) : e, c = dir < 0 ? e : *(it + 1); // a comes first in the file
+    Block ba = block_of(b.text_, b.elems_[a]), bc = block_of(b.text_, b.elems_[c]);
+    if (!ba.aligned || !bc.aligned || ba.le != bc.ls) throw std::runtime_error("elements are not on separate adjacent lines");
+    std::string t = b.text_.substr(0, ba.ls) + b.text_.substr(bc.ls, bc.le - bc.ls) + b.text_.substr(ba.ls, ba.le - ba.ls) +
+                    b.text_.substr(bc.le);
+    return b.rebuilt(std::move(t));
+}
+
+XmlDoc XmlDoc::with_child(int parent, std::string_view name, int* new_index) const {
+    if (!valid_name(name)) throw std::runtime_error("invalid element name");
+    XmlDoc b = baked();
+    const XmlElement& p = b.elems_[parent];
+    const std::string& t0 = b.text_;
+    std::string eol = eol_of(t0), child = "<" + std::string(name) + "/>";
+    std::string pin = line_indent(t0, p.start_off);
+    std::string unit = pin.find('\t') != std::string::npos ? "\t" : "    ";
+    std::string t = t0;
+    if (!p.children.empty()) {
+        const XmlElement& last = b.elems_[p.children.back()];
+        Block k = block_of(t0, last);
+        if (k.aligned) t.insert(k.le, line_indent(t0, last.start_off) + child + eol);
+        else t.insert(last.end_off, child);
+    } else if (p.self_closing) {
+        t.replace(p.attrs_end, p.end_off - p.attrs_end, ">" + eol + pin + unit + child + eol + pin + "</" + p.name + ">");
+    } else {
+        size_t et = t0.rfind("</" + p.name, p.end_off - 1);
+        for (size_t i = p.start_end; i < et; ++i)
+            if (!std::isspace(uint8_t(t0[i]))) throw std::runtime_error("element has text content");
+        t.replace(p.start_end, et - p.start_end, eol + pin + unit + child + eol + pin);
+    }
+    if (new_index) *new_index = parent + b.subtree_size(parent);
+    return b.rebuilt(std::move(t));
+}
+
+XmlDoc XmlDoc::with_attr_added(int elem, std::string_view name, std::string_view value) const {
+    if (!valid_name(name)) throw std::runtime_error("invalid attribute name");
+    XmlDoc d = *this;
+    d.set(elem, name, value);
+    return d.baked().rebuilt(d.baked().text_);
+}
+
+XmlDoc XmlDoc::without_attr(int elem, size_t attr) const {
+    XmlDoc b = baked();
+    const XmlAttr& a = b.elems_[elem].attrs.at(attr);
+    const std::string& t0 = b.text_;
+    size_t end = a.value_off + a.value_len + 1; // closing quote
+    size_t p = a.value_off - 1;                 // opening quote
+    while (p > 0 && std::isspace(uint8_t(t0[p - 1]))) --p;
+    if (p > 0 && t0[p - 1] == '=') --p;
+    while (p > 0 && std::isspace(uint8_t(t0[p - 1]))) --p;
+    p -= std::min(p, a.name.size());
+    if (p > 0 && (t0[p - 1] == ' ' || t0[p - 1] == '\t')) --p; // the separator before the name
+    std::string t = t0;
+    t.erase(p, end - p);
+    return b.rebuilt(std::move(t));
 }
 
 } // namespace we

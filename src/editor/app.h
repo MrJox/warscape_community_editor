@@ -21,8 +21,23 @@ struct Document {
     std::string source_label;          // pack name or "loose"
     XmlDoc doc;
 
-    struct Change { int elem; size_t attr; std::string before, after; };
+    // An attribute edit, or (when doc_before is set) a structural edit that swapped the whole document.
+    struct Change {
+        int elem;
+        size_t attr;
+        std::string before, after;
+        std::shared_ptr<XmlDoc> doc_before, doc_after;
+    };
     std::vector<Change> undo, redo;
+
+    // Structural edit requested while the tree is drawn; applied afterwards because it invalidates element indices.
+    struct PendingOp {
+        enum Kind { None, Remove, Duplicate, MoveUp, MoveDown, AddChild, AddAttr, RemoveAttr } kind = None;
+        int elem = -1;
+        size_t attr = 0;
+        std::string name, value;
+    } pending;
+    int select_after = -1; // element to scroll to after a structural edit
 
     std::string title() const;
 };
@@ -55,6 +70,8 @@ private:
     void draw_element(Document& d, int elem);
     void draw_attribute(Document& d, int elem, size_t attr);
     void draw_changes(Document& d);
+    void apply_pending(Document& d);
+    void undo_redo(Document& d, bool undo);
     void draw_viewport();
     void draw_picker();
     void load_variation_db();
@@ -83,6 +100,7 @@ private:
     // inspector
     char attr_filter_[128] = {};
     std::string pending_before_; // raw value when the active widget was activated
+    char new_name_[96] = {}, new_value_[256] = {}; // inputs of the element context menu
 
     // 3D preview
     std::unique_ptr<TextureCache> textures_;

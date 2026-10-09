@@ -56,8 +56,22 @@ public:
     // Replaces the raw value text. Setting the original text back removes the edit.
     void set_attr_raw(int elem, size_t attr, std::string raw);
     void set(int elem, std::string_view name, std::string_view value); // entity-encodes; appends if missing
-    bool modified() const { return !edits_.empty() || !appended_values_.empty(); }
-    void revert_all();
+    bool modified() const { return !edits_.empty() || !appended_values_.empty() || structural_ > 0; }
+    void revert_all(); // attribute edits only; structural edits need parse(origin_bytes())
+
+    // Structural edits. Each returns a new document: pending attribute edits are baked into its text (they stop
+    // showing as modified) and the elements after the edit point get new indices. The text outside the edited
+    // span stays byte-identical, so the rest of the file still saves unchanged. structural_edits() counts the
+    // operations since parse(); origin_bytes() is the file as first loaded.
+    XmlDoc removed_element(int e) const;
+    XmlDoc duplicated_element(int e, int* new_index = nullptr) const; // the copy goes right after e
+    XmlDoc moved_element(int e, int dir) const;                        // dir -1 / +1 swaps with a sibling
+    XmlDoc with_child(int parent, std::string_view name, int* new_index = nullptr) const; // new empty last child
+    XmlDoc with_attr_added(int elem, std::string_view name, std::string_view value) const;
+    XmlDoc without_attr(int elem, size_t attr) const;
+    int structural_edits() const { return structural_; }
+    const std::vector<uint8_t>& origin_bytes() const { return origin_; }
+    int subtree_size(int e) const; // the element and all its descendants
 
     // Element path like "SCENE/SCENE_NODE_LIST/WEATHER_SCENE_NODE/SKY_DOME/SKYGEN"
     std::string path_of(int elem) const;
@@ -67,7 +81,12 @@ public:
 
 private:
     struct Edit { size_t len; std::string text; };
+    std::string baked_text() const;          // utf-8 text with all attribute edits applied
+    XmlDoc rebuilt(std::string utf8) const;  // parse(utf8), carrying origin_ and counting one more structural edit
+    XmlDoc baked() const;                    // parse(save()) with origin_ and the counter carried over
     std::string text_;
+    std::vector<uint8_t> origin_;
+    int structural_ = 0;
     TextEncoding encoding_ = TextEncoding::Utf8;
     std::vector<XmlElement> elems_;
     std::vector<int> roots_;

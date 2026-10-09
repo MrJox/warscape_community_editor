@@ -41,6 +41,12 @@ struct AttrStats {
     std::set<std::string> files;
 };
 
+std::string diff_at(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t i = 0;
+    while (i < a.size() && i < b.size() && a[i] == b[i]) ++i;
+    return " (first difference at byte " + std::to_string(i) + ", sizes " + std::to_string(a.size()) + "/" + std::to_string(b.size()) + ")";
+}
+
 bool check(const fs::path& p, std::map<std::string, AttrStats>* schema, std::string& err) {
     std::vector<uint8_t> bytes = read_file(p.string());
     XmlDoc doc;
@@ -85,6 +91,65 @@ bool check(const fs::path& p, std::map<std::string, AttrStats>* schema, std::str
         for (size_t a = 0; a < els[e].attrs.size(); ++a)
             edited.set_attr_raw(e, a, std::string(doc.attr_raw(e, a)));
     if (edited.modified() || edited.save() != bytes) { err = "revert differs"; return false; }
+
+    // Structural edits: each must re-parse to the expected tree and, where the inverse exists, restore the bytes.
+    const int n = int(els.size());
+    const int stride = std::max(1, n / 60);
+    for (int e = 0; e < n; e += stride) {
+        const std::string where = doc.path_of(e);
+        try {
+            int ni = -1;
+            XmlDoc dup = doc.duplicated_element(e, &ni);
+            if (int(dup.elements().size()) != n + doc.subtree_size(e) || dup.elements()[ni].name != els[e].name) {
+                err = "duplicate: wrong tree at " + where;
+                return false;
+            }
+            if (dup.removed_element(ni).save() != bytes) { err = "duplicate + remove differs at " + where + diff_at(dup.removed_element(ni).save(), bytes); return false; }
+
+            if (els[e].parent >= 0) {
+                const auto& sib = els[els[e].parent].children;
+                if (sib.back() != e) { // has a next sibling
+                    XmlDoc mv;
+                    try {
+                        mv = doc.moved_element(e, +1);
+                    } catch (const std::exception& ex) {
+                        if (std::string(ex.what()).find("adjacent lines") == std::string::npos) throw;
+                        goto after_move; // inline elements cannot be swapped by whole lines
+                    }
+                    if (mv.elements().size() != els.size()) { err = "move changed element count at " + where; return false; }
+                    if (mv.moved_element(e, +1).save() != bytes) { err = "move + move back differs at " + where + diff_at(mv.moved_element(e, +1).save(), bytes); return false; }
+                }
+            }
+
+        after_move:
+            try {
+                int ci = -1;
+                XmlDoc ch = doc.with_child(e, "we_new", &ci);
+                if (int(ch.elements().size()) != n + 1 || ch.elements()[ci].name != "we_new" || ch.elements()[ci].parent != e) {
+                    err = "add child: wrong tree at " + where;
+                    return false;
+                }
+                if (!els[e].children.empty() && ch.removed_element(ci).save() != bytes) { err = "add child + remove differs at " + where + diff_at(ch.removed_element(ci).save(), bytes); return false; }
+
+            } catch (const std::exception& ex) {
+                if (std::string(ex.what()).find("text content") == std::string::npos) throw; // <property>1</property>
+            }
+
+            XmlDoc at = doc.with_attr_added(e, "we_x", "a&b");
+            if (at.get(e, "we_x") != std::optional<std::string>("a&b")) { err = "add attribute failed at " + where; return false; }
+            if (at.without_attr(e, els[e].attrs.size()).save() != bytes) { err = "add attribute + remove differs at " + where + diff_at(at.without_attr(e, els[e].attrs.size()).save(), bytes); return false; }
+            if (!els[e].attrs.empty()) {
+                XmlDoc rm = doc.without_attr(e, 0);
+                if (rm.elements()[e].attrs.size() + 1 != els[e].attrs.size() || rm.find_attr(e, els[e].attrs[0].name)) {
+                    err = "remove attribute failed at " + where;
+                    return false;
+                }
+            }
+        } catch (const std::exception& ex) {
+            err = std::string("structural edit threw at ") + where + ": " + ex.what();
+            return false;
+        }
+    }
 
     if (schema) {
         for (int e = 0; e < int(els.size()); ++e)
