@@ -181,7 +181,25 @@ static Format make_format(const char* name, const char* ext, const char* magic, 
 }
 
 void register_image_container_formats() {
-    formats().push_back(make_format<DdsFile>("dds", ".dds", "DDS ", 4));
+    Format dds = make_format<DdsFile>("dds", ".dds", "DDS ", 4);
+    dds.round_trip = [](const std::vector<uint8_t>& bytes) {
+        RoundTripResult r;
+        try {
+            DdsFile d = DdsFile::parse(bytes);
+            if (d.flags() == 0 && d.fourcc() == 114 && d.pixel_format_flags() == 4) {
+                // TEd/BOB single-channel float texture: header must be the generated one
+                if (!d.is_r32f_template()) { r.error = "R32F header differs from the generated one"; return r; }
+                d = DdsFile::make_r32f(d.width(), d.height(), d.payload);
+            }
+            r.output = d.write();
+            r.ok = r.output == bytes;
+            if (!r.ok) r.error = describe_diff(bytes, r.output);
+        } catch (const std::exception& e) {
+            r.error = std::string("parse: ") + e.what();
+        }
+        return r;
+    };
+    formats().push_back(std::move(dds));
     formats().push_back(make_format<TgaFile>("tga", ".tga", "", 0));
     Format tiff = make_format<TiffFile>("tiff", ".tif", "II*\0", 4);
     tiff.round_trip = [](const std::vector<uint8_t>& bytes) {

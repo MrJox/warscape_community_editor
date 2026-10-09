@@ -28,7 +28,7 @@ if(MSVC)
     target_compile_options(zlib_vendor PRIVATE /W0)
 endif()
 
-add_library(tile_formats STATIC src/formats/registry.cpp src/formats/xml_format.cpp src/formats/fastbin_tile.cpp src/formats/bmd_bin.cpp src/formats/markers.cpp src/formats/image_containers.cpp src/formats/chmf.cpp src/formats/png_file.cpp src/formats/tile_database.cpp)
+add_library(tile_formats STATIC src/formats/registry.cpp src/formats/xml_format.cpp src/formats/fastbin_tile.cpp src/formats/bmd_bin.cpp src/formats/markers.cpp src/formats/image_containers.cpp src/formats/chmf.cpp src/formats/png_file.cpp src/formats/tile_database.cpp src/formats/opaque_formats.cpp)
 target_include_directories(tile_formats PUBLIC src)
 target_link_libraries(tile_formats PUBLIC attila_core zlib_vendor)
 
@@ -48,3 +48,9 @@ target_include_directories(tile_scene PUBLIC src)
 target_link_libraries(tile_scene PUBLIC attila_core)
 add_executable(scene_check tools/scene_check.cpp)
 target_link_libraries(scene_check PRIVATE tile_scene)
+
+add_library(tile_terrain STATIC src/terrain/height_field.cpp)
+target_include_directories(tile_terrain PUBLIC src)
+target_link_libraries(tile_terrain PUBLIC tile_formats)
+add_executable(height_check tools/height_check.cpp)
+target_link_libraries(height_check PRIVATE tile_terrain)

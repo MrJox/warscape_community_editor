@@ -9,6 +9,7 @@ void register_markers_format();
 void register_image_container_formats();
 void register_chmf_format();
 void register_png_format();
+void register_opaque_formats();
 
 std::vector<Format>& formats() {
     static std::vector<Format> f;
@@ -26,6 +27,7 @@ void register_all_formats() {
     register_image_container_formats();
     register_chmf_format();
     register_png_format();
+    register_opaque_formats();
 }
 
 const Format* find_format(const std::string& path, const std::vector<uint8_t>& head) {

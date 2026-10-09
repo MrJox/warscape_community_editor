@@ -219,6 +219,7 @@ std::vector<std::string> tile_database_order(const std::vector<uint8_t>& bin) {
         for (uint32_t v = r.get<uint32_t>(); v; --v) { r.get<uint16_t>(); r.str(); r.skip(8); }
         for (uint32_t v = r.get<uint32_t>(); v; --v) { r.get<uint16_t>(); r.str(); r.skip(16 + 1 + 4 + 4 + 1); r.str(); }
     }
+    if (r.p != bin.size()) throw std::runtime_error(std::to_string(bin.size() - r.p) + " trailing bytes");
     return order;
 }
 
