@@ -110,6 +110,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             else if (a == L"--select" && i + 1 < argc) { if (!studio.script_select(narrow(argv[++i]))) std::fprintf(stderr, "select: nothing found\n"); }
             else if (a == L"--move" && i + 2 < argc) { studio.script_move(float(_wtof(argv[i + 1])), float(_wtof(argv[i + 2]))); i += 2; }
             else if (a == L"--undo" && i + 1 < argc) studio.script_undo(_wtoi(argv[++i]));
+            else if (a == L"--redo" && i + 1 < argc) studio.script_redo(_wtoi(argv[++i]));
+            else if (a == L"--duplicate") studio.script_duplicate();
+            else if (a == L"--delete") studio.script_delete();
+            else if (a == L"--rotate" && i + 1 < argc) studio.script_rotate(float(_wtof(argv[++i])));
+            else if (a == L"--add" && i + 1 < argc) studio.script_add(narrow(argv[++i]));
             else if (a == L"--save-to" && i + 1 < argc) { std::string msg; bool ok = studio.save_to(narrow(argv[++i]), &msg); std::fprintf(stderr, "save: %s (%s)\n", ok ? "ok" : "failed", msg.c_str()); }
             else if (a == L"--cam" && i + 3 < argc) { float y = float(_wtof(argv[i + 1])), p = float(_wtof(argv[i + 2])), dd = float(_wtof(argv[i + 3])); studio.set_camera(y, p, dd); i += 3; }
         }

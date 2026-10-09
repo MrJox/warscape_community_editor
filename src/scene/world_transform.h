@@ -25,6 +25,13 @@ struct WorldTransform {
 // Position / rotation of `elem` in scene space (all ancestors applied).
 WorldTransform world_transform(const TedScene& scene, int elem);
 
+// Euler angles (a, b, c) with euler_matrix(e) == m (Rz(c) Ry(a) Rx(-b)); gimbal lock resolves with c = 0.
+Vec3 euler_from_matrix(const Mat3& m);
+Mat3 rotation_y(double angle);
+
+// Sets the local orientation of `elem` so that its world rotation becomes Ry(world_yaw_delta) * (current world rotation).
+void rotate_world_yaw(TedScene& scene, int elem, double delta);
+
 // Sets the local position of `elem` so that its world position becomes `world` (ancestors unchanged).
 void set_world_position(TedScene& scene, int elem, const Vec3& world);
 

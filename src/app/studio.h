@@ -46,7 +46,12 @@ public:
     bool script_paint(const std::string& tool, float x, float z, int steps, std::string* error = nullptr);  // x, z in metres
     bool script_select(const std::string& type_or_element);                                                  // first instance of a type, or an element index
     bool script_move(float dx, float dz);                                                                    // selected instance, metres on the ground plane
+    bool script_duplicate();
+    bool script_delete();
+    bool script_rotate(float degrees);                                                                       // selected instance, about world Y
+    bool script_add(const std::string& building_key);
     void script_undo(int n);
+    void script_redo(int n);
     bool save_to(const std::string& dir, std::string* message);
     bool confirm_close();
     std::string diagnostics() const;

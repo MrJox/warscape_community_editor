@@ -12,6 +12,7 @@
 #include "formats/xml_doc.h"
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -48,9 +49,17 @@ public:
     void set_position(int elem, const Vec3& v) { set_vector(elem, "position", "vector", v); }
     void set_euler(int elem, const Vec3& v) { set_vector(elem, "orientation", "euler", v); }
     void translate(int elem, const Vec3& delta);
+    void set_attr(int elem, const char* name, const std::string& value) { doc_.set(elem, name, value); }
     void set_flag(int elem, const char* flag, bool on);        // flags=" OIF_VISIBLE|OIF_ACTIVE"
     bool modified() const { return doc_.modified(); }
     void revert_all() { doc_.revert_all(); }
+
+    // Structural edits. Element indices after the edit point shift: re-resolve any stored index.
+    int duplicate(int elem);                                   // copy placed right after `elem`; returns the copy's index
+    void remove(int elem);
+    using Snapshot = std::shared_ptr<const we::XmlDoc>;        // whole-document snapshot for undo of structural edits
+    Snapshot snapshot() const { return std::make_shared<we::XmlDoc>(doc_); }
+    void restore(const Snapshot& s) { doc_ = *s; }
 
     // All instances (depth first) of a given element name, e.g. "BUILDING_INSTANCE".
     std::vector<int> find_all(const std::string& type) const;

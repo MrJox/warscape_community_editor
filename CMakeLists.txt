@@ -71,3 +71,6 @@ target_link_libraries(tile_project PUBLIC tile_formats tile_scene tile_terrain)
 add_executable(tile_studio WIN32 src/app/main.cpp src/app/studio.cpp ${WE}/render/image_io.cpp)
 target_include_directories(tile_studio PRIVATE ${WE})
 target_link_libraries(tile_studio PRIVATE tile_project imgui_studio d3d11 dxgi d3dcompiler dxguid windowscodecs ole32 comdlg32)
+
+add_executable(unit_tests tools/unit_tests.cpp src/scene/world_transform.cpp)
+target_link_libraries(unit_tests PRIVATE tile_scene)

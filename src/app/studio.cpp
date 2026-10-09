@@ -96,9 +96,11 @@ double radians(float d) { return double(d) * 3.14159265358979323846 / 180.0; }
 } // namespace
 
 struct Action {
-    enum Kind { Height, Move } kind = Height;
+    enum Kind { Height, Move, Struct } kind = Height;
     int elem = 0;
     te::Vec3 old_pos{}, new_pos{}, old_euler{}, new_euler{};
+    te::TedScene::Snapshot before, after;     // Struct: whole-document snapshots
+    int sel_before = -1, sel_after = -1;
 };
 
 struct Studio::Impl {
@@ -535,6 +537,7 @@ struct Studio::Impl {
         if (undo.empty() || !project) return;
         Action a = undo.back(); undo.pop_back();
         if (a.kind == Action::Height) { if (project->height->undo()) { terrain_dirty = true; scene_dirty = true; } }
+        else if (a.kind == Action::Struct) { project->scene.restore(a.before); selected = a.sel_before; scene_dirty = true; }
         else { project->scene.set_position(a.elem, a.old_pos); project->scene.set_euler(a.elem, a.old_euler); scene_dirty = true; }
         redo.push_back(a);
     }
@@ -543,6 +546,7 @@ struct Studio::Impl {
         if (redo.empty() || !project) return;
         Action a = redo.back(); redo.pop_back();
         if (a.kind == Action::Height) { if (project->height->redo()) { terrain_dirty = true; scene_dirty = true; } }
+        else if (a.kind == Action::Struct) { project->scene.restore(a.after); selected = a.sel_after; scene_dirty = true; }
         else { project->scene.set_position(a.elem, a.new_pos); project->scene.set_euler(a.elem, a.new_euler); scene_dirty = true; }
         undo.push_back(a);
     }
@@ -596,12 +600,18 @@ struct Studio::Impl {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) do_redo();
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && project) save();
             if (ImGui::IsKeyPressed(ImGuiKey_G, false) && selected >= 0 && !grabbing && project) begin_grab();
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && selected >= 0 && !grabbing) delete_selected();
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && selected >= 0 && !grabbing) duplicate_selected();
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && selected >= 0 && !grabbing) rotate_selected(io.KeyShift ? -angle_step_deg : angle_step_deg);
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && grabbing) cancel_grab();
         }
         if (grabbing) {
             if (terrain_hit) {
                 double u = unit();
-                te::set_world_position(project->scene, selected, {double(brush_world.x) * u, hit_height + grab_y_offset, double(brush_world.z) * u});
+                float gx = brush_world.x, gz = brush_world.z;
+                if (snap_grid && grid_m > 0.01f) { gx = std::round(gx / grid_m) * grid_m; gz = std::round(gz / grid_m) * grid_m; }
+                float gy = snap_grid ? terrain_height(gx, gz) : hit_height;
+                te::set_world_position(project->scene, selected, {double(gx) * u, gy + grab_y_offset, double(gz) * u});
                 scene_dirty = true;
             }
             if (io.MouseClicked[0] && !over_ui) end_grab();
@@ -624,6 +634,80 @@ struct Studio::Impl {
             undo.push_back(a);
             redo.clear();
         }
+    }
+
+    // ---- instance operations
+    bool snap_grid = false, snap_angle = true;
+    float grid_m = 6.f, angle_step_deg = 15.f;
+    char new_key[128] = {0};
+
+    void commit_struct(const te::TedScene::Snapshot& before, int sel_before) {
+        Action a;
+        a.kind = Action::Struct;
+        a.before = before;
+        a.after = project->scene.snapshot();
+        a.sel_before = sel_before;
+        a.sel_after = selected;
+        push_move(a);
+        scene_dirty = true;
+    }
+
+    void duplicate_selected() {
+        if (!project || selected < 0) return;
+        auto before = project->scene.snapshot();
+        int old = selected;
+        int copy = project->scene.duplicate(selected);
+        if (copy < 0) return;
+        selected = copy;
+        te::WorldTransform w = te::world_transform(project->scene, copy);
+        double u = unit();
+        te::set_world_position(project->scene, copy, {w.position[0] + 4.0 * u, w.position[1], w.position[2]});
+        commit_struct(before, old);
+        status = "duplicated";
+    }
+
+    void delete_selected() {
+        if (!project || selected < 0) return;
+        auto before = project->scene.snapshot();
+        int old = selected;
+        project->scene.remove(selected);
+        selected = -1;
+        commit_struct(before, old);
+        status = "deleted";
+    }
+
+    void add_building(const char* key) {
+        if (!project || !key[0]) return;
+        int tmpl = -1;
+        if (selected >= 0 && project->scene.type(selected) == "BUILDING_INSTANCE") tmpl = selected;
+        else { auto all = project->scene.find_all("BUILDING_INSTANCE"); if (!all.empty()) tmpl = all.front(); }
+        if (tmpl < 0) { status = "no BUILDING_INSTANCE to use as a template in this tile"; return; }
+        auto before = project->scene.snapshot();
+        int old = selected;
+        int copy = project->scene.duplicate(tmpl);
+        project->scene.set_attr(copy, "key", key);
+        project->scene.set_attr(copy, "name", key);
+        selected = copy;
+        if (terrain_hit) {
+            double u = unit();
+            te::set_world_position(project->scene, copy, {double(brush_world.x) * u, double(hit_height), double(brush_world.z) * u});
+        }
+        commit_struct(before, old);
+        status = std::string("added ") + key;
+    }
+
+    void rotate_selected(float deg) {
+        if (!project || selected < 0) return;
+        auto& sc = project->scene;
+        Action a;
+        a.kind = Action::Move; a.elem = selected;
+        a.old_pos = sc.position(selected).value_or(te::Vec3{0, 0, 0});
+        a.old_euler = sc.euler(selected).value_or(te::Vec3{0, 0, 0});
+        te::rotate_world_yaw(sc, selected, radians(deg));
+        a.new_pos = a.old_pos;
+        a.new_euler = sc.euler(selected).value_or(a.old_euler);
+        push_move(a);
+        scene_dirty = true;
     }
 
     void begin_grab() {
@@ -726,6 +810,11 @@ struct Studio::Impl {
             push_move(a);
             scene_dirty = true;
         }
+        if (ImGui::Button("Duplicate (Ctrl+D)")) duplicate_selected();
+        ImGui::SameLine();
+        if (ImGui::Button("Delete (Del)")) delete_selected();
+        ImGui::SameLine();
+        if (ImGui::Button("Rotate +15 (R)")) rotate_selected(angle_step_deg);
         if (ImGui::TreeNode("attributes")) {
             const auto& el = sc.doc().elements()[selected];
             for (size_t i = 0; i < el.attrs.size(); ++i)
@@ -800,6 +889,16 @@ struct Studio::Impl {
             ImGui::Text("tile %u x %u cells, %.0f m", project->info.cells_x, project->info.cells_y, extent());
             ImGui::Text("tile.ted v%d, %zu instances shown%s", project->scene.project_version(), instances.size(), project->scene_modified() ? "  (modified)" : "");
             ImGui::Text("undo %zu / redo %zu%s", undo.size(), redo.size(), project->height_dirty ? "  height modified" : "");
+            ImGui::Separator();
+            ImGui::Checkbox("snap to grid", &snap_grid);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("grid (m)", &grid_m, 0.5f, 0.5f, 64.f);
+            ImGui::SetNextItemWidth(90);
+            ImGui::DragFloat("rotate step (deg)", &angle_step_deg, 1.f, 1.f, 180.f);
+            ImGui::InputText("building key", new_key, sizeof new_key);
+            ImGui::SameLine();
+            if (ImGui::Button("Add")) add_building(new_key);
             ImGui::Separator();
             inspector();
         }
@@ -884,7 +983,12 @@ bool Studio::script_move(float dx, float dz) {
     return true;
 }
 
+bool Studio::script_duplicate() { if (!d->project || d->selected < 0) return false; d->duplicate_selected(); return true; }
+bool Studio::script_delete() { if (!d->project || d->selected < 0) return false; d->delete_selected(); return true; }
+bool Studio::script_rotate(float degrees) { if (!d->project || d->selected < 0) return false; d->rotate_selected(degrees); return true; }
+bool Studio::script_add(const std::string& key) { if (!d->project) return false; d->add_building(key.c_str()); return true; }
 void Studio::script_undo(int n) { for (int i = 0; i < n; ++i) d->do_undo(); }
+void Studio::script_redo(int n) { for (int i = 0; i < n; ++i) d->do_redo(); }
 
 bool Studio::save_to(const std::string& dir, std::string* message) {
     if (!d->project) return false;

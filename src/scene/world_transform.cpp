@@ -1,5 +1,6 @@
 #include "scene/world_transform.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -24,6 +25,32 @@ Vec3 rotate_vec(const Mat3& m, const Vec3& v) {
 Mat3 mat_transpose(const Mat3& m) { return {m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]}; }
 
 Mat3 euler_matrix(const Vec3& e) { return mat_mul(mat_mul(rot_z(e[2]), rot_y(e[0])), rot_x(-e[1])); }
+
+Mat3 rotation_y(double angle) { return rot_y(angle); }
+
+Vec3 euler_from_matrix(const Mat3& m) {
+    // m = Rz(c) Ry(a) Rx(beta), beta = -b:  m[6] = -sin a, m[7] = sin(beta) cos a, m[8] = cos(beta) cos a, m[3] = sin c cos a, m[0] = cos c cos a
+    double sa = std::max(-1.0, std::min(1.0, -m[6]));
+    double a = std::asin(sa), beta, c;
+    if (std::fabs(sa) < 1.0 - 1e-12) {
+        beta = std::atan2(m[7], m[8]);
+        c = std::atan2(m[3], m[0]);
+    } else {
+        c = 0;
+        beta = std::atan2(-m[5], m[4]);
+    }
+    return {a, -beta, c};
+}
+
+void rotate_world_yaw(TedScene& scene, int elem, double delta) {
+    int parent = scene.doc().elements()[elem].parent;
+    WorldTransform pw;
+    if (parent >= 0) pw = world_transform(scene, parent);
+    Mat3 local = euler_matrix(scene.euler(elem).value_or(Vec3{0, 0, 0}));
+    Mat3 world = mat_mul(pw.rotation, local);
+    Mat3 rotated = mat_mul(rot_y(delta), world);
+    scene.set_euler(elem, euler_from_matrix(mat_mul(mat_transpose(pw.rotation), rotated)));
+}
 
 WorldTransform world_transform(const TedScene& scene, int elem) {
     std::vector<int> chain;

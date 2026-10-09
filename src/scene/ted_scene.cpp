@@ -145,6 +145,14 @@ void TedScene::set_flag(int elem, const char* flag, bool on) {
     doc_.set(elem, "flags", f);
 }
 
+int TedScene::duplicate(int elem) {
+    int copy = -1;
+    doc_ = doc_.duplicated_element(elem, &copy);
+    return copy;
+}
+
+void TedScene::remove(int elem) { doc_ = doc_.removed_element(elem); }
+
 std::vector<int> TedScene::find_all(const std::string& type) const {
     std::vector<int> out;
     for (size_t i = 0; i < doc_.elements().size(); ++i)
