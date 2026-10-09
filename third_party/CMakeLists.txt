@@ -15,3 +15,11 @@ target_include_directories(zlib_vendor PUBLIC zlib)
 if(MSVC)
     target_compile_options(zlib_vendor PRIVATE /W0)
 endif()
+
+# ImGuizmo (MIT): translate / rotate / scale gizmos in the viewport.
+add_library(imguizmo STATIC imguizmo/ImGuizmo.cpp)
+target_include_directories(imguizmo PUBLIC imguizmo)
+target_link_libraries(imguizmo PUBLIC imgui)
+if(MSVC)
+    target_compile_options(imguizmo PRIVATE /W0)
+endif()
