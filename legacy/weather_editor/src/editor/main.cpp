@@ -132,7 +132,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     wce::App app(g_device.Get(), g_ctx.Get());
     g_app = &app;
     std::wstring shot_path; // --shot <file.png>: save the window after a few frames and exit
-    int shot_frame = 20;    // --frames <n>: frame to save (particles need time to fill)
+    int shot_frame = 20;    // --frames <n>: rendered frame to save (particles need time to fill)
+    double fixed_step = 0;  // --fixed-step <seconds>: simulate that much per rendered frame; implied (1/60) by --shot
     {   // --open <path> (repeatable)
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -141,6 +142,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             if (a == L"--open") app.open_path(wce::narrow(argv[++i]));
             else if (a == L"--shot") shot_path = argv[++i];
             else if (a == L"--frames") shot_frame = std::max(1, _wtoi(argv[++i]));
+            else if (a == L"--fixed-step") fixed_step = _wtof(argv[++i]);
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
             else if (a == L"--vdb-script") { app.set_vdb_script(wce::narrow(argv[++i])); app.show_picker(true); } // see App::run_vdb_script
             else if (a == L"--pick") { // --pick <category>=<value> (repeatable): conditions of the Weather picker, which opens
@@ -162,6 +164,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LocalFree(argv);
     }
     int frame_no = 0;
+    if (fixed_step <= 0 && !shot_path.empty()) fixed_step = 1.0 / 60.0;
+    if (fixed_step > 0) app.set_fixed_step(fixed_step);
 
     bool done = false;
     while (!done) {
@@ -187,7 +191,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         g_ctx->OMSetRenderTargets(1, g_rtv.GetAddressOf(), nullptr);
         g_ctx->ClearRenderTargetView(g_rtv.Get(), clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        if (!shot_path.empty() && ++frame_no == shot_frame) {
+        if (!shot_path.empty() && (app.frames_rendered() >= uint64_t(shot_frame) || ++frame_no > shot_frame + 600)) { // 600 spare frames: nothing may be rendering
             Microsoft::WRL::ComPtr<ID3D11Texture2D> back;
             g_swap->GetBuffer(0, IID_PPV_ARGS(&back));
             wce::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);

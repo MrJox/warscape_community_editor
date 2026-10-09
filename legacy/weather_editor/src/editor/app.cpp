@@ -145,7 +145,7 @@ void App::init_renderer() {
         int n = scene_->generate(uint32_t(scene_seed_), scene_count_);
         float3 ext = scene_->bounds_max() - scene_->bounds_min();
         cam_dist_ = std::max(60.0f, std::max(ext.x, ext.z) * 0.9f);
-        start_time_ = ImGui::GetTime();
+        clock_.restart();
         set_status(status_ + " Test map: " + std::to_string(n) + " buildings.", status_error_);
     } catch (const std::exception& e) {
         set_status(std::string("Renderer init failed: ") + e.what(), true);
@@ -217,7 +217,9 @@ void App::draw_viewport() {
                       (d->doc.modified() ? 1u : 0u);
     renderer_->vfx_revision = vfx_rev;
     try {
-        renderer_->render(scene_.get(), camera_, params, w, h, float(ImGui::GetTime() - start_time_));
+        clock_.tick();
+        renderer_->deterministic = clock_.fixed_step();
+        renderer_->render(scene_.get(), camera_, params, w, h, float(clock_.time()));
     } catch (const std::exception& e) {
         set_status(std::string("Render error: ") + e.what(), true);
     }

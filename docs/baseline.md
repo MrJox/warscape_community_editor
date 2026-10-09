@@ -92,3 +92,14 @@ Timing, weather tool startup set (`scripts/vfs_timing.sh`, the dry screenshot co
 | rpfm_cli | 10.4 s | 2.7 s |
 
 Cold mount of all 27 pack indexes alone (`vfs_probe --compare --time`): rpfm_server 1.3 s, rpfm_cli 2.3 s.
+
+## Phase 3: fixed-step clock and the weather screenshots re-baselined
+
+`Clock` (`libs/foundation/clock.h`) is the renderer's only time source. `--shot` implies a fixed step of 1/60 s per rendered frame (`--fixed-step <s>` sets it
+otherwise), the shot is taken on the 20th rendered frame, and GPU readbacks (ambient cube, depth range, sun occlusion) wait for their data instead of using it
+whenever it happens to be ready. Two runs of the dry, rain and snow shots are now bit-identical (PNG, diagnostics text and the distortion map).
+
+**The weather screenshots were re-baselined at this point** (the Phase 0 ones followed wall-clock time and are not reproducible): `build/gates_base_p3/` holds
+the new reference (`build/gates_base/` keeps the Phase 0 originals). The new dry shot is 43 dB from the old one, rain 45 dB, snow 27 dB (rain and snow particles
+used to depend on the frame times). From here on a weather shot must be **bit-identical** to `build/gates_base_p3/`; any difference must be explained and
+re-baselined explicitly in its commit. The tile shot still comes from Tile Studio (own renderer until Phase 6) and keeps the Phase 0 tolerance rule.

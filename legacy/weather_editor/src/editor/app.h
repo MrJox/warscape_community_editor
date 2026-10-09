@@ -1,4 +1,5 @@
 #pragma once
+#include "foundation/clock.h"
 #include "vfs/vfs.h"
 #include "render/renderer.h"
 #include "render/scene.h"
@@ -51,6 +52,9 @@ public:
     Renderer* renderer() { return renderer_.get(); }
     void set_blend(int doc, float t) { blend_doc_ = doc; blend_t_ = t; }
     void set_orbit(float yaw, float pitch, float dist, float target_y = 5) { cam_yaw_ = yaw; cam_pitch_ = pitch; cam_dist_ = dist; cam_target_.y = target_y; }
+    // Fixed-step simulation (--fixed-step, implied by --shot): every rendered frame advances the clock by `step`, so frame N is the same every run.
+    void set_fixed_step(double step) { clock_ = Clock::fixed(step); }
+    uint64_t frames_rendered() const { return clock_.frames(); }
     std::string diagnostics() const;
     void set_vdb_script(const std::string& s) { vdb_script_ = s; }
     void show_picker(bool on, bool edit_tab = false) { show_picker_ = on; if (edit_tab) vdb_select_pick_ = false; }
@@ -111,7 +115,7 @@ private:
     float cam_yaw_ = 0.6f, cam_pitch_ = 0.35f, cam_dist_ = 120.0f;
     float3 cam_target_{0, 5, 0};
     int scene_seed_ = 1, scene_count_ = 16;
-    double start_time_ = 0;
+    Clock clock_ = Clock::live();
     int env_doc_ = -1; // document driving the environment (last active .environment/.lighting)
     int blend_doc_ = -1;  // optional second environment for the cross-fade slider
     float blend_t_ = 0;

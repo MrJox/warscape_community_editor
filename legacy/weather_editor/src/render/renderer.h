@@ -30,6 +30,9 @@ class Renderer {
 public:
     enum class View { Final, HdrRaw, Albedo, Normal, Specular, Depth, SkyCube, Bloom, Quarter, ToneMapped, AO };
     float debug_points[4] = {}; int debug_maps = 0;
+    // Fixed-step runs (screenshots, regression, recording): GPU readbacks wait for their data instead of using it a frame later when it
+    // happens to be ready, so frame N is the same every run. Set together with a fixed-step Clock.
+    bool deterministic = false;
     bool fog = true;
     bool shadows = true;
     bool clouds = true;

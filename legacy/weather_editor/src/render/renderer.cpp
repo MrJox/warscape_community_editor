@@ -600,7 +600,7 @@ void Renderer::readback_ambient() {
     if (amb_frame_++ == 0) return;
     for (UINT f = 0; f < 6; ++f) {
         D3D11_MAPPED_SUBRESOURCE ms;
-        if (FAILED(ctx_->Map(src, f, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
+        if (FAILED(ctx_->Map(src, f, D3D11_MAP_READ, deterministic ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
         const uint16_t* h = static_cast<const uint16_t*>(ms.pData);
         for (int c = 0; c < 3; ++c) amb_faces_[f][c] = half_to_float(h[c]);
         ctx_->Unmap(src, f);
@@ -967,7 +967,7 @@ void Renderer::analyse_depth(const Camera& cam) {
     if (depth_frame_++ == 0) return;
     ID3D11Texture2D* src = depth_staging_[depth_frame_ & 1].Get();
     D3D11_MAPPED_SUBRESOURCE ms;
-    if (FAILED(ctx_->Map(src, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
+    if (FAILED(ctx_->Map(src, 0, D3D11_MAP_READ, deterministic ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &ms))) return;
     const float zn = cam.znear, zf = cam.zfar;
     float lo = 3.4e38f, hi = 0;
     for (int y = 0; y < h_; y += 2) {
@@ -1131,8 +1131,13 @@ void Renderer::pass_sun(const EnvironmentParams& env, const float4x4& view_m, co
     if (!env_pass_) {
         auto& old_q = sun_query_[(sun_query_frame_ + 1) % 4];
         UINT64 visible = 0;
-        if (sun_query_frame_ >= 3 && old_q[0] &&
-            ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK) {
+        auto query_ready = [&] {
+            if (!deterministic) return ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
+            HRESULT hr;
+            while ((hr = ctx_->GetData(old_q[0].Get(), &visible, sizeof visible, 0)) == S_FALSE) {}
+            return hr == S_OK;
+        };
+        if (sun_query_frame_ >= 3 && old_q[0] && query_ready()) {
             const float3 c = env.to_sun() * kSunDistance;
             const float z = view_m.m[2][0] * c.x + view_m.m[2][1] * c.y + view_m.m[2][2] * c.z;
             const float k = env.sun_scale * kSunMeshSize;
