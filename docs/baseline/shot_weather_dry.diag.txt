@@ -1,0 +1,13 @@
+status: Opened weather/charlemagne/med_sp_land_day_dry.environment
+scene objects: 19
+cloud sprites: 684
+sun visibility (lens flare): 0.000000
+weather vfx: 'dry breezy' -> , 0 emitters, 0 particles
+wind: dir 0.225223 deg, strength 0.100000, vfx (1.999985 0.007862), g_wind (0.000414 0.000002)
+texture error: rigidmodels/buildings/textures/test_dgray.dds: not found in any pack: rigidmodels/buildings/textures/test_dgray.dds
+texture error: rigidmodels/buildings/textures/test_gloss_map.dds: not found in any pack: rigidmodels/buildings/textures/test_gloss_map.dds
+texture error: rigidmodels/buildings/textures/moria_stone_block_tiled_02_level.dds: not found in any pack: rigidmodels/buildings/textures/moria_stone_block_tiled_02_level.dds
+texture error: rigidmodels/buildings/textures/moria_stone_block_tiled_02a_gloss_map.dds: not found in any pack: rigidmodels/buildings/textures/moria_stone_block_tiled_02a_gloss_map.dds
+points readback: 17 maps, raw 0.008896 6.858319 0.000000 0.000000
+sky cube face averages (+x -x +y -y +z -z): (4.109375 5.054688 4.929688) (2.142578 2.914062 3.000000) (7.082031 7.089844 6.195312) (2.587891 2.775391 0.939453) (2.466797 3.285156 3.380859) (2.728516 3.572266 3.623047) 
+luma black/white points: 0.008896 / 6.858319

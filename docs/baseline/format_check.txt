@@ -1,0 +1,8 @@
+float     same   67521  differs 0
+int       same  229672  differs 0
+bool      same   44038  differs 0
+rgb       same   11823  differs 0
+argb      same     581  differs 0
+variance  same     576  differs 0
+euler     same      65  differs 0
+exit 0

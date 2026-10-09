@@ -1,0 +1,51 @@
+warscape_asset_variation_db/warscape_asset_variation_db.bin from tdd_pack6_weather_1.0.0.pack: 8 metas (31 values, 31 of 32 bits), 239 variations
+tdd_pack6_weather_1.0.0.pack: bin 16932 bytes (writer identical), xml 33056 bytes (data equal to the bin, to_xml identical apart from blank lines in the original, xml->bin identical)
+data.pack: bin 18699 bytes (writer identical), xml 36383 bytes (data equal to the bin, to_xml identical, xml->bin identical)
+editing gates: 0 failures
+self-consistency: 239 variations, 0 not found by their own conditions
+19200 condition combinations: 7830 find no file, 4725 need the default_map retry
+combinations without a file, by value (a hole is data, not a bug: the database has no variation for it):
+  battle_type=land                          3909 / 9600
+  battle_type=sea                           3921 / 9600
+  climate=ROME_Atlantic                        0 / 2400
+  climate=ROME_Continental                  1674 / 2400
+  climate=ROME_Desert                       1098 / 2400
+  climate=ROME_Destruct                     1176 / 2400
+  climate=ROME_Destructdes                  1138 / 2400
+  climate=ROME_EasternDesert                1112 / 2400
+  climate=ROME_Med                          1632 / 2400
+  climate=default                              0 / 2400
+  climate_change_index=cc0                  1260 / 3840
+  climate_change_index=cc1                  1474 / 3840
+  climate_change_index=cc2                  1728 / 3840
+  climate_change_index=cc3                  1684 / 3840
+  climate_change_index=cc4                  1684 / 3840
+  map=bel_attila_map                        2138 / 6400
+  map=cha_attila_map                        2846 / 6400
+  map=default_map                           2846 / 6400
+  precipitation=dry                         1244 / 3840
+  precipitation=fog                         1868 / 3840
+  precipitation=rain                         932 / 3840
+  precipitation=snow                        2346 / 3840
+  precipitation=storm                       1440 / 3840
+  season=au                                 2011 / 4800
+  season=sp                                 1929 / 4800
+  season=su                                 2011 / 4800
+  season=wi                                 1879 / 4800
+  snow_attrition=snow_attrition_off         3224 / 9600
+  snow_attrition=snow_attrition_on          4606 / 9600
+  time_of_day=day                           3676 / 9600
+  time_of_day=night                         4154 / 9600
+not referenced by any variation: weather/att_unit_tests/barbarian.environment
+not referenced by any variation: weather/att_unit_tests/barbarian2.environment
+not referenced by any variation: weather/att_unit_tests/med.environment
+not referenced by any variation: weather/att_unit_tests/med2.environment
+not referenced by any variation: weather/charlemagne/_test_sunrise.environment
+not referenced by any variation: weather/charlemagne/_test_sunset.environment
+not referenced by any variation: weather/charlemagne/at_au_land_day_dry.environment
+not referenced by any variation: weather/charlemagne/at_au_land_day_fog.environment
+not referenced by any variation: weather/charlemagne/at_au_land_day_rain.environment
+not referenced by any variation: weather/charlemagne/at_au_land_day_snow_1.environment
+354 .environment files under weather/ are not referenced; 0 referenced files never selectable by any condition
+missing files 0, never-matching variations 0
+exit 0

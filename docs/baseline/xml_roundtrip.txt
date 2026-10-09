@@ -1,0 +1,5 @@
+.environment   ok   549  fail 0
+.lighting      ok    32  fail 0
+.xml           ok    40  fail 0
+total 621 files, 0 failed, 0 corrupt in source data
+exit 0

@@ -1,0 +1,16 @@
+ 40  weather/charlemagne/med_sp_land_day_dry.environment
+ 34  weather/charlemagne/med_sp_land_day_dry_2.environment
+ 32  weather/charlemagne/cont_sp_land_day_dry.environment
+ 27  weather/charlemagne/cont_sp_land_day_dry_2.environment
+ 25  weather/charlemagne/med_su_land_day_dry.environment
+ 25  weather/charlemagne/cont_su_land_day_dry.environment
+ 22  weather/charlemagne/at_au_land_day_rain.environment
+ 22  weather/charlemagne/cont_su_land_day_dry_2.environment
+ 22  weather/lt_rome/attila/all/atlantic_snow_01.environment
+ 22  weather/charlemagne/_test_sunset.environment
+ 22  weather/charlemagne/at_au_land_day_snow_5.environment
+ 22  weather/charlemagne/at_sp_land_day_snow_5.environment
+ 22  weather/charlemagne/med_sp_land_day_fog.environment
+ 22  weather/charlemagne/at_su_land_day_snow_5.environment
+ 22  weather/charlemagne/at_wi_land_day_snow_5.environment
+exit 0

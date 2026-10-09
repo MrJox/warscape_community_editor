@@ -1,0 +1,60 @@
+bmd_bin      files     860  ok     860  failed     0  skipped(size)    0
+chmf         files     171  ok     171  failed     0  skipped(size)    0
+civilian_deployment files      85  ok      85  failed     0  skipped(size)    0
+civilian_shelter files      85  ok      85  failed     0  skipped(size)    0
+dds          files    5880  ok    5875  failed     0  skipped(size)    5
+grass_list_bin files      81  ok      81  failed     0  skipped(size)    0
+markers      files     449  ok     449  failed     0  skipped(size)    0
+opaque_authoring files     675  ok     672  failed     0  skipped(size)    3
+opaque_binary files     136  ok     136  failed     0  skipped(size)    0
+opaque_text  files      63  ok      63  failed     0  skipped(size)    0
+png          files    8554  ok    6122  failed  2432  skipped(size)    0
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/textures/battle/alpha/12x12.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 116369/66326
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/clouds.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1530094/1530006
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/depo_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1341350/1344541
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/flow_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1653370/1656341
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/height_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1061097/1069552
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/mud.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 342384/346128
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/rock.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 625120/630579
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa/wm/slope_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 665738/672320
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_mont_blanc/aa/wm/clouds.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1587952/1590973
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_mont_blanc/aa/wm/height_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1164453/1174405
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_mont_blanc/aa/wm/mud.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 431751/436186
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/custom_mont_blanc/aa/wm/rock.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 657269/662018
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/clouds.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1543997/1546825
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/depo_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1372145/1375911
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/flow_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1657740/1660681
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/height_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1031601/1040128
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/mud.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 320770/323671
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/rock.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 593693/598080
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_30_l/aa/wm/slope_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 701893/708885
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/clouds.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1593638/1594812
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/depo_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1388914/1392805
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/flow_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1675005/1678196
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/height_output.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 1100284/1107673
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/mud.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 311706/314919
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/atlantic_mountains/large_oval_45_l/aa/wm/rock.png: ancillary chunks (not kit encoder); first difference at byte 34, sizes 680626/686909
+rmv2_magic   files     198  ok     198  failed     0  skipped(size)    0
+tga          files    1756  ok    1756  failed     0  skipped(size)    0
+tiff         files    2248  ok    2216  failed     1  skipped(size)   31
+    FAIL assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa/blend_map.tif: TEd-layout header differs from the generated one
+tile_database_bin files       4  ok       4  failed     0  skipped(size)    0
+tree_list_bin files     562  ok     562  failed     0  skipped(size)    0
+xml          files   10061  ok   10044  failed    15  skipped(size)    2
+    FAIL assembly_kit_battle_tilemap/raw_data/empiredesigndata/groupformations.xml: parse: xml: unclosed <GroupFormationTable> at offset 249063
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/atlantic2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 76725
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/continental2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 70009
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/destruct2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 76723
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/eastdes2_tree_parameters.xml: parse: xml: end tag </group> without start at offset 105524
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/eastdes3_tree_parameters.xml: parse: xml: end tag </group> without start at offset 116844
+    FAIL assembly_kit_battle_tilemap/working_data/battleterrain/vegetation/med2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 85527
+    FAIL assembly_kit_campaign_tilemap/raw_data/empiredesigndata/groupformations.xml: parse: xml: unclosed <GroupFormationTable> at offset 249063
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/atlantic2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 76725
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/continental2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 70009
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/destruct2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 76723
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/eastdes2_tree_parameters.xml: parse: xml: end tag </group> without start at offset 105524
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/eastdes3_tree_parameters.xml: parse: xml: end tag </group> without start at offset 116844
+    FAIL assembly_kit_campaign_tilemap/working_data/battleterrain/vegetation/med2_tree_parameters.xml: parse: xml: end tag </tree> without start at offset 85527
+    FAIL assembly_kit_campaign_tilemap/working_data/vfx/impact_fire_siphon_wood.xml: parse: odd byte count in UTF-16 file
+files no registered format claims, by extension:
+exit 1

@@ -1,0 +1,25 @@
+263 environment files
+map                    3 values: bel_attila_map cha_attila_map default_map
+climate                8 values: ROME_Atlantic ROME_Continental ROME_Desert ROME_Destruct ROME_Destructdes ROME_EasternDesert ROME_Med default
+season                 4 values: au sp su wi
+climate_change_index   5 values: cc0 cc1 cc2 cc3 cc4
+precipitation          5 values: dry fog rain snow storm
+time_of_day            2 values: day night
+battle_types           2 values: land sea
+snow_attrition         2 values: snow_attrition_off snow_attrition_on
+query desert/summer/dry/day: 13 files (default_map retry)
+  weather\rome_desert\default\Land\day\dry\desert_day.environment
+  weather\rome_desert\default\Land\day\dry\desert_evening.environment
+  weather\rome_desert\default\Land\day\dry\desert_eveningB.environment
+  weather\rome_desert\default\Land\day\dry\desert_morning.environment
+  weather\rome_med\default\land\day\dry\day_med_1.environment
+  weather\rome_med\default\land\day\dry\day_med_2.environment
+  weather\rome_med\default\land\day\dry\day_med_3.environment
+  weather\rome_med\default\land\day\dry\day_med_clear.environment
+  weather\rome_med\default\land\day\dry\morn_med_1.environment
+  weather\rome_med\default\land\day\dry\morn_med_3.environment
+  weather\rome_med\default\land\day\dry\morn_med_2.environment
+  weather\rome_med\default\land\day\dry\evening_med_3.environment
+  weather\rome_med\default\land\day\dry\evening_med_2.environment
+unconstrained query on default_map: 76 files
+exit 0
