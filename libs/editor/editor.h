@@ -245,6 +245,8 @@ private:
     bool status_error_ = false;
     bool first_run_ = false;
     DocumentId preview_doc_ = 0;
+    Camera cam_mark_;                      // cam_mark / assert_cam_same (test commands)
+    bool cam_marked_ = false;
     float output_gamma_ = 2.2f, output_brightness_ = 1.0f;   // the game's preferences.script.txt, read when the packs are mounted
     PromptKind prompt_ = PromptKind::None;
     std::vector<DocumentId> prompt_docs_;                    // the unsaved documents the prompt asks about

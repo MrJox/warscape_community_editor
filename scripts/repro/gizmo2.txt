@@ -1,0 +1,16 @@
+tile "%TILE%"
+frames 120
+tile_select BUILDING_INSTANCE
+focus
+cam 2.2 0.5 40 2
+gizmo translate
+frames 10
+shot "%OUT%/g2_before.png"
+cam_info
+gizmo_drag z 50
+frames 6
+cam_info
+gizmo_drag x -50
+frames 6
+cam_info
+quit

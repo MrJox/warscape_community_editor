@@ -1778,13 +1778,16 @@ namespace IMGUIZMO_NAMESPACE
       }
    }
 
+   // wce: the viewport covers its image with an InvisibleButton (it is the hovered / active item whenever the cursor is over the 3D view), so a drag could never
+   // start. SetAllowedItem names that item: it does not count as "another item is hovered / active".
+   static ImGuiID gAllowedItem = 0;
    static bool CanActivate()
    {
-      if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive())
-      {
-         return true;
-      }
-      return false;
+      if (!ImGui::IsMouseClicked(0)) return false;
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      const bool hovered_other = (g.HoveredId != 0 && g.HoveredId != gAllowedItem) || (g.HoveredIdPreviousFrame != 0 && g.HoveredIdPreviousFrame != gAllowedItem);
+      const bool active_other = g.ActiveId != 0 && g.ActiveId != gAllowedItem;
+      return !hovered_other && !active_other;
    }
 
    static bool HandleAndDrawLocalBounds(const float* bounds, matrix_t* matrix, const float* snapValues, OPERATION operation)
@@ -2892,6 +2895,11 @@ namespace IMGUIZMO_NAMESPACE
    void SetGizmoSizeClipSpace(float value)
    {
       gContext.mGizmoSizeClipSpace = value;
+   }
+
+   void SetAllowedItem(ImGuiID id)
+   {
+      gAllowedItem = id;
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////////

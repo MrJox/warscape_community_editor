@@ -183,6 +183,7 @@ void Viewport::draw(Editor& editor) {
     ImGui::InvisibleButton("##viewport", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
+    ImGuizmo::SetAllowedItem(ImGui::GetItemID());   // the gizmo may start a drag while this button is the hovered item (ImGuizmo refuses otherwise)
     ImGuiIO& io = ImGui::GetIO();
 
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
@@ -206,6 +207,7 @@ void Viewport::draw(Editor& editor) {
         to_gizmo(proj, p);
         to_gizmo(world, m);
         ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetGizmoSizeClipSpace(0.16f);   // larger than ImGuizmo's default 0.1: the handles of a building in a 100 m view were 35 px
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
         const ImGuizmo::OPERATION op = gizmo == GizmoMode::Translate ? ImGuizmo::TRANSLATE : gizmo == GizmoMode::Rotate ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
@@ -263,7 +265,8 @@ void Viewport::draw(Editor& editor) {
         in.dy = io.MouseDelta.y;
         in.wheel = hovered ? io.MouseWheel : 0;
         if (!over_gizmo) {
-            const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && !tool_drag_ && !claims;
+            // while a gizmo is shown a left drag that missed it does not orbit (it would turn the view under a user who just aimed badly at a handle): Alt + left or the right button do
+            const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && !tool_drag_ && !claims && (!gizmo_doc || io.KeyAlt);
             in.rotate = fly_active_ ? ImGui::IsMouseDown(ImGuiMouseButton_Right) && active : (left || ImGui::IsMouseDown(ImGuiMouseButton_Right)) && active;
             in.pan = ImGui::IsMouseDown(ImGuiMouseButton_Middle) && active;
         }

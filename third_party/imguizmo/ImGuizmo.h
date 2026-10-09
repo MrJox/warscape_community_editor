@@ -259,6 +259,8 @@ namespace IMGUIZMO_NAMESPACE
    // return true if the cursor is over the operation's gizmo
    IMGUI_API bool IsOver(OPERATION op);
    IMGUI_API void SetGizmoSizeClipSpace(float value);
+   // wce: an ImGui item (the viewport's button) that may be hovered / active while a drag starts
+   IMGUI_API void SetAllowedItem(ImGuiID id);
 
    // Handle type used by the translate/rotate/scale gizmos.
    enum MOVETYPE

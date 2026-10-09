@@ -1017,6 +1017,20 @@ void Editor::register_builtin_commands() {
         if (Document* a = docs_.active()) s += "; history " + std::to_string(a->history().size()) + "/" + std::to_string(a->history().position());
         return CommandResult::success(s);
     });
+    commands_.add("cam_mark", "cam_mark", "test: remember the camera (see assert_cam_same)", [this, ok](const CommandRegistry::Args&) {
+        cam_mark_ = viewport_.camera();
+        cam_marked_ = true;
+        return ok();
+    });
+    commands_.add("assert_cam_same", "assert_cam_same", "test: the camera is where cam_mark left it (a gizmo drag must not orbit the view)", [this, ok, fail](const CommandRegistry::Args&) {
+        const Camera c = viewport_.camera();
+        const float d = length(c.eye - cam_mark_.eye) + length(c.target - cam_mark_.target);
+        return cam_marked_ && d < 1e-4f ? ok() : fail(cam_marked_ ? "the camera moved by " + std::to_string(d) : "no cam_mark");
+    });
+    commands_.add("assert_cam_moved", "assert_cam_moved", "test: the camera is not where cam_mark left it", [this, ok, fail](const CommandRegistry::Args&) {
+        const Camera c = viewport_.camera();
+        return cam_marked_ && length(c.eye - cam_mark_.eye) + length(c.target - cam_mark_.target) > 1e-3f ? ok() : fail("the camera did not move");
+    });
     commands_.add("camera", "camera orbit|fly", "camera controller", [this, ok, fail](const CommandRegistry::Args& a) {
         if (a.empty()) return fail("usage: camera orbit|fly");
         if (a[0] == "fly") viewport_.use_fly();
@@ -1104,9 +1118,9 @@ void Editor::register_builtin_commands() {
         const float3 fwd = normalize(cam.target - cam.eye), right = normalize(cross({0, 1, 0}, fwd));
         float ox, oy, rx, ry;
         if (!viewport_.project(o, ox, oy) || !viewport_.project(o + right, rx, ry)) return fail("the item is not in view");
-        // ImGuizmo: the handle is 0.1 of the clip space (in units of half the viewport height) long, along the axis, from the item's origin
+        // ImGuizmo: the handle is 0.16 of the clip space (in units of half the viewport height) long, along the axis, from the item's origin
         const float unit_px = std::max(1e-3f, std::hypot(rx - ox, ry - oy));
-        const float len = 0.05f * float(viewport_.height()) / unit_px;
+        const float len = 0.08f * float(viewport_.height()) / unit_px;
         float3 axis{0, 0, 0};
         (ax == 0 ? axis.x : ax == 1 ? axis.y : axis.z) = 1.0f;
         float tx, ty, hx, hy;
