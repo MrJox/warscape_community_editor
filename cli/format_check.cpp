@@ -9,7 +9,7 @@
 #include <map>
 
 namespace fs = std::filesystem;
-using namespace we;
+using namespace wce;
 
 int main(int argc, char** argv) {
     std::map<int, std::pair<size_t, size_t>> by_kind; // kind -> (same, differs)

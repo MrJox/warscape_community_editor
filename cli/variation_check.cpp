@@ -13,8 +13,8 @@
 // Report: referenced files missing from every pack, variations that can never match, conditions (every combination of the
 // meta values) for which the game finds no environment file even after the "default_map" retry, and weather/*.environment
 // files no variation refers to.
-#include "core/text_encoding.h"
-#include "core/vfs.h"
+#include "foundation/text_encoding.h"
+#include "vfs/vfs.h"
 #include "formats/variation_db.h"
 
 #include <algorithm>
@@ -23,7 +23,7 @@
 #include <set>
 #include <sstream>
 
-using namespace we;
+using namespace wce;
 
 namespace {
 

@@ -1,9 +1,9 @@
-#include "env_value.h"
+#include "formats/env_value.h"
 
 #include <charconv>
 #include <cstdio>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -132,4 +132,4 @@ std::string format_value(const EnvValue& v) {
     return v.s;
 }
 
-} // namespace we
+} // namespace wce

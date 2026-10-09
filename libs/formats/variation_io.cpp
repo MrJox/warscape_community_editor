@@ -3,9 +3,11 @@
 #include "formats/xml_doc.h"
 
 #include <algorithm>
+#include <iterator>
+#include <sstream>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 std::vector<uint8_t> VariationDb::to_bytes() const {
     std::vector<uint8_t> b = {'F', 'A', 'S', 'T', 'B', 'I', 'N', '0'};
@@ -246,4 +248,58 @@ uint32_t VariationDb::flags_for(const std::map<std::string, std::vector<std::str
     return flags;
 }
 
-} // namespace we
+VariationDb VariationDb::parse_environment_map(const std::vector<uint8_t>& xml) {
+    static const char* const kCategories[] = {"map", "climate", "season", "climate_change_index", "precipitation", "time_of_day", "battle_types", "snow_attrition"};
+    XmlDoc doc = XmlDoc::parse(xml);
+    const auto& el = doc.elements();
+    auto split = [](const std::string& s) {
+        std::vector<std::string> out;
+        std::stringstream ss(s);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            size_t a = item.find_first_not_of(" 	"), b = item.find_last_not_of(" 	");
+            if (a != std::string::npos) out.push_back(item.substr(a, b - a + 1));
+        }
+        return out;
+    };
+    // per file and category, the listed values
+    std::vector<std::string> names;
+    std::vector<std::vector<std::vector<std::string>>> lists;
+    for (size_t i = 0; i < el.size(); ++i) {
+        if (el[i].name != "environment_file") continue;
+        const int e = int(i);
+        names.push_back(doc.get(e, "filename").value_or(""));
+        auto& l = lists.emplace_back();
+        for (const char* c : kCategories) l.push_back(split(doc.get(e, c).value_or("")));
+    }
+    if (names.empty()) throw std::runtime_error("no <environment_file> entries");
+    VariationDb db;
+    for (size_t c = 0; c < std::size(kCategories); ++c) {
+        Meta m;
+        m.name = kCategories[c];
+        for (auto& l : lists) m.values.insert(m.values.end(), l[c].begin(), l[c].end());
+        std::sort(m.values.begin(), m.values.end());
+        m.values.erase(std::unique(m.values.begin(), m.values.end()), m.values.end());
+        db.metas.push_back(std::move(m));
+    }
+    if (db.value_count() > 32) throw std::runtime_error("environment_map: more than 32 category values, the flags would collide");
+    Entry entry;
+    entry.key = "environment";
+    for (size_t f = 0; f < names.size(); ++f) {
+        uint32_t flags = 0;
+        for (size_t c = 0; c < std::size(kCategories); ++c) {
+            const Meta& m = db.metas[c];
+            const int first = db.first_bit(m.name);
+            if (lists[f][c].empty()) { // nothing listed accepts every value of the category
+                for (size_t v = 0; v < m.values.size(); ++v) flags |= 1u << ((first + int(v)) & 31);
+            } else {
+                for (auto& v : lists[f][c]) flags |= db.bit(m.name, v);
+            }
+        }
+        entry.variations.push_back({names[f], flags});
+    }
+    db.entries.push_back(std::move(entry));
+    return db;
+}
+
+} // namespace wce

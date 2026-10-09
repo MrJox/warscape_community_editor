@@ -7,7 +7,7 @@
 //   <out_dir>/index.tsv     one row per shader: name parts, stage, create result, cbuffers, resources
 //   <out_dir>/cbuffers.txt  every distinct constant buffer layout with its variables and users
 //   [asm_dir]/<file>.asm    D3DDisassemble output per shader (large; keep out of the repo)
-#include "core/text_encoding.h"
+#include "foundation/text_encoding.h"
 #include "formats/fxc.h"
 
 #include <d3d11.h>
@@ -24,7 +24,7 @@
 
 namespace fs = std::filesystem;
 using Microsoft::WRL::ComPtr;
-using namespace we;
+using namespace wce;
 
 namespace {
 

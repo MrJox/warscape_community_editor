@@ -1,11 +1,11 @@
 #include "weather_vfx.h"
 
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "formats/xml_doc.h"
 
 #include <cstdlib>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -125,4 +125,4 @@ WeatherVfx load_weather_vfx(const VfxReader& vfs, const std::string& definition_
     return out;
 }
 
-} // namespace we
+} // namespace wce

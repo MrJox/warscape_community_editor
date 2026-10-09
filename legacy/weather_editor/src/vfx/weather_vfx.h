@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs;
 
@@ -52,4 +52,4 @@ using VfxReader = std::function<std::vector<uint8_t>(const std::string& path)>;
 WeatherVfx load_weather_vfx(const VfxReader& read, const std::string& definition_name);
 WeatherVfx load_weather_vfx(Vfs& vfs, const std::string& definition_name);
 
-} // namespace we
+} // namespace wce

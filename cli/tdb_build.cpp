@@ -22,7 +22,7 @@ static std::vector<uint8_t> slurp(const fs::path& p) {
 static int run(int argc, char** argv) {
     if (argc < 4) { std::fprintf(stderr, "usage: tdb_build <_tile_database dir> <extra tiles dir|-> <shipped bin|-> [--out file]\n"); return 2; }
     fs::path dir = argv[1];
-    te::TileDbInput in;
+    wce::TileDbInput in;
     in.settings_xml = slurp(dir / "_settings.xml");
     std::vector<fs::path> files;
     for (auto& e : fs::directory_iterator(dir / "TILES")) if (e.path().extension() == ".xml") files.push_back(e.path());
@@ -31,8 +31,8 @@ static int run(int argc, char** argv) {
     for (auto& f : files) in.tile_xml.push_back(slurp(f));
     in.add_user_tile_set = dir.string().find("battle") != std::string::npos;
     std::vector<uint8_t> ref;
-    if (std::strcmp(argv[3], "-") != 0) { ref = slurp(argv[3]); in.order = te::tile_database_order(ref); }
-    std::vector<uint8_t> out = te::build_tile_database(in);
+    if (std::strcmp(argv[3], "-") != 0) { ref = slurp(argv[3]); in.order = wce::tile_database_order(ref); }
+    std::vector<uint8_t> out = wce::build_tile_database(in);
     std::printf("built %zu bytes from %zu tiles\n", out.size(), files.size());
     for (int i = 4; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--out")) { std::ofstream(argv[i + 1], std::ios::binary).write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size())); }

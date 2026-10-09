@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct ChmfFile {
     std::array<uint32_t, 16> header{};   // all dwords from the magic to block_count, raw
@@ -26,4 +26,4 @@ struct ChmfFile {
     std::vector<uint8_t> write() const;
 };
 
-} // namespace te
+} // namespace wce

@@ -1,10 +1,10 @@
-#include "fxc.h"
+#include "formats/fxc.h"
 
 #include <cstring>
 #include <regex>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -65,4 +65,4 @@ bool split_fxc_name(const std::string& file_name, FxcName& out) {
     return true;
 }
 
-} // namespace we
+} // namespace wce

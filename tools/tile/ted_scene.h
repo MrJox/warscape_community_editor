@@ -8,7 +8,7 @@
 //
 // Edits are attribute edits on the XmlDoc, so everything outside the edited values stays byte-identical, and an edit
 // that does not change a value (as float32) leaves the text alone. Numbers are written the way TEd writes them
-// (format_number): "%.6f" rounded half away from zero, trailing zeros removed.
+// (format_ted_number): "%.6f" rounded half away from zero, trailing zeros removed.
 #include "formats/xml_doc.h"
 
 #include <array>
@@ -18,11 +18,11 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 using Vec3 = std::array<double, 3>;
 
-std::string format_number(double v);                    // 1.000000 -> "1", -0.000000 -> "-0", 12.5 -> "12.5"
+std::string format_ted_number(double v);                    // 1.000000 -> "1", -0.000000 -> "-0", 12.5 -> "12.5"
 std::string format_general(double v);                   // "%g" (6 significant digits), used for <point position="x,y,z">
 std::optional<Vec3> parse_vec3(const std::string& text, const char* prefix); // "vector(1,2,3)" / "euler(..)" / "x,y,z" with prefix ""
 
@@ -33,7 +33,7 @@ public:
 
     int project_version() const;                                // <project version="17">
     int scene_graph() const;                                    // element index of SCENE_GRAPH, -1 if absent
-    const we::XmlDoc& doc() const { return doc_; }
+    const wce::XmlDoc& doc() const { return doc_; }
 
     // Instances below `elem` without the `children` wrappers: direct instance children.
     std::vector<int> children(int elem) const;
@@ -58,8 +58,8 @@ public:
     // Structural edits. Element indices after the edit point shift: re-resolve any stored index.
     int duplicate(int elem);                                   // copy placed right after `elem`; returns the copy's index
     void remove(int elem);
-    using Snapshot = std::shared_ptr<const we::XmlDoc>;        // whole-document snapshot for undo of structural edits
-    Snapshot snapshot() const { return std::make_shared<we::XmlDoc>(doc_); }
+    using Snapshot = std::shared_ptr<const wce::XmlDoc>;        // whole-document snapshot for undo of structural edits
+    Snapshot snapshot() const { return std::make_shared<wce::XmlDoc>(doc_); }
     void restore(const Snapshot& s) { doc_ = *s; }
 
     // Layer operations (text splices on the saved document, then a re-parse: element indices change, the result is returned).
@@ -85,7 +85,8 @@ public:
 
 private:
     void set_vector(int elem, const char* attr, const char* prefix, const Vec3& v);
-    we::XmlDoc doc_;
+    void require_element(int elem, const char* what) const;   // throws std::runtime_error when elem is not an element index
+    wce::XmlDoc doc_;
 };
 
-} // namespace te
+} // namespace wce

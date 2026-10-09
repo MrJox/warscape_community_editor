@@ -1,8 +1,8 @@
-#include "process.h"
+#include "foundation/process.h"
 
 #include <windows.h>
 
-namespace we {
+namespace wce {
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return {};
@@ -79,4 +79,4 @@ ProcessResult run_process(const std::wstring& exe, const std::vector<std::wstrin
     return r;
 }
 
-} // namespace we
+} // namespace wce

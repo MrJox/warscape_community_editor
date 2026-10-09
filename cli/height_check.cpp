@@ -4,7 +4,7 @@
 //   3. a brush stroke (raise, smooth, flatten) changes samples only inside its radius, and undo restores the exact bytes;
 //   4. redo re-applies the stroke exactly.
 //   height_check <png> [min_height scale] ...    (several files may be given; defaults min 0, scale 100)
-#include "terrain/height_field.h"
+#include "tile/height_field.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -18,19 +18,19 @@ static std::vector<uint8_t> slurp(const char* p) {
 
 static int check(const char* path, double min_h, double scale) {
     auto bytes = slurp(path);
-    te::PngFile png = te::PngFile::parse(bytes);
-    te::HeightField hf = te::HeightField::from_png(png, min_h, scale);
+    wce::PngFile png = wce::PngFile::parse(bytes);
+    wce::HeightField hf = wce::HeightField::from_png(png, min_h, scale);
     int bad = 0;
     // 1. conversions
     for (uint32_t r = 0; r < 65536; ++r)
         if (hf.to_raw(hf.to_metres(uint16_t(r))) != r) { ++bad; if (bad < 4) std::printf("  raw %u does not round trip\n", r); }
     // 2. no-op save
-    te::PngFile out = hf.to_png(png);
+    wce::PngFile out = hf.to_png(png);
     bool kit_png = !png.has_ancillary && png.encode() == bytes;
     if (kit_png && out.write() != bytes) { ++bad; std::printf("  no-op save differs\n"); }
     // 3. strokes + undo
     auto before = hf.samples();
-    te::Brush b;
+    wce::Brush b;
     b.cx = hf.width() * 0.4; b.cy = hf.height() * 0.6; b.radius = 20; b.strength = 0.8; b.falloff = 0.7;
     hf.begin_edit(); hf.raise(b, 2.5); hf.end_edit();
     hf.begin_edit(); hf.smooth(b); hf.end_edit();

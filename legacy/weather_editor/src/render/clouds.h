@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class XmlDoc;
 
@@ -73,4 +73,4 @@ std::vector<CloudInstance> generate_clouds(const CloudPlane& plane, uint32_t see
 // "rigidmodels/skybox/cloudsets/cloudset_2/near_set1.dds" etc.
 std::string cloud_texture(const CloudPlane& plane, int map);
 
-} // namespace we
+} // namespace wce

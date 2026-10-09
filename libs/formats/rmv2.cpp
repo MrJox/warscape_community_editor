@@ -1,9 +1,9 @@
-#include "rmv2.h"
+#include "formats/rmv2.h"
 
 #include <cstring>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -126,4 +126,4 @@ Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod) {
     return m;
 }
 
-} // namespace we
+} // namespace wce

@@ -3,7 +3,7 @@
 
 #include <cstring>
 
-namespace te {
+namespace wce {
 namespace {
 
 constexpr char kMagic[8] = {'F', 'A', 'S', 'T', 'B', 'I', 'N', '0'};
@@ -191,4 +191,4 @@ void register_fastbin_tile_formats() {
     formats().push_back(make<CivilianShelter>("civilian_shelter", [](const std::string& p) { return name_is(p, "civilian_shelter.bin"); }));
 }
 
-} // namespace te
+} // namespace wce

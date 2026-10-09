@@ -5,7 +5,7 @@
 // The direction follows the file extensions. The data is validated first (more than 32 values, duplicate values, flag bits that
 // belong to no value, variations that can never match, no 'default_map'); problems stop the conversion unless --force is given.
 // XML output uses the canonical layout (CRLF, tabs, single quotes), which is byte-identical to the vanilla file.
-#include "core/text_encoding.h"
+#include "foundation/text_encoding.h"
 #include "formats/variation_db.h"
 
 #include <cstdio>
@@ -13,7 +13,7 @@
 #include <fstream>
 
 namespace fs = std::filesystem;
-using namespace we;
+using namespace wce;
 
 namespace {
 

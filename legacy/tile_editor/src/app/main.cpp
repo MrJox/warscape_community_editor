@@ -159,7 +159,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         g_ctx->OMSetRenderTargets(1, g_rtv.GetAddressOf(), nullptr);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         if (!shot_path.empty() && ++frame_no == shot_frame) {
-            we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
+            wce::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
             if (FILE* t = _wfopen((shot_path + L".txt").c_str(), L"w")) { std::fputs(studio.diagnostics().c_str(), t); std::fclose(t); }
             done = true;
         }

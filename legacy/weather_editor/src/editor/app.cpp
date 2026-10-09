@@ -1,6 +1,6 @@
 #include "editor/app.h"
 
-#include "core/process.h"
+#include "foundation/process.h"
 #include "formats/env_value.h"
 
 #include "imgui.h"
@@ -15,7 +15,7 @@
 
 namespace fs = std::filesystem;
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -1071,4 +1071,4 @@ void App::draw_changes(Document& d) {
     }
 }
 
-} // namespace we
+} // namespace wce

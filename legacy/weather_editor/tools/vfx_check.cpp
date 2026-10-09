@@ -4,7 +4,7 @@
 //
 // Without a dump file: lists the active emitters and their constant rows. With one: for every emitter finds the
 // dumped row (index into the [512] arrays) that matches best and prints OK / DIFF per variable.
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "vfx/weather_vfx.h"
 
 #include <cmath>
@@ -14,7 +14,7 @@
 #include <map>
 #include <sstream>
 
-using namespace we;
+using namespace wce;
 
 namespace {
 

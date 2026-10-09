@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <sstream>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -280,4 +280,4 @@ VfxFile parse_vfx(const XmlDoc& doc) {
     return f;
 }
 
-} // namespace we
+} // namespace wce

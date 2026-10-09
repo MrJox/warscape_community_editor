@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--limit") && i + 1 < argc) limit = std::strtoull(argv[++i], nullptr, 10);
         else if (!std::strcmp(argv[i], "--all-failures")) max_failures = SIZE_MAX;
     }
-    te::register_all_formats();
+    wce::register_all_formats();
 
     struct Stat { size_t files = 0, ok = 0, failed = 0, skipped = 0; std::vector<std::string> failures; };
     std::map<std::string, Stat> stats;
@@ -71,14 +71,14 @@ int main(int argc, char** argv) {
         if (c.size() < 12 || c[11] != "in") continue;
         fs::path p = fs::path(argv[2]) / c[0] / c[1] / c[2];
         std::vector<uint8_t> head = read_all(p, 4096);
-        const te::Format* f = te::find_format(c[2], head);
+        const wce::Format* f = wce::find_format(c[2], head);
         if (!f) { ++unclaimed[c[5].empty() ? "(none)" : c[5]]; continue; }
         if (!only_format.empty() && f->name != only_format) continue;
         if (seen++ >= limit) break;
         Stat& s = stats[f->name];
         ++s.files;
         if (std::stod(c[3]) > max_mb * 1048576.0) { ++s.skipped; continue; }
-        te::RoundTripResult r = f->round_trip(read_all(p));
+        wce::RoundTripResult r = f->round_trip(read_all(p));
         if (r.ok) ++s.ok;
         else {
             ++s.failed;

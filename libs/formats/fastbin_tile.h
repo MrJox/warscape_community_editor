@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct TreeInstance { float x, y, z; uint16_t w; };
 struct TreeType { std::string name; std::vector<TreeInstance> instances; };
@@ -42,4 +42,4 @@ struct CivilianShelter {
     std::vector<uint8_t> write() const;
 };
 
-} // namespace te
+} // namespace wce

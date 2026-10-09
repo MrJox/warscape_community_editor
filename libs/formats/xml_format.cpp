@@ -4,7 +4,7 @@
 
 #include <cctype>
 
-namespace te {
+namespace wce {
 
 static bool ends_with_ci(const std::string& s, const char* suffix) {
     size_t n = std::char_traits<char>::length(suffix);
@@ -29,7 +29,7 @@ void register_xml_format() {
     f.round_trip = [](const std::vector<uint8_t>& bytes) {
         RoundTripResult r;
         try {
-            we::XmlDoc doc = we::XmlDoc::parse(bytes);
+            wce::XmlDoc doc = wce::XmlDoc::parse(bytes);
             r.output = doc.save();
             r.ok = r.output == bytes;
             if (!r.ok) r.error = describe_diff(bytes, r.output);
@@ -41,4 +41,4 @@ void register_xml_format() {
     formats().push_back(std::move(f));
 }
 
-} // namespace te
+} // namespace wce

@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -210,4 +210,4 @@ Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba) {
     return t;
 }
 
-} // namespace we
+} // namespace wce

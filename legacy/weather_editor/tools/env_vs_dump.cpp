@@ -7,7 +7,7 @@
 // The dump file is the text written by tools/re/dump_cbs.py ("cbuffer.var  v0 v1 v2 ...").
 // --all ranks every .environment file in the packs by how many of those variables match: the dump does not
 // say which weather file the battle used, but its sun / sky / fog constants identify it.
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "formats/xml_doc.h"
 #include "render/environment.h"
 #include "render/shader_lib.h"
@@ -23,7 +23,7 @@
 #include <map>
 #include <sstream>
 
-using namespace we;
+using namespace wce;
 
 namespace {
 

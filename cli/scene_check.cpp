@@ -3,9 +3,9 @@
 //   2. for every instance with a position: set_position(read value) is a no-op (bytes unchanged);
 //   3. translate +1 on x/z of a sample of instances, save, re-parse, translate back, save: the final bytes differ from the
 //      original only where TEd's formatting of the moved value differs (counted), and revert_all restores the original;
-//   4. format_number(parse(v)) == v for position / orientation / scale values (counted, with the failures listed).
+//   4. format_ted_number(parse(v)) == v for position / orientation / scale values (counted, with the failures listed).
 //   scene_check <manifest.tsv> <kits_parent_dir> [max_mb]
-#include "scene/ted_scene.h"
+#include "tile/ted_scene.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,8 +40,8 @@ static int run(int argc, char** argv) {
         fs::path p = fs::path(argv[2]) / c[0] / c[1] / c[2];
         if (p.filename() != "tile.ted" || std::stod(c[3]) > max_mb * 1048576.0) continue;
         auto bytes = slurp(p);
-        te::TedScene sc;
-        try { sc = te::TedScene::parse(bytes); } catch (const std::exception& e) { ++parse_fail; if (notes.size() < 5) notes.push_back(c[2] + ": " + e.what()); continue; }
+        wce::TedScene sc;
+        try { sc = wce::TedScene::parse(bytes); } catch (const std::exception& e) { ++parse_fail; if (notes.size() < 5) notes.push_back(c[2] + ": " + e.what()); continue; }
         ++files;
         if (sc.save() != bytes) { ++save_diff; continue; }
         size_t n = 0;
@@ -56,10 +56,10 @@ static int run(int argc, char** argv) {
                 auto txt = sc.doc().get(e, a);
                 if (!txt) continue;
                 const char* pre = a[0] == 'p' ? "vector" : a[0] == 'o' ? "euler" : "vector";
-                auto v = te::parse_vec3(*txt, pre);
+                auto v = wce::parse_vec3(*txt, pre);
                 if (!v) continue;
                 ++fmt_total;
-                std::string back = std::string(pre) + "(" + te::format_number((*v)[0]) + "," + te::format_number((*v)[1]) + "," + te::format_number((*v)[2]) + ")";
+                std::string back = std::string(pre) + "(" + wce::format_ted_number((*v)[0]) + "," + wce::format_ted_number((*v)[1]) + "," + wce::format_ted_number((*v)[2]) + ")";
                 if (back == *txt) ++fmt_ok; else if (notes.size() < 8) notes.push_back("format: " + *txt + " -> " + back);
             }
             if (++n % 997 == 0) { sc.translate(e, {1, 0, 1}); }

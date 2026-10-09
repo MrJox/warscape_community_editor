@@ -1,5 +1,5 @@
 // Attila Weather Editor: window, D3D11 device and the ImGui frame loop.
-#include "core/process.h"
+#include "foundation/process.h"
 #include "editor/app.h"
 #include "render/image_io.h"
 
@@ -56,7 +56,7 @@ ComPtr<ID3D11DeviceContext> g_ctx;
 ComPtr<IDXGISwapChain> g_swap;
 ComPtr<ID3D11RenderTargetView> g_rtv;
 UINT g_resize_w = 0, g_resize_h = 0;
-we::App* g_app = nullptr;
+wce::App* g_app = nullptr;
 
 void create_rtv() {
     ComPtr<ID3D11Texture2D> back;
@@ -129,7 +129,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device.Get(), g_ctx.Get());
 
-    we::App app(g_device.Get(), g_ctx.Get());
+    wce::App app(g_device.Get(), g_ctx.Get());
     g_app = &app;
     std::wstring shot_path; // --shot <file.png>: save the window after a few frames and exit
     int shot_frame = 20;    // --frames <n>: frame to save (particles need time to fill)
@@ -138,13 +138,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         for (int i = 1; i + 1 < argc; ++i) {
             std::wstring a = argv[i];
-            if (a == L"--open") app.open_path(we::narrow(argv[++i]));
+            if (a == L"--open") app.open_path(wce::narrow(argv[++i]));
             else if (a == L"--shot") shot_path = argv[++i];
             else if (a == L"--frames") shot_frame = std::max(1, _wtoi(argv[++i]));
             else if (a == L"--view") app.set_view(_wtoi(argv[++i]));
-            else if (a == L"--vdb-script") { app.set_vdb_script(we::narrow(argv[++i])); app.show_picker(true); } // see App::run_vdb_script
+            else if (a == L"--vdb-script") { app.set_vdb_script(wce::narrow(argv[++i])); app.show_picker(true); } // see App::run_vdb_script
             else if (a == L"--pick") { // --pick <category>=<value> (repeatable): conditions of the Weather picker, which opens
-                std::string kv = we::narrow(argv[++i]);
+                std::string kv = wce::narrow(argv[++i]);
                 if (auto eq = kv.find('='); eq != std::string::npos) app.set_pick(kv.substr(0, eq), kv.substr(eq + 1));
                 app.show_picker(true);
             }
@@ -190,13 +190,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         if (!shot_path.empty() && ++frame_no == shot_frame) {
             Microsoft::WRL::ComPtr<ID3D11Texture2D> back;
             g_swap->GetBuffer(0, IID_PPV_ARGS(&back));
-            we::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
+            wce::save_texture_png(g_device.Get(), g_ctx.Get(), back.Get(), shot_path);
             if (app.renderer() && app.renderer()->particles())
                 if (ID3D11ShaderResourceView* d = app.renderer()->particles()->distortion()) { // debug: <shot>.distortion.png
                     ComPtr<ID3D11Resource> r;
                     d->GetResource(&r);
                     ComPtr<ID3D11Texture2D> t;
-                    if (SUCCEEDED(r.As(&t))) we::save_texture_png(g_device.Get(), g_ctx.Get(), t.Get(), shot_path + L".distortion.png");
+                    if (SUCCEEDED(r.As(&t))) wce::save_texture_png(g_device.Get(), g_ctx.Get(), t.Get(), shot_path + L".distortion.png");
                 }
             if (FILE* t = _wfopen((shot_path + L".txt").c_str(), L"w")) {
                 fputs(app.diagnostics().c_str(), t);

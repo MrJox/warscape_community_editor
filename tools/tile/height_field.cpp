@@ -1,10 +1,10 @@
-#include "terrain/height_field.h"
+#include "tile/height_field.h"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 
 HeightField HeightField::from_png(const PngFile& png, double min_height, double scale) {
     if (png.bit_depth != 16 || png.color_type != 0) throw std::runtime_error("height map must be 16-bit grey");
@@ -161,4 +161,4 @@ bool HeightField::redo() {
     return true;
 }
 
-} // namespace te
+} // namespace wce

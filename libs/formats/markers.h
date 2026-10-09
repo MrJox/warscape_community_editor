@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct MarkersFile {
     std::string repository_name;          // "BASE_MARKER_REPOSITORY"
@@ -26,4 +26,4 @@ struct MarkersFile {
     std::vector<uint8_t> write() const;
 };
 
-} // namespace te
+} // namespace wce

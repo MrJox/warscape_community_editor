@@ -1,5 +1,5 @@
 #pragma once
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "render/renderer.h"
 #include "render/scene.h"
 #include "editor/variation_editor.h"
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct Document {
     std::string vfs_path;              // in-pack path (lower case); empty for files opened from disk
@@ -138,4 +138,4 @@ private:
     bool status_error_ = false;
 };
 
-} // namespace we
+} // namespace wce

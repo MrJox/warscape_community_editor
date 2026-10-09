@@ -1,6 +1,6 @@
 #include "particles.h"
 
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "render/shader_lib.h"
 #include "render/texture.h"
 
@@ -9,7 +9,7 @@
 #include <cstring>
 #include <map>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -720,4 +720,4 @@ void ParticleSystem::render(const Frame& f) {
     }
 }
 
-} // namespace we
+} // namespace wce

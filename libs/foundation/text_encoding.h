@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 enum class TextEncoding { Utf8, Utf8Bom, Utf16LeBom };
 
@@ -20,4 +20,4 @@ std::vector<uint8_t> encode_text(const std::string& utf8, TextEncoding encoding)
 std::vector<uint8_t> read_file(const std::string& path);
 bool write_file(const std::string& path, const std::vector<uint8_t>& bytes);
 
-} // namespace we
+} // namespace wce

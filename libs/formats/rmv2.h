@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 enum RigidShader : uint16_t {
     RS_STANDARD_TILED_DIRTMAP_V5 = 63,
@@ -59,4 +59,4 @@ Rmv2Model parse_rmv2(const std::vector<uint8_t>& bytes, int only_lod = -1); // t
 
 uint32_t rmv2_vertex_stride(uint16_t vertex_format); // 0 if unknown
 
-} // namespace we
+} // namespace wce

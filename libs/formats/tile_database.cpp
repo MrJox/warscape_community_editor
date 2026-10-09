@@ -8,7 +8,7 @@
 #include <map>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 namespace {
 
 struct Out {
@@ -24,7 +24,7 @@ struct Out {
 
 // Access to the attributes and children of one XmlDoc element.
 struct El {
-    const we::XmlDoc& d;
+    const wce::XmlDoc& d;
     int i;
     std::string attr(const char* name) const {
         auto v = d.get(i, name);
@@ -99,7 +99,7 @@ void write_tile(Out& o, const El& t) {
 } // namespace
 
 std::vector<uint8_t> build_tile_database(const TileDbInput& in) {
-    we::XmlDoc settings = we::XmlDoc::parse(in.settings_xml);
+    wce::XmlDoc settings = wce::XmlDoc::parse(in.settings_xml);
     El root{settings, settings.roots().at(0)};
     Out o;
     o.raw("FASTBIN0", 8);
@@ -141,9 +141,9 @@ std::vector<uint8_t> build_tile_database(const TileDbInput& in) {
     }
     auto sets = root.child("TILE_SETS").kids();
     // tiles are parsed first: sets they reference but _settings.xml does not define are appended to the set list
-    std::vector<we::XmlDoc> docs;
+    std::vector<wce::XmlDoc> docs;
     docs.reserve(in.tile_xml.size());
-    for (const auto& x : in.tile_xml) docs.push_back(we::XmlDoc::parse(x));
+    for (const auto& x : in.tile_xml) docs.push_back(wce::XmlDoc::parse(x));
     std::vector<std::string> extra;
     {
         std::map<std::string, bool> known;
@@ -223,4 +223,4 @@ std::vector<std::string> tile_database_order(const std::vector<uint8_t>& bin) {
     return order;
 }
 
-} // namespace te
+} // namespace wce

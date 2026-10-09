@@ -1,7 +1,7 @@
-#include "vfs.h"
+#include "vfs/vfs.h"
 
-#include "process.h"
-#include "text_encoding.h"
+#include "foundation/process.h"
+#include "foundation/text_encoding.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -13,7 +13,7 @@
 
 namespace fs = std::filesystem;
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -225,4 +225,4 @@ std::vector<uint8_t> Vfs::read(const std::string& path) {
     return read_file(disk->string());
 }
 
-} // namespace we
+} // namespace wce

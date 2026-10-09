@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct DdsFile {
     std::array<uint32_t, 31> header{};      // the 124 bytes after the magic, as dwords (size, flags, height, width, pitch, depth, mips, 11 reserved, pixel format x8, caps x4, reserved)
@@ -60,4 +60,4 @@ struct TiffFile {
     bool header_is_regenerable() const;
 };
 
-} // namespace te
+} // namespace wce

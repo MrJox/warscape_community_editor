@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct TileDbInput {
     std::vector<uint8_t> settings_xml;
@@ -36,4 +36,4 @@ std::vector<uint8_t> build_tile_database(const TileDbInput& in);
 // Locations of the tiles of a shipped tile_database.bin in file order (to reuse its ordering).
 std::vector<std::string> tile_database_order(const std::vector<uint8_t>& bin);
 
-} // namespace te
+} // namespace wce

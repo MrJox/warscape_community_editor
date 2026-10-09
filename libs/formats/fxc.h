@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct FxcFile {
     std::vector<std::pair<std::string, std::string>> defines;
@@ -39,4 +39,4 @@ struct FxcName {
 };
 bool split_fxc_name(const std::string& file_name, FxcName& out);
 
-} // namespace we
+} // namespace wce

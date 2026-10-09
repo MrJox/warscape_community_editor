@@ -1,13 +1,13 @@
 #pragma once
 // Editing UI for the battle weather selection database (formats/variation_db.h): value lists per category and the
 // variations (environment file + the conditions it is allowed for).
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "formats/variation_db.h"
 
 #include <map>
 #include <string>
 
-namespace we {
+namespace wce {
 
 struct VariationEditState {
     int entry = 0;       // which entry ("environment") is shown
@@ -21,4 +21,4 @@ struct VariationEditState {
 // Draws the editor; returns true when the database changed this frame.
 bool draw_variation_editor(VariationDb& db, VariationEditState& st, const Vfs* vfs);
 
-} // namespace we
+} // namespace wce

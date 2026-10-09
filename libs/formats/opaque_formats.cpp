@@ -10,7 +10,7 @@
 #include <cstring>
 #include <set>
 
-namespace te {
+namespace wce {
 
 static std::string lower_ext(const std::string& path) {
     size_t slash = path.find_last_of("/\\");
@@ -73,4 +73,4 @@ void register_opaque_formats() {
     formats().push_back(std::move(tdb));
 }
 
-} // namespace te
+} // namespace wce

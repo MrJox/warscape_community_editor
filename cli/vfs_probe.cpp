@@ -1,11 +1,11 @@
 // Mounts the game packs through rpfm_cli and prints what the editor would see.
 //   vfs_probe [path-to-fetch...]
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 
 #include <chrono>
 #include <cstdio>
 
-using namespace we;
+using namespace wce;
 
 int main(int argc, char** argv) {
     try {

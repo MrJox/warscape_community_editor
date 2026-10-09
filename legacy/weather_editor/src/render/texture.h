@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct Texture {
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
@@ -23,4 +23,4 @@ struct Texture {
 Texture load_dds(ID3D11Device* dev, const std::vector<uint8_t>& bytes, bool srgb); // throws
 Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba);
 
-} // namespace we
+} // namespace wce

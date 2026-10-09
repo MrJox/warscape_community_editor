@@ -5,7 +5,7 @@
 // edits are span replacements applied on save. An unedited document saves byte-identically, and an
 // edited one differs only inside the replaced spans. Multiple top-level elements are allowed
 // (vfx files have <shader_library/>, <vfx> and <vfx_references> side by side).
-#include "core/text_encoding.h"
+#include "foundation/text_encoding.h"
 
 #include <map>
 #include <optional>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct XmlAttr {
     std::string name;
@@ -94,4 +94,4 @@ private:
     std::map<std::pair<int, size_t>, std::string> appended_values_; // (elem, attr index) -> raw value
 };
 
-} // namespace we
+} // namespace wce

@@ -12,7 +12,7 @@
 #include <DirectXPackedVector.h>
 #include <cmath>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -407,4 +407,4 @@ void build_scurve(const EnvironmentParams& e, uint16_t out[256 * 4]) {
     for (int i = 0; i < kBins; ++i) out[i * 4 + 3] = 0;
 }
 
-} // namespace we
+} // namespace wce

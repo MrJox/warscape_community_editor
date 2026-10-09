@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct VariationDb {
     struct Meta {
@@ -44,6 +44,12 @@ struct VariationDb {
     static VariationDb parse(const std::vector<uint8_t>& bytes); // FASTBIN0; throws std::runtime_error
     std::vector<uint8_t> to_bytes() const;                        // FASTBIN0
     static VariationDb parse_xml(const std::vector<uint8_t>& xml); // throws std::runtime_error
+    // The assembly kit's source form, raw_data/warscape_asset_variation_db/environment_map.xml (<environment_file> elements with
+    // comma separated lists per category, an empty or missing list accepts every value), as the single entry "environment".
+    // BOB_Terrain assigns the bits when it builds the FASTBIN; here the metas follow the order map, climate, season,
+    // climate_change_index, precipitation, time_of_day, battle_types, snow_attrition with sorted values (the matching result does
+    // not depend on the bit order). Throws std::runtime_error, also when the values do not fit in 32 bits.
+    static VariationDb parse_environment_map(const std::vector<uint8_t>& xml);
     std::string to_xml() const;                                    // canonical layout
 
     bool operator==(const VariationDb& o) const;
@@ -83,9 +89,13 @@ struct VariationDb {
     };
     // The candidate list the game builds for `key` ("environment").
     Result candidates(const std::string& key, Query q) const;
+    // candidates() for tools that pick from a source list: a map name the database does not list is treated as unmatched, so the
+    // first round is skipped and the "default_map" round runs (the game's own query adds no bit for an unlisted value and so
+    // matches every map in the first round; use candidates() for that behaviour).
+    Result candidates_listed_map(const std::string& key, Query q) const;
 
     // Per category, the values a variation allows (all values when its flags are 0).
     std::vector<std::pair<std::string, std::vector<std::string>>> decode(uint32_t flags) const;
 };
 
-} // namespace we
+} // namespace wce

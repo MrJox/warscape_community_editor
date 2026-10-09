@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -202,4 +202,4 @@ bool draw_variation_editor(VariationDb& db, VariationEditState& st, const Vfs* v
     return changed;
 }
 
-} // namespace we
+} // namespace wce

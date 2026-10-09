@@ -1,9 +1,10 @@
 #include "formats/variation_db.h"
 
+#include <algorithm>
 #include <bit>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -113,6 +114,18 @@ VariationDb::Result VariationDb::candidates(const std::string& key, Query q) con
     return out;
 }
 
+VariationDb::Result VariationDb::candidates_listed_map(const std::string& key, Query q) const {
+    const Meta* m = meta("map");
+    auto it = q.find("map");
+    if (m && it != q.end() && !it->second.empty() && std::find(m->values.begin(), m->values.end(), it->second) == m->values.end()) {
+        q["map"] = "default_map"; // the other categories still apply in the retry
+        Result out = candidates(key, q);
+        out.used_default_map = true;
+        return out;
+    }
+    return candidates(key, std::move(q));
+}
+
 std::vector<std::pair<std::string, std::vector<std::string>>> VariationDb::decode(uint32_t flags) const {
     std::vector<std::pair<std::string, std::vector<std::string>>> out;
     int index = 0;
@@ -126,4 +139,4 @@ std::vector<std::pair<std::string, std::vector<std::string>>> VariationDb::decod
     return out;
 }
 
-} // namespace we
+} // namespace wce

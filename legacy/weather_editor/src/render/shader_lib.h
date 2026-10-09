@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs;
 
@@ -81,4 +81,4 @@ void bind_shader(ID3D11DeviceContext* ctx, const GameShader& s, ConstantBuffers&
 void bind_srv(ID3D11DeviceContext* ctx, const GameShader& s, const std::string& name, ID3D11ShaderResourceView* srv);
 void bind_sampler(ID3D11DeviceContext* ctx, const GameShader& s, const std::string& name, ID3D11SamplerState* smp);
 
-} // namespace we
+} // namespace wce

@@ -4,8 +4,8 @@
 // Render path (own, small): terrain mesh from the height field, instanced boxes for scene instances, line batches for
 // polygons and selection. Input: RMB orbit, MMB pan, wheel zoom, LMB select / paint, G grab selected instance on the
 // ground, Ctrl+Z / Ctrl+Y undo / redo, Ctrl+S save. World space: x, z in metres (scene units / unit scale), y in metres.
-#include "project/tile_project.h"
-#include "scene/world_transform.h"
+#include "tile/tile_project.h"
+#include "tile/world_transform.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>

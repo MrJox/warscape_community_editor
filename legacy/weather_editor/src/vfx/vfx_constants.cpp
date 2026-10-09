@@ -6,7 +6,7 @@
 #include <cctype>
 #include <cmath>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -193,4 +193,4 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& em, const VfxChain
     return k;
 }
 
-} // namespace we
+} // namespace wce

@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class XmlDoc;
 
@@ -99,4 +99,4 @@ struct VfxFile {
 VfxFile parse_vfx(const XmlDoc& doc);
 std::map<std::string, VfxCurve> parse_curves(const std::string& text);
 
-} // namespace we
+} // namespace wce

@@ -5,12 +5,12 @@
 // Mapping: apply_environment() writes the cbuffers. Every transform that is not yet verified against
 // the game is marked ASSUMPTION here and listed in docs/re/environment_to_shader.md.
 #include "render/clouds.h"
-#include "render/math.h"
+#include "foundation/math.h"
 
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class XmlDoc;
 class ConstantBuffers;
@@ -113,4 +113,4 @@ float4x4 colour_matrix(const EnvironmentParams& e, float global_brightness = 1.0
 // 256x1 RGBA16F tone curve (g_scurve_texture) as the engine builds it (half floats), see environment.cpp.
 void build_scurve(const EnvironmentParams& e, uint16_t out[256 * 4]);
 
-} // namespace we
+} // namespace wce

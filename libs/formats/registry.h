@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct RoundTripResult {
     bool ok = false;
@@ -30,4 +30,4 @@ const Format* find_format(const std::string& path, const std::vector<uint8_t>& h
 // First differing offset message for two byte strings.
 std::string describe_diff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
 
-} // namespace te
+} // namespace wce

@@ -2,7 +2,7 @@
 
     python scripts/imgcmp.py <run a> <run b> [--tolerance PSNR_DB]
 
-Prints, per PNG present in both runs: identical, or mean / max absolute difference (0-255) and PSNR. Exits 1 when an
+Prints, per PNG present in both runs: identical (bytes, or pixels with another encoder), or mean / max absolute difference (0-255) and PSNR. Exits 1 when an
 image is below the PSNR tolerance (default 35 dB). Until the renderer runs on a fixed-step clock (PLAN.md, Phase 3)
 the weather shots are not bit-identical between runs: wind and tone-map adaptation follow wall-clock time.
 """
@@ -39,6 +39,9 @@ def main():
             bad += 1
             continue
         d = np.abs(a - b)
+        if not d.any():
+            print(f"{name:40s} identical pixels (file bytes differ: another PNG encoder)")
+            continue
         mse = float((d * d).mean())
         psnr = math.inf if mse == 0 else 10 * math.log10(255 * 255 / mse)
         ok = psnr >= tol

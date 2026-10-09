@@ -7,7 +7,7 @@
 #include <cctype>
 #include <cmath>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -250,4 +250,4 @@ std::string cloud_texture(const CloudPlane& p, int map) {
     return base + (p.far_plane ? (map ? "far2.dds" : "far1.dds") : (map ? "near_set2.dds" : "near_set1.dds"));
 }
 
-} // namespace we
+} // namespace wce

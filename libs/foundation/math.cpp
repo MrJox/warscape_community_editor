@@ -1,6 +1,6 @@
-#include "math.h"
+#include "foundation/math.h"
 
-namespace we {
+namespace wce {
 
 float4x4 inverse(const float4x4& a) {
     const float* m = a.data();
@@ -104,4 +104,4 @@ float4x4 ortho_lh(float w, float h, float zn, float zf) {
     return r;
 }
 
-} // namespace we
+} // namespace wce

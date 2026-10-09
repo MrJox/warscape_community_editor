@@ -1,6 +1,6 @@
 #pragma once
 // Test map: randomly picked building models (RS_STANDARD_V5 meshes, LOD0) on a grid.
-#include "render/math.h"
+#include "foundation/math.h"
 #include "render/texture.h"
 
 #include <d3d11.h>
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs;
 
@@ -89,4 +89,4 @@ private:
     int buildings_ = 0;
 };
 
-} // namespace we
+} // namespace wce

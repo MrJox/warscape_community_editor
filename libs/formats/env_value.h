@@ -16,7 +16,7 @@
 #include <string_view>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 enum class ValueKind { Float, Int, Bool, Rgb, Argb, Variance, Euler, String };
 
@@ -39,4 +39,4 @@ EnvValue parse_value(std::string_view text);
 std::string format_value(const EnvValue& v);
 std::string format_number(float v, const NumStyle& style);
 
-} // namespace we
+} // namespace wce

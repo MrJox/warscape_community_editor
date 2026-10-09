@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct PngFile {
     uint32_t width = 0, height = 0;
@@ -27,4 +27,4 @@ struct PngFile {
     bool pixels_edited = false;
 };
 
-} // namespace te
+} // namespace wce

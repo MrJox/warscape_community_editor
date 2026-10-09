@@ -6,7 +6,7 @@
 // World is Y-up; depth is standard D3D (0 near, 1 far; the sky is drawn at z = w).
 #include <cmath>
 
-namespace we {
+namespace wce {
 
 struct float2 {
     float x = 0, y = 0;
@@ -56,4 +56,4 @@ float4x4 look_at_lh(const float3& eye, const float3& target, const float3& up);
 float4x4 perspective_lh(float fov_y, float aspect, float zn, float zf);
 float4x4 ortho_lh(float w, float h, float zn, float zf);
 
-} // namespace we
+} // namespace wce

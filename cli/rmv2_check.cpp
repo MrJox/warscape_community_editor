@@ -1,6 +1,6 @@
 // Gate for the rigid_model_v2 reader: parses every .rigid_model_v2 under the given folders.
 //   rmv2_check <dir>...
-#include "core/text_encoding.h"
+#include "foundation/text_encoding.h"
 #include "formats/rmv2.h"
 
 #include <cstdio>
@@ -8,7 +8,7 @@
 #include <map>
 
 namespace fs = std::filesystem;
-using namespace we;
+using namespace wce;
 
 int main(int argc, char** argv) {
     size_t files = 0, failed = 0;

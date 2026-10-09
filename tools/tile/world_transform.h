@@ -4,11 +4,11 @@
 // Convention measured against TEd's building export (docs/formats/tile_ted.md): a node's orientation euler(a,b,c) is the
 // rotation Rz(c) * Ry(a) * Rx(-b) (column vectors); parents compose before children; positions are rotated by the parent
 // rotation and added. Scene positions are in half metres horizontally (unit scale 2), heights in metres.
-#include "scene/ted_scene.h"
+#include "tile/ted_scene.h"
 
 #include <array>
 
-namespace te {
+namespace wce {
 
 using Mat3 = std::array<double, 9>;           // row-major
 
@@ -38,4 +38,4 @@ void set_world_rotation(TedScene& scene, int elem, const Mat3& world);
 // Sets the local position of `elem` so that its world position becomes `world` (ancestors unchanged).
 void set_world_position(TedScene& scene, int elem, const Vec3& world);
 
-} // namespace te
+} // namespace wce

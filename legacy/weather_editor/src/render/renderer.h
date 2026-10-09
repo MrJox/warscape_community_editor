@@ -2,7 +2,7 @@
 // Battle renderer built from the game's own shaders. Pass order and shader choices are documented
 // in docs/re/renderer.md; anything not yet confirmed against the game is marked there.
 #include "render/environment.h"
-#include "render/math.h"
+#include "foundation/math.h"
 #include "render/shader_lib.h"
 #include "render/wind.h"
 #include "vfx/particles.h"
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs;
 class TestScene;
@@ -206,4 +206,4 @@ private:
     bool fog_enabled_ = true;
 };
 
-} // namespace we
+} // namespace wce

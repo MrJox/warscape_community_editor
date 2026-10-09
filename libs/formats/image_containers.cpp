@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 
 static uint32_t rd32(const std::vector<uint8_t>& b, size_t o) {
     if (o + 4 > b.size()) throw std::runtime_error("truncated");
@@ -222,4 +222,4 @@ void register_image_container_formats() {
     formats().push_back(std::move(tiff));
 }
 
-} // namespace te
+} // namespace wce

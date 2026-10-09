@@ -1,10 +1,10 @@
-#include "xml_doc.h"
+#include "formats/xml_doc.h"
 
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -232,11 +232,11 @@ std::string XmlDoc::encode_entities(std::string_view text, char quote) {
     return out;
 }
 
-} // namespace we
+} // namespace wce
 
 // ---- structural edits ----------------------------------------------------------------------------------------
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -389,4 +389,4 @@ XmlDoc XmlDoc::without_attr(int elem, size_t attr) const {
     return b.rebuilt(std::move(t));
 }
 
-} // namespace we
+} // namespace wce

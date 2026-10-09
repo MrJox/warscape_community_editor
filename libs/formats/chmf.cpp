@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 
 static uint32_t rd32(const std::vector<uint8_t>& b, size_t o) {
     if (o + 4 > b.size()) throw std::runtime_error("truncated at " + std::to_string(o));
@@ -58,4 +58,4 @@ void register_chmf_format() {
     formats().push_back(std::move(f));
 }
 
-} // namespace te
+} // namespace wce

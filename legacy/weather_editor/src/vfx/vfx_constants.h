@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct VfxEmitterDef;
 struct VfxChain;
@@ -53,4 +53,4 @@ EmitterConstants build_emitter_constants(const VfxEmitterDef& emitter, const Vfx
 // Texture path as the game resolves it: bare file names live in vfx/textures/.
 std::string vfx_texture_path(const std::string& path);
 
-} // namespace we
+} // namespace wce

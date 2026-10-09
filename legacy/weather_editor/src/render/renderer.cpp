@@ -1,6 +1,6 @@
 #include "renderer.h"
 
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "render/scene.h"
 
 #include <d3dcompiler.h>
@@ -12,7 +12,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-namespace we {
+namespace wce {
 
 namespace {
 
@@ -1547,4 +1547,4 @@ void Renderer::render(const TestScene* scene, const Camera& cam, const Environme
     ctx_->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
-} // namespace we
+} // namespace wce

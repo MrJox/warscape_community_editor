@@ -5,7 +5,7 @@
 // points written into free slots taken from the end of the sorted list) -> draw (VS over the sorted list, GS quads).
 // The CPU side (emission rate, spawn positions and velocities) follows the XML semantics; the exact game code is
 // not reverse-engineered yet, see the ASSUMPTION notes in particles.cpp.
-#include "render/math.h"
+#include "foundation/math.h"
 #include "render/texture.h"
 #include "vfx/weather_vfx.h"
 
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs;
 class ShaderLibrary;
@@ -140,4 +140,4 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_none_;
 };
 
-} // namespace we
+} // namespace wce

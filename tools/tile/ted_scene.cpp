@@ -1,4 +1,4 @@
-#include "scene/ted_scene.h"
+#include "tile/ted_scene.h"
 
 #include <cmath>
 #include <cstdio>
@@ -6,9 +6,9 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 
-std::string format_number(double v) {
+std::string format_ted_number(double v) {
     float f = static_cast<float>(v);
     double d = f;
     // exact decimal expansion of the float, then round half away from zero at the 6th decimal
@@ -63,7 +63,7 @@ std::optional<Vec3> parse_vec3(const std::string& text, const char* prefix) {
 
 TedScene TedScene::parse(const std::vector<uint8_t>& bytes) {
     TedScene s;
-    s.doc_ = we::XmlDoc::parse(bytes);
+    s.doc_ = wce::XmlDoc::parse(bytes);
     if (s.doc_.roots().empty() || s.doc_.elements()[s.doc_.roots()[0]].name != "project") throw std::runtime_error("not a tile.ted project");
     return s;
 }
@@ -122,7 +122,7 @@ void TedScene::set_vector(int elem, const char* attr, const char* prefix, const 
             if (same) return;
         }
     }
-    doc_.set(elem, attr, std::string(prefix) + "(" + format_number(v[0]) + "," + format_number(v[1]) + "," + format_number(v[2]) + ")");
+    doc_.set(elem, attr, std::string(prefix) + "(" + format_ted_number(v[0]) + "," + format_ted_number(v[1]) + "," + format_ted_number(v[2]) + ")");
 }
 
 void TedScene::translate(int elem, const Vec3& delta) {
@@ -177,8 +177,14 @@ bool TedScene::is_descendant(int elem, int ancestor) const {
     return false;
 }
 
+// A tile.ted without SCENE_GRAPH (e.g. custom_monte_rosa/aa) makes scene_graph() return -1; layer operations on it must fail cleanly.
+void TedScene::require_element(int elem, const char* what) const {
+    if (elem < 0 || elem >= int(doc_.elements().size())) throw std::runtime_error(std::string("no such ") + what + " (the tile has no SCENE_GRAPH?)");
+}
+
 int TedScene::add_layer(int parent_layer, const std::string& name) {
-    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    require_element(parent_layer, "layer");
+    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
     std::string t = d.original_text();
     int wrapper = -1;
     for (int c : d.elements()[parent_layer].children)
@@ -191,10 +197,10 @@ int TedScene::add_layer(int parent_layer, const std::string& name) {
     std::string ind = indent_of(t, close) + "    ";
     std::string nl = t.find("\r\n") != std::string::npos ? "\r\n" : "\n";
     std::string snippet = ind + "<LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"" +
-                          we::XmlDoc::encode_entities(name, '"') + "\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">" + nl +
+                          wce::XmlDoc::encode_entities(name, '"') + "\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">" + nl +
                           ind + "    <children>" + nl + ind + "    </children>" + nl + ind + "</LayerInstance>" + nl;
     t.insert(at, snippet);
-    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
     int w2 = -1;
     for (int c : doc_.elements()[parent_layer].children)
         if (doc_.elements()[c].name == "children") w2 = c;
@@ -202,8 +208,10 @@ int TedScene::add_layer(int parent_layer, const std::string& name) {
 }
 
 int TedScene::move_to_layer(int elem, int layer) {
+    require_element(elem, "element");
+    require_element(layer, "layer");
     if (elem == layer || is_descendant(layer, elem)) throw std::runtime_error("cannot move a layer into itself");
-    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
     std::string t = d.original_text();
     const auto& e = d.elements()[elem];
     int sub = d.subtree_size(elem);
@@ -233,7 +241,7 @@ int TedScene::move_to_layer(int elem, int layer) {
     // apply the later edit first so the earlier offsets stay valid
     if (cut_a < at) { t.insert(at, moved); t.erase(cut_a, cut_b - cut_a); }
     else { t.erase(cut_a, cut_b - cut_a); t.insert(at, moved); }
-    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
     // the moved element is the last child of the target layer's children; the layer's own index shifts down when the cut was before it
     int new_layer = layer - (elem < layer ? sub : 0);
     int w2 = -1;
@@ -268,7 +276,7 @@ double TedScene::polygon_area(int elem) const {
 }
 
 static void refresh_area(TedScene& sc, int elem) {
-    if (sc.doc().get(elem, "area")) sc.set_attr(elem, "area", format_number(sc.polygon_area(elem)));
+    if (sc.doc().get(elem, "area")) sc.set_attr(elem, "area", format_ted_number(sc.polygon_area(elem)));
 }
 
 void TedScene::set_polygon_point(int elem, size_t index, const Vec3& local) {
@@ -296,6 +304,7 @@ bool TedScene::remove_polygon_point(int elem, size_t index) {
 }
 
 int TedScene::add_polygon(int layer, const std::string& type, const std::string& name, const std::vector<Vec3>& world_points, const std::map<std::string, std::string>& extra) {
+    require_element(layer, "layer");
     if (world_points.size() < 2) throw std::runtime_error("a polygon needs at least 2 points");
     // attribute defaults per type (most common values in the shipped tiles)
     std::map<std::string, std::string> a = {
@@ -309,15 +318,15 @@ int TedScene::add_polygon(int layer, const std::string& type, const std::string&
     // centroid position, local points
     Vec3 c{0, 0, 0};
     for (auto& p : world_points) for (int i = 0; i < 3; ++i) c[i] += p[i] / double(world_points.size());
-    a["position"] = "vector(" + format_number(c[0]) + "," + format_number(c[1]) + "," + format_number(c[2]) + ")";
+    a["position"] = "vector(" + format_ted_number(c[0]) + "," + format_ted_number(c[1]) + "," + format_ted_number(c[2]) + ")";
     a["name"] = name;
     std::vector<Vec3> local;
     for (auto& p : world_points) local.push_back({p[0] - c[0], p[1] - c[1], p[2] - c[2]});
     double area = 0;
     for (size_t i = 0; i < local.size(); ++i) { const Vec3& p = local[i]; const Vec3& q = local[(i + 1) % local.size()]; area += p[0] * q[2] - q[0] * p[2]; }
-    a["area"] = format_number(std::fabs(area) / 2);
+    a["area"] = format_ted_number(std::fabs(area) / 2);
 
-    we::XmlDoc d = we::XmlDoc::parse(doc_.save());
+    wce::XmlDoc d = wce::XmlDoc::parse(doc_.save());
     std::string t = d.original_text();
     int wrapper = -1;
     for (int ch : d.elements()[layer].children)
@@ -331,14 +340,14 @@ int TedScene::add_polygon(int layer, const std::string& type, const std::string&
     // TEd's attribute order (as in shipped tiles), then anything else
     static const char* order[] = {"flags", "recenter_polygon", "lf_offset", "line_colour", "subdivision_length", "max_subdivisions", "hint_type", "is_generated", "polygon_closed",
                                   "position", "selected_line_colour", "name", "polygon_shape", "area", "generated", "surface_mode", "orientation"};
-    auto emit = [&](const std::string& k, const std::string& v) { snippet += " " + k + "=\"" + we::XmlDoc::encode_entities(v, '"') + "\""; };
+    auto emit = [&](const std::string& k, const std::string& v) { snippet += " " + k + "=\"" + wce::XmlDoc::encode_entities(v, '"') + "\""; };
     for (const char* k : order) { auto it = a.find(k); if (it != a.end()) { emit(it->first, it->second); a.erase(it); } }
     for (auto& kv : a) emit(kv.first, kv.second);
     snippet += ">" + nl + ind + "    <points>" + nl;
     for (auto& p : local) snippet += ind + "        <point position=\"" + format_general(p[0]) + "," + format_general(p[1]) + "," + format_general(p[2]) + "\"/>" + nl;
     snippet += ind + "    </points>" + nl + ind + "</" + type + ">" + nl;
     t.insert(at, snippet);
-    doc_ = we::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
+    doc_ = wce::XmlDoc::parse(std::vector<uint8_t>(t.begin(), t.end()));
     int w2 = -1;
     for (int ch : doc_.elements()[layer].children)
         if (doc_.elements()[ch].name == "children") w2 = ch;
@@ -361,4 +370,4 @@ std::string TedScene::layer_path(int elem) const {
     return out;
 }
 
-} // namespace te
+} // namespace wce

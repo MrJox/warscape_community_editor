@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace we {
+namespace wce {
 
 namespace {
 constexpr float kTwoPi = 6.2831853f;
@@ -98,4 +98,4 @@ void WindSim::update(const WeatherDefinition* def, float direction_degrees, floa
     vfx_variance = {std::cos(variance_angle_) * m, 0, std::sin(variance_angle_) * m};
 }
 
-} // namespace we
+} // namespace wce

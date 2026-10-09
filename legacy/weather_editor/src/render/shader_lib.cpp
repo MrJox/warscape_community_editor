@@ -1,6 +1,6 @@
 #include "shader_lib.h"
 
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "formats/fxc.h"
 
 #include <d3d11shader.h>
@@ -12,7 +12,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-namespace we {
+namespace wce {
 
 void ConstantBuffers::declare(const std::string& name, uint32_t size, const std::map<std::string, Var>& vars) {
     Buffer& b = buffers_[name];
@@ -190,4 +190,4 @@ void bind_sampler(ID3D11DeviceContext* ctx, const GameShader& s, const std::stri
     }
 }
 
-} // namespace we
+} // namespace wce

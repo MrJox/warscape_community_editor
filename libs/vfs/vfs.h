@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 class Vfs {
 public:
@@ -76,4 +76,4 @@ private:
     std::map<std::string, std::string> original_case_; // normalized -> path as rpfm prints it
 };
 
-} // namespace we
+} // namespace wce

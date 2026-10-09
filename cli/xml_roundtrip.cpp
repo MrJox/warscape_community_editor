@@ -19,7 +19,7 @@
 #include <set>
 
 namespace fs = std::filesystem;
-using namespace we;
+using namespace wce;
 
 namespace {
 

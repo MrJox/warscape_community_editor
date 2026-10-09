@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 namespace {
 
 struct Reader {
@@ -110,4 +110,4 @@ void register_markers_format() {
     formats().push_back(std::move(f));
 }
 
-} // namespace te
+} // namespace wce

@@ -1,9 +1,9 @@
-#include "text_encoding.h"
+#include "foundation/text_encoding.h"
 
 #include <fstream>
 #include <stdexcept>
 
-namespace we {
+namespace wce {
 
 static void append_utf8(std::string& out, uint32_t cp) {
     if (cp < 0x80) {
@@ -97,4 +97,4 @@ bool write_file(const std::string& path, const std::vector<uint8_t>& bytes) {
     return bool(f);
 }
 
-} // namespace we
+} // namespace wce

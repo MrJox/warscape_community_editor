@@ -9,7 +9,7 @@
 # Inputs are fixed so runs are comparable. Override with environment variables:
 #   WCE_GAME   game folder (contains the assembly_kit_* folders and data/)
 #   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
-#   WCE_BIN    folder with the built executables (default build/legacy/*/Release)
+#   WCE_BIN    folder with the built executables (default build/dev/bin/$WCE_CONFIG; WCE_CONFIG defaults to RelWithDebInfo)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,8 +20,8 @@ for a in "$@"; do case "$a" in --corpus) CORPUS=1;; --render) RENDER=1;; esac; d
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 CACHE="${WCE_CACHE:-$LOCALAPPDATA/awe/x}"
 CBS="${WCE_CBS:-$TEMP/claude/cbs.txt}"
-WB="${WCE_BIN:-$ROOT/build/legacy/weather_editor/Release}"
-TB="${WCE_BIN:-$ROOT/build/legacy/tile_editor/Release}"
+WB="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"   # one folder for every executable since Phase 1
+TB="$WB"
 MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
 TILE="$BKIT/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa"
@@ -47,8 +47,8 @@ run vfx_check_rain    "$WB/vfx_check.exe" "rain heavy"
 [ -f "$CBS" ] && run env_vs_dump_all "$WB/env_vs_dump.exe" --all "$CBS"
 
 # ---- tile_editor gates
-# monte_rosa's tile.ted has no SCENE_GRAPH and crashes unit_tests (known legacy bug, docs/baseline.md)
-run unit_tests        "$TB/unit_tests.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted"
+# monte_rosa's tile.ted has no SCENE_GRAPH (it crashed unit_tests before the Phase 1 fix, docs/baseline.md): the second file checks that
+run unit_tests        "$TB/unit_tests.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" "$TILE/tile.ted"
 run height_check      "$TB/height_check.exe" "$TILE/height_map_0.png"
 run weather_check     "$TB/weather_check.exe" "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 run tdb_build         "$TB/tdb_build.exe" "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"

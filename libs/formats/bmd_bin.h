@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 using Transform16 = std::array<float, 16>; // row-major m00..m33
 
@@ -72,4 +72,4 @@ struct BmdBin {
     std::vector<uint8_t> write() const;
 };
 
-} // namespace te
+} // namespace wce

@@ -2,15 +2,15 @@
 // One tile opened for editing: its tile.ted scene, its height map and the tile database entry that gives the
 // height scale and the footprint. Reads and writes the raw files only.
 #include "formats/png_file.h"
-#include "scene/ted_scene.h"
-#include "terrain/height_field.h"
+#include "tile/ted_scene.h"
+#include "tile/height_field.h"
 
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct TileInfo {
     std::string location;               // terrain\tiles\battle\<set>\<tile>     (TILE@location)
@@ -41,4 +41,4 @@ public:
 // Locates the tile database entry of a raw tile folder (<...>/raw_data/terrain/tiles/<battle|campaign>/<set>/.../<variation>).
 TileInfo find_tile_info(const std::filesystem::path& tile_dir);
 
-} // namespace te
+} // namespace wce

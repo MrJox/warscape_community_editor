@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace te {
+namespace wce {
 namespace {
 
 constexpr char kMagic[8] = {'F', 'A', 'S', 'T', 'B', 'I', 'N', '0'};
@@ -243,4 +243,4 @@ void register_bmd_bin_format() {
     formats().push_back(std::move(f));
 }
 
-} // namespace te
+} // namespace wce

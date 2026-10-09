@@ -6,11 +6,11 @@
 //              exp(-0.5 * ((x - 1) * wind_gust_curve)^2), x = (t - start) / duration in 0..1.
 //   shaders    fn 0x18ee0c0 (weather_shared, wind_VS, wind_PS), fn 0x1923990, fn 0x191e430 (cloud_plane_VS)
 //   VFX        fn 0x18f8b10 (wind_velocity = 20 * wind), fn 0x18e51e0 (wind_variance_dir random walk).
-#include "render/math.h"
+#include "foundation/math.h"
 
 #include <cstdint>
 
-namespace we {
+namespace wce {
 
 struct WeatherDefinition;
 
@@ -49,4 +49,4 @@ private:
     static float rand01(uint32_t& s); // engine LCG: s * 0x343fd + 0x269ec3, (s >> 16) / 65535
 };
 
-} // namespace we
+} // namespace wce

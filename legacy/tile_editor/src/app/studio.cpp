@@ -1,5 +1,5 @@
 #include "app/studio.h"
-#include "weather/environment_map.h"
+#include "formats/variation_db.h"
 
 #include "imgui.h"
 
@@ -101,15 +101,15 @@ double radians(float d) { return double(d) * 3.14159265358979323846 / 180.0; }
 struct Action {
     enum Kind { Height, Move, Struct } kind = Height;
     int elem = 0;
-    te::Vec3 old_pos{}, new_pos{}, old_euler{}, new_euler{};
-    te::TedScene::Snapshot before, after;     // Struct: whole-document snapshots
+    wce::Vec3 old_pos{}, new_pos{}, old_euler{}, new_euler{};
+    wce::TedScene::Snapshot before, after;     // Struct: whole-document snapshots
     int sel_before = -1, sel_after = -1;
 };
 
 struct Studio::Impl {
     ID3D11Device* dev;
     ID3D11DeviceContext* ctx;
-    std::unique_ptr<te::TileProject> project;
+    std::unique_ptr<wce::TileProject> project;
     std::string status = "Open a tile folder (File > Open) or pass --tile <folder>.";
     std::string path_input;
     char path_buf[1024] = {0};
@@ -149,7 +149,7 @@ struct Studio::Impl {
     bool terrain_hit = false;
     float hit_height = 0;
     bool grabbing = false;
-    te::Vec3 grab_old_pos{};
+    wce::Vec3 grab_old_pos{};
     double grab_y_offset = 0;
     bool show_wire = false, show_polys = true, lod_cull = true;
     float veg_distance = 450.f, decal_distance = 300.f, other_distance = 3000.f;
@@ -162,8 +162,8 @@ struct Studio::Impl {
     bool pending_open = false;
 
     // weather picker (data only: which .environment file the game would use)
-    std::unique_ptr<te::EnvironmentMap> env;
-    te::WeatherQuery wq;
+    std::unique_ptr<wce::VariationDb> env;
+    wce::VariationDb::Query wq{{"map", "default_map"}};   // category -> chosen value; an empty value means (any)
     std::string env_status;
 
     void load_environment_map(const std::string& tile_dir) {
@@ -176,14 +176,16 @@ struct Studio::Impl {
         try {
             std::ifstream in(p, std::ios::binary);
             std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            env = std::make_unique<te::EnvironmentMap>(te::EnvironmentMap::parse(b));
-            env_status = std::to_string(env->files().size()) + " environment files";
+            env = std::make_unique<wce::VariationDb>(wce::VariationDb::parse_environment_map(b));
+            env_status = std::to_string(env->entries[0].variations.size()) + " environment files";
         } catch (const std::exception& e) { env_status = std::string("environment_map.xml: ") + e.what(); }
     }
 
-    bool pick_combo(const char* label, const char* category, std::string& value) {
+    bool pick_combo(const char* label, const char* category) {
         bool changed = false;
-        auto vals = env->values(category);
+        std::string& value = wq[category];
+        const auto* meta = env->meta(category);
+        const std::vector<std::string> vals = meta ? meta->values : std::vector<std::string>{};
         if (ImGui::BeginCombo(label, value.empty() ? "(any)" : value.c_str())) {
             if (ImGui::Selectable("(any)", value.empty())) { value.clear(); changed = true; }
             for (const auto& v : vals) if (ImGui::Selectable(v.c_str(), v == value)) { value = v; changed = true; }
@@ -195,19 +197,24 @@ struct Studio::Impl {
     void weather_panel() {
         if (!ImGui::CollapsingHeader("Weather / climate (which environment the game picks)")) return;
         if (!env) { ImGui::TextDisabled("%s", env_status.c_str()); return; }
-        pick_combo("map", "map", wq.map);
-        pick_combo("climate", "climate", wq.climate);
-        pick_combo("season", "season", wq.season);
-        pick_combo("climate change", "climate_change_index", wq.climate_change_index);
-        pick_combo("precipitation", "precipitation", wq.precipitation);
-        pick_combo("time of day", "time_of_day", wq.time_of_day);
-        pick_combo("battle type", "battle_types", wq.battle_type);
-        pick_combo("snow attrition", "snow_attrition", wq.snow_attrition);
+        pick_combo("map", "map");
+        pick_combo("climate", "climate");
+        pick_combo("season", "season");
+        pick_combo("climate change", "climate_change_index");
+        pick_combo("precipitation", "precipitation");
+        pick_combo("time of day", "time_of_day");
+        pick_combo("battle type", "battle_types");
+        pick_combo("snow attrition", "snow_attrition");
         bool dflt = false;
-        auto m = env->match(wq, &dflt);
+        wce::VariationDb::Query query;
+        for (const auto& [category, value] : wq)
+            if (!value.empty()) query[category] = value;
+        const auto res = env->candidates_listed_map("environment", query);
+        const auto& m = res.candidates;
+        dflt = res.used_default_map;
         ImGui::Text("%zu matching files%s, each picked with probability 1/%zu", m.size(), dflt ? " (after the default_map retry)" : "", m.empty() ? size_t(1) : m.size());
         ImGui::BeginChild("envlist", ImVec2(0, 140), true);
-        for (const auto* e : m) ImGui::TextUnformatted(e->filename.c_str());
+        for (const auto& c : m) ImGui::TextUnformatted(c.variation->filename.c_str());
         ImGui::EndChild();
     }
 
@@ -321,7 +328,7 @@ struct Studio::Impl {
     void rebuild_terrain() {
         terrain_dirty = false;
         if (!project || !project->has_height) { terrain_index_count = 0; return; }
-        const te::HeightField& hf = *project->height;
+        const wce::HeightField& hf = *project->height;
         int step = std::max(1, int(std::ceil(std::max(hf.width(), hf.height()) / 512.0)));
         int nx = (int(hf.width()) - 1) / step + 1, ny = (int(hf.height()) - 1) / step + 1;
         double mx = extent() / (hf.width() - 1), mz = extent() / (hf.height() - 1);
@@ -367,7 +374,7 @@ struct Studio::Impl {
         lines.clear();
         type_counts.clear();
         if (!project) return;
-        const te::TedScene& sc = project->scene;
+        const wce::TedScene& sc = project->scene;
         double u = unit();
         const auto& els = sc.doc().elements();
         for (size_t i = 0; i < els.size(); ++i) {
@@ -378,7 +385,7 @@ struct Studio::Impl {
             if (!p) continue;
             ++type_counts[t];
             if (hidden_types.count(t)) continue;
-            te::WorldTransform w = te::world_transform(sc, e);
+            wce::WorldTransform w = wce::world_transform(sc, e);
             Instance in;
             in.elem = e;
             in.type = t;
@@ -394,9 +401,9 @@ struct Studio::Impl {
                 for (int pt : els[c].children) {
                     auto s = sc.doc().get(pt, "position");
                     if (!s) continue;
-                    auto v = te::parse_vec3(*s, "");
+                    auto v = wce::parse_vec3(*s, "");
                     if (!v) continue;
-                    te::Vec3 r = te::rotate_vec(w.rotation, *v);
+                    wce::Vec3 r = wce::rotate_vec(w.rotation, *v);
                     pts.push_back({float((w.position[0] + r[0]) / u), float(w.position[1] + r[1]), float((w.position[2] + r[2]) / u)});
                 }
                 float col[4];
@@ -651,9 +658,9 @@ struct Studio::Impl {
     }
 
     void paint(const Float3& at) {
-        te::HeightField& hf = *project->height;
+        wce::HeightField& hf = *project->height;
         double ppm = (hf.width() - 1) / extent();
-        te::Brush b;
+        wce::Brush b;
         b.cx = at.x * ppm; b.cy = at.z * ppm; b.radius = std::max(1.0, brush_radius_m * ppm);
         b.falloff = brush_falloff;
         double dt = std::min(0.05, double(last_dt));
@@ -672,7 +679,7 @@ struct Studio::Impl {
     // ---- polygon editing (AI hints, zones, ...)
     int poly_point = -1;                        // selected point of the selected polygon
     bool point_drag = false, point_moved = false;
-    te::TedScene::Snapshot point_before;
+    wce::TedScene::Snapshot point_before;
     int point_sel_before = -1;
     bool drawing = false;
     std::vector<Float3> draw_pts;
@@ -692,17 +699,17 @@ struct Studio::Impl {
 
     bool selected_is_polygon() const { return project && selected >= 0 && !project->scene.polygon_points(selected).empty(); }
 
-    Float3 point_world(int elem, const te::Vec3& local) const {
-        te::WorldTransform w = te::world_transform(project->scene, elem);
-        te::Vec3 r = te::rotate_vec(w.rotation, local);
+    Float3 point_world(int elem, const wce::Vec3& local) const {
+        wce::WorldTransform w = wce::world_transform(project->scene, elem);
+        wce::Vec3 r = wce::rotate_vec(w.rotation, local);
         double u = unit();
         return {float((w.position[0] + r[0]) / u), float(w.position[1] + r[1]), float((w.position[2] + r[2]) / u)};
     }
-    te::Vec3 to_local(int elem, const Float3& world) const {        // world metres -> local scene units of `elem`
-        te::WorldTransform w = te::world_transform(project->scene, elem);
+    wce::Vec3 to_local(int elem, const Float3& world) const {        // world metres -> local scene units of `elem`
+        wce::WorldTransform w = wce::world_transform(project->scene, elem);
         double u = unit();
-        te::Vec3 d{world.x * u - w.position[0], world.y - w.position[1], world.z * u - w.position[2]};
-        return te::rotate_vec(te::mat_transpose(w.rotation), d);
+        wce::Vec3 d{world.x * u - w.position[0], world.y - w.position[1], world.z * u - w.position[2]};
+        return wce::rotate_vec(wce::mat_transpose(w.rotation), d);
     }
     std::vector<Float3> polygon_world_points(int elem) const {
         std::vector<Float3> out;
@@ -778,7 +785,8 @@ struct Studio::Impl {
         auto before = project->scene.snapshot();
         int old = selected;
         int layer = selected >= 0 ? layer_of(selected) : project->scene.scene_graph();
-        std::vector<te::Vec3> pts;
+        if (layer < 0) { status = "this tile has no SCENE_GRAPH, so there is no layer to add a polygon to"; draw_pts.clear(); return; }
+        std::vector<wce::Vec3> pts;
         for (const Float3& p : draw_pts) pts.push_back(to_local(layer, p));
         std::map<std::string, std::string> extra;
         if (new_poly_type == 0) extra["hint_type"] = hint_name(new_hint);
@@ -878,7 +886,7 @@ struct Studio::Impl {
                 float gx = brush_world.x, gz = brush_world.z;
                 if (snap_grid && grid_m > 0.01f) { gx = std::round(gx / grid_m) * grid_m; gz = std::round(gz / grid_m) * grid_m; }
                 float gy = snap_grid ? terrain_height(gx, gz) : hit_height;
-                te::set_world_position(project->scene, selected, {double(gx) * u, gy + grab_y_offset, double(gz) * u});
+                wce::set_world_position(project->scene, selected, {double(gx) * u, gy + grab_y_offset, double(gz) * u});
                 scene_dirty = true;
             }
             if (io.MouseClicked[0] && !over_ui) end_grab();
@@ -922,7 +930,7 @@ struct Studio::Impl {
     float grid_m = 6.f, angle_step_deg = 15.f;
     char new_key[128] = {0};
 
-    void commit_struct(const te::TedScene::Snapshot& before, int sel_before) {
+    void commit_struct(const wce::TedScene::Snapshot& before, int sel_before) {
         Action a;
         a.kind = Action::Struct;
         a.before = before;
@@ -940,9 +948,9 @@ struct Studio::Impl {
         int copy = project->scene.duplicate(selected);
         if (copy < 0) return;
         selected = copy;
-        te::WorldTransform w = te::world_transform(project->scene, copy);
+        wce::WorldTransform w = wce::world_transform(project->scene, copy);
         double u = unit();
-        te::set_world_position(project->scene, copy, {w.position[0] + 4.0 * u, w.position[1], w.position[2]});
+        wce::set_world_position(project->scene, copy, {w.position[0] + 4.0 * u, w.position[1], w.position[2]});
         commit_struct(before, old);
         status = "duplicated";
     }
@@ -971,7 +979,7 @@ struct Studio::Impl {
         selected = copy;
         if (terrain_hit) {
             double u = unit();
-            te::set_world_position(project->scene, copy, {double(brush_world.x) * u, double(hit_height), double(brush_world.z) * u});
+            wce::set_world_position(project->scene, copy, {double(brush_world.x) * u, double(hit_height), double(brush_world.z) * u});
         }
         commit_struct(before, old);
         status = std::string("added ") + key;
@@ -982,9 +990,9 @@ struct Studio::Impl {
         auto& sc = project->scene;
         Action a;
         a.kind = Action::Move; a.elem = selected;
-        a.old_pos = sc.position(selected).value_or(te::Vec3{0, 0, 0});
-        a.old_euler = sc.euler(selected).value_or(te::Vec3{0, 0, 0});
-        te::rotate_world_yaw(sc, selected, radians(deg));
+        a.old_pos = sc.position(selected).value_or(wce::Vec3{0, 0, 0});
+        a.old_euler = sc.euler(selected).value_or(wce::Vec3{0, 0, 0});
+        wce::rotate_world_yaw(sc, selected, radians(deg));
         a.new_pos = a.old_pos;
         a.new_euler = sc.euler(selected).value_or(a.old_euler);
         push_move(a);
@@ -996,6 +1004,7 @@ struct Studio::Impl {
 
     void new_layer(int parent) {
         if (!project) return;
+        if (parent < 0) { status = "this tile has no SCENE_GRAPH, so layers cannot be added"; return; }
         auto before = project->scene.snapshot();
         int old = selected;
         int layer = project->scene.add_layer(parent, "New layer");
@@ -1010,12 +1019,12 @@ struct Studio::Impl {
         if (sc.is_descendant(layer, selected)) { status = "cannot move a layer into itself"; return; }
         auto before = sc.snapshot();
         int old = selected;
-        te::WorldTransform w = te::world_transform(sc, selected);
+        wce::WorldTransform w = wce::world_transform(sc, selected);
         bool has_pos = sc.position(selected).has_value();
         int moved = sc.move_to_layer(selected, layer);
         selected = moved;
-        if (has_pos) te::set_world_position(sc, moved, w.position);     // keep the world position and orientation
-        if (sc.euler(moved)) te::set_world_rotation(sc, moved, w.rotation);
+        if (has_pos) wce::set_world_position(sc, moved, w.position);     // keep the world position and orientation
+        if (sc.euler(moved)) wce::set_world_rotation(sc, moved, w.rotation);
         commit_struct(before, old);
         status = "moved to layer " + sc.name(sc.doc().elements()[moved].parent >= 0 ? sc.doc().elements()[sc.doc().elements()[moved].parent].parent : layer);
     }
@@ -1033,14 +1042,14 @@ struct Studio::Impl {
     void begin_grab() {
         auto& sc = project->scene;
         auto p = sc.position(selected);
-        auto w = te::world_transform(sc, selected);
+        auto w = wce::world_transform(sc, selected);
         if (!p) return;
         grabbing = true;
         grab_old_pos = *p;
         double u = unit();
         grab_y_offset = w.position[1] - terrain_height(float(w.position[0] / u), float(w.position[2] / u));
         pending.kind = Action::Move; pending.elem = selected;
-        pending.old_pos = *p; pending.old_euler = sc.euler(selected).value_or(te::Vec3{0, 0, 0});
+        pending.old_pos = *p; pending.old_euler = sc.euler(selected).value_or(wce::Vec3{0, 0, 0});
     }
     void end_grab() {
         grabbing = false;
@@ -1117,7 +1126,7 @@ struct Studio::Impl {
         if (p) {
             float v[3] = {float((*p)[0]), float((*p)[1]), float((*p)[2])};
             if (ImGui::DragFloat3("position (scene)", v, 0.5f)) {
-                if (!pending_open) { pending_open = true; pending = Action{}; pending.kind = Action::Move; pending.elem = selected; pending.old_pos = *p; pending.old_euler = e.value_or(te::Vec3{0, 0, 0}); }
+                if (!pending_open) { pending_open = true; pending = Action{}; pending.kind = Action::Move; pending.elem = selected; pending.old_pos = *p; pending.old_euler = e.value_or(wce::Vec3{0, 0, 0}); }
                 sc.set_position(selected, {v[0], v[1], v[2]});
                 scene_dirty = true;
             }
@@ -1129,7 +1138,7 @@ struct Studio::Impl {
         if (e) {
             float v[3] = {degrees((*e)[0]), degrees((*e)[1]), degrees((*e)[2])};
             if (ImGui::DragFloat3("euler (deg)", v, 0.5f)) {
-                if (!pending_open) { pending_open = true; pending = Action{}; pending.kind = Action::Move; pending.elem = selected; pending.old_pos = p.value_or(te::Vec3{0, 0, 0}); pending.old_euler = *e; }
+                if (!pending_open) { pending_open = true; pending = Action{}; pending.kind = Action::Move; pending.elem = selected; pending.old_pos = p.value_or(wce::Vec3{0, 0, 0}); pending.old_euler = *e; }
                 sc.set_euler(selected, {radians(v[0]), radians(v[1]), radians(v[2])});
                 scene_dirty = true;
             }
@@ -1141,10 +1150,10 @@ struct Studio::Impl {
         if (ImGui::Button("Grab on ground (G)")) { if (!grabbing) begin_grab(); }
         ImGui::SameLine();
         if (ImGui::Button("Drop to terrain") && p) {
-            auto w = te::world_transform(sc, selected);
+            auto w = wce::world_transform(sc, selected);
             double u = unit();
-            Action a; a.kind = Action::Move; a.elem = selected; a.old_pos = *p; a.old_euler = e.value_or(te::Vec3{0, 0, 0});
-            te::set_world_position(sc, selected, {w.position[0], double(terrain_height(float(w.position[0] / u), float(w.position[2] / u))), w.position[2]});
+            Action a; a.kind = Action::Move; a.elem = selected; a.old_pos = *p; a.old_euler = e.value_or(wce::Vec3{0, 0, 0});
+            wce::set_world_position(sc, selected, {w.position[0], double(terrain_height(float(w.position[0] / u), float(w.position[2] / u))), w.position[2]});
             a.new_pos = sc.position(selected).value_or(*p); a.new_euler = a.old_euler;
             push_move(a);
             scene_dirty = true;
@@ -1259,7 +1268,7 @@ Studio::~Studio() = default;
 
 bool Studio::open_tile(const std::string& dir, std::string* error) {
     try {
-        d->project = te::TileProject::open(fs::path(dir));
+        d->project = wce::TileProject::open(fs::path(dir));
     } catch (const std::exception& e) {
         if (error) *error = e.what();
         d->diag += std::string("open failed: ") + e.what() + "\n";
@@ -1318,11 +1327,11 @@ bool Studio::script_move(float dx, float dz) {
     auto p = sc.position(d->selected);
     if (!p) return false;
     Action a;
-    a.kind = Action::Move; a.elem = d->selected; a.old_pos = *p; a.old_euler = sc.euler(d->selected).value_or(te::Vec3{0, 0, 0});
-    te::WorldTransform w = te::world_transform(sc, d->selected);
+    a.kind = Action::Move; a.elem = d->selected; a.old_pos = *p; a.old_euler = sc.euler(d->selected).value_or(wce::Vec3{0, 0, 0});
+    wce::WorldTransform w = wce::world_transform(sc, d->selected);
     double u = d->unit();
     double nx = w.position[0] + double(dx) * u, nz = w.position[2] + double(dz) * u;
-    te::set_world_position(sc, d->selected, {nx, double(d->terrain_height(float(nx / u), float(nz / u))) + (w.position[1] - d->terrain_height(float(w.position[0] / u), float(w.position[2] / u))), nz});
+    wce::set_world_position(sc, d->selected, {nx, double(d->terrain_height(float(nx / u), float(nz / u))) + (w.position[1] - d->terrain_height(float(w.position[0] / u), float(w.position[2] / u))), nz});
     a.new_pos = sc.position(d->selected).value_or(*p); a.new_euler = a.old_euler;
     d->push_move(a);
     d->scene_dirty = true;

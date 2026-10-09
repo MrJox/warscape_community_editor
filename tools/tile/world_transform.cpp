@@ -1,10 +1,10 @@
-#include "scene/world_transform.h"
+#include "tile/world_transform.h"
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 static Mat3 rot_x(double a) { double c = std::cos(a), s = std::sin(a); return {1, 0, 0, 0, c, -s, 0, s, c}; }
 static Mat3 rot_y(double a) { double c = std::cos(a), s = std::sin(a); return {c, 0, s, 0, 1, 0, -s, 0, c}; }
@@ -85,4 +85,4 @@ void set_world_position(TedScene& scene, int elem, const Vec3& world) {
     scene.set_position(elem, rotate_vec(mat_transpose(pw.rotation), d));
 }
 
-} // namespace te
+} // namespace wce

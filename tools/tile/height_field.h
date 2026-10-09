@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace te {
+namespace wce {
 
 struct Brush {
     double cx = 0, cy = 0;       // centre in pixels
@@ -66,4 +66,4 @@ private:
     std::vector<Record> undo_, redo_;
 };
 
-} // namespace te
+} // namespace wce

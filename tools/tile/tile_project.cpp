@@ -1,4 +1,4 @@
-#include "project/tile_project.h"
+#include "tile/tile_project.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -8,7 +8,7 @@
 
 namespace fs = std::filesystem;
 
-namespace te {
+namespace wce {
 
 static std::vector<uint8_t> slurp(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
@@ -42,7 +42,7 @@ TileInfo find_tile_info(const fs::path& tile_dir) {
     for (auto& e : fs::directory_iterator(tiles)) {
         if (e.path().extension() != ".xml") continue;
         try {
-            we::XmlDoc doc = we::XmlDoc::parse(slurp(e.path()));
+            wce::XmlDoc doc = wce::XmlDoc::parse(slurp(e.path()));
             int r = doc.roots().at(0);
             if (doc.get(r, "location").value_or("") != tile_loc) continue;
             info.location = tile_loc;
@@ -105,4 +105,4 @@ bool TileProject::save(const fs::path& out_dir, std::string* message) const {
     return wrote;
 }
 
-} // namespace te
+} // namespace wce

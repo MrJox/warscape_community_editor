@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-namespace we {
+namespace wce {
 
 struct ProcessResult {
     int exit_code = -1;
@@ -15,4 +15,4 @@ ProcessResult run_process(const std::wstring& exe, const std::vector<std::wstrin
 std::wstring widen(const std::string& utf8);
 std::string narrow(const std::wstring& w);
 
-} // namespace we
+} // namespace wce

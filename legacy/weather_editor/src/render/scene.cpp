@@ -1,6 +1,6 @@
 #include "scene.h"
 
-#include "core/vfs.h"
+#include "vfs/vfs.h"
 #include "formats/rmv2.h"
 
 #include <algorithm>
@@ -8,7 +8,7 @@
 #include <cstring>
 #include <random>
 
-namespace we {
+namespace wce {
 
 TextureCache::TextureCache(ID3D11Device* dev, Vfs& vfs) : dev_(dev), vfs_(vfs) {
     white_ = make_solid_texture(dev, 0xffffffff);
@@ -219,4 +219,4 @@ int TestScene::generate(uint32_t seed, int count, const std::string& prefix) {
     return buildings_;
 }
 
-} // namespace we
+} // namespace wce

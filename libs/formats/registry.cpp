@@ -1,6 +1,6 @@
 #include "formats/registry.h"
 
-namespace te {
+namespace wce {
 
 void register_xml_format();
 void register_fastbin_tile_formats();
@@ -43,4 +43,4 @@ std::string describe_diff(const std::vector<uint8_t>& a, const std::vector<uint8
            std::to_string(b.size());
 }
 
-} // namespace te
+} // namespace wce

@@ -16,7 +16,7 @@ static std::vector<uint8_t> slurp(const char* p) {
 
 int main(int argc, char** argv) {
     auto bytes = slurp(argv[1]);
-    te::PngFile p = te::PngFile::parse(bytes);
+    wce::PngFile p = wce::PngFile::parse(bytes);
     auto enc = p.encode();
     std::printf("original %zu bytes, ours %zu, first IDAT chunk %u\n", bytes.size(), enc.size(), p.idat_chunk_size);
     // inflate both IDAT streams and compare filtered data
