@@ -44,6 +44,8 @@ public:
         uint64_t views = 0, instances = 0, draw_calls = 0, triangles = 0, camera_instances = 0, camera_triangles = 0, shadow_instances = 0, shadow_triangles = 0, terrain_patches = 0;
     };
     const DrawStats& draw_stats() const { return draw_stats_; }
+    // The game shaders that could not be loaded (name: reason), newest first: the editor shows them where a pass would otherwise silently draw nothing.
+    const std::vector<std::string>& shader_failures() const { return shader_failures_; }
     float lod_scale = 1.0f;                // multiplies every LOD distance (the editor can trade detail for speed)
     float min_pixels = 0.75f;              // LOD items smaller than this many pixels (radius) are not drawn
     float shadow_min_texels = 2.0f;        // LOD items smaller than this many shadow-map texels (radius) cast no shadow
@@ -213,6 +215,7 @@ private:
     std::map<std::pair<int, int>, Microsoft::WRL::ComPtr<ID3D11Buffer>> terrain_grid_ib_;
     std::vector<EntityId> terrain_mat_entities_;
     bool terrain_mat_active_ = false, terrain_mat_failed_ = false;
+    std::vector<std::string> shader_failures_;
     Target terrain_zw_, terrain_viewz_, terrain_acc_[3];
     int terrain_rt_w_ = 0, terrain_rt_h_ = 0;
     Microsoft::WRL::ComPtr<ID3D11Buffer> terrain_grid_vb_, box_vb_, box_ib_, resolve_vb_, terrain_inst_vb_;

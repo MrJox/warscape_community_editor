@@ -336,6 +336,8 @@ const GameShader* Renderer::shader(const std::string& name) {
         return &lib_->get(name);
     } catch (const std::exception& e) {
         error(e.what());
+        const std::string why = name + ": " + e.what();
+        if (std::find(shader_failures_.begin(), shader_failures_.end(), why) == shader_failures_.end()) shader_failures_.insert(shader_failures_.begin(), why);
         return nullptr;
     }
 }

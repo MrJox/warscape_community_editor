@@ -664,7 +664,6 @@ void TileTool::draw_tile_panel(Editor& editor) {
 // Ground (Phase 3): the terrain colour is the tile's blend map mixed from the textures of a climate. The climate is not stored in the tile (a map's climate
 // map says it), so it is a setting here; a wrong guess looks different, not broken.
 void TileTool::draw_ground_section(Editor& editor, TileDocument& d) {
-    (void)editor;
     if (!ImGui::CollapsingHeader("Ground", ImGuiTreeNodeFlags_DefaultOpen)) return;
     TerrainLook look = d.terrain_look();
     bool changed = false;
@@ -679,16 +678,16 @@ void TileTool::draw_ground_section(Editor& editor, TileDocument& d) {
         }
         names += '\0';
         ImGui::SetNextItemWidth(200);
-        if (ImGui::Combo("climate", &ci, names.c_str())) { look.climate = cl.climates[size_t(ci)].name; changed = true; }
+        if (ImGui::Combo("climate##ground", &ci, names.c_str())) { look.climate = cl.climates[size_t(ci)].name; changed = true; }
         static const char* seasons[] = {"su", "au", "wi"};
         int si = look.season == "au" ? 1 : look.season == "wi" ? 2 : 0;
         ImGui::SetNextItemWidth(80);
-        if (ImGui::Combo("season", &si, "summer\0autumn\0winter\0")) { look.season = seasons[si]; changed = true; }
+        if (ImGui::Combo("season##ground", &si, "summer\0autumn\0winter\0")) { look.season = seasons[si]; changed = true; }
     }
     if (look.blended) {
         int vi = int(look.view);
         ImGui::SetNextItemWidth(160);
-        if (ImGui::Combo("view", &vi, "colour\0blend groups\0ground types\0protection\0")) { look.view = TerrainView(vi); changed = true; }
+        if (ImGui::Combo("view##ground", &vi, "colour\0blend groups\0ground types\0protection\0")) { look.view = TerrainView(vi); changed = true; }
     }
     if (changed) { d.set_terrain_look(look); new_look_ = look; }
     ImGui::TextWrapped("%s", d.terrain_note().c_str());
@@ -698,6 +697,8 @@ void TileTool::draw_ground_section(Editor& editor, TileDocument& d) {
         d.display_changed();
     }
     ImGui::TextDisabled("%s", d.water_note().c_str());
+    if (const Renderer* r = editor.renderer())
+        for (const std::string& f : r->shader_failures()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "game shader not loaded: %s", f.c_str());
 }
 
 // Tile links (Phase 6a, read-only): the entry's link targets and rules, and a viewport view of the cells they name. Editing them is a later step (they are part of the
