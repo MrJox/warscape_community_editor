@@ -33,7 +33,7 @@ void Overlay::polygon_outline(const std::vector<float3>& points, bool closed, ui
 }
 
 Kind Entity::kind() const {
-    static const Kind kinds[] = {Kind::MeshInstance, Kind::Terrain, Kind::VfxEmitter, Kind::Overlay, Kind::CameraRig};   // variant order
+    static const Kind kinds[] = {Kind::MeshInstance, Kind::Terrain, Kind::VfxEmitter, Kind::Overlay, Kind::CameraRig, Kind::Water};   // variant order
     return kinds[payload.index()];
 }
 

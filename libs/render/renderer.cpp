@@ -1752,6 +1752,8 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     pass_clouds(env);
     pass_directional_light();
     pass_fog();
+    gpu_timer_->mark("water");
+    pass_water(scene, env, cam, time_s);
     if (particles_) { // weather precipitation (vfx1 of the WEATHER definition), see src/vfx/particles.h
         ParticleSystem::Frame pf;
         pf.eye = cam.eye;

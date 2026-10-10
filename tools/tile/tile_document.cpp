@@ -821,11 +821,273 @@ std::shared_ptr<const TerrainSkin> TileDocument::ground_skin() {
     return skin_;
 }
 
+// ---- water
+
+namespace {
+
+struct RiverPoint {
+    double x, z, y;            // world metres; y = the spline's own height for freeform, terrain offset for landscape (resolved by the caller)
+    double offset = 0;         // terrain_offset
+    double width = 1, foam = 0.1, fade = 1, flow = 0.5;
+    double cin[3], cout[3];    // control handles as world positions (x, z metres, y local metres)
+};
+
+} // namespace
+
+// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position, all local to the
+// instance in scene units); the ribbon follows it with the point's width. A landscape spline lies terrain_offset above the terrain under each sample (measured on
+// osgiliath: the bed is carved, the offset is the water's depth over it), a freeform one at the height it stores. The sea plane: a tile whose terrain goes below
+// 0 (min_height < 0: sea, coast, river mouth and lake tiles) gets a plane at y = 0 over the bordered tile; the depth test cuts it where the ground is higher.
+void TileDocument::rebuild_water(RenderScene& scene, LayerId layer) {
+    for (EntityId e : water_entities_) scene.remove(e);
+    water_entities_.clear();
+    water_dirty_ = false;
+    water_note_.clear();
+    if (!display_.show_water) {
+        water_note_ = "water hidden";
+        return;
+    }
+    TedScene& sc = tscene();
+    const double u = unit();
+    size_t rivers = 0, ribbons = 0;
+    for (size_t e = 0; e < sc.doc().elements().size(); ++e) {
+        if (sc.doc().elements()[e].name != "SplineRiverInstance") continue;
+        const int elem = int(e);
+        const WorldTransform w = world_transform(sc, elem);
+        const bool landscape = placement_of_attr(elem) == Placement::Landscape;
+        std::vector<RiverPoint> pts;
+        for (int c : sc.doc().elements()[e].children) {
+            if (sc.doc().elements()[size_t(c)].name != "points") continue;
+            for (int p : sc.doc().elements()[size_t(c)].children) {
+                if (sc.doc().elements()[size_t(p)].name != "point") continue;
+                auto vec = [&](const char* name) -> std::optional<Vec3> {
+                    const auto v = sc.doc().get(p, name);
+                    return v ? parse_vec3(*v, "") : std::nullopt;
+                };
+                const auto pos = vec("position"), cin = vec("controlIn"), cout = vec("controlOut");
+                if (!pos) continue;
+                auto world = [&](const Vec3& q, double out3[3]) {
+                    const Vec3 r = rotate_vec(w.rotation, q);
+                    out3[0] = (w.position[0] + r[0]) / u;
+                    out3[1] = w.position[1] + r[1];
+                    out3[2] = (w.position[2] + r[2]) / u;
+                };
+                RiverPoint rp{};
+                double wp[3], wi[3], wo[3];
+                world(*pos, wp);
+                world(cin ? *cin : *pos, wi);
+                world(cout ? *cout : *pos, wo);
+                rp.x = wp[0]; rp.y = wp[1]; rp.z = wp[2];
+                std::memcpy(rp.cin, wi, sizeof wi);
+                std::memcpy(rp.cout, wo, sizeof wo);
+                auto num = [&](const char* n, double d) {
+                    const auto v = sc.doc().get(p, n);
+                    return v && !v->empty() ? std::strtod(v->c_str(), nullptr) : d;
+                };
+                rp.offset = num("terrain_offset", 0);
+                rp.width = num("width", 1);
+                rp.foam = num("foam_amount", 0.1);
+                rp.fade = num("alpha_fade", 1);
+                rp.flow = num("flow_speed", 0.5);
+                pts.push_back(rp);
+            }
+        }
+        if (pts.size() < 2) continue;
+        ++rivers;
+        auto bez = [](double a, double b, double c, double d, double t) {
+            const double s = 1 - t;
+            return s * s * s * a + 3 * s * s * t * b + 3 * s * t * t * c + t * t * t * d;
+        };
+        struct Sample { double x, z, y, width, flow, foam; };
+        std::vector<Sample> samples;
+        for (size_t i = 0; i + 1 < pts.size(); ++i) {
+            const RiverPoint &a = pts[i], &b = pts[i + 1];
+            const double chord = std::hypot(b.x - a.x, b.z - a.z);
+            const int n = std::clamp(int(std::ceil(chord / std::max(2.0, std::min(a.width, b.width) * 0.2))), 2, 40);
+            for (int k = (i == 0 ? 0 : 1); k <= n; ++k) {
+                const double t = double(k) / n;
+                Sample s;
+                s.x = bez(a.x, a.cout[0], b.cin[0], b.x, t);
+                s.z = bez(a.z, a.cout[2], b.cin[2], b.z, t);
+                const double off = a.offset + (b.offset - a.offset) * t;
+                s.y = landscape ? double(terrain_height(float(s.x), float(s.z))) + off : bez(a.y, a.cout[1], b.cin[1], b.y, t);
+                s.width = a.width + (b.width - a.width) * t;
+                s.flow = a.flow + (b.flow - a.flow) * t;
+                s.foam = a.foam + (b.foam - a.foam) * t;
+                samples.push_back(s);
+            }
+        }
+        if (samples.size() < 2) continue;
+        Water wt;
+        wt.river = true;
+        double along = 0, foam_sum = 0;
+        std::vector<double> cum(samples.size(), 0.0);
+        for (size_t i = 1; i < samples.size(); ++i) cum[i] = cum[i - 1] + std::hypot(samples[i].x - samples[i - 1].x, samples[i].z - samples[i - 1].z);
+        const double total = cum.back();
+        const bool fade_ends = pts.front().fade > 0.01 || pts.back().fade > 0.01;
+        for (size_t i = 0; i < samples.size(); ++i) {
+            const Sample& s = samples[i];
+            const Sample& p0 = samples[i ? i - 1 : 0];
+            const Sample& p1 = samples[i + 1 < samples.size() ? i + 1 : i];
+            double tx = p1.x - p0.x, tz = p1.z - p0.z;
+            const double len = std::hypot(tx, tz);
+            if (len < 1e-9) { tx = 1; tz = 0; } else { tx /= len; tz /= len; }
+            const double nx = -tz, nz = tx, hw = s.width * 0.5;
+            const double fadelen = std::max(8.0, s.width);
+            const float fade = fade_ends ? float(std::clamp(std::min(cum[i], total - cum[i]) / fadelen, 0.0, 1.0)) : 1.0f;
+            const float y = float(s.y);
+            wt.verts.push_back({float(s.x - nx * hw), y, float(s.z - nz * hw), float(-hw), float(cum[i]), float(s.flow), fade});
+            wt.verts.push_back({float(s.x + nx * hw), y, float(s.z + nz * hw), float(hw), float(cum[i]), float(s.flow), fade});
+            foam_sum += s.foam;
+            if (i) {
+                const uint32_t a = uint32_t(2 * (i - 1)), b = a + 1, c = a + 2, d = a + 3;
+                for (uint32_t k : {a, c, b, b, c, d}) wt.indices.push_back(k);
+            }
+            along = cum[i];
+        }
+        (void)along;
+        wt.foam = float(foam_sum / double(samples.size()));
+        wt.version = ++water_version_;
+        water_entities_.push_back(scene.add(layer, float4x4{}, std::move(wt), SourceRef{id(), kTerrain}));
+        ribbons += samples.size();
+    }
+    // the sea / lake plane
+    const TileProject& p = *project_;
+    // Which tiles have open water is a matter of the tile set: a river tile's terrain also goes below 0 (the ford's heights are all <= 0) and has no sea.
+    const std::string set = p.has_entry() ? p.entry->tile_set() : std::string();
+    const bool sea_set = set == "sea" || set == "sea_coast" || set == "sea_coast_landing" || set == "lakes" || set == "river_mouth";
+    const bool sea = sea_set && p.has_height && p.info.found && p.info.min_height < -0.5;
+    if (sea) {
+        const float b = float(p.border_m());
+        const float x0 = -b, z0 = -b, x1 = float(extent_x()) + b, z1 = float(extent_z()) + b;
+        Water wt;
+        wt.river = false;
+        wt.foam = 0;
+        wt.verts = {{x0, 0, z0, x0, z0, 0, 1}, {x1, 0, z0, x1, z0, 0, 1}, {x0, 0, z1, x0, z1, 0, 1}, {x1, 0, z1, x1, z1, 0, 1}};
+        wt.indices = {0, 2, 1, 1, 2, 3};
+        wt.version = ++water_version_;
+        water_entities_.push_back(scene.add(layer, float4x4{}, std::move(wt), SourceRef{id(), kTerrain}));
+    }
+    char b[160];
+    std::snprintf(b, sizeof b, "%zu river spline(s) (%zu samples)%s", rivers, ribbons, sea ? ", a sea / lake plane at 0 m" : "");
+    water_note_ = (rivers || sea) ? b : "no water in this tile";
+}
+
+// ---- tile links (read-only view)
+
+void TileDocument::cell_rect(int x, int y, float& x0, float& z0, float& x1, float& z1) const {
+    const int rows = int(project_->info.cells_y ? project_->info.cells_y : 1);
+    x0 = float(x) * 128.0f;
+    x1 = x0 + 128.0f;
+    const int zr = rows - 1 - y;
+    z0 = float(zr) * 128.0f;
+    z1 = z0 + 128.0f;
+}
+
+std::vector<TileDocument::LinkCell> TileDocument::link_cells() const {
+    std::vector<LinkCell> out;
+    if (!project_->has_entry()) return out;
+    for (const TileLinkTarget& t : project_->entry->link_targets()) {
+        LinkCell c;
+        c.x = t.x;
+        c.y = t.y;
+        c.set = t.tile_set;
+        c.target = true;
+        c.base_x = t.x;
+        c.base_y = t.y;
+        c.text = "offers a " + t.tile_set + " join at cell (" + std::to_string(t.x) + ", " + std::to_string(t.y) + ")";
+        out.push_back(std::move(c));
+    }
+    for (const TileLink& l : project_->entry->links()) {
+        LinkCell c;
+        c.x = l.x;
+        c.y = l.y;
+        c.set = l.link_set;
+        c.equals = l.test != "TLT_NOT_EQUALS";
+        c.base_x = l.base_x;
+        c.base_y = l.base_y;
+        c.text = "cell (" + std::to_string(l.x) + ", " + std::to_string(l.y) + ") " + (c.equals ? "must be " : "must not be ") + l.link_set + "; belongs to cell (" + std::to_string(l.base_x) + ", " +
+                 std::to_string(l.base_y) + ")" + (l.is_entry ? ", entry" : "") + ", blend " + std::to_string(l.blend_size) + " px" + (l.no_offline_blend ? ", no offline blend" : "");
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+static uint32_t link_colour(const std::string& set, float alpha) {
+    struct C { const char* s; float r, g, b; };
+    static const C table[] = {{"sea", 0.15f, 0.35f, 0.95f},        {"river", 0.1f, 0.85f, 0.95f},      {"roads", 0.9f, 0.75f, 0.35f},   {"sea_coast", 0.95f, 0.9f, 0.2f},
+                              {"roads_stone", 0.7f, 0.7f, 0.75f},  {"roads_mountain", 0.6f, 0.4f, 0.2f}, {"river_shallow", 0.5f, 0.95f, 0.8f}, {"cliff_custom", 0.95f, 0.35f, 0.2f}};
+    for (const C& c : table)
+        if (set == c.s) return overlay_colour(c.r, c.g, c.b, alpha);
+    uint32_t h = 2166136261u;
+    for (char ch : set) h = (h ^ uint8_t(ch)) * 16777619u;
+    return overlay_colour(0.35f + float(h & 255) / 400.f, 0.35f + float((h >> 8) & 255) / 400.f, 0.35f + float((h >> 16) & 255) / 400.f, alpha);
+}
+
+void TileDocument::rebuild_links(RenderScene& scene, LayerId layer) {
+    if (links_entity_) scene.remove(links_entity_);
+    links_entity_ = 0;
+    links_dirty_ = false;
+    if (!display_.show_links) return;
+    const std::vector<LinkCell> cells = link_cells();
+    if (cells.empty()) return;
+    Overlay o;
+    o.depth_test = true;
+    o.pickable = false;
+    const int sub_n = 8;
+    for (const LinkCell& c : cells) {
+        float x0, z0, x1, z1;
+        cell_rect(c.x, c.y, x0, z0, x1, z1);
+        const uint32_t fill = link_colour(c.set, c.target ? 0.55f : (c.equals ? 0.30f : 0.20f));
+        const uint32_t line = link_colour(c.set, 1.0f);
+        auto at = [&](float x, float z) { return float3{x, terrain_height(x, z) + 0.6f, z}; };
+        // the cell draped over the ground: sub_n x sub_n quads
+        for (int j = 0; j < sub_n; ++j)
+            for (int i = 0; i < sub_n; ++i) {
+                const float xa = x0 + (x1 - x0) * float(i) / sub_n, xb = x0 + (x1 - x0) * float(i + 1) / sub_n;
+                const float za = z0 + (z1 - z0) * float(j) / sub_n, zb = z0 + (z1 - z0) * float(j + 1) / sub_n;
+                o.triangle(at(xa, za), at(xa, zb), at(xb, zb), fill);
+                o.triangle(at(xa, za), at(xb, zb), at(xb, za), fill);
+            }
+        // outline; a rule that must NOT hold gets a cross as well, a target a pole at the cell's centre
+        const int seg = 12;
+        for (int s = 0; s < seg; ++s) {
+            const float a = float(s) / seg, b = float(s + 1) / seg;
+            o.line(at(x0 + (x1 - x0) * a, z0), at(x0 + (x1 - x0) * b, z0), line);
+            o.line(at(x0 + (x1 - x0) * a, z1), at(x0 + (x1 - x0) * b, z1), line);
+            o.line(at(x0, z0 + (z1 - z0) * a), at(x0, z0 + (z1 - z0) * b), line);
+            o.line(at(x1, z0 + (z1 - z0) * a), at(x1, z0 + (z1 - z0) * b), line);
+        }
+        if (!c.equals && !c.target)
+            for (int s = 0; s < seg; ++s) {
+                const float a = float(s) / seg, b = float(s + 1) / seg;
+                o.line(at(x0 + (x1 - x0) * a, z0 + (z1 - z0) * a), at(x0 + (x1 - x0) * b, z0 + (z1 - z0) * b), line);
+                o.line(at(x0 + (x1 - x0) * a, z1 - (z1 - z0) * a), at(x0 + (x1 - x0) * b, z1 - (z1 - z0) * b), line);
+            }
+        if (c.target) {
+            const float3 m = at((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
+            o.line(m, {m.x, m.y + 40.f, m.z}, line);
+            for (int s = 0; s < 4; ++s) {
+                const float a = float(s) * 1.5707963f, b = float(s + 1) * 1.5707963f;
+                o.line({m.x + std::cos(a) * 8.f, m.y + 40.f, m.z + std::sin(a) * 8.f}, {m.x + std::cos(b) * 8.f, m.y + 40.f, m.z + std::sin(b) * 8.f}, line);
+            }
+        } else if (c.base_x != c.x || c.base_y != c.y) {   // the rule's own cell: a line from its centre to the cell it constrains
+            float bx0, bz0, bx1, bz1;
+            cell_rect(c.base_x, c.base_y, bx0, bz0, bx1, bz1);
+            const float3 from = at((bx0 + bx1) * 0.5f, (bz0 + bz1) * 0.5f), to = at((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
+            o.line({from.x, from.y + 6.f, from.z}, {to.x, to.y + 6.f, to.z}, line);
+        }
+    }
+    links_entity_ = scene.add(layer, float4x4{}, std::move(o), SourceRef{id(), kTerrain});
+}
+
 // ---- publishing
 
 void TileDocument::update_terrain(RenderScene& scene, bool first) {
     TileProject& p = *project_;
     Terrain t;
+    water_dirty_ = true;   // landscape rivers lie on the terrain
+    links_dirty_ = true;   // the cells are draped over it
     if (p.has_height) {
         const HeightField& hf = *p.height;
         terrain_stride_ = 1;   // the renderer cuts the grid into patches with LODs, the full resolution costs nothing far away
@@ -944,6 +1206,10 @@ void TileDocument::publish_items(RenderScene& scene, LayerId layer, bool keep_te
     else scene.clear_layer(layer);
     scene_ = &scene;
     layer_ = layer;
+    water_entities_.clear();   // cleared with the layer; rebuilt by the next update_view
+    water_dirty_ = true;
+    links_entity_ = 0;
+    links_dirty_ = true;
     const size_t n = idx_.type.size();
     first_entity_.assign(n, 0);
     entity_count_.assign(n, 0);
@@ -1005,6 +1271,8 @@ void TileDocument::republish(RenderScene& scene, LayerId layer, const CommandSta
 void TileDocument::update_view(RenderScene& scene, LayerId layer, const float3& eye) {
     WCE_PROF("tile.update_view");
     if (scene_ != &scene) return;
+    if (water_dirty_ && !stroke_open_) rebuild_water(scene, layer_);
+    if (links_dirty_ && !stroke_open_) rebuild_links(scene, layer_);
     (void)layer;
     // a type that has markers now but had none when the tile was published (buildings whose models turned out not to load) needs its overlay entity
     if (batch_entity_.size() < idx_.type_names.size()) batch_entity_.resize(idx_.type_names.size(), 0);

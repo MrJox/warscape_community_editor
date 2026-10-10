@@ -126,6 +126,8 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
+    void pass_water(const RenderScene& scene, const EnvironmentParams& env, const Camera& cam, float time_s);
+    void create_water_resources();
     void pass_ssao(const Camera& cam);
     void pass_clouds(const EnvironmentParams& env);
     void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
@@ -171,6 +173,19 @@ private:
     int pick_w_ = 0, pick_h_ = 0;
     Microsoft::WRL::ComPtr<ID3D11Buffer> pick_inst_vb_, pick_id_vb_;
     size_t pick_inst_capacity_ = 0;
+    // water pass (water_pass.cpp), created on first use
+    struct WaterGpu {
+        Microsoft::WRL::ComPtr<ID3D11Buffer> vb, ib;
+        UINT index_count = 0;
+        uint64_t version = ~0ull;
+    };
+    std::map<EntityId, WaterGpu> water_gpu_;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> water_vs_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> water_ps_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> water_il_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> water_cb_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> water_blend_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> water_ds_;
     TextureCache textures_;
     ModelCache models_;
     std::unique_ptr<GpuTimer> gpu_timer_;

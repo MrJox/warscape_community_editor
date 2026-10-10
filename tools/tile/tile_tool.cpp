@@ -649,6 +649,8 @@ void TileTool::draw_tile_panel(Editor& editor) {
     ImGui::Separator();
     draw_ground_section(editor, *d);
     ImGui::Separator();
+    draw_links_section(editor, *d);
+    ImGui::Separator();
     draw_polygon_panel(editor, *d);
     ImGui::Separator();
     draw_weather_panel(editor);
@@ -690,6 +692,40 @@ void TileTool::draw_ground_section(Editor& editor, TileDocument& d) {
     }
     if (changed) { d.set_terrain_look(look); new_look_ = look; }
     ImGui::TextWrapped("%s", d.terrain_note().c_str());
+    bool water = d.display().show_water;
+    if (ImGui::Checkbox("water (rivers, sea / lake)", &water)) {
+        d.display().show_water = water;
+        d.display_changed();
+    }
+    ImGui::TextDisabled("%s", d.water_note().c_str());
+}
+
+// Tile links (Phase 6a, read-only): the entry's link targets and rules, and a viewport view of the cells they name. Editing them is a later step (they are part of the
+// database entry, saved to TILES/<tile>.xml and tile_database.bin).
+void TileTool::draw_links_section(Editor& editor, TileDocument& d) {
+    if (!ImGui::CollapsingHeader("Tile links")) return;
+    const auto cells = d.link_cells();
+    if (cells.empty()) {
+        ImGui::TextDisabled(d.project().has_entry() ? "this tile has no links or link targets" : "no tile database entry: no links");
+        return;
+    }
+    bool show = d.display().show_links;
+    if (ImGui::Checkbox("show on the ground", &show)) {
+        d.display().show_links = show;
+        d.display_changed();
+    }
+    size_t targets = 0;
+    for (const auto& c : cells) targets += c.target ? 1 : 0;
+    ImGui::Text("%zu link target(s), %zu rule(s)", targets, cells.size() - targets);
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const auto& c = cells[i];
+        ImGui::BulletText("%s%s", c.target ? "target: " : (c.equals ? "= " : "!= "), c.text.c_str());
+        if (ImGui::IsItemClicked()) {   // look at the cell
+            float x0, z0, x1, z1;
+            d.cell_rect(c.x, c.y, x0, z0, x1, z1);
+            if (auto* orbit = dynamic_cast<OrbitCamera*>(&editor.viewport().controller())) orbit->set_orbit(0.8f, 0.9f, 350.f, {(x0 + x1) * 0.5f, d.terrain_height((x0 + x1) * 0.5f, (z0 + z1) * 0.5f), (z0 + z1) * 0.5f});
+        }
+    }
 }
 
 // Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The buttons act on the selection (layers: everything

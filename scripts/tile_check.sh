@@ -18,10 +18,10 @@ SRC="$KIT/assembly_kit/khazad_wall_test/battlefield"
 bad=0
 fail() { echo "FAILED: $*"; bad=1; }
 
-run_script() { # run_script <script name> <run> <tile dir> -> $OUT/<name><run>/
-    local name="$1" run="$2" tile="$3" dir="$OUT/$1$2"
+run_script() { # run_script <script name> <run> <tile dir> [second tile dir] -> $OUT/<name><run>/
+    local name="$1" run="$2" tile="$3" tile2="${4:-}" dir="$OUT/$1$2"
     rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/wce.ini" "$dir/settings/" 2>/dev/null
-    sed -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
+    sed -e "s|%TILE2%|$([ -n "$tile2" ] && cygpath -m "$tile2")|g" -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
     WCE_SETTINGS_DIR="$(cygpath -w "$dir/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$dir/script.txt")" > "$dir/run.log" 2>&1
     local rc=$?
     echo "$name run $run: exit $rc"
@@ -41,6 +41,24 @@ cmp -s "$T1/blend.png" "$T1/blend3.png" && cmp -s "$T1/blend.png" "$T1/blend2.pn
 for f in desert.png flat.png groups.png protection.png; do
     cmp -s "$T1/blend.png" "$T1/$f" && fail "terrain: $f equals the blended capture" || echo "terrain: $f differs from the blended capture"
 done
+# water (Phase 4): river ribbons of the ford tile, switched off and on, a stroke, the lake plane; captures identical between two runs, on differs from off
+OSG_MIN="$KIT/tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor"
+FORD="$KIT/river_ford/2x2_lb_rb_ford/aa"; LAKE="$KIT/lakes/10x10/aa"
+run_script tile_water 1 "$FORD" "$LAKE"
+run_script tile_water 2 "$FORD" "$LAKE"
+for f in water_on.png water_off.png water_on2.png lake.png; do
+    cmp -s "$OUT/tile_water1/$f" "$OUT/tile_water2/$f" && [ -s "$OUT/tile_water1/$f" ] && echo "water $f identical between runs" || fail "water $f differs between runs (or missing)"
+done
+cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_on2.png" && echo "water: on again = the first capture" || fail "water: on again differs from the first capture"
+cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_off.png" && fail "water: off equals on" || echo "water: off differs from on"
+# tile links (Phase 6a, read-only): the entry's targets and rules drawn on the cells they name (osgiliath minor: 2 targets, 2 rules)
+run_script tile_links 1 "$OSG_MIN"
+run_script tile_links 2 "$OSG_MIN"
+for f in links_off.png links_on.png links_off2.png; do
+    cmp -s "$OUT/tile_links1/$f" "$OUT/tile_links2/$f" && [ -s "$OUT/tile_links1/$f" ] && echo "links $f identical between runs" || fail "links $f differs between runs (or missing)"
+done
+cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_off2.png" && echo "links: off again = the first capture" || fail "links: off again differs from the first capture"
+cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_on.png" && fail "links: on equals off" || echo "links: on differs from off"
 # placement modes (Phase 2): landscape follows the terrain, freeform is free, a height stroke carries the landscape ones; all undone and saved equals the original
 DESERT="$KIT/terrain_rugged_hills_desert/1x1/aa"
 run_script tile_placement 1 "$DESERT"

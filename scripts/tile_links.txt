@@ -1,0 +1,24 @@
+# Tile links, read-only view (Phase 6a of docs/plans/tile_ted_parity.md, docs/re/tile_links.md): the entry's TILE_LINK_TARGETs and TILE_LINK rules are listed and drawn on
+# the cells they name, coloured by link set. %TILE% is the kit tile dunedain_city_osgiliath/minor (an 8 x 8 tile with river targets at (0, 3) and (7, 4), rules
+# for the neighbour columns -1 and 8), %OUT% a folder for the captures.
+tile "%TILE%"
+frames 5
+assert_links 2 2 0
+tile_links
+# the cell row y counts from the +z edge: the river enters at the west edge at z = 576 m (row 4 from z = 0, 8 - 1 - 4 = 3) and leaves at z = 448 m
+assert_link_cell 0 3 0 512
+assert_link_cell 7 4 896 384
+assert_link_cell -1 3 -128 512
+assert_link_cell 8 4 1024 384
+cam 0.8 0.7 1100 2
+frames 3
+capture 640x360 "%OUT%/links_off.png" 6
+tile_links on
+frames 4
+assert_links 2 2 1
+capture 640x360 "%OUT%/links_on.png" 6
+tile_links off
+frames 3
+assert_links 2 2 0
+capture 640x360 "%OUT%/links_off2.png" 6
+quit

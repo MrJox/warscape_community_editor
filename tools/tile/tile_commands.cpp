@@ -746,6 +746,50 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         new_look_ = look;
         return ok(d->terrain_note());
     });
+    commands.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", [this, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d)) return fail("no tile open");
+        if (!a.empty()) {
+            if (a[0] != "on" && a[0] != "off") return fail("usage: tile_links [on|off]");
+            d->display().show_links = a[0] == "on";
+            d->display_changed();
+            return ok();
+        }
+        std::string s;
+        for (const auto& c : d->link_cells()) s += "\n  " + std::string(c.target ? "target " : (c.equals ? "= " : "!= ")) + c.set + " " + c.text;
+        return ok(std::to_string(d->link_cells().size()) + " link item(s)" + s);
+    });
+    commands.add("assert_links", "assert_links <targets n> <rules n> [drawn 0|1]", "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float t, r;
+        if (!need(d) || a.size() < 2 || !number(a[0], t) || !number(a[1], r)) return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]");
+        size_t targets = 0, rules = 0;
+        for (const auto& c : d->link_cells()) (c.target ? targets : rules)++;
+        if (targets != size_t(t) || rules != size_t(r)) return fail(std::to_string(targets) + " targets, " + std::to_string(rules) + " rules");
+        if (a.size() > 2 && (a[2] == "1") != d->links_drawn()) return fail(std::string("links are ") + (d->links_drawn() ? "" : "not ") + "drawn");
+        return ok();
+    });
+    commands.add("assert_link_cell", "assert_link_cell <x> <y> <x0 m> <z0 m>", "test: the entry cell (x, y) lies at this world corner (the row counts from the +z edge)", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float x, y, ex, ez;
+        if (!need(d) || a.size() < 4 || !number(a[0], x) || !number(a[1], y) || !number(a[2], ex) || !number(a[3], ez)) return fail("usage: assert_link_cell <x> <y> <x0 m> <z0 m>");
+        float x0, z0, x1, z1;
+        d->cell_rect(int(x), int(y), x0, z0, x1, z1);
+        return std::fabs(x0 - ex) < 0.01f && std::fabs(z0 - ez) < 0.01f ? ok() : fail("cell corner is " + std::to_string(x0) + ", " + std::to_string(z0));
+    });
+    commands.add("tile_water", "tile_water on|off", "show or hide the water (river ribbons, sea / lake plane) of the open tile", [this, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty() || (a[0] != "on" && a[0] != "off")) return fail("usage: tile_water on|off");
+        d->display().show_water = a[0] == "on";
+        d->display_changed();
+        return ok();
+    });
+    commands.add("assert_water", "assert_water <pieces n>", "test: the tile has n water meshes (river splines + the sea plane) in the scene (after a frame)", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float n;
+        if (!need(d) || a.empty() || !number(a[0], n)) return fail("usage: assert_water <pieces n>");
+        return d->water_pieces() == size_t(n) ? ok(d->water_note()) : fail(std::to_string(d->water_pieces()) + " water meshes: " + d->water_note());
+    });
     commands.add("assert_ground", "assert_ground blended|flat [layers n] [climate]", "test: the ground is the baked blend (with this many texture layers) or the plain texture", [need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d) || a.empty()) return fail("usage: assert_ground blended|flat [layers n] [climate]");

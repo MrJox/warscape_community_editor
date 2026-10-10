@@ -199,3 +199,7 @@ New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_pan
 | `perf_check` | fast | the brute-force pick test skips hidden and locked instances (the pick grid does not hold them) |
 
 `scripts/shots.sh` (reference `build/gates_base_perf`): the **two tile captures changed on purpose** (the ground is the blended colour now instead of one tiled texture; only the terrain differs) and were re-baselined; the weather captures `rain` and `snow` match, `dry` (1280x720 and 800x600) differs by at most 2 levels in 4 % of the pixels on this machine today (not investigated: the weather path does not use the terrain skin or the placement code, and the same difference shows with no tile open; the reference may be stale or the driver may have changed).
+
+## Phase 4 and the read-only links view (2026-10-10)
+
+`scripts/gates.sh build/<out> --render`: **all 23 gates exit 0**. `tile_tool_check` adds `tile_water` (the ford's river, off / on, a height stroke, a lake plane) and `tile_links` (osgiliath minor: 2 targets, 2 rules, the cell rows, off / on / off), each run twice with identical captures, the on capture differing from the off one. A full run writes about 12 GB to its output folder (osgiliath copies, extracted pack caches): delete it afterwards (the first run of this phase failed with "No space left on device" on a full D: and was repeated).

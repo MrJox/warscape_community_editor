@@ -36,6 +36,7 @@ enum class Kind {
     VfxEmitter,        // particle emitter (the weather precipitation stays with the environment for now)
     Overlay,           // lines and triangles: markers, polygons, boxes, grid, gizmos
     CameraRig,         // declared for the Cinematic editor
+    Water,             // river ribbons and sea / lake planes, drawn by the renderer's water pass (docs/re/water.md)
 };
 
 struct MeshInstance {
@@ -104,7 +105,23 @@ struct Overlay {
 
 struct CameraRig {};                 // placeholder for the Cinematic editor
 
-using Payload = std::variant<MeshInstance, Terrain, VfxEmitter, Overlay, CameraRig>;
+// A water surface as a triangle mesh in world coordinates (the entity's world matrix is applied on top). The pass shades it with the river or sea normal
+// texture, the sky cube and the sun, and fades it by the depth of the water above the ground behind it.
+struct WaterVertex {
+    float x, y, z;
+    float u, v;                      // river: u = metres across (centre 0), v = metres along the spline; sea: world x, z
+    float flow;                      // flow speed of the river there (1 = the file's value of the spline point scaled to texture units)
+    float fade;                      // 0..1 opacity of the end of a river (alpha_fade), 1 for the sea
+};
+struct Water {
+    std::vector<WaterVertex> verts;
+    std::vector<uint32_t> indices;   // triangle list
+    bool river = true;               // false: the sea / lake plane
+    float foam = 0.1f;               // foam at the banks (river points' foam_amount, averaged)
+    uint64_t version = 0;            // change it when the mesh changes
+};
+
+using Payload = std::variant<MeshInstance, Terrain, VfxEmitter, Overlay, CameraRig, Water>;
 
 struct Entity {
     EntityId id = 0;

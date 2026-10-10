@@ -66,6 +66,7 @@ private:
     void draw_layers_panel(Editor& editor);
     void draw_placement_section(Editor& editor, TileDocument& d);
     void draw_ground_section(Editor& editor, TileDocument& d);
+    void draw_links_section(Editor& editor, TileDocument& d);
     void rebuild_tree(TileDocument& d);
     void request_delete(Editor& editor);
     void begin_rename(Editor& editor, int elem);

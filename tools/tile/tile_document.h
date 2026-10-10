@@ -41,6 +41,8 @@ struct TileDisplay {
     bool lod = true;                       // distance culling of the markers
     float veg_distance = 450, decal_distance = 300, other_distance = 3000;
     bool show_border = true;               // the tile's own rectangle (inside the bordered height map)
+    bool show_links = false;               // the tile database entry's link rules and targets on the edge cells (read-only view)
+    bool show_water = true;                // river ribbons and the sea / lake plane (the water pass); drawn whatever the spline layers' eye says
 };
 
 struct BuildingModel {
@@ -129,7 +131,21 @@ public:
 
     // ---- display
     TileDisplay& display() { return display_; }
-    void display_changed() { markers_dirty_ = true; polygons_dirty_ = true; }
+    void display_changed() { markers_dirty_ = true; polygons_dirty_ = true; water_dirty_ = true; links_dirty_ = true; }
+    // Water (Phase 4): rivers from the SplineRiverInstance elements, the sea / lake plane when the terrain goes below 0; see docs/re/water.md.
+    // Tile links (Phase 6a, read-only): the entry's TILE_LINK rules and TILE_LINK_TARGETs drawn on the ground cells they name (128 m cells; the cell row y counts from
+    // the +z edge: y = cells_y - 1 - floor(z / 128), measured against the river targets of osgiliath), coloured by link set. docs/re/tile_links.md.
+    struct LinkCell {
+        int x = 0, y = 0;                  // the entry's cell (x = -1 or width: the neighbour column)
+        std::string set, text;
+        bool equals = true, target = false;
+        int base_x = 0, base_y = 0;
+    };
+    std::vector<LinkCell> link_cells() const;                  // targets first, then the rules, in the entry's order
+    void cell_rect(int x, int y, float& x0, float& z0, float& x1, float& z1) const;   // world metres of an entry cell
+    bool links_drawn() const { return links_entity_ != 0; }
+    size_t water_pieces() const { return water_entities_.size(); }
+    const std::string& water_note() const { return water_note_; }
     // Per frame (the tool's update): rebuilds the marker batches when the camera moved enough or the display settings changed, and updates the highlight overlay.
     void update_view(RenderScene& scene, LayerId layer, const float3& eye);
     void set_highlight(RenderScene& scene, const std::vector<int>& selected, int polygon_point, float handle_size, const Overlay& tool_overlay);
@@ -311,6 +327,15 @@ private:
     size_t saved_height_depth_ = 0;
     bool ted_on_disk_edited_ = false, png_on_disk_edited_ = false;
 
+    // water entities of the scene (rivers, sea plane), rebuilt when the terrain or the display changed
+    std::vector<EntityId> water_entities_;
+    EntityId links_entity_ = 0;
+    bool links_dirty_ = true;
+    void rebuild_links(RenderScene& scene, LayerId layer);
+    bool water_dirty_ = true;
+    uint64_t water_version_ = 0;
+    std::string water_note_;
+    void rebuild_water(RenderScene& scene, LayerId layer);
     // ground look
     TerrainLook look_;
     TerrainLook skin_look_;
