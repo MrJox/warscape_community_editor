@@ -8,8 +8,9 @@ user's installation.
 
 Status: **architecture and inputs verified from the shaders; draw order, patch mesh layout and the data feeding the textures are open** (list at the end).
 `Terrain` entities of the RenderScene with a `TerrainMaterial` are drawn by the game's passes (the last section); without one (the weather editor's flat ground) they are drawn with the interim material
-(one tiled diffuse through the rigid G-buffer shader). **Observed 2026-10-10**: that interim path uses `ModelCache::flat_normal_` = `0xff80ff80`, which the rigid shader decodes (`.wy`, x = A, y = G) as the tangent-space
-normal (1, 1, 0): the ground's G-buffer normal lies in the surface plane, not up. The weather editor's ground lighting was calibrated with it; fixing the constant to 0x7fff7f7f changes every baseline.
+(one tiled diffuse through the rigid G-buffer shader). **Fixed 2026-10-10**: that interim path (and every mesh without a normal map) used `ModelCache::flat_normal_` = `0xff80ff80`, which the rigid shader decodes
+(`.wy`, x = A, y = G) as the tangent-space normal (1, 1, 0): the G-buffer normal lay in the surface plane, not up. The constant is now `0x7fff7f7f` (x = y = 0.5, z rebuilt = up). The weather editor's ground and
+every normal-less mesh are lit differently since (max 29 levels on the dry capture); the capture references of `build/gates_base_perf` were re-baselined (`docs/baseline.md`).
 
 ## Shaders (`rigidterrain.hlsl`, `rigidterrainblend.hlsl`)
 

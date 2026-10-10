@@ -200,6 +200,10 @@ New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_pan
 
 `scripts/shots.sh` (reference `build/gates_base_perf`): the **two tile captures changed on purpose** (the ground is the blended colour now instead of one tiled texture; only the terrain differs) and were re-baselined; the weather captures `rain` and `snow` match, `dry` (1280x720 and 800x600) differs by at most 2 levels in 4 % of the pixels on this machine today (not investigated: the weather path does not use the terrain skin or the placement code, and the same difference shows with no tile open; the reference may be stale or the driver may have changed).
 
+## Flat normal fix and re-baseline (2026-10-10)
+
+`ModelCache::flat_normal_` (the normal map of every mesh without one, including the interim ground of the weather tool) was `0xff80ff80`: x = A = 1, y = G = 1, a normal in the surface plane. It is `0x7fff7f7f` now (straight up). All six `scripts/shots.sh` captures changed (dry 1280x720: 903,723 pixels, max 29 levels; rain max 28; snow max 84; dry 800x600 max 27; monte_rosa tile max 3; Rome tile max 21, models without a normal map) and were checked by eye (the sun-facing light on the ground and on normal-less models is a little softer, nothing else moves). `build/gates_base_perf/` holds the new references, identical on two runs; the previous ones are kept in `build/gates_base_perf_before_flat_normal/`. This also settles the "dry differs by 2 levels" note of the Phase 3 section: the reference was re-taken with the current driver.
+
 ## Phase 4 and the read-only links view (2026-10-10)
 
 `scripts/gates.sh build/<out> --render`: **all 23 gates exit 0**. `tile_tool_check` adds `tile_water` (the ford's river, off / on, a height stroke, a lake plane) and `tile_links` (osgiliath minor: 2 targets, 2 rules, the cell rows, off / on / off), each run twice with identical captures, the on capture differing from the off one. A full run writes about 12 GB to its output folder (osgiliath copies, extracted pack caches): delete it afterwards (the first run of this phase failed with "No space left on device" on a full D: and was repeated).
