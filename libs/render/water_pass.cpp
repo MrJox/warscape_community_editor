@@ -1,17 +1,20 @@
-// The water pass (Phase 4 of docs/plans/tile_ted_parity.md, docs/re/water.md): river ribbons and sea / lake planes of the scene's Water entities, shaded into the HDR
-// target after the fog, before the post passes. Not the game's shaders (rigidriver ps30_main_battle_river, waterplane): the same ingredients in a small own
-// shader - the river's scrolling normal map in three scales, a Schlick fresnel between the sky cube and a body colour from the environment's deep / shallow
-// water colours, the sun's glint, opacity from the water's thickness over the ground behind it (the G-buffer depth) and a soft bank.
+// The water passes (Phase 4 of docs/plans/tile_ted_parity.md, docs/re/water.md): river ribbons and sea / lake planes of the scene's Water entities, drawn with
+// the game's own shaders - rigidriver (vs30_main_battle_river, ps30_main_battle_river), waterplane (vs30_water_battle, ps30_battle_ultra_water_quality) and
+// waterrefraction (ps30_main_3_channel) from the packs' fxc/ folder, bound by their reflected names like every other pass.
+//
+// Frame order (the game's, as far as it can be read from the shaders): the lit scene is copied half-size by waterrefraction into s_terrain_refraction, colour in rgb and
+// the refraction weight (from the ground's world height) in alpha; the sea plane is drawn over the lit scene and then covered by the fog pass (its shader has no fog); the
+// river is drawn after the fog (its shader fogs itself). Both pixel shaders write four targets: the G-buffer channels 1 .. 3 (normal, albedo, specular) and the final
+// lit colour into the HDR target, opaque, with the scene's depth test.
 #include "foundation/profile.h"
 #include "render/renderer.h"
+#include "render/shader_lib.h"
 #include "scene/environment.h"
 
-#include <d3dcompiler.h>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
-#include <stdexcept>
 
 using Microsoft::WRL::ComPtr;
 
@@ -19,146 +22,55 @@ namespace wce {
 
 namespace {
 
-const char* kWaterHlsl = R"(
-cbuffer W : register(b0) {
-    row_major float4x4 vp;
-    float3 eye; float time;
-    float3 sun_dir; float near_p;     // sun_dir: towards the sun
-    float3 sun_rad; float far_p;      // the sun's radiance in HDR units
-    float3 deep; float is_sea;
-    float3 shallow; float foam;
-    float2 inv_screen; float2 pad2;
-};
-Texture2D normal_tex : register(t0);
-TextureCube sky : register(t1);
-Texture2D depth_zw : register(t2);
-SamplerState wrap_s : register(s0);
-SamplerState clamp_s : register(s1);
+const char* kRiverVS = "dx11_sm_3_0_rigidriver.hlsl_vs_vs30_main_battle_river";
+const char* kRiverPS = "dx11_sm_3_0_rigidriver.hlsl_ps_ps30_main_battle_river";
+const char* kSeaVS = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_battle";
+const char* kSeaPS = "dx11_sm_3_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";   // the "ultra" quality level
+const char* kRefractionPS = "dx11_sm_3_0_waterrefraction.hlsl_ps_ps30_main_3_channel";
 
-struct VIn { float3 pos : POSITION; float2 uv : TEXCOORD0; float flow : TEXCOORD1; float fade : TEXCOORD2; };
-struct VOut { float4 sv : SV_Position; float3 wp : TEXCOORD0; float2 uv : TEXCOORD1; float2 ff : TEXCOORD2; float vz : TEXCOORD3; };
+// water_refraction_PS.g_refraction_depth (and directional_light_PS's, which writes the same weight into the light buffer's alpha): the weight of the refraction is
+// saturate(-ground_y * this) below the water level. 0.75 is the value the engine's constructors of both cbuffers store (fn 0x116d45c0 and 0x117037e0: 0x3f400000); a runtime
+// override has not been looked for.
+constexpr float kRefractionDepth = 0.75f;
 
-VOut water_vs(VIn i) {
-    VOut o;
-    o.sv = mul(vp, float4(i.pos, 1));
-    o.wp = i.pos;
-    o.uv = i.uv;
-    o.ff = float2(i.flow, i.fade);
-    o.vz = o.sv.w;
-    return o;
-}
-
-float3 decode_n(float4 t) {
-    float2 xy = (t.wy + 0.001961) * 2 - 1;
-    return float3(xy.x, sqrt(max(1 - dot(xy, xy), 0)), xy.y);
-}
-
-float4 water_ps(VOut i) : SV_Target {
-    float flow = i.ff.x, fade = i.ff.y;
-    float2 tc;
-    float scroll = time * (0.25 + flow * 0.6);
-    if (is_sea > 0.5) tc = i.uv * 0.045 + float2(time * 0.012, time * 0.007);
-    else tc = float2(i.uv.x * 0.059, i.uv.y * 0.177 - scroll * 0.6);
-    float2 tc2 = tc * 1.7 + float2(0.4, -scroll * 0.35);
-    float2 tc3 = tc * 4.1 + float2(0.1, -scroll * 0.9);
-    float3 n1 = decode_n(normal_tex.Sample(wrap_s, tc));
-    float3 n2 = decode_n(normal_tex.Sample(wrap_s, tc2));
-    float3 n3 = decode_n(normal_tex.Sample(wrap_s, tc3));
-    float3 N = normalize(n1 + n2 + n3 * 0.3 + float3(0, 1, 0));
-    float3 V = normalize(eye - i.wp);
-    float ndv = saturate(dot(N, V));
-    float fres = 0.04 + 0.96 * pow(1 - ndv, 5);
-    float3 R = reflect(-V, N);
-    R.y = abs(R.y);
-    float3 refl = sky.SampleLevel(clamp_s, R, 0).rgb;
-    // thickness of the water over what is behind it (view-space depth of the ground minus the water's)
-    float zw = depth_zw.Load(int3(i.sv.xy, 0)).r;
-    float ground = zw <= 0 ? 1e5 : near_p * far_p / (far_p - zw * (far_p - near_p));
-    float thick = max(ground - i.vz, 0);
-    float d01 = saturate(thick / (is_sea > 0.5 ? 14.0 : 5.0));
-    float3 amb = sky.SampleLevel(clamp_s, float3(N.x, 1, N.z), 7).rgb;
-    float3 light = amb * 2.2 + sun_rad * saturate(dot(N, sun_dir)) * 0.5;
-    float3 body = lerp(shallow, deep, d01) * light;
-    float spec = pow(saturate(dot(R, sun_dir)), 220) * 6;
-    float3 col = lerp(body, refl, fres) + sun_rad * spec;
-    float alpha = saturate(0.30 + 0.70 * d01);
-    alpha *= saturate(thick * 1.2 + 0.02) * fade;
-    if (foam > 0 && is_sea < 0.5) {
-        float shore = saturate(1 - thick * 0.9);
-        col += float3(1, 1, 1) * sun_rad.x * 0.12 * foam * shore * alpha * (0.5 + 0.5 * n3.x);
-    }
-    return float4(col, alpha);
-}
-)";
-
-struct WaterCb {
-    float vp[16];
-    float eye[3], time;
-    float sun_dir[3], near_p;
-    float sun_rad[3], far_p;
-    float deep[3], is_sea;
-    float shallow[3], foam;
-    float inv_screen[2], pad2[2];
-};
-
-ComPtr<ID3DBlob> compile_water(const char* entry, const char* target) {
-    ComPtr<ID3DBlob> code, err;
-    if (FAILED(D3DCompile(kWaterHlsl, std::strlen(kWaterHlsl), "water", nullptr, nullptr, entry, target, 0, 0, &code, &err)))
-        throw std::runtime_error(std::string("water shader: ") + (err ? static_cast<const char*>(err->GetBufferPointer()) : entry));
-    return code;
-}
+struct Row { float v[4]; };
 
 } // namespace
 
-void Renderer::create_water_resources() {
-    if (water_vs_) return;
-    auto vs = compile_water("water_vs", "vs_5_0");
-    dev_->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &water_vs_);
-    const D3D11_INPUT_ELEMENT_DESC el[] = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-                                           {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-                                           {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0},
-                                           {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0}};
-    dev_->CreateInputLayout(el, 4, vs->GetBufferPointer(), vs->GetBufferSize(), &water_il_);
-    auto ps = compile_water("water_ps", "ps_5_0");
-    dev_->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &water_ps_);
-    D3D11_BUFFER_DESC cb{sizeof(WaterCb), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE};
-    dev_->CreateBuffer(&cb, nullptr, &water_cb_);
-    D3D11_BLEND_DESC bd{};
-    bd.RenderTarget[0].BlendEnable = TRUE;
-    bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-    bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
-    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-    bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-    dev_->CreateBlendState(&bd, &water_blend_);
-    D3D11_DEPTH_STENCIL_DESC dd{};
-    dd.DepthEnable = TRUE;
-    dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-    dd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-    dev_->CreateDepthStencilState(&dd, &water_ds_);
+void Renderer::water_refraction() {
+    const int tw = std::max(1, w_ / 2), th = std::max(1, h_ / 2);
+    if (!refr_.tex || refr_w_ != tw || refr_h_ != th) {
+        refr_ = make_target(tw, th, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        refr_w_ = tw;
+        refr_h_ = th;
+    }
+    const GameShader* ps = shader(kRefractionPS);
+    if (!ps) return;
+    cbs_.set_f("water_refraction_PS", "g_refraction_depth", {kRefractionDepth});
+    ctx_->PSSetShaderResources(0, 16, std::array<ID3D11ShaderResourceView*, 16>{}.data());
+    ctx_->OMSetRenderTargets(1, refr_.rtv.GetAddressOf(), nullptr);
+    D3D11_VIEWPORT vp{0, 0, float(tw), float(th), 0, 1};
+    ctx_->RSSetViewports(1, &vp);
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
+    ctx_->OMSetDepthStencilState(ds_off_.Get(), 0);
+    ctx_->RSSetState(rs_none_.Get());
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+    bind_sampler(ctx_, *ps, "gbuffer_channel_4_sampler", s_clamp_point_.Get());
+    bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
+    bind_srv(ctx_, *ps, "s_light_accumulation_buffer", hdr_.srv.Get());
+    cbs_.upload(dev_, ctx_);
+    fullscreen(*ps);
+    ctx_->PSSetShaderResources(0, 16, std::array<ID3D11ShaderResourceView*, 16>{}.data());
+    D3D11_VIEWPORT main_vp{0, 0, float(w_), float(h_), 0, 1};
+    ctx_->RSSetViewports(1, &main_vp);
 }
 
-void Renderer::pass_water(const RenderScene& scene, const EnvironmentParams& env, const Camera& cam, float time_s) {
-    bool any = false;
-    for (const Entity& e : scene.entities())
-        if (e.get<Water>() && scene.drawable(e)) { any = true; break; }
-    if (!any) {
-        water_gpu_.clear();
-        return;
-    }
-    WCE_PROF("render.water");
-    try {
-        create_water_resources();
-    } catch (const std::exception& ex) {
-        error(ex.what());
-        return;
-    }
-    const Texture* river_n = textures_.get("battleterrain/river/river_normal.dds", false);
-    const Texture* sea_n = textures_.get("sea/water_detail_normal.dds", false);
+void Renderer::pass_water(const RenderScene& scene, const EnvironmentParams& env, const Camera& cam, float time_s, WaterPhase phase) {
+    (void)env; (void)cam; (void)time_s;
+    const bool rivers = phase == WaterPhase::River;
     // GPU copies of the meshes: rebuilt when an entity's version moves on, dropped with the entity
     std::map<EntityId, WaterGpu> keep;
+    bool any = false;
     for (const Entity& e : scene.entities()) {
         const Water* w = e.get<Water>();
         if (!w || w->verts.empty() || w->indices.empty()) continue;
@@ -175,59 +87,107 @@ void Renderer::pass_water(const RenderScene& scene, const EnvironmentParams& env
             g.version = w->version;
         }
         keep[e.id] = g;
+        if (w->river == rivers && scene.drawable(e)) any = true;
     }
     water_gpu_ = std::move(keep);
+    if (!any) return;
+    WCE_PROF("render.water");
 
-    const float3 to_sun = env.to_sun();
-    const float3 sun_rad = colour_to_linear(env.sun_colour) * (env.sun_colour_scale * kSunHdrScale * 0.004f);   // the shaders multiply by 0.004 in HDR
-    ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
-    ctx_->OMSetDepthStencilState(water_ds_.Get(), 0);
-    ctx_->OMSetBlendState(water_blend_.Get(), nullptr, 0xffffffff);
+    const GameShader* vs = shader(rivers ? kRiverVS : kSeaVS);
+    const GameShader* ps = shader(rivers ? kRiverPS : kSeaPS);
+    if (!vs || !ps) return;
+
+    if (!water_ds_) {
+        D3D11_DEPTH_STENCIL_DESC dd{};
+        dd.DepthEnable = TRUE;
+        dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        dd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+        dd.StencilEnable = TRUE;   // geometry is stencil 1: the fog pass covers the sea plane
+        dd.StencilReadMask = dd.StencilWriteMask = 0xff;
+        dd.FrontFace = {D3D11_STENCIL_OP_KEEP, D3D11_STENCIL_OP_KEEP, D3D11_STENCIL_OP_REPLACE, D3D11_COMPARISON_ALWAYS};
+        dd.BackFace = dd.FrontFace;
+        dev_->CreateDepthStencilState(&dd, &water_ds_);
+    }
+    if (!river_inst_vb_) {   // the instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, identity (the vertices are in world space)
+        const Row river[4] = {{{1, 0, 0, 0}}, {{0, 1, 0, 0}}, {{0, 0, 1, 0}}, {{0, 0, 0, 0}}};   // P2 .. P4 rows, P5 (x >= 1 flips the uv)
+        const Row sea[6] = {{{1, 0, 0, 0}}, {{0, 1, 0, 0}}, {{0, 0, 1, 0}}, {{0, 0, 0, 0}}, {{0, 0, 0, 0}}, {{0, 0, 0, 0}}};   // P1 .. P3 rows, P4 .. P6 unused
+        D3D11_BUFFER_DESC bd{sizeof river, D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER};
+        D3D11_SUBRESOURCE_DATA sd{river};
+        dev_->CreateBuffer(&bd, &sd, &river_inst_vb_);
+        bd.ByteWidth = sizeof sea;
+        sd.pSysMem = sea;
+        dev_->CreateBuffer(&bd, &sd, &sea_inst_vb_);
+    }
+
+    water_refraction();
+
+    const Texture* nt = textures_.get(rivers ? "battleterrain/river/river_normal.dds" : "sea/water_detail_normal.dds", false);
+    ID3D11InputLayout* il = nullptr;
+    try {
+        const DXGI_FORMAT f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        if (rivers) {
+            std::vector<D3D11_INPUT_ELEMENT_DESC> el = {{"POSITION", 0, f4, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0}, {"POSITION", 1, f4, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+            for (UINT i = 0; i < 4; ++i) el.push_back({"POSITION", 2 + i, f4, 1, i * 16, D3D11_INPUT_PER_INSTANCE_DATA, 1});
+            il = lib_->layout(*vs, "river", el);
+        } else {
+            std::vector<D3D11_INPUT_ELEMENT_DESC> el = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                                                        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+            for (UINT i = 0; i < 6; ++i) el.push_back({"POSITION", 1 + i, f4, 1, i * 16, D3D11_INPUT_PER_INSTANCE_DATA, 1});
+            il = lib_->layout(*vs, "sea", el);
+        }
+    } catch (const std::exception& ex) {
+        error(ex.what());
+        return;
+    }
+
+    // constants the river's vertex shader reads for the terrain height: the game puts the ribbon on the low-res height map; here the mesh carries its own world height
+    // (rebuilt from the tile's terrain), so the map's contribution is switched off (scale 0, a black map) and the dimensions are kept finite.
+    cbs_.set_f("vs_height_map_cb", "g_height_map_lf_scale", {0.0f});
+    cbs_.set_f("vs_height_map_cb", "g_height_map_hf_scale", {1.0f});
+    cbs_.set_f("vs_height_map_cb", "g_height_map_vertical_offset", {0.0f});
+    cbs_.set_f("vs_height_map_cb", "g_height_map_dimension", {256.0f, 256.0f, 1.0f / 256.0f, 1.0f / 256.0f});
+    cbs_.set_f("vs_height_map_cb", "g_world_dimensions", {1024.0f, 1024.0f});
+    cbs_.set_f("vs_height_map_cb", "g_lf_uv_offset", {0.0f});
+    cbs_.set_f("river_CB", "g_world_size", {1.0f, 1.0f});
+    cbs_.set_f("river_CB", "g_flow_rate", {0.0f});
+    cbs_.set_f("river_CB", "g_vertical_offset", {0.0f});
+    cbs_.upload(dev_, ctx_);
+
+    ctx_->PSSetShaderResources(0, 16, std::array<ID3D11ShaderResourceView*, 16>{}.data());
+    ID3D11RenderTargetView* rtvs[4] = {gb_[0].rtv.Get(), gb_[1].rtv.Get(), gb_[2].rtv.Get(), hdr_.rtv.Get()};
+    ctx_->OMSetRenderTargets(4, rtvs, dsv_.Get());
+    ctx_->OMSetDepthStencilState(water_ds_.Get(), 1);
+    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
     ctx_->RSSetState(rs_none_.Get());
-    ctx_->IASetInputLayout(water_il_.Get());
+    ctx_->IASetInputLayout(il);
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ctx_->VSSetShader(water_vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(water_ps_.Get(), nullptr, 0);
-    ID3D11SamplerState* samplers[2] = {s_wrap_aniso_.Get(), s_clamp_linear_.Get()};
-    ctx_->PSSetSamplers(0, 2, samplers);
-    ID3D11ShaderResourceView* common[2] = {sky_cube_srv_.Get(), gb_[3].srv.Get()};
-    ctx_->PSSetShaderResources(1, 2, common);
-    const float3 deep = colour_to_linear(env.deep_water), shallow = colour_to_linear(env.shallow_water);
+    bind_shader(ctx_, *vs, cbs_);
+    bind_shader(ctx_, *ps, cbs_);
+    bind_srv(ctx_, *vs, "t_low_res_height_map", black_srv_.Get());
+    for (auto& [n, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_linear_.GetAddressOf());
+    bind_sampler(ctx_, *ps, "s_normal", s_wrap_linear_.Get());
+    bind_sampler(ctx_, *ps, "s_environment", s_wrap_linear_.Get());
+    bind_sampler(ctx_, *ps, "s_terrain_refraction", s_clamp_point_.Get());
+    bind_sampler(ctx_, *ps, "gbuffer_channel_4_sampler", s_clamp_point_.Get());
+    bind_sampler(ctx_, *ps, "s_sky", s_clamp_linear_.Get());
+    bind_srv(ctx_, *ps, "s_normal", nt ? nt->srv.Get() : black_srv_.Get());
+    bind_srv(ctx_, *ps, "s_environment", env_valid_ ? env_cube_srv_.Get() : sky_cube_srv_.Get());
+    bind_srv(ctx_, *ps, "s_sky", sky_cube_srv_.Get());
+    bind_srv(ctx_, *ps, "s_terrain_refraction", refr_.srv.Get());
+    bind_srv(ctx_, *ps, "gbuffer_channel_4_sampler", gb_[3].srv.Get());
     for (const Entity& e : scene.entities()) {
         const Water* w = e.get<Water>();
         auto it = w ? water_gpu_.find(e.id) : water_gpu_.end();
-        if (it == water_gpu_.end() || !scene.drawable(e)) continue;
-        WaterCb cb{};
-        std::memcpy(cb.vp, view_proj_.data(), sizeof cb.vp);
-        cb.eye[0] = cam.eye.x; cb.eye[1] = cam.eye.y; cb.eye[2] = cam.eye.z;
-        cb.time = time_s;
-        cb.sun_dir[0] = to_sun.x; cb.sun_dir[1] = to_sun.y; cb.sun_dir[2] = to_sun.z;
-        cb.near_p = cam.znear;
-        cb.sun_rad[0] = sun_rad.x; cb.sun_rad[1] = sun_rad.y; cb.sun_rad[2] = sun_rad.z;
-        cb.far_p = cam.zfar;
-        cb.deep[0] = deep.x; cb.deep[1] = deep.y; cb.deep[2] = deep.z;
-        cb.is_sea = w->river ? 0.0f : 1.0f;
-        cb.shallow[0] = shallow.x; cb.shallow[1] = shallow.y; cb.shallow[2] = shallow.z;
-        cb.foam = w->foam;
-        D3D11_MAPPED_SUBRESOURCE ms;
-        if (FAILED(ctx_->Map(water_cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) continue;
-        std::memcpy(ms.pData, &cb, sizeof cb);
-        ctx_->Unmap(water_cb_.Get(), 0);
-        ctx_->VSSetConstantBuffers(0, 1, water_cb_.GetAddressOf());
-        ctx_->PSSetConstantBuffers(0, 1, water_cb_.GetAddressOf());
-        const Texture* nt = w->river ? river_n : sea_n;
-        ID3D11ShaderResourceView* nsrv = nt ? nt->srv.Get() : black_srv_.Get();
-        ctx_->PSSetShaderResources(0, 1, &nsrv);
-        const UINT stride = sizeof(WaterVertex), off = 0;
-        ID3D11Buffer* vbp = it->second.vb.Get();
-        ctx_->IASetVertexBuffers(0, 1, &vbp, &stride, &off);
+        if (it == water_gpu_.end() || w->river != rivers || !scene.drawable(e)) continue;
+        ID3D11Buffer* vbs[2] = {it->second.vb.Get(), rivers ? river_inst_vb_.Get() : sea_inst_vb_.Get()};
+        const UINT strides[2] = {sizeof(WaterVertex), rivers ? UINT(4 * sizeof(Row)) : UINT(6 * sizeof(Row))}, offs[2] = {0, 0};
+        ctx_->IASetVertexBuffers(0, 2, vbs, strides, offs);
         ctx_->IASetIndexBuffer(it->second.ib.Get(), DXGI_FORMAT_R32_UINT, 0);
-        ctx_->DrawIndexed(it->second.index_count, 0, 0);
+        ctx_->DrawIndexedInstanced(it->second.index_count, 1, 0, 0, 0);
         ++draw_stats_.draw_calls;
     }
-    ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
-    ID3D11ShaderResourceView* nulls[3] = {};
-    ctx_->PSSetShaderResources(0, 3, nulls);
+    ctx_->PSSetShaderResources(0, 16, std::array<ID3D11ShaderResourceView*, 16>{}.data());
+    ctx_->OMSetRenderTargets(1, hdr_.rtv.GetAddressOf(), dsv_.Get());
 }
 
 } // namespace wce

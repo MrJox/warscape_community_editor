@@ -13,7 +13,6 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -817,6 +816,7 @@ void Renderer::pass_directional_light() {
     cbs_.set("shroud_PS", "g_shroud_enabled", &zero_shroud, 4);
     float4x4 ident;
     cbs_.set_m("directional_light_PS", "g_overlay_view_projection", ident.data());
+    cbs_.set_f("directional_light_PS", "g_refraction_depth", {0.75f});   // the engine's default (see water_pass.cpp); the shader writes the refraction weight into the light buffer's alpha
     cbs_.upload(dev_, ctx_);
     for (int i = 0; i < 4; ++i) bind_srv(ctx_, *ps, "gbuffer_channel_" + std::to_string(i + 1) + "_sampler", gb_[i].srv.Get());
     bind_srv(ctx_, *ps, "s_ssao", ao_result_ ? ao_result_ : white_srv_.Get());
@@ -1751,9 +1751,11 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     pass_sun(env, view_m, proj);
     pass_clouds(env);
     pass_directional_light();
+    gpu_timer_->mark("sea");
+    pass_water(scene, env, cam, time_s, WaterPhase::Sea);
     pass_fog();
-    gpu_timer_->mark("water");
-    pass_water(scene, env, cam, time_s);
+    gpu_timer_->mark("rivers");
+    pass_water(scene, env, cam, time_s, WaterPhase::River);
     if (particles_) { // weather precipitation (vfx1 of the WEATHER definition), see src/vfx/particles.h
         ParticleSystem::Frame pf;
         pf.eye = cam.eye;

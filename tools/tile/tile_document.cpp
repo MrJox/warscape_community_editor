@@ -936,8 +936,8 @@ void TileDocument::rebuild_water(RenderScene& scene, LayerId layer) {
             const double fadelen = std::max(8.0, s.width);
             const float fade = fade_ends ? float(std::clamp(std::min(cum[i], total - cum[i]) / fadelen, 0.0, 1.0)) : 1.0f;
             const float y = float(s.y);
-            wt.verts.push_back({float(s.x - nx * hw), y, float(s.z - nz * hw), float(-hw), float(cum[i]), float(s.flow), fade});
-            wt.verts.push_back({float(s.x + nx * hw), y, float(s.z + nz * hw), float(hw), float(cum[i]), float(s.flow), fade});
+            wt.verts.push_back({float(s.x - nx * hw), y, float(s.z - nz * hw), float(-hw), float(-hw), float(cum[i]), float(s.flow), fade});
+            wt.verts.push_back({float(s.x + nx * hw), y, float(s.z + nz * hw), float(hw), float(hw), float(cum[i]), float(s.flow), fade});
             foam_sum += s.foam;
             if (i) {
                 const uint32_t a = uint32_t(2 * (i - 1)), b = a + 1, c = a + 2, d = a + 3;
@@ -963,7 +963,7 @@ void TileDocument::rebuild_water(RenderScene& scene, LayerId layer) {
         Water wt;
         wt.river = false;
         wt.foam = 0;
-        wt.verts = {{x0, 0, z0, x0, z0, 0, 1}, {x1, 0, z0, x1, z0, 0, 1}, {x0, 0, z1, x0, z1, 0, 1}, {x1, 0, z1, x1, z1, 0, 1}};
+        wt.verts = {{x0, 0, z0, 0, x0, z0, 0, 1}, {x1, 0, z0, 0, x1, z0, 0, 1}, {x0, 0, z1, 0, x0, z1, 0, 1}, {x1, 0, z1, 0, x1, z1, 0, 1}};
         wt.indices = {0, 2, 1, 1, 2, 3};
         wt.version = ++water_version_;
         water_entities_.push_back(scene.add(layer, float4x4{}, std::move(wt), SourceRef{id(), kTerrain}));

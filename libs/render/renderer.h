@@ -126,8 +126,10 @@ private:
     void pass_sky_forward();
     void pass_directional_light();
     void pass_fog();
-    void pass_water(const RenderScene& scene, const EnvironmentParams& env, const Camera& cam, float time_s);
-    void create_water_resources();
+    // Water (water_pass.cpp), the game's shaders: the sea / lake planes are drawn after the light and before the fog (fog is a pass of its own over them), the
+    // rivers after the fog (their shader fogs itself). Both refract a half-resolution copy of the lit scene made by the game's waterrefraction shader.
+    enum class WaterPhase { Sea, River };
+    void pass_water(const RenderScene& scene, const EnvironmentParams& env, const Camera& cam, float time_s, WaterPhase phase);
     void pass_ssao(const Camera& cam);
     void pass_clouds(const EnvironmentParams& env);
     void pass_sun(const EnvironmentParams& env, const float4x4& view, const float4x4& proj);
@@ -180,12 +182,11 @@ private:
         uint64_t version = ~0ull;
     };
     std::map<EntityId, WaterGpu> water_gpu_;
-    Microsoft::WRL::ComPtr<ID3D11VertexShader> water_vs_;
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> water_ps_;
-    Microsoft::WRL::ComPtr<ID3D11InputLayout> water_il_;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> water_cb_;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> water_blend_;
+    Target refr_;                       // half-resolution scene colour (rgb) + the refraction weight (a), s_terrain_refraction
+    int refr_w_ = 0, refr_h_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> river_inst_vb_, sea_inst_vb_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> water_ds_;
+    void water_refraction();
     TextureCache textures_;
     ModelCache models_;
     std::unique_ptr<GpuTimer> gpu_timer_;

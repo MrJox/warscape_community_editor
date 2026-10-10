@@ -105,19 +105,21 @@ struct Overlay {
 
 struct CameraRig {};                 // placeholder for the Cinematic editor
 
-// A water surface as a triangle mesh in world coordinates (the entity's world matrix is applied on top). The pass shades it with the river or sea normal
-// texture, the sky cube and the sun, and fades it by the depth of the water above the ground behind it.
+// A water surface as a triangle mesh in world coordinates (the entity's world matrix is applied on top). Drawn with the game's shaders (rigidriver
+// for a river, waterplane for the sea / lake plane, see libs/render/water_pass.cpp): the vertex is the river vertex shader's input - P0 = (x, y, z, across),
+// P1 = (u, v, flow, fade) - and the sea plane's vertex shader reads only the position.
 struct WaterVertex {
     float x, y, z;
+    float across;                    // river: metres from the centre line (the shader's P0.w); sea: 0
     float u, v;                      // river: u = metres across (centre 0), v = metres along the spline; sea: world x, z
-    float flow;                      // flow speed of the river there (1 = the file's value of the spline point scaled to texture units)
-    float fade;                      // 0..1 opacity of the end of a river (alpha_fade), 1 for the sea
+    float flow;                      // flow speed of the river there (the spline point's flow_speed)
+    float fade;                      // alpha_fade of the river's ends (0..1), 1 for the sea; the game's pixel shader does not read it
 };
 struct Water {
     std::vector<WaterVertex> verts;
     std::vector<uint32_t> indices;   // triangle list
     bool river = true;               // false: the sea / lake plane
-    float foam = 0.1f;               // foam at the banks (river points' foam_amount, averaged)
+    float foam = 0.1f;               // foam_amount of the river points, averaged (kept for the editor; the game's river shader has no foam)
     uint64_t version = 0;            // change it when the mesh changes
 };
 

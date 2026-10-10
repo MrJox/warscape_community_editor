@@ -2,7 +2,7 @@
 
 > **Status (2026-10-10, after Phase 4a / 4b and the read-only part of 6a; the user said go for Phase 4 and the links view).**
 > - Phases 0, 0b, 1, 2 done; Phase 3 first version done (blended ground, climate / season, debug views; open: normals, per-pixel pass, season mixing, in-game comparison, which the user postponed).
-> - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane, an own water pass) done; 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
+> - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane; since 2026-10-10 drawn by the game's own shaders) done; 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
 
 Written after the user's report on the Tile tool in `wce.exe`:
 
@@ -254,7 +254,7 @@ The `.ted` of `dunedain_city_osgiliath/minor` against the user's TEd screenshot:
 
 ## Phase 4 and the read-only links view: what was built (2026-10-10)
 - **4a spike** (`docs/re/water.md`): the river and water plane shaders read from their GLSL listings (inputs, textures, what the pixel shader does), the tile's spline data measured (Bezier chain, the landscape / freeform height rule with `terrain_offset`, widths, the tile sets that have a sea plane).
-- **4b rendering**: `Water` payload and `Kind::Water` in the scene; `libs/render/water_pass.cpp` (an own HLSL pass after the fog: scrolling normal map, fresnel between sky and body colour, sun glint, thickness-based opacity from the G-buffer depth, soft bank, foam); `TileDocument::rebuild_water` (rivers from the splines, the sea plane); Tile panel *water* check box; `tile_water`, `assert_water`. The game's own water shaders (refraction, exact fresnel and fog) are not reproduced.
+- **4b rendering**: `Water` payload and `Kind::Water` in the scene; `libs/render/water_pass.cpp` (first an own HLSL pass, replaced on 2026-10-10 by the game's `rigidriver` / `waterplane` / `waterrefraction` shaders: refraction copy, sea before the fog pass, river after it); `TileDocument::rebuild_water` (rivers from the splines, the sea plane); Tile panel *water* check box; `tile_water`, `assert_water`. Still open: the engine's river mesh uv convention, shadows on water, foam / ice, `g_refraction_depth` at run time (see `docs/re/water.md`).
 - **Links view** (6a, first part): `TileDocument::link_cells`, `cell_rect`, `rebuild_links` (cells draped on the ground, coloured by link set), Tile panel *Tile links* section, `tile_links`, `assert_links`, `assert_link_cell`; the cell-row convention measured (`docs/re/tile_links.md`).
 - **Gates**: `tile_water.txt` and `tile_links.txt` in `tile_check.sh` (two runs identical, on differs from off).
 - **Not done**: 4c (editing splines: points, tangents, width, foam, flow in the viewport and Inspector), 4d (water map, shallow / deep colouring from the ground type map), river ends blending with neighbours, ice, 6a's editors / validator / neighbour preview.

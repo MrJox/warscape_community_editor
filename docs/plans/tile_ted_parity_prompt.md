@@ -93,6 +93,13 @@ block at the top of `docs/plans/tile_ted_parity.md`; wait for the user's go. Do 
 - **Do not kill a running `wce.exe` of the user** (LNK1168 on link means one is running): build in the private tree.
 - **Commits:** on `master` of this repo only, no push, small commits that build, never skip hooks; end the message with
   the attribution line the harness gives you (the old prompt's `Opus 5.5` line is out of date).
+- **Rendering uses the game's own shaders (mandatory, user rule of 2026-10-10):** whatever the editor draws to show the
+  game's look (terrain, water, sky, effects) goes through the compiled shaders of the packs' `fxc/` folder
+  (`ShaderLibrary` / `ConstantBuffers`, `libs/render/water_pass.cpp` is the pattern), fed the inputs the engine feeds
+  them, with every unverified input marked ASSUMPTION in `docs/re/`. No look-alike HLSL, no CPU stand-ins for what the
+  game computes in a shader. Read the **DXBC disassembly** of the `dx11_*.fxc` (`cli/fxc_dump <dir> <out> <asm dir>`)
+  for orientation and constants: the packs' `glsl_sm_*` listings are the GL path and differ (e.g. the y flip of the
+  screen-to-NDC step). Editor overlays (markers, gizmos, link cells, outlines) are not game renders.
 - **Third-party code:** nothing new without asking (ImGui, ImGuizmo, zlib are approved).
 - **No machine paths in code**, tool paths from `%LOCALAPPDATA%\awe\wce.ini` / environment variables; scripts may
   default to this machine but accept overrides.
