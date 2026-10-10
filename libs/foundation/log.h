@@ -2,6 +2,7 @@
 // Process-wide log: a ring of the last entries (the editor's Log panel shows them) plus an optional echo to stderr (CLI runs, scripts).
 // Thread-safe; messages are UTF-8.
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -31,12 +32,15 @@ public:
     size_t count(LogLevel level) const;                // entries of that level currently kept
     void clear();
     void echo_to_stderr(bool on) { echo_ = on; }
+    // Also writes every entry, flushed, to this file (truncated now): what an interactive run logged stays readable after it ends. Returns false when it cannot be opened.
+    bool open_file(const std::string& path);
 
 private:
     mutable std::mutex mutex_;
     std::deque<LogEntry> entries_;
     uint64_t sequence_ = 0;
     bool echo_ = false;
+    std::FILE* file_ = nullptr;
     static constexpr size_t kKeep = 2000;
 };
 

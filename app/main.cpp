@@ -15,6 +15,7 @@
 //                           These flags (or WCE_FOREGROUND=1/0) override either default.
 #include "foundation/log.h"
 #include "foundation/process.h"
+#include "foundation/settings.h"
 #include "foundation/profile.h"
 #include "editor/editor.h"
 #include "render/gpu_adapter.h"
@@ -35,6 +36,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -175,6 +177,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     ImGui_ImplWin32_EnableDpiAwareness();
     const Options opt = parse_args();
     if (!opt.shot.empty() || !opt.capture_path.empty() || !opt.script_text.empty()) wce::Log::instance().echo_to_stderr(true);
+    else {
+        const std::filesystem::path log_path = wce::Settings::default_dir() / "last_run.log";
+        std::error_code ec;
+        std::filesystem::create_directories(log_path.parent_path(), ec);
+        if (ec || !wce::Log::instance().open_file(wce::narrow(log_path.wstring()))) {
+            const std::wstring message = L"WCE could not create its interactive log at " + log_path.wstring() + L"\n";
+            OutputDebugStringW(message.c_str());
+        }
+    }
 
     WNDCLASSEXW wc{sizeof wc, CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"WarscapeCommunityEditor", nullptr};
     RegisterClassExW(&wc);

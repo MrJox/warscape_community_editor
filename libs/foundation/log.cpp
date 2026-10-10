@@ -12,8 +12,19 @@ Log& Log::instance() {
 void Log::add(LogLevel level, std::string text) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (echo_) std::fprintf(stderr, "[%s] %s\n", level == LogLevel::Error ? "error" : level == LogLevel::Warning ? "warn" : "info", text.c_str());
+    if (file_) {
+        std::fprintf(file_, "[%s] %s\n", level == LogLevel::Error ? "error" : level == LogLevel::Warning ? "warn" : "info", text.c_str());
+        std::fflush(file_);
+    }
     entries_.push_back({++sequence_, level, std::move(text)});
     while (entries_.size() > kKeep) entries_.pop_front();
+}
+
+bool Log::open_file(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (file_) std::fclose(file_);
+    file_ = std::fopen(path.c_str(), "wb");
+    return file_ != nullptr;
 }
 
 std::vector<LogEntry> Log::entries() const {
