@@ -59,6 +59,29 @@ struct TerrainSkin {
     uint64_t id = 0;
 };
 
+// The game's own terrain colour pipeline (libs/render/terrain_pass.cpp, docs/re/terrain.md): the per-tile maps and the texture set its shaders (rigidterrain
+// ps30_blend and ps30_terrain_to_gbuffer_ss) read. Images are RGBA8 with row 0 at the rectangle's lowest z (u along +x), the layout of BOB's blend.dds / index.dds /
+// normal.dds. Texture slot = 4 * group + variation of the tile entry's TEXTURE_GROUP (red, green, blue, alpha).
+struct TerrainImage {
+    uint32_t w = 0, h = 0;
+    std::shared_ptr<const std::vector<uint8_t>> rgba;   // shared: a height stroke only replaces the normal map
+};
+struct TerrainMaterial {
+    double x0 = 0, z0 = 0, x1 = 1, z1 = 1;   // the rectangle the maps cover, world metres: the tile with its border
+    double y0 = -100, y1 = 1000;             // the vertical extent of the box that draws it
+    TerrainImage blend;                      // r g b a = weights of the four groups (sum 1)
+    TerrainImage index;                      // r g b a = per group the selector of its four variations: (weighted mean variation) / 3
+    TerrainImage normal;                     // .a = x, .g = z of the surface normal * 0.5 + 0.5 (the two-channel normal the shader reads as .wy); follows the heights
+    uint64_t normal_id = 0;                  // changes when `normal` does (the rest of the material is then reused)
+    std::string diffuse[16], normal_tex[16]; // pack paths per slot; empty = a neutral slice
+    float pixel_scale[4] = {40.1f, 40.1f, 40.1f, 40.1f};      // metres per repeat per group (g_blend_pixel_scale_array[].x)
+    float outfield_scale[4] = {1200.1f, 1200.1f, 1200.1f, 1200.1f};   // .y
+    float mid_strength[4] = {1, 1, 1, 1};                      // .z, mid_distance_strength
+    float smoothness[16] = {}, reflectivity[16] = {};          // s_light_params per slot
+    std::string detail_colour, detail_normal;                  // the climate's medium_detail_map_colour / _normal
+    uint64_t id = 0;                         // changes with the content
+};
+
 struct Terrain {
     int nx = 2, nz = 2;
     float origin_x = -1, origin_z = -1, step = 2;
@@ -67,7 +90,8 @@ struct Terrain {
     float tile_metres = 8;
     bool casts_shadow = false;       // receiver only
     bool lod = false;                // patches of 64 x 64 cells switch to coarser index buffers with distance
-    std::shared_ptr<const TerrainSkin> skin;   // when set, each patch gets its piece of this image instead of the tiled diffuse
+    std::shared_ptr<const TerrainSkin> skin;   // when set, each patch gets its piece of this image instead of the tiled diffuse (the debug views of the tile maps)
+    std::shared_ptr<const TerrainMaterial> material;   // when set, the ground is drawn by the game's terrain shaders (the legacy patches stay for picking, shadows, the environment cube)
     uint64_t version = 0;            // change it when heights or the texture change: the renderer rebuilds the mesh
 
     static Terrain flat(float half_size, const std::string& diffuse, float tile_metres);

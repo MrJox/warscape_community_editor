@@ -1,6 +1,7 @@
 #include "foundation/thread_pool.h"
 #include "foundation/profile.h"
 #include "tile/tile_document.h"
+#include "tile/terrain_material.h"
 
 #include "formats/rmv2.h"
 #include "foundation/log.h"
@@ -767,12 +768,14 @@ void TileDocument::set_terrain_look(const TerrainLook& look) {
 }
 
 // The skin of the terrain payload for the current look: baked once per (climate, season) and kept until the look changes.
+// The debug views of the tile's maps (TEd's blend groups, ground types, protection) are images over the ground; the game-look colour is the material below.
 std::shared_ptr<const TerrainSkin> TileDocument::ground_skin() {
     TileProject& p = *project_;
     if (!look_.blended) {
         terrain_note_ = "plain tiled texture (blend off)";
         return nullptr;
     }
+    if (look_.view == TerrainView::Colour) return nullptr;   // the material's business (ground_material); no CPU stand-in for the game's blend
     if (skin_ && skin_look_ == look_) return skin_;
     skin_.reset();
     skin_baked_.reset();
@@ -819,6 +822,63 @@ std::shared_ptr<const TerrainSkin> TileDocument::ground_skin() {
     terrain_note_ = (look_.view == TerrainView::Colour ? "blended ground: " : "debug view, ") + baked->report;
     Log::info("terrain: " + terrain_note_);
     return skin_;
+}
+
+// The ground for the game's terrain shaders: the blend / index maps and the climate's texture list are made once per look, the normal map from the current heights
+// every time (a stroke changes it).
+std::shared_ptr<const TerrainMaterial> TileDocument::ground_material(const Terrain& t) {
+    TileProject& p = *project_;
+    ground_info_ = GroundInfo{};
+    if (!look_.blended || look_.view != TerrainView::Colour) {
+        material_base_.reset();
+        return nullptr;
+    }
+    if (!material_base_ || !(material_look_ == look_)) {
+        material_base_.reset();
+        material_look_ = look_;
+        if (!p.has_height || !p.has_entry() || !p.bordered()) {
+            terrain_note_ = "plain tiled texture (the tile has no database entry or no height map: no blend map area)";
+            return nullptr;
+        }
+        if (!vfs_) {
+            terrain_note_ = "plain tiled texture (no game files)";
+            return nullptr;
+        }
+        MaterialRequest rq;
+        rq.folder = p.dir;
+        rq.groups = p.entry->texture_group();
+        const double b = p.border_m();
+        rq.x0 = -b;
+        rq.z0 = -b;
+        rq.x1 = extent_x() + b;
+        rq.z1 = extent_z() + b;
+        rq.y0 = p.height->min_height();
+        rq.y1 = p.height->min_height() + p.height->scale();
+        rq.look = look_;
+        rq.id = ++material_id_;
+        std::string why, report;
+        material_base_ = build_terrain_material(rq, climates(), *vfs_, &why, &report);
+        if (!material_base_) {
+            terrain_note_ = "plain tiled texture: " + why;
+            Log::info("terrain: " + terrain_note_);
+            return nullptr;
+        }
+        terrain_note_ = "blended ground: " + report;
+        Log::info("terrain: " + terrain_note_);
+        const Climate* c = climates().find(look_.climate);
+        ground_info_base_.game_shaders = true;
+        ground_info_base_.climate = c ? c->name : "default";
+        ground_info_base_.season = look_.season;
+        int layers = 0;
+        for (const std::string& d : material_base_->diffuse) layers += d.empty() ? 0 : 1;
+        ground_info_base_.layers = layers;
+    }
+    ground_info_ = ground_info_base_;
+    auto m = std::make_shared<TerrainMaterial>(*material_base_);
+    const double k = p.mpp_z() / p.mpp_x();
+    m->normal = terrain_normal_image(t.heights, t.nx, t.nz, t.step, t.step * k, m->blend.w, m->blend.h);
+    m->normal_id = ++normal_id_;
+    return m;
 }
 
 // ---- water
@@ -1103,7 +1163,8 @@ void TileDocument::update_terrain(RenderScene& scene, bool first) {
                 for (int i = 0; i < t.nx; ++i) t.heights[j * size_t(t.nx) + size_t(i)] = float(hf.metres(uint32_t(std::min<int>(i * terrain_stride_, int(hf.width()) - 1)), uint32_t(std::min<int>(int(j) * terrain_stride_, int(hf.height()) - 1))));
         });
         t.lod = true;
-        t.skin = ground_skin();
+        t.material = ground_material(t);
+        if (!t.material) t.skin = ground_skin();
         float4x4 w;
         w.m[2][2] = k;
         t.version = ++terrain_version_;

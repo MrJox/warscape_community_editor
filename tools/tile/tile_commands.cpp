@@ -790,28 +790,18 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         if (!need(d) || a.empty() || !number(a[0], n)) return fail("usage: assert_water <pieces n>");
         return d->water_pieces() == size_t(n) ? ok(d->water_note()) : fail(std::to_string(d->water_pieces()) + " water meshes: " + d->water_note());
     });
-    commands.add("assert_ground", "assert_ground blended|flat [layers n] [climate]", "test: the ground is the baked blend (with this many texture layers) or the plain texture", [need, fail, ok](const CommandRegistry::Args& a) {
+    commands.add("assert_ground", "assert_ground blended|flat [layers n] [climate]", "test: the ground is drawn by the game's terrain shaders (with this many textures in the climate's set) or is the plain texture / a debug view", [need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d) || a.empty()) return fail("usage: assert_ground blended|flat [layers n] [climate]");
-        const BakedColour* b = d->baked_colour();
-        if (a[0] == "flat") return b == nullptr || !d->terrain_look().blended ? ok() : fail("the ground is blended: " + d->terrain_note());
-        if (!b) return fail("the ground is not blended: " + d->terrain_note());
+        const BakedColour* b = d->baked_colour();   // a debug view's image
+        const TileDocument::GroundInfo& g = d->ground_info();
+        if (a[0] == "flat") return !g.game_shaders && b == nullptr ? ok() : fail("the ground is blended: " + d->terrain_note());
+        if (!g.game_shaders && !b) return fail("the ground is not blended: " + d->terrain_note());
+        if (!g.game_shaders) return ok(d->terrain_note());   // a debug view of the maps: blended in the sense of the look
         float n;
-        if (a.size() > 1 && number(a[1], n) && b->layers != int(n)) return fail(std::to_string(b->layers) + " layers, expected " + a[1]);
-        if (a.size() > 2 && b->climate != a[2]) return fail("climate " + b->climate + ", expected " + a[2]);
+        if (a.size() > 1 && number(a[1], n) && g.layers != int(n)) return fail(std::to_string(g.layers) + " textures, expected " + a[1]);
+        if (a.size() > 2 && g.climate != a[2]) return fail("climate " + g.climate + ", expected " + a[2]);
         return ok(d->terrain_note());
-    });
-    commands.add("assert_ground_pixel", "assert_ground_pixel <x m> <z m> <r> <g> <b> [tolerance]", "test: the baked ground colour at a world point (0..255 per channel)", [need, fail, ok](const CommandRegistry::Args& a) {
-        TileDocument* d;
-        float x, z, r, g, bl, tol = 3;
-        if (!need(d) || a.size() < 5 || !number(a[0], x) || !number(a[1], z) || !number(a[2], r) || !number(a[3], g) || !number(a[4], bl)) return fail("usage: assert_ground_pixel <x m> <z m> <r> <g> <b> [tolerance]");
-        if (a.size() > 5) number(a[5], tol);
-        const BakedColour* b = d->baked_colour();
-        if (!b) return fail("the ground is not blended");
-        const int ix = std::clamp(int((x - b->x0) / b->w_m * b->w), 0, int(b->w) - 1), iz = std::clamp(int((z - b->z0) / b->h_m * b->h), 0, int(b->h) - 1);
-        const uint8_t* p = &b->rgba[(size_t(iz) * b->w + size_t(ix)) * 4];
-        if (std::fabs(p[0] - r) > tol || std::fabs(p[1] - g) > tol || std::fabs(p[2] - bl) > tol) return fail("pixel is " + std::to_string(p[0]) + " " + std::to_string(p[1]) + " " + std::to_string(p[2]));
-        return ok();
     });
 
     commands.add("assert_instances", "assert_instances <n>", "test: the tile has n instances", [need, fail, ok](const CommandRegistry::Args& a) {

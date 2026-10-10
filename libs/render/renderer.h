@@ -187,6 +187,38 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> river_inst_vb_, sea_inst_vb_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> water_ds_;
     void water_refraction();
+    // Terrain colour with the game's shaders (terrain_pass.cpp)
+    struct TerrainGeo {
+        struct Patch { float bmin[3], bmax[3]; int pi, pj, cx, cz; };
+        uint64_t version = ~0ull;
+        int nx = 0, nz = 0, tex = 0;
+        float step = 1, ox = 0, oz = 0;
+        float kz = 1, tx = 0, ty = 0, tz = 0;   // the entity's transform: world z = kz * z + tz, world x / y shifted by tx / ty (refreshed every frame)
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> height_srv;
+        std::vector<Patch> patches;
+    };
+    struct TerrainMatGpu {
+        Texture blend, index, normal, alpha, lf_normal, black, diffuse, normals;
+        uint64_t normal_id = 0;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> light_params;
+    };
+    bool prepare_terrain_materials(const RenderScene& scene);
+    void pass_terrain_material(const RenderScene& scene);
+    void make_terrain_states();
+    void build_terrain_geo(EntityId id, const Terrain& t);
+    void build_terrain_material(const TerrainMaterial& m);
+    ID3D11Buffer* terrain_grid_ib(int cx, int cz);
+    std::map<EntityId, TerrainGeo> terrain_geo_;
+    std::map<uint64_t, TerrainMatGpu> terrain_mat_;
+    std::map<std::pair<int, int>, Microsoft::WRL::ComPtr<ID3D11Buffer>> terrain_grid_ib_;
+    std::vector<EntityId> terrain_mat_entities_;
+    bool terrain_mat_active_ = false, terrain_mat_failed_ = false;
+    Target terrain_zw_, terrain_viewz_, terrain_acc_[3];
+    int terrain_rt_w_ = 0, terrain_rt_h_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> terrain_grid_vb_, box_vb_, box_ib_, resolve_vb_, terrain_inst_vb_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> ds_terrain_depth_, ds_terrain_equal_, ds_terrain_stencil_, ds_terrain_resolve_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> bs_terrain_add_;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rs_front_cull_;
     TextureCache textures_;
     ModelCache models_;
     std::unique_ptr<GpuTimer> gpu_timer_;
@@ -264,7 +296,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cube_vb_, cube_ib_, instance_vb_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> instance_ids_tex_;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> instance_ids_srv_, white_srv_, black_srv_, shadow_srv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> instance_ids_srv_, white_srv_, black_srv_, overlay_none_srv_, shadow_srv_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> shadow_tex_;
     // Cascaded shadow atlas: 2048^2, four 1024^2 quadrants (layout from the game's g_split_uv_texture_bounds).
     static constexpr int kShadowSize = 2048;

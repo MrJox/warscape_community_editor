@@ -1,0 +1,110 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Configure WCE (Visual Studio 2022 x64)",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build",
+                "-G", "Visual Studio 17 2022",
+                "-A", "x64"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build WCE (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "wce"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build WCE (Release)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Release", "--target", "wce"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build All (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build All (Release)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Release"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build foundation_check (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "foundation_check"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build editor_check (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "editor_check"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build unit_tests (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "unit_tests"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
+            "dependsOrder": "sequence",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Run fast tests (CTest)",
+            "type": "process",
+            "command": "ctest",
+            "args": ["--test-dir", "${workspaceFolder}/build", "-C", "Debug", "-L", "fast", "--output-on-failure"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Build All (Debug)",
+            "dependsOrder": "sequence",
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run all tests (CTest)",
+            "type": "process",
+            "command": "ctest",
+            "args": ["--test-dir", "${workspaceFolder}/build", "-C", "Debug", "--output-on-failure"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Build All (Debug)",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        }
+    ]
+}

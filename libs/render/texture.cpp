@@ -1,5 +1,7 @@
 #include "render/texture.h"
 
+#include "foundation/log.h"
+
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -249,6 +251,89 @@ DdsStreamPlan plan_dds_stream(const std::vector<uint8_t>& header, size_t file_si
 Texture load_dds_tail(ID3D11Device* dev, const std::vector<uint8_t>& header, const std::vector<uint8_t>& tail, const DdsStreamPlan& plan, bool srgb) {
     const DdsLayout l = parse_dds_layout(header.data(), header.size());
     return build_dds(dev, l, tail.data(), tail.size(), plan.tail_offset, plan.skip, srgb);
+}
+
+Texture load_dds_array(ID3D11Device* dev, const std::vector<const std::vector<uint8_t>*>& files, bool srgb, bool flat_normal, int* mismatched) {
+    std::vector<DdsLayout> layouts(files.size());
+    std::vector<bool> usable(files.size(), false);
+    int ref = -1;
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (!files[i]) continue;
+        try {
+            layouts[i] = parse_dds_layout(files[i]->data(), files[i]->size());
+            const DdsLayout& l = layouts[i];
+            if (l.cube || l.volume || l.array > 1) continue;
+            if (ref < 0) { ref = int(i); usable[i] = true; continue; }
+            const DdsLayout& r = layouts[size_t(ref)];
+            usable[i] = l.width == r.width && l.height == r.height && l.mips == r.mips && l.fmt == r.fmt;
+        } catch (const std::exception&) {}
+    }
+    Texture t;
+    if (ref < 0) return t;
+    const DdsLayout& r = layouts[size_t(ref)];
+    if (mismatched)
+        for (size_t i = 0; i < files.size(); ++i)
+            if (files[i] && !usable[i]) ++*mismatched;
+    // the neutral slice: BC3 blocks of one colour (grey, or the flat normal: alpha and green at one half), every mip the same bytes per block
+    std::vector<std::vector<uint8_t>> neutral(r.mips);
+    {
+        uint32_t w = r.width, h = r.height;
+        for (uint32_t m = 0; m < r.mips; ++m) {
+            size_t pitch, size;
+            mip_size(r, w, h, pitch, size);
+            neutral[m].resize(size);
+            if (r.fmt == DXGI_FORMAT_BC3_UNORM) {
+                static const uint8_t grey[16] = {255, 255, 0, 0, 0, 0, 0, 0, 0xEF, 0x7B, 0xEF, 0x7B, 0, 0, 0, 0};
+                static const uint8_t nrm[16] = {127, 127, 0, 0, 0, 0, 0, 0, 0x00, 0x04, 0xE0, 0x03, 0xFF, 0xFF, 0xFF, 0xFF};   // (alpha 127 + 1/510) * 2 - 1 = 0; green 2/3 of the way from 129.5 to 125.5 = 126.8 -> -0.001
+                for (size_t b = 0; b + 16 <= size; b += 16) std::memcpy(&neutral[m][b], flat_normal ? nrm : grey, 16);
+            } else if (usable[size_t(ref)]) {
+                std::fill(neutral[m].begin(), neutral[m].end(), uint8_t(128));
+            }
+            w = std::max(1u, w / 2);
+            h = std::max(1u, h / 2);
+        }
+    }
+    std::vector<D3D11_SUBRESOURCE_DATA> subs;
+    for (size_t i = 0; i < files.size(); ++i) {
+        uint32_t w = r.width, h = r.height;
+        size_t p = layouts[i].data;
+        for (uint32_t m = 0; m < r.mips; ++m) {
+            size_t pitch, size;
+            mip_size(r, w, h, pitch, size);
+            if (usable[i] && p + size <= files[i]->size()) subs.push_back({files[i]->data() + p, UINT(pitch), UINT(size)});
+            else subs.push_back({neutral[m].data(), UINT(pitch), UINT(size)});
+            p += size;
+            w = std::max(1u, w / 2);
+            h = std::max(1u, h / 2);
+        }
+    }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = r.width;
+    td.Height = r.height;
+    td.MipLevels = r.mips;
+    td.ArraySize = UINT(files.size());
+    td.Format = srgb ? to_typeless(r.fmt) : r.fmt;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    if (const HRESULT hr = dev->CreateTexture2D(&td, subs.data(), &tex); FAILED(hr)) {
+        char b[160];
+        std::snprintf(b, sizeof b, "texture array %ux%u x%zu, %u mips, format %d: CreateTexture2D 0x%08x", r.width, r.height, files.size(), r.mips, int(td.Format), unsigned(hr));
+        Log::warn(b);
+        return t;
+    }
+    t.width = r.width;
+    t.height = r.height;
+    t.mips = r.mips;
+    t.format = srgb ? to_srgb(r.fmt) : r.fmt;
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Format = t.format;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    sd.Texture2DArray.MipLevels = r.mips;
+    sd.Texture2DArray.ArraySize = UINT(files.size());
+    if (FAILED(dev->CreateShaderResourceView(tex.Get(), &sd, &t.srv))) t.srv.Reset();
+    return t;
 }
 
 Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba) {

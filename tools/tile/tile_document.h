@@ -127,7 +127,10 @@ public:
     void set_terrain_look(const TerrainLook& look);
     const ClimateList& climates() const;                         // the kit's _settings.xml, read on first use (empty outside a kit)
     const std::string& terrain_note() const { return terrain_note_; }   // what the colour is, or why it is the plain texture
-    const BakedColour* baked_colour() const { return skin_baked_.get(); }
+    const BakedColour* baked_colour() const { return skin_baked_.get(); }   // the debug view's image (blend groups, ground types, protection)
+    // What the ground is drawn with: the game's terrain shaders (the blend / index / normal maps and the climate's textures) when true.
+    struct GroundInfo { bool game_shaders = false; int layers = 0; std::string climate, season; };
+    const GroundInfo& ground_info() const { return ground_info_; }
 
     // ---- display
     TileDisplay& display() { return display_; }
@@ -346,6 +349,11 @@ private:
     mutable ClimateList climates_;
     mutable bool climates_loaded_ = false;
     std::shared_ptr<const TerrainSkin> ground_skin();
+    std::shared_ptr<const TerrainMaterial> ground_material(const Terrain& t);   // the material for the current look, its normal map from `t`'s heights
+    std::shared_ptr<TerrainMaterial> material_base_;
+    TerrainLook material_look_;
+    uint64_t material_id_ = 0, normal_id_ = 0;
+    GroundInfo ground_info_, ground_info_base_;
 
     // outline cache
     mutable OutlinerNode outline_cache_;

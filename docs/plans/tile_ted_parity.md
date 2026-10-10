@@ -1,7 +1,7 @@
 # Tile tool: TEd feature parity plan (2026-10-09)
 
 > **Status (2026-10-10, after Phase 4a / 4b and the read-only part of 6a; the user said go for Phase 4 and the links view).**
-> - Phases 0, 0b, 1, 2 done; Phase 3 first version done (blended ground, climate / season, debug views; open: normals, per-pixel pass, season mixing, in-game comparison, which the user postponed).
+> - Phases 0, 0b, 1, 2 done; Phase 3 done in two steps: the first version baked the colour on the CPU, and on 2026-10-10 (rule: everything rendered uses the game's shaders) the ground is drawn by the game's own terrain passes (`rigidterrain` `vs30_geom_new` + `ps30_geom` / `ps_depth`, `vs30_blend` + `ps30_blend`, `ps30_terrain_to_gbuffer_ss`; `docs/re/terrain.md`, "The tool's terrain pass"). Open: neighbour tiles / alpha feather, far maps, season mixing, in-game comparison (the user postponed it).
 > - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane; since 2026-10-10 drawn by the game's own shaders) done; 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
 
 Written after the user's report on the Tile tool in `wce.exe`:
@@ -249,6 +249,7 @@ The `.ted` of `dunedain_city_osgiliath/minor` against the user's TEd screenshot:
 - **3b climate model**: the Tile panel's Ground section (blended on / off, climate, season, view) and the commands `tile_terrain`, `tile_ground_view`; the climate is a tool setting (default ROME_Continental) because the tile does not store it.
 - **3c first pass**: `tools/tile/terrain_bake.*` bakes the blend of the climate's textures into one image over the bordered tile (4 texels per metre, 2048 at most); `Terrain::skin` carries it to the renderer, which gives each 64 x 64 patch its own texture (`ModelCache::terrain`, `make_rgba_texture`). It is the CPU stand-in for the game's blend pass with the same inputs; what it lacks is listed in `docs/re/terrain.md`. Opening a tile costs about a second more (osgiliath 8 x 8: 15 layers, 2048 x 2048 texels).
 - **3d debug views**: blend groups, ground types, protection.
+- **Replaced on 2026-10-10 by the game's shaders** (`libs/render/terrain_pass.cpp`, `tools/tile/terrain_material.*`): the CPU bake only draws TEd's debug views now; the ground colour, the normals (from the live heights), the mid-distance detail and the light parameters come from the game's blend and resolve shaders fed the tile's blend / index / normal maps and the climate's texture arrays; `assert_ground_pixel` is gone (the colour exists only on the GPU; the gate compares captures).
 - **Gates**: `terrain_check` (fast: decoder, climates, a real bake), `tile_terrain.txt` in `tile_check.sh` (two runs, identical captures, blended again = the first one, the looks differ). Two tile shots of `scripts/shots.sh` (monte_rosa, Rome) now show the blended ground: re-baselined, only the terrain changed.
 - **Not done**: 3c's exact per-pixel pass (normals, detail, light params, far blend, edge blend with neighbours: they need the engine's blend state and sampler data, `docs/re/terrain.md` open items), 3e season mixing, and the gate against an in-game reference (none supplied: the plan asks for one).
 

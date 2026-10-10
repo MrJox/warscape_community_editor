@@ -183,6 +183,7 @@ Renderer::Renderer(ID3D11Device* dev, ID3D11DeviceContext* ctx, IVfs& vfs) : dev
     };
     solid(0xffffffff, white_srv_);
     solid(0x00000000, black_srv_);
+    solid(0xff000000, overlay_none_srv_);   // no overlay: colour 0, alpha 1 (the lighting of terrain pixels, material id bit 0, is overlay.rgb + lit * overlay.a)
     {   // Placeholder shadow map: depth 1 everywhere (fully lit) until the cascade pass exists.
         float one = 1.0f;
         D3D11_TEXTURE2D_DESC td{1, 1, 1, 1, DXGI_FORMAT_R32_FLOAT, {1, 0}, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE};
@@ -735,6 +736,7 @@ void Renderer::pass_gbuffer() {
     UINT firsts[2] = {0, 0};
     const DrawSet::View vw = camera_view(env_pass_ ? 0.5f : 1.0f);
     for (int k = 0; k < 2; ++k) sets[k]->cull(vw, *viss[k]);
+    if (terrain_mat_active_ && !env_pass_) *viss[0] = DrawSet::Visible{};   // the ground is drawn by the terrain pass (game shaders), not as flat rigid patches
     upload_instances(sets, viss, firsts);
     for (int k = 0; k < 2; ++k) {
         ++draw_stats_.views;
@@ -821,7 +823,7 @@ void Renderer::pass_directional_light() {
     for (int i = 0; i < 4; ++i) bind_srv(ctx_, *ps, "gbuffer_channel_" + std::to_string(i + 1) + "_sampler", gb_[i].srv.Get());
     bind_srv(ctx_, *ps, "s_ssao", ao_result_ ? ao_result_ : white_srv_.Get());
     bind_srv(ctx_, *ps, "s_environment", (env_pass_ || !env_valid_) ? sky_cube_srv_.Get() : env_cube_srv_.Get());
-    bind_srv(ctx_, *ps, "s_overlay", black_srv_.Get());
+    bind_srv(ctx_, *ps, "s_overlay", overlay_none_srv_.Get());
     bind_srv(ctx_, *ps, "s_shroud", white_srv_.Get());
     bind_srv(ctx_, *ps, "g_tShadowBuffer_SM50", shadow_atlas_.srv.Get());
     for (auto& [name, slot] : ps->samplers) ctx_->PSSetSamplers(slot, 1, s_clamp_point_.GetAddressOf());
@@ -1737,8 +1739,13 @@ void Renderer::render(const RenderScene& scene, const ViewParams& view_params, R
     ctx_->RSSetViewports(1, &vp);
     ctx_->OMSetBlendState(bs_opaque_.Get(), nullptr, 0xffffffff);
 
+    terrain_mat_active_ = prepare_terrain_materials(scene);
     gpu_timer_->mark("gbuffer");
     { WCE_PROF("render.gbuffer"); pass_gbuffer(); }
+    if (terrain_mat_active_) {
+        gpu_timer_->mark("terrain");
+        pass_terrain_material(scene);
+    }
     gpu_timer_->mark("depth + ssao");
     analyse_depth(cam);
     pass_ssao(cam);

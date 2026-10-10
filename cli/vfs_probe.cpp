@@ -1,5 +1,5 @@
 // Mounts the game packs and prints what the editor would see.
-//   vfs_probe [--backend auto|server|cli] [path-to-fetch...]
+//   vfs_probe [--backend auto|server|cli] [--find <substring>]... [path-to-fetch...]    (--find lists the paths containing every substring, with the pack that owns each)
 //   vfs_probe --compare [--per-type N] [--time]    (--time adds "timing:" lines; without it the output is the same on every run)
 //
 // --compare is the Phase 2 gate: it mounts the packs once through rpfm_server and once through rpfm_cli, each into its own empty cache
@@ -114,11 +114,12 @@ int main(int argc, char** argv) {
         bool do_compare = false;
         int per_type = 2;
         bool times = false;
-        std::vector<std::string> fetch;
+        std::vector<std::string> fetch, finds;
         for (int i = 1; i < argc; ++i) {
             if (!std::strcmp(argv[i], "--compare")) do_compare = true;
             else if (!std::strcmp(argv[i], "--time")) times = true;
             else if (!std::strcmp(argv[i], "--per-type") && i + 1 < argc) per_type = std::atoi(argv[++i]);
+            else if (!std::strcmp(argv[i], "--find") && i + 1 < argc) finds.push_back(argv[++i]);
             else if (!std::strcmp(argv[i], "--backend") && i + 1 < argc) {
                 std::string m = argv[++i];
                 cfg.backend = m == "server" ? Vfs::BackendMode::Server : m == "cli" ? Vfs::BackendMode::Cli : Vfs::BackendMode::Auto;
@@ -136,6 +137,12 @@ int main(int argc, char** argv) {
         std::printf(".environment %zu, .lighting %zu, vfx xml %zu, fxc %zu, building rmv2 %zu\n",
                     vfs.list("", ".environment").size(), vfs.list("", ".lighting").size(), vfs.list("vfx/", ".xml").size(),
                     vfs.list("fxc/", ".fxc").size(), vfs.list("rigidmodels/buildings/", ".rigid_model_v2").size());
+        if (!finds.empty())
+            for (const auto& [path, pack] : vfs.files()) {
+                bool all = true;
+                for (const std::string& f : finds) all = all && path.find(f) != std::string::npos;
+                if (all) std::printf("find: %s  (%s)\n", path.c_str(), vfs.packs()[size_t(pack)].name.c_str());
+            }
         for (const std::string& f : fetch) {
             auto t1 = std::chrono::steady_clock::now();
             auto o = vfs.owner(f);

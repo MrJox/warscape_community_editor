@@ -34,6 +34,10 @@ struct DdsStreamPlan {
 };
 DdsStreamPlan plan_dds_stream(const std::vector<uint8_t>& header, size_t file_size, uint32_t max_dim);
 Texture load_dds_tail(ID3D11Device* dev, const std::vector<uint8_t>& header, const std::vector<uint8_t>& tail, const DdsStreamPlan& plan, bool srgb); // throws
+// A 2D texture array from DDS files (the terrain's diffuse / normal arrays: every slice the same size, format and mip count, loaded whole, no streaming). A null
+// entry, an unreadable file or one that does not match the first usable file is filled with a neutral BC3 slice: mid grey (`flat_normal` false) or a flat two-channel
+// normal. `mismatched` (optional) counts the files that were replaced although given. Empty srv when no file is usable.
+Texture load_dds_array(ID3D11Device* dev, const std::vector<const std::vector<uint8_t>*>& files, bool srgb, bool flat_normal, int* mismatched = nullptr);
 Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba);
 // An RGBA8 image (w * h * 4 bytes) with a box-filtered mip chain down to 1 x 1; sRGB view when `srgb`. Thread-safe like the device. Empty srv on failure.
 Texture make_rgba_texture(ID3D11Device* dev, uint32_t w, uint32_t h, const uint8_t* rgba, bool srgb);

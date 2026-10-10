@@ -15,6 +15,8 @@ struct ClimateTexture {
     double blend_pixel_scale = 40.1;         // metres per repeat of the texture inside the tile
     double outfield_blend_pixel_scale = 1200.1;
     double mid_distance_strength = 1.0;
+    double lerp_smoothness[4] = {0.1, 0.1, 0.1, 0.1};        // per variation: the game's light parameters of the texture (what ps30_blend reads from s_light_params)
+    double lerp_reflectivity[4] = {0.009, 0.009, 0.009, 0.009};
 };
 
 struct Climate {

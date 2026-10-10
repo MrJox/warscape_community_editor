@@ -55,6 +55,10 @@ ClimateList ClimateList::parse(const std::vector<uint8_t>& bytes) {
                 ct.blend_pixel_scale = num(doc, t, "blend_pixel_scale", ct.blend_pixel_scale);
                 ct.outfield_blend_pixel_scale = num(doc, t, "outfield_blend_pixel_scale", ct.outfield_blend_pixel_scale);
                 ct.mid_distance_strength = num(doc, t, "mid_distance_strength", ct.mid_distance_strength);
+                for (int v = 0; v < 4; ++v) {
+                    ct.lerp_smoothness[v] = num(doc, t, ("lerp_smoothness" + std::to_string(v)).c_str(), ct.lerp_smoothness[v]);
+                    ct.lerp_reflectivity[v] = num(doc, t, ("lerp_reflectivity" + std::to_string(v)).c_str(), ct.lerp_reflectivity[v]);
+                }
                 c.textures.push_back(std::move(ct));
             }
         }
