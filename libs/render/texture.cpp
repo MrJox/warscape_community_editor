@@ -269,4 +269,47 @@ Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba) {
     return t;
 }
 
+Texture make_rgba_texture(ID3D11Device* dev, uint32_t w, uint32_t h, const uint8_t* rgba, bool srgb) {
+    Texture t;
+    if (!w || !h) return t;
+    std::vector<std::vector<uint8_t>> levels;
+    levels.emplace_back(rgba, rgba + size_t(w) * h * 4);
+    std::vector<uint32_t> lw{w}, lh{h};
+    while (lw.back() > 1 || lh.back() > 1) {
+        const uint32_t pw = lw.back(), ph = lh.back(), nw = std::max(1u, pw / 2), nh = std::max(1u, ph / 2);
+        std::vector<uint8_t> next(size_t(nw) * nh * 4);
+        const std::vector<uint8_t>& src = levels.back();
+        for (uint32_t y = 0; y < nh; ++y)
+            for (uint32_t x = 0; x < nw; ++x) {
+                const uint32_t x0 = std::min(2 * x, pw - 1), x1 = std::min(2 * x + 1, pw - 1), y0 = std::min(2 * y, ph - 1), y1 = std::min(2 * y + 1, ph - 1);
+                for (int k = 0; k < 4; ++k) {
+                    const uint32_t s = src[(size_t(y0) * pw + x0) * 4 + size_t(k)] + src[(size_t(y0) * pw + x1) * 4 + size_t(k)] + src[(size_t(y1) * pw + x0) * 4 + size_t(k)] + src[(size_t(y1) * pw + x1) * 4 + size_t(k)];
+                    next[(size_t(y) * nw + x) * 4 + size_t(k)] = uint8_t((s + 2) / 4);
+                }
+            }
+        levels.push_back(std::move(next));
+        lw.push_back(nw);
+        lh.push_back(nh);
+    }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = w;
+    td.Height = h;
+    td.MipLevels = UINT(levels.size());
+    td.ArraySize = 1;
+    td.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> sd(levels.size());
+    for (size_t i = 0; i < levels.size(); ++i) sd[i] = {levels[i].data(), lw[i] * 4, 0};
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    if (FAILED(dev->CreateTexture2D(&td, sd.data(), &tex))) return t;
+    if (FAILED(dev->CreateShaderResourceView(tex.Get(), nullptr, &t.srv))) return t;
+    t.width = w;
+    t.height = h;
+    t.mips = UINT(levels.size());
+    t.format = td.Format;
+    return t;
+}
+
 } // namespace wce

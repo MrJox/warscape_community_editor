@@ -187,3 +187,15 @@ Built in the private tree `build/work2` (`WCE_BIN=build/work2/bin/RelWithDebInfo
 | `placement_check` (new) | corpus | the tool's building transforms against TEd's `building_list.xml` over the kit (73 tiles, 357,666 buildings): x / z 0.0001 m, rotation 0.00 degrees, y exact except 15 crates; landscape buildings sit on `min_height + scale * raw / 65535` with a median of 0.000 m. Output in `docs/baseline/placement_check.txt` (it reports; the exit code is always 0) |
 
 New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_panel <tool panel title>`, `tile` / `tiles` / `tile_entry` / `assert_entry` / `assert_tiles`. No screenshot baseline changed (the Tile panel and the left dock gained a tab; the offscreen captures of `scripts/shots.sh` do not show panels).
+
+## Phases 1 to 3 of the TEd parity plan (2026-10-10)
+
+`scripts/gates.sh build/<out> --render` on `build/work2`: **all 23 gates exit 0** after Phase 3 (the Phase 1 and 2 runs: 22 each). New or changed gates:
+
+| Gate | Group | Result |
+|---|---|---|
+| `tile_tool_check` (`tile_check.sh`) | render | adds `tile_gizmo` (drags on each axis, one undo entry per drag, no camera movement; the y handle does nothing on a landscape building), `tile_layers` (flags, hide / lock, every structure command with undo / redo; undo all + save = the original 55 MB `tile.ted`), `tile_scene_ui` (the Scene panel with the scripted mouse), `tile_placement` (landscape / freeform rules, strokes that carry landscape instances; undo all + save = the original `tile.ted` and height map), `tile_terrain` (blended ground, climate, flat, debug views; every capture identical between two runs) |
+| `terrain_check` (new) | fast | the DXT decoder on hand-made blocks, the kit's 8 climates, the texture path fallbacks, and a bake of `tdd_custom_lothlorien/1x1/aa` against the real packs (12 layers, 1536 x 1536 texels, byte-identical twice) |
+| `perf_check` | fast | the brute-force pick test skips hidden and locked instances (the pick grid does not hold them) |
+
+`scripts/shots.sh` (reference `build/gates_base_perf`): the **two tile captures changed on purpose** (the ground is the blended colour now instead of one tiled texture; only the terrain differs) and were re-baselined; the weather captures `rain` and `snow` match, `dry` (1280x720 and 800x600) differs by at most 2 levels in 4 % of the pixels on this machine today (not investigated: the weather path does not use the terrain skin or the placement code, and the same difference shows with no tile open; the reference may be stale or the driver may have changed).

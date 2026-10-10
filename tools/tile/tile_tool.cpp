@@ -618,7 +618,7 @@ void TileTool::draw_tile_panel(Editor& editor) {
     {
         int np = new_placement_ == TileDocument::Placement::Freeform ? 1 : 0;
         ImGui::SetNextItemWidth(120);
-        if (ImGui::Combo("##new_placement", &np, "Landscape Freeform ")) new_placement_ = np == 1 ? TileDocument::Placement::Freeform : TileDocument::Placement::Landscape;
+        if (ImGui::Combo("##new_placement", &np, "Landscape\0Freeform\0")) new_placement_ = np == 1 ? TileDocument::Placement::Freeform : TileDocument::Placement::Landscape;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("placement of a new building: landscape stands on the terrain, freeform keeps the height it is given");
     }
     ImGui::SameLine();
@@ -647,6 +647,8 @@ void TileTool::draw_tile_panel(Editor& editor) {
     ImGui::Separator();
     draw_placement_section(editor, *d);
     ImGui::Separator();
+    draw_ground_section(editor, *d);
+    ImGui::Separator();
     draw_polygon_panel(editor, *d);
     ImGui::Separator();
     draw_weather_panel(editor);
@@ -655,6 +657,39 @@ void TileTool::draw_tile_panel(Editor& editor) {
         ImGui::TextWrapped("%s", status.c_str());
     }
     ImGui::End();
+}
+
+// Ground (Phase 3): the terrain colour is the tile's blend map mixed from the textures of a climate. The climate is not stored in the tile (a map's climate
+// map says it), so it is a setting here; a wrong guess looks different, not broken.
+void TileTool::draw_ground_section(Editor& editor, TileDocument& d) {
+    (void)editor;
+    if (!ImGui::CollapsingHeader("Ground", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    TerrainLook look = d.terrain_look();
+    bool changed = false;
+    changed |= ImGui::Checkbox("blended ground (blend map + climate textures)", &look.blended);
+    const ClimateList& cl = d.climates();
+    if (look.blended && !cl.climates.empty()) {
+        int ci = 0;
+        std::string names;
+        for (size_t i = 0; i < cl.climates.size(); ++i) {
+            names += cl.climates[i].name + '\0';
+            if (cl.climates[i].name == look.climate) ci = int(i);
+        }
+        names += '\0';
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("climate", &ci, names.c_str())) { look.climate = cl.climates[size_t(ci)].name; changed = true; }
+        static const char* seasons[] = {"su", "au", "wi"};
+        int si = look.season == "au" ? 1 : look.season == "wi" ? 2 : 0;
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::Combo("season", &si, "summer\0autumn\0winter\0")) { look.season = seasons[si]; changed = true; }
+    }
+    if (look.blended) {
+        int vi = int(look.view);
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::Combo("view", &vi, "colour\0blend groups\0ground types\0protection\0")) { look.view = TerrainView(vi); changed = true; }
+    }
+    if (changed) { d.set_terrain_look(look); new_look_ = look; }
+    ImGui::TextWrapped("%s", d.terrain_note().c_str());
 }
 
 // Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The buttons act on the selection (layers: everything

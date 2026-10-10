@@ -743,6 +743,84 @@ float TileDocument::lod_distance(const std::string& type) const {
     return display_.other_distance;
 }
 
+// ---- ground look
+
+const ClimateList& TileDocument::climates() const {
+    if (!climates_loaded_) {
+        climates_loaded_ = true;
+        if (project_->entry && !project_->entry->file().empty()) {
+            const fs::path settings = project_->entry->file().parent_path().parent_path() / "_settings.xml";
+            try {
+                climates_ = ClimateList::load(settings.string());
+            } catch (const std::exception& e) {
+                Log::warn(std::string("climates: ") + e.what());
+            }
+        }
+    }
+    return climates_;
+}
+
+void TileDocument::set_terrain_look(const TerrainLook& look) {
+    if (look == look_) return;
+    look_ = look;
+    if (scene_ && terrain_entity_) update_terrain(*scene_, false);
+}
+
+// The skin of the terrain payload for the current look: baked once per (climate, season) and kept until the look changes.
+std::shared_ptr<const TerrainSkin> TileDocument::ground_skin() {
+    TileProject& p = *project_;
+    if (!look_.blended) {
+        terrain_note_ = "plain tiled texture (blend off)";
+        return nullptr;
+    }
+    if (skin_ && skin_look_ == look_) return skin_;
+    skin_.reset();
+    skin_baked_.reset();
+    skin_look_ = look_;
+    if (!p.has_height || !p.has_entry() || !p.bordered()) {
+        terrain_note_ = "plain tiled texture (the tile has no database entry or no height map: no blend map area)";
+        return nullptr;
+    }
+    BakeRequest rq;
+    rq.blend_map = p.dir / "blend_map.tif";
+    rq.folder = p.dir;
+    rq.groups = p.entry->texture_group();
+    const double b = p.border_m();
+    rq.x0 = -b;
+    rq.z0 = -b;
+    rq.w_m = extent_x() + 2 * b;
+    rq.h_m = extent_z() + 2 * b;
+    rq.look = look_;
+    if (!vfs_) {
+        terrain_note_ = "plain tiled texture (no game files)";
+        return nullptr;
+    }
+    std::string why;
+    const bool map_view = look_.view == TerrainView::GroundTypes || look_.view == TerrainView::Protection;
+    auto baked = map_view ? bake_terrain_map_view(rq, &why) : bake_terrain_colour(rq, climates(), *vfs_, &why);
+    if (!baked) {
+        terrain_note_ = "plain tiled texture: " + why;
+        Log::info("terrain: " + terrain_note_);
+        return nullptr;
+    }
+    // the terrain entity's z axis is scaled by k (rows of the height map vs columns): the skin is in the terrain's own coordinates
+    const double k = p.mpp_z() / p.mpp_x();
+    auto skin = std::make_shared<TerrainSkin>();
+    skin->x0 = baked->x0;
+    skin->z0 = baked->z0 / k;
+    skin->w_m = baked->w_m;
+    skin->h_m = baked->h_m / k;
+    skin->w = baked->w;
+    skin->h = baked->h;
+    skin->rgba = baked->rgba;
+    skin->id = ++skin_id_;
+    skin_ = skin;
+    skin_baked_ = baked;
+    terrain_note_ = (look_.view == TerrainView::Colour ? "blended ground: " : "debug view, ") + baked->report;
+    Log::info("terrain: " + terrain_note_);
+    return skin_;
+}
+
 // ---- publishing
 
 void TileDocument::update_terrain(RenderScene& scene, bool first) {
@@ -763,6 +841,7 @@ void TileDocument::update_terrain(RenderScene& scene, bool first) {
                 for (int i = 0; i < t.nx; ++i) t.heights[j * size_t(t.nx) + size_t(i)] = float(hf.metres(uint32_t(std::min<int>(i * terrain_stride_, int(hf.width()) - 1)), uint32_t(std::min<int>(int(j) * terrain_stride_, int(hf.height()) - 1))));
         });
         t.lod = true;
+        t.skin = ground_skin();
         float4x4 w;
         w.m[2][2] = k;
         t.version = ++terrain_version_;

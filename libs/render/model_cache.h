@@ -106,6 +106,7 @@ private:
 // culled and detailed one by one.
 struct TerrainGpu {
     std::vector<GpuModel> patches;
+    std::vector<std::unique_ptr<Texture>> skins;   // the patches' pieces of the payload's skin (the meshes point at them)
     // what the patches were built from
     uint64_t layout = 0;
     uint64_t version = 0;

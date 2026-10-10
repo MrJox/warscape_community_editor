@@ -1,0 +1,48 @@
+# The ground colour (Phase 3 of docs/plans/tile_ted_parity.md): a tile opens with the blend map mixed from the climate's textures, the climate and season can
+# be changed, the plain tiled texture comes back with `flat`, a height stroke keeps the ground (the colour does not depend on the heights). %TILE% is the kit
+# tile tdd_custom_lothlorien/1x1/aa (TEXTURE_GROUP grass / mud / forest / rock, 12 layers with weight), %OUT% a folder for the captures.
+tile "%TILE%"
+frames 4
+assert_ground blended 12 ROME_Continental
+cam 0.8 0.7 220 2
+frames 4
+capture 640x360 "%OUT%/blend.png" 4
+# grass is the main layer of this tile: a pixel in the middle is a green / brown mix
+assert_ground_pixel 64 64 110 120 60 80
+tile_terrain blended ROME_Desert au
+frames 4
+assert_ground blended 12 ROME_Desert
+capture 640x360 "%OUT%/desert.png" 4
+tile_terrain flat
+frames 3
+assert_ground flat
+capture 640x360 "%OUT%/flat.png" 4
+tile_terrain blended ROME_Continental su
+frames 4
+assert_ground blended 12 ROME_Continental
+capture 640x360 "%OUT%/blend2.png" 4
+# a stroke on the terrain keeps the ground
+paint raise 64 64 4
+frames 3
+assert_ground blended 12 ROME_Continental
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+# TEd's debug views of the tile's maps: blend groups (flat colour per group), ground types, protection; back to the colour
+tile_ground_view groups
+frames 3
+assert_ground blended 12
+capture 640x360 "%OUT%/groups.png" 4
+tile_ground_view ground
+frames 3
+assert_ground blended
+tile_ground_view protection
+frames 3
+assert_ground blended
+capture 640x360 "%OUT%/protection.png" 4
+tile_ground_view colour
+frames 4
+assert_ground blended 12 ROME_Continental
+capture 640x360 "%OUT%/blend3.png" 4
+quit

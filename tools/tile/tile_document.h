@@ -10,6 +10,7 @@
 // World space is metres: x = scene x / unit_scale, y = scene y, z = scene z / unit_scale (the legacy Studio's frame); the height map covers
 // [-128, extent + 128] m, see TileProject.
 #include "editor/document.h"
+#include "tile/terrain_bake.h"
 #include "tile/tile_project.h"
 #include "tile/world_transform.h"
 
@@ -117,6 +118,14 @@ public:
     // The nearest instance along a ray (spheres around the instances), or -1.
     int pick_instance(const float3& origin, const float3& dir, bool visible_only = true) const;
     bool pick_terrain(const float3& origin, const float3& dir, float3& hit) const;
+
+    // ---- ground look (Phase 3): the terrain's colour is the tile's blend map mixed from the climate's textures (tools/tile/terrain_bake), or the plain tiled texture.
+    // A view setting, not an edit: it is not on the undo stack and not saved.
+    const TerrainLook& terrain_look() const { return look_; }
+    void set_terrain_look(const TerrainLook& look);
+    const ClimateList& climates() const;                         // the kit's _settings.xml, read on first use (empty outside a kit)
+    const std::string& terrain_note() const { return terrain_note_; }   // what the colour is, or why it is the plain texture
+    const BakedColour* baked_colour() const { return skin_baked_.get(); }
 
     // ---- display
     TileDisplay& display() { return display_; }
@@ -301,6 +310,17 @@ private:
     uint64_t stroke_id_ = 0x5000;
     size_t saved_height_depth_ = 0;
     bool ted_on_disk_edited_ = false, png_on_disk_edited_ = false;
+
+    // ground look
+    TerrainLook look_;
+    TerrainLook skin_look_;
+    std::shared_ptr<const BakedColour> skin_baked_;
+    std::shared_ptr<const TerrainSkin> skin_;
+    uint64_t skin_id_ = 0;
+    std::string terrain_note_;
+    mutable ClimateList climates_;
+    mutable bool climates_loaded_ = false;
+    std::shared_ptr<const TerrainSkin> ground_skin();
 
     // outline cache
     mutable OutlinerNode outline_cache_;

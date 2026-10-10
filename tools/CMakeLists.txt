@@ -4,7 +4,7 @@ target_include_directories(wce_tile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_tile PUBLIC wce_formats)
 
 # The tile as a Document: tile.ted and the height map on the shared command stack, publishing into the RenderScene.
-add_library(wce_tile_editor STATIC tile/tile_document.cpp)
+add_library(wce_tile_editor STATIC tile/tile_document.cpp tile/terrain_bake.cpp)
 target_include_directories(wce_tile_editor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wce_tile_editor PUBLIC wce_tile wce_scene wce_vfs wce_formats wce_editor_core)
 

@@ -65,6 +65,7 @@ private:
     void draw_tile_panel(Editor& editor);
     void draw_layers_panel(Editor& editor);
     void draw_placement_section(Editor& editor, TileDocument& d);
+    void draw_ground_section(Editor& editor, TileDocument& d);
     void rebuild_tree(TileDocument& d);
     void request_delete(Editor& editor);
     void begin_rename(Editor& editor, int elem);
@@ -85,6 +86,8 @@ private:
     bool snap_grid_ = false;
     float grid_m_ = 6.0f, angle_step_ = 15.0f;
     char building_key_[128] = {};
+    // ground look of newly opened tiles (the Tile panel's Ground section changes the open tile and these)
+    TerrainLook new_look_;
     // placement (Phase 2): the mode of new buildings, the off-terrain report of the Tile panel
     TileDocument::Placement new_placement_ = TileDocument::Placement::Landscape;
     float off_tol_ = 0.5f;

@@ -395,6 +395,7 @@ uint64_t layout_hash(const Terrain& t) {
     }
     h = mix64(h, t.heights.size());
     h = mix64(h, t.lod ? 1 : 0);
+    h = mix64(h, t.skin ? t.skin->id + 1 : 0);
     return h;
 }
 
@@ -406,7 +407,7 @@ std::vector<int> axis_positions(int cells, int stride) {
 }
 
 // One patch: a vertex buffer (cells + 1)^2 vertices plus a skirt around it, and an index buffer per LOD (stride 1, 2, 4, ...).
-bool build_patch(ID3D11Device* dev, const Terrain& t, const Texture* diffuse, TextureCache& tex, int pi, int pj, GpuModel& out) {
+bool build_patch(ID3D11Device* dev, const Terrain& t, const Texture* diffuse, TextureCache& tex, int pi, int pj, GpuModel& out, std::unique_ptr<Texture>* skin_out) {
     const float tile = t.tile_metres > 0 ? t.tile_metres : 8.0f;
     auto height = [&](int i, int j) { return t.height_at(std::clamp(i, 0, t.nx - 1), std::clamp(j, 0, t.nz - 1)); };
     const int ci0 = pi * kCells, cj0 = pj * kCells;
@@ -421,6 +422,31 @@ bool build_patch(ID3D11Device* dev, const Terrain& t, const Texture* diffuse, Te
         }
     const float x0 = t.origin_x + float(ci0) * t.step, z0 = t.origin_z + float(cj0) * t.step;
     const float u0 = x0 / tile - std::floor(x0 / tile), v0 = z0 / tile - std::floor(z0 / tile);
+    // The skin: this patch's rectangle of the image (one texel more on every side, edge texels repeated) becomes the patch's own texture, uv 0..1 across it.
+    int sk_i0 = 0, sk_j0 = 0, sk_w = 0, sk_h = 0;
+    double sk_dx = 1, sk_dz = 1;
+    if (t.skin && t.skin->w > 1 && t.skin->h > 1 && skin_out) {
+        const TerrainSkin& s = *t.skin;
+        sk_dx = s.w_m / double(s.w);
+        sk_dz = s.h_m / double(s.h);
+        const double px0 = double(x0), px1 = double(x0) + double(w - 1) * double(t.step), pz0 = double(z0), pz1 = double(z0) + double(h - 1) * double(t.step);
+        sk_i0 = int(std::floor((px0 - s.x0) / sk_dx)) - 1;
+        sk_j0 = int(std::floor((pz0 - s.z0) / sk_dz)) - 1;
+        const int i1 = int(std::ceil((px1 - s.x0) / sk_dx)) + 1, j1 = int(std::ceil((pz1 - s.z0) / sk_dz)) + 1;
+        sk_w = std::max(2, i1 - sk_i0);
+        sk_h = std::max(2, j1 - sk_j0);
+        std::vector<uint8_t> crop(size_t(sk_w) * size_t(sk_h) * 4);
+        for (int j = 0; j < sk_h; ++j) {
+            const int sj = std::clamp(sk_j0 + j, 0, int(s.h) - 1);
+            for (int i = 0; i < sk_w; ++i) {
+                const int si = std::clamp(sk_i0 + i, 0, int(s.w) - 1);
+                std::memcpy(&crop[(size_t(j) * size_t(sk_w) + size_t(i)) * 4], &s.rgba[(size_t(sj) * s.w + size_t(si)) * 4], 4);
+            }
+        }
+        auto tx = std::make_unique<Texture>(make_rgba_texture(dev, uint32_t(sk_w), uint32_t(sk_h), crop.data(), true));
+        if (tx->srv) *skin_out = std::move(tx);
+    }
+    const bool skinned = skin_out && *skin_out;
     const size_t grid = size_t(w) * size_t(h);
     const size_t skirt = size_t(2) * size_t(w) + size_t(2) * size_t(h);
     std::vector<Vertex0> v(grid + skirt);
@@ -433,8 +459,14 @@ bool build_patch(ID3D11Device* dev, const Terrain& t, const Texture* diffuse, Te
             vx.pos[1] = to_half(height(gi, gj) - miny);
             vx.pos[2] = to_half(zl);
             vx.pos[3] = to_half(1);
-            vx.uv[0] = to_half(u0 + xl / tile);
-            vx.uv[1] = to_half(v0 + zl / tile);
+            if (skinned) {
+                const double X = double(x0) + double(xl), Z = double(z0) + double(zl);
+                vx.uv[0] = to_half(float((X - t.skin->x0 - double(sk_i0) * sk_dx) / (double(sk_w) * sk_dx)));
+                vx.uv[1] = to_half(float((Z - t.skin->z0 - double(sk_j0) * sk_dz) / (double(sk_h) * sk_dz)));
+            } else {
+                vx.uv[0] = to_half(u0 + xl / tile);
+                vx.uv[1] = to_half(v0 + zl / tile);
+            }
             vx.uv[2] = vx.uv[3] = 0;
             const float dhdx = (height(gi + 1, gj) - height(gi - 1, gj)) / (2 * t.step);
             const float dhdz = (height(gi, gj + 1) - height(gi, gj - 1)) / (2 * t.step);
@@ -467,7 +499,7 @@ bool build_patch(ID3D11Device* dev, const Terrain& t, const Texture* diffuse, Te
     if (FAILED(dev->CreateBuffer(&bd, &sd, &base.vb))) return false;
     base.offset = {x0, miny, z0};
     base.has_offset = x0 != 0 || miny != 0 || z0 != 0;
-    const Texture* d = diffuse ? diffuse : tex.white();
+    const Texture* d = skinned ? skin_out->get() : diffuse ? diffuse : tex.white();
     base.tex[kTexDiffuse] = d;
     base.tex[kTexSpecular] = tex.black();
     base.tex[kTexGloss] = tex.black();
@@ -542,7 +574,9 @@ const TerrainGpu* ModelCache::terrain(EntityId id, const Terrain& t) {
         slot->patches_x = px;
         slot->patches_z = pz;
         slot->patches.resize(size_t(px) * size_t(pz));
+        slot->skins.clear();
     }
+    if (slot->skins.size() != slot->patches.size()) slot->skins.resize(slot->patches.size());
     // which patches changed: all on a new layout, otherwise the ones whose heights (plus the margin the normals read) differ from the last build
     std::vector<uint8_t> dirty(slot->patches.size(), 1);
     if (same_layout && !t.heights.empty() && slot->heights.size() == t.heights.size()) {
@@ -565,7 +599,7 @@ const TerrainGpu* ModelCache::terrain(EntityId id, const Terrain& t) {
         for (size_t p = b; p < e; ++p) {
             if (!dirty[p]) continue;
             GpuModel gm;
-            if (build_patch(dev_, t, d, tex_, int(p % size_t(px)), int(p / size_t(px)), gm)) tg.patches[p] = std::move(gm);
+            if (build_patch(dev_, t, d, tex_, int(p % size_t(px)), int(p / size_t(px)), gm, &tg.skins[p])) tg.patches[p] = std::move(gm);
             else failed[p] = 1;
         }
     });

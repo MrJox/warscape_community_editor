@@ -60,6 +60,8 @@ run height_check      "$TB/height_check.exe" "$TILE/height_map_0.png"
 # the tile database entry as the root of a tile: entry round trip (both kits), the index and its cache, open by entry = by folder = by tile.ted, a tile.ted outside the kit (plains/3x1/3x1_aa has a corrupt height map: it must fail the same way each time)
 run tile_entry_check  "$TB/tile_entry_check.exe" "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
 run weather_check     "$TB/weather_check.exe" "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
+# the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
+run terrain_check     "$TB/terrain_check.exe" "$GAME"
 run tdb_build         "$TB/tdb_build.exe" "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     "$TB/roundtrip.exe" "$MANIFEST" "$GAME"

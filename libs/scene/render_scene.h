@@ -10,6 +10,7 @@
 #include "scene/environment.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -48,6 +49,15 @@ struct MeshInstance {
 // A regular grid of heights: vertex (i, j) is at x = origin_x + i * step, z = origin_z + j * step, y = heights[j * nx + i]
 // (before the entity's world transform). The interim material tiles one diffuse texture every `tile_metres` and shades with the
 // game's rigid G-buffer shader (docs/re/terrain.md has what the game's own terrain shaders do).
+// A colour image over the terrain (the tile tool's baked ground colour, tools/tile/terrain_bake): it replaces the tiled diffuse. It covers the world rectangle
+// [x0, x0 + w_m] x [z0, z0 + h_m] (before the entity's transform), sRGB RGBA8, rows along +z. `id` changes with the content.
+struct TerrainSkin {
+    double x0 = 0, z0 = 0, w_m = 1, h_m = 1;
+    uint32_t w = 0, h = 0;
+    std::vector<uint8_t> rgba;
+    uint64_t id = 0;
+};
+
 struct Terrain {
     int nx = 2, nz = 2;
     float origin_x = -1, origin_z = -1, step = 2;
@@ -56,6 +66,7 @@ struct Terrain {
     float tile_metres = 8;
     bool casts_shadow = false;       // receiver only
     bool lod = false;                // patches of 64 x 64 cells switch to coarser index buffers with distance
+    std::shared_ptr<const TerrainSkin> skin;   // when set, each patch gets its piece of this image instead of the tiled diffuse
     uint64_t version = 0;            // change it when heights or the texture change: the renderer rebuilds the mesh
 
     static Terrain flat(float half_size, const std::string& diffuse, float tile_metres);

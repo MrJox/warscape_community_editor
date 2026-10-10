@@ -35,5 +35,7 @@ struct DdsStreamPlan {
 DdsStreamPlan plan_dds_stream(const std::vector<uint8_t>& header, size_t file_size, uint32_t max_dim);
 Texture load_dds_tail(ID3D11Device* dev, const std::vector<uint8_t>& header, const std::vector<uint8_t>& tail, const DdsStreamPlan& plan, bool srgb); // throws
 Texture make_solid_texture(ID3D11Device* dev, uint32_t rgba);
+// An RGBA8 image (w * h * 4 bytes) with a box-filtered mip chain down to 1 x 1; sRGB view when `srgb`. Thread-safe like the device. Empty srv on failure.
+Texture make_rgba_texture(ID3D11Device* dev, uint32_t w, uint32_t h, const uint8_t* rgba, bool srgb);
 
 } // namespace wce

@@ -29,6 +29,18 @@ run_script() { # run_script <script name> <run> <tile dir> -> $OUT/<name><run>/
 }
 
 run_script tile_gizmo 1 "$SRC"
+# the ground colour (Phase 3): blended ground of the lothlorien 1x1 tile, another climate, flat, blended again = the first capture; all different from each other
+LOTH="$KIT/tdd_custom_lothlorien/1x1/aa"
+run_script tile_terrain 1 "$LOTH"
+run_script tile_terrain 2 "$LOTH"
+T1="$OUT/tile_terrain1"; T2="$OUT/tile_terrain2"
+for f in blend.png desert.png flat.png blend2.png groups.png protection.png blend3.png; do
+    cmp -s "$T1/$f" "$T2/$f" && [ -s "$T1/$f" ] && echo "terrain $f identical between runs" || fail "terrain $f differs between runs (or missing)"
+done
+cmp -s "$T1/blend.png" "$T1/blend3.png" && cmp -s "$T1/blend.png" "$T1/blend2.png" && echo "terrain: blended again = the first capture" || fail "terrain: blended again differs from the first capture"
+for f in desert.png flat.png groups.png protection.png; do
+    cmp -s "$T1/blend.png" "$T1/$f" && fail "terrain: $f equals the blended capture" || echo "terrain: $f differs from the blended capture"
+done
 # placement modes (Phase 2): landscape follows the terrain, freeform is free, a height stroke carries the landscape ones; all undone and saved equals the original
 DESERT="$KIT/terrain_rugged_hills_desert/1x1/aa"
 run_script tile_placement 1 "$DESERT"

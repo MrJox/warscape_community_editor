@@ -716,6 +716,60 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         return c.landscape == size_t(l) && c.freeform == size_t(f) ? ok() : fail("landscape " + std::to_string(c.landscape) + ", freeform " + std::to_string(c.freeform));
     });
 
+    // ---- ground look (Phase 3)
+    commands.add("tile_terrain", "tile_terrain blended|flat [climate] [season su|au|wi]", "the ground colour of the open tile: the blend map mixed from the climate's textures, or the plain tiled texture",
+                 [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_terrain blended|flat [climate] [season su|au|wi]");
+        TerrainLook look = d->terrain_look();
+        if (a[0] == "blended") look.blended = true;
+        else if (a[0] == "flat") look.blended = false;
+        else return fail("the first word is blended or flat");
+        if (a.size() > 1) look.climate = a[1];
+        if (a.size() > 2) look.season = a[2];
+        if (look.blended && !d->climates().find(look.climate) && !d->climates().climates.empty()) return fail("no climate '" + look.climate + "' in the kit's _settings.xml");
+        d->set_terrain_look(look);
+        new_look_ = look;
+        return ok(d->terrain_note());
+    });
+    commands.add("tile_ground_view", "tile_ground_view colour|groups|ground|protection", "what the ground shows: the blended colour or a debug view of the tile's maps (blend groups, ground types, protection)", [this, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_ground_view colour|groups|ground|protection");
+        TerrainLook look = d->terrain_look();
+        look.blended = true;
+        if (a[0] == "colour") look.view = TerrainView::Colour;
+        else if (a[0] == "groups") look.view = TerrainView::BlendGroups;
+        else if (a[0] == "ground") look.view = TerrainView::GroundTypes;
+        else if (a[0] == "protection") look.view = TerrainView::Protection;
+        else return fail("the view is colour, groups, ground or protection");
+        d->set_terrain_look(look);
+        new_look_ = look;
+        return ok(d->terrain_note());
+    });
+    commands.add("assert_ground", "assert_ground blended|flat [layers n] [climate]", "test: the ground is the baked blend (with this many texture layers) or the plain texture", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: assert_ground blended|flat [layers n] [climate]");
+        const BakedColour* b = d->baked_colour();
+        if (a[0] == "flat") return b == nullptr || !d->terrain_look().blended ? ok() : fail("the ground is blended: " + d->terrain_note());
+        if (!b) return fail("the ground is not blended: " + d->terrain_note());
+        float n;
+        if (a.size() > 1 && number(a[1], n) && b->layers != int(n)) return fail(std::to_string(b->layers) + " layers, expected " + a[1]);
+        if (a.size() > 2 && b->climate != a[2]) return fail("climate " + b->climate + ", expected " + a[2]);
+        return ok(d->terrain_note());
+    });
+    commands.add("assert_ground_pixel", "assert_ground_pixel <x m> <z m> <r> <g> <b> [tolerance]", "test: the baked ground colour at a world point (0..255 per channel)", [need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        float x, z, r, g, bl, tol = 3;
+        if (!need(d) || a.size() < 5 || !number(a[0], x) || !number(a[1], z) || !number(a[2], r) || !number(a[3], g) || !number(a[4], bl)) return fail("usage: assert_ground_pixel <x m> <z m> <r> <g> <b> [tolerance]");
+        if (a.size() > 5) number(a[5], tol);
+        const BakedColour* b = d->baked_colour();
+        if (!b) return fail("the ground is not blended");
+        const int ix = std::clamp(int((x - b->x0) / b->w_m * b->w), 0, int(b->w) - 1), iz = std::clamp(int((z - b->z0) / b->h_m * b->h), 0, int(b->h) - 1);
+        const uint8_t* p = &b->rgba[(size_t(iz) * b->w + size_t(ix)) * 4];
+        if (std::fabs(p[0] - r) > tol || std::fabs(p[1] - g) > tol || std::fabs(p[2] - bl) > tol) return fail("pixel is " + std::to_string(p[0]) + " " + std::to_string(p[1]) + " " + std::to_string(p[2]));
+        return ok();
+    });
+
     commands.add("assert_instances", "assert_instances <n>", "test: the tile has n instances", [need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         if (!need(d) || a.empty()) return fail("usage: assert_instances <n> (with a tile open)");
