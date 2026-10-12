@@ -329,6 +329,7 @@ void Renderer::error(const std::string& e) {
     for (auto& x : errors_)
         if (x == e) return;
     errors_.push_back(e);
+    Log::error(e);
 }
 
 const GameShader* Renderer::shader(const std::string& name) {

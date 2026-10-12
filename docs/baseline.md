@@ -207,3 +207,10 @@ New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_pan
 ## Phase 4 and the read-only links view (2026-10-10)
 
 `scripts/gates.sh build/<out> --render`: **all 23 gates exit 0**. `tile_tool_check` adds `tile_water` (the ford's river, off / on, a height stroke, a lake plane) and `tile_links` (osgiliath minor: 2 targets, 2 rules, the cell rows, off / on / off), each run twice with identical captures, the on capture differing from the off one. A full run writes about 12 GB to its output folder (osgiliath copies, extracted pack caches): delete it afterwards (the first run of this phase failed with "No space left on device" on a full D: and was repeated).
+
+## Terrain layer scale fix and re-baseline (2026-10-10)
+
+`pass_terrain_material` stored `g_blend_pixel_scale_array` one element too high (`[layer + 1]`; the shader reads `cb3[mapping + 1]`, which is element `[mapping]` because row 0 of `ps_texture_array_cb` is `g_light_params_texture_width`). Layer 0 (the tile's first texture group, 82 % of the osgiliath test map) therefore had a scale of 0: uv = world / 0 = one flat texel, a plain colour with no texture. Layers 1 - 3 only looked right because the four scales of the tile were equal. Fixed in `libs/render/terrain_pass.cpp`.
+
+Gate added: `scripts/tile_terrain.txt` takes a close capture (`detail.png`) and `scripts/tile_check.sh` fails when more than 1 % of its lit 8 x 8 pixel blocks are flat (std < 2.5 levels): the broken build gave 6 % (lothlorien 1x1/aa, AMD), the fixed one 0 %.
+The two tile captures of `scripts/shots.sh` changed on purpose (the ground has its textures) and were re-baselined in `build/gates_base_perf/` (the previous ones are in `build/gates_base_perf_before_scale_fix/`); the four weather captures are identical.

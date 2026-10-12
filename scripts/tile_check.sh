@@ -34,13 +34,27 @@ LOTH="$KIT/tdd_custom_lothlorien/1x1/aa"
 run_script tile_terrain 1 "$LOTH"
 run_script tile_terrain 2 "$LOTH"
 T1="$OUT/tile_terrain1"; T2="$OUT/tile_terrain2"
-for f in blend.png desert.png flat.png blend2.png groups.png protection.png blend3.png; do
+for f in blend.png desert.png flat.png blend2.png groups.png protection.png blend3.png detail.png; do
     cmp -s "$T1/$f" "$T2/$f" && [ -s "$T1/$f" ] && echo "terrain $f identical between runs" || fail "terrain $f differs between runs (or missing)"
 done
 cmp -s "$T1/blend.png" "$T1/blend3.png" && cmp -s "$T1/blend.png" "$T1/blend2.png" && echo "terrain: blended again = the first capture" || fail "terrain: blended again differs from the first capture"
 for f in desert.png flat.png groups.png protection.png; do
     cmp -s "$T1/blend.png" "$T1/$f" && fail "terrain: $f equals the blended capture" || echo "terrain: $f differs from the blended capture"
 done
+# the ground shows its textures (the shader reads the layer's uv scale from ps_texture_array_cb[mapping + 1] = array element [mapping]: layer 0 once got scale 0 and was one flat colour):
+# in the close capture no more than 1 % of the lit 8 x 8 pixel blocks may be flat (the broken build: 6 %, the right one: 0 %)
+python - "$T1/detail.png" <<'PY' || bad=1
+import sys
+import numpy as np
+from PIL import Image
+a = np.asarray(Image.open(sys.argv[1]).convert("L"), dtype=float)
+h, w = a.shape
+b = a[:h // 8 * 8, :w // 8 * 8].reshape(h // 8, 8, w // 8, 8).transpose(0, 2, 1, 3).reshape(-1, 64)
+lit = b.mean(1) > 40
+flat = float((b.std(1)[lit] < 2.5).mean()) if lit.any() else 1.0
+print("terrain detail: %d lit blocks, %.1f %% flat" % (lit.sum(), flat * 100))
+sys.exit(0 if lit.sum() > 1000 and flat <= 0.01 else 1)
+PY
 # water (Phase 4): river ribbons of the ford tile, switched off and on, a stroke, the lake plane; captures identical between two runs, on differs from off
 OSG_MIN="$KIT/tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor"
 FORD="$KIT/river_ford/2x2_lb_rb_ford/aa"; LAKE="$KIT/lakes/10x10/aa"

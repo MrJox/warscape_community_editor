@@ -22,26 +22,6 @@
             "preLaunchTask": "Build WCE (Release)"
         },
         {
-            "name": "Debug test: foundation_check",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Debug/foundation_check.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Build foundation_check (Debug)"
-        },
-        {
-            "name": "Debug test: editor_check",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Debug/editor_check.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Build editor_check (Debug)"
-        },
-        {
             "name": "Debug test: unit_tests (no game data)",
             "type": "cppvsdbg",
             "request": "launch",

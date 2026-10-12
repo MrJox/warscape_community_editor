@@ -124,7 +124,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   default sun (from +z) the +z side of a raised spike is the bright one.
 - **Texture arrays** (`t_diffuse_array` sRGB, `t_normal_array`): slice `4 * group + variation` of the climate's `terrain/textures/battle/<climate>/<group>/<variation>_<su|au|wi>_<diffuse|normal>.dds`
   (1024 x 1024 DXT5, 11 mips, whole files, no streaming); a slice that does not exist or does not match the first one's size / format is a neutral one. The layer mapping `g_array_mapping[i] = i`,
-  `g_array_section_sizes = (1, 1, 0, 0)` (so season / climate indices do not move the slot), `g_blend_pixel_scale_array[layer + 1] = (blend_pixel_scale, outfield scale, mid_distance_strength)` from
+  `g_array_section_sizes = (1, 1, 0, 0)` (so season / climate indices do not move the slot), `g_blend_pixel_scale_array[layer] = (blend_pixel_scale, outfield scale, mid_distance_strength)` (the shader's `cb3[mapping + 1]` is that element: row 0 of the cbuffer is `g_light_params_texture_width`; the first version stored it one element too high, so layer 0 had scale 0 and drew one flat texel - fixed 2026-10-10) from
   `_settings.xml`, `s_light_params` = (`lerp_smoothness`, `lerp_reflectivity`) per slot (16 x 1, `g_light_params_texture_width` 16).
 - **Alpha map**: 1 everywhere (the editor shows one tile). The kit's `final_alpha.dds` (R32F, 1 sample per metre over the tile without its border, 0 at the edge ramping to 1 in about 25 m) is the
   feather for neighbours and is not used yet.

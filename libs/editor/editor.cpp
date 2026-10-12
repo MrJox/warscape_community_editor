@@ -86,6 +86,11 @@ void Editor::status(const std::string& text, bool error) {
 bool Editor::start() {
     try {
         Vfs::Config cfg = Vfs::default_config();
+        const char* backend = cfg.backend == Vfs::BackendMode::Server ? "server" : cfg.backend == Vfs::BackendMode::Cli ? "cli" : "auto";
+        Log::info("Data paths: game=" + (cfg.game_dir.empty() ? std::string("(unset)") : narrow(cfg.game_dir.wstring())) +
+                  ", cache=" + narrow(cfg.cache_dir.wstring()) + ", RPFM=" +
+                  (cfg.rpfm_cli.empty() ? (cfg.server.exe.empty() ? std::string("(auto-detect)") : narrow(cfg.server.exe.wstring())) : narrow(cfg.rpfm_cli.wstring())) +
+                  ", backend=" + backend);
         auto v = std::make_unique<Vfs>(cfg);
         v->mount();
         vfs_ = std::move(v);

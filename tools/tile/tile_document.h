@@ -189,6 +189,10 @@ public:
     // a y that is asked for is ignored; freeform y is free; Landscape -> Freeform keeps y, Freeform -> Landscape snaps it; a height brush stroke carries the
     // landscape instances under the brush with the terrain (the same undo entry as the stroke). Items without a `surface_mode` behave as freeform.
     Placement placement(int elem) const;                        // the element's own surface_mode
+    // A landscape instance stands on the terrain whatever y its file has: TEd re-snaps them against the tile's current height map and entry, while the file's y comes from
+    // the height map of the day (5 m off in tiles whose entry min_height / scale changed later). The element index holds the snapped height of leaf instances (buildings,
+    // vegetation, decals, ...; polygons and splines carry their own heights); the file keeps the y it had until the instance is edited (TEd shows the same on opening it).
+    void snap_landscape_world(int elem, WorldTransform& w) const;
     float landscape_y(int, float x, float z) const { return terrain_height(x, z); }
     std::vector<int> instances_below(const std::vector<int>& elems) const;   // the instances among `elems` and below them (layers are walked, not returned)
     // Set the mode of the instances among `elems` (layers: everything below); Landscape snaps y. One undo entry; returns how many instances changed.

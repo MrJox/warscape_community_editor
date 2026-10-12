@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 
 namespace fs = std::filesystem;
 
@@ -670,7 +671,18 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         }
         const auto list = d->off_terrain(tol, a.size() > 1 ? &among : nullptr);
         std::string s = std::to_string(list.size()) + " landscape instance(s) more than " + std::to_string(tol) + " m off the terrain";
-        for (size_t i = 0; i < list.size() && i < 8; ++i) s += "\n  #" + std::to_string(list[i].elem) + " " + d->tscene().type(list[i].elem) + " '" + d->tscene().name(list[i].elem) + "' " + std::to_string(list[i].dy) + " m";
+        {   // by type: how many, and the signed range of the offsets
+            struct Acc { size_t n = 0; float lo = 1e30f, hi = -1e30f; };
+            std::map<std::string, Acc> by_type;
+            for (const auto& o : list) { Acc& acc = by_type[d->tscene().type(o.elem)]; ++acc.n; acc.lo = std::min(acc.lo, o.dy); acc.hi = std::max(acc.hi, o.dy); }
+            for (const auto& [t, acc] : by_type) s += "\n  " + t + ": " + std::to_string(acc.n) + " (" + std::to_string(acc.lo) + " .. " + std::to_string(acc.hi) + " m)";
+        }
+        for (size_t i = 0; i < list.size() && i < 8; ++i) {
+            const int e = list[i].elem;
+            const float3 w = d->world_position(e);
+            s += "\n  #" + std::to_string(e) + " " + d->tscene().type(e) + " '" + d->tscene().name(e) + "' " + std::to_string(list[i].dy) + " m (world " + std::to_string(w.x) + " " + std::to_string(w.y) + " " +
+                 std::to_string(w.z) + ", terrain " + std::to_string(d->terrain_height(w.x, w.z)) + ")";
+        }
         return ok(s);
     });
     commands.add("assert_placement", "assert_placement <path | #elem | selected> landscape|freeform|none", "test: the element's surface mode", [this, ed, need, fail, ok](const CommandRegistry::Args& a) {
@@ -701,7 +713,22 @@ void TileTool::register_commands(Editor& editor, CommandRegistry& commands) {
         if (on != (a[1] == "1")) return fail(std::string(on ? "all stand on the terrain" : std::to_string(off) + " off the terrain, worst " + std::to_string(worst) + " m") + ", expected " + (a[1] == "1" ? "on" : "off"));
         return ok();
     });
-    commands.add("assert_off_terrain_count", "assert_off_terrain_count <tolerance m> <n>", "test: n landscape instances of the tile are more than the tolerance off the terrain", [need, fail, ok](const CommandRegistry::Args& a) {
+    commands.add("tile_dump_placement", "tile_dump_placement <file.tsv>", "write every instance with its surface mode, world position and the terrain height under it (TSV), to study placement",
+                 [this, need, fail, ok](const CommandRegistry::Args& a) {
+        TileDocument* d;
+        if (!need(d) || a.empty()) return fail("usage: tile_dump_placement <file.tsv>");
+        std::ofstream f(a[0]);
+        if (!f) return fail("cannot write " + a[0]);
+        f << "elem\ttype\tname\tmode\twx\twy\twz\tterrain\n";
+        for (int e : d->instances()) {
+            const float3 w = d->world_position(e);
+            const auto m = d->placement(e);
+            f << e << '\t' << d->tscene().type(e) << '\t' << d->tscene().name(e) << '\t' << (m == TileDocument::Placement::Landscape ? "landscape" : m == TileDocument::Placement::Freeform ? "freeform" : "none") << '\t' << w.x
+              << '\t' << w.y << '\t' << w.z << '\t' << d->terrain_height(w.x, w.z) << '\n';
+        }
+        return ok(std::to_string(d->instances().size()) + " instances written");
+    });
+    commands.add("assert_off_terrain_count","assert_off_terrain_count <tolerance m> <n>", "test: n landscape instances of the tile are more than the tolerance off the terrain", [need, fail, ok](const CommandRegistry::Args& a) {
         TileDocument* d;
         float tol, n;
         if (!need(d) || a.size() < 2 || !number(a[0], tol) || !number(a[1], n)) return fail("usage: assert_off_terrain_count <tolerance m> <n>");

@@ -541,6 +541,7 @@ void TileDocument::build_index() {
             }
             if (l.has_eul) w.rotation = mat_mul(w.rotation, euler_matrix(Vec3{l.eul[0], l.eul[1], l.eul[2]}));
             slot = uint32_t(ix.world.size());
+            snap_landscape_world(int(i), w);   // ix.mode / ix.kind of this element are set; the children (none for a leaf) compose from the file's transform
             ix.world.push_back(w);
         }
         ix.slot[i] = slot;
@@ -569,6 +570,7 @@ void TileDocument::index_edited(int elem) {
     const uint32_t own = idx_.slot[size_t(elem)];
     if (own != 0 && parent >= 0 && own != idx_.slot[size_t(parent)] && !(idx_.kind[size_t(elem)] & kLayerBit)) {
         idx_.world[own] = world_transform(tscene(), elem);   // an instance owns its slot: only it changes
+        snap_landscape_world(elem, idx_.world[own]);
     } else {
         build_index();                                       // a layer (or an element without a transform of its own): everything below it moved
     }
@@ -2156,6 +2158,15 @@ TileDocument::Placement TileDocument::placement(int elem) const {
     return placement_of_attr(elem);
 }
 
+void TileDocument::snap_landscape_world(int elem, WorldTransform& w) const {
+    if (!project_->has_height) return;
+    const auto& els = tscene().doc().elements();
+    if (elem < 0 || size_t(elem) >= idx_.mode.size() || idx_.mode[size_t(elem)] != 1) return;
+    const uint8_t kind = idx_.kind[size_t(elem)];
+    if (!(kind & kInstanceBit) || (kind & (kPolygonBit | kLayerBit)) || !els[size_t(elem)].children.empty()) return;
+    w.position[1] = project_->height_at(w.position[0] / unit(), w.position[2] / unit());
+}
+
 TileDocument::Placement TileDocument::placement_of_attr(int elem) const {
     if (elem < 0 || elem >= int(tscene().doc().elements().size())) return Placement::None;
     const auto m = tscene().doc().get(elem, "surface_mode");
@@ -2202,7 +2213,14 @@ int TileDocument::set_placement(const std::vector<int>& elems, Placement mode) {
         if (mode == Placement::Landscape) {   // Freeform -> Landscape snaps (TEd writes the terrain height)
             const float3 p = world_position(e);
             const float y = landscape_y(e, p.x, p.z);
-            if (cur != mode || std::fabs(y - p.y) > 1e-5f) {
+            if (cur != mode || std::fabs(y - float(world_transform(tscene(), e).position[1])) > 1e-5f) {   // the file's own y: a landscape item is shown on the terrain even when its file is not
+                it.pos_old = tscene().position(e);
+                it.pos_new = local_for_world_y(e, y);
+            }
+        }
+        else if (cur == Placement::Landscape) {   // Landscape -> Freeform keeps the height it is shown at (the file's y may be a stale one: see snap_landscape_world)
+            const float y = world_position(e).y;
+            if (std::fabs(y - float(world_transform(tscene(), e).position[1])) > 1e-5f) {
                 it.pos_old = tscene().position(e);
                 it.pos_new = local_for_world_y(e, y);
             }
@@ -2223,7 +2241,7 @@ int TileDocument::snap_to_terrain(const std::vector<int>& elems, bool include_fr
         if (cur != Placement::Landscape && !(include_freeform && cur != Placement::None)) continue;
         const float3 p = world_position(e);
         const float y = landscape_y(e, p.x, p.z);
-        if (std::fabs(y - p.y) < 1e-5f) continue;
+        if (std::fabs(y - float(world_transform(tscene(), e).position[1])) < 1e-5f) continue;   // the file's own y (see snap_landscape_world): this writes the shown height into it
         TedPlacementCommand::Item it{};
         it.elem = e;
         it.idx_old = it.idx_new = cur == Placement::Landscape ? 1 : 2;

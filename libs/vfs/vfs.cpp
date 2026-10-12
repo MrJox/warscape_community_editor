@@ -1,4 +1,5 @@
 #include "foundation/profile.h"
+#include "foundation/log.h"
 #include "vfs/vfs.h"
 
 #include "foundation/process.h"
@@ -6,12 +7,16 @@
 #include "foundation/text_encoding.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <fstream>
+#include <sstream>
 #include <set>
 #include <stdexcept>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -23,6 +28,46 @@ std::optional<std::string> env(const char* name) {
     const char* v = std::getenv(name);
     if (!v || !*v) return std::nullopt;
     return std::string(v);
+}
+
+uint64_t pack_index_checksum(const std::vector<std::string>& lines) {
+    uint64_t hash = 14695981039346656037ull;
+    auto feed = [&](unsigned char c) {
+        hash ^= c;
+        hash *= 1099511628211ull;
+    };
+    for (const std::string& line : lines) {
+        for (unsigned char c : line) feed(c);
+        feed('\n');
+    }
+    return hash;
+}
+
+std::string pack_index_header(const std::vector<std::string>& lines) {
+    std::ostringstream out;
+    out << "# WCE_PACK_INDEX_V1 " << lines.size() << ' ' << std::hex << pack_index_checksum(lines) << '\n';
+    return out.str();
+}
+
+bool read_pack_index(const fs::path& path, std::vector<std::string>& lines) {
+    std::ifstream f(path, std::ios::binary);
+    std::string header;
+    if (!std::getline(f, header)) return false;
+    std::istringstream fields(header);
+    std::string magic;
+    uint64_t expected_count = 0, expected_checksum = 0;
+    std::string version;
+    if (!(fields >> magic >> version >> expected_count >> std::hex >> expected_checksum) || magic != "#" || version != "WCE_PACK_INDEX_V1") return false;
+    fields >> std::ws;
+    if (!fields.eof()) return false;
+
+    lines.clear();
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(std::move(line));
+    }
+    return f.eof() && lines.size() == expected_count && pack_index_checksum(lines) == expected_checksum;
 }
 
 } // namespace
@@ -153,17 +198,42 @@ std::vector<std::string> Vfs::index_pack(const Pack& p) {
     fs::path idx = dir / widen(p.name + "." + std::to_string(p.size) + "." + std::to_string(p.mtime) + ".txt");
     std::vector<std::string> lines;
     if (fs::exists(idx)) {
-        std::ifstream f(idx);
-        std::string l;
-        while (std::getline(f, l)) lines.push_back(l);
-        return lines;
+        if (read_pack_index(idx, lines)) return lines;
+        Log::warn("refreshing incomplete or outdated pack index: " + p.name);
     }
     lines = backend().list(p.path);
-    // Drop stale indexes of the same pack.
+    // The previous implementation wrote directly to the final path. If the process was stopped mid-write,
+    // the next run treated that truncated list as valid and silently hid assets from the VFS. Write a
+    // checksummed file beside the cache entry, then rename it into place only after the stream is complete.
+    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto thread = std::hash<std::thread::id>{}(std::this_thread::get_id());
+    fs::path tmp = idx;
+    tmp += ".tmp." + std::to_string(uint64_t(tick) ^ uint64_t(thread));
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (f) {
+            f << pack_index_header(lines);
+            for (const auto& l : lines) f << l << "\n";
+            f.flush();
+            if (!f) {
+                f.close();
+                std::error_code ec;
+                fs::remove(tmp, ec);
+                throw std::runtime_error("cannot write pack index cache: " + narrow(tmp.wstring()));
+            }
+        } else {
+            throw std::runtime_error("cannot create pack index cache: " + narrow(tmp.wstring()));
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, idx, ec);
+    if (ec) {
+        fs::remove(tmp);
+        throw std::runtime_error("cannot commit pack index cache: " + narrow(idx.wstring()) + ": " + ec.message());
+    }
+    // Drop stale indexes of the same pack after the replacement is safely installed.
     for (auto& de : fs::directory_iterator(dir))
-        if (de.path().filename().string().rfind(p.name + ".", 0) == 0) fs::remove(de.path());
-    std::ofstream f(idx);
-    for (auto& l : lines) f << l << "\n";
+        if (de.path() != idx && de.path().filename().wstring().rfind(widen(p.name + "."), 0) == 0) fs::remove(de.path());
     return lines;
 }
 
@@ -225,7 +295,30 @@ void Vfs::extract(int pack, const std::vector<std::string>& paths) {
                 std::vector<std::string> in_pack;
                 for (const std::string& n : set)
                     if (!fs::exists(root / widen(normalize(n)))) in_pack.push_back(n);
-                if (!in_pack.empty()) backend().extract(packs_[size_t(pk)].path, in_pack, root);
+                if (in_pack.empty()) continue;
+
+                const std::string reader = backend().name();
+                backend_->extract(packs_[size_t(pk)].path, in_pack, root);
+
+                // The server can report a successful tool call even when it did not write every requested file.
+                // Don't leave those misses looking like absent game assets: retry them with the CLI backend.
+                std::vector<std::string> missing;
+                for (const std::string& n : in_pack)
+                    if (!fs::exists(root / widen(normalize(n)))) missing.push_back(n);
+                if (!missing.empty() && reader.rfind("rpfm_server", 0) == 0) {
+                    Log::warn("rpfm_server left " + std::to_string(missing.size()) + " file(s) unextracted from " + packs_[size_t(pk)].name + " (" + missing.front() + "); retrying with rpfm_cli");
+                    backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, cfg_.profile.key);
+                    backend_note_ = "rpfm_server left files unextracted; using rpfm_cli";
+                    try {
+                        backend_->extract(packs_[size_t(pk)].path, missing, root);
+                    } catch (const std::exception& e) {
+                        Log::warn("rpfm_cli retry failed for " + packs_[size_t(pk)].name + ": " + e.what());
+                    }
+                    missing.erase(std::remove_if(missing.begin(), missing.end(), [&](const std::string& n) {
+                        return fs::exists(root / widen(normalize(n)));
+                    }), missing.end());
+                    if (!missing.empty()) Log::warn("rpfm_cli also left " + std::to_string(missing.size()) + " file(s) unextracted from " + packs_[size_t(pk)].name + ": " + missing.front());
+                }
             }
         } catch (...) {
             failure = std::current_exception();
@@ -254,9 +347,19 @@ std::optional<fs::path> Vfs::fetch_from(int pack, const std::string& path) {
 }
 
 std::optional<fs::path> Vfs::fetch(const std::string& path) {
-    auto o = owner(path);
-    if (!o) return std::nullopt;
-    return fetch_from(*o, path);
+    // A stale pack index or a pack backend that omitted a file must not hide a
+    // lower-priority copy of the same asset.
+    std::string failure;
+    for (int pack : owners(path)) {
+        try {
+            if (auto disk = fetch_from(pack, path)) return disk;
+        } catch (const std::exception& e) {
+            failure = e.what();
+            Log::warn("could not fetch " + path + " from " + packs_[size_t(pack)].name + ": " + failure);
+        }
+    }
+    if (!failure.empty()) throw std::runtime_error(failure);
+    return std::nullopt;
 }
 
 size_t Vfs::prefetch(const std::vector<std::string>& paths) {

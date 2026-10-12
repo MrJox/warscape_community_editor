@@ -36,6 +36,26 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "Run WCE (Debug build, without debugger)",
+            "type": "process",
+            "command": "${workspaceFolder}/build/bin/Debug/wce.exe",
+            "args": [],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Build WCE (Debug)",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run WCE (Release build, without debugger)",
+            "type": "process",
+            "command": "${workspaceFolder}/build/bin/Release/wce.exe",
+            "args": [],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Build WCE (Release)",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
             "label": "Build All (Debug)",
             "type": "process",
             "command": "cmake",
@@ -50,26 +70,6 @@
             "type": "process",
             "command": "cmake",
             "args": ["--build", "${workspaceFolder}/build", "--config", "Release"],
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build foundation_check (Debug)",
-            "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "foundation_check"],
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build editor_check (Debug)",
-            "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "editor_check"],
             "options": { "cwd": "${workspaceFolder}" },
             "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
             "dependsOrder": "sequence",

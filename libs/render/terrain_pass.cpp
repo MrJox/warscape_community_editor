@@ -467,12 +467,13 @@ void Renderer::pass_terrain_material(const RenderScene& scene) {
             cbs_.set_i("ps_height_map_cb", "g_is_campaign", 0);
             cbs_.set_f("vs_height_map_cb", "g_world_dimensions", {1.0e6f, 1.0e6f});   // the (disabled) map-wide normal map's uv
             // ps_texture_array_cb: one layer per texture group, its four variations are the slots 4 * layer + 0..3; g_array_section_sizes.z = 0 keeps the index at the tile's own
-            // the shader reads element [layer + 1]: (metres per repeat, outfield scale, mid-distance strength)
+            // the shader reads `cb3[mapping + 1]` of the cbuffer, whose row 0 is g_light_params_texture_width: that is array element [mapping] (= the layer here):
+            // (metres per repeat, outfield scale, mid-distance strength). Element [layer + 1] left layer 0 with a scale of 0 (uv = world / 0: one flat texel)
             std::vector<float> arr(400 * 4, 0.0f);
             for (int l = 0; l < 4; ++l) {
-                arr[size_t(l + 1) * 4 + 0] = m.pixel_scale[l];
-                arr[size_t(l + 1) * 4 + 1] = m.outfield_scale[l];
-                arr[size_t(l + 1) * 4 + 2] = m.mid_strength[l];
+                arr[size_t(l) * 4 + 0] = m.pixel_scale[l];
+                arr[size_t(l) * 4 + 1] = m.outfield_scale[l];
+                arr[size_t(l) * 4 + 2] = m.mid_strength[l];
             }
             cbs_.set("ps_texture_array_cb", "g_blend_pixel_scale_array", arr.data(), arr.size() * 4);
             cbs_.set_f("ps_texture_array_cb", "g_light_params_texture_width", {16.0f});

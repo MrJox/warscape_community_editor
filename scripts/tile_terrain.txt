@@ -43,4 +43,8 @@ tile_ground_view colour
 frames 4
 assert_ground blended 16 ROME_Continental
 capture 640x360 "%OUT%/blend3.png" 4
+# a close look at the ground: every texture layer shows its texture (a layer whose uv scale is 0 draws one flat texel: tile_check.sh counts the flat blocks)
+cam 0.8 1.0 70 2
+frames 4
+capture 640x360 "%OUT%/detail.png" 4
 quit
