@@ -1969,6 +1969,8 @@ name = "wce_formats"
 version = "0.1.0"
 dependencies = [
  "memchr",
+ "rayon",
+ "tempfile",
  "thiserror",
 ]
 
