@@ -1,0 +1,10 @@
+[package]
+name = "wce_assets"
+description = "Game assets the editor builds GPU data from: vfx definitions, particle emitter constants and the weather effects."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_formats = { path = "../wce_formats" }
+wce_vfs = { path = "../wce_vfs" }
