@@ -11,8 +11,8 @@ namespace wce {
 std::vector<std::filesystem::path> steam_library_folders();
 // <library>/steamapps/common/Total War Attila with data/data.pack, or empty.
 std::filesystem::path detect_attila_folder();
-// A folder that holds rpfm_cli(.exe), looked for in the game folder's parent, the user's Downloads and Program Files (Linux: rpfm_cli or
-// rpfm_server on $PATH, then Downloads and /opt), or empty.
+// A folder that holds rpfm_server(.exe), looked for in the game folder's parent, the user's Downloads and Program Files (Linux: on $PATH,
+// then Downloads and /opt), or empty.
 std::filesystem::path detect_rpfm_folder(const std::filesystem::path& game_dir);
 // Open or save file dialog (`filter` is the Win32 list of NUL-separated pairs, see OPENFILENAME); empty when cancelled.
 std::filesystem::path file_dialog(bool save, const std::filesystem::path& initial, const wchar_t* filter);

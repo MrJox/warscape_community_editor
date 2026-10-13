@@ -86,11 +86,10 @@ void Editor::status(const std::string& text, bool error) {
 bool Editor::start() {
     try {
         Vfs::Config cfg = Vfs::default_config();
-        const char* backend = cfg.backend == Vfs::BackendMode::Server ? "server" : cfg.backend == Vfs::BackendMode::Cli ? "cli" : "auto";
         Log::info("Data paths: game=" + (cfg.game_dir.empty() ? std::string("(unset)") : narrow(cfg.game_dir.wstring())) +
-                  ", cache=" + narrow(cfg.cache_dir.wstring()) + ", RPFM=" +
-                  (cfg.rpfm_cli.empty() ? (cfg.server.exe.empty() ? std::string("(auto-detect)") : narrow(cfg.server.exe.wstring())) : narrow(cfg.rpfm_cli.wstring())) +
-                  ", backend=" + backend);
+                  ", cache=" + narrow(cfg.cache_dir.wstring()) + ", rpfm_server=" +
+                  (cfg.server.exe.empty() ? std::string("(not set, must be running)") : narrow(cfg.server.exe.wstring())) +
+                  " on port " + std::to_string(cfg.server.port));
         auto v = std::make_unique<Vfs>(cfg);
         v->mount();
         vfs_ = std::move(v);
@@ -102,7 +101,6 @@ bool Editor::start() {
         first_run_ = false;
         std::string msg = "Mounted " + std::to_string(vfs_->packs().size()) + " packs, " + std::to_string(vfs_->files().size()) + " files.";
         for (auto& m : vfs_->missing_mods()) msg += " Missing mod: " + m + ".";
-        if (!vfs_->backend_note().empty()) msg += " " + vfs_->backend_note() + ".";
         status(msg);
         return true;
     } catch (const std::exception& e) {
@@ -659,7 +657,7 @@ void Editor::draw_first_run() {
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(640, 0));
     if (!ImGui::BeginPopupModal("First run", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::TextWrapped("Warscape Community Editor needs Total War: Attila and RPFM. Nothing from the game is copied: files are read from your installation.");
+    ImGui::TextWrapped("Warscape Community Editor needs Total War: Attila and RPFM 5.2 or newer. Nothing from the game is copied: files are read from your installation.");
     ImGui::Spacing();
     char buf[1024];
     auto field = [&](const char* label, std::string& value, const wchar_t* title) {
@@ -673,7 +671,7 @@ void Editor::draw_first_run() {
         }
     };
     field("Game folder", first_run_game_, L"Total War Attila folder");
-    field("RPFM folder", first_run_rpfm_, widen("Folder with " + exe_name("rpfm_cli")).c_str());
+    field("RPFM folder", first_run_rpfm_, widen("Folder with " + exe_name("rpfm_server")).c_str());
     if (ImGui::Button("Detect")) {
         fs::path g = detect_attila_folder();
         if (!g.empty()) first_run_game_ = narrow(g.wstring());
@@ -682,9 +680,9 @@ void Editor::draw_first_run() {
     }
     ImGui::SameLine();
     const bool game_ok = !first_run_game_.empty() && fs::exists(fs::path(widen(first_run_game_)) / "data");
-    const bool rpfm_ok = !first_run_rpfm_.empty() && fs::exists(fs::path(widen(first_run_rpfm_)) / exe_name("rpfm_cli"));
+    const bool rpfm_ok = !first_run_rpfm_.empty() && fs::exists(fs::path(widen(first_run_rpfm_)) / exe_name("rpfm_server"));
     if (!game_ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "no data folder in the game folder");
-    else if (!rpfm_ok) ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1), "%s not found there (needed when rpfm_server cannot start)", exe_name("rpfm_cli").c_str());
+    else if (!rpfm_ok) ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1), "%s not found there (needed unless it is already running)", exe_name("rpfm_server").c_str());
     if (!first_run_message_.empty()) {
         ImGui::PushTextWrapPos(600);
         ImGui::TextDisabled("%s", first_run_message_.c_str());

@@ -9,7 +9,7 @@ endif()
 add_library(wce_game STATIC game/game_profile.cpp)
 target_link_libraries(wce_game PUBLIC wce_foundation)
 
-add_library(wce_vfs STATIC vfs/vfs.cpp vfs/mcp_client.cpp vfs/rpfm_server_backend.cpp vfs/rpfm_cli_backend.cpp)
+add_library(wce_vfs STATIC vfs/vfs.cpp vfs/rpfm_client.cpp vfs/rpfm_server_backend.cpp)
 target_link_libraries(wce_vfs PUBLIC wce_game wce_foundation ${WCE_HTTP_LIBS})
 
 add_library(wce_formats STATIC

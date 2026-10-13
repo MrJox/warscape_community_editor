@@ -1,6 +1,6 @@
 # Warscape Community Editor: plan to merge weather_editor and tile_editor
 
-## Status (updated 2026-10-09)
+## Status (updated 2026-10-13)
 
 | Phase | State |
 |---|---|
@@ -15,6 +15,7 @@
 | 7 Cross-tool composition | **Done, waiting for your go.** `docs/editor.md` (Cross-tool composition), gate `cross_tool_check`, Phase 7 deviations below. |
 | 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
 | 9 | Not started. |
+| Step 0 of the Rust/rpfm plan | **Done, waiting for your go** (2026-10-13). Pack access on RPFM 5.2's WebSocket API, rpfm_cli backend removed: `docs/vfs.md`, `docs/baseline.md` (Step 0). |
 
 Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;
 `vfx_check` and `env_vs_dump` moved to `cli/`; `legacy/weather_editor/tools/re` is `scripts/re`, the tile survey scripts are `scripts/proto`, the other Python helpers are in `scripts/`; the old READMEs and `current-state.md` are in `docs/plans/` next to the two plans (`weather.md`, `tile.md`);
@@ -63,7 +64,7 @@ Phase 1 deviations from this plan: gates moved to `cli/` already (only `vfx_chec
 | Games | Attila only, but every game-specific fact sits behind one `GameProfile` so Rome 2 / ToB could be added later. |
 | Repo | New repo. Both existing histories are imported (subtree merge), then files move to the new layout as ordinary commits. Old folders are archived once the unified app is at parity. |
 | Migration | Freeze feature work. Commit what is in flight. Migrate in steps (libs → renderer → shell → tools). `weather_editor.exe` and `tile_studio.exe` keep building until `wce.exe` reaches parity. Every existing gate must pass after every step. |
-| Pack access | **rpfm_server** (persistent process, MCP over HTTP at `127.0.0.1:45127/mcp`), behind a VFS interface. The current rpfm_cli code stays as the fallback backend. This replaces the old "rpfm_cli only" decision. |
+| Pack access | **rpfm_server** (persistent process), behind a VFS interface. Since 2026-10-13: RPFM 5.2+, JSON-RPC over WebSocket (`127.0.0.1:45127/ws`), a session of our own; no rpfm_cli fallback (RPFM dropped it). Before: MCP over HTTP at `127.0.0.1:45127/mcp`, with the rpfm_cli code as the fallback backend. This replaces the old "rpfm_cli only" decision. |
 | Scene | **Own data model per tool, shared render/editor scene.** Each tool keeps its own lossless document model (TedScene, XmlDoc environment, VfxDef, …) and publishes its objects into one shared scene. That scene provides the viewport, picking, selection, gizmos and undo plumbing. |
 | Documents | One composed scene, many open documents. Tools are modes: a tool changes the panels, the viewport tools and which document is being edited. Example: edit a `.environment` while looking at a real tile. |
 | UI | ImGui **docking** branch. Each tool ships a default layout; users can rearrange panels; layouts are saved per tool. |

@@ -1,17 +1,16 @@
 #pragma once
 // Game file system. Consumers use IVfs; Vfs implements it over the game's packs, with pack access through RPFM (no own pack reader).
 //
-// Pack priority is ours (GameProfile::pack_order), whichever RPFM backend reads the packs:
+// Pack priority is ours (GameProfile::pack_order), not RPFM's:
 //   0. loose overlay folders (Config::overlay_folders, e.g. an assembly kit's raw_data), in the order given;
 //   1. mods from <game>/used_mods.txt, in file order (first listed wins);
 //   2. vanilla packs: the profile's extra_vanilla DLC packs, then data/manifest.txt .pack entries.
 // TODO(verify): exact engine priority between mods and between vanilla packs.
 //
-// Pack backends (pack_backend.h): rpfm_server is the primary one (one persistent process, MCP over HTTP), rpfm_cli the fallback;
-// Auto tries the server and falls back to the cli with a note in backend_note().
+// Packs are read through rpfm_server (pack_backend.h: one persistent process, WebSocket API, a session of our own), started on first use.
 //
 // Each pack's file list is cached as <cache>/index/<pack>.<size>.<mtime>.txt, so a pack edited by the team is re-indexed
-// automatically. Files are extracted on demand into <cache>/x/<pack-id>/<path>. Both caches are shared by the backends.
+// automatically. Files are extracted on demand into <cache>/x/<pack-id>/<path>.
 // Keep the cache root short: rpfm silently writes nothing past MAX_PATH (260).
 #include "game/game_profile.h"
 #include "vfs/pack_backend.h"
@@ -64,8 +63,6 @@ public:
 
 class Vfs : public IVfs {
 public:
-    enum class BackendMode { Auto, Server, Cli };
-
     struct Config {
         std::filesystem::path game_dir;   // ...\Total War Attila
         std::filesystem::path cache_dir;  // e.g. %LOCALAPPDATA%\awe
@@ -73,24 +70,21 @@ public:
         bool use_mods = true;
         std::vector<std::filesystem::path> overlay_folders;
 
-        BackendMode backend = BackendMode::Auto;
-        std::filesystem::path rpfm_cli;   // ...\rpfm_cli.exe
         RpfmServerConfig server;
     };
 
     // From the settings file and the environment (foundation/settings.h): game_dir (WCE_GAME / ATTILA_DIR), rpfm_dir (WCE_RPFM_DIR) or
-    // rpfm_cli (RPFM_CLI), rpfm_server_exe, rpfm_server_port, rpfm_server_autostart, rpfm_backend (WCE_RPFM_BACKEND: auto, server, cli),
-    // cache_dir (WCE_CACHE_DIR / AWE_CACHE). Unset values stay empty: mount() then fails with a message that names the missing setting.
+    // rpfm_server_exe (WCE_RPFM_SERVER), rpfm_server_port, rpfm_server_autostart, cache_dir (WCE_CACHE_DIR / AWE_CACHE). Unset values
+    // stay empty: mount() then fails with a message that names the missing setting.
     static Config default_config();
 
     explicit Vfs(Config cfg);
-    Vfs(Config cfg, std::unique_ptr<PackBackend> backend);   // a given backend, for tests and the backend comparison
+    Vfs(Config cfg, std::unique_ptr<PackBackend> backend);   // a given backend, for tests and the cache comparison
     ~Vfs();
     void mount();                    // builds the pack list and indexes; throws on failure
 
-    // Which backend serves the packs (after the first use), and why the fallback was taken if it was.
+    // Which backend serves the packs (after the first use).
     std::string backend_name() const { return backend_ ? backend_->name() : std::string("(not used yet)"); }
-    const std::string& backend_note() const { return backend_note_; }
 
     const std::vector<Pack>& packs() const override { return packs_; }
     const std::vector<std::string>& missing_mods() const override { return missing_mods_; }
@@ -115,7 +109,6 @@ private:
     std::unique_ptr<ExtractQueue> queue_;
     Config cfg_;
     std::unique_ptr<PackBackend> backend_;
-    std::string backend_note_;
     std::vector<Pack> packs_;
     std::vector<std::string> missing_mods_;
     std::map<std::string, int> files_;
