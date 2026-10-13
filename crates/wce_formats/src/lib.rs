@@ -1,5 +1,6 @@
 //! The editor's own file formats: the ones it edits in place without re-serialising them (XML), and the ones rpfm_lib doesn't cover.
 
+pub mod env_value;
 pub mod text_encoding;
 pub mod xml_doc;
 
