@@ -8,14 +8,28 @@
 #include <sstream>
 
 #include <algorithm>
-#include <DirectXPackedVector.h>
 #include <cmath>
+#ifdef _WIN32
+#include <DirectXPackedVector.h>
+#else
+#include <bit>
+#include <cstdint>
+#endif
 
 namespace wce {
 
 namespace {
 
 constexpr float kDeg = 3.14159265358979f / 180.0f;
+
+// float to half, round to nearest even (what XMConvertFloatToHalf does)
+uint16_t float_to_half(float v) {
+#ifdef _WIN32
+    return DirectX::PackedVector::XMConvertFloatToHalf(v);
+#else
+    return std::bit_cast<uint16_t>(static_cast<_Float16>(v));
+#endif
+}
 
 struct Reader {
     const XmlDoc& doc;
@@ -63,8 +77,17 @@ float3 EnvironmentParams::to_sun() const {
 GraphicsOptions read_graphics_options() {
     GraphicsOptions o;
     const char* appdata = std::getenv("APPDATA");
+#ifdef _WIN32
     if (!appdata) return o;
     std::ifstream f(std::string(appdata) + "\\The Creative Assembly\\Attila\\scripts\\preferences.script.txt");
+#else
+    // The game runs under Proton: its %APPDATA% is in the prefix of app 325610 (default Steam library), unless $APPDATA points elsewhere.
+    std::string roaming;
+    if (appdata) roaming = appdata;
+    else if (const char* home = std::getenv("HOME")) roaming = std::string(home) + "/.local/share/Steam/steamapps/compatdata/325610/pfx/drive_c/users/steamuser/AppData/Roaming";
+    else return o;
+    std::ifstream f(roaming + "/The Creative Assembly/Attila/scripts/preferences.script.txt");
+#endif
     std::string line;
     while (std::getline(f, line)) {
         std::istringstream is(line);
@@ -325,7 +348,7 @@ void build_scurve(const EnvironmentParams& e, uint16_t out[256 * 4]) {
                 by[bin] = y;
             }
         }
-        for (int i = 0; i < kBins; ++i) out[i * 4 + ch] = DirectX::PackedVector::XMConvertFloatToHalf(std::fmax(by[i], 0.0f));
+        for (int i = 0; i < kBins; ++i) out[i * 4 + ch] = float_to_half(std::fmax(by[i], 0.0f));
     }
     for (int i = 0; i < kBins; ++i) out[i * 4 + 3] = 0;
 }

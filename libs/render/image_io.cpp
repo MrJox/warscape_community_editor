@@ -1,6 +1,7 @@
 #include "render/image_io.h"
 
 #include "formats/png_file.h"
+#include "foundation/process.h"
 
 #include <wrl/client.h>
 
@@ -44,7 +45,11 @@ bool save_texture_png(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Texture
 
     std::vector<uint8_t> bytes;
     try { bytes = png.encode(); } catch (...) { return false; }
+#ifdef _WIN32
     FILE* f = _wfopen(path.c_str(), L"wb");
+#else
+    FILE* f = std::fopen(narrow(path).c_str(), "wb");
+#endif
     if (!f) return false;
     const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
     return std::fclose(f) == 0 && ok;

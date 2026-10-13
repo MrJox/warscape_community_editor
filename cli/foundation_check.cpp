@@ -58,7 +58,11 @@ int main() {
     wce::Settings s = wce::Settings::load(dir);
     CHECK(s.get("game_dir").value_or("") == "C:\\games", "value from the file, CRLF tolerated");
     CHECK(!s.get("empty") && !s.get("missing") && !s.get("# comment"), "empty, missing and comment lines");
+#ifdef _WIN32
     _putenv_s("WCE_CHECK_GAME", "E:\\env");
+#else
+    setenv("WCE_CHECK_GAME", "E:\\env", 1);
+#endif
     CHECK(s.get("game_dir", "WCE_CHECK_GAME").value_or("") == "E:\\env", "environment overrides the file");
     CHECK(s.get("game_dir", "WCE_CHECK_UNSET").value_or("") == "C:\\games", "unset environment variable falls back to the file");
     s.set("cache_dir", "F:\\c");

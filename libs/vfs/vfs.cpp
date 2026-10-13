@@ -82,10 +82,10 @@ Vfs::Config Vfs::default_config() {
     fs::path rpfm_dir;
     if (auto d = s.get("rpfm_dir", "WCE_RPFM_DIR")) rpfm_dir = fs::path(widen(*d));
     if (auto e = s.get("rpfm_cli", "RPFM_CLI")) c.rpfm_cli = fs::path(widen(*e));
-    else if (!rpfm_dir.empty()) c.rpfm_cli = rpfm_dir / "rpfm_cli.exe";
+    else if (!rpfm_dir.empty()) c.rpfm_cli = rpfm_dir / exe_name("rpfm_cli");
 
     if (auto e = s.get("rpfm_server_exe", "WCE_RPFM_SERVER")) c.server.exe = fs::path(widen(*e));
-    else if (!rpfm_dir.empty()) c.server.exe = rpfm_dir / "rpfm_server.exe";
+    else if (!rpfm_dir.empty()) c.server.exe = rpfm_dir / exe_name("rpfm_server");
     if (auto p = s.get("rpfm_server_port", "WCE_RPFM_PORT")) c.server.port = std::atoi(p->c_str());
     if (auto a = s.get("rpfm_server_autostart", "WCE_RPFM_AUTOSTART")) c.server.autostart = *a != "0" && *a != "false" && *a != "off";
     if (auto b = s.get("rpfm_backend", "WCE_RPFM_BACKEND")) {
@@ -341,8 +341,10 @@ std::optional<fs::path> Vfs::fetch_from(int pack, const std::string& path) {
     if (fs::exists(disk)) return disk;
     extract(pack, {path});
     if (fs::exists(disk)) return disk;
+#ifdef _WIN32
     if (disk.native().size() >= 260)
         throw std::runtime_error("path too long for rpfm (MAX_PATH): " + narrow(disk.native()));
+#endif
     return std::nullopt;
 }
 

@@ -129,8 +129,13 @@ fs::path Editor::layout_file(const std::string& tool_id) const { return Settings
 
 std::filesystem::path Editor::output_dir() const {
     if (auto v = settings_.get("output_dir", "WCE_OUTPUT_DIR")) return fs::path(widen(*v));
+#ifdef _WIN32
     const char* profile = std::getenv("USERPROFILE");
     return fs::path(widen(profile ? profile : "C:\\")) / "Documents" / "AttilaWeatherEditor" / "out";
+#else
+    const char* home = std::getenv("HOME");
+    return fs::path(home ? home : "/tmp") / "Documents" / "AttilaWeatherEditor" / "out";
+#endif
 }
 
 void Editor::set_output_dir(const std::filesystem::path& dir, bool persist) {
@@ -668,7 +673,7 @@ void Editor::draw_first_run() {
         }
     };
     field("Game folder", first_run_game_, L"Total War Attila folder");
-    field("RPFM folder", first_run_rpfm_, L"Folder with rpfm_cli.exe");
+    field("RPFM folder", first_run_rpfm_, widen("Folder with " + exe_name("rpfm_cli")).c_str());
     if (ImGui::Button("Detect")) {
         fs::path g = detect_attila_folder();
         if (!g.empty()) first_run_game_ = narrow(g.wstring());
@@ -677,9 +682,9 @@ void Editor::draw_first_run() {
     }
     ImGui::SameLine();
     const bool game_ok = !first_run_game_.empty() && fs::exists(fs::path(widen(first_run_game_)) / "data");
-    const bool rpfm_ok = !first_run_rpfm_.empty() && fs::exists(fs::path(widen(first_run_rpfm_)) / "rpfm_cli.exe");
+    const bool rpfm_ok = !first_run_rpfm_.empty() && fs::exists(fs::path(widen(first_run_rpfm_)) / exe_name("rpfm_cli"));
     if (!game_ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "no data folder in the game folder");
-    else if (!rpfm_ok) ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1), "rpfm_cli.exe not found there (needed when rpfm_server cannot start)");
+    else if (!rpfm_ok) ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1), "%s not found there (needed when rpfm_server cannot start)", exe_name("rpfm_cli").c_str());
     if (!first_run_message_.empty()) {
         ImGui::PushTextWrapPos(600);
         ImGui::TextDisabled("%s", first_run_message_.c_str());

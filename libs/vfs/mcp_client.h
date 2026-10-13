@@ -1,5 +1,5 @@
 #pragma once
-// Minimal MCP client (JSON-RPC over HTTP, "streamable HTTP" transport) for rpfm_server, on WinHTTP. One session per client:
+// Minimal MCP client (JSON-RPC over HTTP, "streamable HTTP" transport) for rpfm_server, on WinHTTP (libcurl on Linux). One session per client:
 // rpfm_server keeps the selected game and the open packs per MCP session, so this client never touches the state of other sessions
 // (the attila-toolkit bridge used by Claude sessions talks to the same server). Not thread-safe.
 #include "foundation/json.h"
