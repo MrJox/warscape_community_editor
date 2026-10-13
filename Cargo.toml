@@ -1,0 +1,17 @@
+# Rust port of the editor (PLAN.md, "Rust port"). The C++ tree keeps building with CMake until the port reaches parity.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+windows-core = "0.100"
+windows-link = "0.100"
+windows-bindgen = "0.100"
+
+# rpfm_lib with the Attila formats added for the editor (rpfm branch wce_formats). A path for now, until that branch is pushed.
+rpfm_lib = { path = "../rpfm_wce_formats/rpfm_lib", default-features = false }
