@@ -1,0 +1,11 @@
+[package]
+name = "wce_foundation"
+description = "Basics shared by every layer of the editor: math, the simulation clock, the log, machine settings and the profiler."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"
