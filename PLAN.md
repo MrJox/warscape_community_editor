@@ -16,7 +16,7 @@
 | 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
 | 9 | Not started. |
 | Step 0 of the Rust/rpfm plan | **Done, waiting for your go** (2026-10-13). Pack access on RPFM 5.2's WebSocket API, rpfm_cli backend removed: `docs/vfs.md`, `docs/baseline.md` (Step 0). |
-| Rust port | **Started** (2026-10-13). Renderer spike passed; crates `wce_d3d11`, `wce_vfs`, `wce_formats` (XmlDoc). See "Rust port" below. |
+| Rust port | **Started** (2026-10-13). Renderer spike passed; crates `wce_d3d11`, `wce_vfs`, `wce_formats`, `wce_foundation`. See "Rust port" below. |
 
 Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;
 `vfx_check` and `env_vs_dump` moved to `cli/`; `legacy/weather_editor/tools/re` is `scripts/re`, the tile survey scripts are `scripts/proto`, the other Python helpers are in `scripts/`; the old READMEs and `current-state.md` are in `docs/plans/` next to the two plans (`weather.md`, `tile.md`);
@@ -90,6 +90,7 @@ Ported so far (each checked against the C++ code on the same inputs):
 | `wce_formats` | `env_value`: typed attribute values that keep their number style (`%f` stripped, shortest, fixed) | `env_value_dump` against the C++ code: identical over 2,025,816 floats in all 13 styles and 525,089 value texts (every attribute value of the kit and the cache, plus fuzzed ones); `format_check` output identical to the C++ gate |
 | `wce_formats` | `tile_entry`, `tile_climate`, `tile_index` (with its row cache), and `c_num` (C's `strtod` / `strtol` prefix reading, which the typed views rely on) | `tile_dump` against the C++ code over the Attila kit: identical for all 1,107 entries (every one saves byte for byte, no unknown names), the climates and 1,992 texture path lookups, the index built without cache, cold and warm, and 9,072 resolve / find lookups |
 | `wce_formats` | `png_file` (the kit's PNG encoder, on classic zlib from libz-sys) and `image_containers` (DDS, TGA, TIFF with the generated TEd headers) | `image_dump` against the C++ registry's round trips over 16,234 images of the kit and local caches: identical, including 11,037 PNGs re-encoded to the same bytes (libz-sys' zlib 1.3.2 against the vendored 1.3.1); golden hashes of the C++ encoder in the tests |
+| `wce_foundation` | math (same operation order as the C++ code), the simulation clock, the log, machine settings (wce.ini) and the scope profiler. Not ported: the JSON and process helpers (they served the rpfm_server client, replaced by rpfm_lib in-process); `parallel_for` is rayon, and the priority job queue comes with the renderer's model loading | `math_dump` against the C++ functions: bit-identical over 20,000 random cases |
 
 Text is kept as bytes in Rust (`Vec<u8>`): 8-bit game files are not always UTF-8, and UTF-16 files decode to WTF-8.
 

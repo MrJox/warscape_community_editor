@@ -1994,6 +1994,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_foundation"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "wce_vfs"
 version = "0.1.0"
 dependencies = [
