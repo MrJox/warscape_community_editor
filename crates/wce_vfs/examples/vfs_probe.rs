@@ -1,16 +1,20 @@
 //! Mounts the packs and prints what the editor would see, in the format of the C++ `vfs_probe`.
 //!
-//!   WCE_GAME=<game folder> cargo run -p wce_vfs --example vfs_probe [--find <substring>]... [path-to-read...]
+//!   WCE_GAME=<game folder> cargo run -p wce_vfs --example vfs_probe [--find <substring>]... [--extract <prefix> <folder>]... [path-to-read...]
+//!
+//! `--extract` writes every file under a path prefix, as the packs give it, below a folder.
 
 use wce_vfs::{Config, GameProfile, Vfs};
 
 fn main() {
     let mut finds = vec![];
     let mut reads = vec![];
+    let mut extracts = vec![];
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--find" => finds.push(args.next().expect("--find needs a substring")),
+            "--extract" => extracts.push((args.next().expect("--extract needs a prefix"), args.next().expect("--extract needs a folder"))),
             _ => reads.push(arg),
         }
     }
@@ -45,5 +49,16 @@ fn main() {
             Ok(bytes) => println!("{path} -> {} : {} bytes", vfs.packs()[vfs.owner(&path).unwrap()].name, bytes.len()),
             Err(error) => println!("{path}: {error}"),
         }
+    }
+
+    for (prefix, folder) in extracts {
+        let paths = vfs.list(&prefix, "");
+        for path in &paths {
+            let target = std::path::Path::new(&folder).join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&target, vfs.read(path).unwrap()).unwrap();
+        }
+
+        println!("extracted {} files under {prefix} to {folder}", paths.len());
     }
 }
