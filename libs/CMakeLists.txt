@@ -2,12 +2,15 @@
 # formats and everything below it never include D3D or ImGui.
 add_library(wce_foundation STATIC foundation/text_encoding.cpp foundation/process.cpp foundation/math.cpp foundation/json.cpp foundation/settings.cpp foundation/log.cpp foundation/profile.cpp foundation/thread_pool.cpp)
 target_include_directories(wce_foundation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(NOT WIN32)
+    target_link_libraries(wce_foundation PUBLIC Threads::Threads)
+endif()
 
 add_library(wce_game STATIC game/game_profile.cpp)
 target_link_libraries(wce_game PUBLIC wce_foundation)
 
 add_library(wce_vfs STATIC vfs/vfs.cpp vfs/mcp_client.cpp vfs/rpfm_server_backend.cpp vfs/rpfm_cli_backend.cpp)
-target_link_libraries(wce_vfs PUBLIC wce_game wce_foundation winhttp)
+target_link_libraries(wce_vfs PUBLIC wce_game wce_foundation ${WCE_HTTP_LIBS})
 
 add_library(wce_formats STATIC
     formats/xml_doc.cpp formats/env_value.cpp formats/fxc.cpp formats/rmv2.cpp formats/variation_db.cpp formats/variation_io.cpp
@@ -28,7 +31,7 @@ target_link_libraries(wce_scene PUBLIC wce_formats)
 add_library(wce_render STATIC
     render/image_io.cpp render/render_target.cpp render/shader_lib.cpp render/texture.cpp render/wind.cpp render/model_cache.cpp render/particles.cpp render/editor_passes.cpp
     render/environment_apply.cpp render/renderer.cpp render/gpu_adapter.cpp render/gpu_timer.cpp render/draw_set.cpp render/water_pass.cpp render/terrain_pass.cpp)
-target_link_libraries(wce_render PUBLIC wce_scene wce_assets wce_vfs wce_formats d3d11 dxgi d3dcompiler dxguid)
+target_link_libraries(wce_render PUBLIC wce_scene wce_assets wce_vfs wce_formats ${WCE_D3D_LIBS})
 
 # The editor shell. editor_core has no ImGui or GPU code (commands, documents, selection, command registry, camera controllers) and is what
 # editor_check tests; editor is the dockspace, panels, viewport and gizmos on top.
@@ -36,4 +39,4 @@ add_library(wce_editor_core STATIC editor/command.cpp editor/document_manager.cp
 target_link_libraries(wce_editor_core PUBLIC wce_scene wce_foundation)
 
 add_library(wce_editor STATIC editor/editor.cpp editor/viewport.cpp editor/panels.cpp editor/steam_detect.cpp)
-target_link_libraries(wce_editor PUBLIC wce_editor_core wce_render wce_vfs wce_game imgui imguizmo ole32 shell32 advapi32)
+target_link_libraries(wce_editor PUBLIC wce_editor_core wce_render wce_vfs wce_game imgui imguizmo ${WCE_SHELL_LIBS})

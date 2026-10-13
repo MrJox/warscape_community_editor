@@ -6,6 +6,7 @@
 //   height_check <png> [min_height scale] ...    (several files may be given; defaults min 0, scale 100)
 #include "tile/height_field.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>

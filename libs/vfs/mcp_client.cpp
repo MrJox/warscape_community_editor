@@ -2,8 +2,15 @@
 
 #include "foundation/process.h"
 
+#ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include <curl/curl.h>
+
+#include <cctype>
+#include <mutex>
+#endif
 
 #include <vector>
 
@@ -11,7 +18,9 @@ namespace wce {
 
 namespace {
 
+#ifdef _WIN32
 std::string last_error_text(const char* what) { return std::string(what) + " (Windows error " + std::to_string(GetLastError()) + ")"; }
+#endif
 
 // The server answers with text/event-stream: blocks separated by blank lines, each with "data: <json>" lines.
 std::vector<std::string> sse_events(const std::string& body) {
@@ -42,12 +51,14 @@ std::vector<std::string> sse_events(const std::string& body) {
 
 McpClient::McpClient(std::string host, int port) : host_(std::move(host)), port_(port) {}
 
+void McpClient::disconnect() { session_id_.clear(); }
+
+#ifdef _WIN32
+
 McpClient::~McpClient() {
     if (connection_) WinHttpCloseHandle(connection_);
     if (session_) WinHttpCloseHandle(session_);
 }
-
-void McpClient::disconnect() { session_id_.clear(); }
 
 std::string McpClient::post(const std::string& body) {
     if (!session_) {
@@ -99,6 +110,86 @@ std::string McpClient::post(const std::string& body) {
     if (status >= 400) throw McpError("rpfm_server answered HTTP " + std::to_string(status) + ": " + out.substr(0, 300));
     return out;
 }
+
+#else
+
+namespace {
+
+size_t curl_body(char* data, size_t size, size_t n, void* user) {
+    static_cast<std::string*>(user)->append(data, size * n);
+    return size * n;
+}
+
+// Keeps the Mcp-Session-Id header (names are case-insensitive).
+size_t curl_header(char* data, size_t size, size_t n, void* user) {
+    const std::string line(data, size * n);
+    static const std::string kName = "mcp-session-id:";
+    if (line.size() > kName.size()) {
+        bool match = true;
+        for (size_t i = 0; i < kName.size() && match; ++i) match = std::tolower(static_cast<unsigned char>(line[i])) == kName[i];
+        if (match) {
+            std::string v = line.substr(kName.size());
+            const size_t b = v.find_first_not_of(" \t");
+            const size_t e = v.find_last_not_of(" \t\r\n");
+            *static_cast<std::string*>(user) = b == std::string::npos ? std::string() : v.substr(b, e - b + 1);
+        }
+    }
+    return size * n;
+}
+
+} // namespace
+
+McpClient::~McpClient() {
+    if (session_) curl_easy_cleanup(static_cast<CURL*>(session_));
+}
+
+std::string McpClient::post(const std::string& body) {
+    static std::once_flag global_init;
+    std::call_once(global_init, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+    if (!session_) {   // one easy handle per client: it keeps the connection to the server alive between requests
+        session_ = curl_easy_init();
+        if (!session_) throw McpError("curl_easy_init failed");
+    }
+    CURL* curl = static_cast<CURL*>(session_);
+    curl_easy_reset(curl);
+    const std::string url = "http://" + host_ + ":" + std::to_string(port_) + "/mcp";
+    std::string out, sid;
+    curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Accept: application/json, text/event-stream");
+    if (!session_id_.empty()) headers = curl_slist_append(headers, ("Mcp-Session-Id: " + session_id_).c_str());
+    struct Freer {
+        curl_slist* h;
+        ~Freer() { curl_slist_free_all(h); }
+    } freer{headers};
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "WarscapeCommunityEditor");
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, curl_off_t(body.size()));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &sid);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // connect in 5 s; a batch extract of a large pack can keep the reply silent for minutes
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 600L);
+    const CURLcode rc = curl_easy_perform(curl);
+    if (rc == CURLE_COULDNT_CONNECT || rc == CURLE_COULDNT_RESOLVE_HOST || rc == CURLE_OPERATION_TIMEDOUT)
+        throw McpUnreachable("rpfm_server is not reachable on " + host_ + ":" + std::to_string(port_));
+    if (rc != CURLE_OK) throw McpError(std::string("HTTP request to rpfm_server failed: ") + curl_easy_strerror(rc));
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    if (!sid.empty()) session_id_ = sid;
+    if (status == 404) throw McpSessionLost("rpfm_server forgot the MCP session");
+    if (status >= 400) throw McpError("rpfm_server answered HTTP " + std::to_string(status) + ": " + out.substr(0, 300));
+    return out;
+}
+
+#endif
 
 Json McpClient::rpc(const std::string& method, const Json& params, bool notification) {
     Json msg = Json::object();

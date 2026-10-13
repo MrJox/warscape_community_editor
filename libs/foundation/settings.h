@@ -1,5 +1,5 @@
 #pragma once
-// Machine settings: a key=value text file (wce.ini in the cache folder, %LOCALAPPDATA%\awe by default) with environment overrides.
+// Machine settings: a key=value text file (wce.ini in the cache folder, %LOCALAPPDATA%\awe by default, ~/.local/share/awe on Linux) with environment overrides.
 // Nothing about the machine lives in code; the first-run dialog (Phase 4) writes this file. Lines starting with # are comments.
 #include <filesystem>
 #include <map>
@@ -10,7 +10,7 @@ namespace wce {
 
 class Settings {
 public:
-    // The folder that holds wce.ini: $WCE_SETTINGS_DIR, else %LOCALAPPDATA%\awe.
+    // The folder that holds wce.ini: $WCE_SETTINGS_DIR, else %LOCALAPPDATA%\awe (Linux: $XDG_DATA_HOME/awe, else ~/.local/share/awe).
     static std::filesystem::path default_dir();
     static Settings load(const std::filesystem::path& dir = default_dir());
     // The VFS cache folder: $WCE_CACHE_DIR, else $AWE_CACHE, else cache_dir in the file, else the settings folder.
