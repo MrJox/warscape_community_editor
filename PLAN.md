@@ -87,6 +87,7 @@ Ported so far (each checked against the C++ code on the same inputs):
 | `wce_d3d11` | D3D11, DXGI and D3D compiler bindings | the renderer spike above |
 | `wce_vfs` | the packs in the editor's priority order, plus overlay folders | same packs, files and winners as the C++ VFS (158,769 files); 422 cached files byte-identical |
 | `wce_formats` | text encodings and the lossless `XmlDoc` (attribute edits, functional and in-place structural edits, splice journal, parallel read) | `xml_roundtrip` and `xml_splice_check` ported as examples: the round-trip output is byte-identical to the C++ gate over 3,197 files (the Attila kit and the cache; the same 7 malformed CA files fail); the splice gate passes on 8.6 and 9.7 MB kit tables, and the 383 MB `translated_texts.xml` reads to the same table in pieces as in one go |
+| `wce_formats` | `env_value`: typed attribute values that keep their number style (`%f` stripped, shortest, fixed) | `env_value_dump` against the C++ code: identical over 2,025,816 floats in all 13 styles and 525,089 value texts (every attribute value of the kit and the cache, plus fuzzed ones); `format_check` output identical to the C++ gate |
 
 Text is kept as bytes in Rust (`Vec<u8>`): 8-bit game files are not always UTF-8, and UTF-16 files decode to WTF-8.
 
