@@ -139,18 +139,17 @@ fs::path detect_rpfm_folder(const fs::path& game_dir) {
     if (GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH)) roots.push_back(fs::path(buf) / "Downloads");
     if (GetEnvironmentVariableW(L"ProgramFiles", buf, MAX_PATH)) roots.push_back(fs::path(buf));
 #else
-    for (const char* program : {"rpfm_cli", "rpfm_server"})   // distribution packages may ship only one of them
-        if (const fs::path p = find_in_path(program); !p.empty()) return p.parent_path();
+    if (const fs::path p = find_in_path("rpfm_server"); !p.empty()) return p.parent_path();
     if (const fs::path home = home_dir(); !home.empty()) roots.push_back(home / "Downloads");
     roots.push_back("/opt");
 #endif
-    const std::string cli = exe_name("rpfm_cli");
+    const std::string server = exe_name("rpfm_server");
     for (const fs::path& r : roots) {
         std::error_code ec;
-        if (fs::exists(r / cli, ec)) return r;
+        if (fs::exists(r / server, ec)) return r;
         for (fs::directory_iterator it(r, ec), end; !ec && it != end; it.increment(ec)) {
             const std::wstring name = it->path().filename().wstring();
-            if (name.find(L"rpfm") != std::wstring::npos && fs::exists(it->path() / cli, ec)) return it->path();
+            if (name.find(L"rpfm") != std::wstring::npos && fs::exists(it->path() / server, ec)) return it->path();
         }
     }
     return {};

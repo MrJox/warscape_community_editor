@@ -19,6 +19,6 @@ configure time into `<build>/_deps` (nothing is committed or redistributed); the
 | vkd3d | vkd3d-2.1 | **LGPL-2.1-or-later** | `libvkd3d-utils.so`: `D3DCompile` (the editor's helper HLSL), `D3DReflect` (game shader bindings) and `D3DDisassemble` (`fxc_dump`). Built with one local change: `WINAPI` / COM methods use the native x86-64 ABI instead of `ms_abi`, to match DXVK's headers |
 | SPIRV-Headers | vulkan-sdk-1.4.321.0 | MIT-style (Khronos) | headers needed to build vkd3d |
 
-System libraries: SDL3 (zlib licence) for the window and input, libcurl (curl licence) for the MCP client.
+System libraries: SDL3 (zlib licence) for the window and input, libcurl (curl licence) for the rpfm_server client (HTTP and WebSocket).
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.

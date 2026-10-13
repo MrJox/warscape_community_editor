@@ -35,8 +35,8 @@ cmake --build build
 ```
 
 Executables land in `build/bin` (`wce` and the gates, no `.exe`). Settings live in `~/.local/share/awe` (`$XDG_DATA_HOME/awe`). The game is
-the Windows (Proton) install, found in the usual Steam folders. RPFM is found on `$PATH` (`rpfm_cli`, `rpfm_server`), or set
-`WCE_RPFM_SERVER` / `RPFM_CLI`. File dialogs use zenity or kdialog.
+the Windows (Proton) install, found in the usual Steam folders. RPFM 5.2 or newer is needed (`rpfm_server`; found on `$PATH`, or
+set `WCE_RPFM_SERVER`). File dialogs use zenity or kdialog.
 
 ## Gates
 
@@ -44,5 +44,5 @@ the Windows (Proton) install, found in the usual Steam folders. RPFM is found on
 output file per gate. `scripts/imgcmp.py <run a> <run b>` compares the reference screenshots of two runs. The recorded
 baseline and the comparison rules are in [docs/baseline.md](docs/baseline.md). Every migration step must reproduce it.
 
-Requirements: the game, RPFM (`rpfm_cli`), the battle/campaign tilemap assembly kits for the tile gates, and
+Requirements: the game, RPFM 5.2+ (`rpfm_server`), the battle/campaign tilemap assembly kits for the tile gates, and
 `manifest/corpus.tsv` (built by `scripts/corpus_inventory.py`; not in git).
