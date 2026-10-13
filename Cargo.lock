@@ -1973,6 +1973,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_assets"
+version = "0.1.0"
+dependencies = [
+ "wce_formats",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_d3d11"
 version = "0.1.0"
 dependencies = [
