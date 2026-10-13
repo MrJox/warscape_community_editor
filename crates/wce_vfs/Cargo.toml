@@ -1,0 +1,13 @@
+[package]
+name = "wce_vfs"
+description = "The game's file system: the packs of a game in their priority order, plus loose overlay folders."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
