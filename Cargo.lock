@@ -1965,6 +1965,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_formats"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "thiserror",
+]
+
+[[package]]
 name = "wce_vfs"
 version = "0.1.0"
 dependencies = [
