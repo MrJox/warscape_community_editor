@@ -1965,6 +1965,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_vfs"
+version = "0.1.0"
+dependencies = [
+ "rpfm_lib",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
