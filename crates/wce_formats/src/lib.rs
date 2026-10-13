@@ -2,6 +2,8 @@
 
 pub mod c_num;
 pub mod env_value;
+pub mod image_containers;
+pub mod png_file;
 pub mod text_encoding;
 pub mod tile_climate;
 pub mod tile_entry;
