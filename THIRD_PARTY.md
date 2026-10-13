@@ -21,4 +21,8 @@ configure time into `<build>/_deps` (nothing is committed or redistributed); the
 
 System libraries: SDL3 (zlib licence) for the window and input, libcurl (curl licence) for the rpfm_server client (HTTP and WebSocket).
 
+Rust port: crates.io dependencies are listed in `Cargo.lock` (all MIT, Apache-2.0 or zlib licensed). Notable: rpfm_lib (MIT) for the packs and
+game formats, windows-core / windows-bindgen (MIT or Apache-2.0) for the D3D11 bindings, and libz-sys (MIT or Apache-2.0) building its bundled
+classic zlib (zlib licence) statically for the kit's PNG encoder.
+
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
