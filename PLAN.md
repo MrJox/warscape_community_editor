@@ -16,7 +16,7 @@
 | 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
 | 9 | Not started. |
 | Step 0 of the Rust/rpfm plan | **Done, waiting for your go** (2026-10-13). Pack access on RPFM 5.2's WebSocket API, rpfm_cli backend removed: `docs/vfs.md`, `docs/baseline.md` (Step 0). |
-| Rust port | **Started** (2026-10-13). Renderer spike passed; Cargo workspace with `crates/wce_d3d11`. See "Rust port" below. |
+| Rust port | **Started** (2026-10-13). Renderer spike passed; crates `wce_d3d11`, `wce_vfs`, `wce_formats` (XmlDoc). See "Rust port" below. |
 
 Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;
 `vfx_check` and `env_vs_dump` moved to `cli/`; `legacy/weather_editor/tools/re` is `scripts/re`, the tile survey scripts are `scripts/proto`, the other Python helpers are in `scripts/`; the old READMEs and `current-state.md` are in `docs/plans/` next to the two plans (`weather.md`, `tile.md`);
@@ -79,6 +79,16 @@ vfs, formats, assets, scene, render, editor, tools, app). The C++ tree keeps bui
 app reaches parity, as in the C++ merge. rpfm_lib is a path dependency on the `wce_formats` worktree until that branch is pushed.
 UI: dear-imgui-rs (Dear ImGui 1.92.9 docking) with dear-imguizmo and the SDL3 platform backend; the D3D11 renderer backend is ours.
 ImGuizmo's local `SetAllowedItem` change needs a patched copy of its C source.
+
+Ported so far (each checked against the C++ code on the same inputs):
+
+| Crate | What | Check |
+|---|---|---|
+| `wce_d3d11` | D3D11, DXGI and D3D compiler bindings | the renderer spike above |
+| `wce_vfs` | the packs in the editor's priority order, plus overlay folders | same packs, files and winners as the C++ VFS (158,769 files); 422 cached files byte-identical |
+| `wce_formats` | text encodings and the lossless `XmlDoc` (attribute edits, functional and in-place structural edits, splice journal, parallel read) | `xml_roundtrip` and `xml_splice_check` ported as examples: the round-trip output is byte-identical to the C++ gate over 3,197 files (the Attila kit and the cache; the same 7 malformed CA files fail); the splice gate passes on 8.6 and 9.7 MB kit tables, and the 383 MB `translated_texts.xml` reads to the same table in pieces as in one go |
+
+Text is kept as bytes in Rust (`Vec<u8>`): 8-bit game files are not always UTF-8, and UTF-16 files decode to WTF-8.
 
 ## Agreed scope (2026-10-09, 10 questions + follow-ups)
 

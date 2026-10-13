@@ -1,0 +1,10 @@
+[package]
+name = "wce_formats"
+description = "The editor's own file formats: lossless XML, and the formats rpfm_lib doesn't cover."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+memchr = "2"
+thiserror = "2"
