@@ -1,11 +1,13 @@
 // Mounts the game packs and prints what the editor would see.
-//   vfs_probe [--backend auto|server|cli] [--find <substring>]... [path-to-fetch...]    (--find lists the paths containing every substring, with the pack that owns each)
-//   vfs_probe --compare [--per-type N] [--time]    (--time adds "timing:" lines; without it the output is the same on every run)
+//   vfs_probe [--find <substring>]... [path-to-fetch...]    (--find lists the paths containing every substring, with the pack that owns each)
+//   vfs_probe --compare [--reference <cache dir>] [--per-type N] [--time]    (--time adds "timing:" lines; without it the output is the same on every run)
 //
-// --compare is the Phase 2 gate: it mounts the packs once through rpfm_server and once through rpfm_cli, each into its own empty cache
-// (cold), and checks that both give the same pack order, the same file lists, the same winner for every path, and the same bytes
-// for a fixed sample: per pack and per file type (shader, model, texture, xml, environment, lua) the first N files (default 2)
-// in the pack's own order, fetched from that pack, so vanilla, DLC and mod packs are all covered. Exit 1 on any difference.
+// --compare is the VFS gate: it mounts the packs through rpfm_server into an empty cache (cold) and checks the result against a reference
+// cache (default: the configured cache_dir) written earlier, by this or another RPFM version: the same pack order, the same file lists, the same
+// winner for every path, and the same bytes for a fixed sample: per pack and per file type (shader, model, texture, xml, environment, lua) the
+// first N files (default 2) in the pack's own order among those the reference has extracted, fetched from that pack, plus up to 20 paths that
+// several packs provide, read from each. The reference is read as it is (nothing is extracted into it). Exit 1 on any difference, or when there
+// is nothing to compare.
 #include "foundation/process.h"
 #include "foundation/text_encoding.h"
 #include "vfs/vfs.h"
@@ -15,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <stdexcept>
 
 using namespace wce;
 namespace fs = std::filesystem;
@@ -23,30 +26,34 @@ namespace {
 
 double since(std::chrono::steady_clock::time_point t0) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
 
-int compare(int per_type, bool times) {
-    Vfs::Config base = Vfs::default_config();
-    const fs::path tmp = base.cache_dir / "compare";
-    std::error_code ec;
-    fs::remove_all(tmp, ec);
-    struct Side {
-        const char* name;
-        Vfs::BackendMode mode;
-        std::unique_ptr<Vfs> vfs;
-        double mount_s = 0;
-    } sides[2] = {{"rpfm_server", Vfs::BackendMode::Server, nullptr}, {"rpfm_cli", Vfs::BackendMode::Cli, nullptr}};
-    for (Side& s : sides) {
-        Vfs::Config c = base;
-        c.backend = s.mode;
-        c.cache_dir = tmp / s.name;
-        s.vfs = std::make_unique<Vfs>(c);
-        auto t0 = std::chrono::steady_clock::now();
-        s.vfs->mount();
-        s.mount_s = since(t0);
-        std::printf("%-12s cold mount: %zu packs, %zu files, read by %s\n", s.name, s.vfs->packs().size(), s.vfs->files().size(), s.vfs->backend_name().substr(0, s.vfs->backend_name().find(' ')).c_str());
-        if (times) std::printf("timing: %-12s cold mount %.1f s\n", s.name, s.mount_s);
+// The reference cache as it is: pack lists from its index, files only where it already extracted them.
+class CacheOnly : public PackBackend {
+public:
+    std::string name() const override { return "reference cache"; }
+    std::vector<std::string> list(const fs::path& pack) override {
+        throw std::runtime_error("the reference cache has no index of " + narrow(pack.filename().wstring()) + " (written for another version of the pack?)");
     }
-    Vfs& a = *sides[0].vfs;
-    Vfs& b = *sides[1].vfs;
+    void extract(const fs::path&, const std::vector<std::string>&, const fs::path&) override {}
+};
+
+int compare(const fs::path& reference, int per_type, bool times) {
+    Vfs::Config base = Vfs::default_config();
+    Vfs::Config ref_cfg = base;
+    ref_cfg.cache_dir = reference.empty() ? base.cache_dir : reference;
+    Vfs::Config cold_cfg = base;
+    cold_cfg.cache_dir = base.cache_dir / "compare" / "rpfm_server";
+    std::error_code ec;
+    fs::remove_all(cold_cfg.cache_dir, ec);
+
+    Vfs b(ref_cfg, std::make_unique<CacheOnly>());
+    b.mount();
+    std::printf("reference    %zu packs, %zu files\n", b.packs().size(), b.files().size());
+    Vfs a(cold_cfg);
+    auto t0 = std::chrono::steady_clock::now();
+    a.mount();
+    std::printf("rpfm_server  cold mount: %zu packs, %zu files\n", a.packs().size(), a.files().size());
+    if (times) std::printf("timing: rpfm_server cold mount %.1f s\n", since(t0));
+
     int failures = 0;
     auto fail = [&](const std::string& m) {
         ++failures;
@@ -64,7 +71,7 @@ int compare(int per_type, bool times) {
             else if (it->second != o) ++other_winner;
         }
         for (auto& [p, o] : b.files()) if (!a.files().count(p)) ++only_b;
-        fail("file lists: " + std::to_string(only_a) + " only via server, " + std::to_string(only_b) + " only via cli, " + std::to_string(other_winner) + " with another winner");
+        fail("file lists: " + std::to_string(only_a) + " only via rpfm_server, " + std::to_string(only_b) + " only in the reference, " + std::to_string(other_winner) + " with another winner");
     }
     size_t mods = 0;
     for (auto& p : a.packs()) mods += p.is_mod;
@@ -77,12 +84,14 @@ int compare(int per_type, bool times) {
         if (a.packs()[p].loose) continue;
         std::map<std::string, int> taken;
         for (auto& [path, owner_pack] : a.files()) {
-            if (owner_pack != p) continue;   // files this pack wins; a shadowed file is fetched below via fetch_from as well
+            if (owner_pack != p) continue;   // files this pack wins; shadowed copies are read below
             for (const char* t : kTypes)
                 if (path.ends_with(t) && taken[t] < per_type) {
+                    auto db = b.fetch_from(p, path);
+                    if (!db) continue;   // not in the reference
                     ++taken[t];
-                    auto da = a.fetch_from(p, path), db = b.fetch_from(p, path);
-                    if (!da || !db) { fail(path + ": " + (da ? "missing via cli" : "missing via server")); continue; }
+                    auto da = a.fetch_from(p, path);
+                    if (!da) { fail(path + ": missing via rpfm_server"); continue; }
                     auto ba = read_file(da->string()), bb = read_file(db->string());
                     if (ba != bb) fail(path + ": bytes differ (" + std::to_string(ba.size()) + " vs " + std::to_string(bb.size()) + ")");
                     ++compared;
@@ -91,19 +100,23 @@ int compare(int per_type, bool times) {
                 }
         }
     }
-    // A path two packs provide, read from both (shadowed copies must also match).
+    // Paths several packs provide, read from each (shadowed copies must also match).
     size_t shadow = 0;
     for (auto& [path, o] : a.files()) {
         auto os = a.owners(path);
         if (os.size() < 2 || shadow >= 20) continue;
+        bool in_reference = true;
+        for (int p : os) in_reference = in_reference && !a.packs()[p].loose && b.fetch_from(p, path).has_value();
+        if (!in_reference) continue;
         for (int p : os) {
             auto da = a.fetch_from(p, path), db = b.fetch_from(p, path);
-            if (!da || !db || read_file(da->string()) != read_file(db->string())) fail("shadowed " + path + " in pack " + a.packs()[p].name);
+            if (!da || read_file(da->string()) != read_file(db->string())) fail("shadowed " + path + " in pack " + a.packs()[p].name);
         }
         ++shadow;
     }
-    std::printf("compared %zu sample files (%.1f MB) in %zu packs, %zu shadowed paths: %s\n", compared, bytes / 1048576.0, per_pack.size(), shadow, failures ? "DIFFERENCES" : "identical");
-    return failures ? 1 : 0;
+    std::printf("compared %zu sample files (%.1f MB) in %zu packs, %zu shadowed paths: %s\n", compared, bytes / 1048576.0, per_pack.size(), shadow,
+                failures ? "DIFFERENCES" : compared ? "identical" : "NOTHING TO COMPARE (the reference has no extracted files)");
+    return failures || !compared ? 1 : 0;
 }
 
 } // namespace
@@ -112,6 +125,7 @@ int main(int argc, char** argv) {
     try {
         Vfs::Config cfg = Vfs::default_config();
         bool do_compare = false;
+        fs::path reference;
         int per_type = 2;
         bool times = false;
         std::vector<std::string> fetch, finds;
@@ -119,13 +133,11 @@ int main(int argc, char** argv) {
             if (!std::strcmp(argv[i], "--compare")) do_compare = true;
             else if (!std::strcmp(argv[i], "--time")) times = true;
             else if (!std::strcmp(argv[i], "--per-type") && i + 1 < argc) per_type = std::atoi(argv[++i]);
+            else if (!std::strcmp(argv[i], "--reference") && i + 1 < argc) reference = fs::path(widen(argv[++i]));
             else if (!std::strcmp(argv[i], "--find") && i + 1 < argc) finds.push_back(argv[++i]);
-            else if (!std::strcmp(argv[i], "--backend") && i + 1 < argc) {
-                std::string m = argv[++i];
-                cfg.backend = m == "server" ? Vfs::BackendMode::Server : m == "cli" ? Vfs::BackendMode::Cli : Vfs::BackendMode::Auto;
-            } else fetch.push_back(argv[i]);
+            else fetch.push_back(argv[i]);
         }
-        if (do_compare) return compare(per_type, times);
+        if (do_compare) return compare(reference, per_type, times);
 
         auto t0 = std::chrono::steady_clock::now();
         Vfs vfs(cfg);
@@ -150,7 +162,6 @@ int main(int argc, char** argv) {
             std::printf("%s -> %s : %s (%.2f s)\n", f.c_str(), o ? vfs.packs()[*o].name.c_str() : "-", d ? d->string().c_str() : "missing", since(t1));
         }
         std::printf("backend: %s\n", vfs.backend_name().c_str());
-        if (!vfs.backend_note().empty()) std::printf("note: %s\n", vfs.backend_note().c_str());
     } catch (const std::exception& e) {
         std::printf("error: %s\n", e.what());
         return 1;

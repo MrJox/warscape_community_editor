@@ -214,3 +214,20 @@ New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_pan
 
 Gate added: `scripts/tile_terrain.txt` takes a close capture (`detail.png`) and `scripts/tile_check.sh` fails when more than 1 % of its lit 8 x 8 pixel blocks are flat (std < 2.5 levels): the broken build gave 6 % (lothlorien 1x1/aa, AMD), the fixed one 0 %.
 The two tile captures of `scripts/shots.sh` changed on purpose (the ground has its textures) and were re-baselined in `build/gates_base_perf/` (the previous ones are in `build/gates_base_perf_before_scale_fix/`); the four weather captures are identical.
+
+## Step 0: rpfm_server 5.2 (2026-10-13)
+
+The VFS reads packs through RPFM 5.2's WebSocket API; the rpfm_cli backend is gone (`docs/vfs.md`). **`vfs_compare` changed meaning**: it no longer compares rpfm_server
+with rpfm_cli, it compares a cold mount through rpfm_server with a reference cache written earlier (by default the configured one), so its output lines differ from the
+Phase 2 baseline above. Checked on Linux (Proton install, 20 packs, 1 mod pack; RPFM develop `ef8d9d615` debug build), with the cache that RPFM 5.1.0 had written as the reference:
+
+| Check | Result |
+|---|---|
+| `vfs_probe --compare` | same 20 packs, 158,769 files and winners; 12 sample files (17.3 MB) identical; with `--per-type 100000` every file of the reference, 393 files (400.2 MB), identical. Cold mount of the 20 indexes 1.6 s |
+| `variation_check`, `vfx_check "rain heavy"`, `render_check` | output identical between the 5.1.0 cache and an empty cache filled through the 5.2 server (`render_check`: except DXVK's log line with a pointer) |
+| `wce --capture` dry, rain, snow (the `scripts/shots.sh` commands) | byte-identical between the two caches |
+| a 5.1.0 server on the port | refused: "rpfm_server 5.1.0 on 127.0.0.1:45127 is too old: RPFM 5.2 or newer is needed" |
+| server killed between two calls | the backend restarted it (autostart), set the game, re-opened the pack, listed (50,773 files of data.pack) and extracted |
+
+`terrain_check` fails the same way with both caches on that machine (no `assembly_kit_battle_tilemap` in the Linux install). The Windows path (WinHTTP WebSocket) was not
+built or run yet.
