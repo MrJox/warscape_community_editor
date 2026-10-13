@@ -24,6 +24,10 @@ fs::path Settings::default_dir() {
     if (auto v = env_value("WCE_SETTINGS_DIR")) return fs::path(widen(*v));
     fs::path local = fs::temp_directory_path();
     if (auto v = env_value("LOCALAPPDATA")) local = fs::path(widen(*v));
+#ifndef _WIN32
+    else if (auto x = env_value("XDG_DATA_HOME")) local = fs::path(*x);
+    else if (auto h = env_value("HOME")) local = fs::path(*h) / ".local" / "share";
+#endif
     return local / "awe";
 }
 

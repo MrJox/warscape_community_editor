@@ -2,7 +2,14 @@
 #include "foundation/process.h"
 #include "foundation/thread_pool.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -96,6 +103,8 @@ std::vector<uint8_t> encode_text(const std::string& s, TextEncoding enc) {
     return out;
 }
 
+#ifdef _WIN32
+
 std::vector<uint8_t> read_file(const std::string& path) {
     // One sized buffer and large ReadFile calls: the stream-iterator version read a texture byte by byte (3 ms per 4 MB file).
     HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
@@ -156,6 +165,64 @@ uint64_t file_size_of(const std::string& path) {
     if (!ok) throw std::runtime_error("cannot read " + path);
     return uint64_t(size.QuadPart);
 }
+
+#else
+
+namespace {
+
+struct Fd {
+    int fd;
+    ~Fd() { if (fd >= 0) close(fd); }
+};
+
+// `want` bytes from `offset` into `out`; false on a read error or an early end of file.
+bool read_all(int fd, uint8_t* out, size_t want, uint64_t offset) {
+    size_t at = 0;
+    while (at < want) {
+        const ssize_t got = pread(fd, out + at, std::min<size_t>(want - at, size_t(1) << 28), off_t(offset + at));
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return false;
+        at += size_t(got);
+    }
+    return true;
+}
+
+uint64_t size_of(int fd, const std::string& path) {
+    struct stat st{};
+    if (fstat(fd, &st) != 0) throw std::runtime_error("cannot read " + path);
+    return uint64_t(st.st_size);
+}
+
+} // namespace
+
+std::vector<uint8_t> read_file(const std::string& path) {
+    Fd f{open(path.c_str(), O_RDONLY | O_CLOEXEC)};
+    if (f.fd < 0) throw std::runtime_error("cannot open " + path);
+    posix_fadvise(f.fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    std::vector<uint8_t> out(size_t(size_of(f.fd, path)));
+    if (!read_all(f.fd, out.data(), out.size(), 0)) throw std::runtime_error("cannot read " + path);
+    return out;
+}
+
+std::vector<uint8_t> read_file_range(const std::string& path, uint64_t offset, size_t length) {
+    Fd f{open(path.c_str(), O_RDONLY | O_CLOEXEC)};
+    if (f.fd < 0) throw std::runtime_error("cannot open " + path);
+    const uint64_t size = size_of(f.fd, path);
+    if (offset > size) offset = size;
+    size_t want = size_t(size - offset);
+    if (length && length < want) want = length;
+    std::vector<uint8_t> out(want);
+    if (!read_all(f.fd, out.data(), want, offset)) throw std::runtime_error("cannot read " + path);
+    return out;
+}
+
+uint64_t file_size_of(const std::string& path) {
+    Fd f{open(path.c_str(), O_RDONLY | O_CLOEXEC)};
+    if (f.fd < 0) throw std::runtime_error("cannot open " + path);
+    return size_of(f.fd, path);
+}
+
+#endif
 
 bool write_file(const std::string& path, const std::vector<uint8_t>& bytes) {
     std::ofstream f(path, std::ios::binary);

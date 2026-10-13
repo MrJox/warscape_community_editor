@@ -20,6 +20,7 @@ std::string lower(std::string s) {
 } // namespace
 
 Microsoft::WRL::ComPtr<IDXGIAdapter> choose_adapter() {
+    prepare_d3d();
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return nullptr;
     const char* want = std::getenv("WCE_GPU");
