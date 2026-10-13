@@ -16,6 +16,7 @@
 | 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
 | 9 | Not started. |
 | Step 0 of the Rust/rpfm plan | **Done, waiting for your go** (2026-10-13). Pack access on RPFM 5.2's WebSocket API, rpfm_cli backend removed: `docs/vfs.md`, `docs/baseline.md` (Step 0). |
+| Rust port | **Started** (2026-10-13). Renderer spike passed; Cargo workspace with `crates/wce_d3d11`. See "Rust port" below. |
 
 Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;
 `vfx_check` and `env_vs_dump` moved to `cli/`; `legacy/weather_editor/tools/re` is `scripts/re`, the tile survey scripts are `scripts/proto`, the other Python helpers are in `scripts/`; the old READMEs and `current-state.md` are in `docs/plans/` next to the two plans (`weather.md`, `tile.md`);
@@ -55,6 +56,29 @@ The old docs moved to `docs/re`, `docs/formats` and `docs/plans`.
 Phase 2 deviations: the spike showed that rpfm_server state is per MCP session, so the editor shares the running server with the attila-toolkit bridge (no second instance; the port cannot be changed anyway); the pack backends sit below `Vfs` (which keeps pack priority and both caches) instead of being implementations of `IVfs`; `libs/foundation` gained `json` and `settings` (no JSON library was approved, so the reader is our own); loose overlay folders are part of `Vfs`, not a third backend.
 
 Phase 1 deviations from this plan: gates moved to `cli/` already (only `vfx_check` and `env_vs_dump` stay under `legacy/weather_editor/tools/`, they need the vfx and render code of Phase 3); `libs/game` (GameProfile) is built in Phase 2 together with the VFS because `extra_vanilla` is part of the VFS config; vfx stays in `legacy/weather_editor/src/vfx` until Phase 3; `image_io` (the D3D readback) moved to `libs/render` and writes through `png_file`, so screenshot file bytes changed (pixels checked); the assembly kit's `environment_map.xml` is a different XML from the variation db's, so `VariationDb::parse_environment_map` was added instead of reusing `parse_xml`.
+
+## Rust port (started 2026-10-13)
+
+Decided with you on 2026-10-12/13: the editor moves to Rust; parsing moves into rpfm_lib wherever the format belongs to the game's files
+(rpfm branch `wce_formats`: Attila's fxc, rigid models v1-v6, BMD v4-v6, tile lists, asset variation db, tile database build, DDS mipmaps),
+while the Assembly Kit image writers (byte-exact PNG with classic zlib, TIFF/TGA/DDS header templates) stay in the editor.
+Unknown files and fields (`.markers` classes, CHMF blocks, the `Uk*` material types) get a later pass based on decompiling the kit's tools.
+
+Renderer spike (the go/no-go of the port), passed: `cargo run -p wce_d3d11 --example game_shader` reads `skydome.hlsl_ps_ps30_skygen` from
+Attila's packs with rpfm_lib (in-process, 0.3 to 0.6 s for all vanilla packs), reflects it with `D3DReflect` (the same cbuffers, offsets and
+slots as `fxc_dump`), compiles a helper vertex shader with `D3DCompile` and draws the game's pixel shader into a render target on D3D11,
+reading the pixels back. On Linux this runs on DXVK-native and vkd3d-utils (the same builds as the C++ app).
+
+How: the `windows` crate does not build for Linux (its mandatory `windows-future` dependency is Windows-only), but `windows-core` does.
+`crates/wce_d3d11` holds bindings generated with windows-bindgen for exactly the API the editor uses (`examples/generate_bindings.rs`
+lists it); on Linux they link DXVK-native and vkd3d-utils from `build/_deps/prefix` (`WCE_DEPS_PREFIX`), with an RPATH so DXVK's two
+libraries find each other. COM methods are `extern "system"`, the native ABI on Linux, which DXVK-native and the patched vkd3d use.
+
+Layout: a Cargo workspace at the repo root, one crate per layer under `crates/` (same dependency direction as the C++ libs: d3d11/foundation,
+vfs, formats, assets, scene, render, editor, tools, app). The C++ tree keeps building and stays the reference for the gates until the Rust
+app reaches parity, as in the C++ merge. rpfm_lib is a path dependency on the `wce_formats` worktree until that branch is pushed.
+UI: dear-imgui-rs (Dear ImGui 1.92.9 docking) with dear-imguizmo and the SDL3 platform backend; the D3D11 renderer backend is ours.
+ImGuizmo's local `SetAllowedItem` change needs a patched copy of its C source.
 
 ## Agreed scope (2026-10-09, 10 questions + follow-ups)
 

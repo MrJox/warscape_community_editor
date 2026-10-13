@@ -1,0 +1,14 @@
+[package]
+name = "wce_d3d11"
+description = "D3D11, DXGI and D3D compiler bindings, on Windows and on DXVK-native + vkd3d-utils on Linux."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+windows-core.workspace = true
+windows-link.workspace = true
+
+[dev-dependencies]
+windows-bindgen.workspace = true
+rpfm_lib.workspace = true
