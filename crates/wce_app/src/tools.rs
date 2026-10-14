@@ -7,7 +7,7 @@ use wce_editor::tool::PlaceholderTool;
 pub fn all_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(wce_weather_tool::WeatherTool::default()),
-        Box::new(PlaceholderTool::new("tile", "Tile", "Tile editor: being ported to Rust (the document is; the panels are next).")),
+        Box::new(wce_tile_tool::TileTool::default()),
         // Placeholders for the future tools: no features.
         Box::new(PlaceholderTool::new(
             "unit", "Unit",

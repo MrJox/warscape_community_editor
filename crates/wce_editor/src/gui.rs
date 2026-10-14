@@ -139,6 +139,11 @@ pub fn separator_text(s: &str) {
     call!(sys::igSeparatorText(c.as_ptr()))
 }
 
+/// An empty item of a size (it moves the cursor the way an item does).
+pub fn dummy(size: Vec2) {
+    call!(sys::igDummy(size))
+}
+
 pub fn new_line() {
     call!(sys::igNewLine())
 }
@@ -481,6 +486,150 @@ pub fn table_set_column_index(column: i32) -> bool {
     call!(sys::igTableSetColumnIndex(column))
 }
 
+// ---- drawing
+
+/// The current window's draw list.
+#[derive(Clone, Copy, Debug)]
+pub struct DrawList(*mut sys::ImDrawList);
+
+/// IM_COL32.
+pub const fn col32(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24)
+}
+
+pub fn window_draw_list() -> DrawList {
+    DrawList(call!(sys::igGetWindowDrawList()))
+}
+
+impl DrawList {
+    pub fn ellipse(&self, c: Vec2, radius: Vec2, col: u32, segments: i32, thickness: f32) {
+        call!(sys::ImDrawList_AddEllipse(self.0, c, radius, col, 0.0, segments, thickness))
+    }
+
+    pub fn circle_filled(&self, c: Vec2, radius: f32, col: u32) {
+        call!(sys::ImDrawList_AddCircleFilled(self.0, c, radius, col, 0))
+    }
+
+    pub fn line(&self, a: Vec2, b: Vec2, col: u32, thickness: f32) {
+        call!(sys::ImDrawList_AddLine(self.0, a, b, col, thickness))
+    }
+
+    pub fn triangle_filled(&self, a: Vec2, b: Vec2, c: Vec2, col: u32) {
+        call!(sys::ImDrawList_AddTriangleFilled(self.0, a, b, c, col))
+    }
+
+    pub fn rect_filled(&self, min: Vec2, max: Vec2, col: u32, rounding: f32) {
+        call!(sys::ImDrawList_AddRectFilled(self.0, min, max, col, rounding, 0))
+    }
+
+    pub fn rect(&self, min: Vec2, max: Vec2, col: u32, rounding: f32, thickness: f32) {
+        call!(sys::ImDrawList_AddRect(self.0, min, max, col, rounding, thickness, 0))
+    }
+
+    pub fn text(&self, pos: Vec2, col: u32, text: &str) {
+        let r = text.as_bytes().as_ptr_range();
+        call!(sys::ImDrawList_AddText_Vec2(self.0, pos, col, r.start.cast(), r.end.cast()))
+    }
+
+    pub fn push_clip_rect(&self, min: Vec2, max: Vec2) {
+        call!(sys::ImDrawList_PushClipRect(self.0, min, max, true))
+    }
+
+    pub fn pop_clip_rect(&self) {
+        call!(sys::ImDrawList_PopClipRect(self.0))
+    }
+}
+
+// ---- drag and drop (payloads of element indices)
+
+pub fn begin_drag_drop_source() -> bool {
+    call!(sys::igBeginDragDropSource(sys::ImGuiDragDropFlags_SourceAllowNullID))
+}
+
+pub fn set_drag_drop_payload(kind: &str, data: &[i32]) {
+    let k = cs(kind);
+    call!({ sys::igSetDragDropPayload(k.as_ptr(), data.as_ptr().cast(), std::mem::size_of_val(data), 0); })
+}
+
+pub fn end_drag_drop_source() {
+    call!(sys::igEndDragDropSource())
+}
+
+pub fn begin_drag_drop_target() -> bool {
+    call!(sys::igBeginDragDropTarget())
+}
+
+/// A payload of `kind` hovering this target (before delivery, without the default rectangle): its data and whether it is delivered now.
+pub fn accept_drag_drop_payload(kind: &str) -> Option<(Vec<i32>, bool)> {
+    let k = cs(kind);
+    call!({
+        let p = sys::igAcceptDragDropPayload(k.as_ptr(), sys::ImGuiDragDropFlags_AcceptBeforeDelivery | sys::ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        if p.is_null() {
+            None
+        } else {
+            let n = usize::try_from((*p).DataSize).unwrap_or(0) / std::mem::size_of::<i32>();
+            let data = if n == 0 { vec![] } else { std::slice::from_raw_parts((*p).Data as *const i32, n).to_vec() };
+            Some((data, sys::ImGuiPayload_IsDelivery(p.cast_mut())))
+        }
+    })
+}
+
+pub fn end_drag_drop_target() {
+    call!(sys::igEndDragDropTarget())
+}
+
+// ---- metrics and misc
+
+pub fn set_next_item_allow_overlap() {
+    call!(sys::igSetNextItemAllowOverlap())
+}
+
+/// The window (or a child of it) is hovered.
+pub fn is_window_hovered_with_children() -> bool {
+    call!(sys::igIsWindowHovered(sys::ImGuiHoveredFlags_ChildWindows | sys::ImGuiHoveredFlags_RootAndChildWindows))
+}
+
+pub fn mouse_pos() -> Vec2 {
+    call!(sys::igGetMousePos())
+}
+
+pub fn frame_height_with_spacing() -> f32 {
+    call!(sys::igGetFrameHeightWithSpacing())
+}
+
+pub fn text_line_height() -> f32 {
+    call!(sys::igGetTextLineHeight())
+}
+
+pub fn text_line_height_with_spacing() -> f32 {
+    call!(sys::igGetTextLineHeightWithSpacing())
+}
+
+pub fn time() -> f64 {
+    call!(sys::igGetTime())
+}
+
+pub fn radio_button(label: &str, active: bool) -> bool {
+    let c = cs(label);
+    call!(sys::igRadioButton_Bool(c.as_ptr(), active))
+}
+
+/// A swatch that does nothing on click.
+pub fn color_swatch(id: &str, col: [f32; 4], size: Vec2) -> bool {
+    let c = cs(id);
+    let flags = sys::ImGuiColorEditFlags_NoTooltip | sys::ImGuiColorEditFlags_NoDragDrop | sys::ImGuiColorEditFlags_NoPicker;
+    call!(sys::igColorButton(c.as_ptr(), v4(col[0], col[1], col[2], col[3]), flags, size))
+}
+
+pub fn selectable_sized(label: &str, selected: bool, flags: i32, size: Vec2) -> bool {
+    let c = cs(label);
+    call!(sys::igSelectable_Bool(c.as_ptr(), selected, flags, size))
+}
+
+pub fn is_item_clicked_with(button: i32) -> bool {
+    call!(sys::igIsItemClicked(button))
+}
+
 // ---- popups
 
 pub fn open_popup(id: &str) {
@@ -636,10 +785,15 @@ pub fn load_ini_empty() {
 }
 
 /// A clipped list: calls `row` for the rows on screen.
-pub fn clipped(count: usize, mut row: impl FnMut(usize)) {
+pub fn clipped(count: usize, row: impl FnMut(usize)) {
+    clipped_rows(count, -1.0, row)
+}
+
+/// A clipped list of rows of a known height (-1: measured from the first row).
+pub fn clipped_rows(count: usize, height: f32, mut row: impl FnMut(usize)) {
     call!({
         let clipper = sys::ImGuiListClipper_ImGuiListClipper();
-        sys::ImGuiListClipper_Begin(clipper, count as i32, -1.0);
+        sys::ImGuiListClipper_Begin(clipper, count as i32, height);
         while sys::ImGuiListClipper_Step(clipper) {
             for i in (*clipper).DisplayStart..(*clipper).DisplayEnd {
                 row(i as usize);
@@ -669,7 +823,9 @@ pub fn set_context_ids(ids: (ImGuiID, ImGuiID, ImGuiID)) {
 
 pub use sys::{
     ImGuiButtonFlags_MouseButtonLeft as BUTTON_LEFT, ImGuiButtonFlags_MouseButtonMiddle as BUTTON_MIDDLE, ImGuiButtonFlags_MouseButtonRight as BUTTON_RIGHT,
-    ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
+    ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiInputTextFlags_AutoSelectAll as INPUT_AUTO_SELECT_ALL, ImGuiTableFlags_SizingFixedFit as TABLE_SIZING_FIXED_FIT,
+    ImGuiTableFlags_BordersInnerV as TABLE_BORDERS_INNER_V, ImGuiKey_Delete as KEY_DELETE, ImGuiKey_G as KEY_G, ImGuiKey_Enter as KEY_ENTER, ImGuiKey_KeypadEnter as KEY_KEYPAD_ENTER,
+    ImGuiKey_F2 as KEY_F2, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
     ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
     ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
