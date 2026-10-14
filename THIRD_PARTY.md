@@ -23,6 +23,8 @@ System libraries: SDL3 (zlib licence) for the window and input, libcurl (curl li
 
 Rust port: crates.io dependencies are listed in `Cargo.lock` (all MIT, Apache-2.0 or zlib licensed). Notable: rpfm_lib (MIT) for the packs and
 game formats, windows-core / windows-bindgen (MIT or Apache-2.0) for the D3D11 bindings, and libz-sys (MIT or Apache-2.0) building its bundled
-classic zlib (zlib licence) statically for the kit's PNG encoder.
+classic zlib (zlib licence) statically for the kit's PNG encoder. The UI uses dear-imgui-rs / dear-imgui-sys (MIT or Apache-2.0; they build
+Dear ImGui 1.92.9b docking and cimgui, MIT) and sdl3-sys (zlib licence), linked against the system SDL3 (the one DXVK-native presents through);
+the SDL3 platform backend is a port of Dear ImGui's `imgui_impl_sdl3.cpp` and the D3D11 renderer one of `imgui_impl_dx11.cpp` (both MIT).
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
