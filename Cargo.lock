@@ -2215,6 +2215,7 @@ dependencies = [
 name = "wce_tile_tool"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "rpfm_lib",
  "wce_editor",
  "wce_editor_core",
