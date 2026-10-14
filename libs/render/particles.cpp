@@ -452,15 +452,20 @@ void ParticleSystem::spawn(const Frame& f, std::vector<SpawnVertex>& out) {
         float latest_death = 0;
         for (uint32_t p = 0; p < count && free_slots > 0; ++p) {
             float spawn_t = window_start + window * (float(p) + rand01()) / float(std::max(1u, count));
-            float life = std::max(0.01f, lerp(life_lo, life_hi, rand01()) + lerp(lb_lo, lb_hi, rand01()));
+            // The random draws are sequenced explicitly in the order GCC evaluated the old one-expression forms (C++ leaves it unspecified).
+            const float r_life = rand01(), r_bias = rand01();
+            float life = std::max(0.01f, lerp(life_lo, life_hi, r_life) + lerp(lb_lo, lb_hi, r_bias));
             if (spawn_t + life <= clock_) continue; // died during pre-warm
             float3 offset;
             if (use_box) {
-                offset.x = (rand01() - 0.5f) * lerp(box_lo[0], box_hi[0], rand01()) * a.scale;
-                offset.y = (rand01() - 0.5f) * lerp(box_lo[1], box_hi[1], rand01()) * a.scale;
-                offset.z = (rand01() - 0.5f) * lerp(box_lo[2], box_hi[2], rand01()) * a.scale;
+                float* axes[3] = {&offset.x, &offset.y, &offset.z};
+                for (int k = 0; k < 3; ++k) {
+                    const float r_pos = rand01(), r_size = rand01();
+                    *axes[k] = (r_pos - 0.5f) * lerp(box_lo[k], box_hi[k], r_size) * a.scale;
+                }
             } else {
-                float r = lerp(lerp(r_in_lo, r_in_hi, rand01()), lerp(r_out_lo, r_out_hi, rand01()), rand01()) * a.scale;
+                const float r_blend = rand01(), r_outer = rand01(), r_inner = rand01();
+                float r = lerp(lerp(r_in_lo, r_in_hi, r_inner), lerp(r_out_lo, r_out_hi, r_outer), r_blend) * a.scale;
                 float az = lerp(arc[0], arc[1], rand01()) * kPi / 180.0f;
                 offset = float3{std::cos(az), 0, std::sin(az)} * r;
             }
