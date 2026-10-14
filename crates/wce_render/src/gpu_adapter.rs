@@ -20,14 +20,8 @@ pub unsafe fn choose_adapter() -> Option<IDXGIAdapter> {
             let mut i = 0;
             while let Ok(adapter) = factory.EnumAdapters1(i) {
                 i += 1;
-                let mut d = DXGI_ADAPTER_DESC1::default();
-                if adapter.GetDesc1(&mut d).is_err() {
-                    continue;
-                }
-
-                let len = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
-                let name = String::from_utf16_lossy(&d.Description[..len]).to_lowercase();
-                if name.contains(&needle) && d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE as u32 == 0 {
+                let Some(info) = adapter_info(&adapter) else { continue };
+                if info.name.to_lowercase().contains(&needle) && info.flags & DXGI_ADAPTER_FLAG_SOFTWARE as u32 == 0 {
                     return windows_core::Interface::cast(&adapter).ok();
                 }
             }

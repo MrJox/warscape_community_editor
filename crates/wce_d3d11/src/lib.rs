@@ -27,3 +27,51 @@ pub unsafe fn init_platform() {
         }
     }
 }
+
+/// What DXGI says about an adapter.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdapterInfo {
+    pub name: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+
+    /// `DXGI_ADAPTER_FLAG_*`.
+    pub flags: u32,
+}
+
+/// A WCHAR of the platform's D3D headers: UTF-16 on Windows, `wchar_t` (UTF-32) in DXVK-native's.
+#[cfg(windows)]
+type NativeWchar = u16;
+#[cfg(not(windows))]
+type NativeWchar = u32;
+
+/// `DXGI_ADAPTER_DESC1` as the platform lays it out. The generated binding has 16-bit WCHARs, so on Linux DXVK-native writes 256 bytes past
+/// it: call `GetDesc1` through [`adapter_info`] only.
+#[repr(C)]
+struct NativeAdapterDesc1 {
+    description: [NativeWchar; 128],
+    vendor_id: u32,
+    device_id: u32,
+    sub_sys_id: u32,
+    revision: u32,
+    dedicated_video_memory: usize,
+    dedicated_system_memory: usize,
+    shared_system_memory: usize,
+    adapter_luid: LUID,
+    flags: u32,
+}
+
+/// The adapter's description (`IDXGIAdapter1::GetDesc1` with the platform's WCHAR).
+pub fn adapter_info(adapter: &IDXGIAdapter1) -> Option<AdapterInfo> {
+    // SAFETY: zeroed plain data is a valid description.
+    let mut d: NativeAdapterDesc1 = unsafe { std::mem::zeroed() };
+    // SAFETY: the vtable call with a description of the size and layout the implementation writes.
+    let hr = unsafe { (windows_core::Interface::vtable(adapter).GetDesc1)(windows_core::Interface::as_raw(adapter), (&raw mut d).cast()) };
+    hr.ok().ok()?;
+    let len = d.description.iter().position(|&c| c == 0).unwrap_or(d.description.len());
+    #[cfg(windows)]
+    let name = String::from_utf16_lossy(&d.description[..len]);
+    #[cfg(not(windows))]
+    let name = d.description[..len].iter().map(|&c| char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER)).collect();
+    Some(AdapterInfo { name, vendor_id: d.vendor_id, device_id: d.device_id, flags: d.flags })
+}
