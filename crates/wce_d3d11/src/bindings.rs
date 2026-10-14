@@ -1285,6 +1285,8 @@ pub const DXGI_ADAPTER_FLAG_FORCE_DWORD: DXGI_ADAPTER_FLAG = -1;
 pub const DXGI_ADAPTER_FLAG_NONE: DXGI_ADAPTER_FLAG = 0;
 pub const DXGI_ADAPTER_FLAG_REMOTE: DXGI_ADAPTER_FLAG = 1;
 pub const DXGI_ADAPTER_FLAG_SOFTWARE: DXGI_ADAPTER_FLAG = 2;
+pub type DXGI_ALPHA_MODE = i32;
+pub type DXGI_FEATURE = i32;
 pub type DXGI_FORMAT = i32;
 pub const DXGI_FORMAT_420_OPAQUE: DXGI_FORMAT = 106;
 pub const DXGI_FORMAT_A4B4G4R4_UNORM: DXGI_FORMAT = 191;
@@ -1447,6 +1449,7 @@ pub struct DXGI_SAMPLE_DESC {
     pub Count: u32,
     pub Quality: u32,
 }
+pub type DXGI_SCALING = i32;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DXGI_SHARED_RESOURCE {
@@ -1471,6 +1474,29 @@ pub struct DXGI_SWAP_CHAIN_DESC {
     pub Windowed: windows_core::BOOL,
     pub SwapEffect: DXGI_SWAP_EFFECT,
     pub Flags: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DXGI_SWAP_CHAIN_DESC1 {
+    pub Width: u32,
+    pub Height: u32,
+    pub Format: DXGI_FORMAT,
+    pub Stereo: windows_core::BOOL,
+    pub SampleDesc: DXGI_SAMPLE_DESC,
+    pub BufferUsage: DXGI_USAGE,
+    pub BufferCount: u32,
+    pub Scaling: DXGI_SCALING,
+    pub SwapEffect: DXGI_SWAP_EFFECT,
+    pub AlphaMode: DXGI_ALPHA_MODE,
+    pub Flags: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DXGI_SWAP_CHAIN_FULLSCREEN_DESC {
+    pub RefreshRate: DXGI_RATIONAL,
+    pub ScanlineOrdering: DXGI_MODE_SCANLINE_ORDER,
+    pub Scaling: DXGI_MODE_SCALING,
+    pub Windowed: windows_core::BOOL,
 }
 pub type DXGI_SWAP_EFFECT = i32;
 pub const DXGI_SWAP_EFFECT_DISCARD: DXGI_SWAP_EFFECT = 0;
@@ -1574,10 +1600,46 @@ windows_core::imp::interface_hierarchy!(
     windows_core::IUnknown,
     ID3D11DeviceChild
 );
+impl ID3D11Asynchronous {
+    pub unsafe fn GetDataSize(&self) -> u32 {
+        unsafe {
+            (windows_core::Interface::vtable(self).GetDataSize)(windows_core::Interface::as_raw(
+                self,
+            ))
+        }
+    }
+}
 #[repr(C)]
 pub struct ID3D11Asynchronous_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
-    GetDataSize: usize,
+    pub GetDataSize: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32,
+}
+pub trait ID3D11Asynchronous_Impl: ID3D11DeviceChild_Impl {
+    fn GetDataSize(&self) -> u32;
+}
+impl ID3D11Asynchronous_Vtbl {
+    pub const fn new<Identity: ID3D11Asynchronous_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDataSize<
+            Identity: ID3D11Asynchronous_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> u32 {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Asynchronous_Impl::GetDataSize(this)
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetDataSize: GetDataSize::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Asynchronous as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11Asynchronous {}
 windows_core::imp::define_interface!(
@@ -1611,6 +1673,31 @@ pub struct ID3D11BlendState_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_BLEND_DESC),
 }
+pub trait ID3D11BlendState_Impl: ID3D11DeviceChild_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_BLEND_DESC);
+}
+impl ID3D11BlendState_Vtbl {
+    pub const fn new<Identity: ID3D11BlendState_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<Identity: ID3D11BlendState_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_BLEND_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11BlendState_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11BlendState as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11BlendState {}
 windows_core::imp::define_interface!(
     ID3D11Buffer,
@@ -1643,6 +1730,32 @@ impl ID3D11Buffer {
 pub struct ID3D11Buffer_Vtbl {
     pub base__: ID3D11Resource_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_BUFFER_DESC),
+}
+pub trait ID3D11Buffer_Impl: ID3D11Resource_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_BUFFER_DESC);
+}
+impl ID3D11Buffer_Vtbl {
+    pub const fn new<Identity: ID3D11Buffer_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<Identity: ID3D11Buffer_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_BUFFER_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Buffer_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11Resource_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Buffer as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11Resource as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11Buffer {}
 windows_core::imp::define_interface!(
@@ -1735,6 +1848,18 @@ windows_core::imp::interface_hierarchy!(
 pub struct ID3D11ComputeShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
 }
+pub trait ID3D11ComputeShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11ComputeShader_Vtbl {
+    pub const fn new<Identity: ID3D11ComputeShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11ComputeShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11ComputeShader {}
 windows_core::imp::define_interface!(
     ID3D11Counter,
@@ -1790,6 +1915,34 @@ pub struct ID3D11DepthStencilState_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_DEPTH_STENCIL_DESC),
 }
+pub trait ID3D11DepthStencilState_Impl: ID3D11DeviceChild_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_DEPTH_STENCIL_DESC);
+}
+impl ID3D11DepthStencilState_Vtbl {
+    pub const fn new<Identity: ID3D11DepthStencilState_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11DepthStencilState_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_DEPTH_STENCIL_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DepthStencilState_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11DepthStencilState as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11DepthStencilState {}
 windows_core::imp::define_interface!(
     ID3D11DepthStencilView,
@@ -1823,6 +1976,35 @@ pub struct ID3D11DepthStencilView_Vtbl {
     pub base__: ID3D11View_Vtbl,
     pub GetDesc:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_DEPTH_STENCIL_VIEW_DESC),
+}
+pub trait ID3D11DepthStencilView_Impl: ID3D11View_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_DEPTH_STENCIL_VIEW_DESC);
+}
+impl ID3D11DepthStencilView_Vtbl {
+    pub const fn new<Identity: ID3D11DepthStencilView_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11DepthStencilView_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_DEPTH_STENCIL_VIEW_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DepthStencilView_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11View_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11DepthStencilView as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11View as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11DepthStencilView {}
 windows_core::imp::define_interface!(
@@ -3716,13 +3898,193 @@ windows_core::imp::define_interface!(
     0x1841e5c8_16b0_489b_bcc8_44cfb0d5deae
 );
 windows_core::imp::interface_hierarchy!(ID3D11DeviceChild, windows_core::IUnknown);
+impl ID3D11DeviceChild {
+    pub unsafe fn GetDevice(&self) -> windows_core::Result<ID3D11Device> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetDevice)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            );
+            windows_core::imp::Type::from_abi(result__)
+        }
+    }
+    pub unsafe fn GetPrivateData(
+        &self,
+        guid: *const windows_core::GUID,
+        pdatasize: *mut u32,
+        pdata: Option<*mut core::ffi::c_void>,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).GetPrivateData)(
+                windows_core::Interface::as_raw(self),
+                guid,
+                pdatasize as _,
+                pdata.unwrap_or(core::mem::zeroed()) as _,
+            )
+        }
+    }
+    pub unsafe fn SetPrivateData(
+        &self,
+        guid: *const windows_core::GUID,
+        datasize: u32,
+        pdata: Option<*const core::ffi::c_void>,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPrivateData)(
+                windows_core::Interface::as_raw(self),
+                guid,
+                datasize,
+                pdata.unwrap_or(core::mem::zeroed()) as _,
+            )
+        }
+    }
+    pub unsafe fn SetPrivateDataInterface<P1>(
+        &self,
+        guid: *const windows_core::GUID,
+        pdata: P1,
+    ) -> windows_core::HRESULT
+    where
+        P1: windows_core::Param<windows_core::IUnknown>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPrivateDataInterface)(
+                windows_core::Interface::as_raw(self),
+                guid,
+                pdata.param().abi(),
+            )
+        }
+    }
+}
 #[repr(C)]
 pub struct ID3D11DeviceChild_Vtbl {
     pub base__: windows_core::IUnknown_Vtbl,
-    GetDevice: usize,
-    GetPrivateData: usize,
-    SetPrivateData: usize,
-    SetPrivateDataInterface: usize,
+    pub GetDevice: unsafe extern "system" fn(*mut core::ffi::c_void, *mut *mut core::ffi::c_void),
+    pub GetPrivateData: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut u32,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetPrivateData: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        u32,
+        *const core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetPrivateDataInterface: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait ID3D11DeviceChild_Impl: windows_core::IUnknownImpl {
+    fn GetDevice(&self, ppdevice: windows_core::OutRef<ID3D11Device>);
+    fn GetPrivateData(
+        &self,
+        guid: *const windows_core::GUID,
+        pdatasize: *mut u32,
+        pdata: *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn SetPrivateData(
+        &self,
+        guid: *const windows_core::GUID,
+        datasize: u32,
+        pdata: *const core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn SetPrivateDataInterface(
+        &self,
+        guid: *const windows_core::GUID,
+        pdata: windows_core::Ref<windows_core::IUnknown>,
+    ) -> windows_core::Result<()>;
+}
+impl ID3D11DeviceChild_Vtbl {
+    pub const fn new<Identity: ID3D11DeviceChild_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDevice<
+            Identity: ID3D11DeviceChild_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppdevice: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceChild_Impl::GetDevice(this, core::mem::transmute_copy(&ppdevice));
+            }
+        }
+        unsafe extern "system" fn GetPrivateData<
+            Identity: ID3D11DeviceChild_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            guid: *const windows_core::GUID,
+            pdatasize: *mut u32,
+            pdata: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceChild_Impl::GetPrivateData(
+                    this,
+                    core::mem::transmute_copy(&guid),
+                    core::mem::transmute_copy(&pdatasize),
+                    core::mem::transmute_copy(&pdata),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetPrivateData<
+            Identity: ID3D11DeviceChild_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            guid: *const windows_core::GUID,
+            datasize: u32,
+            pdata: *const core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceChild_Impl::SetPrivateData(
+                    this,
+                    core::mem::transmute_copy(&guid),
+                    core::mem::transmute_copy(&datasize),
+                    core::mem::transmute_copy(&pdata),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetPrivateDataInterface<
+            Identity: ID3D11DeviceChild_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            guid: *const windows_core::GUID,
+            pdata: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceChild_Impl::SetPrivateDataInterface(
+                    this,
+                    core::mem::transmute_copy(&guid),
+                    core::mem::transmute_copy(&pdata),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: windows_core::IUnknown_Vtbl::new::<Identity, OFFSET>(),
+            GetDevice: GetDevice::<Identity, OFFSET>,
+            GetPrivateData: GetPrivateData::<Identity, OFFSET>,
+            SetPrivateData: SetPrivateData::<Identity, OFFSET>,
+            SetPrivateDataInterface: SetPrivateDataInterface::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11DeviceChild {}
 windows_core::imp::define_interface!(
@@ -5677,6 +6039,2747 @@ pub struct ID3D11DeviceContext_Vtbl {
         *mut *mut core::ffi::c_void,
     ) -> windows_core::HRESULT,
 }
+pub trait ID3D11DeviceContext_Impl: ID3D11DeviceChild_Impl {
+    fn VSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn PSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn PSSetShader(
+        &self,
+        ppixelshader: windows_core::Ref<ID3D11PixelShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn PSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn VSSetShader(
+        &self,
+        pvertexshader: windows_core::Ref<ID3D11VertexShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn DrawIndexed(&self, indexcount: u32, startindexlocation: u32, basevertexlocation: i32);
+    fn Draw(&self, vertexcount: u32, startvertexlocation: u32);
+    fn Map(
+        &self,
+        presource: windows_core::Ref<ID3D11Resource>,
+        subresource: u32,
+        maptype: D3D11_MAP,
+        mapflags: u32,
+        pmappedresource: *mut D3D11_MAPPED_SUBRESOURCE,
+    ) -> windows_core::Result<()>;
+    fn Unmap(&self, presource: windows_core::Ref<ID3D11Resource>, subresource: u32);
+    fn PSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn IASetInputLayout(&self, pinputlayout: windows_core::Ref<ID3D11InputLayout>);
+    fn IASetVertexBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppvertexbuffers: *const Option<ID3D11Buffer>,
+        pstrides: *const u32,
+        poffsets: *const u32,
+    );
+    fn IASetIndexBuffer(
+        &self,
+        pindexbuffer: windows_core::Ref<ID3D11Buffer>,
+        format: DXGI_FORMAT,
+        offset: u32,
+    );
+    fn DrawIndexedInstanced(
+        &self,
+        indexcountperinstance: u32,
+        instancecount: u32,
+        startindexlocation: u32,
+        basevertexlocation: i32,
+        startinstancelocation: u32,
+    );
+    fn DrawInstanced(
+        &self,
+        vertexcountperinstance: u32,
+        instancecount: u32,
+        startvertexlocation: u32,
+        startinstancelocation: u32,
+    );
+    fn GSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn GSSetShader(
+        &self,
+        pshader: windows_core::Ref<ID3D11GeometryShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn IASetPrimitiveTopology(&self, topology: D3D11_PRIMITIVE_TOPOLOGY);
+    fn VSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn VSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn Begin(&self, pasync: windows_core::Ref<ID3D11Asynchronous>);
+    fn End(&self, pasync: windows_core::Ref<ID3D11Asynchronous>);
+    fn GetData(
+        &self,
+        pasync: windows_core::Ref<ID3D11Asynchronous>,
+        pdata: *mut core::ffi::c_void,
+        datasize: u32,
+        getdataflags: u32,
+    ) -> windows_core::Result<()>;
+    fn SetPredication(
+        &self,
+        ppredicate: windows_core::Ref<ID3D11Predicate>,
+        predicatevalue: windows_core::BOOL,
+    );
+    fn GSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn GSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn OMSetRenderTargets(
+        &self,
+        numviews: u32,
+        pprendertargetviews: *const Option<ID3D11RenderTargetView>,
+        pdepthstencilview: windows_core::Ref<ID3D11DepthStencilView>,
+    );
+    fn OMSetRenderTargetsAndUnorderedAccessViews(
+        &self,
+        numrtvs: u32,
+        pprendertargetviews: *const Option<ID3D11RenderTargetView>,
+        pdepthstencilview: windows_core::Ref<ID3D11DepthStencilView>,
+        uavstartslot: u32,
+        numuavs: u32,
+        ppunorderedaccessviews: *const Option<ID3D11UnorderedAccessView>,
+        puavinitialcounts: *const u32,
+    );
+    fn OMSetBlendState(
+        &self,
+        pblendstate: windows_core::Ref<ID3D11BlendState>,
+        blendfactor: *const f32,
+        samplemask: u32,
+    );
+    fn OMSetDepthStencilState(
+        &self,
+        pdepthstencilstate: windows_core::Ref<ID3D11DepthStencilState>,
+        stencilref: u32,
+    );
+    fn SOSetTargets(
+        &self,
+        numbuffers: u32,
+        ppsotargets: *const Option<ID3D11Buffer>,
+        poffsets: *const u32,
+    );
+    fn DrawAuto(&self);
+    fn DrawIndexedInstancedIndirect(
+        &self,
+        pbufferforargs: windows_core::Ref<ID3D11Buffer>,
+        alignedbyteoffsetforargs: u32,
+    );
+    fn DrawInstancedIndirect(
+        &self,
+        pbufferforargs: windows_core::Ref<ID3D11Buffer>,
+        alignedbyteoffsetforargs: u32,
+    );
+    fn Dispatch(&self, threadgroupcountx: u32, threadgroupcounty: u32, threadgroupcountz: u32);
+    fn DispatchIndirect(
+        &self,
+        pbufferforargs: windows_core::Ref<ID3D11Buffer>,
+        alignedbyteoffsetforargs: u32,
+    );
+    fn RSSetState(&self, prasterizerstate: windows_core::Ref<ID3D11RasterizerState>);
+    fn RSSetViewports(&self, numviewports: u32, pviewports: *const D3D11_VIEWPORT);
+    fn RSSetScissorRects(&self, numrects: u32, prects: *const D3D11_RECT);
+    fn CopySubresourceRegion(
+        &self,
+        pdstresource: windows_core::Ref<ID3D11Resource>,
+        dstsubresource: u32,
+        dstx: u32,
+        dsty: u32,
+        dstz: u32,
+        psrcresource: windows_core::Ref<ID3D11Resource>,
+        srcsubresource: u32,
+        psrcbox: *const D3D11_BOX,
+    );
+    fn CopyResource(
+        &self,
+        pdstresource: windows_core::Ref<ID3D11Resource>,
+        psrcresource: windows_core::Ref<ID3D11Resource>,
+    );
+    fn UpdateSubresource(
+        &self,
+        pdstresource: windows_core::Ref<ID3D11Resource>,
+        dstsubresource: u32,
+        pdstbox: *const D3D11_BOX,
+        psrcdata: *const core::ffi::c_void,
+        srcrowpitch: u32,
+        srcdepthpitch: u32,
+    );
+    fn CopyStructureCount(
+        &self,
+        pdstbuffer: windows_core::Ref<ID3D11Buffer>,
+        dstalignedbyteoffset: u32,
+        psrcview: windows_core::Ref<ID3D11UnorderedAccessView>,
+    );
+    fn ClearRenderTargetView(
+        &self,
+        prendertargetview: windows_core::Ref<ID3D11RenderTargetView>,
+        colorrgba: *const f32,
+    );
+    fn ClearUnorderedAccessViewUint(
+        &self,
+        punorderedaccessview: windows_core::Ref<ID3D11UnorderedAccessView>,
+        values: *const u32,
+    );
+    fn ClearUnorderedAccessViewFloat(
+        &self,
+        punorderedaccessview: windows_core::Ref<ID3D11UnorderedAccessView>,
+        values: *const f32,
+    );
+    fn ClearDepthStencilView(
+        &self,
+        pdepthstencilview: windows_core::Ref<ID3D11DepthStencilView>,
+        clearflags: u32,
+        depth: f32,
+        stencil: u8,
+    );
+    fn GenerateMips(&self, pshaderresourceview: windows_core::Ref<ID3D11ShaderResourceView>);
+    fn SetResourceMinLOD(&self, presource: windows_core::Ref<ID3D11Resource>, minlod: f32);
+    fn GetResourceMinLOD(&self, presource: windows_core::Ref<ID3D11Resource>) -> f32;
+    fn ResolveSubresource(
+        &self,
+        pdstresource: windows_core::Ref<ID3D11Resource>,
+        dstsubresource: u32,
+        psrcresource: windows_core::Ref<ID3D11Resource>,
+        srcsubresource: u32,
+        format: DXGI_FORMAT,
+    );
+    fn ExecuteCommandList(
+        &self,
+        pcommandlist: windows_core::Ref<ID3D11CommandList>,
+        restorecontextstate: windows_core::BOOL,
+    );
+    fn HSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn HSSetShader(
+        &self,
+        phullshader: windows_core::Ref<ID3D11HullShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn HSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn HSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn DSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn DSSetShader(
+        &self,
+        pdomainshader: windows_core::Ref<ID3D11DomainShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn DSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn DSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn CSSetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *const Option<ID3D11ShaderResourceView>,
+    );
+    fn CSSetUnorderedAccessViews(
+        &self,
+        startslot: u32,
+        numuavs: u32,
+        ppunorderedaccessviews: *const Option<ID3D11UnorderedAccessView>,
+        puavinitialcounts: *const u32,
+    );
+    fn CSSetShader(
+        &self,
+        pcomputeshader: windows_core::Ref<ID3D11ComputeShader>,
+        ppclassinstances: *const Option<ID3D11ClassInstance>,
+        numclassinstances: u32,
+    );
+    fn CSSetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *const Option<ID3D11SamplerState>,
+    );
+    fn CSSetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *const Option<ID3D11Buffer>,
+    );
+    fn VSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn PSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn PSGetShader(
+        &self,
+        pppixelshader: windows_core::OutRef<ID3D11PixelShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn PSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn VSGetShader(
+        &self,
+        ppvertexshader: windows_core::OutRef<ID3D11VertexShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn PSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn IAGetInputLayout(&self, ppinputlayout: windows_core::OutRef<ID3D11InputLayout>);
+    fn IAGetVertexBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppvertexbuffers: *mut Option<ID3D11Buffer>,
+        pstrides: *mut u32,
+        poffsets: *mut u32,
+    );
+    fn IAGetIndexBuffer(
+        &self,
+        pindexbuffer: windows_core::OutRef<ID3D11Buffer>,
+        format: *mut DXGI_FORMAT,
+        offset: *mut u32,
+    );
+    fn GSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn GSGetShader(
+        &self,
+        ppgeometryshader: windows_core::OutRef<ID3D11GeometryShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn IAGetPrimitiveTopology(&self, ptopology: *mut D3D11_PRIMITIVE_TOPOLOGY);
+    fn VSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn VSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn GetPredication(
+        &self,
+        pppredicate: windows_core::OutRef<ID3D11Predicate>,
+        ppredicatevalue: *mut windows_core::BOOL,
+    );
+    fn GSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn GSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn OMGetRenderTargets(
+        &self,
+        numviews: u32,
+        pprendertargetviews: *mut Option<ID3D11RenderTargetView>,
+        ppdepthstencilview: windows_core::OutRef<ID3D11DepthStencilView>,
+    );
+    fn OMGetRenderTargetsAndUnorderedAccessViews(
+        &self,
+        numrtvs: u32,
+        pprendertargetviews: *mut Option<ID3D11RenderTargetView>,
+        ppdepthstencilview: windows_core::OutRef<ID3D11DepthStencilView>,
+        uavstartslot: u32,
+        numuavs: u32,
+        ppunorderedaccessviews: *mut Option<ID3D11UnorderedAccessView>,
+    );
+    fn OMGetBlendState(
+        &self,
+        ppblendstate: windows_core::OutRef<ID3D11BlendState>,
+        blendfactor: *mut f32,
+        psamplemask: *mut u32,
+    );
+    fn OMGetDepthStencilState(
+        &self,
+        ppdepthstencilstate: windows_core::OutRef<ID3D11DepthStencilState>,
+        pstencilref: *mut u32,
+    );
+    fn SOGetTargets(&self, numbuffers: u32, ppsotargets: *mut Option<ID3D11Buffer>);
+    fn RSGetState(&self, pprasterizerstate: windows_core::OutRef<ID3D11RasterizerState>);
+    fn RSGetViewports(&self, pnumviewports: *mut u32, pviewports: *mut D3D11_VIEWPORT);
+    fn RSGetScissorRects(&self, pnumrects: *mut u32, prects: *mut D3D11_RECT);
+    fn HSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn HSGetShader(
+        &self,
+        pphullshader: windows_core::OutRef<ID3D11HullShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn HSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn HSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn DSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn DSGetShader(
+        &self,
+        ppdomainshader: windows_core::OutRef<ID3D11DomainShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn DSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn DSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn CSGetShaderResources(
+        &self,
+        startslot: u32,
+        numviews: u32,
+        ppshaderresourceviews: *mut Option<ID3D11ShaderResourceView>,
+    );
+    fn CSGetUnorderedAccessViews(
+        &self,
+        startslot: u32,
+        numuavs: u32,
+        ppunorderedaccessviews: *mut Option<ID3D11UnorderedAccessView>,
+    );
+    fn CSGetShader(
+        &self,
+        ppcomputeshader: windows_core::OutRef<ID3D11ComputeShader>,
+        ppclassinstances: windows_core::OutRef<ID3D11ClassInstance>,
+        pnumclassinstances: *mut u32,
+    );
+    fn CSGetSamplers(
+        &self,
+        startslot: u32,
+        numsamplers: u32,
+        ppsamplers: *mut Option<ID3D11SamplerState>,
+    );
+    fn CSGetConstantBuffers(
+        &self,
+        startslot: u32,
+        numbuffers: u32,
+        ppconstantbuffers: *mut Option<ID3D11Buffer>,
+    );
+    fn ClearState(&self);
+    fn Flush(&self);
+    fn GetType(&self) -> D3D11_DEVICE_CONTEXT_TYPE;
+    fn GetContextFlags(&self) -> u32;
+    fn FinishCommandList(
+        &self,
+        restoredeferredcontextstate: windows_core::BOOL,
+        ppcommandlist: windows_core::OutRef<ID3D11CommandList>,
+    ) -> windows_core::Result<()>;
+}
+impl ID3D11DeviceContext_Vtbl {
+    pub const fn new<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn VSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn PSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn PSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppixelshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSSetShader(
+                    this,
+                    core::mem::transmute_copy(&ppixelshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn PSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn VSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pvertexshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSSetShader(
+                    this,
+                    core::mem::transmute_copy(&pvertexshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn DrawIndexed<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            indexcount: u32,
+            startindexlocation: u32,
+            basevertexlocation: i32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawIndexed(
+                    this,
+                    core::mem::transmute_copy(&indexcount),
+                    core::mem::transmute_copy(&startindexlocation),
+                    core::mem::transmute_copy(&basevertexlocation),
+                );
+            }
+        }
+        unsafe extern "system" fn Draw<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            vertexcount: u32,
+            startvertexlocation: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Draw(
+                    this,
+                    core::mem::transmute_copy(&vertexcount),
+                    core::mem::transmute_copy(&startvertexlocation),
+                );
+            }
+        }
+        unsafe extern "system" fn Map<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            presource: *mut core::ffi::c_void,
+            subresource: u32,
+            maptype: D3D11_MAP,
+            mapflags: u32,
+            pmappedresource: *mut D3D11_MAPPED_SUBRESOURCE,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Map(
+                    this,
+                    core::mem::transmute_copy(&presource),
+                    core::mem::transmute_copy(&subresource),
+                    core::mem::transmute_copy(&maptype),
+                    core::mem::transmute_copy(&mapflags),
+                    core::mem::transmute_copy(&pmappedresource),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn Unmap<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            presource: *mut core::ffi::c_void,
+            subresource: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Unmap(
+                    this,
+                    core::mem::transmute_copy(&presource),
+                    core::mem::transmute_copy(&subresource),
+                );
+            }
+        }
+        unsafe extern "system" fn PSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn IASetInputLayout<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pinputlayout: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IASetInputLayout(
+                    this,
+                    core::mem::transmute_copy(&pinputlayout),
+                );
+            }
+        }
+        unsafe extern "system" fn IASetVertexBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppvertexbuffers: *const *mut core::ffi::c_void,
+            pstrides: *const u32,
+            poffsets: *const u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IASetVertexBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppvertexbuffers),
+                    core::mem::transmute_copy(&pstrides),
+                    core::mem::transmute_copy(&poffsets),
+                );
+            }
+        }
+        unsafe extern "system" fn IASetIndexBuffer<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pindexbuffer: *mut core::ffi::c_void,
+            format: DXGI_FORMAT,
+            offset: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IASetIndexBuffer(
+                    this,
+                    core::mem::transmute_copy(&pindexbuffer),
+                    core::mem::transmute_copy(&format),
+                    core::mem::transmute_copy(&offset),
+                );
+            }
+        }
+        unsafe extern "system" fn DrawIndexedInstanced<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            indexcountperinstance: u32,
+            instancecount: u32,
+            startindexlocation: u32,
+            basevertexlocation: i32,
+            startinstancelocation: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawIndexedInstanced(
+                    this,
+                    core::mem::transmute_copy(&indexcountperinstance),
+                    core::mem::transmute_copy(&instancecount),
+                    core::mem::transmute_copy(&startindexlocation),
+                    core::mem::transmute_copy(&basevertexlocation),
+                    core::mem::transmute_copy(&startinstancelocation),
+                );
+            }
+        }
+        unsafe extern "system" fn DrawInstanced<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            vertexcountperinstance: u32,
+            instancecount: u32,
+            startvertexlocation: u32,
+            startinstancelocation: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawInstanced(
+                    this,
+                    core::mem::transmute_copy(&vertexcountperinstance),
+                    core::mem::transmute_copy(&instancecount),
+                    core::mem::transmute_copy(&startvertexlocation),
+                    core::mem::transmute_copy(&startinstancelocation),
+                );
+            }
+        }
+        unsafe extern "system" fn GSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn GSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSSetShader(
+                    this,
+                    core::mem::transmute_copy(&pshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn IASetPrimitiveTopology<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            topology: D3D11_PRIMITIVE_TOPOLOGY,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IASetPrimitiveTopology(
+                    this,
+                    core::mem::transmute_copy(&topology),
+                );
+            }
+        }
+        unsafe extern "system" fn VSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn VSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn Begin<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pasync: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Begin(this, core::mem::transmute_copy(&pasync));
+            }
+        }
+        unsafe extern "system" fn End<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pasync: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::End(this, core::mem::transmute_copy(&pasync));
+            }
+        }
+        unsafe extern "system" fn GetData<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pasync: *mut core::ffi::c_void,
+            pdata: *mut core::ffi::c_void,
+            datasize: u32,
+            getdataflags: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GetData(
+                    this,
+                    core::mem::transmute_copy(&pasync),
+                    core::mem::transmute_copy(&pdata),
+                    core::mem::transmute_copy(&datasize),
+                    core::mem::transmute_copy(&getdataflags),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetPredication<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppredicate: *mut core::ffi::c_void,
+            predicatevalue: windows_core::BOOL,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::SetPredication(
+                    this,
+                    core::mem::transmute_copy(&ppredicate),
+                    core::mem::transmute_copy(&predicatevalue),
+                );
+            }
+        }
+        unsafe extern "system" fn GSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn GSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn OMSetRenderTargets<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numviews: u32,
+            pprendertargetviews: *const *mut core::ffi::c_void,
+            pdepthstencilview: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMSetRenderTargets(
+                    this,
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&pprendertargetviews),
+                    core::mem::transmute_copy(&pdepthstencilview),
+                );
+            }
+        }
+        unsafe extern "system" fn OMSetRenderTargetsAndUnorderedAccessViews<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numrtvs: u32,
+            pprendertargetviews: *const *mut core::ffi::c_void,
+            pdepthstencilview: *mut core::ffi::c_void,
+            uavstartslot: u32,
+            numuavs: u32,
+            ppunorderedaccessviews: *const *mut core::ffi::c_void,
+            puavinitialcounts: *const u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMSetRenderTargetsAndUnorderedAccessViews(
+                    this,
+                    core::mem::transmute_copy(&numrtvs),
+                    core::mem::transmute_copy(&pprendertargetviews),
+                    core::mem::transmute_copy(&pdepthstencilview),
+                    core::mem::transmute_copy(&uavstartslot),
+                    core::mem::transmute_copy(&numuavs),
+                    core::mem::transmute_copy(&ppunorderedaccessviews),
+                    core::mem::transmute_copy(&puavinitialcounts),
+                );
+            }
+        }
+        unsafe extern "system" fn OMSetBlendState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pblendstate: *mut core::ffi::c_void,
+            blendfactor: *const f32,
+            samplemask: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMSetBlendState(
+                    this,
+                    core::mem::transmute_copy(&pblendstate),
+                    core::mem::transmute_copy(&blendfactor),
+                    core::mem::transmute_copy(&samplemask),
+                );
+            }
+        }
+        unsafe extern "system" fn OMSetDepthStencilState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdepthstencilstate: *mut core::ffi::c_void,
+            stencilref: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMSetDepthStencilState(
+                    this,
+                    core::mem::transmute_copy(&pdepthstencilstate),
+                    core::mem::transmute_copy(&stencilref),
+                );
+            }
+        }
+        unsafe extern "system" fn SOSetTargets<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numbuffers: u32,
+            ppsotargets: *const *mut core::ffi::c_void,
+            poffsets: *const u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::SOSetTargets(
+                    this,
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppsotargets),
+                    core::mem::transmute_copy(&poffsets),
+                );
+            }
+        }
+        unsafe extern "system" fn DrawAuto<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawAuto(this);
+            }
+        }
+        unsafe extern "system" fn DrawIndexedInstancedIndirect<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pbufferforargs: *mut core::ffi::c_void,
+            alignedbyteoffsetforargs: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawIndexedInstancedIndirect(
+                    this,
+                    core::mem::transmute_copy(&pbufferforargs),
+                    core::mem::transmute_copy(&alignedbyteoffsetforargs),
+                );
+            }
+        }
+        unsafe extern "system" fn DrawInstancedIndirect<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pbufferforargs: *mut core::ffi::c_void,
+            alignedbyteoffsetforargs: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DrawInstancedIndirect(
+                    this,
+                    core::mem::transmute_copy(&pbufferforargs),
+                    core::mem::transmute_copy(&alignedbyteoffsetforargs),
+                );
+            }
+        }
+        unsafe extern "system" fn Dispatch<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            threadgroupcountx: u32,
+            threadgroupcounty: u32,
+            threadgroupcountz: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Dispatch(
+                    this,
+                    core::mem::transmute_copy(&threadgroupcountx),
+                    core::mem::transmute_copy(&threadgroupcounty),
+                    core::mem::transmute_copy(&threadgroupcountz),
+                );
+            }
+        }
+        unsafe extern "system" fn DispatchIndirect<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pbufferforargs: *mut core::ffi::c_void,
+            alignedbyteoffsetforargs: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DispatchIndirect(
+                    this,
+                    core::mem::transmute_copy(&pbufferforargs),
+                    core::mem::transmute_copy(&alignedbyteoffsetforargs),
+                );
+            }
+        }
+        unsafe extern "system" fn RSSetState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            prasterizerstate: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSSetState(
+                    this,
+                    core::mem::transmute_copy(&prasterizerstate),
+                );
+            }
+        }
+        unsafe extern "system" fn RSSetViewports<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numviewports: u32,
+            pviewports: *const D3D11_VIEWPORT,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSSetViewports(
+                    this,
+                    core::mem::transmute_copy(&numviewports),
+                    core::mem::transmute_copy(&pviewports),
+                );
+            }
+        }
+        unsafe extern "system" fn RSSetScissorRects<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numrects: u32,
+            prects: *const D3D11_RECT,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSSetScissorRects(
+                    this,
+                    core::mem::transmute_copy(&numrects),
+                    core::mem::transmute_copy(&prects),
+                );
+            }
+        }
+        unsafe extern "system" fn CopySubresourceRegion<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdstresource: *mut core::ffi::c_void,
+            dstsubresource: u32,
+            dstx: u32,
+            dsty: u32,
+            dstz: u32,
+            psrcresource: *mut core::ffi::c_void,
+            srcsubresource: u32,
+            psrcbox: *const D3D11_BOX,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CopySubresourceRegion(
+                    this,
+                    core::mem::transmute_copy(&pdstresource),
+                    core::mem::transmute_copy(&dstsubresource),
+                    core::mem::transmute_copy(&dstx),
+                    core::mem::transmute_copy(&dsty),
+                    core::mem::transmute_copy(&dstz),
+                    core::mem::transmute_copy(&psrcresource),
+                    core::mem::transmute_copy(&srcsubresource),
+                    core::mem::transmute_copy(&psrcbox),
+                );
+            }
+        }
+        unsafe extern "system" fn CopyResource<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdstresource: *mut core::ffi::c_void,
+            psrcresource: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CopyResource(
+                    this,
+                    core::mem::transmute_copy(&pdstresource),
+                    core::mem::transmute_copy(&psrcresource),
+                );
+            }
+        }
+        unsafe extern "system" fn UpdateSubresource<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdstresource: *mut core::ffi::c_void,
+            dstsubresource: u32,
+            pdstbox: *const D3D11_BOX,
+            psrcdata: *const core::ffi::c_void,
+            srcrowpitch: u32,
+            srcdepthpitch: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::UpdateSubresource(
+                    this,
+                    core::mem::transmute_copy(&pdstresource),
+                    core::mem::transmute_copy(&dstsubresource),
+                    core::mem::transmute_copy(&pdstbox),
+                    core::mem::transmute_copy(&psrcdata),
+                    core::mem::transmute_copy(&srcrowpitch),
+                    core::mem::transmute_copy(&srcdepthpitch),
+                );
+            }
+        }
+        unsafe extern "system" fn CopyStructureCount<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdstbuffer: *mut core::ffi::c_void,
+            dstalignedbyteoffset: u32,
+            psrcview: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CopyStructureCount(
+                    this,
+                    core::mem::transmute_copy(&pdstbuffer),
+                    core::mem::transmute_copy(&dstalignedbyteoffset),
+                    core::mem::transmute_copy(&psrcview),
+                );
+            }
+        }
+        unsafe extern "system" fn ClearRenderTargetView<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            prendertargetview: *mut core::ffi::c_void,
+            colorrgba: *const f32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ClearRenderTargetView(
+                    this,
+                    core::mem::transmute_copy(&prendertargetview),
+                    core::mem::transmute_copy(&colorrgba),
+                );
+            }
+        }
+        unsafe extern "system" fn ClearUnorderedAccessViewUint<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            punorderedaccessview: *mut core::ffi::c_void,
+            values: *const u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ClearUnorderedAccessViewUint(
+                    this,
+                    core::mem::transmute_copy(&punorderedaccessview),
+                    core::mem::transmute_copy(&values),
+                );
+            }
+        }
+        unsafe extern "system" fn ClearUnorderedAccessViewFloat<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            punorderedaccessview: *mut core::ffi::c_void,
+            values: *const f32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ClearUnorderedAccessViewFloat(
+                    this,
+                    core::mem::transmute_copy(&punorderedaccessview),
+                    core::mem::transmute_copy(&values),
+                );
+            }
+        }
+        unsafe extern "system" fn ClearDepthStencilView<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdepthstencilview: *mut core::ffi::c_void,
+            clearflags: u32,
+            depth: f32,
+            stencil: u8,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ClearDepthStencilView(
+                    this,
+                    core::mem::transmute_copy(&pdepthstencilview),
+                    core::mem::transmute_copy(&clearflags),
+                    core::mem::transmute_copy(&depth),
+                    core::mem::transmute_copy(&stencil),
+                );
+            }
+        }
+        unsafe extern "system" fn GenerateMips<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pshaderresourceview: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GenerateMips(
+                    this,
+                    core::mem::transmute_copy(&pshaderresourceview),
+                );
+            }
+        }
+        unsafe extern "system" fn SetResourceMinLOD<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            presource: *mut core::ffi::c_void,
+            minlod: f32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::SetResourceMinLOD(
+                    this,
+                    core::mem::transmute_copy(&presource),
+                    core::mem::transmute_copy(&minlod),
+                );
+            }
+        }
+        unsafe extern "system" fn GetResourceMinLOD<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            presource: *mut core::ffi::c_void,
+        ) -> f32 {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GetResourceMinLOD(
+                    this,
+                    core::mem::transmute_copy(&presource),
+                )
+            }
+        }
+        unsafe extern "system" fn ResolveSubresource<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdstresource: *mut core::ffi::c_void,
+            dstsubresource: u32,
+            psrcresource: *mut core::ffi::c_void,
+            srcsubresource: u32,
+            format: DXGI_FORMAT,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ResolveSubresource(
+                    this,
+                    core::mem::transmute_copy(&pdstresource),
+                    core::mem::transmute_copy(&dstsubresource),
+                    core::mem::transmute_copy(&psrcresource),
+                    core::mem::transmute_copy(&srcsubresource),
+                    core::mem::transmute_copy(&format),
+                );
+            }
+        }
+        unsafe extern "system" fn ExecuteCommandList<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pcommandlist: *mut core::ffi::c_void,
+            restorecontextstate: windows_core::BOOL,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ExecuteCommandList(
+                    this,
+                    core::mem::transmute_copy(&pcommandlist),
+                    core::mem::transmute_copy(&restorecontextstate),
+                );
+            }
+        }
+        unsafe extern "system" fn HSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn HSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            phullshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSSetShader(
+                    this,
+                    core::mem::transmute_copy(&phullshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn HSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn HSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn DSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn DSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdomainshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSSetShader(
+                    this,
+                    core::mem::transmute_copy(&pdomainshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn DSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn DSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn CSSetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSSetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn CSSetUnorderedAccessViews<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numuavs: u32,
+            ppunorderedaccessviews: *const *mut core::ffi::c_void,
+            puavinitialcounts: *const u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSSetUnorderedAccessViews(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numuavs),
+                    core::mem::transmute_copy(&ppunorderedaccessviews),
+                    core::mem::transmute_copy(&puavinitialcounts),
+                );
+            }
+        }
+        unsafe extern "system" fn CSSetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pcomputeshader: *mut core::ffi::c_void,
+            ppclassinstances: *const *mut core::ffi::c_void,
+            numclassinstances: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSSetShader(
+                    this,
+                    core::mem::transmute_copy(&pcomputeshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&numclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn CSSetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSSetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn CSSetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *const *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSSetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn VSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn PSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn PSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pppixelshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSGetShader(
+                    this,
+                    core::mem::transmute_copy(&pppixelshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn PSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn VSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppvertexshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSGetShader(
+                    this,
+                    core::mem::transmute_copy(&ppvertexshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn PSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::PSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn IAGetInputLayout<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppinputlayout: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IAGetInputLayout(
+                    this,
+                    core::mem::transmute_copy(&ppinputlayout),
+                );
+            }
+        }
+        unsafe extern "system" fn IAGetVertexBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppvertexbuffers: *mut *mut core::ffi::c_void,
+            pstrides: *mut u32,
+            poffsets: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IAGetVertexBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppvertexbuffers),
+                    core::mem::transmute_copy(&pstrides),
+                    core::mem::transmute_copy(&poffsets),
+                );
+            }
+        }
+        unsafe extern "system" fn IAGetIndexBuffer<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pindexbuffer: *mut *mut core::ffi::c_void,
+            format: *mut DXGI_FORMAT,
+            offset: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IAGetIndexBuffer(
+                    this,
+                    core::mem::transmute_copy(&pindexbuffer),
+                    core::mem::transmute_copy(&format),
+                    core::mem::transmute_copy(&offset),
+                );
+            }
+        }
+        unsafe extern "system" fn GSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn GSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppgeometryshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSGetShader(
+                    this,
+                    core::mem::transmute_copy(&ppgeometryshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn IAGetPrimitiveTopology<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ptopology: *mut D3D11_PRIMITIVE_TOPOLOGY,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::IAGetPrimitiveTopology(
+                    this,
+                    core::mem::transmute_copy(&ptopology),
+                );
+            }
+        }
+        unsafe extern "system" fn VSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn VSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::VSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn GetPredication<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pppredicate: *mut *mut core::ffi::c_void,
+            ppredicatevalue: *mut windows_core::BOOL,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GetPredication(
+                    this,
+                    core::mem::transmute_copy(&pppredicate),
+                    core::mem::transmute_copy(&ppredicatevalue),
+                );
+            }
+        }
+        unsafe extern "system" fn GSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn GSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn OMGetRenderTargets<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numviews: u32,
+            pprendertargetviews: *mut *mut core::ffi::c_void,
+            ppdepthstencilview: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMGetRenderTargets(
+                    this,
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&pprendertargetviews),
+                    core::mem::transmute_copy(&ppdepthstencilview),
+                );
+            }
+        }
+        unsafe extern "system" fn OMGetRenderTargetsAndUnorderedAccessViews<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numrtvs: u32,
+            pprendertargetviews: *mut *mut core::ffi::c_void,
+            ppdepthstencilview: *mut *mut core::ffi::c_void,
+            uavstartslot: u32,
+            numuavs: u32,
+            ppunorderedaccessviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMGetRenderTargetsAndUnorderedAccessViews(
+                    this,
+                    core::mem::transmute_copy(&numrtvs),
+                    core::mem::transmute_copy(&pprendertargetviews),
+                    core::mem::transmute_copy(&ppdepthstencilview),
+                    core::mem::transmute_copy(&uavstartslot),
+                    core::mem::transmute_copy(&numuavs),
+                    core::mem::transmute_copy(&ppunorderedaccessviews),
+                );
+            }
+        }
+        unsafe extern "system" fn OMGetBlendState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppblendstate: *mut *mut core::ffi::c_void,
+            blendfactor: *mut f32,
+            psamplemask: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMGetBlendState(
+                    this,
+                    core::mem::transmute_copy(&ppblendstate),
+                    core::mem::transmute_copy(&blendfactor),
+                    core::mem::transmute_copy(&psamplemask),
+                );
+            }
+        }
+        unsafe extern "system" fn OMGetDepthStencilState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppdepthstencilstate: *mut *mut core::ffi::c_void,
+            pstencilref: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::OMGetDepthStencilState(
+                    this,
+                    core::mem::transmute_copy(&ppdepthstencilstate),
+                    core::mem::transmute_copy(&pstencilref),
+                );
+            }
+        }
+        unsafe extern "system" fn SOGetTargets<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            numbuffers: u32,
+            ppsotargets: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::SOGetTargets(
+                    this,
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppsotargets),
+                );
+            }
+        }
+        unsafe extern "system" fn RSGetState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pprasterizerstate: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSGetState(
+                    this,
+                    core::mem::transmute_copy(&pprasterizerstate),
+                );
+            }
+        }
+        unsafe extern "system" fn RSGetViewports<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pnumviewports: *mut u32,
+            pviewports: *mut D3D11_VIEWPORT,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSGetViewports(
+                    this,
+                    core::mem::transmute_copy(&pnumviewports),
+                    core::mem::transmute_copy(&pviewports),
+                );
+            }
+        }
+        unsafe extern "system" fn RSGetScissorRects<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pnumrects: *mut u32,
+            prects: *mut D3D11_RECT,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::RSGetScissorRects(
+                    this,
+                    core::mem::transmute_copy(&pnumrects),
+                    core::mem::transmute_copy(&prects),
+                );
+            }
+        }
+        unsafe extern "system" fn HSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn HSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pphullshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSGetShader(
+                    this,
+                    core::mem::transmute_copy(&pphullshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn HSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn HSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::HSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn DSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn DSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppdomainshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSGetShader(
+                    this,
+                    core::mem::transmute_copy(&ppdomainshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn DSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn DSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::DSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn CSGetShaderResources<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numviews: u32,
+            ppshaderresourceviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSGetShaderResources(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numviews),
+                    core::mem::transmute_copy(&ppshaderresourceviews),
+                );
+            }
+        }
+        unsafe extern "system" fn CSGetUnorderedAccessViews<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numuavs: u32,
+            ppunorderedaccessviews: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSGetUnorderedAccessViews(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numuavs),
+                    core::mem::transmute_copy(&ppunorderedaccessviews),
+                );
+            }
+        }
+        unsafe extern "system" fn CSGetShader<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppcomputeshader: *mut *mut core::ffi::c_void,
+            ppclassinstances: *mut *mut core::ffi::c_void,
+            pnumclassinstances: *mut u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSGetShader(
+                    this,
+                    core::mem::transmute_copy(&ppcomputeshader),
+                    core::mem::transmute_copy(&ppclassinstances),
+                    core::mem::transmute_copy(&pnumclassinstances),
+                );
+            }
+        }
+        unsafe extern "system" fn CSGetSamplers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numsamplers: u32,
+            ppsamplers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSGetSamplers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numsamplers),
+                    core::mem::transmute_copy(&ppsamplers),
+                );
+            }
+        }
+        unsafe extern "system" fn CSGetConstantBuffers<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            startslot: u32,
+            numbuffers: u32,
+            ppconstantbuffers: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::CSGetConstantBuffers(
+                    this,
+                    core::mem::transmute_copy(&startslot),
+                    core::mem::transmute_copy(&numbuffers),
+                    core::mem::transmute_copy(&ppconstantbuffers),
+                );
+            }
+        }
+        unsafe extern "system" fn ClearState<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::ClearState(this);
+            }
+        }
+        unsafe extern "system" fn Flush<Identity: ID3D11DeviceContext_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::Flush(this);
+            }
+        }
+        unsafe extern "system" fn GetType<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> D3D11_DEVICE_CONTEXT_TYPE {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GetType(this)
+            }
+        }
+        unsafe extern "system" fn GetContextFlags<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> u32 {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::GetContextFlags(this)
+            }
+        }
+        unsafe extern "system" fn FinishCommandList<
+            Identity: ID3D11DeviceContext_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            restoredeferredcontextstate: windows_core::BOOL,
+            ppcommandlist: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11DeviceContext_Impl::FinishCommandList(
+                    this,
+                    core::mem::transmute_copy(&restoredeferredcontextstate),
+                    core::mem::transmute_copy(&ppcommandlist),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            VSSetConstantBuffers: VSSetConstantBuffers::<Identity, OFFSET>,
+            PSSetShaderResources: PSSetShaderResources::<Identity, OFFSET>,
+            PSSetShader: PSSetShader::<Identity, OFFSET>,
+            PSSetSamplers: PSSetSamplers::<Identity, OFFSET>,
+            VSSetShader: VSSetShader::<Identity, OFFSET>,
+            DrawIndexed: DrawIndexed::<Identity, OFFSET>,
+            Draw: Draw::<Identity, OFFSET>,
+            Map: Map::<Identity, OFFSET>,
+            Unmap: Unmap::<Identity, OFFSET>,
+            PSSetConstantBuffers: PSSetConstantBuffers::<Identity, OFFSET>,
+            IASetInputLayout: IASetInputLayout::<Identity, OFFSET>,
+            IASetVertexBuffers: IASetVertexBuffers::<Identity, OFFSET>,
+            IASetIndexBuffer: IASetIndexBuffer::<Identity, OFFSET>,
+            DrawIndexedInstanced: DrawIndexedInstanced::<Identity, OFFSET>,
+            DrawInstanced: DrawInstanced::<Identity, OFFSET>,
+            GSSetConstantBuffers: GSSetConstantBuffers::<Identity, OFFSET>,
+            GSSetShader: GSSetShader::<Identity, OFFSET>,
+            IASetPrimitiveTopology: IASetPrimitiveTopology::<Identity, OFFSET>,
+            VSSetShaderResources: VSSetShaderResources::<Identity, OFFSET>,
+            VSSetSamplers: VSSetSamplers::<Identity, OFFSET>,
+            Begin: Begin::<Identity, OFFSET>,
+            End: End::<Identity, OFFSET>,
+            GetData: GetData::<Identity, OFFSET>,
+            SetPredication: SetPredication::<Identity, OFFSET>,
+            GSSetShaderResources: GSSetShaderResources::<Identity, OFFSET>,
+            GSSetSamplers: GSSetSamplers::<Identity, OFFSET>,
+            OMSetRenderTargets: OMSetRenderTargets::<Identity, OFFSET>,
+            OMSetRenderTargetsAndUnorderedAccessViews: OMSetRenderTargetsAndUnorderedAccessViews::<
+                Identity,
+                OFFSET,
+            >,
+            OMSetBlendState: OMSetBlendState::<Identity, OFFSET>,
+            OMSetDepthStencilState: OMSetDepthStencilState::<Identity, OFFSET>,
+            SOSetTargets: SOSetTargets::<Identity, OFFSET>,
+            DrawAuto: DrawAuto::<Identity, OFFSET>,
+            DrawIndexedInstancedIndirect: DrawIndexedInstancedIndirect::<Identity, OFFSET>,
+            DrawInstancedIndirect: DrawInstancedIndirect::<Identity, OFFSET>,
+            Dispatch: Dispatch::<Identity, OFFSET>,
+            DispatchIndirect: DispatchIndirect::<Identity, OFFSET>,
+            RSSetState: RSSetState::<Identity, OFFSET>,
+            RSSetViewports: RSSetViewports::<Identity, OFFSET>,
+            RSSetScissorRects: RSSetScissorRects::<Identity, OFFSET>,
+            CopySubresourceRegion: CopySubresourceRegion::<Identity, OFFSET>,
+            CopyResource: CopyResource::<Identity, OFFSET>,
+            UpdateSubresource: UpdateSubresource::<Identity, OFFSET>,
+            CopyStructureCount: CopyStructureCount::<Identity, OFFSET>,
+            ClearRenderTargetView: ClearRenderTargetView::<Identity, OFFSET>,
+            ClearUnorderedAccessViewUint: ClearUnorderedAccessViewUint::<Identity, OFFSET>,
+            ClearUnorderedAccessViewFloat: ClearUnorderedAccessViewFloat::<Identity, OFFSET>,
+            ClearDepthStencilView: ClearDepthStencilView::<Identity, OFFSET>,
+            GenerateMips: GenerateMips::<Identity, OFFSET>,
+            SetResourceMinLOD: SetResourceMinLOD::<Identity, OFFSET>,
+            GetResourceMinLOD: GetResourceMinLOD::<Identity, OFFSET>,
+            ResolveSubresource: ResolveSubresource::<Identity, OFFSET>,
+            ExecuteCommandList: ExecuteCommandList::<Identity, OFFSET>,
+            HSSetShaderResources: HSSetShaderResources::<Identity, OFFSET>,
+            HSSetShader: HSSetShader::<Identity, OFFSET>,
+            HSSetSamplers: HSSetSamplers::<Identity, OFFSET>,
+            HSSetConstantBuffers: HSSetConstantBuffers::<Identity, OFFSET>,
+            DSSetShaderResources: DSSetShaderResources::<Identity, OFFSET>,
+            DSSetShader: DSSetShader::<Identity, OFFSET>,
+            DSSetSamplers: DSSetSamplers::<Identity, OFFSET>,
+            DSSetConstantBuffers: DSSetConstantBuffers::<Identity, OFFSET>,
+            CSSetShaderResources: CSSetShaderResources::<Identity, OFFSET>,
+            CSSetUnorderedAccessViews: CSSetUnorderedAccessViews::<Identity, OFFSET>,
+            CSSetShader: CSSetShader::<Identity, OFFSET>,
+            CSSetSamplers: CSSetSamplers::<Identity, OFFSET>,
+            CSSetConstantBuffers: CSSetConstantBuffers::<Identity, OFFSET>,
+            VSGetConstantBuffers: VSGetConstantBuffers::<Identity, OFFSET>,
+            PSGetShaderResources: PSGetShaderResources::<Identity, OFFSET>,
+            PSGetShader: PSGetShader::<Identity, OFFSET>,
+            PSGetSamplers: PSGetSamplers::<Identity, OFFSET>,
+            VSGetShader: VSGetShader::<Identity, OFFSET>,
+            PSGetConstantBuffers: PSGetConstantBuffers::<Identity, OFFSET>,
+            IAGetInputLayout: IAGetInputLayout::<Identity, OFFSET>,
+            IAGetVertexBuffers: IAGetVertexBuffers::<Identity, OFFSET>,
+            IAGetIndexBuffer: IAGetIndexBuffer::<Identity, OFFSET>,
+            GSGetConstantBuffers: GSGetConstantBuffers::<Identity, OFFSET>,
+            GSGetShader: GSGetShader::<Identity, OFFSET>,
+            IAGetPrimitiveTopology: IAGetPrimitiveTopology::<Identity, OFFSET>,
+            VSGetShaderResources: VSGetShaderResources::<Identity, OFFSET>,
+            VSGetSamplers: VSGetSamplers::<Identity, OFFSET>,
+            GetPredication: GetPredication::<Identity, OFFSET>,
+            GSGetShaderResources: GSGetShaderResources::<Identity, OFFSET>,
+            GSGetSamplers: GSGetSamplers::<Identity, OFFSET>,
+            OMGetRenderTargets: OMGetRenderTargets::<Identity, OFFSET>,
+            OMGetRenderTargetsAndUnorderedAccessViews: OMGetRenderTargetsAndUnorderedAccessViews::<
+                Identity,
+                OFFSET,
+            >,
+            OMGetBlendState: OMGetBlendState::<Identity, OFFSET>,
+            OMGetDepthStencilState: OMGetDepthStencilState::<Identity, OFFSET>,
+            SOGetTargets: SOGetTargets::<Identity, OFFSET>,
+            RSGetState: RSGetState::<Identity, OFFSET>,
+            RSGetViewports: RSGetViewports::<Identity, OFFSET>,
+            RSGetScissorRects: RSGetScissorRects::<Identity, OFFSET>,
+            HSGetShaderResources: HSGetShaderResources::<Identity, OFFSET>,
+            HSGetShader: HSGetShader::<Identity, OFFSET>,
+            HSGetSamplers: HSGetSamplers::<Identity, OFFSET>,
+            HSGetConstantBuffers: HSGetConstantBuffers::<Identity, OFFSET>,
+            DSGetShaderResources: DSGetShaderResources::<Identity, OFFSET>,
+            DSGetShader: DSGetShader::<Identity, OFFSET>,
+            DSGetSamplers: DSGetSamplers::<Identity, OFFSET>,
+            DSGetConstantBuffers: DSGetConstantBuffers::<Identity, OFFSET>,
+            CSGetShaderResources: CSGetShaderResources::<Identity, OFFSET>,
+            CSGetUnorderedAccessViews: CSGetUnorderedAccessViews::<Identity, OFFSET>,
+            CSGetShader: CSGetShader::<Identity, OFFSET>,
+            CSGetSamplers: CSGetSamplers::<Identity, OFFSET>,
+            CSGetConstantBuffers: CSGetConstantBuffers::<Identity, OFFSET>,
+            ClearState: ClearState::<Identity, OFFSET>,
+            Flush: Flush::<Identity, OFFSET>,
+            GetType: GetType::<Identity, OFFSET>,
+            GetContextFlags: GetContextFlags::<Identity, OFFSET>,
+            FinishCommandList: FinishCommandList::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11DeviceContext as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11DeviceContext {}
 windows_core::imp::define_interface!(
     ID3D11DomainShader,
@@ -5697,6 +8800,18 @@ windows_core::imp::interface_hierarchy!(
 #[repr(C)]
 pub struct ID3D11DomainShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
+}
+pub trait ID3D11DomainShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11DomainShader_Vtbl {
+    pub const fn new<Identity: ID3D11DomainShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11DomainShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11DomainShader {}
 windows_core::imp::define_interface!(
@@ -5719,6 +8834,18 @@ windows_core::imp::interface_hierarchy!(
 pub struct ID3D11GeometryShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
 }
+pub trait ID3D11GeometryShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11GeometryShader_Vtbl {
+    pub const fn new<Identity: ID3D11GeometryShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11GeometryShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11GeometryShader {}
 windows_core::imp::define_interface!(
     ID3D11HullShader,
@@ -5739,6 +8866,18 @@ windows_core::imp::interface_hierarchy!(
 #[repr(C)]
 pub struct ID3D11HullShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
+}
+pub trait ID3D11HullShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11HullShader_Vtbl {
+    pub const fn new<Identity: ID3D11HullShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11HullShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11HullShader {}
 windows_core::imp::define_interface!(
@@ -5761,6 +8900,18 @@ windows_core::imp::interface_hierarchy!(
 pub struct ID3D11InputLayout_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
 }
+pub trait ID3D11InputLayout_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11InputLayout_Vtbl {
+    pub const fn new<Identity: ID3D11InputLayout_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11InputLayout as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11InputLayout {}
 windows_core::imp::define_interface!(
     ID3D11PixelShader,
@@ -5781,6 +8932,18 @@ windows_core::imp::interface_hierarchy!(
 #[repr(C)]
 pub struct ID3D11PixelShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
+}
+pub trait ID3D11PixelShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11PixelShader_Vtbl {
+    pub const fn new<Identity: ID3D11PixelShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11PixelShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11PixelShader {}
 windows_core::imp::define_interface!(
@@ -5804,6 +8967,20 @@ windows_core::imp::interface_hierarchy!(
 #[repr(C)]
 pub struct ID3D11Predicate_Vtbl {
     pub base__: ID3D11Query_Vtbl,
+}
+pub trait ID3D11Predicate_Impl: ID3D11Query_Impl {}
+impl ID3D11Predicate_Vtbl {
+    pub const fn new<Identity: ID3D11Predicate_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11Query_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Predicate as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11Asynchronous as windows_core::Interface>::IID
+            || iid == &<ID3D11Query as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11Predicate {}
 windows_core::imp::define_interface!(
@@ -5840,6 +9017,32 @@ pub struct ID3D11Query_Vtbl {
     pub base__: ID3D11Asynchronous_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_QUERY_DESC),
 }
+pub trait ID3D11Query_Impl: ID3D11Asynchronous_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_QUERY_DESC);
+}
+impl ID3D11Query_Vtbl {
+    pub const fn new<Identity: ID3D11Query_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<Identity: ID3D11Query_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_QUERY_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Query_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11Asynchronous_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Query as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11Asynchronous as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11Query {}
 windows_core::imp::define_interface!(
     ID3D11RasterizerState,
@@ -5871,6 +9074,34 @@ impl ID3D11RasterizerState {
 pub struct ID3D11RasterizerState_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_RASTERIZER_DESC),
+}
+pub trait ID3D11RasterizerState_Impl: ID3D11DeviceChild_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_RASTERIZER_DESC);
+}
+impl ID3D11RasterizerState_Vtbl {
+    pub const fn new<Identity: ID3D11RasterizerState_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11RasterizerState_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_RASTERIZER_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11RasterizerState_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11RasterizerState as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11RasterizerState {}
 windows_core::imp::define_interface!(
@@ -5905,6 +9136,35 @@ pub struct ID3D11RenderTargetView_Vtbl {
     pub base__: ID3D11View_Vtbl,
     pub GetDesc:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_RENDER_TARGET_VIEW_DESC),
+}
+pub trait ID3D11RenderTargetView_Impl: ID3D11View_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_RENDER_TARGET_VIEW_DESC);
+}
+impl ID3D11RenderTargetView_Vtbl {
+    pub const fn new<Identity: ID3D11RenderTargetView_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11RenderTargetView_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_RENDER_TARGET_VIEW_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11RenderTargetView_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11View_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11RenderTargetView as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11View as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11RenderTargetView {}
 windows_core::imp::define_interface!(
@@ -5953,6 +9213,63 @@ pub struct ID3D11Resource_Vtbl {
     pub SetEvictionPriority: unsafe extern "system" fn(*mut core::ffi::c_void, u32),
     pub GetEvictionPriority: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32,
 }
+pub trait ID3D11Resource_Impl: ID3D11DeviceChild_Impl {
+    fn GetType(&self, presourcedimension: *mut D3D11_RESOURCE_DIMENSION);
+    fn SetEvictionPriority(&self, evictionpriority: u32);
+    fn GetEvictionPriority(&self) -> u32;
+}
+impl ID3D11Resource_Vtbl {
+    pub const fn new<Identity: ID3D11Resource_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetType<Identity: ID3D11Resource_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            presourcedimension: *mut D3D11_RESOURCE_DIMENSION,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Resource_Impl::GetType(this, core::mem::transmute_copy(&presourcedimension));
+            }
+        }
+        unsafe extern "system" fn SetEvictionPriority<
+            Identity: ID3D11Resource_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            evictionpriority: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Resource_Impl::SetEvictionPriority(
+                    this,
+                    core::mem::transmute_copy(&evictionpriority),
+                );
+            }
+        }
+        unsafe extern "system" fn GetEvictionPriority<
+            Identity: ID3D11Resource_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> u32 {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Resource_Impl::GetEvictionPriority(this)
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetType: GetType::<Identity, OFFSET>,
+            SetEvictionPriority: SetEvictionPriority::<Identity, OFFSET>,
+            GetEvictionPriority: GetEvictionPriority::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Resource as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11Resource {}
 windows_core::imp::define_interface!(
     ID3D11SamplerState,
@@ -5984,6 +9301,34 @@ impl ID3D11SamplerState {
 pub struct ID3D11SamplerState_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_SAMPLER_DESC),
+}
+pub trait ID3D11SamplerState_Impl: ID3D11DeviceChild_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_SAMPLER_DESC);
+}
+impl ID3D11SamplerState_Vtbl {
+    pub const fn new<Identity: ID3D11SamplerState_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11SamplerState_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_SAMPLER_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11SamplerState_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11SamplerState as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11SamplerState {}
 windows_core::imp::define_interface!(
@@ -7230,6 +10575,35 @@ pub struct ID3D11ShaderResourceView_Vtbl {
     pub GetDesc:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_SHADER_RESOURCE_VIEW_DESC),
 }
+pub trait ID3D11ShaderResourceView_Impl: ID3D11View_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_SHADER_RESOURCE_VIEW_DESC);
+}
+impl ID3D11ShaderResourceView_Vtbl {
+    pub const fn new<Identity: ID3D11ShaderResourceView_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11ShaderResourceView_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_SHADER_RESOURCE_VIEW_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11ShaderResourceView_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11View_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11ShaderResourceView as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11View as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11ShaderResourceView {}
 windows_core::imp::define_interface!(
     ID3D11Texture1D,
@@ -7286,6 +10660,32 @@ pub struct ID3D11Texture2D_Vtbl {
     pub base__: ID3D11Resource_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_TEXTURE2D_DESC),
 }
+pub trait ID3D11Texture2D_Impl: ID3D11Resource_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_TEXTURE2D_DESC);
+}
+impl ID3D11Texture2D_Vtbl {
+    pub const fn new<Identity: ID3D11Texture2D_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<Identity: ID3D11Texture2D_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_TEXTURE2D_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Texture2D_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11Resource_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Texture2D as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11Resource as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11Texture2D {}
 windows_core::imp::define_interface!(
     ID3D11Texture3D,
@@ -7318,6 +10718,32 @@ impl ID3D11Texture3D {
 pub struct ID3D11Texture3D_Vtbl {
     pub base__: ID3D11Resource_Vtbl,
     pub GetDesc: unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_TEXTURE3D_DESC),
+}
+pub trait ID3D11Texture3D_Impl: ID3D11Resource_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_TEXTURE3D_DESC);
+}
+impl ID3D11Texture3D_Vtbl {
+    pub const fn new<Identity: ID3D11Texture3D_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<Identity: ID3D11Texture3D_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_TEXTURE3D_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11Texture3D_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11Resource_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11Texture3D as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11Resource as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11Texture3D {}
 windows_core::imp::define_interface!(
@@ -7353,6 +10779,35 @@ pub struct ID3D11UnorderedAccessView_Vtbl {
     pub GetDesc:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut D3D11_UNORDERED_ACCESS_VIEW_DESC),
 }
+pub trait ID3D11UnorderedAccessView_Impl: ID3D11View_Impl {
+    fn GetDesc(&self, pdesc: *mut D3D11_UNORDERED_ACCESS_VIEW_DESC);
+}
+impl ID3D11UnorderedAccessView_Vtbl {
+    pub const fn new<Identity: ID3D11UnorderedAccessView_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDesc<
+            Identity: ID3D11UnorderedAccessView_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut D3D11_UNORDERED_ACCESS_VIEW_DESC,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11UnorderedAccessView_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc));
+            }
+        }
+        Self {
+            base__: ID3D11View_Vtbl::new::<Identity, OFFSET>(),
+            GetDesc: GetDesc::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11UnorderedAccessView as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+            || iid == &<ID3D11View as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11UnorderedAccessView {}
 windows_core::imp::define_interface!(
     ID3D11VertexShader,
@@ -7374,6 +10829,18 @@ windows_core::imp::interface_hierarchy!(
 pub struct ID3D11VertexShader_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
 }
+pub trait ID3D11VertexShader_Impl: ID3D11DeviceChild_Impl {}
+impl ID3D11VertexShader_Vtbl {
+    pub const fn new<Identity: ID3D11VertexShader_Impl, const OFFSET: isize>() -> Self {
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11VertexShader as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for ID3D11VertexShader {}
 windows_core::imp::define_interface!(
     ID3D11View,
@@ -7387,10 +10854,47 @@ impl core::ops::Deref for ID3D11View {
     }
 }
 windows_core::imp::interface_hierarchy!(ID3D11View, windows_core::IUnknown, ID3D11DeviceChild);
+impl ID3D11View {
+    pub unsafe fn GetResource(&self) -> windows_core::Result<ID3D11Resource> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetResource)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            );
+            windows_core::imp::Type::from_abi(result__)
+        }
+    }
+}
 #[repr(C)]
 pub struct ID3D11View_Vtbl {
     pub base__: ID3D11DeviceChild_Vtbl,
-    GetResource: usize,
+    pub GetResource: unsafe extern "system" fn(*mut core::ffi::c_void, *mut *mut core::ffi::c_void),
+}
+pub trait ID3D11View_Impl: ID3D11DeviceChild_Impl {
+    fn GetResource(&self, ppresource: windows_core::OutRef<ID3D11Resource>);
+}
+impl ID3D11View_Vtbl {
+    pub const fn new<Identity: ID3D11View_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetResource<Identity: ID3D11View_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            ppresource: *mut *mut core::ffi::c_void,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ID3D11View_Impl::GetResource(this, core::mem::transmute_copy(&ppresource));
+            }
+        }
+        Self {
+            base__: ID3D11DeviceChild_Vtbl::new::<Identity, OFFSET>(),
+            GetResource: GetResource::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ID3D11View as windows_core::Interface>::IID
+            || iid == &<ID3D11DeviceChild as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for ID3D11View {}
 windows_core::imp::define_interface!(ID3DInclude, ID3DInclude_Vtbl);
@@ -7557,6 +11061,133 @@ pub struct IDXGIDevice_Vtbl {
     pub GetGPUThreadPriority:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut i32) -> windows_core::HRESULT,
 }
+pub trait IDXGIDevice_Impl: IDXGIObject_Impl {
+    fn GetAdapter(&self) -> windows_core::Result<IDXGIAdapter>;
+    fn CreateSurface(
+        &self,
+        pdesc: *const DXGI_SURFACE_DESC,
+        numsurfaces: u32,
+        usage: DXGI_USAGE,
+        psharedresource: *const DXGI_SHARED_RESOURCE,
+        ppsurface: *mut Option<IDXGISurface>,
+    ) -> windows_core::Result<()>;
+    fn QueryResourceResidency(
+        &self,
+        ppresources: *const Option<windows_core::IUnknown>,
+        presidencystatus: *mut DXGI_RESIDENCY,
+        numresources: u32,
+    ) -> windows_core::Result<()>;
+    fn SetGPUThreadPriority(&self, priority: i32) -> windows_core::Result<()>;
+    fn GetGPUThreadPriority(&self) -> windows_core::Result<i32>;
+}
+impl IDXGIDevice_Vtbl {
+    pub const fn new<Identity: IDXGIDevice_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetAdapter<Identity: IDXGIDevice_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            padapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIDevice_Impl::GetAdapter(this) {
+                    Ok(ok__) => {
+                        padapter.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn CreateSurface<Identity: IDXGIDevice_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *const DXGI_SURFACE_DESC,
+            numsurfaces: u32,
+            usage: DXGI_USAGE,
+            psharedresource: *const DXGI_SHARED_RESOURCE,
+            ppsurface: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIDevice_Impl::CreateSurface(
+                    this,
+                    core::mem::transmute_copy(&pdesc),
+                    core::mem::transmute_copy(&numsurfaces),
+                    core::mem::transmute_copy(&usage),
+                    core::mem::transmute_copy(&psharedresource),
+                    core::mem::transmute_copy(&ppsurface),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn QueryResourceResidency<
+            Identity: IDXGIDevice_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppresources: *const *mut core::ffi::c_void,
+            presidencystatus: *mut DXGI_RESIDENCY,
+            numresources: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIDevice_Impl::QueryResourceResidency(
+                    this,
+                    core::mem::transmute_copy(&ppresources),
+                    core::mem::transmute_copy(&presidencystatus),
+                    core::mem::transmute_copy(&numresources),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetGPUThreadPriority<
+            Identity: IDXGIDevice_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            priority: i32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIDevice_Impl::SetGPUThreadPriority(this, core::mem::transmute_copy(&priority))
+                    .into()
+            }
+        }
+        unsafe extern "system" fn GetGPUThreadPriority<
+            Identity: IDXGIDevice_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppriority: *mut i32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIDevice_Impl::GetGPUThreadPriority(this) {
+                    Ok(ok__) => {
+                        ppriority.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        Self {
+            base__: IDXGIObject_Vtbl::new::<Identity, OFFSET>(),
+            GetAdapter: GetAdapter::<Identity, OFFSET>,
+            CreateSurface: CreateSurface::<Identity, OFFSET>,
+            QueryResourceResidency: QueryResourceResidency::<Identity, OFFSET>,
+            SetGPUThreadPriority: SetGPUThreadPriority::<Identity, OFFSET>,
+            GetGPUThreadPriority: GetGPUThreadPriority::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIDevice as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for IDXGIDevice {}
 windows_core::imp::define_interface!(
     IDXGIDeviceSubObject,
@@ -7570,10 +11201,68 @@ impl core::ops::Deref for IDXGIDeviceSubObject {
     }
 }
 windows_core::imp::interface_hierarchy!(IDXGIDeviceSubObject, windows_core::IUnknown, IDXGIObject);
+impl IDXGIDeviceSubObject {
+    pub unsafe fn GetDevice<T>(&self) -> windows_core::Result<T>
+    where
+        T: windows_core::Interface,
+    {
+        let mut result__ = core::ptr::null_mut();
+        unsafe {
+            (windows_core::Interface::vtable(self).GetDevice)(
+                windows_core::Interface::as_raw(self),
+                &T::IID,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIDeviceSubObject_Vtbl {
     pub base__: IDXGIObject_Vtbl,
-    GetDevice: usize,
+    pub GetDevice: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIDeviceSubObject_Impl: IDXGIObject_Impl {
+    fn GetDevice(
+        &self,
+        riid: *const windows_core::GUID,
+        ppdevice: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+}
+impl IDXGIDeviceSubObject_Vtbl {
+    pub const fn new<Identity: IDXGIDeviceSubObject_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetDevice<
+            Identity: IDXGIDeviceSubObject_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            riid: *const windows_core::GUID,
+            ppdevice: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIDeviceSubObject_Impl::GetDevice(
+                    this,
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppdevice),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: IDXGIObject_Vtbl::new::<Identity, OFFSET>(),
+            GetDevice: GetDevice::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIDeviceSubObject as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIDeviceSubObject {}
 windows_core::imp::define_interface!(
@@ -7588,14 +11277,228 @@ impl core::ops::Deref for IDXGIFactory {
     }
 }
 windows_core::imp::interface_hierarchy!(IDXGIFactory, windows_core::IUnknown, IDXGIObject);
+impl IDXGIFactory {
+    pub unsafe fn EnumAdapters(&self, adapter: u32) -> windows_core::Result<IDXGIAdapter> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).EnumAdapters)(
+                windows_core::Interface::as_raw(self),
+                adapter,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub unsafe fn MakeWindowAssociation(
+        &self,
+        windowhandle: HWND,
+        flags: u32,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).MakeWindowAssociation)(
+                windows_core::Interface::as_raw(self),
+                windowhandle,
+                flags,
+            )
+        }
+    }
+    pub unsafe fn GetWindowAssociation(&self) -> windows_core::Result<HWND> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetWindowAssociation)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn CreateSwapChain<P0>(
+        &self,
+        pdevice: P0,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC,
+    ) -> windows_core::Result<IDXGISwapChain>
+    where
+        P0: windows_core::Param<windows_core::IUnknown>,
+    {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).CreateSwapChain)(
+                windows_core::Interface::as_raw(self),
+                pdevice.param().abi(),
+                pdesc,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub unsafe fn CreateSoftwareAdapter(
+        &self,
+        module: HMODULE,
+    ) -> windows_core::Result<IDXGIAdapter> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).CreateSoftwareAdapter)(
+                windows_core::Interface::as_raw(self),
+                module,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIFactory_Vtbl {
     pub base__: IDXGIObject_Vtbl,
-    EnumAdapters: usize,
-    MakeWindowAssociation: usize,
-    GetWindowAssociation: usize,
-    CreateSwapChain: usize,
-    CreateSoftwareAdapter: usize,
+    pub EnumAdapters: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        u32,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub MakeWindowAssociation:
+        unsafe extern "system" fn(*mut core::ffi::c_void, HWND, u32) -> windows_core::HRESULT,
+    pub GetWindowAssociation:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut HWND) -> windows_core::HRESULT,
+    pub CreateSwapChain: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *const DXGI_SWAP_CHAIN_DESC,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub CreateSoftwareAdapter: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HMODULE,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIFactory_Impl: IDXGIObject_Impl {
+    fn EnumAdapters(&self, adapter: u32) -> windows_core::Result<IDXGIAdapter>;
+    fn MakeWindowAssociation(&self, windowhandle: HWND, flags: u32) -> windows_core::Result<()>;
+    fn GetWindowAssociation(&self) -> windows_core::Result<HWND>;
+    fn CreateSwapChain(
+        &self,
+        pdevice: windows_core::Ref<windows_core::IUnknown>,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC,
+    ) -> windows_core::Result<IDXGISwapChain>;
+    fn CreateSoftwareAdapter(&self, module: HMODULE) -> windows_core::Result<IDXGIAdapter>;
+}
+impl IDXGIFactory_Vtbl {
+    pub const fn new<Identity: IDXGIFactory_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn EnumAdapters<Identity: IDXGIFactory_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            adapter: u32,
+            ppadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory_Impl::EnumAdapters(this, core::mem::transmute_copy(&adapter)) {
+                    Ok(ok__) => {
+                        ppadapter.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn MakeWindowAssociation<
+            Identity: IDXGIFactory_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            windowhandle: HWND,
+            flags: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory_Impl::MakeWindowAssociation(
+                    this,
+                    core::mem::transmute_copy(&windowhandle),
+                    core::mem::transmute_copy(&flags),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetWindowAssociation<
+            Identity: IDXGIFactory_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pwindowhandle: *mut HWND,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory_Impl::GetWindowAssociation(this) {
+                    Ok(ok__) => {
+                        pwindowhandle.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn CreateSwapChain<
+            Identity: IDXGIFactory_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdevice: *mut core::ffi::c_void,
+            pdesc: *const DXGI_SWAP_CHAIN_DESC,
+            ppswapchain: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory_Impl::CreateSwapChain(
+                    this,
+                    core::mem::transmute_copy(&pdevice),
+                    core::mem::transmute_copy(&pdesc),
+                ) {
+                    Ok(ok__) => {
+                        ppswapchain.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn CreateSoftwareAdapter<
+            Identity: IDXGIFactory_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            module: HMODULE,
+            ppadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory_Impl::CreateSoftwareAdapter(
+                    this,
+                    core::mem::transmute_copy(&module),
+                ) {
+                    Ok(ok__) => {
+                        ppadapter.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        Self {
+            base__: IDXGIObject_Vtbl::new::<Identity, OFFSET>(),
+            EnumAdapters: EnumAdapters::<Identity, OFFSET>,
+            MakeWindowAssociation: MakeWindowAssociation::<Identity, OFFSET>,
+            GetWindowAssociation: GetWindowAssociation::<Identity, OFFSET>,
+            CreateSwapChain: CreateSwapChain::<Identity, OFFSET>,
+            CreateSoftwareAdapter: CreateSoftwareAdapter::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIFactory {}
 windows_core::imp::define_interface!(
@@ -7643,6 +11546,53 @@ pub struct IDXGIFactory1_Vtbl {
     ) -> windows_core::HRESULT,
     pub IsCurrent: unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::BOOL,
 }
+pub trait IDXGIFactory1_Impl: IDXGIFactory_Impl {
+    fn EnumAdapters1(&self, adapter: u32) -> windows_core::Result<IDXGIAdapter1>;
+    fn IsCurrent(&self) -> windows_core::BOOL;
+}
+impl IDXGIFactory1_Vtbl {
+    pub const fn new<Identity: IDXGIFactory1_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn EnumAdapters1<
+            Identity: IDXGIFactory1_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            adapter: u32,
+            ppadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory1_Impl::EnumAdapters1(this, core::mem::transmute_copy(&adapter)) {
+                    Ok(ok__) => {
+                        ppadapter.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn IsCurrent<Identity: IDXGIFactory1_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+        ) -> windows_core::BOOL {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory1_Impl::IsCurrent(this)
+            }
+        }
+        Self {
+            base__: IDXGIFactory_Vtbl::new::<Identity, OFFSET>(),
+            EnumAdapters1: EnumAdapters1::<Identity, OFFSET>,
+            IsCurrent: IsCurrent::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for IDXGIFactory1 {}
 windows_core::imp::define_interface!(
     IDXGIFactory2,
@@ -7662,20 +11612,543 @@ windows_core::imp::interface_hierarchy!(
     IDXGIFactory,
     IDXGIFactory1
 );
+impl IDXGIFactory2 {
+    pub unsafe fn IsWindowedStereoEnabled(&self) -> windows_core::BOOL {
+        unsafe {
+            (windows_core::Interface::vtable(self).IsWindowedStereoEnabled)(
+                windows_core::Interface::as_raw(self),
+            )
+        }
+    }
+    pub unsafe fn CreateSwapChainForHwnd<P0, P4>(
+        &self,
+        pdevice: P0,
+        hwnd: HWND,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        pfullscreendesc: Option<*const DXGI_SWAP_CHAIN_FULLSCREEN_DESC>,
+        prestricttooutput: P4,
+    ) -> windows_core::Result<IDXGISwapChain1>
+    where
+        P0: windows_core::Param<windows_core::IUnknown>,
+        P4: windows_core::Param<IDXGIOutput>,
+    {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).CreateSwapChainForHwnd)(
+                windows_core::Interface::as_raw(self),
+                pdevice.param().abi(),
+                hwnd,
+                pdesc,
+                pfullscreendesc.unwrap_or(core::mem::zeroed()) as _,
+                prestricttooutput.param().abi(),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub unsafe fn CreateSwapChainForCoreWindow<P0, P1, P3>(
+        &self,
+        pdevice: P0,
+        pwindow: P1,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        prestricttooutput: P3,
+    ) -> windows_core::Result<IDXGISwapChain1>
+    where
+        P0: windows_core::Param<windows_core::IUnknown>,
+        P1: windows_core::Param<windows_core::IUnknown>,
+        P3: windows_core::Param<IDXGIOutput>,
+    {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).CreateSwapChainForCoreWindow)(
+                windows_core::Interface::as_raw(self),
+                pdevice.param().abi(),
+                pwindow.param().abi(),
+                pdesc,
+                prestricttooutput.param().abi(),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub unsafe fn GetSharedResourceAdapterLuid(
+        &self,
+        hresource: HANDLE,
+    ) -> windows_core::Result<LUID> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetSharedResourceAdapterLuid)(
+                windows_core::Interface::as_raw(self),
+                hresource,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn RegisterStereoStatusWindow(
+        &self,
+        windowhandle: HWND,
+        wmsg: u32,
+    ) -> windows_core::Result<u32> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).RegisterStereoStatusWindow)(
+                windows_core::Interface::as_raw(self),
+                windowhandle,
+                wmsg,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn RegisterStereoStatusEvent(&self, hevent: HANDLE) -> windows_core::Result<u32> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).RegisterStereoStatusEvent)(
+                windows_core::Interface::as_raw(self),
+                hevent,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn UnregisterStereoStatus(&self, dwcookie: u32) {
+        unsafe {
+            (windows_core::Interface::vtable(self).UnregisterStereoStatus)(
+                windows_core::Interface::as_raw(self),
+                dwcookie,
+            );
+        }
+    }
+    pub unsafe fn RegisterOcclusionStatusWindow(
+        &self,
+        windowhandle: HWND,
+        wmsg: u32,
+    ) -> windows_core::Result<u32> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).RegisterOcclusionStatusWindow)(
+                windows_core::Interface::as_raw(self),
+                windowhandle,
+                wmsg,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn RegisterOcclusionStatusEvent(&self, hevent: HANDLE) -> windows_core::Result<u32> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).RegisterOcclusionStatusEvent)(
+                windows_core::Interface::as_raw(self),
+                hevent,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub unsafe fn UnregisterOcclusionStatus(&self, dwcookie: u32) {
+        unsafe {
+            (windows_core::Interface::vtable(self).UnregisterOcclusionStatus)(
+                windows_core::Interface::as_raw(self),
+                dwcookie,
+            );
+        }
+    }
+    pub unsafe fn CreateSwapChainForComposition<P0, P2>(
+        &self,
+        pdevice: P0,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        prestricttooutput: P2,
+    ) -> windows_core::Result<IDXGISwapChain1>
+    where
+        P0: windows_core::Param<windows_core::IUnknown>,
+        P2: windows_core::Param<IDXGIOutput>,
+    {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).CreateSwapChainForComposition)(
+                windows_core::Interface::as_raw(self),
+                pdevice.param().abi(),
+                pdesc,
+                prestricttooutput.param().abi(),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIFactory2_Vtbl {
     pub base__: IDXGIFactory1_Vtbl,
-    IsWindowedStereoEnabled: usize,
-    CreateSwapChainForHwnd: usize,
-    CreateSwapChainForCoreWindow: usize,
-    GetSharedResourceAdapterLuid: usize,
-    RegisterStereoStatusWindow: usize,
-    RegisterStereoStatusEvent: usize,
-    UnregisterStereoStatus: usize,
-    RegisterOcclusionStatusWindow: usize,
-    RegisterOcclusionStatusEvent: usize,
-    UnregisterOcclusionStatus: usize,
-    CreateSwapChainForComposition: usize,
+    pub IsWindowedStereoEnabled:
+        unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::BOOL,
+    pub CreateSwapChainForHwnd: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        HWND,
+        *const DXGI_SWAP_CHAIN_DESC1,
+        *const DXGI_SWAP_CHAIN_FULLSCREEN_DESC,
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub CreateSwapChainForCoreWindow: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *const DXGI_SWAP_CHAIN_DESC1,
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub GetSharedResourceAdapterLuid: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HANDLE,
+        *mut LUID,
+    ) -> windows_core::HRESULT,
+    pub RegisterStereoStatusWindow: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HWND,
+        u32,
+        *mut u32,
+    ) -> windows_core::HRESULT,
+    pub RegisterStereoStatusEvent: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HANDLE,
+        *mut u32,
+    ) -> windows_core::HRESULT,
+    pub UnregisterStereoStatus: unsafe extern "system" fn(*mut core::ffi::c_void, u32),
+    pub RegisterOcclusionStatusWindow: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HWND,
+        u32,
+        *mut u32,
+    ) -> windows_core::HRESULT,
+    pub RegisterOcclusionStatusEvent: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        HANDLE,
+        *mut u32,
+    ) -> windows_core::HRESULT,
+    pub UnregisterOcclusionStatus: unsafe extern "system" fn(*mut core::ffi::c_void, u32),
+    pub CreateSwapChainForComposition: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *const DXGI_SWAP_CHAIN_DESC1,
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIFactory2_Impl: IDXGIFactory1_Impl {
+    fn IsWindowedStereoEnabled(&self) -> windows_core::BOOL;
+    fn CreateSwapChainForHwnd(
+        &self,
+        pdevice: windows_core::Ref<windows_core::IUnknown>,
+        hwnd: HWND,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        pfullscreendesc: *const DXGI_SWAP_CHAIN_FULLSCREEN_DESC,
+        prestricttooutput: windows_core::Ref<IDXGIOutput>,
+    ) -> windows_core::Result<IDXGISwapChain1>;
+    fn CreateSwapChainForCoreWindow(
+        &self,
+        pdevice: windows_core::Ref<windows_core::IUnknown>,
+        pwindow: windows_core::Ref<windows_core::IUnknown>,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        prestricttooutput: windows_core::Ref<IDXGIOutput>,
+    ) -> windows_core::Result<IDXGISwapChain1>;
+    fn GetSharedResourceAdapterLuid(&self, hresource: HANDLE) -> windows_core::Result<LUID>;
+    fn RegisterStereoStatusWindow(
+        &self,
+        windowhandle: HWND,
+        wmsg: u32,
+    ) -> windows_core::Result<u32>;
+    fn RegisterStereoStatusEvent(&self, hevent: HANDLE) -> windows_core::Result<u32>;
+    fn UnregisterStereoStatus(&self, dwcookie: u32);
+    fn RegisterOcclusionStatusWindow(
+        &self,
+        windowhandle: HWND,
+        wmsg: u32,
+    ) -> windows_core::Result<u32>;
+    fn RegisterOcclusionStatusEvent(&self, hevent: HANDLE) -> windows_core::Result<u32>;
+    fn UnregisterOcclusionStatus(&self, dwcookie: u32);
+    fn CreateSwapChainForComposition(
+        &self,
+        pdevice: windows_core::Ref<windows_core::IUnknown>,
+        pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+        prestricttooutput: windows_core::Ref<IDXGIOutput>,
+    ) -> windows_core::Result<IDXGISwapChain1>;
+}
+impl IDXGIFactory2_Vtbl {
+    pub const fn new<Identity: IDXGIFactory2_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn IsWindowedStereoEnabled<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> windows_core::BOOL {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory2_Impl::IsWindowedStereoEnabled(this)
+            }
+        }
+        unsafe extern "system" fn CreateSwapChainForHwnd<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdevice: *mut core::ffi::c_void,
+            hwnd: HWND,
+            pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+            pfullscreendesc: *const DXGI_SWAP_CHAIN_FULLSCREEN_DESC,
+            prestricttooutput: *mut core::ffi::c_void,
+            ppswapchain: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::CreateSwapChainForHwnd(
+                    this,
+                    core::mem::transmute_copy(&pdevice),
+                    core::mem::transmute_copy(&hwnd),
+                    core::mem::transmute_copy(&pdesc),
+                    core::mem::transmute_copy(&pfullscreendesc),
+                    core::mem::transmute_copy(&prestricttooutput),
+                ) {
+                    Ok(ok__) => {
+                        ppswapchain.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn CreateSwapChainForCoreWindow<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdevice: *mut core::ffi::c_void,
+            pwindow: *mut core::ffi::c_void,
+            pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+            prestricttooutput: *mut core::ffi::c_void,
+            ppswapchain: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::CreateSwapChainForCoreWindow(
+                    this,
+                    core::mem::transmute_copy(&pdevice),
+                    core::mem::transmute_copy(&pwindow),
+                    core::mem::transmute_copy(&pdesc),
+                    core::mem::transmute_copy(&prestricttooutput),
+                ) {
+                    Ok(ok__) => {
+                        ppswapchain.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn GetSharedResourceAdapterLuid<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            hresource: HANDLE,
+            pluid: *mut LUID,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::GetSharedResourceAdapterLuid(
+                    this,
+                    core::mem::transmute_copy(&hresource),
+                ) {
+                    Ok(ok__) => {
+                        pluid.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn RegisterStereoStatusWindow<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            windowhandle: HWND,
+            wmsg: u32,
+            pdwcookie: *mut u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::RegisterStereoStatusWindow(
+                    this,
+                    core::mem::transmute_copy(&windowhandle),
+                    core::mem::transmute_copy(&wmsg),
+                ) {
+                    Ok(ok__) => {
+                        pdwcookie.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn RegisterStereoStatusEvent<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            hevent: HANDLE,
+            pdwcookie: *mut u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::RegisterStereoStatusEvent(
+                    this,
+                    core::mem::transmute_copy(&hevent),
+                ) {
+                    Ok(ok__) => {
+                        pdwcookie.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn UnregisterStereoStatus<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            dwcookie: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory2_Impl::UnregisterStereoStatus(
+                    this,
+                    core::mem::transmute_copy(&dwcookie),
+                );
+            }
+        }
+        unsafe extern "system" fn RegisterOcclusionStatusWindow<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            windowhandle: HWND,
+            wmsg: u32,
+            pdwcookie: *mut u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::RegisterOcclusionStatusWindow(
+                    this,
+                    core::mem::transmute_copy(&windowhandle),
+                    core::mem::transmute_copy(&wmsg),
+                ) {
+                    Ok(ok__) => {
+                        pdwcookie.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn RegisterOcclusionStatusEvent<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            hevent: HANDLE,
+            pdwcookie: *mut u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::RegisterOcclusionStatusEvent(
+                    this,
+                    core::mem::transmute_copy(&hevent),
+                ) {
+                    Ok(ok__) => {
+                        pdwcookie.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn UnregisterOcclusionStatus<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            dwcookie: u32,
+        ) {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory2_Impl::UnregisterOcclusionStatus(
+                    this,
+                    core::mem::transmute_copy(&dwcookie),
+                );
+            }
+        }
+        unsafe extern "system" fn CreateSwapChainForComposition<
+            Identity: IDXGIFactory2_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pdevice: *mut core::ffi::c_void,
+            pdesc: *const DXGI_SWAP_CHAIN_DESC1,
+            prestricttooutput: *mut core::ffi::c_void,
+            ppswapchain: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGIFactory2_Impl::CreateSwapChainForComposition(
+                    this,
+                    core::mem::transmute_copy(&pdevice),
+                    core::mem::transmute_copy(&pdesc),
+                    core::mem::transmute_copy(&prestricttooutput),
+                ) {
+                    Ok(ok__) => {
+                        ppswapchain.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        Self {
+            base__: IDXGIFactory1_Vtbl::new::<Identity, OFFSET>(),
+            IsWindowedStereoEnabled: IsWindowedStereoEnabled::<Identity, OFFSET>,
+            CreateSwapChainForHwnd: CreateSwapChainForHwnd::<Identity, OFFSET>,
+            CreateSwapChainForCoreWindow: CreateSwapChainForCoreWindow::<Identity, OFFSET>,
+            GetSharedResourceAdapterLuid: GetSharedResourceAdapterLuid::<Identity, OFFSET>,
+            RegisterStereoStatusWindow: RegisterStereoStatusWindow::<Identity, OFFSET>,
+            RegisterStereoStatusEvent: RegisterStereoStatusEvent::<Identity, OFFSET>,
+            UnregisterStereoStatus: UnregisterStereoStatus::<Identity, OFFSET>,
+            RegisterOcclusionStatusWindow: RegisterOcclusionStatusWindow::<Identity, OFFSET>,
+            RegisterOcclusionStatusEvent: RegisterOcclusionStatusEvent::<Identity, OFFSET>,
+            UnregisterOcclusionStatus: UnregisterOcclusionStatus::<Identity, OFFSET>,
+            CreateSwapChainForComposition: CreateSwapChainForComposition::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory2 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIFactory2 {}
 windows_core::imp::define_interface!(
@@ -7697,10 +12170,49 @@ windows_core::imp::interface_hierarchy!(
     IDXGIFactory1,
     IDXGIFactory2
 );
+impl IDXGIFactory3 {
+    pub unsafe fn GetCreationFlags(&self) -> u32 {
+        unsafe {
+            (windows_core::Interface::vtable(self).GetCreationFlags)(
+                windows_core::Interface::as_raw(self),
+            )
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIFactory3_Vtbl {
     pub base__: IDXGIFactory2_Vtbl,
-    GetCreationFlags: usize,
+    pub GetCreationFlags: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32,
+}
+pub trait IDXGIFactory3_Impl: IDXGIFactory2_Impl {
+    fn GetCreationFlags(&self) -> u32;
+}
+impl IDXGIFactory3_Vtbl {
+    pub const fn new<Identity: IDXGIFactory3_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn GetCreationFlags<
+            Identity: IDXGIFactory3_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+        ) -> u32 {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory3_Impl::GetCreationFlags(this)
+            }
+        }
+        Self {
+            base__: IDXGIFactory2_Vtbl::new::<Identity, OFFSET>(),
+            GetCreationFlags: GetCreationFlags::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory3 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory2 as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIFactory3 {}
 windows_core::imp::define_interface!(
@@ -7723,11 +12235,121 @@ windows_core::imp::interface_hierarchy!(
     IDXGIFactory2,
     IDXGIFactory3
 );
+impl IDXGIFactory4 {
+    pub unsafe fn EnumAdapterByLuid<T>(&self, adapterluid: LUID) -> windows_core::Result<T>
+    where
+        T: windows_core::Interface,
+    {
+        let mut result__ = core::ptr::null_mut();
+        unsafe {
+            (windows_core::Interface::vtable(self).EnumAdapterByLuid)(
+                windows_core::Interface::as_raw(self),
+                adapterluid,
+                &T::IID,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub unsafe fn EnumWarpAdapter<T>(&self) -> windows_core::Result<T>
+    where
+        T: windows_core::Interface,
+    {
+        let mut result__ = core::ptr::null_mut();
+        unsafe {
+            (windows_core::Interface::vtable(self).EnumWarpAdapter)(
+                windows_core::Interface::as_raw(self),
+                &T::IID,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIFactory4_Vtbl {
     pub base__: IDXGIFactory3_Vtbl,
-    EnumAdapterByLuid: usize,
-    EnumWarpAdapter: usize,
+    pub EnumAdapterByLuid: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        LUID,
+        *const windows_core::GUID,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub EnumWarpAdapter: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIFactory4_Impl: IDXGIFactory3_Impl {
+    fn EnumAdapterByLuid(
+        &self,
+        adapterluid: &LUID,
+        riid: *const windows_core::GUID,
+        ppvadapter: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn EnumWarpAdapter(
+        &self,
+        riid: *const windows_core::GUID,
+        ppvadapter: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+}
+impl IDXGIFactory4_Vtbl {
+    pub const fn new<Identity: IDXGIFactory4_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn EnumAdapterByLuid<
+            Identity: IDXGIFactory4_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            adapterluid: LUID,
+            riid: *const windows_core::GUID,
+            ppvadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory4_Impl::EnumAdapterByLuid(
+                    this,
+                    core::mem::transmute(&adapterluid),
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppvadapter),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn EnumWarpAdapter<
+            Identity: IDXGIFactory4_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            riid: *const windows_core::GUID,
+            ppvadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory4_Impl::EnumWarpAdapter(
+                    this,
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppvadapter),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: IDXGIFactory3_Vtbl::new::<Identity, OFFSET>(),
+            EnumAdapterByLuid: EnumAdapterByLuid::<Identity, OFFSET>,
+            EnumWarpAdapter: EnumWarpAdapter::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory4 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory2 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory3 as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIFactory4 {}
 windows_core::imp::define_interface!(
@@ -7751,10 +12373,78 @@ windows_core::imp::interface_hierarchy!(
     IDXGIFactory3,
     IDXGIFactory4
 );
+impl IDXGIFactory5 {
+    pub unsafe fn CheckFeatureSupport(
+        &self,
+        feature: DXGI_FEATURE,
+        pfeaturesupportdata: *mut core::ffi::c_void,
+        featuresupportdatasize: u32,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).CheckFeatureSupport)(
+                windows_core::Interface::as_raw(self),
+                feature,
+                pfeaturesupportdata as _,
+                featuresupportdatasize,
+            )
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIFactory5_Vtbl {
     pub base__: IDXGIFactory4_Vtbl,
-    CheckFeatureSupport: usize,
+    pub CheckFeatureSupport: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        DXGI_FEATURE,
+        *mut core::ffi::c_void,
+        u32,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIFactory5_Impl: IDXGIFactory4_Impl {
+    fn CheckFeatureSupport(
+        &self,
+        feature: DXGI_FEATURE,
+        pfeaturesupportdata: *mut core::ffi::c_void,
+        featuresupportdatasize: u32,
+    ) -> windows_core::Result<()>;
+}
+impl IDXGIFactory5_Vtbl {
+    pub const fn new<Identity: IDXGIFactory5_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn CheckFeatureSupport<
+            Identity: IDXGIFactory5_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            feature: DXGI_FEATURE,
+            pfeaturesupportdata: *mut core::ffi::c_void,
+            featuresupportdatasize: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory5_Impl::CheckFeatureSupport(
+                    this,
+                    core::mem::transmute_copy(&feature),
+                    core::mem::transmute_copy(&pfeaturesupportdata),
+                    core::mem::transmute_copy(&featuresupportdatasize),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: IDXGIFactory4_Vtbl::new::<Identity, OFFSET>(),
+            CheckFeatureSupport: CheckFeatureSupport::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory5 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory2 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory3 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory4 as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIFactory5 {}
 windows_core::imp::define_interface!(
@@ -7812,6 +12502,56 @@ pub struct IDXGIFactory6_Vtbl {
         *mut *mut core::ffi::c_void,
     ) -> windows_core::HRESULT,
 }
+pub trait IDXGIFactory6_Impl: IDXGIFactory5_Impl {
+    fn EnumAdapterByGpuPreference(
+        &self,
+        adapter: u32,
+        gpupreference: DXGI_GPU_PREFERENCE,
+        riid: *const windows_core::GUID,
+        ppvadapter: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+}
+impl IDXGIFactory6_Vtbl {
+    pub const fn new<Identity: IDXGIFactory6_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn EnumAdapterByGpuPreference<
+            Identity: IDXGIFactory6_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            adapter: u32,
+            gpupreference: DXGI_GPU_PREFERENCE,
+            riid: *const windows_core::GUID,
+            ppvadapter: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIFactory6_Impl::EnumAdapterByGpuPreference(
+                    this,
+                    core::mem::transmute_copy(&adapter),
+                    core::mem::transmute_copy(&gpupreference),
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppvadapter),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: IDXGIFactory5_Vtbl::new::<Identity, OFFSET>(),
+            EnumAdapterByGpuPreference: EnumAdapterByGpuPreference::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIFactory6 as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory1 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory2 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory3 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory4 as windows_core::Interface>::IID
+            || iid == &<IDXGIFactory5 as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for IDXGIFactory6 {}
 windows_core::imp::define_interface!(
     IDXGIObject,
@@ -7819,13 +12559,208 @@ windows_core::imp::define_interface!(
     0xaec22fb8_76f3_4639_9be0_28eb43a67a2e
 );
 windows_core::imp::interface_hierarchy!(IDXGIObject, windows_core::IUnknown);
+impl IDXGIObject {
+    pub unsafe fn SetPrivateData(
+        &self,
+        name: *const windows_core::GUID,
+        datasize: u32,
+        pdata: *const core::ffi::c_void,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPrivateData)(
+                windows_core::Interface::as_raw(self),
+                name,
+                datasize,
+                pdata,
+            )
+        }
+    }
+    pub unsafe fn SetPrivateDataInterface<P1>(
+        &self,
+        name: *const windows_core::GUID,
+        punknown: P1,
+    ) -> windows_core::HRESULT
+    where
+        P1: windows_core::Param<windows_core::IUnknown>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPrivateDataInterface)(
+                windows_core::Interface::as_raw(self),
+                name,
+                punknown.param().abi(),
+            )
+        }
+    }
+    pub unsafe fn GetPrivateData(
+        &self,
+        name: *const windows_core::GUID,
+        pdatasize: *mut u32,
+        pdata: *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            (windows_core::Interface::vtable(self).GetPrivateData)(
+                windows_core::Interface::as_raw(self),
+                name,
+                pdatasize as _,
+                pdata as _,
+            )
+        }
+    }
+    pub unsafe fn GetParent<T>(&self) -> windows_core::Result<T>
+    where
+        T: windows_core::Interface,
+    {
+        let mut result__ = core::ptr::null_mut();
+        unsafe {
+            (windows_core::Interface::vtable(self).GetParent)(
+                windows_core::Interface::as_raw(self),
+                &T::IID,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
 #[repr(C)]
 pub struct IDXGIObject_Vtbl {
     pub base__: windows_core::IUnknown_Vtbl,
-    SetPrivateData: usize,
-    SetPrivateDataInterface: usize,
-    GetPrivateData: usize,
-    GetParent: usize,
+    pub SetPrivateData: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        u32,
+        *const core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetPrivateDataInterface: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub GetPrivateData: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut u32,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub GetParent: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *const windows_core::GUID,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+pub trait IDXGIObject_Impl: windows_core::IUnknownImpl {
+    fn SetPrivateData(
+        &self,
+        name: *const windows_core::GUID,
+        datasize: u32,
+        pdata: *const core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn SetPrivateDataInterface(
+        &self,
+        name: *const windows_core::GUID,
+        punknown: windows_core::Ref<windows_core::IUnknown>,
+    ) -> windows_core::Result<()>;
+    fn GetPrivateData(
+        &self,
+        name: *const windows_core::GUID,
+        pdatasize: *mut u32,
+        pdata: *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn GetParent(
+        &self,
+        riid: *const windows_core::GUID,
+        ppparent: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+}
+impl IDXGIObject_Vtbl {
+    pub const fn new<Identity: IDXGIObject_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn SetPrivateData<
+            Identity: IDXGIObject_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            name: *const windows_core::GUID,
+            datasize: u32,
+            pdata: *const core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIObject_Impl::SetPrivateData(
+                    this,
+                    core::mem::transmute_copy(&name),
+                    core::mem::transmute_copy(&datasize),
+                    core::mem::transmute_copy(&pdata),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetPrivateDataInterface<
+            Identity: IDXGIObject_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            name: *const windows_core::GUID,
+            punknown: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIObject_Impl::SetPrivateDataInterface(
+                    this,
+                    core::mem::transmute_copy(&name),
+                    core::mem::transmute_copy(&punknown),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetPrivateData<
+            Identity: IDXGIObject_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            name: *const windows_core::GUID,
+            pdatasize: *mut u32,
+            pdata: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIObject_Impl::GetPrivateData(
+                    this,
+                    core::mem::transmute_copy(&name),
+                    core::mem::transmute_copy(&pdatasize),
+                    core::mem::transmute_copy(&pdata),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetParent<Identity: IDXGIObject_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            riid: *const windows_core::GUID,
+            ppparent: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGIObject_Impl::GetParent(
+                    this,
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppparent),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: windows_core::IUnknown_Vtbl::new::<Identity, OFFSET>(),
+            SetPrivateData: SetPrivateData::<Identity, OFFSET>,
+            SetPrivateDataInterface: SetPrivateDataInterface::<Identity, OFFSET>,
+            GetPrivateData: GetPrivateData::<Identity, OFFSET>,
+            GetParent: GetParent::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGIObject as windows_core::Interface>::IID
+    }
 }
 impl windows_core::RuntimeName for IDXGIObject {}
 windows_core::imp::define_interface!(
@@ -8071,7 +13006,272 @@ pub struct IDXGISwapChain_Vtbl {
     pub GetLastPresentCount:
         unsafe extern "system" fn(*mut core::ffi::c_void, *mut u32) -> windows_core::HRESULT,
 }
+pub trait IDXGISwapChain_Impl: IDXGIDeviceSubObject_Impl {
+    fn Present(&self, syncinterval: u32, flags: u32) -> windows_core::Result<()>;
+    fn GetBuffer(
+        &self,
+        buffer: u32,
+        riid: *const windows_core::GUID,
+        ppsurface: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()>;
+    fn SetFullscreenState(
+        &self,
+        fullscreen: windows_core::BOOL,
+        ptarget: windows_core::Ref<IDXGIOutput>,
+    ) -> windows_core::Result<()>;
+    fn GetFullscreenState(
+        &self,
+        pfullscreen: *mut windows_core::BOOL,
+        pptarget: windows_core::OutRef<IDXGIOutput>,
+    ) -> windows_core::Result<()>;
+    fn GetDesc(&self, pdesc: *mut DXGI_SWAP_CHAIN_DESC) -> windows_core::Result<()>;
+    fn ResizeBuffers(
+        &self,
+        buffercount: u32,
+        width: u32,
+        height: u32,
+        newformat: DXGI_FORMAT,
+        swapchainflags: u32,
+    ) -> windows_core::Result<()>;
+    fn ResizeTarget(&self, pnewtargetparameters: *const DXGI_MODE_DESC)
+    -> windows_core::Result<()>;
+    fn GetContainingOutput(&self) -> windows_core::Result<IDXGIOutput>;
+    fn GetFrameStatistics(&self, pstats: *mut DXGI_FRAME_STATISTICS) -> windows_core::Result<()>;
+    fn GetLastPresentCount(&self) -> windows_core::Result<u32>;
+}
+impl IDXGISwapChain_Vtbl {
+    pub const fn new<Identity: IDXGISwapChain_Impl, const OFFSET: isize>() -> Self {
+        unsafe extern "system" fn Present<Identity: IDXGISwapChain_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            syncinterval: u32,
+            flags: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::Present(
+                    this,
+                    core::mem::transmute_copy(&syncinterval),
+                    core::mem::transmute_copy(&flags),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetBuffer<Identity: IDXGISwapChain_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            buffer: u32,
+            riid: *const windows_core::GUID,
+            ppsurface: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::GetBuffer(
+                    this,
+                    core::mem::transmute_copy(&buffer),
+                    core::mem::transmute_copy(&riid),
+                    core::mem::transmute_copy(&ppsurface),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn SetFullscreenState<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            fullscreen: windows_core::BOOL,
+            ptarget: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::SetFullscreenState(
+                    this,
+                    core::mem::transmute_copy(&fullscreen),
+                    core::mem::transmute_copy(&ptarget),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetFullscreenState<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pfullscreen: *mut windows_core::BOOL,
+            pptarget: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::GetFullscreenState(
+                    this,
+                    core::mem::transmute_copy(&pfullscreen),
+                    core::mem::transmute_copy(&pptarget),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetDesc<Identity: IDXGISwapChain_Impl, const OFFSET: isize>(
+            this: *mut core::ffi::c_void,
+            pdesc: *mut DXGI_SWAP_CHAIN_DESC,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::GetDesc(this, core::mem::transmute_copy(&pdesc)).into()
+            }
+        }
+        unsafe extern "system" fn ResizeBuffers<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            buffercount: u32,
+            width: u32,
+            height: u32,
+            newformat: DXGI_FORMAT,
+            swapchainflags: u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::ResizeBuffers(
+                    this,
+                    core::mem::transmute_copy(&buffercount),
+                    core::mem::transmute_copy(&width),
+                    core::mem::transmute_copy(&height),
+                    core::mem::transmute_copy(&newformat),
+                    core::mem::transmute_copy(&swapchainflags),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn ResizeTarget<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pnewtargetparameters: *const DXGI_MODE_DESC,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::ResizeTarget(
+                    this,
+                    core::mem::transmute_copy(&pnewtargetparameters),
+                )
+                .into()
+            }
+        }
+        unsafe extern "system" fn GetContainingOutput<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            ppoutput: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGISwapChain_Impl::GetContainingOutput(this) {
+                    Ok(ok__) => {
+                        ppoutput.write(core::mem::transmute(ok__));
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn GetFrameStatistics<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            pstats: *mut DXGI_FRAME_STATISTICS,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                IDXGISwapChain_Impl::GetFrameStatistics(this, core::mem::transmute_copy(&pstats))
+                    .into()
+            }
+        }
+        unsafe extern "system" fn GetLastPresentCount<
+            Identity: IDXGISwapChain_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            plastpresentcount: *mut u32,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match IDXGISwapChain_Impl::GetLastPresentCount(this) {
+                    Ok(ok__) => {
+                        plastpresentcount.write(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        Self {
+            base__: IDXGIDeviceSubObject_Vtbl::new::<Identity, OFFSET>(),
+            Present: Present::<Identity, OFFSET>,
+            GetBuffer: GetBuffer::<Identity, OFFSET>,
+            SetFullscreenState: SetFullscreenState::<Identity, OFFSET>,
+            GetFullscreenState: GetFullscreenState::<Identity, OFFSET>,
+            GetDesc: GetDesc::<Identity, OFFSET>,
+            ResizeBuffers: ResizeBuffers::<Identity, OFFSET>,
+            ResizeTarget: ResizeTarget::<Identity, OFFSET>,
+            GetContainingOutput: GetContainingOutput::<Identity, OFFSET>,
+            GetFrameStatistics: GetFrameStatistics::<Identity, OFFSET>,
+            GetLastPresentCount: GetLastPresentCount::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<IDXGISwapChain as windows_core::Interface>::IID
+            || iid == &<IDXGIObject as windows_core::Interface>::IID
+            || iid == &<IDXGIDeviceSubObject as windows_core::Interface>::IID
+    }
+}
 impl windows_core::RuntimeName for IDXGISwapChain {}
+windows_core::imp::define_interface!(
+    IDXGISwapChain1,
+    IDXGISwapChain1_Vtbl,
+    0x790a45f7_0d42_4876_983a_0a55cfe6f4aa
+);
+impl core::ops::Deref for IDXGISwapChain1 {
+    type Target = IDXGISwapChain;
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+windows_core::imp::interface_hierarchy!(
+    IDXGISwapChain1,
+    windows_core::IUnknown,
+    IDXGIObject,
+    IDXGIDeviceSubObject,
+    IDXGISwapChain
+);
+#[repr(C)]
+pub struct IDXGISwapChain1_Vtbl {
+    pub base__: IDXGISwapChain_Vtbl,
+    GetDesc1: usize,
+    GetFullscreenDesc: usize,
+    GetHwnd: usize,
+    GetCoreWindow: usize,
+    Present1: usize,
+    IsTemporaryMonoSupported: usize,
+    GetRestrictToOutput: usize,
+    SetBackgroundColor: usize,
+    GetBackgroundColor: usize,
+    SetRotation: usize,
+    GetRotation: usize,
+}
+impl windows_core::RuntimeName for IDXGISwapChain1 {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LUID {

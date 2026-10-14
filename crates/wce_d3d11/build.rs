@@ -18,6 +18,8 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=dxvk_dxgi");
     println!("cargo:rustc-link-lib=dylib=vkd3d-utils");
 
-    // An RPATH, not a RUNPATH: libdxvk_d3d11.so finds libdxvk_dxgi.so through it too.
+    // An RPATH, not a RUNPATH: libdxvk_d3d11.so finds libdxvk_dxgi.so through it too. Link arguments only reach this crate's own
+    // binaries: crates with binaries read the folder from `DEP_WCE_D3D11_LIB_DIR` (see `rpath` in this crate) and add it to theirs.
     println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags,-rpath,{}", lib.display());
+    println!("cargo:lib_dir={}", lib.display());
 }
