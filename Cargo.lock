@@ -2009,6 +2009,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_render"
+version = "0.1.0"
+dependencies = [
+ "rpfm_lib",
+ "wce_assets",
+ "wce_d3d11",
+ "wce_formats",
+ "wce_foundation",
+ "wce_scene",
+ "wce_vfs",
+ "windows-core",
+]
+
+[[package]]
 name = "wce_scene"
 version = "0.1.0"
 dependencies = [
