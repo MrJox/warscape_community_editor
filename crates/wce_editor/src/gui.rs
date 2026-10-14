@@ -139,6 +139,11 @@ pub fn separator_text(s: &str) {
     call!(sys::igSeparatorText(c.as_ptr()))
 }
 
+/// The style's spacing between items (x, y).
+pub fn item_spacing() -> Vec2 {
+    call!((*sys::igGetStyle()).ItemSpacing)
+}
+
 /// An empty item of a size (it moves the cursor the way an item does).
 pub fn dummy(size: Vec2) {
     call!(sys::igDummy(size))

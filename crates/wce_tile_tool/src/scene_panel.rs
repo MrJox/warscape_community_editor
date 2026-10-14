@@ -590,9 +590,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             }
 
             draw_cursor(dl, v2(p0.x + avail - 0.5 * ICON_WIDTH, cy), own_act, own_act && !act);
-            // Dear ImGui 1.92 wants an item, not a bare cursor move, to advance to the next row.
+            // Dear ImGui 1.92 wants an item, not a bare cursor move, to advance to the next row; the item spacing it adds is taken off, so
+            // that the next row starts row_h below, as the C++ panel's cursor move did.
             gui::set_cursor_screen_pos(p0);
-            gui::dummy(v2(avail, row_h));
+            gui::dummy(v2(avail, row_h - gui::item_spacing().y));
             gui::pop_id();
         });
     }
