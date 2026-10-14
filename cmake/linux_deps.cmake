@@ -37,9 +37,26 @@ if(WCE_JOBS EQUAL 0)
 endif()
 
 # ---- DXVK-native: libdxvk_d3d11.so, libdxvk_dxgi.so and the Windows/D3D headers (include/dxvk)
-set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}")
+# One local change, backported from upstream master (not in a release yet): D3D11SwapChain::ChangeProperties gave the presenter the old size on
+# ResizeBuffers. Windows and X11 surfaces report their size, so it did not matter there; a Wayland surface does not, and a maximized window
+# kept its first swapchain, stretched by the compositor.
+set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}-resize")
 if(NOT EXISTS "${WCE_DXVK_STAMP}")
     wce_dep_clone(dxvk https://github.com/doitsujin/dxvk.git ${WCE_DXVK_TAG})
+    set(dxvk_swapchain "${WCE_DEPS_DIR}/dxvk/src/d3d11/d3d11_swapchain.cpp")
+    file(READ "${dxvk_swapchain}" dxvk_src)
+    set(dxvk_old "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ m_desc.Width, m_desc.Height });")
+    set(dxvk_new "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ pDesc->Width, pDesc->Height });")
+    string(FIND "${dxvk_src}" "${dxvk_old}" at)
+    if(NOT at EQUAL -1)
+        string(REPLACE "${dxvk_old}" "${dxvk_new}" dxvk_src "${dxvk_src}")
+        file(WRITE "${dxvk_swapchain}" "${dxvk_src}")
+    else()
+        string(FIND "${dxvk_src}" "${dxvk_new}" at)
+        if(at EQUAL -1)
+            message(FATAL_ERROR "DXVK: the swapchain resize backport no longer applies to ${WCE_DXVK_TAG}")
+        endif()
+    endif()
     message(STATUS "Building DXVK-native (a few minutes, once)")
     file(REMOVE_RECURSE "${WCE_DEPS_DIR}/dxvk/build")
     wce_dep_run("DXVK meson setup" ${WCE_MESON} setup "${WCE_DEPS_DIR}/dxvk/build" "${WCE_DEPS_DIR}/dxvk" --buildtype=release --prefix=${WCE_DEPS_PREFIX} --libdir=lib
