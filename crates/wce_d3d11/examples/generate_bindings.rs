@@ -3,7 +3,7 @@
 
 fn main() {
     let names = [
-        "D3D11CreateDevice", "D3D11_SDK_VERSION", "D3DCompile", "D3DReflect",
+        "D3D11CreateDevice", "D3D11_SDK_VERSION", "D3DCompile", "D3DReflect", "D3DDisassemble",
         "ID3D11Device", "ID3D11DeviceContext", "ID3D11Texture2D", "ID3D11RenderTargetView", "ID3D11Buffer",
         "ID3D11VertexShader", "ID3D11PixelShader", "ID3D11ShaderReflection", "ID3D11ShaderReflectionConstantBuffer", "ID3D11ShaderReflectionVariable", "ID3D11ShaderReflectionType", "D3D11_PRIMITIVE_TOPOLOGY", "ID3D10Blob",
         "D3D11_TEXTURE2D_DESC", "D3D11_BUFFER_DESC", "D3D11_MAPPED_SUBRESOURCE", "D3D11_VIEWPORT", "D3D11_SUBRESOURCE_DATA",
