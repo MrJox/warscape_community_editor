@@ -2140,6 +2140,7 @@ dependencies = [
  "libz-sys",
  "memchr",
  "rayon",
+ "rpfm_lib",
  "tempfile",
  "thiserror",
 ]
