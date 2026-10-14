@@ -18,6 +18,7 @@ use rpfm_lib::games::supported_games::SupportedGames;
 
 pub use self::game_profile::{GameProfile, PackOrder, PackRef};
 
+pub mod files;
 mod game_profile;
 
 /// Errors of the file system.
@@ -241,7 +242,7 @@ pub fn normalize(path: &str) -> String {
 }
 
 /// Every file under a folder, as paths relative to it with forward slashes.
-fn list_folder(folder: &Path) -> Vec<String> {
+pub(crate) fn list_folder(folder: &Path) -> Vec<String> {
     let mut paths = vec![];
     let mut pending = vec![folder.to_path_buf()];
     while let Some(dir) = pending.pop() {
