@@ -2012,6 +2012,7 @@ dependencies = [
 name = "wce_render"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "rpfm_lib",
  "thiserror",
  "wce_assets",
