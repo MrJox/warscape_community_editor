@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rayon = "1"
 rpfm_lib.workspace = true
 wce_assets = { path = "../wce_assets" }
 wce_d3d11 = { path = "../wce_d3d11" }
