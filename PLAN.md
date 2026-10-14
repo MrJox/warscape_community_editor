@@ -78,7 +78,7 @@ Layout: a Cargo workspace at the repo root, one crate per layer under `crates/` 
 vfs, formats, assets, scene, render, editor, tools, app). The C++ tree keeps building and stays the reference for the gates until the Rust
 app reaches parity, as in the C++ merge. rpfm_lib is a path dependency on the `wce_formats` worktree until that branch is pushed.
 UI: dear-imgui-rs (Dear ImGui 1.92.9 docking) with dear-imguizmo and the SDL3 platform backend; the D3D11 renderer backend is ours.
-ImGuizmo's local `SetAllowedItem` change needs a patched copy of its C source.
+ImGuizmo is upstream's (dear-imguizmo-sys); instead of the local `SetAllowedItem` change, the viewport clears its button from Dear ImGui's hovered and active ids while `Manipulate` runs.
 
 Ported so far (each checked against the C++ code on the same inputs):
 
