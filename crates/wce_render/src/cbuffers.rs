@@ -85,6 +85,11 @@ impl ConstantBuffers {
         self.set_f(cb, var, m);
     }
 
+    /// Every declared buffer, by name.
+    pub fn buffers(&self) -> impl Iterator<Item = &Buffer> {
+        self.buffers.values()
+    }
+
     pub fn find(&self, cb: &str) -> Option<&Buffer> {
         self.buffers.get(cb)
     }
