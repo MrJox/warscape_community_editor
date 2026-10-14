@@ -1,0 +1,17 @@
+[package]
+name = "wce_weather_tool"
+description = "The Weather / Lighting tool: weather files as documents, the live preview on the sample map with cross-fades, the weather picker and the variation database editor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_render = { path = "../wce_render" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
+wce_weather = { path = "../wce_weather" }

@@ -6,7 +6,7 @@ use wce_editor::tool::PlaceholderTool;
 /// Every tool, in the switcher's order (Ctrl+1 is the first).
 pub fn all_tools() -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(PlaceholderTool::new("weather", "Weather", "Weather editor: being ported to Rust (the documents are; the panels are next).")),
+        Box::new(wce_weather_tool::WeatherTool::default()),
         Box::new(PlaceholderTool::new("tile", "Tile", "Tile editor: being ported to Rust (the document is; the panels are next).")),
         // Placeholders for the future tools: no features.
         Box::new(PlaceholderTool::new(
