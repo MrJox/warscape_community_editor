@@ -2087,6 +2087,7 @@ dependencies = [
  "wce_foundation",
  "wce_imgui",
  "wce_render",
+ "wce_weather_tool",
 ]
 
 [[package]]
@@ -2229,6 +2230,21 @@ dependencies = [
  "wce_foundation",
  "wce_scene",
  "wce_vfs",
+]
+
+[[package]]
+name = "wce_weather_tool"
+version = "0.1.0"
+dependencies = [
+ "rpfm_lib",
+ "wce_editor",
+ "wce_editor_core",
+ "wce_formats",
+ "wce_foundation",
+ "wce_render",
+ "wce_scene",
+ "wce_vfs",
+ "wce_weather",
 ]
 
 [[package]]
