@@ -84,25 +84,47 @@ float4x4 matrix_of(const WorldTransform& w, double unit, const std::optional<Vec
 
 // ------------------------------------------------------------------------------------------------ commands
 
+// "Hide Walls", "Unlock 3 items": the name of a flag edit.
+static std::string flag_command_name(const TedScene& sc, const std::vector<int>& elems, const std::string& flag, bool on) {
+    const bool eye = flag == "OIF_VISIBLE";
+    std::string n = elems.size() == 1 ? sc.name(elems[0]) : std::to_string(elems.size()) + " items";
+    if (n.empty() && elems.size() == 1) n = sc.type(elems[0]);
+    return std::string(eye ? (on ? "Show " : "Hide ") : (on ? "Unlock " : "Lock ")) + n;
+}
+
 class TedMoveCommand : public Command {
 public:
     TedMoveCommand(TileDocument& d, int elem, std::optional<Vec3> op, std::optional<Vec3> np, std::optional<Vec3> oe, std::optional<Vec3> ne, uint64_t gesture)
-        : doc_(d), elem_(elem), old_pos_(op), new_pos_(np), old_euler_(oe), new_euler_(ne), gesture_(gesture) {}
+        : doc_(d), elem_(elem), old_pos_(op), new_pos_(np), old_euler_(oe), new_euler_(ne), gesture_(gesture) {
+        // Undo puts the texts back: the numbers written again could differ from the file's (and the text splices of earlier commands must fit).
+        if (old_pos_) old_pos_text_ = d.tscene().doc().get(elem, "position");
+        if (old_euler_) old_euler_text_ = d.tscene().doc().get(elem, "orientation");
+    }
     std::string name() const override {
         const TedScene& s = doc_.tscene();
         std::string n = s.name(elem_);
         return "Move " + (n.empty() ? s.type(elem_) : n);
     }
     void apply() override { set(new_pos_, new_euler_); }
-    void revert() override { set(old_pos_, old_euler_); }
+    void revert() override {
+        if (old_pos_) {
+            if (old_pos_text_) doc_.tscene().set_attr(elem_, "position", *old_pos_text_);
+            else doc_.tscene().set_position(elem_, *old_pos_);
+        }
+        if (old_euler_) {
+            if (old_euler_text_) doc_.tscene().set_attr(elem_, "orientation", *old_euler_text_);
+            else doc_.tscene().set_euler(elem_, *old_euler_);
+        }
+        doc_.index_edited(elem_);
+    }
     uint64_t merge_key() const override { return gesture_ ? gesture_ ^ (uint64_t(elem_) << 20) : 0; }
     bool merge_from(const Command& next) override {
         const auto* n = dynamic_cast<const TedMoveCommand*>(&next);
         if (!n || n->elem_ != elem_) return false;
         if (n->new_pos_) new_pos_ = n->new_pos_;
         if (n->new_euler_) new_euler_ = n->new_euler_;
-        if (!old_pos_) old_pos_ = n->old_pos_;
-        if (!old_euler_) old_euler_ = n->old_euler_;
+        if (!old_pos_) { old_pos_ = n->old_pos_; old_pos_text_ = n->old_pos_text_; }
+        if (!old_euler_) { old_euler_ = n->old_euler_; old_euler_text_ = n->old_euler_text_; }
         return true;
     }
     std::vector<uint64_t> dirty_items() const override { return {TileDocument::item_of(elem_)}; }
@@ -116,16 +138,28 @@ private:
     TileDocument& doc_;
     int elem_;
     std::optional<Vec3> old_pos_, new_pos_, old_euler_, new_euler_;
+    std::optional<std::string> old_pos_text_, old_euler_text_;
     uint64_t gesture_;
 };
 
 class TedPointCommand : public Command {
 public:
     TedPointCommand(TileDocument& d, int elem, size_t index, Vec3 before, Vec3 after, uint64_t gesture)
-        : doc_(d), elem_(elem), index_(index), before_(before), after_(after), gesture_(gesture) {}
+        : doc_(d), elem_(elem), index_(index), before_(before), after_(after), gesture_(gesture) {
+        // Undo puts the texts back (the area is recomputed by an edit, and need not be what the file had).
+        before_text_ = d.tscene().doc().get(d.tscene().polygon_points(elem)[index], "position");
+        area_text_ = d.tscene().doc().get(elem, "area");
+    }
     std::string name() const override { return "Move polygon point " + std::to_string(index_); }
     void apply() override { doc_.tscene().set_polygon_point(elem_, index_, after_); }
-    void revert() override { doc_.tscene().set_polygon_point(elem_, index_, before_); }
+    void revert() override {
+        if (!before_text_) {
+            doc_.tscene().set_polygon_point(elem_, index_, before_);
+            return;
+        }
+        doc_.tscene().set_attr(doc_.tscene().polygon_points(elem_)[index_], "position", *before_text_);
+        if (area_text_) doc_.tscene().set_attr(elem_, "area", *area_text_);
+    }
     uint64_t merge_key() const override { return gesture_ ? gesture_ ^ (uint64_t(elem_) << 20) ^ (uint64_t(index_) << 44) : 0; }
     bool merge_from(const Command& next) override {
         const auto* n = dynamic_cast<const TedPointCommand*>(&next);
@@ -140,6 +174,7 @@ private:
     int elem_;
     size_t index_;
     Vec3 before_, after_;
+    std::optional<std::string> before_text_, area_text_;
     uint64_t gesture_;
 };
 
@@ -184,12 +219,7 @@ public:
             d.tscene().set_attr(e, "flags", old_.back().value_or(""));   // the stack applies it
         }
     }
-    std::string name() const override {
-        const bool eye = flag_ == "OIF_VISIBLE";
-        std::string n = elems_.size() == 1 ? doc_.tscene().name(elems_[0]) : std::to_string(elems_.size()) + " items";
-        if (n.empty() && elems_.size() == 1) n = doc_.tscene().type(elems_[0]);
-        return std::string(eye ? (on_ ? "Show " : "Hide ") : (on_ ? "Unlock " : "Lock ")) + n;
-    }
+    std::string name() const override { return flag_command_name(doc_.tscene(), elems_, flag_, on_); }
     void apply() override { put(new_); }
     void revert() override { put(old_); }
 
@@ -215,6 +245,7 @@ public:
         std::optional<std::string> mode_old, mode_new;
         std::optional<Vec3> pos_old, pos_new;
         uint8_t idx_old, idx_new;
+        std::optional<std::string> pos_old_text;   // undo puts these bytes back
     };
     TedPlacementCommand(TileDocument& d, std::string name, std::vector<Item> items) : doc_(d), name_(std::move(name)), items_(std::move(items)) {}
     std::string name() const override { return name_; }
@@ -234,7 +265,8 @@ private:
             const auto& mode = forward ? i.mode_new : i.mode_old;
             const auto& pos = forward ? i.pos_new : i.pos_old;
             if (mode) sc.set_attr(i.elem, "surface_mode", *mode);
-            if (pos) sc.set_position(i.elem, *pos);
+            if (pos && !forward && i.pos_old_text) sc.set_attr(i.elem, "position", *i.pos_old_text);
+            else if (pos) sc.set_position(i.elem, *pos);
             if (doc_.idx_.valid && size_t(i.elem) < doc_.idx_.mode.size()) doc_.idx_.mode[size_t(i.elem)] = forward ? i.idx_new : i.idx_old;
             if (pos) doc_.index_edited(i.elem);
         }
@@ -1824,9 +1856,10 @@ bool TileDocument::is_instance_slow(int elem) const {
 }
 
 bool TileDocument::rotate(int elem, float deg) {
-    if (!is_instance(elem)) return false;
+    // Without an orientation attribute the turn would add one outside the history (the command below cannot take it back).
+    if (!is_instance(elem) || !tscene().euler(elem)) return false;
     TedScene& sc = tscene();
-    const Vec3 old_euler = sc.euler(elem).value_or(Vec3{0, 0, 0});
+    const Vec3 old_euler = *sc.euler(elem);
     rotate_world_yaw(sc, elem, radians(deg));
     const Vec3 new_euler = sc.euler(elem).value_or(old_euler);
     sc.set_euler(elem, old_euler);   // the command applies it
@@ -1998,9 +2031,11 @@ bool TileDocument::selectable(int elem) const {
 }
 
 bool TileDocument::set_flags(const std::vector<int>& elems, const char* flag, bool on) {
+    // Only elements with a flags attribute (layers and instances; TEd writes none on the scene graph): own_flag() reads a missing attribute as
+    // every flag set, which set_flag() cannot write, and an added attribute is text the attribute edits of TedFlagCommand cannot take back.
     std::vector<int> todo;
     for (int e : elems)
-        if (e >= 0 && e < int(tscene().doc().elements().size()) && own_flag(e, flag) != on) todo.push_back(e);
+        if (e >= 0 && e < int(tscene().doc().elements().size()) && tscene().doc().get(e, "flags") && own_flag(e, flag) != on) todo.push_back(e);
     if (todo.empty()) return false;
     history_.push(std::make_unique<TedFlagCommand>(*this, std::move(todo), flag, on));
     return true;
@@ -2135,9 +2170,11 @@ bool TileDocument::remove_items(const std::vector<int>& elems_in) {
     if (top.empty()) return false;
     std::vector<uint64_t> sel_before;
     for (int e : top) sel_before.push_back(item_of(e));
+    // named before the removal: afterwards another element has the index
+    const std::string name = top.size() == 1 ? "Delete " + sc.type(top[0]) : "Delete " + std::to_string(top.size()) + " items";
     const size_t mark = sc.begin_edit();
     for (size_t i = top.size(); i-- > 0;) sc.remove(top[i]);   // from the last one: the indices of the others stay
-    push_splice(top.size() == 1 ? "Delete " + sc.type(top[0]) : "Delete " + std::to_string(top.size()) + " items", mark, std::move(sel_before), {});
+    push_splice(name, mark, std::move(sel_before), {});
     return true;
 }
 
@@ -2215,6 +2252,7 @@ int TileDocument::set_placement(const std::vector<int>& elems, Placement mode) {
             const float y = landscape_y(e, p.x, p.z);
             if (cur != mode || std::fabs(y - float(world_transform(tscene(), e).position[1])) > 1e-5f) {   // the file's own y: a landscape item is shown on the terrain even when its file is not
                 it.pos_old = tscene().position(e);
+                it.pos_old_text = tscene().doc().get(e, "position");
                 it.pos_new = local_for_world_y(e, y);
             }
         }
@@ -2222,6 +2260,7 @@ int TileDocument::set_placement(const std::vector<int>& elems, Placement mode) {
             const float y = world_position(e).y;
             if (std::fabs(y - float(world_transform(tscene(), e).position[1])) > 1e-5f) {
                 it.pos_old = tscene().position(e);
+                it.pos_old_text = tscene().doc().get(e, "position");
                 it.pos_new = local_for_world_y(e, y);
             }
         }
@@ -2246,6 +2285,7 @@ int TileDocument::snap_to_terrain(const std::vector<int>& elems, bool include_fr
         it.elem = e;
         it.idx_old = it.idx_new = cur == Placement::Landscape ? 1 : 2;
         it.pos_old = tscene().position(e);
+                it.pos_old_text = tscene().doc().get(e, "position");
         it.pos_new = local_for_world_y(e, y);
         items.push_back(std::move(it));
     }
@@ -2297,8 +2337,9 @@ void TileDocument::apply_brush_following(BrushKind kind, float x, float z, const
         const auto before = tscene().position(c.elem);
         if (!before) continue;
         const Vec3 after = local_for_world_y(c.elem, double(world_position(c.elem).y) + double(dh));
+        std::string before_text = tscene().doc().get(c.elem, "position").value_or("");
         tscene().set_position(c.elem, after);
-        moved.push_back({c.elem, *before, after});
+        moved.push_back({c.elem, *before, after, std::move(before_text)});
     }
     if (!moved.empty()) {
         for (const Follow& f : moved) index_edited(f.elem);
@@ -2307,7 +2348,8 @@ void TileDocument::apply_brush_following(BrushKind kind, float x, float z, const
 
 void TileDocument::put_positions(const std::vector<Follow>& moved, bool after) {
     for (const Follow& f : moved) {
-        tscene().set_position(f.elem, after ? f.after : f.before);
+        if (!after && !f.before_text.empty()) tscene().set_attr(f.elem, "position", f.before_text);
+        else tscene().set_position(f.elem, after ? f.after : f.before);
         index_edited(f.elem);
     }
 }
@@ -2338,8 +2380,12 @@ void TileDocument::apply_brush(BrushKind kind, float x, float z, const BrushSett
 
 void TileDocument::brush_step(BrushKind kind, float x, float z, const BrushSettings& s, float dt) {
     if (!project_->has_height) return;
+    // A stroke goes on only while its entry is the last change: after another edit the next step would be a new entry sharing the height field's
+    // open record with the old one, and undo would take back both strokes' heights with the newer entry.
+    if (stroke_open_ && history_.version() != stroke_version_) end_stroke();
     if (!stroke_open_) ++stroke_id_;
     history_.push(std::make_unique<BrushStepCommand>(*this, kind, x, z, s, dt, stroke_id_));
+    stroke_version_ = history_.version();
 }
 
 void TileDocument::end_stroke() {
