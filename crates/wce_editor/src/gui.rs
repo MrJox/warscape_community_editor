@@ -139,6 +139,14 @@ pub fn separator_text(s: &str) {
     call!(sys::igSeparatorText(c.as_ptr()))
 }
 
+pub fn new_line() {
+    call!(sys::igNewLine())
+}
+
+pub fn set_next_window_bg_alpha(alpha: f32) {
+    call!(sys::igSetNextWindowBgAlpha(alpha))
+}
+
 pub fn spacing() {
     call!(sys::igSpacing())
 }
@@ -311,6 +319,39 @@ pub fn drag_i64(label: &str, v: &mut i64, speed: f32) -> bool {
     call!(sys::igDragScalar(l.as_ptr(), sys::ImGuiDataType_S64, (v as *mut i64).cast(), speed, std::ptr::null(), std::ptr::null(), std::ptr::null(), 0))
 }
 
+pub fn input_int(label: &str, v: &mut i32) -> bool {
+    let l = cs(label);
+    call!(sys::igInputInt(l.as_ptr(), v, 1, 100, 0))
+}
+
+pub fn slider_float(label: &str, v: &mut f32, lo: f32, hi: f32, format: &str) -> bool {
+    let (l, f) = (cs(label), cs(format));
+    call!(sys::igSliderFloat(l.as_ptr(), v, lo, hi, f.as_ptr(), 0))
+}
+
+pub fn slider_int(label: &str, v: &mut i32, lo: i32, hi: i32) -> bool {
+    let l = cs(label);
+    call!(sys::igSliderInt(l.as_ptr(), v, lo, hi, c"%d".as_ptr(), 0))
+}
+
+/// A combo over `items`; true when the choice changed.
+pub fn combo(label: &str, current: &mut i32, items: &[&str]) -> bool {
+    let shown = usize::try_from(*current).ok().and_then(|i| items.get(i)).copied().unwrap_or("");
+    let mut changed = false;
+    if begin_combo(label, shown) {
+        for (i, item) in items.iter().enumerate() {
+            if selectable(item, i as i32 == *current, 0) {
+                *current = i as i32;
+                changed = true;
+            }
+        }
+
+        end_combo();
+    }
+
+    changed
+}
+
 pub fn color_edit3(label: &str, v: &mut [f32; 3], flags: i32) -> bool {
     let l = cs(label);
     call!(sys::igColorEdit3(l.as_ptr(), v.as_mut_ptr(), flags))
@@ -355,6 +396,23 @@ pub fn tree_node_ex(label: &str, flags: i32) -> bool {
     call!(sys::igTreeNodeEx_Str(c.as_ptr(), flags))
 }
 
+/// A tree node whose id is `id` and whose shown text is `label` (the id stays when the text changes).
+pub fn tree_node_ex_id(id: &str, flags: i32, label: &str) -> bool {
+    let (i, l) = (cs(id), cs(label));
+    call!(sys::igTreeNodeEx_StrStr(i.as_ptr(), flags, c"%s".as_ptr(), l.as_ptr()))
+}
+
+pub fn tree_node(label: &str) -> bool {
+    let c = cs(label);
+    call!(sys::igTreeNode_Str(c.as_ptr()))
+}
+
+/// A tree node with an id and a shown text.
+pub fn tree_node_id(id: &str, label: &str) -> bool {
+    let (i, l) = (cs(id), cs(label));
+    call!(sys::igTreeNode_StrStr(i.as_ptr(), c"%s".as_ptr(), l.as_ptr()))
+}
+
 pub fn tree_pop() {
     call!(sys::igTreePop())
 }
@@ -367,6 +425,60 @@ pub fn collapsing_header(label: &str, flags: i32) -> bool {
 pub fn image(id: u64, size: Vec2) {
     let tex = sys::ImTextureRef_c { _TexData: std::ptr::null_mut(), _TexID: id };
     call!(sys::igImage(tex, size, v2(0.0, 0.0), v2(1.0, 1.0)))
+}
+
+// ---- tabs and tables
+
+pub fn begin_tab_bar(id: &str) -> bool {
+    let c = cs(id);
+    call!(sys::igBeginTabBar(c.as_ptr(), 0))
+}
+
+pub fn end_tab_bar() {
+    call!(sys::igEndTabBar())
+}
+
+pub fn begin_tab_item(label: &str, flags: i32) -> bool {
+    let c = cs(label);
+    call!(sys::igBeginTabItem(c.as_ptr(), std::ptr::null_mut(), flags))
+}
+
+pub fn end_tab_item() {
+    call!(sys::igEndTabItem())
+}
+
+pub fn begin_table(id: &str, columns: i32, flags: i32, outer_size: Vec2) -> bool {
+    let c = cs(id);
+    call!(sys::igBeginTable(c.as_ptr(), columns, flags, outer_size, 0.0))
+}
+
+pub fn end_table() {
+    call!(sys::igEndTable())
+}
+
+pub fn table_setup_column(label: &str, flags: i32, width_or_weight: f32) {
+    let c = cs(label);
+    call!(sys::igTableSetupColumn(c.as_ptr(), flags, width_or_weight, 0))
+}
+
+pub fn table_setup_scroll_freeze(cols: i32, rows: i32) {
+    call!(sys::igTableSetupScrollFreeze(cols, rows))
+}
+
+pub fn table_headers_row() {
+    call!(sys::igTableHeadersRow())
+}
+
+pub fn table_next_row() {
+    call!(sys::igTableNextRow(0, 0.0))
+}
+
+pub fn table_next_column() -> bool {
+    call!(sys::igTableNextColumn())
+}
+
+pub fn table_set_column_index(column: i32) -> bool {
+    call!(sys::igTableSetColumnIndex(column))
 }
 
 // ---- popups
@@ -414,6 +526,18 @@ pub fn is_item_toggled_open() -> bool {
 
 pub fn is_item_deactivated_after_edit() -> bool {
     call!(sys::igIsItemDeactivatedAfterEdit())
+}
+
+pub fn is_item_activated() -> bool {
+    call!(sys::igIsItemActivated())
+}
+
+pub fn is_item_deactivated() -> bool {
+    call!(sys::igIsItemDeactivated())
+}
+
+pub fn is_window_appearing() -> bool {
+    call!(sys::igIsWindowAppearing())
 }
 
 pub fn item_id() -> ImGuiID {
@@ -545,7 +669,7 @@ pub fn set_context_ids(ids: (ImGuiID, ImGuiID, ImGuiID)) {
 
 pub use sys::{
     ImGuiButtonFlags_MouseButtonLeft as BUTTON_LEFT, ImGuiButtonFlags_MouseButtonMiddle as BUTTON_MIDDLE, ImGuiButtonFlags_MouseButtonRight as BUTTON_RIGHT,
-    ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
+    ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
     ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
     ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
@@ -558,7 +682,9 @@ pub use sys::{
     ImGuiWindowFlags_NoBringToFrontOnFocus as WINDOW_NO_BRING_TO_FRONT, ImGuiWindowFlags_NoCollapse as WINDOW_NO_COLLAPSE, ImGuiWindowFlags_NoDocking as WINDOW_NO_DOCKING,
     ImGuiWindowFlags_NoMove as WINDOW_NO_MOVE, ImGuiWindowFlags_NoNavFocus as WINDOW_NO_NAV_FOCUS, ImGuiWindowFlags_NoResize as WINDOW_NO_RESIZE,
     ImGuiWindowFlags_NoSavedSettings as WINDOW_NO_SAVED_SETTINGS, ImGuiWindowFlags_NoScrollWithMouse as WINDOW_NO_SCROLL_WITH_MOUSE,
-    ImGuiWindowFlags_NoScrollbar as WINDOW_NO_SCROLLBAR, ImGuiWindowFlags_NoTitleBar as WINDOW_NO_TITLE_BAR,
+    ImGuiWindowFlags_NoScrollbar as WINDOW_NO_SCROLLBAR, ImGuiWindowFlags_NoTitleBar as WINDOW_NO_TITLE_BAR, ImGuiTableFlags_Resizable as TABLE_RESIZABLE, ImGuiTableFlags_RowBg as TABLE_ROW_BG,
+    ImGuiTableFlags_Borders as TABLE_BORDERS, ImGuiTableFlags_SizingStretchProp as TABLE_SIZING_STRETCH_PROP, ImGuiTableFlags_ScrollY as TABLE_SCROLL_Y,
+    ImGuiTableColumnFlags_WidthStretch as COLUMN_WIDTH_STRETCH, ImGuiTableColumnFlags_WidthFixed as COLUMN_WIDTH_FIXED, ImGuiTabItemFlags_SetSelected as TAB_SET_SELECTED,
 };
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
