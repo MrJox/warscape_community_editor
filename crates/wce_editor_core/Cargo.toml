@@ -1,0 +1,10 @@
+[package]
+name = "wce_editor_core"
+description = "The editor shell without UI or GPU: undo stacks, documents and their scene layers, the selection, named commands and scripts, camera controllers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
