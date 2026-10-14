@@ -76,3 +76,38 @@ fn profile_slots() {
     assert_eq!(slot.calls.load(std::sync::atomic::Ordering::Relaxed), 3);
     assert!(profile::report(false, 0.0).contains("test.scope"));
 }
+
+#[test]
+fn job_pool_order() {
+    use std::sync::{Arc, Mutex, mpsc};
+    use wce_foundation::jobs::JobPool;
+
+    let pool = JobPool::new(1);
+    let order = Arc::new(Mutex::new(vec![]));
+    let (release, gate) = mpsc::channel::<()>();
+
+    // The first job holds the only thread while the others queue up.
+    pool.post(move || { let _ = gate.recv(); }, 0.0);
+    while pool.running() == 0 {
+        std::thread::yield_now();
+    }
+
+    let job = |name: &'static str| {
+        let order = order.clone();
+        move || order.lock().unwrap().push((name, JobPool::current_priority()))
+    };
+
+    let late = pool.post(job("late"), 5.0);
+    pool.post(job("first"), 1.0);
+    let cancelled = pool.post(job("cancelled"), 0.5);
+    pool.post(job("second"), 1.0);
+    pool.post(|| panic!("a failing job"), 2.0);
+    pool.set_priority(late, 0.1);
+    assert!(pool.cancel(cancelled) && !pool.cancel(cancelled));
+    assert_eq!(pool.queued(), 4);
+
+    release.send(()).unwrap();
+    pool.wait_idle();
+    assert_eq!(*order.lock().unwrap(), [("late", 0.1), ("first", 1.0), ("second", 1.0)]);
+    assert_eq!(JobPool::current_priority(), 0.0);
+}
