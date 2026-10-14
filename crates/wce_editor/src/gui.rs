@@ -383,7 +383,7 @@ pub fn begin_popup_modal(name: &str, open: Option<&mut bool>, flags: i32) -> boo
 
 pub fn begin_popup_context_item(id: &str) -> bool {
     let c = cs(id);
-    call!(sys::igBeginPopupContextItem(c.as_ptr(), 1))
+    call!(sys::igBeginPopupContextItem(c.as_ptr(), sys::ImGuiPopupFlags_MouseButtonRight))
 }
 
 pub fn end_popup() {
