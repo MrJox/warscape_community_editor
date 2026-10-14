@@ -658,7 +658,7 @@ impl ModelCache {
         let same_layout = self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.patches_x == px && slot.patches_z == pz);
         if !same_layout {
             let count = (px * pz) as usize;
-            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: vec![Arc::new(GpuModel::default()); count], skins: vec![None; count], ..Default::default() });
+            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: (0..count).map(|_| Arc::new(GpuModel::default())).collect(), skins: vec![None; count], ..Default::default() });
         }
 
         let diffuse = self.inner.textures.get(&t.diffuse, true);
