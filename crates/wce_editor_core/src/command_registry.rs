@@ -53,6 +53,12 @@ impl CommandResult {
 /// What owns the commands.
 pub trait CommandHost: Sized + 'static {
     fn commands(&self) -> &CommandRegistry<Self>;
+
+    /// Lines a command wants run next in the running script (the `script` command includes a file this way): the script runner takes them
+    /// after each line it runs and puts them right after it.
+    fn take_script_lines(&mut self) -> Vec<String> {
+        vec![]
+    }
 }
 
 pub type CommandFn<H> = Rc<dyn Fn(&mut H, &[String]) -> CommandResult>;
@@ -160,6 +166,16 @@ pub struct ScriptRunner {
     error: String,
 }
 
+/// The lines of a script file.
+///
+/// # Errors
+///
+/// The file can't be read.
+pub fn read_script(path: &str) -> Result<Vec<String>, String> {
+    let bytes = std::fs::read(path).map_err(|_| format!("cannot open script {path}"))?;
+    Ok(split_lines(&String::from_utf8_lossy(&bytes)))
+}
+
 fn split_lines(text: &str) -> Vec<String> {
     // getline: a final newline does not start another line.
     let mut lines = text.split('\n').map(str::to_owned).collect::<Vec<_>>();
@@ -179,8 +195,8 @@ impl ScriptRunner {
     ///
     /// The file can't be read.
     pub fn load_file(&mut self, path: &str) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|_| format!("cannot open script {path}"))?;
-        self.load_text(&String::from_utf8_lossy(&bytes));
+        let lines = read_script(path)?;
+        *self = Self { lines, ..Default::default() };
         Ok(())
     }
 
@@ -190,10 +206,13 @@ impl ScriptRunner {
     ///
     /// The file can't be read.
     pub fn include_file(&mut self, path: &str) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|_| format!("cannot open script {path}"))?;
-        let lines = split_lines(&String::from_utf8_lossy(&bytes));
-        self.lines.splice(self.next..self.next, lines);
+        self.include_lines(read_script(path)?);
         Ok(())
+    }
+
+    /// Inserts lines right after the current position.
+    pub fn include_lines(&mut self, lines: Vec<String>) {
+        self.lines.splice(self.next..self.next, lines);
     }
 
     pub fn done(&self) -> bool {
@@ -233,6 +252,11 @@ impl ScriptRunner {
             }
 
             let r = CommandRegistry::run(host, &line);
+            let included = host.take_script_lines();
+            if !included.is_empty() {
+                self.include_lines(included);
+            }
+
             if !r.message.is_empty() {
                 log::info(format!("{line} -> {}", r.message));
             }
