@@ -7,6 +7,7 @@ pub mod gpu_adapter;
 pub mod gpu_timer;
 pub mod image_io;
 pub mod model_cache;
+pub mod particles;
 pub mod render_target;
 pub mod shader_lib;
 pub mod texture;
