@@ -463,9 +463,13 @@ fn main() {
             std::process::exit(1);
         }
 
-        // Window size in pixels: the D3D11 backend draws at DisplaySize, so the window has no separate high-density back buffer. Under Wayland
-        // the compositor scales the window; under X11 the content scale sizes the UI like the Windows DPI scale does.
-        let wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
+        // A high pixel density window (interactive runs): on a scaled Wayland output the back buffer has the output's pixels (Dear ImGui works in logical units
+        // with a framebuffer scale, and rasterizes its fonts at that density), instead of the compositor stretching a logical-size image.
+        // Under X11 the content scale sizes the UI like the Windows DPI scale does.
+        // Scripted runs keep one pixel per unit: their mouse positions and shots must not depend on the display's scale.
+        let scripted = opt.fixed_step > 0.0 || (!opt.live && (!opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty()));
+        let density = if scripted { SDL_WindowFlags(0) } else { SDL_WINDOW_HIGH_PIXEL_DENSITY };
+        let wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | density | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
         let window = SDL_CreateWindow(c"Warscape Community Editor".as_ptr(), 1600, 960, wflags);
         if window.is_null() {
             eprintln!("SDL_CreateWindow failed: {}", std::ffi::CStr::from_ptr(sdl3_sys::error::SDL_GetError()).to_string_lossy());

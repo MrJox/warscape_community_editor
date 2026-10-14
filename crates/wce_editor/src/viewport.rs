@@ -352,6 +352,11 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     unsafe { gz::ImGuizmo_BeginFrame() };
     let size = gui::content_region_avail();
     let (w, h) = (size.x as i32, size.y as i32);
+
+    // The image is rendered at the window's pixel density (a scaled HiDPI output) and shown at its logical size; positions given to the
+    // tools and to picking are pixels of the image.
+    let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+    let (pw, ph) = ((size.x * density) as u32, (size.y * density) as u32);
     if e.renderer.is_none() {
         gui::text_disabled("The renderer is not available (the game packs are not mounted).");
         gui::end();
@@ -363,7 +368,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         return;
     }
 
-    render(e, w as u32, h as u32);
+    render(e, pw, ph);
     let Some(srv) = e.viewport.target.srv().cloned() else {
         gui::end();
         return;
@@ -473,7 +478,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let over_gizmo = using_gizmo || (gizmo_target.is_some() && over_gizmo_handle);
 
     // ---- the active tool's mouse events (hover every frame, the left button's press / drag / release)
-    let event = |kind| ViewportEvent { kind, x: (mouse_x - origin.x) as i32, y: (mouse_y - origin.y) as i32, ctrl, shift, alt, ..Default::default() };
+    let event = |kind| ViewportEvent {
+        kind, x: ((mouse_x - origin.x) * density) as i32, y: ((mouse_y - origin.y) * density) as i32, ctrl, shift, alt, ..Default::default()
+    };
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
         e.tool_viewport_input(&event(ViewportEventKind::Hover));
