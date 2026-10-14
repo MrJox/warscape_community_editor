@@ -114,6 +114,29 @@ where
     }
 }
 #[inline]
+pub unsafe fn D3DDisassemble<P3>(
+    psrcdata: *const core::ffi::c_void,
+    srcdatasize: usize,
+    flags: u32,
+    szcomments: P3,
+) -> windows_core::Result<ID3D10Blob>
+where
+    P3: windows_core::Param<windows_core::PCSTR>,
+{
+    windows_core::link!("d3dcompiler_47.dll" "system" fn D3DDisassemble(psrcdata : *const core::ffi::c_void, srcdatasize : usize, flags : u32, szcomments : windows_core::PCSTR, ppdisassembly : *mut *mut core::ffi::c_void) -> windows_core::HRESULT);
+    unsafe {
+        let mut result__ = core::mem::zeroed();
+        D3DDisassemble(
+            psrcdata,
+            srcdatasize,
+            flags,
+            szcomments.param().abi(),
+            &mut result__,
+        )
+        .and_then(|| windows_core::imp::Type::from_abi(result__))
+    }
+}
+#[inline]
 pub unsafe fn D3DReflect(
     psrcdata: *const core::ffi::c_void,
     srcdatasize: usize,
