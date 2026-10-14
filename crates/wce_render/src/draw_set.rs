@@ -387,8 +387,8 @@ impl DrawSet {
 
             // translation += rotation * offset
             if mesh.has_offset {
-                for row in 0..3 {
-                    r.world[row][3] += w[row][0] * mesh.offset.x + w[row][1] * mesh.offset.y + w[row][2] * mesh.offset.z;
+                for (out, w) in r.world.iter_mut().zip(w) {
+                    out[3] += w[0] * mesh.offset.x + w[1] * mesh.offset.y + w[2] * mesh.offset.z;
                 }
             }
 
