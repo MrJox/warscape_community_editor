@@ -2050,6 +2050,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_weather"
+version = "0.1.0"
+dependencies = [
+ "rpfm_lib",
+ "tempfile",
+ "wce_editor_core",
+ "wce_formats",
+ "wce_foundation",
+ "wce_scene",
+ "wce_vfs",
+]
+
+[[package]]
 name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
