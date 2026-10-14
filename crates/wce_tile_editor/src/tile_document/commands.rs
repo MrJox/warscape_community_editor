@@ -1,0 +1,394 @@
+//! The commands of a tile document. They edit the [`Tile`]; their names are made when they are pushed (the C++ code read the element's name when
+//! the history panel asked, after later structural edits had possibly moved the indices).
+//!
+//! Undo puts the attribute texts an edit replaced back as they were (writing the old numbers again could give other text than the file's,
+//! and the text splices of earlier structural commands must still fit the text).
+
+use std::any::Any;
+use std::collections::HashMap;
+
+use wce_editor_core::command::Command;
+use wce_formats::xml_doc::XmlSplice;
+use wce_tile::ted_scene::Vec3;
+
+use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
+
+/// A move and / or rotation of one element (local position and euler angles); the steps of one gesture merge.
+pub(crate) struct TedMoveCommand {
+    pub name: String,
+    pub elem: usize,
+    pub old_pos: Option<Vec3>,
+    pub new_pos: Option<Vec3>,
+    pub old_euler: Option<Vec3>,
+    pub new_euler: Option<Vec3>,
+    pub old_pos_text: Option<String>,
+    pub old_euler_text: Option<String>,
+    pub gesture: u64,
+}
+
+impl TedMoveCommand {
+    fn set(&self, t: &mut Tile, p: Option<Vec3>, e: Option<Vec3>) {
+        if let Some(p) = p {
+            t.project.scene.set_position(self.elem, p);
+        }
+
+        if let Some(e) = e {
+            t.project.scene.set_euler(self.elem, e);
+        }
+
+        // What asks for the world position before the next republish sees the move.
+        t.index_edited(self.elem);
+    }
+}
+
+impl Command<Tile> for TedMoveCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.set(t, self.new_pos, self.new_euler);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        let sc = &mut t.project.scene;
+        if let Some(p) = self.old_pos {
+            match &self.old_pos_text {
+                Some(text) => sc.set_attr(self.elem, "position", text),
+                None => sc.set_position(self.elem, p),
+            }
+        }
+
+        if let Some(e) = self.old_euler {
+            match &self.old_euler_text {
+                Some(text) => sc.set_attr(self.elem, "orientation", text),
+                None => sc.set_euler(self.elem, e),
+            }
+        }
+
+        t.index_edited(self.elem);
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ ((self.elem as u64) << 20) } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem) else { return false };
+        if n.new_pos.is_some() {
+            self.new_pos = n.new_pos;
+        }
+
+        if n.new_euler.is_some() {
+            self.new_euler = n.new_euler;
+        }
+
+        if self.old_pos.is_none() {
+            self.old_pos = n.old_pos;
+            self.old_pos_text = n.old_pos_text.clone();
+        }
+
+        if self.old_euler.is_none() {
+            self.old_euler = n.old_euler;
+            self.old_euler_text = n.old_euler_text.clone();
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![item_of(self.elem)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A move of one polygon point; the steps of one gesture merge.
+pub(crate) struct TedPointCommand {
+    pub elem: usize,
+    pub index: usize,
+    pub before: Vec3,
+    pub after: Vec3,
+
+    /// The point's position text and the polygon's area text (an edit recomputes the area, which need not be what the file had).
+    pub before_text: Option<String>,
+    pub area_text: Option<String>,
+    pub gesture: u64,
+}
+
+impl Command<Tile> for TedPointCommand {
+    fn name(&self) -> String {
+        format!("Move polygon point {}", self.index)
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        let _ = t.project.scene.set_polygon_point(self.elem, self.index, self.after);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        let sc = &mut t.project.scene;
+        let Some(text) = &self.before_text else {
+            let _ = sc.set_polygon_point(self.elem, self.index, self.before);
+            return;
+        };
+
+        let point = sc.polygon_points(self.elem)[self.index];
+        sc.set_attr(point, "position", text);
+        if let Some(area) = &self.area_text {
+            sc.set_attr(self.elem, "area", area);
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ ((self.elem as u64) << 20) ^ ((self.index as u64) << 44) } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.index == self.index) else { return false };
+        self.after = n.after;
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![item_of(self.elem)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A structural edit changes element indices; its undo record is the list of text splices it made (a few hundred bytes, not a copy of the
+/// document). The scene already holds the result when the command is pushed.
+pub(crate) struct TedSpliceCommand {
+    pub name: String,
+    pub record: Vec<XmlSplice>,
+    pub sel_before: Vec<u64>,
+    pub sel_after: Vec<u64>,
+    pub first: bool,
+}
+
+impl Command<Tile> for TedSpliceCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if self.first {
+            self.first = false;
+        } else {
+            let _ = t.project.scene.apply(&self.record);
+        }
+
+        t.idx.valid = false;
+        t.structure_version += 1;
+        t.hint = Some(self.sel_after.clone());
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        let _ = t.project.scene.unapply(&self.record);
+        t.idx.valid = false;
+        t.structure_version += 1;
+        t.hint = Some(self.sel_before.clone());
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The eye / cursor of one or more layers or instances: the flags text is replaced, so undo restores the original bytes. Visibility changes what
+/// is drawn below the element, so the document republishes everything (no dirty items).
+pub(crate) struct TedFlagCommand {
+    pub name: String,
+    pub elems: Vec<usize>,
+    pub old: Vec<Option<String>>,
+    pub new: Vec<Option<String>>,
+}
+
+impl TedFlagCommand {
+    fn put(elems: &[usize], v: &[Option<String>], t: &mut Tile) {
+        for (&e, value) in elems.iter().zip(v) {
+            if let Some(value) = value {
+                t.project.scene.set_attr(e, "flags", value);
+            }
+        }
+
+        t.idx.valid = false;
+        t.structure_version += 1;
+    }
+}
+
+impl Command<Tile> for TedFlagCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        Self::put(&self.elems, &self.new, t);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        Self::put(&self.elems, &self.old, t);
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// One instance of a placement edit.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlacementItem {
+    pub elem: usize,
+    pub mode_old: Option<String>,
+    pub mode_new: Option<String>,
+    pub pos_old: Option<Vec3>,
+    pub pos_new: Option<Vec3>,
+    pub idx_old: u8,
+    pub idx_new: u8,
+
+    /// Undo puts these bytes back.
+    pub pos_old_text: Option<String>,
+}
+
+/// Placement edits of several instances at once: surface_mode and the local position of each (a landscape instance is snapped to the terrain
+/// when it becomes one). Undo puts the old attribute texts back.
+pub(crate) struct TedPlacementCommand {
+    pub name: String,
+    pub items: Vec<PlacementItem>,
+}
+
+impl TedPlacementCommand {
+    fn put(&self, t: &mut Tile, forward: bool) {
+        for i in &self.items {
+            let (mode, pos) = if forward { (&i.mode_new, i.pos_new) } else { (&i.mode_old, i.pos_old) };
+            if let Some(mode) = mode {
+                t.project.scene.set_attr(i.elem, "surface_mode", mode);
+            }
+
+            match (pos, &i.pos_old_text) {
+                (Some(_), Some(text)) if !forward => t.project.scene.set_attr(i.elem, "position", text),
+                (Some(pos), _) => t.project.scene.set_position(i.elem, pos),
+                _ => {}
+            }
+
+            if t.idx.valid && i.elem < t.idx.mode.len() {
+                t.idx.mode[i.elem] = if forward { i.idx_new } else { i.idx_old };
+            }
+
+            if pos.is_some() {
+                t.index_edited(i.elem);
+            }
+        }
+    }
+}
+
+impl Command<Tile> for TedPlacementCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.put(t, true);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        self.put(t, false);
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        self.items.iter().map(|i| item_of(i.elem)).collect()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// One brush step; the steps of a stroke merge into one entry. The first step runs when pushed; undo and redo use the height field's own
+/// records (`HeightField::end_edit` stores them, so a stroke is closed before it can be undone). The landscape instances under the brush move
+/// with the terrain: the command keeps their local positions before the stroke and after its last step.
+pub(crate) struct BrushStepCommand {
+    pub kind: BrushKind,
+    pub x: f32,
+    pub z: f32,
+    pub settings: BrushSettings,
+    pub dt: f32,
+    pub stroke: u64,
+    pub first: bool,
+    pub moved: Vec<Follow>,
+    pub where_: HashMap<usize, usize>,
+}
+
+impl Command<Tile> for BrushStepCommand {
+    fn name(&self) -> String {
+        let n = match self.kind {
+            BrushKind::Raise => "Raise",
+            BrushKind::Lower => "Lower",
+            BrushKind::Smooth => "Smooth",
+            BrushKind::Flatten => "Flatten",
+            BrushKind::Level => "Level",
+        };
+
+        format!("Terrain {n}")
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if self.first {
+            self.first = false;
+            t.apply_brush_following(self.kind, self.x, self.z, &self.settings, self.dt, &mut self.moved);
+        } else {
+            t.end_stroke_edit();
+            if let Some(h) = &mut t.project.height {
+                h.redo();
+            }
+
+            t.put_positions(&self.moved, true);
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        t.end_stroke_edit();
+        if let Some(h) = &mut t.project.height {
+            h.undo();
+        }
+
+        t.put_positions(&self.moved, false);
+    }
+
+    fn merge_key(&self) -> u64 {
+        self.stroke
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+        if self.where_.len() != self.moved.len() {
+            for (i, f) in self.moved.iter().enumerate() {
+                self.where_.insert(f.elem, i);
+            }
+        }
+
+        for f in &n.moved {
+            match self.where_.get(&f.elem) {
+                Some(&i) => self.moved[i].after = f.after,
+                None => {
+                    self.where_.insert(f.elem, self.moved.len());
+                    self.moved.push(f.clone());
+                }
+            }
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        std::iter::once(TERRAIN).chain(self.moved.iter().map(|f| item_of(f.elem))).collect()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
