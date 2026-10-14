@@ -1,0 +1,20 @@
+[package]
+name = "wce_app"
+description = "Warscape Community Editor (wce): the window, the D3D11 device, Dear ImGui with docking, the tool registry and the frame loop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wce"
+path = "src/main.rs"
+
+[dependencies]
+dear-imgui-rs = "0.20"
+dear-imgui-sys = "0.20"
+sdl3-sys = "0.7"
+wce_d3d11 = { path = "../wce_d3d11" }
+wce_editor = { path = "../wce_editor" }
+wce_foundation = { path = "../wce_foundation" }
+wce_imgui = { path = "../wce_imgui" }
+wce_render = { path = "../wce_render" }
