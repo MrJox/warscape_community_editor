@@ -101,7 +101,7 @@ struct Batch {
 }
 
 /// One view's request.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct View {
     pub frustum: Frustum,
     pub eye: Float3,
@@ -120,6 +120,14 @@ pub struct View {
 
     /// LOD items with a smaller radius are skipped (shadow texels).
     pub min_radius: f32,
+}
+
+impl Default for View {
+
+    /// As the C++ default: LOD distances unscaled.
+    fn default() -> Self {
+        Self { frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0 }
+    }
 }
 
 /// What a view sees, grouped by batch.
