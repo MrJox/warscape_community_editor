@@ -1,0 +1,240 @@
+//! The water passes: river ribbons and sea / lake planes of the scene's water entities, drawn with the game's own shaders: rigidriver
+//! (vs30_main_battle_river, ps30_main_battle_river), waterplane (vs30_water_battle, ps30_battle_ultra_water_quality) and waterrefraction
+//! (ps30_main_3_channel).
+//!
+//! The frame order (the game's, as far as the shaders show it): the lit scene is copied half-size by waterrefraction into s_terrain_refraction,
+//! colour in rgb and the refraction weight (from the ground's world height) in alpha; the sea plane is drawn over the lit scene and then covered
+//! by the fog pass (its shader has no fog); the river is drawn after the fog (its shader fogs itself). Both pixel shaders write four targets:
+//! the G-buffer channels 1 .. 3 (normal, albedo, specular) and the final lit colour into the HDR target, opaque, with the scene's depth test.
+
+use std::collections::BTreeMap;
+
+use wce_foundation::wce_prof;
+use wce_scene::render_scene::{EntityId, Payload, RenderScene};
+
+use super::*;
+use crate::shader_lib::{bind_sampler, bind_srv};
+
+const RIVER_VS: &str = "dx11_sm_3_0_rigidriver.hlsl_vs_vs30_main_battle_river";
+const RIVER_PS: &str = "dx11_sm_3_0_rigidriver.hlsl_ps_ps30_main_battle_river";
+const SEA_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_battle";
+
+/// The "ultra" quality level.
+const SEA_PS: &str = "dx11_sm_3_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";
+const REFRACTION_PS: &str = "dx11_sm_3_0_waterrefraction.hlsl_ps_ps30_main_3_channel";
+
+/// water_refraction_PS.g_refraction_depth (and directional_light_PS's, which writes the same weight into the light buffer's alpha): the weight of
+/// the refraction is saturate(-ground_y * this) below the water level. 0.75 is the value the engine's constructors of both cbuffers store
+/// (fn 0x116d45c0 and 0x117037e0: 0x3f400000); a runtime override has not been looked for.
+const REFRACTION_DEPTH: f32 = 0.75;
+
+/// The GPU copy of a water mesh.
+#[derive(Clone, Debug)]
+pub(crate) struct WaterMesh {
+    vb: Option<ID3D11Buffer>,
+    ib: Option<ID3D11Buffer>,
+    index_count: u32,
+    version: u64,
+}
+
+/// The water pass's state.
+#[derive(Default)]
+pub(crate) struct WaterGpu {
+    meshes: BTreeMap<EntityId, WaterMesh>,
+
+    /// The half-resolution scene colour (rgb) + the refraction weight (a), s_terrain_refraction.
+    refr: Target,
+    refr_w: u32,
+    refr_h: u32,
+    river_inst_vb: Option<ID3D11Buffer>,
+    sea_inst_vb: Option<ID3D11Buffer>,
+    ds: Option<ID3D11DepthStencilState>,
+}
+
+/// The size of a water vertex.
+const WATER_VERTEX: u32 = 32;
+
+impl Renderer {
+
+    fn water_refraction(&mut self) {
+        let (tw, th) = ((self.w / 2).max(1), (self.h / 2).max(1));
+        if self.water.refr.tex.is_none() || self.water.refr_w != tw || self.water.refr_h != th {
+            self.water.refr = make_target(&self.dev, tw, th, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            self.water.refr_w = tw;
+            self.water.refr_h = th;
+        }
+
+        let Some(ps) = self.shader(REFRACTION_PS) else { return };
+        self.cbs.set_f("water_refraction_PS", "g_refraction_depth", &[REFRACTION_DEPTH]);
+        null_ps_srvs(&self.ctx, 16);
+        // SAFETY: state calls with objects of this device.
+        unsafe {
+            self.ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.water.refr.rtv)), None);
+            self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, tw as f32, th as f32)]));
+            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
+            self.ctx.OMSetDepthStencilState(self.ds_off.as_ref(), 0);
+            self.ctx.RSSetState(self.rs_none.as_ref());
+        }
+
+        ps_samplers(&self.ctx, &ps, &self.s_clamp_linear);
+        bind_sampler(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.s_clamp_point.as_ref());
+        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gb[3].srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_light_accumulation_buffer", self.hdr.srv.as_ref());
+        self.upload();
+        self.fullscreen(&ps);
+        null_ps_srvs(&self.ctx, 16);
+        // SAFETY: a state call.
+        unsafe { self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, self.w as f32, self.h as f32)])) };
+    }
+
+    pub(crate) fn pass_water(&mut self, scene: &RenderScene, rivers: bool) {
+        // The GPU copies of the meshes: rebuilt when an entity's version moves on, dropped with the entity.
+        let mut keep = BTreeMap::new();
+        let mut any = false;
+        for e in scene.entities() {
+            let Payload::Water(w) = &e.payload else { continue };
+            if w.verts.is_empty() || w.indices.is_empty() {
+                continue;
+            }
+
+            let mesh = match self.water.meshes.get(&e.id).filter(|m| m.version == w.version && m.vb.is_some()) {
+                Some(mesh) => mesh.clone(),
+                None => {
+                    let verts = w.verts.iter().flat_map(|v| [v.x, v.y, v.z, v.across, v.u, v.v, v.flow, v.fade]).collect::<Vec<_>>();
+                    let indices = w.indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
+                    let (vb, ib) = (immutable_buffer(&self.dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER), immutable_buffer(&self.dev, &indices, D3D11_BIND_INDEX_BUFFER));
+                    if vb.is_none() || ib.is_none() {
+                        continue;
+                    }
+
+                    WaterMesh { vb, ib, index_count: w.indices.len() as u32, version: w.version }
+                }
+            };
+
+            keep.insert(e.id, mesh);
+            if w.river == rivers && scene.drawable(e) {
+                any = true;
+            }
+        }
+
+        self.water.meshes = keep;
+        if !any {
+            return;
+        }
+
+        wce_prof!("render.water");
+        let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
+        let ps = self.shader(if rivers { RIVER_PS } else { SEA_PS });
+        let (Some(vs), Some(ps)) = (vs, ps) else { return };
+        if self.water.ds.is_none() {
+            // Geometry is stencil 1: the fog pass covers the sea plane.
+            let replace = D3D11_DEPTH_STENCILOP_DESC { StencilFailOp: D3D11_STENCIL_OP_KEEP, StencilDepthFailOp: D3D11_STENCIL_OP_KEEP, StencilPassOp: D3D11_STENCIL_OP_REPLACE, StencilFunc: D3D11_COMPARISON_ALWAYS };
+            let dd = D3D11_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, StencilEnable: true.into(),
+                StencilReadMask: 0xFF, StencilWriteMask: 0xFF, FrontFace: replace, BackFace: replace,
+            };
+
+            // SAFETY: a plain creation call.
+            let _ = unsafe { self.dev.CreateDepthStencilState(&dd, Some(&mut self.water.ds)) };
+        }
+
+        // The instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, identity (the vertices are in world space).
+        if self.water.river_inst_vb.is_none() {
+            // P2 .. P4 rows, P5 (x >= 1 flips the uv).
+            let river = [1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+            // P1 .. P3 rows, P4 .. P6 unused.
+            let mut sea = [0.0f32; 24];
+            sea[..12].copy_from_slice(&river[..12]);
+            self.water.river_inst_vb = immutable_buffer(&self.dev, &f32_bytes(&river), D3D11_BIND_VERTEX_BUFFER);
+            self.water.sea_inst_vb = immutable_buffer(&self.dev, &f32_bytes(&sea), D3D11_BIND_VERTEX_BUFFER);
+        }
+
+        self.water_refraction();
+        let nt = self.textures.get(if rivers { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
+        let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        let layout = if rivers {
+            let mut el = vec![element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false)];
+            for i in 0..4 {
+                el.push(element(c"POSITION", 2 + i, f4, 1, i * 16, true));
+            }
+
+            self.layout(&vs, "river", &el)
+        } else {
+            let mut el = vec![element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
+            for i in 0..6 {
+                el.push(element(c"POSITION", 1 + i, f4, 1, i * 16, true));
+            }
+
+            self.layout(&vs, "sea", &el)
+        };
+
+        let Some(layout) = layout else { return };
+
+        // The constants the river's vertex shader reads for the terrain height: the game puts the ribbon on the low-res height map; here the mesh
+        // carries its own world height (rebuilt from the tile's terrain), so the map's contribution is switched off (scale 0, a black map) and
+        // the dimensions are kept finite.
+        let cbs = &mut self.cbs;
+        cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[0.0]);
+        cbs.set_f("vs_height_map_cb", "g_height_map_hf_scale", &[1.0]);
+        cbs.set_f("vs_height_map_cb", "g_height_map_vertical_offset", &[0.0]);
+        cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[256.0, 256.0, 1.0 / 256.0, 1.0 / 256.0]);
+        cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1024.0, 1024.0]);
+        cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[0.0]);
+        cbs.set_f("river_CB", "g_world_size", &[1.0, 1.0]);
+        cbs.set_f("river_CB", "g_flow_rate", &[0.0]);
+        cbs.set_f("river_CB", "g_vertical_offset", &[0.0]);
+        self.upload();
+
+        null_ps_srvs(&self.ctx, 16);
+        let rtvs = [self.gb[0].rtv.clone(), self.gb[1].rtv.clone(), self.gb[2].rtv.clone(), self.hdr.rtv.clone()];
+        // SAFETY: state calls with objects of this device.
+        unsafe {
+            self.ctx.OMSetRenderTargets(Some(&rtvs), self.dsv.as_ref());
+            self.ctx.OMSetDepthStencilState(self.water.ds.as_ref(), 1);
+            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
+            self.ctx.RSSetState(self.rs_none.as_ref());
+            self.ctx.IASetInputLayout(&layout);
+            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
+        }
+
+        self.bind(&vs);
+        self.bind(&ps);
+        let ctx = &self.ctx;
+        bind_srv(ctx, &vs, "t_low_res_height_map", self.black_srv.as_ref());
+        ps_samplers(ctx, &ps, &self.s_clamp_linear);
+        bind_sampler(ctx, &ps, "s_normal", self.s_wrap_linear.as_ref());
+        bind_sampler(ctx, &ps, "s_environment", self.s_wrap_linear.as_ref());
+        bind_sampler(ctx, &ps, "s_terrain_refraction", self.s_clamp_point.as_ref());
+        bind_sampler(ctx, &ps, "gbuffer_channel_4_sampler", self.s_clamp_point.as_ref());
+        bind_sampler(ctx, &ps, "s_sky", self.s_clamp_linear.as_ref());
+        let normal = nt.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.black_srv.clone());
+        bind_srv(ctx, &ps, "s_normal", normal.as_ref());
+        bind_srv(ctx, &ps, "s_environment", if self.env_valid { self.env_cube_srv.as_ref() } else { self.sky_cube_srv.as_ref() });
+        bind_srv(ctx, &ps, "s_sky", self.sky_cube_srv.as_ref());
+        bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
+        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gb[3].srv.as_ref());
+        let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
+        let inst_stride = if rivers { 64u32 } else { 96 };
+        for e in scene.entities() {
+            let Payload::Water(w) = &e.payload else { continue };
+            let Some(mesh) = self.water.meshes.get(&e.id) else { continue };
+            if w.river != rivers || !scene.drawable(e) {
+                continue;
+            }
+
+            // SAFETY: drawing calls with buffers of this device.
+            unsafe {
+                ctx.IASetVertexBuffers(0, 2, Some([mesh.vb.clone(), inst.clone()].as_ptr()), Some([WATER_VERTEX, inst_stride].as_ptr()), Some([0u32, 0].as_ptr()));
+                ctx.IASetIndexBuffer(mesh.ib.as_ref(), DXGI_FORMAT_R32_UINT, 0);
+                ctx.DrawIndexedInstanced(mesh.index_count, 1, 0, 0, 0);
+            }
+
+            self.draw_stats.draw_calls += 1;
+        }
+
+        null_ps_srvs(&self.ctx, 16);
+        // SAFETY: a state call.
+        unsafe { self.ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.hdr.rtv)), self.dsv.as_ref()) };
+    }
+}
