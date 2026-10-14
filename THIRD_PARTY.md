@@ -15,7 +15,7 @@ configure time into `<build>/_deps` (nothing is committed or redistributed); the
 
 | Component | Version | Licence | Used for |
 |---|---|---|---|
-| DXVK (native build) | v3.1.1 | zlib licence | `libdxvk_d3d11.so`, `libdxvk_dxgi.so` and the D3D/DXGI headers (from mingw-w64) |
+| DXVK (native build) | v3.1.1 | zlib licence | `libdxvk_d3d11.so`, `libdxvk_dxgi.so` and the D3D/DXGI headers (from mingw-w64). Built with one change backported from upstream master: `ResizeBuffers` gives the presenter the new size (a maximized window on Wayland kept its first swapchain) |
 | vkd3d | vkd3d-2.1 | **LGPL-2.1-or-later** | `libvkd3d-utils.so`: `D3DCompile` (the editor's helper HLSL), `D3DReflect` (game shader bindings) and `D3DDisassemble` (`fxc_dump`). Built with one local change: `WINAPI` / COM methods use the native x86-64 ABI instead of `ms_abi`, to match DXVK's headers |
 | SPIRV-Headers | vulkan-sdk-1.4.321.0 | MIT-style (Khronos) | headers needed to build vkd3d |
 
