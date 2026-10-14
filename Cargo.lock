@@ -2041,6 +2041,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_tile"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "tempfile",
+ "wce_formats",
+ "wce_foundation",
+]
+
+[[package]]
 name = "wce_vfs"
 version = "0.1.0"
 dependencies = [
