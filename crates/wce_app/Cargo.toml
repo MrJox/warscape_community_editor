@@ -18,4 +18,5 @@ wce_editor = { path = "../wce_editor" }
 wce_foundation = { path = "../wce_foundation" }
 wce_imgui = { path = "../wce_imgui" }
 wce_render = { path = "../wce_render" }
+wce_tile_tool = { path = "../wce_tile_tool" }
 wce_weather_tool = { path = "../wce_weather_tool" }
