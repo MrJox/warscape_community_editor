@@ -658,7 +658,7 @@ impl ModelCache {
         let same_layout = self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.patches_x == px && slot.patches_z == pz);
         if !same_layout {
             let count = (px * pz) as usize;
-            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: vec![GpuModel::default(); count], skins: vec![None; count], ..Default::default() });
+            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: vec![Arc::new(GpuModel::default()); count], skins: vec![None; count], ..Default::default() });
         }
 
         let diffuse = self.inner.textures.get(&t.diffuse, true);
@@ -691,7 +691,7 @@ impl ModelCache {
         for (p, result) in built {
             match result {
                 Some((model, skin)) => {
-                    tg.patches[p] = model;
+                    tg.patches[p] = Arc::new(model);
                     tg.skins[p] = skin;
                 }
 
@@ -736,7 +736,7 @@ const CELLS: i32 = 64;
 /// so they are culled and detailed one by one.
 #[derive(Clone, Debug, Default)]
 pub struct TerrainGpu {
-    pub patches: Vec<GpuModel>,
+    pub patches: Vec<Arc<GpuModel>>,
 
     /// The patches' pieces of the payload's skin (the meshes use them).
     pub skins: Vec<Option<SharedTexture>>,
