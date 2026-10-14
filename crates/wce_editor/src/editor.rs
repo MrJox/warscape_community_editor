@@ -430,8 +430,10 @@ impl Editor {
             self.mouse_cur = m;
         }
 
+        // The scripted positions are pixels of the viewport image, which has the window's pixel density.
         let o = self.viewport.image_origin();
-        gui::add_mouse_pos_event(o.x + self.mouse_cur.x, o.y + self.mouse_cur.y);
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        gui::add_mouse_pos_event(o.x + self.mouse_cur.x / density, o.y + self.mouse_cur.y / density);
         for b in 0..3 {
             gui::add_mouse_button_event(b, self.mouse_cur.down[b as usize]);
         }
