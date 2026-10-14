@@ -81,6 +81,11 @@ pub fn strtod_prefix(s: &str) -> Option<(f64, usize)> {
 
 /// `printf("%g", v)`: 6 significant digits, fixed or exponent notation by the exponent, trailing zeros removed.
 pub fn printf_g(v: f64) -> String {
+    printf_g_prec(v, 6)
+}
+
+/// `printf("%.<precision>g", v)`.
+pub fn printf_g_prec(v: f64, precision: usize) -> String {
     if v.is_nan() {
         return if v.is_sign_negative() { "-nan" } else { "nan" }.to_owned();
     }
@@ -93,14 +98,15 @@ pub fn printf_g(v: f64) -> String {
         return if v.is_sign_negative() { "-0" } else { "0" }.to_owned();
     }
 
+    let p = precision.max(1);
     let strip = |t: String| if t.contains('.') { t.trim_end_matches('0').trim_end_matches('.').to_owned() } else { t };
 
-    // The exponent after rounding to 6 significant digits decides the notation.
-    let e = format!("{v:.5e}");
+    // The exponent after rounding to p significant digits decides the notation.
+    let e = format!("{v:.*e}", p - 1);
     let (mantissa, exp) = e.split_once('e').expect("exponent notation");
     let x = exp.parse::<i32>().expect("an exponent");
-    if (-4..6).contains(&x) {
-        strip(format!("{v:.*}", (5 - x) as usize))
+    if (-4..p as i32).contains(&x) {
+        strip(format!("{v:.*}", (p as i32 - 1 - x) as usize))
     } else {
         format!("{}e{}{:02}", strip(mantissa.to_owned()), if x < 0 { '-' } else { '+' }, x.abs())
     }
