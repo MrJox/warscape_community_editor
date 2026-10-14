@@ -4,6 +4,7 @@ description = "D3D11, DXGI and D3D compiler bindings, on Windows and on DXVK-nat
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+links = "wce_d3d11"
 
 [dependencies]
 windows-core.workspace = true
