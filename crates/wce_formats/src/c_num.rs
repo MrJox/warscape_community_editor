@@ -16,6 +16,12 @@ fn digits(s: &[u8], at: usize) -> usize {
 
 /// The float at the start of `s` (after whitespace), or `None` if there is none (where `strtod` sets its end pointer to `s`).
 pub fn strtod(s: &str) -> Option<f64> {
+    strtod_prefix(s).map(|(value, _)| value)
+}
+
+/// The float at the start of `s` (after whitespace) and the number of bytes `strtod` consumes for it (its end pointer), or `None` if there
+/// is none.
+pub fn strtod_prefix(s: &str) -> Option<(f64, usize)> {
     let bytes = s.as_bytes();
     let start = bytes.iter().take_while(|b| is_c_space(**b)).count();
     let mut p = start;
@@ -27,11 +33,21 @@ pub fn strtod(s: &str) -> Option<f64> {
     let starts_with = |word: &[u8]| rest.len() >= word.len() && rest[..word.len()].eq_ignore_ascii_case(word);
     let sign = if bytes.get(start) == Some(&b'-') { -1.0 } else { 1.0 };
     if starts_with(b"inf") {
-        return Some(sign * f64::INFINITY);
+        let len = if starts_with(b"infinity") { 8 } else { 3 };
+        return Some((sign * f64::INFINITY, p + len));
     }
 
     if starts_with(b"nan") {
-        return Some(sign * f64::NAN);
+        // "nan(n-char-sequence)" takes the parentheses too when they close.
+        let mut end = p + 3;
+        if bytes.get(end) == Some(&b'(') {
+            let chars = bytes[end + 1..].iter().take_while(|b| b.is_ascii_alphanumeric() || **b == b'_').count();
+            if bytes.get(end + 1 + chars) == Some(&b')') {
+                end += chars + 2;
+            }
+        }
+
+        return Some((sign * f64::NAN, end));
     }
 
     let int_digits = digits(bytes, p);
@@ -60,7 +76,34 @@ pub fn strtod(s: &str) -> Option<f64> {
         }
     }
 
-    s[start..end].parse().ok()
+    Some((s[start..end].parse().ok()?, end))
+}
+
+/// `printf("%g", v)`: 6 significant digits, fixed or exponent notation by the exponent, trailing zeros removed.
+pub fn printf_g(v: f64) -> String {
+    if v.is_nan() {
+        return if v.is_sign_negative() { "-nan" } else { "nan" }.to_owned();
+    }
+
+    if v.is_infinite() {
+        return if v < 0.0 { "-inf" } else { "inf" }.to_owned();
+    }
+
+    if v == 0.0 {
+        return if v.is_sign_negative() { "-0" } else { "0" }.to_owned();
+    }
+
+    let strip = |t: String| if t.contains('.') { t.trim_end_matches('0').trim_end_matches('.').to_owned() } else { t };
+
+    // The exponent after rounding to 6 significant digits decides the notation.
+    let e = format!("{v:.5e}");
+    let (mantissa, exp) = e.split_once('e').expect("exponent notation");
+    let x = exp.parse::<i32>().expect("an exponent");
+    if (-4..6).contains(&x) {
+        strip(format!("{v:.*}", (5 - x) as usize))
+    } else {
+        format!("{}e{}{:02}", strip(mantissa.to_owned()), if x < 0 { '-' } else { '+' }, x.abs())
+    }
 }
 
 /// The integer at the start of `s` (after whitespace) in base 10, or `None` if there is none. Out of range values saturate, as in `strtoll`.
