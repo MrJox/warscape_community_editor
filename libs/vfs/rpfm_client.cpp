@@ -273,7 +273,8 @@ void RpfmClient::connect() {
     const std::string body = http_get(host_, port_, "/version");
     std::string version;
     try {
-        if (const Json* v = Json::parse(body).find("version"); v && v->is_string()) version = v->as_string();
+        const Json reply = Json::parse(body);   // named: find() points into it
+        if (const Json* v = reply.find("version"); v && v->is_string()) version = v->as_string();
     } catch (const std::exception&) {}
     int major = 0, minor = 0;
     if (std::sscanf(version.c_str(), "%d.%d", &major, &minor) != 2)
