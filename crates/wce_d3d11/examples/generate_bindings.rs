@@ -24,6 +24,7 @@ fn main() {
         "D3D11_SHADER_TYPE_DESC", "D3D11_SHADER_VERSION_TYPE", "D3D11_SIGNATURE_PARAMETER_DESC", "D3D_SRV_DIMENSION", "D3D11_STENCIL_OP", "D3D11_TEXTURE3D_DESC",
         "D3D11_TEXTURE_ADDRESS_MODE", "D3D11_UNORDERED_ACCESS_VIEW_DESC", "D3D11_UAV_DIMENSION", "D3D_SHADER_INPUT_TYPE", "D3D_CBUFFER_TYPE",
         "D3D_SHADER_VARIABLE_CLASS", "D3D_SHADER_MACRO", "D3D11_APPEND_ALIGNED_ELEMENT",
+        "ID3D11View", "ID3D11DeviceChild", "ID3D11Asynchronous", "IDXGIObject", "IDXGIDeviceSubObject", "IDXGIFactory", "IDXGIFactory2", "IDXGIFactory3", "IDXGIFactory4", "IDXGIFactory5",
     ];
     let mut args = vec!["--out", concat!(env!("CARGO_MANIFEST_DIR"), "/src/bindings.rs"), "--flat", "--filter"];
     args.extend(names);
