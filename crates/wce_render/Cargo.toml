@@ -9,10 +9,9 @@ license.workspace = true
 rpfm_lib.workspace = true
 wce_assets = { path = "../wce_assets" }
 wce_d3d11 = { path = "../wce_d3d11" }
+wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
 wce_scene = { path = "../wce_scene" }
 wce_vfs = { path = "../wce_vfs" }
+thiserror = "2"
 windows-core.workspace = true
-
-[dev-dependencies]
-wce_formats = { path = "../wce_formats" }

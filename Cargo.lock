@@ -2013,6 +2013,7 @@ name = "wce_render"
 version = "0.1.0"
 dependencies = [
  "rpfm_lib",
+ "thiserror",
  "wce_assets",
  "wce_d3d11",
  "wce_formats",
