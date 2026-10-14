@@ -425,6 +425,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dear-imguizmo-sys"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22598be8db9d5daf7d0df028ea96b02b2ec0d22ed88c310c1eca287bb8d6fa10"
+dependencies = [
+ "cc",
+ "dear-imgui-build-support",
+ "dear-imgui-sys",
+ "mint",
+]
+
+[[package]]
 name = "derive_pod"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2079,6 +2091,22 @@ dependencies = [
  "windows-bindgen",
  "windows-core",
  "windows-link 0.100.0",
+]
+
+[[package]]
+name = "wce_editor"
+version = "0.1.0"
+dependencies = [
+ "dear-imgui-rs",
+ "dear-imgui-sys",
+ "dear-imguizmo-sys",
+ "wce_d3d11",
+ "wce_editor_core",
+ "wce_foundation",
+ "wce_imgui",
+ "wce_render",
+ "wce_scene",
+ "wce_vfs",
 ]
 
 [[package]]

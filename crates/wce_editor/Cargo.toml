@@ -1,0 +1,18 @@
+[package]
+name = "wce_editor"
+description = "The editor shell: dockspace, menus, toolbar, tool switching with a layout per tool, the viewport with gizmos, the shared panels, built-in commands and scripts, first run."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dear-imgui-rs = "0.20"
+dear-imgui-sys = "0.20"
+dear-imguizmo-sys = "0.20"
+wce_d3d11 = { path = "../wce_d3d11" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_foundation = { path = "../wce_foundation" }
+wce_imgui = { path = "../wce_imgui" }
+wce_render = { path = "../wce_render" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
