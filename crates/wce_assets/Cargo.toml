@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 wce_formats = { path = "../wce_formats" }
 wce_vfs = { path = "../wce_vfs" }
+
+[dev-dependencies]
+wce_foundation = { path = "../wce_foundation" }
