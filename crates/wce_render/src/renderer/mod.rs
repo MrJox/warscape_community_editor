@@ -596,12 +596,8 @@ impl Renderer {
         if let Ok(dxgi) = dev.cast::<IDXGIDevice>() {
             // SAFETY: plain queries of the device's adapter.
             unsafe {
-                if let Ok(adapter) = dxgi.GetAdapter() {
-                    let mut desc = DXGI_ADAPTER_DESC1::default();
-                    if adapter.cast::<IDXGIAdapter1>().and_then(|a| a.GetDesc1(&mut desc).ok()).is_ok() {
-                        let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
-                        wce_foundation::log::info(format!("GPU: {}", String::from_utf16_lossy(&desc.Description[..len])));
-                    }
+                if let Some(info) = dxgi.GetAdapter().and_then(|a| a.cast::<IDXGIAdapter1>()).ok().and_then(|a| adapter_info(&a)) {
+                    wce_foundation::log::info(format!("GPU: {}", info.name));
                 }
             }
         }
