@@ -57,6 +57,8 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
     }
 }
 
+// 6.28 is the generator's own number, shared with the C++ harness, not an approximation of tau.
+#[allow(clippy::approx_constant)]
 fn main() {
     let mut rng = Rng(88_172_645_463_325_252);
     let mut models = vec![];
@@ -84,10 +86,10 @@ fn main() {
         let m = models[(rng.next() % models.len() as u32) as usize].clone();
         let (tx, ty, tz, ry, sc) = (rng.f(-2000.0, 2000.0), rng.f(-10.0, 50.0), rng.f(-2000.0, 2000.0), rng.f(0.0, 6.28), rng.f(0.5, 3.0));
         let w = translation(Float3::new(tx, ty, tz)) * rotation_y(ry) * scaling(sc);
-        let params: [f32; 16] = std::array::from_fn(|_| if rng.next() % 3 == 0 { rng.f(-1.0, 1.0) } else { 0.0 });
+        let params: [f32; 16] = std::array::from_fn(|_| if rng.next().is_multiple_of(3) { rng.f(-1.0, 1.0) } else { 0.0 });
         let any_params = rng.next() % 2 == 1;
-        let shadow = rng.next() % 4 != 0;
-        let lod = rng.next() % 5 != 0;
+        let shadow = !rng.next().is_multiple_of(4);
+        let lod = !rng.next().is_multiple_of(5);
         ds.add(&m, &w, any_params.then_some(&params), shadow, lod, i + 1);
     }
 
