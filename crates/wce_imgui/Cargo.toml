@@ -1,0 +1,18 @@
+[package]
+name = "wce_imgui"
+description = "Dear ImGui on the editor's window and device: the SDL3 platform backend and the D3D11 renderer backend for dear-imgui-rs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dear-imgui-rs = "0.20"
+dear-imgui-sys = "0.20"
+sdl3-sys = "0.7"
+wce_d3d11 = { path = "../wce_d3d11" }
+windows-core.workspace = true
+
+[build-dependencies]
+
+[dev-dependencies]
+wce_render = { path = "../wce_render" }
