@@ -16,3 +16,6 @@ wce_scene = { path = "../wce_scene" }
 wce_vfs = { path = "../wce_vfs" }
 thiserror = "2"
 windows-core.workspace = true
+
+[dev-dependencies]
+wce_weather = { path = "../wce_weather" }
