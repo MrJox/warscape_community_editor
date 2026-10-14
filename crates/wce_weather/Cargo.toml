@@ -1,0 +1,17 @@
+[package]
+name = "wce_weather"
+description = "The weather tool's pieces that need no window: the sample map, and the weather files as documents (XmlDoc with undo)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
+
+[dev-dependencies]
+tempfile = "3"
