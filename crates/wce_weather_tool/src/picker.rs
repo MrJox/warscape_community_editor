@@ -318,16 +318,17 @@ impl WeatherPicker {
     }
 
     /// The candidate list the game builds for a battle; `active_environment` is the in-pack path of the open environment (reverse lookup).
-    pub fn draw(&mut self, e: &mut Editor, output_dir: &Path, active_environment: &str) {
+    /// Returns the in-pack path of a candidate to open (its Open button).
+    pub fn draw(&mut self, e: &mut Editor, output_dir: &Path, active_environment: &str) -> Option<String> {
         if !self.open {
-            return;
+            return None;
         }
 
         gui::set_next_window_size(gui::v2(760.0, 800.0), gui::COND_FIRST_USE_EVER);
         gui::set_next_window_bg_alpha(1.0);
         if !gui::begin("Weather picker", Some(&mut self.open), 0) {
             gui::end();
-            return;
+            return None;
         }
 
         if !self.loaded {
@@ -341,7 +342,7 @@ impl WeatherPicker {
             }
 
             gui::end();
-            return;
+            return None;
         }
 
         if !self.script.is_empty() {
@@ -365,7 +366,7 @@ impl WeatherPicker {
                 }
 
                 gui::end();
-                return;
+                return None;
             }
         }
 
@@ -373,7 +374,7 @@ impl WeatherPicker {
         if gui::small_button("Reload") {
             self.loaded = false;
             gui::end();
-            return;
+            return None;
         }
 
         gui::set_next_item_width(420.0);
@@ -422,7 +423,7 @@ impl WeatherPicker {
 
         if !gui::begin_tab_bar("vdbtabs") {
             gui::end();
-            return;
+            return None;
         }
 
         let vfs = e.vfs().cloned();
@@ -437,12 +438,12 @@ impl WeatherPicker {
         if !gui::begin_tab_item("Pick", if self.select_pick() { gui::TAB_SET_SELECTED } else { 0 }) {
             gui::end_tab_bar();
             gui::end();
-            return;
+            return None;
         }
 
         self.pick_shown = true;
 
-        let Some(db) = self.db.as_ref() else { return };
+        let db = self.db.as_ref()?;
         gui::separator();
         gui::text("Battle conditions");
         for m in db.categories() {
@@ -552,10 +553,6 @@ impl WeatherPicker {
         gui::end_tab_item();
         gui::end_tab_bar();
         gui::end();
-        if let Some(path) = open
-            && let Err(msg) = e.open_path(&path, true, true)
-        {
-            e.status(&msg, true);
-        }
+        open
     }
 }

@@ -476,6 +476,20 @@ impl Editor {
     ///
     /// No tool opens the file, or the tool can't.
     pub fn open_path(&mut self, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
+        self.open_path_with(None, path, from_packs, switch_tool)
+    }
+
+    /// `open_path` for a tool that opens a file while the editor calls it (a double-click in its own panel): the tool is lent out then, so
+    /// it passes itself, and opens the file when it is the tool that claims it.
+    ///
+    /// # Errors
+    ///
+    /// No tool opens the file, or the tool can't.
+    pub fn open_path_from(&mut self, me: &mut dyn Tool, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
+        self.open_path_with(Some(me), path, from_packs, switch_tool)
+    }
+
+    fn open_path_with(&mut self, me: Option<&mut dyn Tool>, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
         let ext = path.rfind('.').map(|d| path[d..].to_lowercase()).unwrap_or_default();
         let claims = |t: &ToolInfo| t.opens.contains(&ext);
         let tool = if self.tool_info.get(self.active_tool).is_some_and(claims) { Some(self.active_tool) } else { self.tool_info.iter().position(claims) };
@@ -491,9 +505,13 @@ impl Editor {
         }
 
         let title = self.tool_info[tool].title.clone();
-        let doc = self.with_tool_at(tool, |t, e| t.open(e, path, from_packs)).unwrap_or_else(|| Err(format!("{title} is busy")))
-            .map_err(|e| format!("cannot open {path}: {e}"))?;
         let tid = self.tool_info[tool].id.clone();
+        let opened = match me {
+            Some(me) if self.tools[tool].is_none() && me.id() == tid => Some(me.open(self, path, from_packs)),
+            _ => self.with_tool_at(tool, |t, e| t.open(e, path, from_packs)),
+        };
+
+        let doc = opened.unwrap_or_else(|| Err(format!("{title} is busy"))).map_err(|e| format!("cannot open {path}: {e}"))?;
         self.docs.add(&mut self.scene, doc, &tid);
         if switch_tool && tool != self.active_tool {
             self.set_tool(&tid);
