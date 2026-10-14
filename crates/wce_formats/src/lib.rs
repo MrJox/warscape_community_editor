@@ -1,6 +1,7 @@
 //! The editor's own file formats: the ones it edits in place without re-serialising them (XML), and the ones rpfm_lib doesn't cover.
 
 pub mod c_num;
+pub mod dds_decode;
 pub mod env_value;
 pub mod image_containers;
 pub mod png_file;
