@@ -268,7 +268,7 @@ impl WeatherTool {
         gui::end_child();
         gui::end();
         if let Some(p) = open {
-            match e.open_path(&p, true, true) {
+            match e.open_path_from(self, &p, true, true) {
                 Ok(msg) => e.status(&msg, false),
                 Err(msg) => e.status(&msg, true),
             }
@@ -847,7 +847,11 @@ impl Tool for WeatherTool {
         self.draw_scene_bar(e);
         let env = find_xml(e, self.env_doc).map(|x| x.source().vfs_path.clone()).unwrap_or_default();
         let out = e.output_dir();
-        self.picker.draw(e, &out, &env);
+        if let Some(path) = self.picker.draw(e, &out, &env)
+            && let Err(msg) = e.open_path_from(self, &path, true, true)
+        {
+            e.status(&msg, true);
+        }
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {
