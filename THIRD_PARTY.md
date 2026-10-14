@@ -26,5 +26,7 @@ game formats, windows-core / windows-bindgen (MIT or Apache-2.0) for the D3D11 b
 classic zlib (zlib licence) statically for the kit's PNG encoder. The UI uses dear-imgui-rs / dear-imgui-sys (MIT or Apache-2.0; they build
 Dear ImGui 1.92.9b docking and cimgui, MIT) and sdl3-sys (zlib licence), linked against the system SDL3 (the one DXVK-native presents through);
 the SDL3 platform backend is a port of Dear ImGui's `imgui_impl_sdl3.cpp` and the D3D11 renderer one of `imgui_impl_dx11.cpp` (both MIT).
+The gizmos come from dear-imguizmo-sys (MIT or Apache-2.0), which builds upstream ImGuizmo (MIT) without the local `SetAllowedItem`
+change: the viewport clears its button from Dear ImGui's hovered and active ids around `Manipulate` instead.
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
