@@ -1,0 +1,18 @@
+[package]
+name = "wce_tile_tool"
+description = "The Tile tool: battle and campaign tiles (tile.ted and the height map) on the shared editor, with terrain brushes, instances, layers, polygons and AI hints, the tile browser and the weather picker for the tile's map."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_render = { path = "../wce_render" }
+wce_scene = { path = "../wce_scene" }
+wce_tile = { path = "../wce_tile" }
+wce_tile_editor = { path = "../wce_tile_editor" }
+wce_vfs = { path = "../wce_vfs" }

@@ -2087,6 +2087,7 @@ dependencies = [
  "wce_foundation",
  "wce_imgui",
  "wce_render",
+ "wce_tile_tool",
  "wce_weather_tool",
 ]
 
@@ -2207,6 +2208,22 @@ dependencies = [
  "wce_foundation",
  "wce_scene",
  "wce_tile",
+ "wce_vfs",
+]
+
+[[package]]
+name = "wce_tile_tool"
+version = "0.1.0"
+dependencies = [
+ "rpfm_lib",
+ "wce_editor",
+ "wce_editor_core",
+ "wce_formats",
+ "wce_foundation",
+ "wce_render",
+ "wce_scene",
+ "wce_tile",
+ "wce_tile_editor",
  "wce_vfs",
 ]
 

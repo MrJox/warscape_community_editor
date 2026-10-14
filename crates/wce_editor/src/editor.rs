@@ -84,7 +84,7 @@ pub struct Editor {
     pub(crate) ctx: ID3D11DeviceContext,
     settings: Settings,
     vfs: Option<Arc<Vfs>>,
-    pub(crate) renderer: Option<Renderer>,
+    pub renderer: Option<Renderer>,
     pub scene: RenderScene,
     pub docs: DocumentManager,
     pub selection: Selection,
