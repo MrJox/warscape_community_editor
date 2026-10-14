@@ -2177,6 +2177,7 @@ dependencies = [
  "wce_foundation",
  "wce_scene",
  "wce_vfs",
+ "wce_weather",
  "windows-core",
 ]
 
