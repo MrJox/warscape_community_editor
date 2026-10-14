@@ -1,0 +1,18 @@
+[package]
+name = "wce_render"
+description = "The renderer: the game's own shaders on D3D11, fed from the scene and the environment."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+wce_assets = { path = "../wce_assets" }
+wce_d3d11 = { path = "../wce_d3d11" }
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
+windows-core.workspace = true
+
+[dev-dependencies]
+wce_formats = { path = "../wce_formats" }
