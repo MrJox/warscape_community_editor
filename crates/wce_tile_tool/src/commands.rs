@@ -1,0 +1,1185 @@
+//! The tile tool's commands: everything the panels and the mouse do (the old Tile Studio script flags), plus test commands (assert_*).
+//!
+//! | Studio flag | command |
+//! |---|---|
+//! | `--tile <folder>` | `tile <folder>` |
+//! | `--paint k x z n` | `paint k x z n` |
+//! | `--select t\|n` | `tile_select t\|n` |
+//! | `--move dx dz` | `tile_move dx dz` |
+//! | `--duplicate`, `--delete`, `--rotate d`, `--add key` | `duplicate`, `delete_item`, `rotate d`, `add_building key` |
+//! | `--add-polygon s`, `--polygon-point op i x z` | `add_polygon s`, `polygon_point op i x z` |
+//! | `--new-layer n`, `--move-to-layer n` | `new_layer n`, `move_to_layer n` |
+//! | `--save-to dir`, `--undo n` / `--redo n` | `save_to dir`, `undo` / `redo` (the editor's, one step each) |
+//!
+//! The app maps the old flag names to these commands.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use wce_editor::editor::Editor;
+use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
+use wce_editor_core::document::{Document, SaveTarget};
+use wce_formats::tile_index::TileIndex;
+use wce_foundation::math::Float3;
+use wce_tile_editor::terrain_bake::TerrainView;
+use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
+
+use crate::tool::{HINTS, MODE_NAMES, POLYGON_TYPES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
+
+fn ok(m: impl Into<String>) -> CommandResult {
+    CommandResult::success(m)
+}
+
+fn fail(m: impl Into<String>) -> CommandResult {
+    CommandResult::fail(m)
+}
+
+/// The whole string as a float (strtof with nothing left over).
+fn number(s: &str) -> Option<f32> {
+    if s.is_empty() { None } else { s.parse().ok() }
+}
+
+/// C's atoi: the leading integer, 0 when there is none.
+fn atoi(s: &str) -> i64 {
+    wce_formats::c_num::strtol(s).unwrap_or(0)
+}
+
+/// `std::to_string` of a float: `%f`.
+fn f6(v: f32) -> String {
+    format!("{v:.6}")
+}
+
+fn no_tile() -> CommandResult {
+    fail("no tile open")
+}
+
+/// Runs `f` with the tile tool and the active tile.
+fn with_doc(e: &mut Editor, f: impl FnOnce(&mut TileTool, &mut Editor) -> CommandResult) -> CommandResult {
+    if document(e).is_none() {
+        return no_tile();
+    }
+
+    with_tile(e, f)
+}
+
+/// Runs the `mouse` command for a command that drives the scripted mouse: the caller returns `message` and the frames the mouse needs (the
+/// C++ registry kept the nested command's wait).
+fn mouse(e: &mut Editor, args: &[String], message: impl Into<String>) -> CommandResult {
+    let r = CommandRegistry::run_args(e, "mouse", args);
+    if r.ok { ok(message).wait(r.wait_frames) } else { r }
+}
+
+/// Clicks the viewport pixel of a world point with the scripted mouse; None when the point is not in view.
+fn click_at(e: &mut Editor, p: Float3, message: impl Into<String>) -> Option<CommandResult> {
+    let (x, y) = e.viewport.project(p)?;
+    Some(mouse(e, &["click".to_owned(), format!("{x:.1}"), format!("{y:.1}")], message))
+}
+
+pub fn register(c: &mut CommandRegistry<Editor>) {
+    c.add(
+        "tile", "tile <entry xml | tile name | folder | tile.ted> [variation]",
+        "open a tile by its database entry (a TILES/*.xml, or a name like assembly_kit/osgiliath_test), by a variation folder or by its tile.ted, and switch to the tile tool",
+        |e, a| {
+            let Some(target) = a.first() else { return fail("usage: tile <entry xml | tile name | folder | tile.ted> [variation]") };
+            let variation = a.get(1).map_or("", String::as_str);
+            with_tile(e, |t, e| t.open_tile(e, target, variation).map_or_else(fail, ok))
+        },
+    );
+
+    c.add("tiles", "tiles [filter words]", "list the tile database entries of the kits (the tile browser's rows), optionally filtered; says how many", |e, a| {
+        with_tile(e, |t, e| {
+            let roots = t.kit_roots(e);
+            if roots.is_empty() {
+                return fail("no assembly kit found");
+            }
+
+            let words = a.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+            let (mut out, mut total, mut shown) = (String::new(), 0, 0);
+            for root in &roots {
+                let index = TileIndex::shared(root);
+                total += index.entries().len();
+                for en in index.entries().iter().filter(|en| matches_words(en, &words)) {
+                    shown += 1;
+                    if shown <= 40 {
+                        let kit = root.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                        out += &format!("{}  {}x{}  [{}]  {kit}\n", en.key, en.width, en.height, en.variations.join(","));
+                    }
+                }
+            }
+
+            ok(format!("{shown} of {total} tiles{}", if shown != 0 { format!("\n{out}") } else { String::new() }))
+        })
+    });
+
+    c.add("assert_tiles", "assert_tiles <n> [filter words]", "test: the tile browser lists n entries for the filter (over all kits)", |e, a| {
+        let Some(n) = a.first() else { return fail("usage: assert_tiles <n> [filter words]") };
+        with_tile(e, |t, e| {
+            let words = a[1..].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+            let shown = t.kit_roots(e).iter().map(|root| TileIndex::shared(root).entries().iter().filter(|en| matches_words(en, &words)).count()).sum::<usize>();
+            if shown as i64 == atoi(n) { ok("") } else { fail(format!("{shown} tiles, expected {n}")) }
+        })
+    });
+
+    c.add("tile_entry", "tile_entry", "log the active tile's database entry (location, size, colour, ground groups, variations, links)", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        let p = d.project();
+        let Some(en) = &p.entry else {
+            return ok(format!("no tile database entry{}", if p.warning.is_empty() { String::new() } else { format!(": {}", p.warning) }));
+        };
+
+        let g = en.texture_group();
+        ok(format!(
+            "{}: {} set {}, {} x {} cells, colour {:.0} {:.0} {:.0}, ground {}/{}/{}/{}, {} variations (open: {}), {} links, {} targets",
+            en.file().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(), en.location_generic(), en.tile_set(), en.width(), en.height(),
+            en.red(), en.green(), en.blue(), g.red, g.green, g.blue, g.alpha, en.variations().len(), p.info.variation, en.links().len(), en.link_targets().len(),
+        ))
+    });
+
+    c.add(
+        "assert_entry", "assert_entry <field> <value>",
+        "test: a field of the active tile's database entry (set, location, name, kind, width, height, red, green, blue, ground_red/green/blue/alpha, variations, variation, min_height, scale, normal_strength, overlap_border_size, raw_data_tri_density, links, targets, scalable, random_rotatable; `entry none` / `entry present`)",
+        |e, a| {
+            let (Some(d), true) = (document(e), a.len() >= 2) else { return fail("usage: assert_entry <field> <value> (with a tile open)") };
+            let p = d.project();
+            if a[0] == "entry" {
+                return if (a[1] == "none") == p.entry.is_none() { ok("") } else { fail(if p.entry.is_some() { "the tile has an entry" } else { "the tile has no entry" }) };
+            }
+
+            let Some(en) = &p.entry else { return fail("the tile has no database entry") };
+            let g = en.texture_group();
+            let vars = en.variations();
+            let v = p.variation.and_then(|i| vars.get(i));
+            let text = |s: String| (Some(s), 0.0);
+            let flag = |b: bool| (Some(if b { "true" } else { "false" }.to_owned()), 0.0);
+            let n = |x: f64| (None, x);
+            let (got, num) = match a[0].as_str() {
+                "set" => text(en.tile_set()),
+                "location" => text(en.location_generic()),
+                "name" => text(en.file().file_stem().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()),
+                "kind" => text(en.kind()),
+                "width" => n(f64::from(en.width())),
+                "height" => n(f64::from(en.height())),
+                "red" => n(en.red()),
+                "green" => n(en.green()),
+                "blue" => n(en.blue()),
+                "ground_red" => text(g.red),
+                "ground_green" => text(g.green),
+                "ground_blue" => text(g.blue),
+                "ground_alpha" => text(g.alpha),
+                "variations" => n(vars.len() as f64),
+                "variation" => text(p.info.variation.clone()),
+                "links" => n(en.links().len() as f64),
+                "targets" => n(en.link_targets().len() as f64),
+                "scalable" => flag(en.scalable()),
+                "random_rotatable" => flag(en.random_rotatable()),
+                "min_height" if v.is_some() => n(v.expect("checked").min_height),
+                "scale" if v.is_some() => n(v.expect("checked").scale),
+                "normal_strength" if v.is_some() => n(v.expect("checked").normal_strength),
+                "overlap_border_size" if v.is_some() => n(v.expect("checked").overlap_border_size),
+                "raw_data_tri_density" if v.is_some() => n(f64::from(v.expect("checked").raw_data_tri_density)),
+                other => {
+                    return fail(format!(
+                        "unknown field '{other}'{}", if v.is_some() { "" } else { " (or the open folder is not one of the entry's variations)" },
+                    ));
+                }
+            };
+
+            match got {
+                None => {
+                    let want = wce_formats::c_num::strtod(&a[1]).filter(|_| a[1].trim_start().len() == a[1].len());
+                    match want {
+                        Some(w) if (num - w).abs() <= 1e-4 && a[1].parse::<f64>().is_ok() => ok(""),
+                        _ => fail(format!("{} is {}, expected {}", a[0], wce_formats::c_num::printf_g(num), a[1])),
+                    }
+                }
+
+                Some(s) => {
+                    if s == a[1] { ok("") } else { fail(format!("{} is '{s}', expected '{}'", a[0], a[1])) }
+                }
+            }
+        },
+    );
+
+    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level", "what the left mouse button does in the viewport", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level") };
+        let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
+        with_tile(e, |t, _| {
+            t.set_mode(TileMode::from_index(i));
+            ok("")
+        })
+    });
+
+    c.add("brush", "brush <radius m> [strength] [falloff] [flatten height m]", "set the terrain brush", |e, a| {
+        let Some(r) = a.first().and_then(|x| number(x)) else { return fail("usage: brush <radius m> [strength] [falloff] [flatten height m]") };
+        with_tile(e, |t, _| {
+            t.brush.radius_m = r.clamp(1.0, 500.0);
+            if let Some(v) = a.get(1).and_then(|x| number(x)) {
+                t.brush.strength = v;
+            }
+
+            if let Some(v) = a.get(2).and_then(|x| number(x)) {
+                t.brush.falloff = v.clamp(0.0, 1.0);
+            }
+
+            if let Some(v) = a.get(3).and_then(|x| number(x)) {
+                t.brush.flatten_height = v;
+            }
+
+            ok("")
+        })
+    });
+
+    c.add("paint", "paint raise|lower|smooth|flatten|level <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
+            let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level <x m> <z m> <steps>") };
+            let kind = match a[0].as_str() {
+                "raise" => BrushKind::Raise,
+                "lower" => BrushKind::Lower,
+                "smooth" => BrushKind::Smooth,
+                "flatten" => BrushKind::Flatten,
+                "level" => BrushKind::Level,
+                other => return fail(format!("unknown brush '{other}'")),
+            };
+
+            let d = document(e).expect("a tile");
+            if !d.project().has_height() {
+                return fail("no height map");
+            }
+
+            for _ in 0..n as i32 {
+                d.brush_step(kind, x, z, t.brush, 1.0 / 60.0);
+            }
+
+            d.end_stroke();
+            ok("")
+        })
+    });
+
+    c.add("tile_select", "tile_select <type | element index> [add]", "select the first instance of a type, or an element by index", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(what) = a.first() else { return fail("usage: tile_select <type | element index> [add]") };
+        let add = a.get(1).is_some_and(|x| x == "add");
+        let found = match what.parse::<i64>() {
+            Ok(i) => usize::try_from(i).ok(),
+            Err(_) => d.tile().instances().iter().copied().find(|&el| d.tile().tscene().type_of(el) == what),
+        };
+
+        let Some(found) = found.filter(|&f| f < d.tile().tscene().doc().elements().len()) else { return fail(format!("nothing found for '{what}'")) };
+        select_elem(e, Some(found), add);
+        ok(format!("element {found}"))
+    });
+
+    c.add("tile_move", "tile_move <dx m> <dz m>", "move the selected instance over the ground (keeps its height above the terrain)", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let Some((dx, dz)) = parsed else { return fail("usage: tile_move <dx m> <dz m>") };
+        let Some(el) = el else { return fail("nothing selected") };
+        let t = d.tile();
+        let mut p = t.world_position(el);
+        let above = p.y - t.terrain_height(p.x, p.z);
+        p.x += dx;
+        p.z += dz;
+        p.y = t.terrain_height(p.x, p.z) + above;
+        if !t.is_instance(el) {
+            return fail("cannot move this element");
+        }
+
+        d.set_world_metres(el, p, 0);
+        ok("")
+    });
+
+    c.add("grab_to", "grab_to <x m> <z m>", "the G grab: put the selected instance on the ground at a point (grid snap applies)", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let Some((mut x, mut z)) = parsed else { return fail("usage: grab_to <x m> <z m>") };
+            if !t.begin_grab(e) {
+                return fail("nothing selected");
+            }
+
+            if t.snap_grid && t.grid_m > 0.01 {
+                x = (x / t.grid_m).round() * t.grid_m;
+                z = (z / t.grid_m).round() * t.grid_m;
+            }
+
+            let d = document(e).expect("a tile");
+            let y = d.tile().terrain_height(x, z) + t.grab_y_offset as f32;
+            if let Some(g) = t.grab_elem {
+                d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture);
+            }
+
+            t.end_grab(e, true);
+            ok("")
+        })
+    });
+
+    c.add("duplicate", "duplicate", "duplicate the selected instance (4 m to the side) and select the copy", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(el) = el else { return fail("nothing selected") };
+        d.duplicate(el).map_or_else(fail, |_| ok("duplicated"))
+    });
+
+    c.add("delete_item", "delete_item", "delete the selected instance", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        if el.is_some_and(|el| d.remove(el)) { ok("deleted") } else { fail("nothing selected") }
+    });
+
+    c.add("rotate", "rotate <degrees>", "rotate the selected instance about the world Y axis", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(deg) = a.first().and_then(|x| number(x)) else { return fail("usage: rotate <degrees>") };
+        if el.is_some_and(|el| d.rotate(el, deg)) { ok("") } else { fail("nothing selected") }
+    });
+
+    c.add("add_building", "add_building <key> [x m z m]", "add a building (a copy of the selected or the first one, with this key), on the ground at x z when given", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(key) = a.first() else { return fail("usage: add_building <key> [x m z m]") };
+        let at = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten().map(|(x, z)| Float3::new(x, d.tile().terrain_height(x, z), z));
+        d.add_building(key, el, at, Placement::Landscape).map_or_else(fail, |_| ok(format!("added {key}")))
+    });
+
+    c.add("add_polygon", "add_polygon \"TYPE|HINT|x,z;x,z;...\"", "add a polygon (AI hint, zone, ...) from points in metres; selects it", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(spec) = a.first() else { return fail("usage: add_polygon \"TYPE|HINT|x,z;x,z;...\"") };
+        let parts = spec.split('|').collect::<Vec<_>>();
+        if parts.len() < 3 {
+            return fail("expected TYPE|HINT|x,z;x,z");
+        }
+
+        let pts = parts[2]
+            .split(';')
+            .filter_map(|item| {
+                let xz = item.split(',').collect::<Vec<_>>();
+                if xz.len() != 2 {
+                    return None;
+                }
+
+                let (x, z) = (number(xz[0])?, number(xz[1])?);
+                Some(Float3::new(x, d.tile().terrain_height(x, z), z))
+            })
+            .collect::<Vec<_>>();
+        let layer = match el {
+            Some(el) => d.tile().layer_of(el),
+            None => d.tile().tscene().scene_graph(),
+        };
+
+        d.add_polygon(layer, parts[0], parts[1], &pts).map_or_else(fail, |_| ok(format!("added {}", parts[0])))
+    });
+
+    c.add("polygon_point", "polygon_point move|insert|remove <index> <x m> <z m>", "edit a point of the selected polygon (insert: after the index)", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(idx) = a.get(1).and_then(|x| number(x)).filter(|_| a.len() >= 2) else {
+            return fail("usage: polygon_point move|insert|remove <index> <x m> <z m>");
+        };
+
+        let (x, z) = if a.len() >= 4 { (number(&a[2]).unwrap_or(0.0), number(&a[3]).unwrap_or(0.0)) } else { (0.0, 0.0) };
+        let Some(el) = el else { return fail("nothing selected") };
+        let Ok(idx) = usize::try_from(idx as i64) else { return fail("no such point") };
+        let p = Float3::new(x, d.tile().terrain_height(x, z), z);
+        d.polygon_point(el, &a[0], idx, p, 0).map_or_else(fail, |()| ok(""))
+    });
+
+    c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(name) = a.first() else { return fail("usage: new_layer <name>") };
+        let graph = d.tile().tscene().scene_graph();
+        d.add_layer(graph, name).map_or_else(fail, |_| ok(""))
+    });
+
+    c.add("move_to_layer", "move_to_layer <layer name>", "move the selected instance into the layer with this name", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(name) = a.first() else { return fail("usage: move_to_layer <layer name>") };
+        let Some(el) = el else { return fail("nothing selected") };
+        let sc = d.tile().tscene();
+        let Some(layer) = (0..sc.doc().elements().len()).find(|&i| sc.is_layer(i) && sc.name(i) == *name) else {
+            return fail(format!("no layer named '{name}'"));
+        };
+
+        d.move_to_layer(el, layer).map_or_else(fail, |_| ok(""))
+    });
+
+    c.add("save_to", "save_to <folder>", "write tile.ted and height_map_0.png into another folder (the originals stay)", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(dir) = a.first() else { return fail("usage: save_to <folder>") };
+        match d.save(&SaveTarget { path: PathBuf::from(dir) }) {
+            Ok(()) => ok(d.tile().last_message.clone()),
+            Err(msg) => fail(msg),
+        }
+    });
+
+    c.add("tile_diagnostics", "tile_diagnostics <file.txt>", "write the tile's counts and model fallbacks (what Tile Studio wrote next to a shot)", |e, a| {
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        let Some(path) = a.first() else { return fail("usage: tile_diagnostics <file.txt>") };
+        let text = e.docs.find_as::<TileDocument>(id).expect("a tile").tile().diagnostics(Some(&e.scene));
+        match std::fs::write(path, text) {
+            Ok(()) => ok(""),
+            Err(_) => fail(format!("cannot write {path}")),
+        }
+    });
+
+    // ---- scripted mouse on instances (the same events a real click or drag sends)
+    c.add("tile_click", "tile_click <element> [ctrl|shift]", "click the pixel where an instance is (selects it through the viewport, like the mouse)", |e, a| {
+        let (Some(d), Some(x)) = (document(e), a.first()) else { return fail("usage: tile_click <element> [ctrl|shift]") };
+        let Some(el) = usize::try_from(atoi(x)).ok().filter(|&el| d.tile().is_instance(el)) else { return fail("not an instance") };
+        let mut p = d.tile().world_position(el);
+        if d.tile().tscene().type_of(el) == "BUILDING_INSTANCE" {
+            p.y += d.tile().marker_radius(el) * 0.5;
+        }
+
+        click_at(e, p, "").unwrap_or_else(|| fail("the instance is not in view"))
+    });
+
+    c.add("tile_click_ground", "tile_click_ground <x m> <z m>", "click the pixel where a ground point is", |e, a| {
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: tile_click_ground <x m> <z m>") };
+        let p = Float3::new(x, d.tile().terrain_height(x, z), z);
+        click_at(e, p, "").unwrap_or_else(|| fail("the point is not in view"))
+    });
+
+    c.add("tile_drag_point", "tile_drag_point <index> <x m> <z m>", "drag a point handle of the selected polygon to a ground point with the mouse", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((idx, x, z))) = (document(e), parsed) else { return fail("usage: tile_drag_point <index> <x m> <z m>") };
+        let Some(el) = el.filter(|&el| d.tile().is_polygon(el)) else { return fail("no polygon selected") };
+        let pts = d.tile().polygon_world_points(el);
+        let Some(&from) = usize::try_from(idx as i64).ok().and_then(|i| pts.get(i)) else { return fail("no such point") };
+        let to = Float3::new(x, d.tile().terrain_height(x, z), z);
+        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+        mouse(e, &args, "")
+    });
+
+    c.add("draw_polygon", "draw_polygon <type> [hint]", "start drawing a polygon: click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
+        let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint]") };
+        with_tile(e, |t, _| {
+            let Some(i) = POLYGON_TYPES.iter().position(|p| p == kind) else {
+                t.new_poly_type = 0;
+                return fail(format!("unknown polygon type '{kind}'"));
+            };
+
+            t.new_poly_type = i;
+            if let Some(h) = a.get(1).and_then(|h| HINTS.iter().position(|x| x == h)) {
+                t.new_hint = h;
+            }
+
+            t.start_drawing();
+            ok("")
+        })
+    });
+
+    c.add("assert_at_cursor", "assert_at_cursor [tolerance]", "test: the selected instance is on the ground point the mouse last hovered", |e, a| {
+        with_doc(e, |t, e| {
+            let tol = a.first().and_then(|x| number(x)).unwrap_or(0.5);
+            let el = primary(e);
+            let (Some(el), true) = (el, t.terrain_hit) else { return fail("nothing selected or the cursor never touched the ground") };
+            let p = document(e).expect("a tile").tile().world_position(el);
+            let c = t.cursor;
+            if (p.x - c.x).abs() <= tol && (p.z - c.z).abs() <= tol {
+                ok("")
+            } else {
+                fail(format!("at {:.2} {:.2}, cursor {:.2} {:.2}", p.x, p.z, c.x, c.z))
+            }
+        })
+    });
+
+    c.add("assert_mode", "assert_mode select|raise|...", "test: the tile tool's left-button mode", |e, a| {
+        with_tile(e, |t, _| {
+            let now = MODE_NAMES[t.mode().index()];
+            if a.first().is_some_and(|x| x == now) { ok("") } else { fail(format!("mode is {now}")) }
+        })
+    });
+
+    c.add("assert_grabbing", "assert_grabbing 0|1", "test: whether a G grab is in progress", |e, a| {
+        with_tile(e, |t, _| {
+            if a.first().is_some_and(|x| (x == "1") == t.grabbing) { ok("") } else { fail(if t.grabbing { "grabbing" } else { "not grabbing" }) }
+        })
+    });
+
+    // ---- layers: flags, structure, export type. A layer is named by its path from the scene graph ("Walls/Standard_Walls"), "#n" is an
+    // element index.
+    c.add(
+        "tile_flag", "tile_flag <layer path | #elem | selected> visible|active on|off", "the eye (OIF_VISIBLE) or the cursor arrow (OIF_ACTIVE, selectable) of a layer or instance",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 3) else { return fail("usage: tile_flag <layer path | #elem | selected> visible|active on|off") };
+            let el = element_arg(d, &a[0], primary_of(&sel, d));
+            let Some(el) = el.filter(|&el| el < d.tile().tscene().doc().elements().len()) else { return fail(format!("no such layer or element '{}'", a[0])) };
+            let flag = match a[1].as_str() {
+                "visible" => "OIF_VISIBLE",
+                "active" => "OIF_ACTIVE",
+                _ => return fail("the flag is visible or active"),
+            };
+
+            let targets = if a[0] == "selected" { sel } else { vec![el] };
+            if d.set_flags(&targets, flag, a[2] == "on") { ok("") } else { ok(format!("already {}", a[2])) }
+        },
+    );
+
+    c.add("tile_new_layer", "tile_new_layer <name> [parent layer path]", "a new layer in a layer (the scene graph by default), selected", |e, a| {
+        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_new_layer <name> [parent layer path]") };
+        let parent = match a.get(1) {
+            Some(p) => d.tile().find_layer(p),
+            None => d.tile().tscene().scene_graph(),
+        };
+
+        d.add_layer(parent, &a[0]).map_or_else(|err| fail(if err.is_empty() { "no such parent layer".to_owned() } else { err }), |_| ok(""))
+    });
+
+    c.add("tile_rename", "tile_rename <layer path | #elem | selected> <name>", "rename a layer or an instance", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_rename <layer path | #elem | selected> <name>") };
+        let el = element_arg(d, &a[0], primary_of(&sel, d));
+        if el.is_some_and(|el| d.rename(el, &a[1])) { ok("") } else { fail(format!("no such layer or element '{}'", a[0])) }
+    });
+
+    c.add(
+        "tile_move_to", "tile_move_to <what: path | #elem | selected> <target layer path> [before <path | #elem>]",
+        "move layers / instances into a layer (in front of a sibling): the selection when `selected`", |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else {
+                return fail("usage: tile_move_to <path | #elem | selected> <target layer path> [before <path | #elem>]");
+            };
+
+            let p = primary_of(&sel, d);
+            let what = if a[0] == "selected" { sel.iter().copied().map(Some).collect() } else { vec![element_arg(d, &a[0], p)] };
+            let layer = element_arg(d, &a[1], p);
+            let before = if a.len() > 3 && a[2] == "before" { element_arg(d, &a[3], p) } else { None };
+            let (Some(Some(_)), Some(layer)) = (what.first(), layer) else { return fail("nothing to move, or no such target layer") };
+            let what = what.into_iter().flatten().collect::<Vec<_>>();
+            d.move_items(&what, layer, before).map_or_else(fail, |()| ok(""))
+        },
+    );
+
+    c.add("tile_group", "tile_group <new layer name>", "put the selected items into a new layer next to the first one", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_group <new layer name>") };
+        d.group_items(&sel, &a[0]).map_or_else(fail, |_| ok(""))
+    });
+
+    c.add("tile_delete", "tile_delete <layer path | #elem | selected>", "delete layers / instances (with everything below)", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_delete <layer path | #elem | selected>") };
+        let p = primary_of(&sel, d);
+        let what = if a[0] == "selected" { sel.iter().copied().map(Some).collect() } else { vec![element_arg(d, &a[0], p)] };
+        let ok_first = what.first().is_some_and(Option::is_some);
+        let what = what.into_iter().flatten().collect::<Vec<_>>();
+        if ok_first && d.remove_items(&what) { ok("") } else { fail("nothing to delete") }
+    });
+
+    c.add("tile_duplicate_layer", "tile_duplicate_layer <layer path>", "duplicate a layer with everything in it (named '<name> copy')", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_duplicate_layer <layer path>") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer") };
+        d.duplicate_layer(el).map_or_else(fail, |_| ok(""))
+    });
+
+    c.add("tile_export_type", "tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3", "the export type of a layer", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)).filter(|&el| d.tile().tscene().is_layer(el)) else { return fail("no such layer") };
+        if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
+    });
+
+    c.add("tile_select_layer", "tile_select_layer <layer path | #elem>", "select a layer or an element in the scene tree", |e, a| {
+        let Some(what) = a.first() else { return fail("usage: tile_select_layer <layer path | #elem>") };
+        let p = primary(e);
+        let Some(d) = document(e) else { return fail("usage: tile_select_layer <layer path | #elem>") };
+        let el = element_arg(d, what, p);
+        let Some(el) = el else { return fail("no such layer or element") };
+        select_elem(e, Some(el), false);
+        ok("")
+    });
+
+    c.add(
+        "tile_select_in", "tile_select_in <layer path> <type> [frame|click]",
+        "select the first instance of a type below a layer; `frame` points the camera at it, `click` clicks its pixel with the scripted mouse (frame it and wait some frames first)",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_select_in <layer path> <type> [click]") };
+            let Some(layer) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer") };
+            let t = d.tile();
+            let Some(found) = t.instances().iter().copied().find(|&el| t.tscene().type_of(el) == a[1] && t.tscene().is_descendant(el, layer)) else {
+                return fail(format!("no {} in {}", a[1], a[0]));
+            };
+
+            let p = t.world_position(found);
+            match a.get(2).map(String::as_str) {
+                Some("click") => {
+                    let mut q = p;
+                    if t.tscene().type_of(found) == "BUILDING_INSTANCE" {
+                        q.y += t.marker_radius(found) * 0.5;
+                    }
+
+                    click_at(e, q, format!("clicked element {found}")).unwrap_or_else(|| fail("the instance is not in view"))
+                }
+
+                // The camera looks at it (wait a few frames before clicking).
+                Some("frame") => {
+                    if !e.viewport.is_fly() {
+                        e.viewport.orbit_mut().set_orbit(0.8, 0.7, 60.0, p);
+                    }
+
+                    ok(format!("framed element {found}"))
+                }
+
+                _ => {
+                    select_elem(e, Some(found), false);
+                    ok(format!("element {found}"))
+                }
+            }
+        },
+    );
+
+    c.add("tile_tree", "tile_tree [depth]", "log the scene tree from the root down to a depth (default 2) with each layer's flags and child count", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let depth = a.first().map_or(2, |x| atoi(x));
+        let t = d.tile();
+        let sc = t.tscene();
+        let mut out = String::new();
+        let mut stack = sc.scene_graph().map(|g| vec![(g, 0i64)]).unwrap_or_default();
+        while let Some((el, level)) = stack.pop() {
+            let kids = sc.children(el);
+            out += &format!(
+                "{:width$}#{el} {} '{}' {}{}{} {}\n", "", sc.type_of(el), sc.name(el), if t.own_flag(el, "OIF_VISIBLE") { "V" } else { "-" },
+                if t.own_flag(el, "OIF_ACTIVE") { "A" } else { "-" }, if sc.is_layer(el) { format!(" export={}", t.export_type(el)) } else { String::new() },
+                kids.len(), width = (level * 2) as usize,
+            );
+            if level < depth {
+                stack.extend(kids.into_iter().filter(|&k| sc.is_layer(k)).rev().map(|k| (k, level + 1)));
+            }
+        }
+
+        ok(out)
+    });
+
+    c.add("assert_flag", "assert_flag <layer path | #elem> visible|active 0|1", "test: the element's own eye / cursor arrow", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 3) else { return fail("usage: assert_flag <layer path | #elem> visible|active 0|1") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
+        let v = d.tile().own_flag(el, if a[1] == "visible" { "OIF_VISIBLE" } else { "OIF_ACTIVE" });
+        if v == (a[2] == "1") { ok("") } else { fail(format!("{} {} is {}", a[0], a[1], if v { "1" } else { "0" })) }
+    });
+
+    c.add("assert_shown", "assert_shown <layer path | #elem> 0|1", "test: the element is drawn (visible itself and in every layer above)", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_shown <layer path | #elem> 0|1") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
+        let shown = d.tile().shown(el);
+        if shown == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if shown { " is shown" } else { " is hidden" })) }
+    });
+
+    c.add("assert_selectable", "assert_selectable <layer path | #elem> 0|1", "test: the element can be picked (active itself and in every layer above)", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_selectable <layer path | #elem> 0|1") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
+        let s = d.tile().selectable(el);
+        if s == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if s { " is selectable" } else { " is locked" })) }
+    });
+
+    c.add(
+        "assert_layer", "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>",
+        "test: facts of a layer (children n | exists 0|1 | export Type | child <index> <name>)", |e, a| {
+            let sel = selected(e);
+            let usage = "usage: assert_layer <layer path> <children n | exists 0|1 | export Type>";
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail(usage) };
+            let el = element_arg(d, &a[0], primary_of(&sel, d));
+            if a[1] == "exists" {
+                return if el.is_some() == a.get(2).is_some_and(|x| x == "1") { ok("") } else { fail(if el.is_some() { "the layer exists" } else { "no such layer" }) };
+            }
+
+            let Some(el) = el else { return fail(format!("no such layer '{}'", a[0])) };
+            let t = d.tile();
+            match (a[1].as_str(), a.len()) {
+                ("children", 3..) => {
+                    let n = t.tscene().children(el).len();
+                    if n as i64 == atoi(&a[2]) { ok("") } else { fail(format!("children: {n}")) }
+                }
+
+                ("export", 3..) => {
+                    let x = t.export_type(el);
+                    if x == a[2] { ok("") } else { fail(format!("export type {x}")) }
+                }
+
+                // The direct child at an index (counted from 0) has this name.
+                ("child", 4..) => {
+                    let kids = t.tscene().children(el);
+                    let got = usize::try_from(atoi(&a[2])).ok().and_then(|i| kids.get(i)).map_or_else(|| "(none)".to_owned(), |&k| t.tscene().name(k));
+                    if got == a[3] { ok("") } else { fail(format!("child {} is '{got}'", a[2])) }
+                }
+
+                _ => fail(usage),
+            }
+        },
+    );
+
+    c.add("assert_selection_names", "assert_selection_names <name>...", "test: the selected elements have exactly these names, in selection order", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let got = sel.iter().map(|&el| d.tile().tscene().name(el)).collect::<Vec<_>>().join(",");
+        let want = a.join(",");
+        if got == want { ok("") } else { fail(format!("selected: {got}")) }
+    });
+
+    // ---- placement: landscape / freeform, snapping, the off-terrain report
+    c.add(
+        "tile_placement", "tile_placement <path | #elem | selected> landscape|freeform",
+        "set the surface mode of the instances (layers: everything below); landscape snaps them to the terrain", |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_placement <path | #elem | selected> landscape|freeform") };
+            let p = primary_of(&sel, d);
+            let what = if a[0] == "selected" { sel.clone() } else { element_arg(d, &a[0], p).into_iter().collect() };
+            if what.is_empty() {
+                return fail(format!("no such layer or element '{}'", a[0]));
+            }
+
+            let mode = match a[1].as_str() {
+                "landscape" => Placement::Landscape,
+                "freeform" => Placement::Freeform,
+                _ => return fail("the mode is landscape or freeform"),
+            };
+
+            ok(format!("{} changed", d.set_placement(&what, mode)))
+        },
+    );
+
+    c.add(
+        "tile_snap", "tile_snap <path | #elem | selected | all> [freeform]",
+        "put landscape instances (with `freeform`: every instance) on the terrain; `all` is every instance of the tile", |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_snap <path | #elem | selected | all> [freeform]") };
+            let p = primary_of(&sel, d);
+            let what: Vec<usize> = match a[0].as_str() {
+                "all" => d.tile().tscene().scene_graph().into_iter().collect(),
+                "selected" => sel.clone(),
+                other => element_arg(d, other, p).into_iter().collect(),
+            };
+
+            if what.is_empty() {
+                return fail(format!("no such layer or element '{}'", a[0]));
+            }
+
+            ok(format!("{} moved", d.snap_to_terrain(&what, a.get(1).is_some_and(|x| x == "freeform"))))
+        },
+    );
+
+    c.add("tile_set_world", "tile_set_world <x m> <y m> <z m>", "type a world position for the selected instance (the Inspector's X / Y / Z fields)", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((x, y, z))) = (document(e), parsed) else { return fail("usage: tile_set_world <x m> <y m> <z m>") };
+        let Some(el) = el.filter(|&el| d.tile().is_instance(el)) else { return fail("no instance selected") };
+        d.set_world_metres(el, Float3::new(x, y, z), 0);
+        d.history_mut().break_merge();
+        ok("")
+    });
+
+    c.add(
+        "tile_report_off_terrain", "tile_report_off_terrain [tolerance m] [layer path]",
+        "log the landscape instances that are more than the tolerance (default 0.5) off the terrain, worst first", |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let tol = match a.first() {
+                Some(x) => match number(x) {
+                    Some(v) => v,
+                    None => return fail("usage: tile_report_off_terrain [tolerance m] [layer path]"),
+                },
+
+                None => 0.5,
+            };
+
+            let t = d.tile();
+            let among = match a.get(1) {
+                Some(path) => match t.find_layer(path) {
+                    Some(l) => Some(t.instances_below(&[l])),
+                    None => return fail(format!("no such layer '{path}'")),
+                },
+
+                None => None,
+            };
+
+            let list = t.off_terrain(tol, among.as_deref());
+            let mut s = format!("{} landscape instance(s) more than {} m off the terrain", list.len(), f6(tol));
+
+            // By type: how many, and the signed range of the offsets.
+            let mut by_type: BTreeMap<String, (usize, f32, f32)> = BTreeMap::new();
+            for o in &list {
+                let acc = by_type.entry(t.tscene().type_of(o.elem).to_owned()).or_insert((0, 1e30, -1e30));
+                acc.0 += 1;
+                acc.1 = acc.1.min(o.dy);
+                acc.2 = acc.2.max(o.dy);
+            }
+
+            for (ty, (n, lo, hi)) in &by_type {
+                s += &format!("\n  {ty}: {n} ({} .. {} m)", f6(*lo), f6(*hi));
+            }
+
+            for o in list.iter().take(8) {
+                let w = t.world_position(o.elem);
+                s += &format!(
+                    "\n  #{} {} '{}' {} m (world {} {} {}, terrain {})", o.elem, t.tscene().type_of(o.elem), t.tscene().name(o.elem), f6(o.dy), f6(w.x), f6(w.y), f6(w.z),
+                    f6(t.terrain_height(w.x, w.z)),
+                );
+            }
+
+            ok(s)
+        },
+    );
+
+    c.add("assert_placement", "assert_placement <path | #elem | selected> landscape|freeform|none", "test: the element's surface mode", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_placement <path | #elem | selected> landscape|freeform|none") };
+        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail(format!("no such element '{}'", a[0])) };
+        let got = match d.tile().placement(el) {
+            Placement::Landscape => "landscape",
+            Placement::Freeform => "freeform",
+            Placement::None => "none",
+        };
+
+        if got == a[1] { ok("") } else { fail(format!("placement is {got}, expected {}", a[1])) }
+    });
+
+    c.add(
+        "assert_on_terrain", "assert_on_terrain <path | #elem | selected> 0|1 [tolerance m]",
+        "test: the instance (any placement mode) stands on the terrain (y = the terrain height) or not; for a layer, all instances below it", |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_on_terrain <path | #elem | selected> 0|1 [tolerance m]") };
+            let tol = match a.get(2) {
+                Some(x) => match number(x) {
+                    Some(v) => v,
+                    None => return fail("bad tolerance"),
+                },
+
+                None => 0.001,
+            };
+
+            let p = primary_of(&sel, d);
+            let what = if a[0] == "selected" { sel.clone() } else { element_arg(d, &a[0], p).into_iter().collect() };
+            if what.is_empty() {
+                return fail(format!("no such element '{}'", a[0]));
+            }
+
+            // Any mode: the instance's y against the terrain at its x / z.
+            let t = d.tile();
+            let (mut off, mut worst) = (0usize, 0f32);
+            for el in t.instances_below(&what) {
+                let p = t.world_position(el);
+                let dy = p.y - t.landscape_y(el, p.x, p.z);
+                if dy.abs() > tol {
+                    off += 1;
+                    if dy.abs() > worst.abs() {
+                        worst = dy;
+                    }
+                }
+            }
+
+            let on = off == 0;
+            if on != (a[1] == "1") {
+                let now = if on { "all stand on the terrain".to_owned() } else { format!("{off} off the terrain, worst {} m", f6(worst)) };
+                return fail(format!("{now}, expected {}", if a[1] == "1" { "on" } else { "off" }));
+            }
+
+            ok("")
+        },
+    );
+
+    c.add(
+        "tile_dump_placement", "tile_dump_placement <file.tsv>",
+        "write every instance with its surface mode, world position and the terrain height under it (TSV), to study placement", |e, a| {
+            let (Some(d), Some(path)) = (document(e), a.first()) else { return fail("usage: tile_dump_placement <file.tsv>") };
+            let t = d.tile();
+            let mut out = "elem\ttype\tname\tmode\twx\twy\twz\tterrain\n".to_owned();
+            for &el in t.instances() {
+                let w = t.world_position(el);
+                let mode = match t.placement(el) {
+                    Placement::Landscape => "landscape",
+                    Placement::Freeform => "freeform",
+                    Placement::None => "none",
+                };
+
+                // The C++ stream wrote floats with 6 significant digits.
+                let g = |v: f32| wce_formats::c_num::printf_g(f64::from(v));
+                out += &format!(
+                    "{el}\t{}\t{}\t{mode}\t{}\t{}\t{}\t{}\n", t.tscene().type_of(el), t.tscene().name(el), g(w.x), g(w.y), g(w.z), g(t.terrain_height(w.x, w.z)),
+                );
+            }
+
+            match std::fs::write(path, out) {
+                Ok(()) => ok(format!("{} instances written", t.instances().len())),
+                Err(_) => fail(format!("cannot write {path}")),
+            }
+        },
+    );
+
+    c.add("assert_off_terrain_count", "assert_off_terrain_count <tolerance m> <n>", "test: n landscape instances of the tile are more than the tolerance off the terrain", |e, a| {
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((tol, n))) = (document(e), parsed) else { return fail("usage: assert_off_terrain_count <tolerance m> <n>") };
+        let got = d.tile().off_terrain(tol, None).len();
+        if got == n as usize { ok("") } else { fail(format!("{got} instances off the terrain, expected {}", a[1])) }
+    });
+
+    c.add("assert_placement_counts", "assert_placement_counts <landscape n> <freeform n>", "test: how many instances are landscape / freeform", |e, a| {
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((l, f))) = (document(e), parsed) else { return fail("usage: assert_placement_counts <landscape n> <freeform n>") };
+        let c = d.tile().placement_counts();
+        if c.landscape == l as usize && c.freeform == f as usize { ok("") } else { fail(format!("landscape {}, freeform {}", c.landscape, c.freeform)) }
+    });
+
+    // ---- ground look
+    c.add(
+        "tile_terrain", "tile_terrain blended|flat [climate] [season su|au|wi]",
+        "the ground colour of the open tile: the blend map mixed from the climate's textures, or the plain tiled texture", |e, a| {
+            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_terrain blended|flat [climate] [season su|au|wi]") };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let mut look = d.tile().terrain_look().clone();
+            match a[0].as_str() {
+                "blended" => look.blended = true,
+                "flat" => look.blended = false,
+                _ => return fail("the first word is blended or flat"),
+            }
+
+            if let Some(climate) = a.get(1) {
+                look.climate = climate.clone();
+            }
+
+            if let Some(season) = a.get(2) {
+                look.season = season.clone();
+            }
+
+            let climates = d.tile().climates();
+            if look.blended && climates.find(&look.climate).is_none() && !climates.climates.is_empty() {
+                return fail(format!("no climate '{}' in the kit's _settings.xml", look.climate));
+            }
+
+            d.tile_mut().set_terrain_look(&mut e.scene, look);
+            ok(d.tile().terrain_note().to_owned())
+        },
+    );
+
+    c.add(
+        "tile_ground_view", "tile_ground_view colour|groups|ground|protection",
+        "what the ground shows: the blended colour or a debug view of the tile's maps (blend groups, ground types, protection)", |e, a| {
+            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_ground_view colour|groups|ground|protection") };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let mut look = d.tile().terrain_look().clone();
+            look.blended = true;
+            look.view = match a[0].as_str() {
+                "colour" => TerrainView::Colour,
+                "groups" => TerrainView::BlendGroups,
+                "ground" => TerrainView::GroundTypes,
+                "protection" => TerrainView::Protection,
+                _ => return fail("the view is colour, groups, ground or protection"),
+            };
+
+            d.tile_mut().set_terrain_look(&mut e.scene, look);
+            ok(d.tile().terrain_note().to_owned())
+        },
+    );
+
+    c.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        if let Some(w) = a.first() {
+            if w != "on" && w != "off" {
+                return fail("usage: tile_links [on|off]");
+            }
+
+            d.tile_mut().display_mut().show_links = w == "on";
+            d.tile_mut().display_changed();
+            return ok("");
+        }
+
+        let cells = d.tile().link_cells();
+        let s = cells
+            .iter()
+            .map(|c| format!("\n  {}{} {}", if c.target { "target " } else if c.equals { "= " } else { "!= " }, c.set, c.text))
+            .collect::<String>();
+        ok(format!("{} link item(s){s}", cells.len()))
+    });
+
+    c.add("assert_links", "assert_links <targets n> <rules n> [drawn 0|1]", "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)", |e, a| {
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((t, r))) = (document(e), parsed) else { return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]") };
+        let cells = d.tile().link_cells();
+        let targets = cells.iter().filter(|c| c.target).count();
+        let rules = cells.len() - targets;
+        if targets != t as usize || rules != r as usize {
+            return fail(format!("{targets} targets, {rules} rules"));
+        }
+
+        let drawn = d.tile().links_drawn();
+        if a.get(2).is_some_and(|x| (x == "1") != drawn) {
+            return fail(format!("links are {}drawn", if drawn { "" } else { "not " }));
+        }
+
+        ok("")
+    });
+
+    c.add("assert_link_cell", "assert_link_cell <x> <y> <x0 m> <z0 m>", "test: the entry cell (x, y) lies at this world corner (the row counts from the +z edge)", |e, a| {
+        let parsed = (a.len() >= 4).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
+        let (Some(d), Some((x, y, ex, ez))) = (document(e), parsed) else { return fail("usage: assert_link_cell <x> <y> <x0 m> <z0 m>") };
+        let (x0, z0, _, _) = d.tile().cell_rect(x as i32, y as i32);
+        if (x0 - ex).abs() < 0.01 && (z0 - ez).abs() < 0.01 { ok("") } else { fail(format!("cell corner is {}, {}", f6(x0), f6(z0))) }
+    });
+
+    c.add("tile_water", "tile_water on|off", "show or hide the water (river ribbons, sea / lake plane) of the open tile", |e, a| {
+        let (Some(d), Some(w)) = (document(e), a.first().filter(|w| *w == "on" || *w == "off")) else { return fail("usage: tile_water on|off") };
+        d.tile_mut().display_mut().show_water = w == "on";
+        d.tile_mut().display_changed();
+        ok("")
+    });
+
+    c.add("assert_water", "assert_water <pieces n>", "test: the tile has n water meshes (river splines + the sea plane) in the scene (after a frame)", |e, a| {
+        let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: assert_water <pieces n>") };
+        let t = d.tile();
+        if t.water_pieces() == n as usize {
+            ok(t.water_note().to_owned())
+        } else {
+            fail(format!("{} water meshes: {}", t.water_pieces(), t.water_note()))
+        }
+    });
+
+    c.add(
+        "assert_ground", "assert_ground blended|flat [layers n] [climate]",
+        "test: the ground is drawn by the game's terrain shaders (with this many textures in the climate's set) or is the plain texture / a debug view", |e, a| {
+            let (Some(d), Some(kind)) = (document(e), a.first()) else { return fail("usage: assert_ground blended|flat [layers n] [climate]") };
+            let t = d.tile();
+
+            // A debug view's image.
+            let baked = t.baked_colour().is_some();
+            let g = t.ground_info();
+            let note = t.terrain_note().to_owned();
+            if kind == "flat" {
+                return if !g.game_shaders && !baked { ok("") } else { fail(format!("the ground is blended: {note}")) };
+            }
+
+            if !g.game_shaders && !baked {
+                return fail(format!("the ground is not blended: {note}"));
+            }
+
+            // A debug view of the maps: blended in the sense of the look.
+            if !g.game_shaders {
+                return ok(note);
+            }
+
+            if let Some(n) = a.get(1).and_then(|x| number(x))
+                && g.layers != n as i32
+            {
+                return fail(format!("{} textures, expected {}", g.layers, a[1]));
+            }
+
+            if let Some(climate) = a.get(2)
+                && g.climate != *climate
+            {
+                return fail(format!("climate {}, expected {climate}", g.climate));
+            }
+
+            ok(note)
+        },
+    );
+
+    c.add("assert_instances", "assert_instances <n>", "test: the tile has n instances", |e, a| {
+        let (Some(d), Some(n)) = (document(e), a.first()) else { return fail("usage: assert_instances <n> (with a tile open)") };
+        let have = d.tile().instances().len();
+        if have as i64 == atoi(n) { ok("") } else { fail(format!("instances: {have}, expected {n}")) }
+    });
+
+    c.add("assert_type_count", "assert_type_count <type> <n>", "test: the tile has n instances of a type", |e, a| {
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_type_count <type> <n> (with a tile open)") };
+        let n = d.tile().type_counts().get(&a[0]).copied().unwrap_or(0);
+        if i64::from(n) == atoi(&a[1]) { ok("") } else { fail(format!("{}: {n}, expected {}", a[0], a[1])) }
+    });
+
+    c.add("assert_world", "assert_world <x m> <y m> <z m> [tolerance]", "test: the selected instance is at this world position", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((x, y, z))) = (document(e), parsed) else { return fail("usage: assert_world <x m> <y m> <z m> [tolerance]") };
+        let tol = a.get(3).and_then(|v| number(v)).unwrap_or(0.01);
+        let Some(el) = el else { return fail("nothing selected") };
+        let p = d.tile().world_position(el);
+        if (p.x - x).abs() <= tol && (p.y - y).abs() <= tol && (p.z - z).abs() <= tol {
+            ok("")
+        } else {
+            fail(format!("at {:.3} {:.3} {:.3}, expected {x:.3} {y:.3} {z:.3}", p.x, p.y, p.z))
+        }
+    });
+
+    c.add("assert_world_xz", "assert_world_xz <x m> <z m> [tolerance]", "test: the selected instance is at this ground position (any height)", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_world_xz <x m> <z m> [tolerance]") };
+        let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.01);
+        let Some(el) = el else { return fail("nothing selected") };
+        let p = d.tile().world_position(el);
+        if (p.x - x).abs() <= tol && (p.z - z).abs() <= tol { ok("") } else { fail(format!("at {:.3} {:.3}, expected {x:.3} {z:.3}", p.x, p.z)) }
+    });
+
+    c.add("mark_height", "mark_height <name> <x m> <z m>", "remember the terrain height at a point under a name (for assert_height_delta)", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
+            let Some((x, z)) = parsed else { return fail("usage: mark_height <name> <x m> <z m>") };
+            let h = document(e).expect("a tile").tile().terrain_height(x, z);
+            t.marks.insert(a[0].clone(), h);
+            ok("")
+        })
+    });
+
+    c.add("assert_height_delta", "assert_height_delta <name> <x m> <z m> <min> <max>", "test: the height at a point changed by an amount in [min, max] since mark_height", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 5).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+            let Some((x, z, lo, hi)) = parsed else { return fail("usage: assert_height_delta <name> <x m> <z m> <min> <max>") };
+            let Some(&mark) = t.marks.get(&a[0]) else { return fail(format!("no mark '{}'", a[0])) };
+            let delta = document(e).expect("a tile").tile().terrain_height(x, z) - mark;
+            if delta >= lo && delta <= hi { ok("") } else { fail(format!("height changed by {delta:.4}, expected {lo:.4} .. {hi:.4}")) }
+        })
+    });
+
+    c.add("assert_height", "assert_height <x m> <z m> <height m> [tolerance]", "test: the terrain height at a point", |e, a| {
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((x, z, h))) = (document(e), parsed) else { return fail("usage: assert_height <x m> <z m> <height m> [tolerance]") };
+        let tol = a.get(3).and_then(|v| number(v)).unwrap_or(0.01);
+        let got = d.tile().terrain_height(x, z);
+        if (got - h).abs() <= tol { ok("") } else { fail(format!("height {got:.4}, expected {h:.4}")) }
+    });
+
+    c.add("assert_selected_type", "assert_selected_type <type>", "test: the primary selected element has this type", |e, a| {
+        let el = primary(e);
+        let (Some(d), Some(want)) = (document(e), a.first()) else { return fail("usage: assert_selected_type <type>") };
+        let Some(el) = el else { return fail("nothing selected") };
+        let ty = d.tile().tscene().type_of(el);
+        if ty == want { ok("") } else { fail(format!("selected {ty}")) }
+    });
+
+    c.add("assert_file_exists", "assert_file_exists <path>", "test: a file exists", |_, a| {
+        match a.first() {
+            Some(p) if Path::new(p).exists() => ok(""),
+            other => fail(format!("missing {}", other.map_or("", String::as_str))),
+        }
+    });
+}
+
+/// The first selected instance of `sel` (what "selected" names).
+fn primary_of(sel: &[usize], d: &TileDocument) -> Option<usize> {
+    sel.iter().copied().find(|&el| d.tile().is_instance(el))
+}
+
+/// An element named on a command line: "#123" (an element index), a layer path ("Walls/Standard_Walls"), "selected" (the first selected
+/// item, read before the document was borrowed).
+fn element_arg(d: &TileDocument, a: &str, primary: Option<usize>) -> Option<usize> {
+    if a.is_empty() {
+        return None;
+    }
+
+    if a == "selected" {
+        return primary;
+    }
+
+    if let Some(n) = a.strip_prefix('#') {
+        return usize::try_from(atoi(n)).ok();
+    }
+
+    d.tile().find_layer(a)
+}

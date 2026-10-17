@@ -81,17 +81,11 @@ Vfs::Config Vfs::default_config() {
 
     fs::path rpfm_dir;
     if (auto d = s.get("rpfm_dir", "WCE_RPFM_DIR")) rpfm_dir = fs::path(widen(*d));
-    if (auto e = s.get("rpfm_cli", "RPFM_CLI")) c.rpfm_cli = fs::path(widen(*e));
-    else if (!rpfm_dir.empty()) c.rpfm_cli = rpfm_dir / "rpfm_cli.exe";
 
     if (auto e = s.get("rpfm_server_exe", "WCE_RPFM_SERVER")) c.server.exe = fs::path(widen(*e));
-    else if (!rpfm_dir.empty()) c.server.exe = rpfm_dir / "rpfm_server.exe";
+    else if (!rpfm_dir.empty()) c.server.exe = rpfm_dir / exe_name("rpfm_server");
     if (auto p = s.get("rpfm_server_port", "WCE_RPFM_PORT")) c.server.port = std::atoi(p->c_str());
     if (auto a = s.get("rpfm_server_autostart", "WCE_RPFM_AUTOSTART")) c.server.autostart = *a != "0" && *a != "false" && *a != "off";
-    if (auto b = s.get("rpfm_backend", "WCE_RPFM_BACKEND")) {
-        if (*b == "server") c.backend = BackendMode::Server;
-        else if (*b == "cli") c.backend = BackendMode::Cli;
-    }
     c.server.game_key = c.profile.key;
     return c;
 }
@@ -117,24 +111,7 @@ std::string IVfs::normalize(std::string p) {
 }
 
 PackBackend& Vfs::backend() {
-    if (backend_) return *backend_;
-    const std::string& game = cfg_.profile.key;
-    switch (cfg_.backend) {
-    case BackendMode::Server: backend_ = make_rpfm_server_backend(cfg_.server); break;
-    case BackendMode::Cli: backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, game); break;
-    case BackendMode::Auto:
-        try {
-            backend_ = make_rpfm_server_backend(cfg_.server);
-        } catch (const std::exception& server_error) {
-            try {
-                backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, game);
-            } catch (const std::exception& cli_error) {
-                throw std::runtime_error(std::string("no way to read packs: ") + server_error.what() + "; " + cli_error.what());
-            }
-            backend_note_ = std::string("rpfm_server unavailable (") + server_error.what() + "); using rpfm_cli";
-        }
-        break;
-    }
+    if (!backend_) backend_ = make_rpfm_server_backend(cfg_.server);
     return *backend_;
 }
 
@@ -147,10 +124,9 @@ void Vfs::mount() {
     pack_case_.clear();
     if (cfg_.game_dir.empty() || !fs::exists(cfg_.game_dir))
         throw std::runtime_error("the game folder is not set or does not exist (game_dir in wce.ini, or the environment variable WCE_GAME)");
-    // rpfm_server and rpfm_cli run in another working directory: every path handed to them must be absolute.
+    // rpfm_server runs in another working directory: every path handed to it must be absolute.
     cfg_.game_dir = fs::absolute(cfg_.game_dir);
     cfg_.cache_dir = fs::absolute(cfg_.cache_dir);
-    if (!cfg_.rpfm_cli.empty()) cfg_.rpfm_cli = fs::absolute(cfg_.rpfm_cli);
     for (fs::path& f : cfg_.overlay_folders) f = fs::absolute(f);
 
     for (const fs::path& folder : cfg_.overlay_folders) {
@@ -297,28 +273,14 @@ void Vfs::extract(int pack, const std::vector<std::string>& paths) {
                     if (!fs::exists(root / widen(normalize(n)))) in_pack.push_back(n);
                 if (in_pack.empty()) continue;
 
-                const std::string reader = backend().name();
-                backend_->extract(packs_[size_t(pk)].path, in_pack, root);
+                backend().extract(packs_[size_t(pk)].path, in_pack, root);
 
-                // The server can report a successful tool call even when it did not write every requested file.
-                // Don't leave those misses looking like absent game assets: retry them with the CLI backend.
+                // Say so when the server did not write every requested file, so the misses don't look like absent game assets.
                 std::vector<std::string> missing;
                 for (const std::string& n : in_pack)
                     if (!fs::exists(root / widen(normalize(n)))) missing.push_back(n);
-                if (!missing.empty() && reader.rfind("rpfm_server", 0) == 0) {
-                    Log::warn("rpfm_server left " + std::to_string(missing.size()) + " file(s) unextracted from " + packs_[size_t(pk)].name + " (" + missing.front() + "); retrying with rpfm_cli");
-                    backend_ = make_rpfm_cli_backend(cfg_.rpfm_cli, cfg_.profile.key);
-                    backend_note_ = "rpfm_server left files unextracted; using rpfm_cli";
-                    try {
-                        backend_->extract(packs_[size_t(pk)].path, missing, root);
-                    } catch (const std::exception& e) {
-                        Log::warn("rpfm_cli retry failed for " + packs_[size_t(pk)].name + ": " + e.what());
-                    }
-                    missing.erase(std::remove_if(missing.begin(), missing.end(), [&](const std::string& n) {
-                        return fs::exists(root / widen(normalize(n)));
-                    }), missing.end());
-                    if (!missing.empty()) Log::warn("rpfm_cli also left " + std::to_string(missing.size()) + " file(s) unextracted from " + packs_[size_t(pk)].name + ": " + missing.front());
-                }
+                if (!missing.empty())
+                    Log::warn("rpfm_server left " + std::to_string(missing.size()) + " file(s) unextracted from " + packs_[size_t(pk)].name + ": " + missing.front());
             }
         } catch (...) {
             failure = std::current_exception();
@@ -341,8 +303,10 @@ std::optional<fs::path> Vfs::fetch_from(int pack, const std::string& path) {
     if (fs::exists(disk)) return disk;
     extract(pack, {path});
     if (fs::exists(disk)) return disk;
+#ifdef _WIN32
     if (disk.native().size() >= 260)
         throw std::runtime_error("path too long for rpfm (MAX_PATH): " + narrow(disk.native()));
+#endif
     return std::nullopt;
 }
 

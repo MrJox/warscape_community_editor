@@ -1,0 +1,18 @@
+[package]
+name = "wce_tile_editor"
+description = "The tile as a document of the editor: tile.ted and the height map on the shared command stack, publishing into the render scene, and the ground colour and material of a tile."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rayon = "1"
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
+wce_tile = { path = "../wce_tile" }
+wce_vfs = { path = "../wce_vfs" }
+
+[dev-dependencies]
+tempfile = "3"

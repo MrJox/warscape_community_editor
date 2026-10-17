@@ -10,6 +10,7 @@
 #include "vfs/vfs.h"
 #include "formats/xml_doc.h"
 #include "render/environment_apply.h"
+#include "render/gpu_adapter.h"
 #include "scene/environment.h"
 #include "render/shader_lib.h"
 
@@ -91,6 +92,7 @@ int main(int argc, char** argv) {
     }
     Microsoft::WRL::ComPtr<ID3D11Device> dev;
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
+    wce::prepare_d3d();
     if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, &fl, 1, D3D11_SDK_VERSION, &dev, nullptr, nullptr))) return 1;
     Vfs vfs(Vfs::default_config());
     vfs.mount();

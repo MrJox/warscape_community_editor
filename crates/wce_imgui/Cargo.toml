@@ -1,0 +1,24 @@
+[package]
+name = "wce_imgui"
+description = "Dear ImGui on the editor's window and device: the SDL3 platform backend and the D3D11 renderer backend for dear-imgui-rs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dear-imgui-rs = "0.20"
+dear-imgui-sys = "0.20"
+wce_d3d11 = { path = "../wce_d3d11" }
+windows-core.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Keep SDL3 linked to the same source-built library as the app on Windows.
+sdl3-sys = { version = "0.7", default-features = false, features = ["build-from-source"] }
+
+[target.'cfg(not(windows))'.dependencies]
+sdl3-sys = "0.7"
+
+[build-dependencies]
+
+[dev-dependencies]
+wce_render = { path = "../wce_render" }

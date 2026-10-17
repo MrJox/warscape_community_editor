@@ -230,6 +230,7 @@ private:
     struct Follow {
         int elem;
         Vec3 before, after;
+        std::string before_text;   // the position attribute as it was: undo puts these bytes back
     };
     // The brush step of BrushStepCommand: the landscape instances under the brush move with the terrain (y += the change of the height under each).
     void apply_brush_following(BrushKind kind, float x, float z, const BrushSettings& s, float dt, std::vector<Follow>& moved);
@@ -331,6 +332,7 @@ private:
     std::optional<std::vector<uint64_t>> hint_;
     bool stroke_open_ = false;
     uint64_t stroke_id_ = 0x5000;
+    uint64_t stroke_version_ = 0;          // the history's version after the stroke's last step
     size_t saved_height_depth_ = 0;
     bool ted_on_disk_edited_ = false, png_on_disk_edited_ = false;
 

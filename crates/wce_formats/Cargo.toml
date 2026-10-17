@@ -1,0 +1,17 @@
+[package]
+name = "wce_formats"
+description = "The editor's own file formats: lossless XML, and the formats rpfm_lib doesn't cover."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Classic zlib, built from libz-sys' bundled source: the kit's PNG encoder is reproduced byte for byte only by it (not by zlib-ng).
+libz-sys = { version = "1", default-features = false, features = ["libc", "static"] }
+memchr = "2"
+rayon = "1"
+thiserror = "2"
+
+[dev-dependencies]
+rpfm_lib.workspace = true
+tempfile = "3"
