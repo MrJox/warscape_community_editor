@@ -47,6 +47,12 @@ impl ImageTextures {
         self.ready.get(key).copied()
     }
 
+    /// Forgets one picture so the next `submit` replaces it (its file changed).
+    pub fn forget(&mut self, key: &str) {
+        self.pending.retain(|p| p.key != key);
+        self.ready.remove(key);
+    }
+
     /// Forgets everything (the game folder changed).
     pub fn clear(&mut self) {
         self.pending.clear();

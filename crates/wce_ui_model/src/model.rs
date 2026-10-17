@@ -5,6 +5,14 @@ use std::rc::Rc;
 use crate::dom::{Dom, Element, Form, Node};
 use wce_ui_format::is_array_tag;
 
+/// Where a moved component goes relative to the one it is dropped on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Before,
+    After,
+    Inside,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
     Entry,
@@ -100,6 +108,10 @@ fn set_int(parent: &mut Element, idx: usize, n: i64) {
             _ => break,
         }
     }
+}
+
+pub(crate) fn set_color_pub(e: &mut Element, rgba: [u8; 4]) {
+    set_color(e, rgba)
 }
 
 fn set_color(e: &mut Element, rgba: [u8; 4]) {
@@ -495,7 +507,7 @@ impl UiModel {
         self.delete(path)?;
         // Paths after the removal: the new parent may have shifted if it shares the old array.
         let mut np = new_parent.to_vec();
-        if np.len() > path.len() && np[..path.len() - 1] == path[..path.len() - 1] && np[path.len() - 1] > path[path.len() - 1] {
+        if np.len() >= path.len() && np[..path.len() - 1] == path[..path.len() - 1] && np[path.len() - 1] > path[path.len() - 1] {
             np[path.len() - 1] -= 1;
         }
         if keep_screen_position {
@@ -527,6 +539,28 @@ impl UiModel {
         Ok(p)
     }
 
+    /// Moves a component next to another one (before or after it, as its sibling) or into it (as its last child), with everything below
+    /// it. The component keeps its place on screen. Returns its new path.
+    pub fn move_to(&mut self, path: &[usize], target: &[usize], place: Place, keep_screen_position: bool) -> Result<Vec<usize>, String> {
+        if target.starts_with(path) {
+            return Err("a component cannot move into itself".into());
+        }
+
+        if place == Place::Inside {
+            return self.reparent(path, target, None, keep_screen_position);
+        }
+
+        let ents = self.entries();
+        let s = ents.iter().position(|e| e.path == path).ok_or("no such component")?;
+        let t = ents.iter().position(|e| e.path == target).ok_or("no such target")?;
+        let parent = ents[t].parent.ok_or("the root has no siblings: drop onto it instead")?;
+        let parent_path = ents[parent].path.clone();
+        // the place among the target's siblings once the moved component is out of the list
+        let sibs: Vec<usize> = (0..ents.len()).filter(|&k| ents[k].parent == Some(parent) && k != s).collect();
+        let at = sibs.iter().position(|&k| k == t).ok_or("the target is not in its parent")?;
+        self.reparent(path, &parent_path, Some(if place == Place::After { at + 1 } else { at }), keep_screen_position)
+    }
+
     /// Adds a component to `parent`: a copy of `like` (default: the parent's first child, else the parent itself) without its own children.
     pub fn add_child(&mut self, parent: &[usize], like: Option<&[usize]>, name: &str) -> Result<Vec<usize>, String> {
         let par = self.dom.at(parent).ok_or("no such parent")?;
@@ -544,7 +578,11 @@ impl UiModel {
                 p
             }
         };
-        let mut node = self.dom.at(&proto_path).ok_or("no component to copy")?.clone();
+        let mut node = match self.dom.at(&proto_path) {
+            Some(n) if n.name == "uientry" => n.clone(),
+            // a parent without children: copy the first plain component found anywhere in the layout
+            _ => first_uientry(&self.dom.root).ok_or("the layout has no component to copy")?.clone(),
+        };
         if node.name != "uientry" {
             return Err("the copied item is not a component".into());
         }
@@ -588,6 +626,26 @@ pub fn fix_counts(e: &mut Element) {
 
 fn id_comment(e: &Element, i: usize) -> bool {
     matches!(e.children.get(i + 1), Some(Node::Comment { text, inline: true }) if text.trim_start().starts_with("ID ("))
+}
+
+/// The first component of the layout that has no components below it: the plainest thing to copy.
+fn first_uientry(e: &Element) -> Option<&Element> {
+    for n in &e.children {
+        if let Node::Elem(c) = n {
+            if c.name == "uientry" {
+                let has_kids = c.find("children").is_some_and(|ch| ch.elems().any(|k| k.name == "uientry"));
+                if !has_kids {
+                    return Some(c);
+                }
+            }
+
+            if let Some(f) = first_uientry(c) {
+                return Some(f);
+            }
+        }
+    }
+
+    None
 }
 
 fn collect_ids(e: &Element, out: &mut Vec<u32>) {

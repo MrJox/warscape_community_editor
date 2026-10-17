@@ -91,7 +91,14 @@ impl Session {
     fn vfs(&mut self) -> Result<&Vfs, String> {
         if self.vfs.is_none() {
             let dir = self.game_dir.clone().ok_or("the game folder is not set: pass --game <folder>, set WCE_GAME, or run the editor once")?;
-            let v = Vfs::mount(&Config::new(dir, GameProfile::ATTILA)).map_err(|e| e.to_string())?;
+            let mut cfg = Config::new(dir, GameProfile::ATTILA);
+            if let Ok(o) = std::env::var("WCE_OVERLAY") {
+                cfg.overlay_folders = o.split(';').map(str::trim).filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
+            }
+            // the game's release packs, and the mods named in WCE_MOD_PACKS (; separated file names); not the launcher's list
+            cfg.use_mods = false;
+            cfg.mod_packs = Some(std::env::var("WCE_MOD_PACKS").map(|m| m.split(';').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect()).unwrap_or_default());
+            let v = Vfs::mount(&cfg).map_err(|e| e.to_string())?;
             self.vfs = Some(Rc::new(v));
         }
         Ok(self.vfs.as_deref().unwrap())
@@ -224,7 +231,7 @@ impl Session {
             return Ok(None);
         }
 
-        let list = skins::list(self.vfs()?);
+        let list = skins::list(self.vfs()?, None);
         if list.iter().any(|s| s.name == name) {
             return Ok(Some(name.to_string()));
         }
@@ -357,7 +364,7 @@ impl Session {
                 Ok(Reply::json(json!({
                     "index": i, "name": en.name, "class": en.class, "id": en.id,
                     "offset": [en.x, en.y], "size": [en.w, en.h], "screen": [en.ax, en.ay],
-                    "parent": en.parent, "children": kids, "fields": fields,
+                    "parent": en.parent, "children": kids, "properties": props_json(&d.model, &en.path), "fields": fields,
                 })))
             }
             "state" => {
@@ -366,7 +373,7 @@ impl Session {
                 let d = self.doc(&id)?;
                 let sp = d.model.default_state_path(&en.path).ok_or("entry has no state")?;
                 let fields: Vec<Value> = d.model.fields(&sp).into_iter().map(|f| json!({"field": f.idx, "type": f.tag, "label": f.label, "value": f.value})).collect();
-                Ok(Reply::json(json!({ "state_path": sp, "fields": fields })))
+                Ok(Reply::json(json!({ "state_path": sp, "properties": props_json(&d.model, &sp), "fields": fields })))
             }
             "set_field" => {
                 let id = self.id_of(a)?;
@@ -377,6 +384,30 @@ impl Session {
                 let d = self.doc_mut(&id)?;
                 let path = if in_state { d.model.default_state_path(&en.path).ok_or("entry has no state")? } else { en.path.clone() };
                 d.model.set_field(&path, field, &value)?;
+                d.dirty = true;
+                Ok(Reply::text("ok"))
+            }
+            "set_property" => {
+                let id = self.id_of(a)?;
+                let (_, en) = self.entry_arg(&id, a, "entry")?;
+                let name = arg_str(a, "name").ok_or("'name' (a property name from ui_entry or ui_state) is required")?.to_string();
+                let value = a.get("value").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).ok_or("'value' is required")?;
+                let d = self.doc_mut(&id)?;
+                let path = match arg_str(a, "state") {
+                    None | Some("") => {
+                        if arg_str(a, "scope") == Some("state") { d.model.default_state_path(&en.path).ok_or("entry has no state")? } else { en.path.clone() }
+                    }
+                    Some(st) => d.model.state_paths(&en.path).into_iter().find(|(_, n)| n == st).map(|(p, _)| p).ok_or_else(|| format!("the component has no state called {st:?}"))?,
+                };
+
+                let props = d.model.properties(&path);
+                let p = props
+                    .items
+                    .iter()
+                    .find(|p| p.name.eq_ignore_ascii_case(&name))
+                    .ok_or_else(|| format!("no property {name:?}; the names are: {}", props.items.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
+                let change = p.edit_from_text(&value)?;
+                d.model.edit_prop(&path, p.idx, change)?;
                 d.dirty = true;
                 Ok(Reply::text("ok"))
             }
@@ -534,7 +565,7 @@ impl Session {
                 Ok(Reply { text, png: Some(png) })
             }
             "skins" => {
-                let lines: Vec<String> = skins::list(self.vfs()?).iter().map(|s| format!("{} ({} pictures)", s.name, s.files)).collect();
+                let lines: Vec<String> = skins::list(self.vfs()?, None).iter().map(|s| format!("{} ({} pictures)", s.name, s.files)).collect();
                 Ok(Reply::text(lines.join("\n")))
             }
             "related" => {
@@ -707,4 +738,46 @@ impl Session {
         let rects = d.model.geometry(&ents, &DrawOptions::default());
         Ok(Reply::text(Self::row(i, &ents[i], &rects[i]).trim_start().to_string()))
     }
+}
+
+
+/// The properties of the element at `path` as JSON: the game's name, group, kind of control, shown value and choices.
+fn props_json(m: &wce_ui_model::UiModel, path: &[usize]) -> Vec<Value> {
+    use wce_ui_model::props::Control;
+    m.properties(path)
+        .items
+        .into_iter()
+        .map(|p| {
+            let kind = match &p.control {
+                Control::Text => "text",
+                Control::Int => "integer",
+                Control::Float => "number",
+                Control::Check => "yes/no",
+                Control::Choice(_) => "choice",
+                Control::Suggest(_) => "text",
+                Control::Bit { .. } => "yes/no",
+                Control::Colour => "colour",
+                Control::Info => "read-only",
+            };
+            let choices: Vec<String> = match &p.control {
+                Control::Choice(l) => l.iter().map(|(_, s)| s.clone()).collect(),
+                Control::Suggest(l) => l.iter().map(|s| s.to_string()).collect(),
+                _ => vec![],
+            };
+            let mut j = json!({"name": p.name, "group": p.group, "kind": kind, "value": p.shown(), "field": p.idx});
+            if !choices.is_empty() {
+                j["choices"] = json!(choices);
+            }
+
+            if !p.help.is_empty() {
+                j["help"] = json!(p.help);
+            }
+
+            if p.advanced {
+                j["advanced"] = json!(true);
+            }
+
+            j
+        })
+        .collect()
 }

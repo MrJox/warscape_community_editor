@@ -23,3 +23,21 @@ pub fn write_pack(pack_path: &Path, inside: &str, data: &[u8]) -> Result<(), Str
     pack.insert(file).map_err(|e| e.to_string())?;
     pack.save(Some(pack_path), game, &None).map_err(|e| e.to_string())
 }
+
+/// Writes a new mod pack (an existing file at `pack_path` is replaced) holding `files`: (path inside the pack, bytes).
+pub fn write_pack_many(pack_path: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
+    let games = SupportedGames::default();
+    let game = games.game("attila").ok_or("rpfm does not know attila")?;
+    let name = pack_path.file_name().and_then(|n| n.to_str()).unwrap_or("mod.pack");
+    let mut pack = Pack::new_with_name_and_version(name, game.pfh_version_by_file_type(PFHFileType::Mod));
+    pack.set_pfh_file_type(PFHFileType::Mod);
+    for (inside, data) in files {
+        pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
+    }
+
+    if let Some(parent) = pack_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    pack.save(Some(pack_path), game, &None).map_err(|e| e.to_string())
+}

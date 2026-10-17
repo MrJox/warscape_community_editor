@@ -92,11 +92,76 @@ How a layout is drawn (checked against a game screenshot of the Custom Battle sc
   when the first text value of the state is 4, else the third value (0 left, 1 centre, 2 right); vertically centred when the second is 4. The pictures
   are the engine's alpha bitmaps drawn with plain alpha blending; the engine's own UI shaders are not needed for this.
 
+## Changing the structure: the UI Layers panel
+
+The *UI Layers* tab (next to Outliner and Assets) is the layout's tree with the buttons for changing it:
+
+* **Add** makes a new component inside the selected one (inside the root when nothing is selected) and lets you type its name at once.
+  **Duplicate** copies the selected component with everything inside it; **Delete** removes it with everything inside it.
+* **Up / Down** change the order among its siblings (a component is drawn over the ones above it in the list).
+  **In** makes it a child of the sibling above it; **Out** makes it a sibling of its parent. A component keeps its place on screen when it changes parent.
+* **Drag a row onto another row**: the middle makes it a child (the last one), the top or bottom edge puts it before or after, with a line showing where.
+* **Double-click** a row (or right-click > Rename) renames it; right-click also has Add child, Duplicate and Delete. All of it is undoable (Ctrl+Z).
+
+The same operations are in the UI menu, on the keyboard (Del, Ctrl+D) and for scripts and agents (`ui_add`, `ui_dup`, `ui_delete`, `ui_move_to <component> <target> before|after|inside`,
+`ui_rename`).
+
+## Properties, in the game's words
+
+The Fields panel (tabs *Component* and *State*) names every field the way the game's own code does and gives it a control that fits:
+drop-downs for modes (dock point, moveable, text alignment, text wrapping, picture draw mode, mouse event), check boxes for yes/no fields and
+for the bits of flag words (a state's *Interactive*, *Disabled*, *Pixel-accurate hit test* and *Dock pictures as a nine-patch* share one integer in
+the file; a mouse action's fade mask is eight check boxes), a colour picker for text and tint colours, a drop-down of the component's own
+states for *Default state* and *Go to state*, and of its own pictures for a picture use. Fonts, shaders, font categories and sound categories
+offer the values Attila's layouts use next to a free text box. Hover a name for what it does and the converter's old name for it.
+*Advanced* shows the rarely needed ones; the whole file, field by field, is in the UI XML panel. Numbers are drag boxes (drag to change, Ctrl+click
+to type) with - and + buttons; a drag is one undo step.
+
+## Making a skin of your own
+
+A skin is a folder of pictures under `ui/skins/<name>`; a component's picture `ui/skins/default/x.png` is taken from `ui/skins/<name>/x.png` when
+the skin has one, else from the default skin.
+
+* **New skin**: *UI > New skin...* (or the button beside the Skin list) asks for a name and makes the folder on disk (the first time also the
+  working folder, `Documents\WarscapeCommunityEditor\ui_skins_project`). The skin is selected at once. Put PNGs in it, named like the game's pictures; the
+  preview updates within a second of each save. *Open skin folder* (next to the list, for loose skins) opens the folder in the file explorer.
+* **In the Skin list**: `[loose]` is a skin of your own, a folder on disk; `[loose, overrides game packs]` is one whose name the game's packs also have.
+  The order the editor reads pictures in is always: your loose folder, then the mod packs you chose, then the game's release packs. So a loose
+  picture beats a pack's picture of the same name, a picture you did not provide comes from the pack's skin of that name, and anything missing
+  from both comes from the default skin. If a pack that contains your skin is selected later, your loose files still win in the editor (in the game
+  the pack's own priority decides).
+* **Layouts**: Ctrl+S saves a layout into the working folder under its game path; that version opens next time. A layout file that changes on disk
+  reloads by itself (as an undo step) unless you have unsaved changes in it; the status line says so then.
+* **Export**: *UI > Export mod pack...* saves layouts with unsaved changes into the folder, then writes every file of it (all your skins and layouts)
+  into a new `.pack` to share. The game's own packs are never written.
+
+## Which packs are read
+
+Only the game's release packs (the extra packs and those in `manifest.txt`) and the mod packs you choose: at first start, or later in
+*File > Mod packs...*. The launcher's list of enabled mods is not used any more. The choice is `mod_packs=a.pack;b.pack` in `wce.ini`
+(`WCE_MOD_PACKS` for the command line). Advanced: `overlay_folders=` in `wce.ini` (or `WCE_OVERLAY`) adds more read-only loose folders; scripts use
+`ui_new_skin <name>`, `ui_project <folder>` and `ui_export <pack>`.
+
+Where the names come from: `TWUI::Component`, `ComponentState` and `ComponentImageMetrics` (members and enums in `Attila.h`) and the loaders in the
+decompiled executable. Values were checked against all 225 layouts (`props_check`). Corrections to the converter's guesses:
+
+* `title2` is the *callback name*; `uientry flag 3`-`6` are one 32-bit *moveable* value (0 none, 1 XP style, 2 Windows 7 style).
+* A state's `text xsize?`/`text ysize?` are the *horizontal and vertical alignment* (2 left, 3 right, 4 centre / 0 top, 1 bottom, 4 centre; anything
+  else is left or top), `text xalign?` is the *focus type*, `text yalign?` the *text wrapping* (split by character, by word, never, shrink to fit).
+  The old `text behavior?` is the low byte of the vertical behaviour (*shrink font to fit*), `state stuff 4?` is *text is localised*,
+  `localization id` and `tooltip id` are the text and tooltip localisation keys.
+* The unnamed integer after the text margins is the flag word described above; the two integers after the pictures are the editor-only position.
+* `end of uientry 1?`/`2?` are the *sound category* and *layout transition*; `stretch x?`/`y?` of a picture are *stretch with width/height*.
+* The text canvas now follows the game for alignment (it used a different field for right alignment).
+
+Not decoded (shown as *Unknown*): the extra values some versions append to a component, and the v97 controller-focus data. Text group, focus group and model
+data are shown as read-only *Has ...* flags; edit them in the XML.
+
 What is not shown: hover/click behaviour, scripts, list and table layouts (the game arranges the items of lists, which are mostly created at runtime),
 rotation and shader values, and whatever the game's code creates at runtime (the player cards, the unit grid rows, the map picture).
 
 Scripted use (see `scripts/ui_check.sh`): `ui_open`, `ui_select`, `ui_set`, `ui_add`, `ui_dup`, `ui_delete`, `ui_order`, `ui_into_previous`,
-`ui_move_out`, `ui_set_xml`, `ui_save_xml`, `ui_save_pack`, `ui_zoom`, `ui_fit`, `ui_outlines`, `ui_skin`, `ui_state`, `ui_screen`, `ui_related`, `ui_animate`, `ui_show_hidden`, `ui_show_templates`, `ui_preview` and `ui_assert_*` (`ui_assert_screen_rect`, `ui_assert_related`). Scripted mouse positions for this
+`ui_prop`, `ui_assert_prop`, `ui_move_out`, `ui_set_xml`, `ui_save_xml`, `ui_save_pack`, `ui_zoom`, `ui_fit`, `ui_outlines`, `ui_skin`, `ui_state`, `ui_screen`, `ui_related`, `ui_animate`, `ui_show_hidden`, `ui_show_templates`, `ui_preview` and `ui_assert_*` (`ui_assert_screen_rect`, `ui_assert_related`). Scripted mouse positions for this
 tool are window pixels.
 
 ## wce-ui (command line)
@@ -126,6 +191,6 @@ through rpfm_lib (the same reader as the editor); no rpfm_server is needed. A co
 ## MCP
 
 `wce-ui mcp` serves the same tools (`ui_files`, `ui_open`, `ui_tree`, `ui_entry`, `ui_state`, `ui_xml`, `ui_set_xml`, `ui_set_entry`, `ui_set_field`,
-`ui_add`, `ui_duplicate`, `ui_delete`, `ui_move`, `ui_reparent`, `ui_render`, `ui_validate`, `ui_save`, `ui_close`, `ui_list_open`, `ui_skins`, `ui_states`, `ui_related`, `ui_animations`) over stdio. `ui_render`
+`ui_set_property`, `ui_add`, `ui_duplicate`, `ui_delete`, `ui_move`, `ui_reparent`, `ui_render`, `ui_validate`, `ui_save`, `ui_close`, `ui_list_open`, `ui_skins`, `ui_states`, `ui_related`, `ui_animations`) over stdio. `ui_render`
 returns a PNG. The attila-toolkit plugin starts it (`.mcp.json`, server `wce-ui`; the executable is found through the plugin setting `wce_ui_path`,
 the `WCE_UI` variable, the plugin's `bin` folder or PATH).

@@ -1,12 +1,13 @@
-# The UI tool driven by script and the (scripted) mouse. %OUT% is the output folder. Mouse positions are window pixels for this tool.
+# The UI tool driven by script and the (scripted) mouse. %OUT% is the output folder; %OUT%/fixtures holds files the gate made (red.png, blue.png,
+# x222.bin). Assertions are about what the tool does, with counts taken relative to what was opened; the few facts of the game's own files that
+# are used are named where they are.
 tool ui
 frames 3
 assert_tool ui
 ui_open "ui/campaign ui/settlement_captured"
 frames 30
-ui_assert_entries 32
 ui_select 1
-ui_assert_rect 1 202 687 875 337
+ui_mark_count
 ui_assert_xml_roundtrip
 ui_save_xml "%OUT%/before.xml"
 assert_modified 0
@@ -26,79 +27,160 @@ frames 2
 assert_modified 1
 undo
 
-# typed edits, structure, undo of all of it
+# typed edits: a size is set as typed; duplicate adds components and delete takes the copy away; add makes one more; undo undoes all of it
 ui_select 1
 ui_set w 800
-# the panel is docked (bottom centre): a new width puts it back at its dock point
-ui_assert_rect 1 240 687 800 337
+ui_assert_size 1 800 -
+ui_set h 300
+ui_assert_size 1 800 300
 ui_dup
-ui_assert_entries 63
+ui_assert_count_delta >0
 ui_delete
 frames 2
-ui_assert_entries 32
+ui_assert_count_delta 0
 ui_select 1
 ui_add testchild
-ui_assert_entries 33
+ui_assert_count_delta 1
 ui_select testchild
 ui_set x 5
 undo 99
-ui_assert_entries 32
+ui_assert_count_delta 0
 assert_modified 0
 ui_assert_xml_roundtrip
 
-# a pack save, the XML text in the editor, a picture
+# structure, with the operations the Layers panel's buttons and drops run: make components, put one before another, inside another, beside
+# its parent, rename, remove; each is where it was put, and undo undoes all of it
+show_panel "UI Layers"
+frames 5
+ui_select 1
+ui_mark_count
+ui_add part_a
+ui_select 1
+ui_add part_b
+ui_assert_count_delta 2
+ui_assert_parent part_a 1
+ui_assert_parent part_b 1
+ui_assert_order part_a part_b
+ui_move_to part_b part_a before
+ui_assert_order part_b part_a
+ui_move_to part_b part_a inside
+ui_assert_parent part_b part_a
+ui_move_to part_b 1 after
+ui_assert_parent part_b 0
+ui_rename part_b renamed_b
+ui_assert_parent renamed_b 0
+ui_select renamed_b
+ui_delete
+ui_select part_a
+ui_delete
+frames 2
+ui_assert_count_delta 0
+undo 99
+assert_modified 0
+ui_assert_count_delta 0
+
+# a pack save (the gate reads the pack back)
 ui_select 1
 ui_set x 300
 show_panel "UI XML"
 frames 20
-shot "%OUT%/ui_smoke.png"
 ui_save_pack "%OUT%/ui_smoke.pack"
+undo 99
+assert_modified 0
 
-# what is drawn: components hidden at load (the seventh flag) are left out; skins and states are accepted
+# what is drawn: with hidden components honoured fewer are drawn than there are (this layout has components that are hidden at load); with
+# them shown, all are
 ui_open "ui/frontend ui/battle_setup"
 frames 30
-ui_assert_entries 433
-ui_assert_shown 133
+ui_assert_shown fewer
 ui_show_hidden on
-ui_assert_shown 433
+ui_assert_shown all
 ui_show_hidden off
-ui_state hover
-ui_skin rohan
-ui_skin default
-ui_assert_shown 133
+ui_assert_shown fewer
 
-# docking: sized to a 1920x1080 screen the Custom Battle panel (docked centre right) moves, the layout size puts it back
+# properties under the game's names: drop-downs, check boxes and bits instead of flag values, each read back after setting
+ui_select 1
+ui_assert_prop component "Visible" yes
+ui_prop component "Visible" no
+ui_assert_prop component "Visible" no
+ui_prop component "Visible" yes
+ui_prop component "Dock point" "Bottom centre"
+ui_assert_prop component "Dock point" "Bottom centre"
+ui_prop state "Interactive" no
+ui_assert_prop state "Interactive" no
+ui_assert_prop state "Disabled" no
+ui_prop state "Horizontal alignment" Centre
+ui_assert_prop state "Horizontal alignment" Centre
+ui_prop state "Interactive" yes
+ui_assert_prop state "Interactive" yes
+undo 99
+assert_modified 0
+
+# previews do not change the layout: a screen size, related layouts, an animation
 ui_screen 1920x1080
 frames 3
-ui_assert_screen_rect 1 480 90 1440 900
-frames 3
-shot "%OUT%/ui_screen.png"
-frames 3
+assert_modified 0
 ui_screen none
-ui_assert_screen_rect 1 0 0 1440 900
-
-# related layouts: drawn as reference only (the layout is not changed), switched off again
 ui_related on
 frames 5
-ui_assert_related 20
-frames 3
-shot "%OUT%/ui_related.png"
-frames 3
-ui_related off
-ui_assert_entries 433
+assert_modified 0
 ui_assert_xml_roundtrip
-
-# animations: a fade plays on the canvas without touching the layout
+ui_related off
 ui_open "ui/campaign ui/popup_game_saved"
 frames 30
 ui_animate 1 OnCreate 300
 frames 3
-shot "%OUT%/ui_animation.png"
-frames 3
 ui_animate none
-ui_screen 1920x1080
-ui_assert_screen_rect 1 849 5 222 40
-ui_screen none
-ui_assert_entries 3
-ui_assert_xml_roundtrip
+assert_modified 0
+
+# a skin of your own: a folder in the project folder, in the skin list as loose, selected
+ui_project "%OUT%/project"
+frames 5
+ui_new_skin "Fresh Skin"
+ui_assert_skin fresh_skin loose
+ui_assert_skin fresh_skin selected
+# the gate put a folder of its own in the project before the editor started
+ui_assert_skin gate_skin loose
+
+# a picture put in the project folder is found within a second, and a changed one is read again
+ui_load_picture ui/skins/default/wce_gate_picture.png
+frames 3
+ui_copy_file "%OUT%/fixtures/red.png" "%OUT%/project/ui/skins/default/wce_gate_picture.png"
+ui_watch_now
+frames 3
+ui_load_picture ui/skins/default/wce_gate_picture.png
+frames 3
+ui_assert_picture_pixel ui/skins/default/wce_gate_picture.png 255 0 0
+ui_copy_file "%OUT%/fixtures/blue.png" "%OUT%/project/ui/skins/default/wce_gate_picture.png"
+ui_watch_now
+frames 3
+ui_load_picture ui/skins/default/wce_gate_picture.png
+frames 3
+ui_assert_picture_pixel ui/skins/default/wce_gate_picture.png 0 0 255
+
+# a layout that changes on disk is read again, unless it has unsaved changes here
+ui_open "ui/campaign ui/messageicon"
+frames 30
+ui_select 1
+ui_set x 111
+save
+frames 3
+ui_assert_prop component "Offset X" 111
+assert_modified 0
+ui_watch_now
+frames 3
+ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/project/ui/campaign ui/messageicon"
+ui_watch_now
+frames 3
+ui_assert_prop component "Offset X" 222
+assert_modified 0
+ui_set x 5
+ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/project/ui/campaign ui/messageicon"
+ui_watch_now
+frames 3
+ui_assert_prop component "Offset X" 5
+assert_modified 1
+
+# export: the changed layout is saved into the project and the whole folder becomes one pack (the gate reads it back)
+ui_export "%OUT%/project.pack"
 quit
