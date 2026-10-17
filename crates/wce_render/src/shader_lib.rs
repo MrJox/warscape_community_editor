@@ -96,34 +96,32 @@ impl ShaderLibrary {
             let mut sd = D3D11_SHADER_DESC::default();
             refl.GetDesc(&mut sd).ok()?;
 
-            let code = &s.bytecode;
+            let code = s.bytecode.as_slice();
             let created = match shader_version_type(sd.Version) {
-                1 => {
-                    s.stage = Stage::Vs;
-                    self.dev.CreateVertexShader(code, None, Some(&mut s.vs))
-                }
+                1 => self.dev.create_vertex_shader(code).map(|vs| {
+                    s.vs = Some(vs);
+                    Stage::Vs
+                }),
 
-                0 => {
-                    s.stage = Stage::Ps;
-                    self.dev.CreatePixelShader(code, None, Some(&mut s.ps))
-                }
+                0 => self.dev.create_pixel_shader(code).map(|ps| {
+                    s.ps = Some(ps);
+                    Stage::Ps
+                }),
 
-                2 => {
-                    s.stage = Stage::Gs;
-                    self.dev.CreateGeometryShader(code, None, Some(&mut s.gs))
-                }
+                2 => self.dev.create_geometry_shader(code).map(|gs| {
+                    s.gs = Some(gs);
+                    Stage::Gs
+                }),
 
-                5 => {
-                    s.stage = Stage::Cs;
-                    self.dev.CreateComputeShader(code, None, Some(&mut s.cs))
-                }
+                5 => self.dev.create_compute_shader(code).map(|cs| {
+                    s.cs = Some(cs);
+                    Stage::Cs
+                }),
 
                 _ => return Err(RenderError(format!("unsupported shader stage: {name}"))),
             };
 
-            if created.is_err() {
-                return Err(RenderError(format!("create failed: {name}")));
-            }
+            s.stage = created.map_err(|_| RenderError(format!("create failed: {name}")))?;
 
             for r in 0..sd.BoundResources {
                 let mut bd = D3D11_SHADER_INPUT_BIND_DESC::default();
@@ -168,16 +166,13 @@ impl ShaderLibrary {
     /// # Errors
     ///
     /// Fails if the device refuses the layout.
-    pub fn layout(&mut self, vs: &GameShader, id: &str, elems: &[D3D11_INPUT_ELEMENT_DESC]) -> Result<ID3D11InputLayout, RenderError> {
+    pub fn layout(&mut self, vs: &GameShader, id: &str, elems: &[InputElement]) -> Result<ID3D11InputLayout, RenderError> {
         let key = format!("{}|{id}", vs.name);
         if let Some(layout) = self.layouts.get(&key) {
             return Ok(layout.clone());
         }
 
-        let mut layout = None;
-        // SAFETY: the element descriptions name semantics with static strings and the bytecode is the shader's.
-        let hr = unsafe { self.dev.CreateInputLayout(elems, &vs.bytecode, Some(&mut layout)) };
-        let layout = layout.filter(|_| hr.is_ok()).ok_or_else(|| RenderError(format!("input layout failed: {key}")))?;
+        let layout = self.dev.create_input_layout(elems, &vs.bytecode).map_err(|_| RenderError(format!("input layout failed: {key}")))?;
         self.layouts.insert(key, layout.clone());
         Ok(layout)
     }
@@ -185,26 +180,23 @@ impl ShaderLibrary {
 
 /// Binds a shader and its constant buffers. Textures and samplers are bound by name by the caller.
 pub fn bind_shader(ctx: &ID3D11DeviceContext, s: &GameShader, cbs: &ConstantBuffers) {
-    // SAFETY: binding calls with objects of this device.
-    unsafe {
-        match s.stage {
-            Stage::Vs => ctx.VSSetShader(s.vs.as_ref(), None),
-            Stage::Ps => ctx.PSSetShader(s.ps.as_ref(), None),
-            Stage::Gs => ctx.GSSetShader(s.gs.as_ref(), None),
-            Stage::Cs => ctx.CSSetShader(s.cs.as_ref(), None),
-            Stage::Hs | Stage::Ds => {}
-        }
+    match s.stage {
+        Stage::Vs => ctx.vs_set_shader(s.vs.as_ref()),
+        Stage::Ps => ctx.ps_set_shader(s.ps.as_ref()),
+        Stage::Gs => ctx.gs_set_shader(s.gs.as_ref()),
+        Stage::Cs => ctx.cs_set_shader(s.cs.as_ref()),
+        Stage::Hs | Stage::Ds => {}
+    }
 
-        for (name, &slot) in &s.cbuffers {
-            let Some(buffer) = cbs.find(name).and_then(|b| b.gpu.clone()) else { continue };
-            let buffers = [Some(buffer)];
-            match s.stage {
-                Stage::Vs => ctx.VSSetConstantBuffers(slot, Some(&buffers)),
-                Stage::Ps => ctx.PSSetConstantBuffers(slot, Some(&buffers)),
-                Stage::Gs => ctx.GSSetConstantBuffers(slot, Some(&buffers)),
-                Stage::Cs => ctx.CSSetConstantBuffers(slot, Some(&buffers)),
-                Stage::Hs | Stage::Ds => {}
-            }
+    for (name, &slot) in &s.cbuffers {
+        let Some(buffer) = cbs.find(name).and_then(|b| b.gpu.clone()) else { continue };
+        let buffers = [Some(buffer)];
+        match s.stage {
+            Stage::Vs => ctx.vs_set_constant_buffers(slot, &buffers),
+            Stage::Ps => ctx.ps_set_constant_buffers(slot, &buffers),
+            Stage::Gs => ctx.gs_set_constant_buffers(slot, &buffers),
+            Stage::Cs => ctx.cs_set_constant_buffers(slot, &buffers),
+            Stage::Hs | Stage::Ds => {}
         }
     }
 }
@@ -213,15 +205,12 @@ pub fn bind_shader(ctx: &ID3D11DeviceContext, s: &GameShader, cbs: &ConstantBuff
 pub fn bind_srv(ctx: &ID3D11DeviceContext, s: &GameShader, name: &str, srv: Option<&ID3D11ShaderResourceView>) {
     let Some(&slot) = s.textures.get(name) else { return };
     let views = [srv.cloned()];
-    // SAFETY: binding calls with objects of this device.
-    unsafe {
-        match s.stage {
-            Stage::Vs => ctx.VSSetShaderResources(slot, Some(&views)),
-            Stage::Ps => ctx.PSSetShaderResources(slot, Some(&views)),
-            Stage::Gs => ctx.GSSetShaderResources(slot, Some(&views)),
-            Stage::Cs => ctx.CSSetShaderResources(slot, Some(&views)),
-            Stage::Hs | Stage::Ds => {}
-        }
+    match s.stage {
+        Stage::Vs => ctx.vs_set_shader_resources(slot, &views),
+        Stage::Ps => ctx.ps_set_shader_resources(slot, &views),
+        Stage::Gs => ctx.gs_set_shader_resources(slot, &views),
+        Stage::Cs => ctx.cs_set_shader_resources(slot, &views),
+        Stage::Hs | Stage::Ds => {}
     }
 }
 
@@ -229,14 +218,11 @@ pub fn bind_srv(ctx: &ID3D11DeviceContext, s: &GameShader, name: &str, srv: Opti
 pub fn bind_sampler(ctx: &ID3D11DeviceContext, s: &GameShader, name: &str, smp: Option<&ID3D11SamplerState>) {
     let Some(&slot) = s.samplers.get(name) else { return };
     let samplers = [smp.cloned()];
-    // SAFETY: binding calls with objects of this device.
-    unsafe {
-        match s.stage {
-            Stage::Vs => ctx.VSSetSamplers(slot, Some(&samplers)),
-            Stage::Ps => ctx.PSSetSamplers(slot, Some(&samplers)),
-            Stage::Gs => ctx.GSSetSamplers(slot, Some(&samplers)),
-            Stage::Cs => ctx.CSSetSamplers(slot, Some(&samplers)),
-            Stage::Hs | Stage::Ds => {}
-        }
+    match s.stage {
+        Stage::Vs => ctx.vs_set_samplers(slot, &samplers),
+        Stage::Ps => ctx.ps_set_samplers(slot, &samplers),
+        Stage::Gs => ctx.gs_set_samplers(slot, &samplers),
+        Stage::Cs => ctx.cs_set_samplers(slot, &samplers),
+        Stage::Hs | Stage::Ds => {}
     }
 }

@@ -161,20 +161,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             }
 
             match a[0].as_str() {
-                "lod_scale" => r.lod_scale = atof(&a[1]) as f32,
-                "min_pixels" => r.min_pixels = atof(&a[1]) as f32,
-                "shadow_min_texels" => r.shadow_min_texels = atof(&a[1]) as f32,
+                "lod_scale" => r.settings.lod_scale = atof(&a[1]) as f32,
+                "min_pixels" => r.settings.min_pixels = atof(&a[1]) as f32,
+                "shadow_min_texels" => r.settings.shadow_min_texels = atof(&a[1]) as f32,
                 _ => {
                     let on = a[1] != "off" && a[1] != "0";
                     let flag = match a[0].as_str() {
-                        "shadows" => &mut r.shadows,
-                        "ssao" => &mut r.ssao,
-                        "fog" => &mut r.fog,
-                        "clouds" => &mut r.clouds,
-                        "lens_flare" => &mut r.lens_flare,
-                        "vignette" => &mut r.vignette,
-                        "depth_of_field" => &mut r.depth_of_field,
-                        "distortion" => &mut r.distortion,
+                        "shadows" => &mut r.settings.shadows,
+                        "ssao" => &mut r.settings.ssao,
+                        "fog" => &mut r.settings.fog,
+                        "clouds" => &mut r.settings.clouds,
+                        "lens_flare" => &mut r.settings.lens_flare,
+                        "vignette" => &mut r.settings.vignette,
+                        "depth_of_field" => &mut r.settings.depth_of_field,
+                        "distortion" => &mut r.settings.distortion,
                         _ => return fail(format!("unknown feature '{}'", a[0])),
                     };
 

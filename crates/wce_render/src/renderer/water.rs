@@ -57,7 +57,7 @@ const WATER_VERTEX: u32 = 32;
 impl Renderer {
 
     fn water_refraction(&mut self) {
-        let (tw, th) = ((self.w / 2).max(1), (self.h / 2).max(1));
+        let (tw, th) = ((self.gbuffer.w / 2).max(1), (self.gbuffer.h / 2).max(1));
         if self.water.refr.tex.is_none() || self.water.refr_w != tw || self.water.refr_h != th {
             self.water.refr = make_target(&self.dev, tw, th, DXGI_FORMAT_R16G16B16A16_FLOAT);
             self.water.refr_w = tw;
@@ -67,24 +67,20 @@ impl Renderer {
         let Some(ps) = self.shader(REFRACTION_PS) else { return };
         self.cbs.set_f("water_refraction_PS", "g_refraction_depth", &[REFRACTION_DEPTH]);
         null_ps_srvs(&self.ctx, 16);
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.water.refr.rtv)), None);
-            self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, tw as f32, th as f32)]));
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.OMSetDepthStencilState(self.ds_off.as_ref(), 0);
-            self.ctx.RSSetState(self.rs_none.as_ref());
-        }
+        self.ctx.set_render_targets(std::slice::from_ref(&self.water.refr.rtv), None);
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, tw as f32, th as f32)]);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
-        ps_samplers(&self.ctx, &ps, &self.s_clamp_linear);
-        bind_sampler(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.s_clamp_point.as_ref());
-        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gb[3].srv.as_ref());
-        bind_srv(&self.ctx, &ps, "s_light_accumulation_buffer", self.hdr.srv.as_ref());
+        ps_samplers(&self.ctx, &ps, &self.states.s_clamp_linear);
+        bind_sampler(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.states.s_clamp_point.as_ref());
+        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_light_accumulation_buffer", self.gbuffer.hdr.srv.as_ref());
         self.upload();
         self.fullscreen(&ps);
         null_ps_srvs(&self.ctx, 16);
-        // SAFETY: a state call.
-        unsafe { self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, self.w as f32, self.h as f32)])) };
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, self.gbuffer.w as f32, self.gbuffer.h as f32)]);
     }
 
     pub(crate) fn pass_water(&mut self, scene: &RenderScene, rivers: bool) {
@@ -134,8 +130,7 @@ impl Renderer {
                 StencilReadMask: 0xFF, StencilWriteMask: 0xFF, FrontFace: replace, BackFace: replace,
             };
 
-            // SAFETY: a plain creation call.
-            let _ = unsafe { self.dev.CreateDepthStencilState(&dd, Some(&mut self.water.ds)) };
+            self.water.ds = self.dev.create_depth_stencil_state(&dd).ok();
         }
 
         // The instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, identity (the vertices are in world space).
@@ -187,33 +182,30 @@ impl Renderer {
         self.upload();
 
         null_ps_srvs(&self.ctx, 16);
-        let rtvs = [self.gb[0].rtv.clone(), self.gb[1].rtv.clone(), self.gb[2].rtv.clone(), self.hdr.rtv.clone()];
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(&rtvs), self.dsv.as_ref());
-            self.ctx.OMSetDepthStencilState(self.water.ds.as_ref(), 1);
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.RSSetState(self.rs_none.as_ref());
-            self.ctx.IASetInputLayout(&layout);
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-        }
+        let rtvs = [self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()];
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), 1);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         self.bind(&vs);
         self.bind(&ps);
         let ctx = &self.ctx;
-        bind_srv(ctx, &vs, "t_low_res_height_map", self.black_srv.as_ref());
-        ps_samplers(ctx, &ps, &self.s_clamp_linear);
-        bind_sampler(ctx, &ps, "s_normal", self.s_wrap_linear.as_ref());
-        bind_sampler(ctx, &ps, "s_environment", self.s_wrap_linear.as_ref());
-        bind_sampler(ctx, &ps, "s_terrain_refraction", self.s_clamp_point.as_ref());
-        bind_sampler(ctx, &ps, "gbuffer_channel_4_sampler", self.s_clamp_point.as_ref());
-        bind_sampler(ctx, &ps, "s_sky", self.s_clamp_linear.as_ref());
-        let normal = nt.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.black_srv.clone());
+        bind_srv(ctx, &vs, "t_low_res_height_map", self.res.black_srv.as_ref());
+        ps_samplers(ctx, &ps, &self.states.s_clamp_linear);
+        bind_sampler(ctx, &ps, "s_normal", self.states.s_wrap_linear.as_ref());
+        bind_sampler(ctx, &ps, "s_environment", self.states.s_wrap_linear.as_ref());
+        bind_sampler(ctx, &ps, "s_terrain_refraction", self.states.s_clamp_point.as_ref());
+        bind_sampler(ctx, &ps, "gbuffer_channel_4_sampler", self.states.s_clamp_point.as_ref());
+        bind_sampler(ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
+        let normal = nt.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.black_srv.clone());
         bind_srv(ctx, &ps, "s_normal", normal.as_ref());
-        bind_srv(ctx, &ps, "s_environment", if self.env_valid { self.env_cube_srv.as_ref() } else { self.sky_cube_srv.as_ref() });
-        bind_srv(ctx, &ps, "s_sky", self.sky_cube_srv.as_ref());
+        bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
+        bind_srv(ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
         bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
-        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gb[3].srv.as_ref());
+        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
         let inst_stride = if rivers { 64u32 } else { 96 };
         for e in scene.entities() {
@@ -223,18 +215,14 @@ impl Renderer {
                 continue;
             }
 
-            // SAFETY: drawing calls with buffers of this device.
-            unsafe {
-                ctx.IASetVertexBuffers(0, 2, Some([mesh.vb.clone(), inst.clone()].as_ptr()), Some([WATER_VERTEX, inst_stride].as_ptr()), Some([0u32, 0].as_ptr()));
-                ctx.IASetIndexBuffer(mesh.ib.as_ref(), DXGI_FORMAT_R32_UINT, 0);
-                ctx.DrawIndexedInstanced(mesh.index_count, 1, 0, 0, 0);
-            }
+            ctx.set_vertex_buffers(0, &[mesh.vb.clone(), inst.clone()], &[WATER_VERTEX, inst_stride], &[0, 0]);
+            ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R32_UINT, 0);
+            ctx.draw_indexed_instanced(mesh.index_count, 1, 0, 0, 0);
 
             self.draw_stats.draw_calls += 1;
         }
 
         null_ps_srvs(&self.ctx, 16);
-        // SAFETY: a state call.
-        unsafe { self.ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.hdr.rtv)), self.dsv.as_ref()) };
+        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
     }
 }

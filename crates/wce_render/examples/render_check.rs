@@ -70,7 +70,7 @@ fn orbit(yaw: f32, pitch: f32, dist: f32, target: Float3) -> Camera {
 /// Renders `frames` fixed-step frames; the last one stays in `target`.
 fn render_frames(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &mut RenderTarget, frames: usize) {
     let mut clock = Clock::fixed(1.0 / 60.0);
-    r.deterministic = true;
+    r.settings.deterministic = true;
     for _ in 0..frames {
         clock.tick();
         r.render(scene, &ViewParams { camera: *cam, time_s: clock.time() as f32 }, target);
@@ -246,14 +246,14 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         g.check(r.pick(&scene, &vp, &t, 3, 3) == 0, "picking empty sky finds nothing");
 
         // Selection outline, grid, depth-test off.
-        r.selection = vec![hill_id];
+        r.settings.selection = vec![hill_id];
         render_frames(&mut r, &scene, &cam, &mut t, 1);
         g.check(read(&gpu, &t).count_near_all([255, 217, 51], 4) > 20, "a selected entity is outlined");
-        r.selection.clear();
-        r.show_grid = true;
+        r.settings.selection.clear();
+        r.settings.show_grid = true;
         render_frames(&mut r, &scene, &cam, &mut t, 1);
         g.check(read(&gpu, &t).rgba != base.rgba, "the grid changes the image");
-        r.show_grid = false;
+        r.settings.show_grid = false;
         if let Some(Payload::Overlay(b)) = scene.find_mut(buried_id).map(|e| &mut e.payload) {
             b.depth_test = false;
         }

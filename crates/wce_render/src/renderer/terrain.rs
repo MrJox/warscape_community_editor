@@ -148,10 +148,7 @@ fn is_simple_world(w: &Float4x4) -> bool {
 }
 
 fn depth_stencil(dev: &ID3D11Device, d: &D3D11_DEPTH_STENCIL_DESC) -> Option<ID3D11DepthStencilState> {
-    let mut state = None;
-    // SAFETY: a plain creation call.
-    let _ = unsafe { dev.CreateDepthStencilState(d, Some(&mut state)) };
-    state
+    dev.create_depth_stencil_state(d).ok()
 }
 
 impl Renderer {
@@ -192,8 +189,7 @@ impl Renderer {
 
         // The blend boxes: their back faces cover the pixels once, also from inside the box.
         let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_FRONT, DepthClipEnable: true.into(), ..Default::default() };
-        // SAFETY: a plain creation call.
-        let _ = unsafe { dev.CreateRasterizerState(&rd, Some(&mut t.rs_front_cull)) };
+        t.rs_front_cull = dev.create_rasterizer_state(&rd).ok();
 
         // The 65 x 65 vertex grid of a patch (x, 0, z in cells); the height comes from the texture.
         let mut grid = Vec::with_capacity(((PATCH_CELLS + 1) * (PATCH_CELLS + 1) * 3) as usize);
@@ -263,22 +259,11 @@ impl Renderer {
             Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let sd = D3D11_SUBRESOURCE_DATA { pSysMem: tex.as_ptr().cast(), SysMemPitch: (s * 4) as u32, SysMemSlicePitch: 0 };
-        let mut tx = None;
-        // SAFETY: the texels live during the calls.
-        unsafe {
-            if self.dev.CreateTexture2D(&td, Some(&sd), Some(&mut tx)).is_err() {
-                self.terrain.geo.insert(id, g);
-                return;
-            }
-
-            if let Some(tx) = &tx
-                && self.dev.CreateShaderResourceView(tx, None, Some(&mut g.height_srv)).is_err()
-            {
-                g.height_srv = None;
-                self.terrain.geo.insert(id, g);
-                return;
-            }
+        let sd = [InitData::new(bytemuck::cast_slice(&tex), (s * 4) as u32)];
+        g.height_srv = self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok();
+        if g.height_srv.is_none() {
+            self.terrain.geo.insert(id, g);
+            return;
         }
 
         let (cx, cz) = (t.nx - 1, t.nz - 1);
@@ -419,15 +404,9 @@ impl Renderer {
             Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let sd = D3D11_SUBRESOURCE_DATA { pSysMem: lp.as_ptr().cast(), SysMemPitch: 16 * 8, SysMemSlicePitch: 0 };
-        let mut tx = None;
-        // SAFETY: the texels live during the calls.
-        unsafe {
-            if self.dev.CreateTexture2D(&td, Some(&sd), Some(&mut tx)).is_ok()
-                && let Some(tx) = &tx
-            {
-                let _ = self.dev.CreateShaderResourceView(tx, None, Some(&mut g.light_params));
-            }
+        let sd = [InitData::new(bytemuck::cast_slice(&lp), 16 * 8)];
+        if let Ok(tx) = self.dev.create_texture_2d(&td, Some(&sd)) {
+            g.light_params = self.dev.create_shader_resource_view(&tx, None).ok();
         }
 
         // A few live at a time.
@@ -444,7 +423,7 @@ impl Renderer {
         self.terrain.entities.clear();
 
         // A shader that didn't load: the legacy ground stays.
-        if self.env_pass || self.terrain.failed {
+        if self.env.active || self.terrain.failed {
             return false;
         }
 
@@ -489,27 +468,24 @@ impl Renderer {
         };
 
         // The targets.
-        if self.terrain.zw.tex.is_none() || self.terrain.rt_w != self.w || self.terrain.rt_h != self.h {
-            self.terrain.zw = make_target(&self.dev, self.w, self.h, DXGI_FORMAT_R32_FLOAT);
-            self.terrain.viewz = make_target(&self.dev, self.w, self.h, DXGI_FORMAT_R32_FLOAT);
+        if self.terrain.zw.tex.is_none() || self.terrain.rt_w != self.gbuffer.w || self.terrain.rt_h != self.gbuffer.h {
+            self.terrain.zw = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
+            self.terrain.viewz = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
             for i in 0..3 {
-                self.terrain.acc[i] = make_target(&self.dev, self.w, self.h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+                self.terrain.acc[i] = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R16G16B16A16_FLOAT);
             }
 
-            self.terrain.rt_w = self.w;
-            self.terrain.rt_h = self.h;
+            self.terrain.rt_w = self.gbuffer.w;
+            self.terrain.rt_h = self.gbuffer.h;
         }
 
         null_ps_srvs(&self.ctx, 16);
-        // SAFETY: clears of views of this device.
-        unsafe {
-            for rtv in [&self.terrain.zw.rtv, &self.terrain.viewz.rtv].into_iter().flatten() {
-                self.ctx.ClearRenderTargetView(rtv, &[1.0, 0.0, 0.0, 1.0]);
-            }
+        for rtv in [&self.terrain.zw.rtv, &self.terrain.viewz.rtv].into_iter().flatten() {
+            self.ctx.clear_render_target_view(rtv, [1.0, 0.0, 0.0, 1.0]);
+        }
 
-            for a in self.terrain.acc.iter().filter_map(|a| a.rtv.as_ref()) {
-                self.ctx.ClearRenderTargetView(a, &[0.0; 4]);
-            }
+        for a in self.terrain.acc.iter().filter_map(|a| a.rtv.as_ref()) {
+            self.ctx.clear_render_target_view(a, [0.0; 4]);
         }
 
         // ---- 1. The surface (per terrain entity: geometry, then the pixel shader's two outputs).
@@ -546,14 +522,11 @@ impl Renderer {
         ];
 
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_el) else { return };
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.RSSetState(self.rs_none.as_ref());
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.IASetInputLayout(&geom_il);
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-            self.ctx.IASetVertexBuffers(0, 1, Some(&self.terrain.grid_vb), Some(&12), Some(&0));
-        }
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_input_layout(Some(&geom_il));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.grid_vb), &[12], &[0]);
 
         let (zw_rtv, viewz_rtv) = (self.terrain.zw.rtv.clone(), self.terrain.viewz.rtv.clone());
         let (ds_depth, ds_equal) = (self.terrain.ds_depth.clone(), self.terrain.ds_equal.clone());
@@ -571,14 +544,11 @@ impl Renderer {
 
         let Some(il) = self.layout(&blend_vs, "terrain_box", &el) else { return };
         let acc = self.terrain.acc.iter().map(|a| a.rtv.clone()).collect::<Vec<_>>();
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(&acc), self.dsv.as_ref());
-            self.ctx.OMSetDepthStencilState(self.terrain.ds_stencil.as_ref(), 2);
-            self.ctx.OMSetBlendState(self.terrain.bs_add.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.RSSetState(self.terrain.rs_front_cull.as_ref());
-            self.ctx.IASetInputLayout(&il);
-        }
+        self.ctx.set_render_targets(&acc, self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.terrain.ds_stencil.as_ref(), 2);
+        self.ctx.set_blend_state(self.terrain.bs_add.as_ref());
+        self.ctx.set_rasterizer_state(self.terrain.rs_front_cull.as_ref());
+        self.ctx.set_input_layout(Some(&il));
 
         for e in &ents {
             let Payload::Terrain(t) = &e.payload else { continue };
@@ -647,29 +617,23 @@ impl Renderer {
             bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
             bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
             bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
-            ps_samplers(ctx, &blend_ps, &self.s_clamp_linear);
-            bind_sampler(ctx, &blend_ps, "s_depth_map", self.s_clamp_point.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_light_params", self.s_clamp_point.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_diffuse_array", self.s_wrap_aniso.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_normal_array", self.s_wrap_aniso.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_lf_normal_map", self.s_wrap_linear.as_ref());
+            ps_samplers(ctx, &blend_ps, &self.states.s_clamp_linear);
+            bind_sampler(ctx, &blend_ps, "s_depth_map", self.states.s_clamp_point.as_ref());
+            bind_sampler(ctx, &blend_ps, "s_light_params", self.states.s_clamp_point.as_ref());
+            bind_sampler(ctx, &blend_ps, "s_diffuse_array", self.states.s_wrap_aniso.as_ref());
+            bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_aniso.as_ref());
+            bind_sampler(ctx, &blend_ps, "s_lf_normal_map", self.states.s_wrap_linear.as_ref());
 
             // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max), rotation index 0 and the layer base 0 (T3).
             let inst = [0.0, 1.0, 2.0, 3.0, m.x0 as f32, m.y0 as f32, m.z0 as f32, 0.0, m.x1 as f32, m.y1 as f32, m.z1 as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
             let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-            // SAFETY: the instance buffer is written within its size while mapped; drawing calls with buffers of this device.
-            unsafe {
-                let mut ms = D3D11_MAPPED_SUBRESOURCE::default();
-                if ctx.Map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut ms)).is_err() {
-                    continue;
-                }
-
-                std::ptr::copy_nonoverlapping(inst.as_ptr(), ms.pData.cast::<f32>(), 16);
-                ctx.Unmap(&inst_vb, 0);
-                ctx.IASetVertexBuffers(0, 2, Some([self.terrain.box_vb.clone(), Some(inst_vb)].as_ptr()), Some([12u32, 64].as_ptr()), Some([0u32, 0].as_ptr()));
-                ctx.IASetIndexBuffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-                ctx.DrawIndexedInstanced(36, 1, 0, 0, 0);
+            if !ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &inst)) {
+                continue;
             }
+
+            ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb)], &[12, 64], &[0, 0]);
+            ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+            ctx.draw_indexed_instanced(36, 1, 0, 0, 0);
 
             self.draw_stats.draw_calls += 1;
         }
@@ -680,15 +644,12 @@ impl Renderer {
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
         let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
         let Some(il) = self.layout(&res_vs, "terrain_resolve", &el) else { return };
-        let rtvs = self.gb.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(&rtvs), self.dsv.as_ref());
-            self.ctx.OMSetDepthStencilState(self.terrain.ds_resolve.as_ref(), 2);
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.RSSetState(self.rs_none.as_ref());
-            self.ctx.IASetInputLayout(&il);
-        }
+        let rtvs = self.gbuffer.channels.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.terrain.ds_resolve.as_ref(), 2);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_input_layout(Some(&il));
 
         let cbs = &mut self.cbs;
         cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]);
@@ -711,43 +672,34 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_far_diffuse_map", g.black.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_mask_map", g.black.srv.as_ref());
-        bind_srv(ctx, &res_ps, "s_shroud", self.white_srv.as_ref());
+        bind_srv(ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(ctx, &res_ps, "s_snow_normals", g.lf_normal.srv.as_ref());
         bind_srv(ctx, &res_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
-        let dc = dc.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.white_srv.clone());
+        let dc = dc.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
         let dn = dn.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| g.lf_normal.srv.clone());
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_colour", dc.as_ref());
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_normal", dn.as_ref());
-        ps_samplers(ctx, &res_ps, &self.s_wrap_linear);
+        ps_samplers(ctx, &res_ps, &self.states.s_wrap_linear);
         for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map", "s_mask_map"] {
-            bind_sampler(ctx, &res_ps, n, self.s_clamp_point.as_ref());
+            bind_sampler(ctx, &res_ps, n, self.states.s_clamp_point.as_ref());
         }
 
-        bind_sampler(ctx, &res_ps, "s_shroud", self.s_clamp_linear.as_ref());
-        bind_sampler(ctx, &res_ps, "s_diffuse_array", self.s_wrap_aniso.as_ref());
-        // SAFETY: drawing calls with buffers of this device.
-        unsafe {
-            ctx.IASetVertexBuffers(0, 1, Some(&self.terrain.resolve_vb), Some(&24), Some(&0));
-            ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-            ctx.Draw(6, 0);
-        }
+        bind_sampler(ctx, &res_ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+        bind_sampler(ctx, &res_ps, "s_diffuse_array", self.states.s_wrap_aniso.as_ref());
+        ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);
+        ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ctx.draw(6, 0);
 
         self.draw_stats.draw_calls += 1;
         null_ps_srvs(&self.ctx, 16);
-        // SAFETY: state calls.
-        unsafe {
-            self.ctx.RSSetState(self.rs_back.as_ref());
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-        }
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
     fn draw_terrain_surface(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(std::slice::from_ref(rtv)), self.dsv.as_ref());
-            self.ctx.OMSetDepthStencilState(ds.as_ref(), stencil_ref);
-        }
+        self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
 
         for e in ents {
             let Some(g) = self.terrain.geo.get(&e.id).cloned() else { continue };
@@ -772,7 +724,7 @@ impl Renderer {
             for p in &g.patches {
                 let wmin = [p.bmin[0] + g.tx, p.bmin[1] + g.ty, g.kz * p.bmin[2] + g.tz];
                 let wmax = [p.bmax[0] + g.tx, p.bmax[1] + g.ty, g.kz * p.bmax[2] + g.tz];
-                if !box_in_frustum(&self.view_proj, wmin, wmax) {
+                if !box_in_frustum(&self.camera.main_view_proj, wmin, wmax) {
                     continue;
                 }
 
@@ -800,19 +752,13 @@ impl Renderer {
 
                 let ib = self.terrain_grid_ib(cx, cz);
                 let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-                // SAFETY: the instance buffer is written within its size while mapped; drawing calls with buffers of this device.
-                unsafe {
-                    let mut ms = D3D11_MAPPED_SUBRESOURCE::default();
-                    if self.ctx.Map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut ms)).is_err() {
-                        continue;
-                    }
-
-                    std::ptr::copy_nonoverlapping(rows.as_ptr(), ms.pData.cast::<f32>(), rows.len());
-                    self.ctx.Unmap(&inst_vb, 0);
-                    self.ctx.IASetVertexBuffers(1, 1, Some(&Some(inst_vb)), Some(&48), Some(&0));
-                    self.ctx.IASetIndexBuffer(ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-                    self.ctx.DrawIndexedInstanced((cx * cz * 6) as u32, count, 0, 0, 0);
+                if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &rows)) {
+                    continue;
                 }
+
+                self.ctx.set_vertex_buffers(1, &[Some(inst_vb)], &[48], &[0]);
+                self.ctx.set_index_buffer(ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                self.ctx.draw_indexed_instanced((cx * cz * 6) as u32, count, 0, 0, 0);
 
                 self.draw_stats.draw_calls += 1;
                 self.draw_stats.triangles += (cx * cz * 2) as u64 * u64::from(count);

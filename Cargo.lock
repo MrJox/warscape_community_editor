@@ -2184,6 +2184,7 @@ dependencies = [
 name = "wce_render"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "rayon",
  "rpfm_lib",
  "thiserror",
