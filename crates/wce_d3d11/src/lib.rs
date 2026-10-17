@@ -9,6 +9,10 @@ mod bindings;
 
 pub use bindings::*;
 
+pub mod safe;
+
+pub use safe::{ContextExt, DescExt, DeviceExt, InitData, InputElement, Mapped, ViewExt};
+
 /// Prepares the platform for the first D3D11 call. On Linux, tells DXVK-native to use SDL3 for windows, and to log to stderr
 /// only instead of writing `<exe>_d3d11.log` files into the working directory, unless `DXVK_WSI_DRIVER` / `DXVK_LOG_PATH` say otherwise.
 ///

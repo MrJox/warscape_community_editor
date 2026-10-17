@@ -7,6 +7,7 @@ license.workspace = true
 links = "wce_d3d11"
 
 [dependencies]
+bytemuck = { version = "1", features = ["derive"] }
 windows-core.workspace = true
 windows-link.workspace = true
 
