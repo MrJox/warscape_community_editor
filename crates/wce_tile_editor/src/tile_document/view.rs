@@ -7,13 +7,13 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use wce_editor_core::document::OutlinerNode;
 use wce_formats::c_num::strtod;
-use wce_foundation::math::{Float3, Float4x4, dot, translation};
+use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{
     EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
 };
-use wce_tile::ted_scene::{Vec3, parse_vec3};
-use wce_tile::world_transform::{rotate_vec, world_transform};
+use wce_tile::ted_scene::parse_vec3;
+use wce_tile::world_transform::world_transform;
 
 use super::index::{matrix_of, style_of};
 use super::{GroundInfo, LinkCell, Placement, TERRAIN, Tile, elem_of, item_of, scene_key};
@@ -274,9 +274,9 @@ impl Tile {
                 for &p in els[c].children.iter().filter(|&&p| els[p].name == "point") {
                     let vec = |name: &str| sc.doc().get(p, name).and_then(|v| parse_vec3(&v, ""));
                     let Some(pos) = vec("position") else { continue };
-                    let world = |q: Vec3| {
-                        let r = rotate_vec(&w.rotation, q);
-                        [(w.position[0] + r[0]) / u, w.position[1] + r[1], (w.position[2] + r[2]) / u]
+                    let world = |q: Double3| {
+                        let p = w.position + w.rotation * q;
+                        [p.x / u, p.y, p.z / u]
                     };
 
                     let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
@@ -946,8 +946,8 @@ impl Tile {
         let w = world_transform(self.tscene(), elem);
         let u = self.unit();
         self.tscene().polygon_points(elem).into_iter().filter_map(|p| self.tscene().point_position(p)).map(|v| {
-            let r = rotate_vec(&w.rotation, v);
-            Float3::new(((w.position[0] + r[0]) / u) as f32, (w.position[1] + r[1]) as f32, ((w.position[2] + r[2]) / u) as f32)
+            let p = w.position + w.rotation * v;
+            Float3::new((p.x / u) as f32, p.y as f32, (p.z / u) as f32)
         }).collect()
     }
 

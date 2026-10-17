@@ -28,7 +28,7 @@ use wce_editor_core::command::{CommandStack, Dirty, History};
 use wce_editor_core::document::{Document, DocumentCore, OutlinerNode, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_formats::tile_climate::ClimateList;
-use wce_foundation::math::{Float3, Float4x4};
+use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
 use wce_tile::tile_project::TileProject;
@@ -182,8 +182,8 @@ pub struct PlacementCounts {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Follow {
     pub elem: usize,
-    pub before: [f64; 3],
-    pub after: [f64; 3],
+    pub before: Double3,
+    pub after: Double3,
 
     /// The position attribute as it was: undo puts these bytes back.
     pub before_text: Option<String>,

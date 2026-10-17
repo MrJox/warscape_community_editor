@@ -11,13 +11,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use wce_editor_core::command::History;
 use wce_editor_core::document::{Document, SaveTarget};
 use wce_editor_core::inspector::Inspector;
-use wce_foundation::math::{Float3, Float4x4};
+use wce_foundation::math::{Double3, Double3x3, Float3, Float4x4};
 use wce_scene::render_scene::SourceRef;
 use wce_tile::height_field::Brush;
-use wce_tile::ted_scene::{TedScene, Vec3};
-use wce_tile::world_transform::{
-    Mat3, WorldTransform, euler_from_matrix, mat_mul, mat_transpose, rotate_vec, rotate_world_yaw, set_world_position, set_world_rotation, world_transform,
-};
+use wce_tile::ted_scene::TedScene;
+use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::commands::{BrushStepCommand, PlacementItem, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointCommand, TedSpliceCommand};
 use super::{BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of};
@@ -34,8 +32,18 @@ fn parent_transform(sc: &TedScene, elem: usize) -> WorldTransform {
     sc.doc().elements()[elem].parent.map(|p| world_transform(sc, p)).unwrap_or_default()
 }
 
-fn close(a: Vec3, b: Vec3) -> bool {
-    (0..3).all(|i| (a[i] - b[i]).abs() < 2e-4)
+fn close(a: Double3, b: Double3) -> bool {
+    a.max_abs_diff(b) < 2e-4
+}
+
+/// A world position in scene units (`unit` per metre horizontally).
+fn scene_point(p: Float3, unit: f64) -> Double3 {
+    Double3::new(f64::from(p.x) * unit, f64::from(p.y), f64::from(p.z) * unit)
+}
+
+/// The rotation (upper 3x3) of a world matrix.
+fn rotation_of(m: &Float4x4) -> Double3x3 {
+    Double3x3 { m: std::array::from_fn(|a| std::array::from_fn(|b| f64::from(m.m[a][b]))) }
 }
 
 /// The elements of `elems` that are not below another element of it, in document order.
@@ -60,20 +68,17 @@ fn top_level(sc: &TedScene, mut elems: Vec<usize>) -> Vec<usize> {
 impl Tile {
 
     /// Local polygon point of a world position.
-    pub fn to_local(&self, elem: usize, world: Float3) -> Vec3 {
+    pub fn to_local(&self, elem: usize, world: Float3) -> Double3 {
         let w = world_transform(self.tscene(), elem);
-        let u = self.unit();
-        let d = [f64::from(world.x) * u - w.position[0], f64::from(world.y) - w.position[1], f64::from(world.z) * u - w.position[2]];
-        rotate_vec(&mat_transpose(&w.rotation), d)
+        w.rotation.transpose() * (scene_point(world, self.unit()) - w.position)
     }
 
     /// Local position of `elem` with its world y replaced (x, z kept).
-    pub(crate) fn local_for_world_y(&self, elem: usize, world_y: f64) -> Vec3 {
+    pub(crate) fn local_for_world_y(&self, elem: usize, world_y: f64) -> Double3 {
         let pw = parent_transform(self.tscene(), elem);
         let mut w = world_transform(self.tscene(), elem);
-        w.position[1] = world_y;
-        let d = [w.position[0] - pw.position[0], w.position[1] - pw.position[1], w.position[2] - pw.position[2]];
-        rotate_vec(&mat_transpose(&pw.rotation), d)
+        w.position.y = world_y;
+        pw.rotation.transpose() * (w.position - pw.position)
     }
 
     /// The instances among `elems` and below them (layers are walked, not returned).
@@ -273,7 +278,7 @@ impl TileDocument {
     }
 
     /// Scene units / radians, local to the parent.
-    pub fn set_local(&mut self, elem: usize, position: Option<Vec3>, euler: Option<Vec3>, gesture: u64) -> bool {
+    pub fn set_local(&mut self, elem: usize, position: Option<Double3>, euler: Option<Double3>, gesture: u64) -> bool {
         let t = self.tile();
         if !t.is_instance(elem) {
             return false;
@@ -311,9 +316,7 @@ impl TileDocument {
         }
 
         let pw = parent_transform(t.tscene(), elem);
-        let u = t.unit();
-        let d = [f64::from(p.x) * u - pw.position[0], f64::from(p.y) - pw.position[1], f64::from(p.z) * u - pw.position[2]];
-        let lp = rotate_vec(&mat_transpose(&pw.rotation), d);
+        let lp = pw.rotation.transpose() * (scene_point(p, t.unit()) - pw.position);
 
         // Nothing to do: no empty undo entry.
         if t.tscene().position(elem).is_some_and(|cur| close(cur, lp)) {
@@ -357,14 +360,14 @@ impl TileDocument {
         if t.is_instance_slow(copy) {
             let w = world_transform(t.tscene(), copy);
             let u = t.unit();
-            let mut y = w.position[1];
+            let mut y = w.position.y;
 
             // The copy stands on the terrain.
             if t.placement_of_attr(copy) == Placement::Landscape {
-                y = f64::from(t.landscape_y(copy, ((w.position[0] + 4.0 * u) / u) as f32, (w.position[2] / u) as f32));
+                y = f64::from(t.landscape_y(copy, ((w.position.x + 4.0 * u) / u) as f32, (w.position.z / u) as f32));
             }
 
-            set_world_position(self.tscene_mut(), copy, [w.position[0] + 4.0 * u, y, w.position[2]]);
+            set_world_position(self.tscene_mut(), copy, Double3::new(w.position.x + 4.0 * u, y, w.position.z));
         }
 
         let name = format!("Duplicate {}", self.tile().tscene().type_of(copy));
@@ -410,8 +413,8 @@ impl TileDocument {
         if let Some(at) = at {
             let t = self.tile();
             let y = if t.placement_of_attr(copy) == Placement::Landscape { t.landscape_y(copy, at.x, at.z) } else { at.y };
-            let u = t.unit();
-            set_world_position(self.tscene_mut(), copy, [f64::from(at.x) * u, f64::from(y), f64::from(at.z) * u]);
+            let p = scene_point(Float3::new(at.x, y, at.z), t.unit());
+            set_world_position(self.tscene_mut(), copy, p);
         }
 
         self.push_splice(format!("Add {key}"), mark, vec![template_elem.map_or(0, item_of)], vec![item_of(copy)]);
@@ -457,7 +460,7 @@ impl TileDocument {
         let pts = t.tscene().polygon_points(elem);
         if op == "move" {
             let &p = pts.get(index).ok_or("no such point")?;
-            let before = t.tscene().point_position(p).unwrap_or([0.0; 3]);
+            let before = t.tscene().point_position(p).unwrap_or_default();
             let after = t.to_local(elem, world);
             let (before_text, area_text) = (t.tscene().doc().get(p, "position"), t.tscene().doc().get(elem, "area"));
             self.history.push(Box::new(TedPointCommand { elem, index, before, after, before_text, area_text, gesture }));
@@ -799,7 +802,7 @@ impl TileDocument {
                 it.mode_new = Some(text.to_owned());
             }
 
-            let file_y = world_transform(t.tscene(), e).position[1] as f32;
+            let file_y = world_transform(t.tscene(), e).position.y as f32;
             if mode == Placement::Landscape {
                 // Freeform -> Landscape snaps (TEd writes the terrain height); a landscape item is shown on the terrain even when its file is not.
                 let p = t.world_position(e);
@@ -848,7 +851,7 @@ impl TileDocument {
             let y = t.landscape_y(e, p.x, p.z);
 
             // The file's own y (see snap_landscape_world): this writes the shown height into it.
-            if (y - world_transform(t.tscene(), e).position[1] as f32).abs() < 1e-5 {
+            if (y - world_transform(t.tscene(), e).position.y as f32).abs() < 1e-5 {
                 continue;
             }
 
@@ -1025,9 +1028,9 @@ impl TileDocument {
         }
 
         if let Some(p) = self.tile().tscene().position(e) {
-            let mut v = [p[0] as f32, p[1] as f32, p[2] as f32];
+            let mut v = p.to_array().map(|c| c as f32);
             if ins.edit_float3("position", "position (scene)", &mut v, 0.5) {
-                self.set_local(e, Some([f64::from(v[0]), f64::from(v[1]), f64::from(v[2])]), None, base);
+                self.set_local(e, Some(v.map(f64::from).into()), None, base);
             }
 
             if ins.gesture_ended() {
@@ -1036,9 +1039,9 @@ impl TileDocument {
         }
 
         if let Some(eu) = self.tile().tscene().euler(e) {
-            let mut v = [degrees(eu[0]), degrees(eu[1]), degrees(eu[2])];
+            let mut v = eu.to_array().map(degrees);
             if ins.edit_float3("euler", "euler (deg)", &mut v, 0.5) {
-                self.set_local(e, None, Some([radians(v[0]), radians(v[1]), radians(v[2])]), base + 1);
+                self.set_local(e, None, Some(v.map(radians).into()), base + 1);
             }
 
             if ins.gesture_ended() {
@@ -1104,27 +1107,19 @@ impl TileDocument {
             let u = t.unit();
 
             // The new world position in scene units, local to the parent.
-            let mut wp = [f64::from(now.m[0][3]) * u, f64::from(now.m[1][3]), f64::from(now.m[2][3]) * u];
+            let mut wp = Double3::new(f64::from(now.m[0][3]) * u, f64::from(now.m[1][3]), f64::from(now.m[2][3]) * u);
 
             // As in TEd: x / z move a landscape instance over the terrain, y is the terrain's (a y handle does nothing). The float32 noise of a
             // y-axis drag at 1000 m is 6e-5.
             if t.placement(e) == Placement::Landscape {
                 let same_xz = (now.m[0][3] - before.m[0][3]).abs() < 2e-4 && (now.m[2][3] - before.m[2][3]).abs() < 2e-4;
-                wp[1] = if same_xz { f64::from(before.m[1][3]) } else { f64::from(t.landscape_y(e, now.m[0][3], now.m[2][3])) };
+                wp.y = if same_xz { f64::from(before.m[1][3]) } else { f64::from(t.landscape_y(e, now.m[0][3], now.m[2][3])) };
             }
 
-            let d = [wp[0] - pw.position[0], wp[1] - pw.position[1], wp[2] - pw.position[2]];
-            let lp = rotate_vec(&mat_transpose(&pw.rotation), d);
-            let (mut wr, mut br): (Mat3, Mat3) = ([0.0; 9], [0.0; 9]);
-            for a in 0..3 {
-                for b in 0..3 {
-                    wr[a * 3 + b] = f64::from(now.m[a][b]);
-                    br[a * 3 + b] = f64::from(before.m[a][b]);
-                }
-            }
-
-            let dr = wr.iter().zip(&br).fold(0.0f64, |m, (a, b)| m.max((a - b).abs()));
-            let le = (dr > 1e-5).then(|| euler_from_matrix(&mat_mul(&mat_transpose(&pw.rotation), &wr)));
+            let lp = pw.rotation.transpose() * (wp - pw.position);
+            let (wr, br) = (rotation_of(&now), rotation_of(&before));
+            let dr = wr.data().iter().zip(br.data()).fold(0.0f64, |m, (a, b)| m.max((a - b).abs()));
+            let le = (dr > 1e-5).then(|| euler_from_matrix(&(pw.rotation.transpose() * wr)));
 
             // A y drag on a landscape instance: nothing changed.
             if le.is_none() && t.tscene().position(e).is_some_and(|cur| close(cur, lp)) {

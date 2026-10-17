@@ -3,9 +3,10 @@
 use std::collections::BTreeMap;
 
 use wce_formats::png_file::PngFile;
+use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::height_field::{Brush, HeightField};
 use wce_tile::ted_scene::{TedScene, format_ted_number};
-use wce_tile::world_transform::{euler_from_matrix, euler_matrix, mat_mul, rotate_world_yaw, rotation_y, set_world_position, world_transform};
+use wce_tile::world_transform::{euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, world_transform};
 
 const TED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <project version="16">
@@ -42,10 +43,10 @@ fn euler_round_trip() {
 
     let mut worst = 0.0f64;
     for _ in 0..20000 {
-        let e = [ang(), ang() * 0.5, ang()];
+        let e = Double3::new(ang(), ang() * 0.5, ang());
         let (m, m2) = (euler_matrix(e), euler_matrix(euler_from_matrix(&euler_matrix(e))));
-        for k in 0..9 {
-            worst = worst.max((m[k] - m2[k]).abs());
+        for (a, b) in m.data().iter().zip(m2.data()) {
+            worst = worst.max((a - b).abs());
         }
     }
 
@@ -85,16 +86,16 @@ fn structural_edits_and_transforms() {
     let w0 = world_transform(&sc, b);
     rotate_world_yaw(&mut sc, b, 0.3);
     let w1 = world_transform(&sc, b);
-    let expected = mat_mul(&rotation_y(0.3), &w0.rotation);
-    assert!((0..9).all(|k| (expected[k] - w1.rotation[k]).abs() < 2e-5), "rotate_world_yaw applies Ry(delta) in world space");
+    let close = |a: &Double3x3, b: &Double3x3| a.data().iter().zip(b.data()).all(|(a, b)| (a - b).abs() < 2e-5);
+    assert!(close(&(Double3x3::rotation_y(0.3) * w0.rotation), &w1.rotation), "rotate_world_yaw applies Ry(delta) in world space");
     rotate_world_yaw(&mut sc, b, -0.3);
     let w2 = world_transform(&sc, b);
-    assert!((0..9).all(|k| (w0.rotation[k] - w2.rotation[k]).abs() < 2e-5), "rotating back restores the world rotation");
+    assert!(close(&w0.rotation, &w2.rotation), "rotating back restores the world rotation");
 
     // set_world_position keeps the world position.
-    set_world_position(&mut sc, b, [w0.position[0] + 6.0, w0.position[1], w0.position[2] - 6.0]);
+    set_world_position(&mut sc, b, Double3::new(w0.position.x + 6.0, w0.position.y, w0.position.z - 6.0));
     let w3 = world_transform(&sc, b);
-    assert!((w3.position[0] - (w0.position[0] + 6.0)).abs() < 1e-3 && (w3.position[2] - (w0.position[2] - 6.0)).abs() < 1e-3, "set_world_position");
+    assert!((w3.position.x - (w0.position.x + 6.0)).abs() < 1e-3 && (w3.position.z - (w0.position.z - 6.0)).abs() < 1e-3, "set_world_position");
     sc.revert_all();
     assert_eq!(sc.save(), bytes);
 
@@ -124,17 +125,17 @@ fn polygons() {
     let orig = sc.save();
     let layer = sc.add_layer(sc.scene_graph(), "Poly layer").unwrap();
     let extra = [("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect::<BTreeMap<_, _>>();
-    let pts = [[0.0, 1.0, 0.0], [20.0, 1.0, 0.0], [20.0, 1.0, 10.0], [0.0, 1.0, 10.0]];
+    let pts = [[0.0, 1.0, 0.0], [20.0, 1.0, 0.0], [20.0, 1.0, 10.0], [0.0, 1.0, 10.0]].map(Double3::from);
     let poly = sc.add_polygon(Some(layer), "AI_HINT_POLYGON_INSTANCE", "Test hint", &pts, &extra).unwrap();
     assert_eq!(sc.polygon_points(poly).len(), 4, "polygon has 4 points");
     assert!((sc.polygon_area(poly) - 200.0).abs() < 1e-6, "rectangle area 200");
     assert_eq!(sc.doc().get(poly, "area").as_deref(), Some("200"), "area attribute written");
     assert_eq!(sc.doc().get(poly, "hint_type").as_deref(), Some("AIH_FORT_PERIMETER"), "hint type override");
     let p0 = sc.point_position(sc.polygon_points(poly)[0]).unwrap();
-    assert!((p0[0] + 10.0).abs() < 1e-6, "points are local to the centroid");
-    sc.set_polygon_point(poly, 0, [-20.0, 0.0, -5.0]).unwrap();
+    assert!((p0.x + 10.0).abs() < 1e-6, "points are local to the centroid");
+    sc.set_polygon_point(poly, 0, Double3::new(-20.0, 0.0, -5.0)).unwrap();
     assert!(sc.polygon_area(poly) > 200.0, "area follows point edits");
-    sc.insert_polygon_point(poly, 1, [0.0, 0.0, -8.0]).unwrap();
+    sc.insert_polygon_point(poly, 1, Double3::new(0.0, 0.0, -8.0)).unwrap();
     assert_eq!(sc.polygon_points(poly).len(), 5, "insert adds a point");
     assert!(sc.remove_polygon_point(poly, 1).unwrap(), "remove a point");
     assert_eq!(sc.polygon_points(poly).len(), 4, "remove drops a point");

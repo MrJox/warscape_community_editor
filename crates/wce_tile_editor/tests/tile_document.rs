@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use wce_editor_core::document::Document;
-use wce_foundation::math::Float3;
+use wce_foundation::math::{Double3, Float3};
 use wce_tile::tile_project::TileProject;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, TileDocument};
 
@@ -68,7 +68,7 @@ fn moves_undo_to_the_file_text() {
     let (_dir, mut d) = open();
     let original = text(&d);
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
-    assert!(d.set_local(b, Some([1.0, 2.0, 3.0]), Some([0.5, 0.0, 0.0]), 0));
+    assert!(d.set_local(b, Some(Double3::new(1.0, 2.0, 3.0)), Some(Double3::new(0.5, 0.0, 0.0)), 0));
     d.history_mut().undo();
     assert_eq!(text(&d), original, "\"10.50\" and \"0.0\" come back as they were written, not as TEd would write them");
 
@@ -90,7 +90,7 @@ fn a_stroke_interrupted_by_another_edit_is_two_entries_with_their_own_heights() 
 
     // The stroke stays open (no mouse up), another edit comes in, then the brush goes on.
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
-    assert!(d.set_local(b, Some([1.0, 2.0, 3.0]), None, 0));
+    assert!(d.set_local(b, Some(Double3::new(1.0, 2.0, 3.0)), None, 0));
     d.brush_step(BrushKind::Raise, 90.0, 90.0, s, 0.05);
     d.end_stroke();
     assert_eq!(d.history().size(), 3, "the second stroke is an entry of its own");

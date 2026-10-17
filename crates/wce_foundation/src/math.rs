@@ -5,8 +5,11 @@
 //! the sky is drawn at z = w).
 //!
 //! The operations keep the C++ editor's order of floating-point operations, so both give the same bits.
+//!
+//! The renderer works in single precision ([`Float3`], [`Float4x4`]); tile scenes in double precision ([`Double3`], [`Double3x3`]), as TEd
+//! does, with the same conventions.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Div, Index, IndexMut, Mul, Neg, Sub};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Float2 {
@@ -232,4 +235,212 @@ pub fn ortho_lh(w: f32, h: f32, zn: f32, zf: f32) -> Float4x4 {
     r.m[2][2] = 1.0 / (zf - zn);
     r.m[2][3] = -zn / (zf - zn);
     r
+}
+
+/// A double-precision vector: tile scene positions, offsets and euler angles.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Double3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl Double3 {
+    pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);
+
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    pub const fn to_array(self) -> [f64; 3] {
+        [self.x, self.y, self.z]
+    }
+
+    /// The components changed by `f`, each on its own.
+    pub fn map(self, f: impl Fn(f64) -> f64) -> Self {
+        Self::new(f(self.x), f(self.y), f(self.z))
+    }
+
+    /// The largest absolute difference of a component.
+    pub fn max_abs_diff(self, o: Self) -> f64 {
+        (self.x - o.x).abs().max((self.y - o.y).abs()).max((self.z - o.z).abs())
+    }
+}
+
+impl From<[f64; 3]> for Double3 {
+    fn from([x, y, z]: [f64; 3]) -> Self {
+        Self::new(x, y, z)
+    }
+}
+
+impl From<Double3> for [f64; 3] {
+    fn from(v: Double3) -> Self {
+        v.to_array()
+    }
+}
+
+/// Component `i` (0 = x).
+impl Index<usize> for Double3 {
+    type Output = f64;
+    fn index(&self, i: usize) -> &f64 {
+        match i {
+            0 => &self.x,
+            1 => &self.y,
+            2 => &self.z,
+            _ => panic!("Double3 has 3 components, not {}", i + 1),
+        }
+    }
+}
+
+impl IndexMut<usize> for Double3 {
+    fn index_mut(&mut self, i: usize) -> &mut f64 {
+        match i {
+            0 => &mut self.x,
+            1 => &mut self.y,
+            2 => &mut self.z,
+            _ => panic!("Double3 has 3 components, not {}", i + 1),
+        }
+    }
+}
+
+impl Add for Double3 {
+    type Output = Self;
+    fn add(self, o: Self) -> Self {
+        Self::new(self.x + o.x, self.y + o.y, self.z + o.z)
+    }
+}
+
+impl AddAssign for Double3 {
+    fn add_assign(&mut self, o: Self) {
+        *self = *self + o;
+    }
+}
+
+impl Sub for Double3 {
+    type Output = Self;
+    fn sub(self, o: Self) -> Self {
+        Self::new(self.x - o.x, self.y - o.y, self.z - o.z)
+    }
+}
+
+impl Mul<f64> for Double3 {
+    type Output = Self;
+    fn mul(self, s: f64) -> Self {
+        Self::new(self.x * s, self.y * s, self.z * s)
+    }
+}
+
+impl Div<f64> for Double3 {
+    type Output = Self;
+    fn div(self, s: f64) -> Self {
+        Self::new(self.x / s, self.y / s, self.z / s)
+    }
+}
+
+impl Neg for Double3 {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self::new(-self.x, -self.y, -self.z)
+    }
+}
+
+/// A 3x3 double-precision matrix, row-major, for column vectors (a rotation of the tile scene).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Double3x3 {
+    pub m: [[f64; 3]; 3],
+}
+
+impl Default for Double3x3 {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+impl Double3x3 {
+    pub const IDENTITY: Self = Self { m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] };
+
+    pub fn rotation_x(a: f64) -> Self {
+        let (c, s) = (a.cos(), a.sin());
+        Self { m: [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]] }
+    }
+
+    pub fn rotation_y(a: f64) -> Self {
+        let (c, s) = (a.cos(), a.sin());
+        Self { m: [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]] }
+    }
+
+    pub fn rotation_z(a: f64) -> Self {
+        let (c, s) = (a.cos(), a.sin());
+        Self { m: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]] }
+    }
+
+    /// The matrix with these columns.
+    pub fn from_cols(x: Double3, y: Double3, z: Double3) -> Self {
+        Self { m: [[x.x, y.x, z.x], [x.y, y.y, z.y], [x.z, y.z, z.z]] }
+    }
+
+    pub fn col(&self, j: usize) -> Double3 {
+        Double3::new(self.m[0][j], self.m[1][j], self.m[2][j])
+    }
+
+    /// The 9 values, row by row.
+    pub fn data(&self) -> &[f64; 9] {
+        self.m.as_flattened().try_into().unwrap_or(&[0.0; 9])
+    }
+
+    /// The inverse of a rotation.
+    pub fn transpose(&self) -> Self {
+        let m = &self.m;
+        Self { m: [[m[0][0], m[1][0], m[2][0]], [m[0][1], m[1][1], m[2][1]], [m[0][2], m[1][2], m[2][2]]] }
+    }
+}
+
+impl Mul for Double3x3 {
+    type Output = Self;
+    fn mul(self, o: Self) -> Self {
+        let (a, b) = (&self.m, &o.m);
+        Self { m: std::array::from_fn(|i| std::array::from_fn(|j| a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j])) }
+    }
+}
+
+impl Mul<Double3> for Double3x3 {
+    type Output = Double3;
+    fn mul(self, v: Double3) -> Double3 {
+        let m = &self.m;
+        Double3::new(
+            m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+            m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+            m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn double_rotations() {
+        let (a, b) = (Double3x3::rotation_y(0.3), Double3x3::rotation_z(-1.2));
+        let ab = a * b;
+        let v = Double3::new(1.0, 2.0, 3.0);
+
+        // (A B) v = A (B v), and a rotation's transpose undoes it.
+        assert!((ab * v).max_abs_diff(a * (b * v)) < 1e-12);
+        assert!((ab.transpose() * (ab * v)).max_abs_diff(v) < 1e-12);
+        assert_eq!(Double3x3::IDENTITY * v, v);
+        assert_eq!(Double3x3::from_cols(ab.col(0), ab.col(1), ab.col(2)), ab);
+
+        // Rz(90 degrees) takes x to y.
+        assert!((Double3x3::rotation_z(std::f64::consts::FRAC_PI_2) * Double3::new(1.0, 0.0, 0.0)).max_abs_diff(Double3::new(0.0, 1.0, 0.0)) < 1e-15);
+    }
+
+    #[test]
+    fn double_components() {
+        let mut v = Double3::from([1.0, -2.0, 4.0]);
+        v[1] = 5.0;
+        v += Double3::new(1.0, 1.0, 1.0);
+        assert_eq!(v.to_array(), [2.0, 6.0, 5.0]);
+        assert_eq!((-v * 0.5 - v).map(f64::abs), Double3::new(3.0, 9.0, 7.5));
+    }
 }
