@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use wce_editor_core::command::Command;
 use wce_formats::xml_doc::XmlSplice;
-use wce_tile::ted_scene::Vec3;
+use wce_foundation::math::Double3;
 
 use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 
@@ -17,17 +17,17 @@ use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 pub(crate) struct TedMoveCommand {
     pub name: String,
     pub elem: usize,
-    pub old_pos: Option<Vec3>,
-    pub new_pos: Option<Vec3>,
-    pub old_euler: Option<Vec3>,
-    pub new_euler: Option<Vec3>,
+    pub old_pos: Option<Double3>,
+    pub new_pos: Option<Double3>,
+    pub old_euler: Option<Double3>,
+    pub new_euler: Option<Double3>,
     pub old_pos_text: Option<String>,
     pub old_euler_text: Option<String>,
     pub gesture: u64,
 }
 
 impl TedMoveCommand {
-    fn set(&self, t: &mut Tile, p: Option<Vec3>, e: Option<Vec3>) {
+    fn set(&self, t: &mut Tile, p: Option<Double3>, e: Option<Double3>) {
         if let Some(p) = p {
             t.project.scene.set_position(self.elem, p);
         }
@@ -109,8 +109,8 @@ impl Command<Tile> for TedMoveCommand {
 pub(crate) struct TedPointCommand {
     pub elem: usize,
     pub index: usize,
-    pub before: Vec3,
-    pub after: Vec3,
+    pub before: Double3,
+    pub after: Double3,
 
     /// The point's position text and the polygon's area text (an edit recomputes the area, which need not be what the file had).
     pub before_text: Option<String>,
@@ -245,8 +245,8 @@ pub(crate) struct PlacementItem {
     pub elem: usize,
     pub mode_old: Option<String>,
     pub mode_new: Option<String>,
-    pub pos_old: Option<Vec3>,
-    pub pos_new: Option<Vec3>,
+    pub pos_old: Option<Double3>,
+    pub pos_new: Option<Double3>,
     pub idx_old: u8,
     pub idx_new: u8,
 

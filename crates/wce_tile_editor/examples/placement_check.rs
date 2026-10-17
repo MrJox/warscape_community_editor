@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use wce_formats::c_num::{printf_g, strtod_prefix};
 use wce_formats::xml_doc::XmlDoc;
+use wce_foundation::math::Double3x3;
 use wce_tile::tile_project::TileProject;
-use wce_tile::world_transform::{Mat3, mat_mul, mat_transpose, world_transform};
+use wce_tile::world_transform::world_transform;
 use wce_tile_editor::tile_document::TileDocument;
 
 #[derive(Clone, Debug, Default)]
@@ -61,26 +62,29 @@ fn read_list(p: &Path) -> Result<Vec<ListEntry>, String> {
     Ok(out)
 }
 
-fn quat_matrix(q: &[f64; 4]) -> Mat3 {
+fn quat_matrix(q: &[f64; 4]) -> Double3x3 {
     let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
     let n = (x * x + y * y + z * z + w * w).sqrt();
     let (x, y, z, w) = (x / n, y / n, z / n, w / n);
-    [
-        1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w),
-        2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w),
-        2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y),
-    ]
+    Double3x3 {
+        m: [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+    }
 }
 
 /// F * M * F with F = diag(1, 1, -1): the same rotation seen from the frame with z mirrored.
-fn mirror_z(m: &Mat3) -> Mat3 {
-    [m[0], m[1], -m[2], m[3], m[4], -m[5], -m[6], -m[7], m[8]]
+fn mirror_z(m: &Double3x3) -> Double3x3 {
+    let m = &m.m;
+    Double3x3 { m: [[m[0][0], m[0][1], -m[0][2]], [m[1][0], m[1][1], -m[1][2]], [-m[2][0], -m[2][1], m[2][2]]] }
 }
 
 #[allow(clippy::manual_clamp)]
-fn angle_between(a: &Mat3, b: &Mat3) -> f64 {
-    let r = mat_mul(&mat_transpose(a), b);
-    let c = ((r[0] + r[4] + r[8] - 1.0) * 0.5).max(-1.0).min(1.0);
+fn angle_between(a: &Double3x3, b: &Double3x3) -> f64 {
+    let r = (a.transpose() * *b).m;
+    let c = ((r[0][0] + r[1][1] + r[2][2] - 1.0) * 0.5).max(-1.0).min(1.0);
     c.acos() * 57.295_779_513_082_32
 }
 

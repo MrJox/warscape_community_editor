@@ -1621,7 +1621,7 @@ impl Tool for TileTool {
                         let sc = d.tile().tscene();
                         let pts = sc.polygon_points(sel);
                         if let Some(&point) = pts.get(pt) {
-                            let before = sc.point_position(point).unwrap_or([0.0; 3]);
+                            let before = sc.point_position(point).unwrap_or_default();
                             let after = d.tile().to_local(sel, self.cursor);
                             if before != after {
                                 let _ = d.polygon_point(sel, "move", pt, self.cursor, self.point_gesture);

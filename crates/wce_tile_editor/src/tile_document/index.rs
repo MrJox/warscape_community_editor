@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rayon::prelude::*;
 use wce_formats::c_num::strtod_prefix;
 use wce_formats::tile_climate::ClimateList;
-use wce_foundation::math::{Float3, Float4x4};
+use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::overlay_colour;
-use wce_tile::ted_scene::{TedScene, Vec3, parse_vec3};
-use wce_tile::world_transform::{WorldTransform, euler_matrix, mat_mul, rotate_vec, world_transform};
+use wce_tile::ted_scene::{TedScene, parse_vec3};
+use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
 use super::{BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceState, PieceStatus, Placement, TileTypeStyle, Tile};
 
@@ -39,7 +39,7 @@ fn from_chars(s: &str) -> Option<(f64, usize)> {
 
 /// "vector(1,2,3)" / "euler(..)" (prefix) or "x,y,z" (empty prefix); spaces are allowed around the numbers. `None` when the text is anything
 /// else. Numbers `from_chars` does not take ("+1", " 1") go through `parse_vec3`.
-pub(crate) fn parse_triple(s: &str, prefix: &str) -> Option<[f64; 3]> {
+pub(crate) fn parse_triple(s: &str, prefix: &str) -> Option<Double3> {
     let mut s = s;
     if !prefix.is_empty() {
         if s.len() < prefix.len() + 2 || !s.starts_with(prefix) || s.as_bytes()[prefix.len()] != b'(' || !s.ends_with(')') {
@@ -62,21 +62,21 @@ pub(crate) fn parse_triple(s: &str, prefix: &str) -> Option<[f64; 3]> {
         }
     }
 
-    Some(out)
+    Some(out.into())
 }
 
-pub(crate) fn matrix_of(w: &WorldTransform, unit: f64, scale: Option<Vec3>) -> Float4x4 {
+pub(crate) fn matrix_of(w: &WorldTransform, unit: f64, scale: Option<Double3>) -> Float4x4 {
     let mut m = Float4x4::IDENTITY;
-    let s = scale.unwrap_or([1.0; 3]);
-    for (r, row) in m.m.iter_mut().take(3).enumerate() {
+    let s = scale.unwrap_or(Double3::new(1.0, 1.0, 1.0));
+    for (row, rotation) in m.m.iter_mut().zip(&w.rotation.m) {
         for (c, v) in row.iter_mut().take(3).enumerate() {
-            *v = (w.rotation[r * 3 + c] * s[c]) as f32;
+            *v = (rotation[c] * s[c]) as f32;
         }
     }
 
-    m.m[0][3] = (w.position[0] / unit) as f32;
-    m.m[1][3] = w.position[1] as f32;
-    m.m[2][3] = (w.position[2] / unit) as f32;
+    m.m[0][3] = (w.position.x / unit) as f32;
+    m.m[1][3] = w.position.y as f32;
+    m.m[2][3] = (w.position.z / unit) as f32;
     m
 }
 
@@ -87,8 +87,8 @@ fn text(raw: &[u8]) -> std::borrow::Cow<'_, str> {
 /// The parsed local transform and flags of one element.
 #[derive(Clone, Copy, Default)]
 struct Local {
-    pos: Option<[f64; 3]>,
-    eul: Option<[f64; 3]>,
+    pos: Option<Double3>,
+    eul: Option<Double3>,
 
     /// 1: has a flags attribute, 2: OIF_VISIBLE, 4: OIF_ACTIVE.
     flagbits: u8,
@@ -175,7 +175,7 @@ impl Tile {
     }
 
     fn metres(&self, w: &WorldTransform) -> Float3 {
-        Float3::new((w.position[0] / self.unit()) as f32, w.position[1] as f32, (w.position[2] / self.unit()) as f32)
+        Float3::new((w.position.x / self.unit()) as f32, w.position.y as f32, (w.position.z / self.unit()) as f32)
     }
 
     pub fn world_position(&self, elem: usize) -> Float3 {
@@ -189,7 +189,7 @@ impl Tile {
     pub fn world_matrix(&self, elem: usize) -> Float4x4 {
         if self.idx.valid && elem < self.idx.slot.len() {
             let s = self.idx.scale[elem];
-            return matrix_of(&self.idx.world[self.idx.slot[elem] as usize], self.unit(), Some([f64::from(s[0]), f64::from(s[1]), f64::from(s[2])]));
+            return matrix_of(&self.idx.world[self.idx.slot[elem] as usize], self.unit(), Some(s.map(f64::from).into()));
         }
 
         matrix_of(&world_transform(self.tscene(), elem), self.unit(), self.tscene().scale(elem))
@@ -421,14 +421,11 @@ impl Tile {
             if l.pos.is_some() || l.eul.is_some() {
                 let mut w = ix.world[slot as usize];
                 if let Some(pos) = l.pos {
-                    let r = rotate_vec(&w.rotation, pos);
-                    for (a, b) in w.position.iter_mut().zip(r) {
-                        *a += b;
-                    }
+                    w.position += w.rotation * pos;
                 }
 
                 if let Some(e) = l.eul {
-                    w.rotation = mat_mul(&w.rotation, &euler_matrix(e));
+                    w.rotation = w.rotation * euler_matrix(e);
                 }
 
                 slot = ix.world.len() as u32;
@@ -674,9 +671,9 @@ impl Tile {
             let w = &ix.world[ix.slot[i] as usize];
             let a = at as usize;
             mk.elem[a] = i;
-            mk.x[a] = (w.position[0] / unit) as f32;
-            mk.y[a] = w.position[1] as f32;
-            mk.z[a] = (w.position[2] / unit) as f32;
+            mk.x[a] = (w.position.x / unit) as f32;
+            mk.y[a] = w.position.y as f32;
+            mk.z[a] = (w.position.z / unit) as f32;
             mk.slot[i] = Some(at);
         }
 
@@ -706,5 +703,5 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
         return;
     }
 
-    w.position[1] = t.project.height_at(w.position[0] / t.unit(), w.position[2] / t.unit());
+    w.position.y = t.project.height_at(w.position.x / t.unit(), w.position.z / t.unit());
 }
