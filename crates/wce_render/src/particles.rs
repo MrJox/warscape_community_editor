@@ -11,7 +11,7 @@ use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAI
 use wce_assets::weather_vfx::{VfxReader, WeatherVfx, load_weather_vfx};
 use wce_d3d11::*;
 use wce_foundation::math::{Float3, Float4x4, rotation_x, rotation_y, rotation_z};
-use windows_core::{Interface, PCSTR};
+use windows_core::Interface;
 
 use crate::cbuffers::ConstantBuffers;
 use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, Stage, bind_sampler, bind_shader, bind_srv};
@@ -69,11 +69,7 @@ fn u4(v: &[u32; 4]) -> [u8; 16] {
 
 fn make_cb(dev: &ID3D11Device, data: &[u8]) -> Option<ID3D11Buffer> {
     let desc = D3D11_BUFFER_DESC { ByteWidth: data.len() as u32, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
-    let init = D3D11_SUBRESOURCE_DATA { pSysMem: data.as_ptr().cast(), SysMemPitch: 0, SysMemSlicePitch: 0 };
-    let mut buffer = None;
-    // SAFETY: the data covers the buffer and lives during the call.
-    let _ = unsafe { dev.CreateBuffer(&desc, Some(&init), Some(&mut buffer)) };
-    buffer
+    dev.create_buffer(&desc, Some(data)).ok()
 }
 
 /// Particle maps of one kind in one 2D array (behaviour_mask.y = diffuse slice, .z = normal slice), as the game's pixel shaders expect.
@@ -127,32 +123,23 @@ impl TextureArrayBuilder {
 
     fn build(&self, dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Option<ID3D11ShaderResourceView> {
         let first = self.textures.first()?;
-        // SAFETY: copies between textures of this device; descriptions are locals.
-        unsafe {
-            let t0 = first.srv.as_ref()?.GetResource().ok()?.cast::<ID3D11Texture2D>().ok()?;
-            let mut td = D3D11_TEXTURE2D_DESC::default();
-            t0.GetDesc(&mut td);
-            let mips = td.MipLevels;
-            td.ArraySize = self.textures.len() as u32;
-            td.Usage = D3D11_USAGE_DEFAULT;
-            td.MiscFlags = 0;
-            let mut array = None;
-            dev.CreateTexture2D(&td, None, Some(&mut array)).ok().ok()?;
-            let array = array?;
-            for (s, texture) in self.textures.iter().enumerate() {
-                let resource = texture.srv.as_ref()?.GetResource().ok()?;
-                for m in 0..mips {
-                    ctx.CopySubresourceRegion(&array, m + s as u32 * mips, 0, 0, 0, &resource, m, None);
-                }
+        let mut td = first.srv.as_ref()?.resource().ok()?.cast::<ID3D11Texture2D>().ok()?.desc();
+        let mips = td.MipLevels;
+        td.ArraySize = self.textures.len() as u32;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.MiscFlags = 0;
+        let array = dev.create_texture_2d(&td, None).ok()?;
+        for (s, texture) in self.textures.iter().enumerate() {
+            let resource = texture.srv.as_ref()?.resource().ok()?;
+            for m in 0..mips {
+                ctx.copy_subresource_region(&array, m + s as u32 * mips, [0; 3], &resource, m, None);
             }
-
-            let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: first.format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
-            sd.Anonymous.Texture2DArray.MipLevels = mips;
-            sd.Anonymous.Texture2DArray.ArraySize = td.ArraySize;
-            let mut srv = None;
-            dev.CreateShaderResourceView(&array, Some(&sd), Some(&mut srv)).ok().ok()?;
-            srv
         }
+
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: first.format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        sd.Anonymous.Texture2DArray.MipLevels = mips;
+        sd.Anonymous.Texture2DArray.ArraySize = td.ArraySize;
+        dev.create_shader_resource_view(&array, Some(&sd)).ok()
     }
 }
 
@@ -191,7 +178,7 @@ impl Default for EmitterState {
 
 /// A spawned particle as the spawn shader reads it.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SpawnVertex {
     /// Emitter instance, random seed, pre-simulation sub-steps (0.2 s each), 0.
     pub id_seed_steps: [f32; 4],
@@ -307,10 +294,7 @@ struct Shaders {
 pub(crate) fn blend_state(dev: &ID3D11Device, rt: D3D11_RENDER_TARGET_BLEND_DESC) -> Option<ID3D11BlendState> {
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0] = rt;
-    let mut state = None;
-    // SAFETY: a plain creation call.
-    let _ = unsafe { dev.CreateBlendState(&desc, Some(&mut state)) };
-    state
+    dev.create_blend_state(&desc).ok()
 }
 
 impl ParticleSystem {
@@ -429,37 +413,29 @@ impl ParticleSystem {
                 Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
             };
 
-            let mut tex = None;
-            // SAFETY: creation calls with valid descriptions.
-            unsafe {
-                if dev.CreateTexture2D(&td, None, Some(&mut tex)).is_err() {
-                    return t;
-                }
+            let Ok(tex) = dev.create_texture_2d(&td, None) else { return t };
+            let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: fmt, ..Default::default() };
+            if slices > 1 {
+                sd.ViewDimension = D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY);
+                sd.Anonymous.Texture2DArray.MipLevels = 1;
+                sd.Anonymous.Texture2DArray.ArraySize = slices;
+            } else {
+                sd.ViewDimension = D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D);
+                sd.Anonymous.Texture2D.MipLevels = 1;
+            }
 
-                let Some(tex) = tex else { return t };
-                let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: fmt, ..Default::default() };
+            t.srv = dev.create_shader_resource_view(&tex, Some(&sd)).ok();
+            for s in 0..slices {
+                let mut rd = D3D11_RENDER_TARGET_VIEW_DESC { Format: fmt, ..Default::default() };
                 if slices > 1 {
-                    sd.ViewDimension = D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY);
-                    sd.Anonymous.Texture2DArray.MipLevels = 1;
-                    sd.Anonymous.Texture2DArray.ArraySize = slices;
+                    rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+                    rd.Anonymous.Texture2DArray.FirstArraySlice = s;
+                    rd.Anonymous.Texture2DArray.ArraySize = 1;
                 } else {
-                    sd.ViewDimension = D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D);
-                    sd.Anonymous.Texture2D.MipLevels = 1;
+                    rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
                 }
 
-                let _ = dev.CreateShaderResourceView(&tex, Some(&sd), Some(&mut t.srv));
-                for s in 0..slices {
-                    let mut rd = D3D11_RENDER_TARGET_VIEW_DESC { Format: fmt, ..Default::default() };
-                    if slices > 1 {
-                        rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-                        rd.Anonymous.Texture2DArray.FirstArraySlice = s;
-                        rd.Anonymous.Texture2DArray.ArraySize = 1;
-                    } else {
-                        rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-                    }
-
-                    let _ = dev.CreateRenderTargetView(&tex, Some(&rd), Some(&mut t.rtv[s as usize]));
-                }
+                t.rtv[s as usize] = dev.create_render_target_view(&tex, Some(&rd)).ok();
             }
 
             t
@@ -468,53 +444,37 @@ impl ParticleSystem {
         self.particles = [make_target(DXGI_FORMAT_R32G32B32A32_FLOAT, 3), make_target(DXGI_FORMAT_R32G32B32A32_FLOAT, 3)];
         self.keys = [make_target(DXGI_FORMAT_R32G32_FLOAT, 1), make_target(DXGI_FORMAT_R32G32_FLOAT, 1)];
 
-        // SAFETY: creation calls with valid descriptions and data that lives during them.
-        unsafe {
-            let ed = D3D11_TEXTURE2D_DESC {
-                Width: EMITTER_WIDTH as u32, Height: 1, MipLevels: 1, ArraySize: EMITTER_LAYERS as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-            };
+        let ed = D3D11_TEXTURE2D_DESC {
+            Width: EMITTER_WIDTH as u32, Height: 1, MipLevels: 1, ArraySize: EMITTER_LAYERS as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
 
-            let _ = dev.CreateTexture2D(&ed, None, Some(&mut self.emitter_tex));
-            if let Some(tex) = &self.emitter_tex {
-                let _ = dev.CreateShaderResourceView(tex, None, Some(&mut self.emitter_srv));
-            }
+        self.emitter_tex = dev.create_texture_2d(&ed, None).ok();
+        self.emitter_srv = self.emitter_tex.as_ref().and_then(|tex| dev.create_shader_resource_view(tex, None).ok());
 
-            // A flat normal (1 slice) and a still sea surface (2 slices; the game logic's collision is off for weather).
-            let flat = 0xFFFF_8080u32;
-            let td = D3D11_TEXTURE2D_DESC {
-                Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-            };
+        // A flat normal (1 slice) and a still sea surface (2 slices; the game logic's collision is off for weather).
+        let flat = 0xFFFF_8080u32.to_le_bytes();
+        let td = D3D11_TEXTURE2D_DESC {
+            Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
 
-            let sd = D3D11_SUBRESOURCE_DATA { pSysMem: (&raw const flat).cast(), SysMemPitch: 4, SysMemSlicePitch: 4 };
-            let mut t = None;
-            let _ = dev.CreateTexture2D(&td, Some(&sd), Some(&mut t));
-            if let Some(t) = t {
-                let mut vd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
-                vd.Anonymous.Texture2DArray.MipLevels = 1;
-                vd.Anonymous.Texture2DArray.ArraySize = 1;
-                let _ = dev.CreateShaderResourceView(&t, Some(&vd), Some(&mut self.flat_normal_srv));
-            }
+        let mut vd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        vd.Anonymous.Texture2DArray.MipLevels = 1;
+        vd.Anonymous.Texture2DArray.ArraySize = 1;
+        self.flat_normal_srv = dev.create_texture_2d(&td, Some(&[InitData { data: &flat, row_pitch: 4, slice_pitch: 4 }]))
+            .and_then(|t| dev.create_shader_resource_view(&t, Some(&vd)))
+            .ok();
 
-            self.normal_srv = self.flat_normal_srv.clone();
-            let zero = [[0f32; 4]; 2];
-            let sdsc = D3D11_TEXTURE2D_DESC {
-                Width: 1, Height: 1, MipLevels: 1, ArraySize: 2, Format: DXGI_FORMAT_R32G32B32A32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-            };
+        self.normal_srv = self.flat_normal_srv.clone();
+        let zero = [0u8; 16];
+        let sdsc = D3D11_TEXTURE2D_DESC {
+            Width: 1, Height: 1, MipLevels: 1, ArraySize: 2, Format: DXGI_FORMAT_R32G32B32A32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
 
-            let ss = [
-                D3D11_SUBRESOURCE_DATA { pSysMem: zero[0].as_ptr().cast(), SysMemPitch: 16, SysMemSlicePitch: 16 },
-                D3D11_SUBRESOURCE_DATA { pSysMem: zero[1].as_ptr().cast(), SysMemPitch: 16, SysMemSlicePitch: 16 },
-            ];
-
-            let mut st = None;
-            let _ = dev.CreateTexture2D(&sdsc, Some(ss.as_ptr()), Some(&mut st));
-            if let Some(st) = st {
-                let _ = dev.CreateShaderResourceView(&st, None, Some(&mut self.sea_srv));
-            }
-        }
+        let ss = [InitData { data: &zero, row_pitch: 16, slice_pitch: 16 }; 2];
+        self.sea_srv = dev.create_texture_2d(&sdsc, Some(&ss)).and_then(|st| dev.create_shader_resource_view(&st, None)).ok();
 
         // The 3D vector field the turbulence samples (g_tex_vector_field, the string next to it in the DLL).
         match (self.reader)("vfx/textures/turbulence.dds").and_then(|bytes| load_dds(&dev, &bytes, false).map_err(|error| error.to_string())) {
@@ -527,24 +487,14 @@ impl ParticleSystem {
                     BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
                 };
 
-                let sd = D3D11_SUBRESOURCE_DATA { pSysMem: (&raw const mid).cast(), SysMemPitch: 4, SysMemSlicePitch: 4 };
-                let mut t = None;
-                // SAFETY: creation calls with data that lives during them.
-                unsafe {
-                    let _ = dev.CreateTexture3D(&vd, Some(&sd), Some(&mut t));
-                    if let Some(t) = t {
-                        let _ = dev.CreateShaderResourceView(&t, None, Some(&mut self.vector_field_srv));
-                    }
-                }
+                let sd = [InitData { data: &mid.to_le_bytes(), row_pitch: 4, slice_pitch: 4 }];
+                self.vector_field_srv = dev.create_texture_3d(&vd, Some(&sd)).and_then(|t| dev.create_shader_resource_view(&t, None)).ok();
             }
         }
 
         let sampler = |filter: D3D11_FILTER, address: D3D11_TEXTURE_ADDRESS_MODE| {
             let sd = D3D11_SAMPLER_DESC { Filter: filter, AddressU: address, AddressV: address, AddressW: address, MaxLOD: D3D11_FLOAT32_MAX, ..Default::default() };
-            let mut state = None;
-            // SAFETY: a plain creation call.
-            let _ = unsafe { dev.CreateSamplerState(&sd, Some(&mut state)) };
-            state
+            dev.create_sampler_state(&sd).ok()
         };
 
         self.s_linear_clamp = sampler(D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_CLAMP);
@@ -573,13 +523,10 @@ impl ParticleSystem {
 
         let mut dd = D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() };
         let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
-        // SAFETY: plain creation calls.
-        unsafe {
-            let _ = dev.CreateDepthStencilState(&dd, Some(&mut self.ds_test));
-            dd.DepthEnable = false.into();
-            let _ = dev.CreateDepthStencilState(&dd, Some(&mut self.ds_off));
-            let _ = dev.CreateRasterizerState(&rd, Some(&mut self.rs_none));
-        }
+        self.ds_test = dev.create_depth_stencil_state(&dd).ok();
+        dd.DepthEnable = false.into();
+        self.ds_off = dev.create_depth_stencil_state(&dd).ok();
+        self.rs_none = dev.create_rasterizer_state(&rd).ok();
     }
 
     /// Loads the effect of a weather definition, restarting the simulation. It reloads when the name or `revision` (the editor's edit
@@ -686,25 +633,17 @@ impl ParticleSystem {
         }
 
         let subs = texels.chunks(slice)
-            .map(|chunk| D3D11_SUBRESOURCE_DATA { pSysMem: chunk.as_ptr().cast(), SysMemPitch: (VFX_CURVE_WIDTH * 16) as u32, SysMemSlicePitch: (VFX_CURVE_WIDTH * 16 * 8) as u32 })
+            .map(|chunk| InitData { data: bytemuck::cast_slice(chunk), row_pitch: (VFX_CURVE_WIDTH * 16) as u32, slice_pitch: (VFX_CURVE_WIDTH * 16 * 8) as u32 })
             .collect::<Vec<_>>();
         let td = D3D11_TEXTURE2D_DESC {
             Width: VFX_CURVE_WIDTH as u32, Height: 8, MipLevels: 1, ArraySize: layers as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        self.curves_srv = None;
-        // SAFETY: the subresources point into `texels`, alive during the calls.
-        unsafe {
-            let mut t = None;
-            let _ = self.dev.CreateTexture2D(&td, Some(subs.as_ptr()), Some(&mut t));
-            if let Some(t) = t {
-                let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
-                sd.Anonymous.Texture2DArray.MipLevels = 1;
-                sd.Anonymous.Texture2DArray.ArraySize = layers as u32;
-                let _ = self.dev.CreateShaderResourceView(&t, Some(&sd), Some(&mut self.curves_srv));
-            }
-        }
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        sd.Anonymous.Texture2DArray.MipLevels = 1;
+        sd.Anonymous.Texture2DArray.ArraySize = layers as u32;
+        self.curves_srv = self.dev.create_texture_2d(&td, Some(&subs)).and_then(|t| self.dev.create_shader_resource_view(&t, Some(&sd))).ok();
 
         for e in tex_errors {
             self.error(e);
@@ -726,38 +665,29 @@ impl ParticleSystem {
 
             let Some(buffer) = buffer else { continue };
             let buffers = [Some(buffer.clone())];
-            // SAFETY: binding calls with objects of this device.
-            unsafe {
-                match s.stage {
-                    Stage::Vs => self.ctx.VSSetConstantBuffers(slot, Some(&buffers)),
-                    Stage::Gs => self.ctx.GSSetConstantBuffers(slot, Some(&buffers)),
-                    Stage::Ps => self.ctx.PSSetConstantBuffers(slot, Some(&buffers)),
-                    _ => {}
-                }
+            match s.stage {
+                Stage::Vs => self.ctx.vs_set_constant_buffers(slot, &buffers),
+                Stage::Gs => self.ctx.gs_set_constant_buffers(slot, &buffers),
+                Stage::Ps => self.ctx.ps_set_constant_buffers(slot, &buffers),
+                _ => {}
             }
         }
     }
 
     fn fullscreen(&self, rtvs: &[Option<ID3D11RenderTargetView>], w: u32, h: u32) {
-        // SAFETY: drawing calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(rtvs), None);
-            self.ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: w as f32, Height: h as f32, MinDepth: 0.0, MaxDepth: 1.0 }]));
-            self.ctx.IASetInputLayout(None);
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-            self.ctx.Draw(3, 0);
-        }
+        self.ctx.set_render_targets(rtvs, None);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: w as f32, Height: h as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_input_layout(None);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.draw(3, 0);
     }
 
     fn unbind(&self) {
         let none: [Option<ID3D11ShaderResourceView>; 8] = Default::default();
-        // SAFETY: unbinding calls.
-        unsafe {
-            self.ctx.OMSetRenderTargets(None, None);
-            self.ctx.VSSetShaderResources(0, Some(&none));
-            self.ctx.PSSetShaderResources(0, Some(&none));
-            self.ctx.GSSetShaderResources(0, Some(&none));
-        }
+        self.ctx.set_render_targets(&[], None);
+        self.ctx.vs_set_shader_resources(0, &none);
+        self.ctx.ps_set_shader_resources(0, &none);
+        self.ctx.gs_set_shader_resources(0, &none);
     }
 
     /// CPU emission. The spawn code is fn 0x1895130; the shapes below are still approximations of it:
@@ -992,12 +922,9 @@ impl ParticleSystem {
             layers[at(5, i) + 3] = 1.0;
         }
 
-        // SAFETY: each layer is EMITTER_WIDTH texels of the CPU array.
-        unsafe {
-            if let Some(tex) = &self.emitter_tex {
-                for l in 0..EMITTER_LAYERS {
-                    self.ctx.UpdateSubresource(tex, l as u32, None, layers[at(l, 0)..].as_ptr().cast(), (EMITTER_WIDTH * 16) as u32, 0);
-                }
+        if let Some(tex) = &self.emitter_tex {
+            for l in 0..EMITTER_LAYERS {
+                let _ = self.ctx.update_subresource(tex, l as u32, None, bytemuck::cast_slice(&layers[at(l, 0)..]), (EMITTER_WIDTH * 16) as u32, 0);
             }
         }
 
@@ -1016,24 +943,21 @@ impl ParticleSystem {
         let _ = cbs.upload(&self.dev, &self.ctx);
 
         self.unbind();
-        // SAFETY: state calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.OMSetDepthStencilState(self.ds_off.as_ref(), 0);
-            self.ctx.RSSetState(self.rs_none.as_ref());
-            self.ctx.GSSetShader(None, None);
-            if self.clear {
-                for p in &self.particles {
-                    let clears = [[-1.0, 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4]];
-                    for (rtv, colour) in p.rtv.iter().zip(clears) {
-                        if let Some(rtv) = rtv {
-                            self.ctx.ClearRenderTargetView(rtv, &colour);
-                        }
+        self.ctx.set_blend_state(self.bs_opaque.as_ref());
+        self.ctx.set_depth_stencil_state(self.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.rs_none.as_ref());
+        self.ctx.gs_set_shader(None);
+        if self.clear {
+            for p in &self.particles {
+                let clears = [[-1.0, 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4]];
+                for (rtv, colour) in p.rtv.iter().zip(clears) {
+                    if let Some(rtv) = rtv {
+                        self.ctx.clear_render_target_view(rtv, colour);
                     }
                 }
-
-                self.clear = false;
             }
+
+            self.clear = false;
         }
 
         // 1. The simulation: particles[cur] -> particles[1 - cur].
@@ -1104,8 +1028,7 @@ impl ParticleSystem {
 
                 if let Some(rtv) = self.dist_rtv.clone() {
                     let neutral = [127.0 / 255.0, 127.0 / 255.0, 0.0, 0.0];
-                    // SAFETY: a clear of a view of this device.
-                    unsafe { self.ctx.ClearRenderTargetView(&rtv, &neutral) };
+                    self.ctx.clear_render_target_view(&rtv, neutral);
                     match lib.get(read, cbs, DISTORTION_PS) {
                         Ok(ps) => {
                             self.draw(f, &sh, &ps, &rtv, VFX_DISTORTION_VIEW_ID, self.bs_alpha.clone(), cbs);
@@ -1118,8 +1041,7 @@ impl ParticleSystem {
             }
 
             cbs.set_i("cb_vfx", "g_view_id", VFX_MAIN_VIEW_ID as i32);
-            // SAFETY: a state call.
-            unsafe { self.ctx.OMSetBlendState(None, None, 0xFFFF_FFFF) };
+            self.ctx.set_blend_state(None);
         }
     }
 
@@ -1131,14 +1053,9 @@ impl ParticleSystem {
             Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let mut tex = None;
-        // SAFETY: creation calls with a valid description.
-        unsafe {
-            let _ = self.dev.CreateTexture2D(&td, None, Some(&mut tex));
-            if let Some(tex) = tex {
-                let _ = self.dev.CreateRenderTargetView(&tex, None, Some(&mut self.dist_rtv));
-                let _ = self.dev.CreateShaderResourceView(&tex, None, Some(&mut self.dist_srv));
-            }
+        if let Ok(tex) = self.dev.create_texture_2d(&td, None) {
+            self.dist_rtv = self.dev.create_render_target_view(&tex, None).ok();
+            self.dist_srv = self.dev.create_shader_resource_view(&tex, None).ok();
         }
 
         self.dist_w = w;
@@ -1153,70 +1070,51 @@ impl ParticleSystem {
                 CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0, StructureByteStride: 0,
             };
 
-            self.spawn_vb = None;
-            // SAFETY: a plain creation call.
-            let _ = unsafe { self.dev.CreateBuffer(&desc, None, Some(&mut self.spawn_vb)) };
+            self.spawn_vb = self.dev.create_buffer(&desc, None).ok();
         }
 
         let Some(vb) = self.spawn_vb.clone() else { return };
-        let elements = [0u32, 16, 32].map(|offset| D3D11_INPUT_ELEMENT_DESC {
-            SemanticName: PCSTR(c"COLOR".as_ptr().cast()),
-            SemanticIndex: offset / 16,
-            Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-            InputSlot: 0,
-            AlignedByteOffset: offset,
-            InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-            InstanceDataStepRate: 0,
-        });
+        let elements = [0u32, 16, 32].map(|offset| InputElement::new(c"COLOR", offset / 16, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offset, false));
 
         let Ok(layout) = lib.layout(&sh.spawn_vs, "vfx_spawn", &elements) else { return };
-        // SAFETY: the vertex buffer is written within its size while mapped; drawing calls with objects of this device.
-        unsafe {
-            let mut ms = D3D11_MAPPED_SUBRESOURCE::default();
-            if self.ctx.Map(&vb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut ms)).is_err() {
-                return;
-            }
+        let written = match self.ctx.map(&vb, 0, D3D11_MAP_WRITE_DISCARD, 0) {
+            Ok(mut ms) => ms.write(0, verts),
+            Err(_) => false,
+        };
 
-            std::ptr::copy_nonoverlapping(verts.as_ptr().cast::<u8>(), ms.pData.cast::<u8>(), std::mem::size_of_val(verts));
-            self.ctx.Unmap(&vb, 0);
-            self.ctx.IASetInputLayout(&layout);
-            let stride = size_of::<SpawnVertex>() as u32;
-            let offset = 0u32;
-            self.ctx.IASetVertexBuffers(0, 1, Some(&Some(vb)), Some(&stride), Some(&offset));
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST));
-            bind_shader(&self.ctx, &sh.spawn_vs, cbs);
-            bind_srv(&self.ctx, &sh.spawn_vs, "g_tex_sorted_data", self.keys[self.sorted].srv.as_ref());
-            bind_shader(&self.ctx, &sh.spawn_ps, cbs);
-            self.bind_emitter_cbs(&sh.spawn_ps, true);
-            bind_srv(&self.ctx, &sh.spawn_ps, "g_emitter_instances", self.emitter_srv.as_ref());
-            bind_srv(&self.ctx, &sh.spawn_ps, "g_tex_sea_surface_anim", self.sea_srv.as_ref());
-            bind_srv(&self.ctx, &sh.spawn_ps, "g_tex_vector_field", self.vector_field_srv.as_ref());
-            bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_terrain_surface", self.s_linear_clamp.as_ref());
-            bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_vector_field", self.s_linear_wrap.as_ref());
-            self.ctx.OMSetRenderTargets(Some(&self.particles[self.cur].rtv), None);
-            self.ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: WIDTH as f32, Height: WIDTH as f32, MinDepth: 0.0, MaxDepth: 1.0 }]));
-            self.ctx.Draw(verts.len() as u32, 0);
+        if !written {
+            return;
         }
 
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_vertex_buffers(0, &[Some(vb)], &[size_of::<SpawnVertex>() as u32], &[0]);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+        bind_shader(&self.ctx, &sh.spawn_vs, cbs);
+        bind_srv(&self.ctx, &sh.spawn_vs, "g_tex_sorted_data", self.keys[self.sorted].srv.as_ref());
+        bind_shader(&self.ctx, &sh.spawn_ps, cbs);
+        self.bind_emitter_cbs(&sh.spawn_ps, true);
+        bind_srv(&self.ctx, &sh.spawn_ps, "g_emitter_instances", self.emitter_srv.as_ref());
+        bind_srv(&self.ctx, &sh.spawn_ps, "g_tex_sea_surface_anim", self.sea_srv.as_ref());
+        bind_srv(&self.ctx, &sh.spawn_ps, "g_tex_vector_field", self.vector_field_srv.as_ref());
+        bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_terrain_surface", self.s_linear_clamp.as_ref());
+        bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_vector_field", self.s_linear_wrap.as_ref());
+        self.ctx.set_render_targets(&self.particles[self.cur].rtv, None);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: WIDTH as f32, Height: WIDTH as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.draw(verts.len() as u32, 0);
         self.unbind();
-        let zero = 0u32;
-        // SAFETY: unbinding the vertex buffer.
-        unsafe { self.ctx.IASetVertexBuffers(0, 1, Some(&None), Some(&zero), Some(&zero)) };
+        self.ctx.set_vertex_buffers(0, &[None], &[0], &[0]);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn draw(&self, f: &Frame, sh: &Shaders, pixel: &GameShader, rtv: &ID3D11RenderTargetView, view_id: u32, blend: Option<ID3D11BlendState>, cbs: &mut ConstantBuffers) {
         cbs.set_i("cb_vfx", "g_view_id", view_id as i32);
         let _ = cbs.upload(&self.dev, &self.ctx);
-        // SAFETY: drawing calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(&[Some(rtv.clone())]), f.depth.as_ref());
-            self.ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: f.width as f32, Height: f.height as f32, MinDepth: 0.0, MaxDepth: 1.0 }]));
-            self.ctx.OMSetBlendState(blend.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.OMSetDepthStencilState(if f.depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
-            self.ctx.IASetInputLayout(None);
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST));
-        }
+        self.ctx.set_render_targets(&[Some(rtv.clone())], f.depth.as_ref());
+        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: f.width as f32, Height: f.height as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_blend_state(blend.as_ref());
+        self.ctx.set_depth_stencil_state(if f.depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
+        self.ctx.set_input_layout(None);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
 
         bind_shader(&self.ctx, &sh.vs, cbs);
         self.bind_emitter_cbs(&sh.vs, false);
@@ -1239,11 +1137,8 @@ impl ParticleSystem {
         bind_sampler(&self.ctx, pixel, "gbuffer_channel_4_sampler", self.s_point_clamp.as_ref());
         bind_sampler(&self.ctx, pixel, "g_sam_diffuse", self.s_linear_wrap.as_ref());
         bind_sampler(&self.ctx, pixel, "g_sam_normal", self.s_linear_wrap.as_ref());
-        // SAFETY: drawing calls.
-        unsafe {
-            self.ctx.Draw(self.alive + 1, 0);
-            self.ctx.GSSetShader(None, None);
-        }
+        self.ctx.draw(self.alive + 1, 0);
+        self.ctx.gs_set_shader(None);
 
         self.unbind();
     }

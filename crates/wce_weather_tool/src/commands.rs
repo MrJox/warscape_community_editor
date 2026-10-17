@@ -92,7 +92,8 @@ pub fn weather_diagnostics(e: &mut Editor, tool: &WeatherTool) -> String {
         d += &format!("texture error: {err}\n");
     }
 
-    d += &format!("points readback: {} maps, raw {} {} {} {}\n", r.debug_maps, f(r.debug_points[0]), f(r.debug_points[1]), f(r.debug_points[2]), f(r.debug_points[3]));
+    let (points, maps) = r.points_readback();
+    d += &format!("points readback: {maps} maps, raw {} {} {} {}\n", f(points[0]), f(points[1]), f(points[2]), f(points[3]));
     d += &format!("sky cube face averages (+x -x +y -y +z -z): {}\n", r.engine_ambient_faces());
     d += &format!("luma black/white points: {} / {}\n", f(r.luma_black()), f(r.luma_white()));
     for err in r.errors() {
@@ -145,7 +146,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         "view", "view <n>", "renderer view: 0 final, 1 HDR raw, 2 albedo, 3 normal, 4 specular, 5 depth, 6 sky cube, 7 bloom, 8 quarter, 9 tone mapped, 10 AO",
         |e, a| {
             let (Some(n), Some(r)) = (a.first(), e.renderer()) else { return fail("usage: view <n> (needs the renderer)") };
-            r.view = view_of(int(n).clamp(0, 10) as i32);
+            r.settings.view = view_of(int(n).clamp(0, 10) as i32);
             ok("")
         },
     );
@@ -220,7 +221,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("no-flare", "no-flare", "lens flare off (the old --no-flare flag)", |e, _| {
         if let Some(r) = e.renderer() {
-            r.lens_flare = false;
+            r.settings.lens_flare = false;
         }
 
         ok("")

@@ -219,10 +219,10 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     }
 
     let vp = &mut e.viewport;
-    r.show_grid = vp.show_grid;
-    r.selection = e.selection.entities(&e.scene);
+    r.settings.show_grid = vp.show_grid;
+    r.settings.selection = e.selection.entities(&e.scene);
     e.clock.tick();
-    r.deterministic = e.clock.fixed_step();
+    r.settings.deterministic = e.clock.fixed_step();
     if !vp.target.resize(&e.dev, w, h) {
         log::error("cannot create the viewport surface");
         return;
@@ -275,12 +275,12 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     }
 
     let mut clock = Clock::fixed(1.0 / 60.0);
-    r.deterministic = true;
+    r.settings.deterministic = true;
 
     // A capture is a function of the scene, not of the live frames before it.
     r.restart_temporal();
-    r.show_grid = e.viewport.show_grid;
-    r.selection = e.selection.entities(&e.scene);
+    r.settings.show_grid = e.viewport.show_grid;
+    r.settings.selection = e.selection.entities(&e.scene);
     for _ in 0..frames {
         clock.tick();
         let params = ViewParams { camera: e.viewport.camera(), time_s: clock.time() as f32 };
