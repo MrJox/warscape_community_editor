@@ -8,6 +8,7 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(wce_weather_tool::WeatherTool::default()),
         Box::new(wce_tile_tool::TileTool::default()),
+        Box::new(wce_ui_tool::UiTool::default()),
         // Placeholders for the future tools: no features.
         Box::new(PlaceholderTool::new(
             "unit", "Unit",

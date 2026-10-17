@@ -1,0 +1,19 @@
+wce-ui: Total War UI layouts as XML, for people, scripts and Claude Code (MCP).
+
+  wce-ui files [--filter text]               layouts in the game's packs
+  wce-ui to-xml <source> [--out file.xml]    a binary layout as XML (pack path or file)
+  wce-ui from-xml <file.xml> --out file      XML back to a binary layout
+  wce-ui tree <source>                       the components, with rectangles
+  wce-ui entry <source> --entry <n|name>     fields of one component
+  wce-ui render <source> --out shot.png [--scale 1] [--outlines] [--select n --frame] [--screen 1920x1080] [--related]
+                 [--animation name --animation_entry n --time ms] [--skin folder] [--entry_state "button=hover"]
+  wce-ui related <source>                    layouts used with this one (found by component names)
+  wce-ui animations <source> [--entry n]     the animations of a component (or of all), with frames for one component
+  wce-ui set_entry <source> --entry n --x 10 --y 20 [--w 100] [--text "Hi"] --save [--out f | --pack mod.pack]
+  wce-ui validate <source>
+  wce-ui script <file>                       several tools in one session
+  wce-ui mcp                                 MCP server on stdio
+  wce-ui tools                               every tool and its arguments
+
+<source> is a path in the packs (ui/campaign ui/settlement_panel) or a file on disk.
+--game <folder> sets the game folder (otherwise wce.ini, WCE_GAME or ATTILA_DIR).

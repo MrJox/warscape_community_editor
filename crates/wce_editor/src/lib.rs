@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod editor;
 pub mod gui;
+pub mod images;
 pub mod panels;
 pub mod perf;
 pub mod steam_detect;

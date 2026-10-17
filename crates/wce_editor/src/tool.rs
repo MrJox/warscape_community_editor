@@ -77,6 +77,11 @@ pub trait Tool: Any {
         vec![]
     }
 
+    /// False for a tool that has its own canvas and no use for the 3D viewport.
+    fn shows_viewport(&self) -> bool {
+        true
+    }
+
     /// Builds the first-run layout in the dockspace. The default is the standard layout.
     fn default_layout(&self, dockspace: gui::ImGuiID) {
         default_layout(dockspace, self.title());

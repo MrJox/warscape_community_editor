@@ -132,6 +132,12 @@ pub struct Editor {
     pub panels: Panels,
     pub(crate) panel_data: PanelData,
 
+    /// Pictures tools draw with (see `images`).
+    pub images: crate::images::ImageTextures,
+
+    /// A tool without a 3D viewport sets this every frame so that the scripted mouse (`mouse ...`) is in window pixels from this origin.
+    pub input_origin: Option<gui::Vec2>,
+
     /// The file the next `shot` writes, handled by the app loop.
     pub pending_shot: Option<PathBuf>,
 }
@@ -156,7 +162,7 @@ impl Editor {
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), perf: PerfStats::default(), wait_loaded_start: None, vsync: true, panels: Panels::default(),
-            panel_data: PanelData::default(), pending_shot: None,
+            panel_data: PanelData::default(), images: Default::default(), input_origin: None, pending_shot: None,
         };
 
         crate::commands::register_builtin(&mut e.commands);
@@ -431,7 +437,7 @@ impl Editor {
         }
 
         // The scripted positions are pixels of the viewport image, which has the window's pixel density.
-        let o = self.viewport.image_origin();
+        let o = self.input_origin.unwrap_or_else(|| self.viewport.image_origin());
         let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
         gui::add_mouse_pos_event(o.x + self.mouse_cur.x / density, o.y + self.mouse_cur.y / density);
         for b in 0..3 {
@@ -760,6 +766,8 @@ impl Editor {
     pub fn frame(&mut self, textures: &mut D3D11Renderer) {
         wce_prof!("editor.frame");
         self.frame += 1;
+        self.images.flush(&self.dev, textures);
+        self.input_origin = None;
 
         // Lines of a `script` command run outside a script (the command line, the console).
         if !self.script_lines.is_empty() {
@@ -878,7 +886,8 @@ impl Editor {
     }
 
     fn draw_panels(&mut self, textures: &mut D3D11Renderer) {
-        if self.panels.viewport {
+        let shows_viewport = self.with_tool_at(self.active_tool, |t, _| t.shows_viewport()).unwrap_or(true);
+        if self.panels.viewport && shows_viewport {
             wce_prof!("panel.viewport");
             crate::viewport::draw(self, textures);
         }
