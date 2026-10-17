@@ -125,7 +125,7 @@ unsafe impl Sync for GpuMesh {}
 
 /// Per-instance vertex data, POSITION1..7 of rigidcommon.hlsl vs30_main.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RigidInstance {
     /// POSITION1..3: the rows of the 3x4 world matrix.
     pub world: [[f32; 4]; 3],
@@ -146,11 +146,7 @@ pub struct RigidInstance {
 /// An immutable buffer of some bytes.
 fn immutable_buffer(dev: &ID3D11Device, bytes: &[u8], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
     let desc = D3D11_BUFFER_DESC { ByteWidth: bytes.len() as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: bind as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
-    let data = D3D11_SUBRESOURCE_DATA { pSysMem: bytes.as_ptr().cast(), SysMemPitch: 0, SysMemSlicePitch: 0 };
-    let mut buffer = None;
-    // SAFETY: the data covers the buffer's size and lives during the call.
-    unsafe { dev.CreateBuffer(&desc, Some(&data), Some(&mut buffer)).ok().ok()? };
-    buffer
+    dev.create_buffer(&desc, Some(bytes)).ok()
 }
 
 // ------------------------------------------------------------------------------------------------ textures

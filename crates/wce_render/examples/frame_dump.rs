@@ -185,10 +185,10 @@ fn main() {
         s.environment.active = Some(env.clone());
         let mut r = Renderer::new(&dev, &ctx, files.clone()).unwrap();
         let mut t = RenderTarget::new(&dev, W, H);
-        r.deterministic = true;
+        r.settings.deterministic = true;
         if what & 8 != 0 {
-            r.show_grid = true;
-            r.selection = vec![2, 5];
+            r.settings.show_grid = true;
+            r.settings.selection = vec![2, 5];
         }
 
         let mut clock = Clock::fixed(1.0 / 60.0);
@@ -205,13 +205,13 @@ fn main() {
             ];
 
             for (v, view_name) in views {
-                r.view = v;
+                r.settings.view = v;
                 clock.tick();
                 r.render(&s, &ViewParams { camera: cam, time_s: clock.time() as f32 }, &mut t);
                 dump(&r, &t, &format!("{name}_{view_name}"));
             }
 
-            r.view = View::Final;
+            r.settings.view = View::Final;
             print!("  picks");
             for y in (20..H as i32).step_by(40) {
                 for x in (20..W as i32).step_by(50) {

@@ -294,7 +294,7 @@ impl Editor {
         }) {
             Ok((vfs, mut renderer)) => {
                 let go = read_graphics_options();
-                renderer.apply_graphics_options(&go);
+                renderer.settings.apply_graphics_options(&go);
                 self.output_gamma = go.gamma;
                 self.output_brightness = go.brightness;
                 self.first_run = false;

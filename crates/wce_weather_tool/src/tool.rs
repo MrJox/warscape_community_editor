@@ -287,10 +287,10 @@ impl WeatherTool {
             return;
         };
 
-        let mut v = VIEWS.iter().position(|(view, _)| *view == r.view).unwrap_or(0) as i32;
+        let mut v = VIEWS.iter().position(|(view, _)| *view == r.settings.view).unwrap_or(0) as i32;
         gui::set_next_item_width(170.0);
         if gui::combo("view", &mut v, &VIEWS.map(|(_, name)| name)) {
-            r.view = view_of(v);
+            r.settings.view = view_of(v);
         }
 
         let errors = r.errors().to_vec();
@@ -837,7 +837,7 @@ impl Tool for WeatherTool {
         }
 
         if let Some(r) = e.renderer() {
-            r.vfx_revision = rev;
+            r.settings.vfx_revision = rev;
         }
     }
 
@@ -866,14 +866,14 @@ impl Tool for WeatherTool {
             if let Some(r) = e.renderer() {
                 gui::separator();
                 gui::text("Game graphics options (read from preferences.script.txt):");
-                gui::checkbox("Vignette (gfx_vignette)", &mut r.vignette);
-                gui::checkbox("Depth of field (gfx_depth_of_field)", &mut r.depth_of_field);
-                gui::checkbox("SSAO (gfx_ssao)", &mut r.ssao);
-                gui::checkbox("Distortion (gfx_distortion)", &mut r.distortion);
-                gui::checkbox("Shadows", &mut r.shadows);
+                gui::checkbox("Vignette (gfx_vignette)", &mut r.settings.vignette);
+                gui::checkbox("Depth of field (gfx_depth_of_field)", &mut r.settings.depth_of_field);
+                gui::checkbox("SSAO (gfx_ssao)", &mut r.settings.ssao);
+                gui::checkbox("Distortion (gfx_distortion)", &mut r.settings.distortion);
+                gui::checkbox("Shadows", &mut r.settings.shadows);
                 gui::set_next_item_width(120.0);
-                gui::slider_int("Shadow quality (gfx_shadow_quality)", &mut r.shadow_quality, 0, 3);
-                gui::checkbox("Lens flare", &mut r.lens_flare);
+                gui::slider_int("Shadow quality (gfx_shadow_quality)", &mut r.settings.shadow_quality, 0, 3);
+                gui::checkbox("Lens flare", &mut r.settings.lens_flare);
                 gui::drag_float("Gamma (gfx_gamma_setting)", &mut self.output_gamma, 0.01, 1.0, 3.0, "%.3f");
                 gui::drag_float("Brightness (gfx_brightness_setting)", &mut self.output_brightness, 0.01, 0.5, 2.0, "%.3f");
             }
@@ -918,7 +918,7 @@ impl Tool for WeatherTool {
         if random {
             gui::same_line();
             if gui::button("New battle direction") {
-                r.wind_dir_seed = r.wind_dir_seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                r.settings.wind_dir_seed = r.settings.wind_dir_seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
             }
         }
 
@@ -933,8 +933,8 @@ impl Tool for WeatherTool {
         gui::separator();
         gui::text("Battle (not stored in the weather files):");
         gui::set_next_item_width(200.0);
-        gui::combo("Season (g_season_type)", &mut r.season, &["0", "1", "2", "3 (winter in the snow dump)"]);
-        gui::checkbox("Snow on the map (g_snow_mask)", &mut r.snow_cover);
+        gui::combo("Season (g_season_type)", &mut r.settings.season, &["0", "1", "2", "3 (winter in the snow dump)"]);
+        gui::checkbox("Snow on the map (g_snow_mask)", &mut r.settings.snow_cover);
         gui::separator();
         gui::text(&format!("Particles: {alive} / {capacity}"));
         for em in &emitters {

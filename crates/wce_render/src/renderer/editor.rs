@@ -83,20 +83,9 @@ fn frame_cb(vp: &Float4x4) -> [u8; FRAME_CB] {
     cb
 }
 
-/// Writes bytes into a dynamic buffer.
-fn write_dynamic(ctx: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8]) -> bool {
-    let mut ms = D3D11_MAPPED_SUBRESOURCE::default();
-    // SAFETY: the caller's buffer holds at least the bytes; it is written while mapped.
-    unsafe {
-        if ctx.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut ms)).is_err() {
-            return false;
-        }
-
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ms.pData.cast::<u8>(), bytes.len());
-        ctx.Unmap(buffer, 0);
-    }
-
-    true
+/// Writes data into a dynamic buffer; false when it can't be mapped or the data doesn't fit.
+fn write_dynamic<T: bytemuck::NoUninit>(ctx: &ID3D11DeviceContext, buffer: &ID3D11Buffer, data: &[T]) -> bool {
+    ctx.map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, data))
 }
 
 impl Renderer {
@@ -120,16 +109,13 @@ impl Renderer {
 
         // The entity id of every instance.
         pel.push(element(c"TEXCOORD", 0, DXGI_FORMAT_R32_UINT, 2, 0, true));
-        let mut pick_failed = false;
-        // SAFETY: creation calls with valid descriptions.
-        unsafe {
-            let _ = dev.CreateVertexShader(&vs, None, Some(&mut e.ovl_vs));
-            let _ = dev.CreateInputLayout(&oel, &vs, Some(&mut e.ovl_il));
-            let _ = dev.CreatePixelShader(&ps, None, Some(&mut e.ovl_ps));
-            let _ = dev.CreateVertexShader(&pvs, None, Some(&mut e.pick_vs));
-            pick_failed = dev.CreateInputLayout(&pel, &pvs, Some(&mut e.pick_il)).is_err() || pick_failed;
-            let _ = dev.CreatePixelShader(&pps, None, Some(&mut e.pick_ps));
-        }
+        e.ovl_vs = dev.create_vertex_shader(&vs).ok();
+        e.ovl_il = dev.create_input_layout(&oel, &vs).ok();
+        e.ovl_ps = dev.create_pixel_shader(&ps).ok();
+        e.pick_vs = dev.create_vertex_shader(&pvs).ok();
+        e.pick_il = dev.create_input_layout(&pel, &pvs).ok();
+        let pick_failed = e.pick_il.is_none();
+        e.pick_ps = dev.create_pixel_shader(&pps).ok();
 
         e.ovl_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.pick_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
@@ -140,17 +126,14 @@ impl Renderer {
 
         let mut dd = D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() };
         let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
-        // SAFETY: plain creation calls.
-        unsafe {
-            let _ = dev.CreateDepthStencilState(&dd, Some(&mut e.ovl_ds_test));
-            dd.DepthEnable = false.into();
-            let _ = dev.CreateDepthStencilState(&dd, Some(&mut e.ovl_ds_off));
-            dd.DepthEnable = true.into();
-            dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-            dd.DepthFunc = D3D11_COMPARISON_LESS;
-            let _ = dev.CreateDepthStencilState(&dd, Some(&mut e.pick_ds));
-            let _ = dev.CreateRasterizerState(&rd, Some(&mut e.ovl_rs));
-        }
+        e.ovl_ds_test = dev.create_depth_stencil_state(&dd).ok();
+        dd.DepthEnable = false.into();
+        e.ovl_ds_off = dev.create_depth_stencil_state(&dd).ok();
+        dd.DepthEnable = true.into();
+        dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        dd.DepthFunc = D3D11_COMPARISON_LESS;
+        e.pick_ds = dev.create_depth_stencil_state(&dd).ok();
+        e.ovl_rs = dev.create_rasterizer_state(&rd).ok();
 
         e.ready = true;
         if pick_failed {
@@ -209,11 +192,11 @@ impl Renderer {
 
         // This frame's extras.
         let (mut lines_d, mut lines_n) = (vec![], vec![]);
-        if self.show_grid {
-            let n = (self.grid_half_extent / self.grid_step) as i32;
-            let g = self.grid_half_extent;
+        if self.settings.show_grid {
+            let n = (self.settings.grid_half_extent / self.settings.grid_step) as i32;
+            let g = self.settings.grid_half_extent;
             for i in -n..=n {
-                let t = i as f32 * self.grid_step;
+                let t = i as f32 * self.settings.grid_step;
                 let c = if i == 0 { overlay_colour(0.9, 0.3, 0.3, 0.8) } else { overlay_colour(0.7, 0.7, 0.7, 0.25) };
                 let c2 = if i == 0 { overlay_colour(0.3, 0.4, 0.95, 0.8) } else { overlay_colour(0.7, 0.7, 0.7, 0.25) };
                 lines_d.extend([
@@ -225,10 +208,10 @@ impl Renderer {
             }
         }
 
-        if !self.selection.is_empty() {
+        if !self.settings.selection.is_empty() {
             let mut sel = Overlay::default();
             let yellow = overlay_colour(1.0, 0.85, 0.2, 1.0);
-            for &id in &self.selection {
+            for &id in &self.settings.selection {
                 let Some(e) = scene.find(id) else { continue };
                 if !scene.drawable(e) {
                     continue;
@@ -236,14 +219,14 @@ impl Renderer {
 
                 match &e.payload {
                     Payload::Terrain(_) => {
-                        if let Some(b) = self.terrain_bounds.get(&id) {
+                        if let Some(b) = self.draw_lists.terrain_bounds.get(&id) {
                             sel.box_wire_transformed(&b.world, b.bmin, b.bmax, yellow);
                         }
                     }
 
                     Payload::MeshInstance(_) => {
-                        if let Some(&item) = self.item_of_entity.get(id as usize).filter(|&&item| item != NO_ITEM)
-                            && let Some((w, lo, hi)) = self.draws.item_box(item)
+                        if let Some(&item) = self.draw_lists.item_of_entity.get(id as usize).filter(|&&item| item != NO_ITEM)
+                            && let Some((w, lo, hi)) = self.draw_lists.draws.item_box(item)
                         {
                             sel.box_wire_transformed(&w, lo, hi, yellow);
                         }
@@ -293,33 +276,30 @@ impl Renderer {
             return;
         }
 
-        write_dynamic(&self.ctx, &cb, &frame_cb(&self.view_proj));
+        write_dynamic(&self.ctx, &cb, &frame_cb(&self.camera.main_view_proj));
         let e = &self.editor;
         let topology = [D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST];
-        // SAFETY: drawing calls with objects of this device.
-        unsafe {
-            self.ctx.OMSetRenderTargets(Some(&[target.rtv().cloned()]), self.dsv.as_ref());
-            self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, target.width() as f32, target.height() as f32)]));
-            self.ctx.OMSetBlendState(e.ovl_blend.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.RSSetState(e.ovl_rs.as_ref());
-            self.ctx.IASetInputLayout(e.ovl_il.as_ref());
-            self.ctx.IASetVertexBuffers(0, 1, Some(&Some(vb)), Some(&(OVERLAY_VERTEX as u32)), Some(&0));
-            self.ctx.VSSetShader(e.ovl_vs.as_ref(), None);
-            self.ctx.VSSetConstantBuffers(0, Some(&[Some(cb)]));
-            self.ctx.PSSetShader(e.ovl_ps.as_ref(), None);
-            for b in 0..4 {
-                if count[b] == 0 {
-                    continue;
-                }
-
-                self.ctx.OMSetDepthStencilState(if b < 2 { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
-                self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology[b]));
-                self.ctx.Draw(count[b], first[b]);
+        self.ctx.set_render_targets(&[target.rtv().cloned()], self.gbuffer.dsv.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, target.width() as f32, target.height() as f32)]);
+        self.ctx.set_blend_state(e.ovl_blend.as_ref());
+        self.ctx.set_rasterizer_state(e.ovl_rs.as_ref());
+        self.ctx.set_input_layout(e.ovl_il.as_ref());
+        self.ctx.set_vertex_buffers(0, &[Some(vb)], &[OVERLAY_VERTEX as u32], &[0]);
+        self.ctx.vs_set_shader(e.ovl_vs.as_ref());
+        self.ctx.vs_set_constant_buffers(0, &[Some(cb)]);
+        self.ctx.ps_set_shader(e.ovl_ps.as_ref());
+        for b in 0..4 {
+            if count[b] == 0 {
+                continue;
             }
 
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.OMSetRenderTargets(None, None);
+            self.ctx.set_depth_stencil_state(if b < 2 { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
+            self.ctx.set_topology(topology[b]);
+            self.ctx.draw(count[b], first[b]);
         }
+
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_render_targets(&[], None);
     }
 
     /// The entity under pixel (x, y) of `target` as `params` sees the scene; 0 for none. Mesh and terrain entities are found with an id pass of
@@ -381,30 +361,15 @@ impl Renderer {
         // 2. Meshes and terrain: an id pass at the target's size, read back at one pixel.
         if self.editor.pick_w != w || self.editor.pick_h != h {
             let e = &mut self.editor;
-            e.pick_id_tex = None;
-            e.pick_id_rtv = None;
-            e.pick_dsv = None;
-            e.pick_staging = None;
             let desc = |w: u32, h: u32, fmt: DXGI_FORMAT, usage: D3D11_USAGE, bind: u32, cpu: u32| D3D11_TEXTURE2D_DESC {
                 Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: usage, BindFlags: bind,
                 CPUAccessFlags: cpu, MiscFlags: 0,
             };
 
-            // SAFETY: creation calls with valid descriptions.
-            unsafe {
-                let _ = self.dev.CreateTexture2D(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None, Some(&mut e.pick_id_tex));
-                if let Some(tex) = &e.pick_id_tex {
-                    let _ = self.dev.CreateRenderTargetView(tex, None, Some(&mut e.pick_id_rtv));
-                }
-
-                let mut depth = None;
-                let _ = self.dev.CreateTexture2D(&desc(w, h, DXGI_FORMAT_D32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL as u32, 0), None, Some(&mut depth));
-                if let Some(depth) = depth {
-                    let _ = self.dev.CreateDepthStencilView(&depth, None, Some(&mut e.pick_dsv));
-                }
-
-                let _ = self.dev.CreateTexture2D(&desc(1, 1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None, Some(&mut e.pick_staging));
-            }
+            e.pick_id_tex = self.dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+            e.pick_id_rtv = e.pick_id_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
+            e.pick_dsv = depth_target(&self.dev, w, h, DXGI_FORMAT_D32_FLOAT);
+            e.pick_staging = self.dev.create_texture_2d(&desc(1, 1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
 
             e.pick_w = w;
             e.pick_h = h;
@@ -412,34 +377,32 @@ impl Renderer {
 
         let (Some(rtv), Some(dsv), Some(staging), Some(id_tex)) = (self.editor.pick_id_rtv.clone(), self.editor.pick_dsv.clone(), self.editor.pick_staging.clone(), self.editor.pick_id_tex.clone()) else { return 0 };
         let e = &self.editor;
-        // SAFETY: clears and state calls with objects of this device. The unsigned integer target is cleared with zero bits.
-        unsafe {
-            self.ctx.ClearRenderTargetView(&rtv, &[0.0; 4]);
-            self.ctx.ClearDepthStencilView(&dsv, D3D11_CLEAR_DEPTH as u32, 1.0, 0);
-            self.ctx.OMSetRenderTargets(Some(&[Some(rtv)]), Some(&dsv));
-            self.ctx.RSSetViewports(Some(&[viewport(0.0, 0.0, w as f32, h as f32)]));
-            self.ctx.OMSetDepthStencilState(e.pick_ds.as_ref(), 0);
-            self.ctx.OMSetBlendState(self.bs_opaque.as_ref(), None, 0xFFFF_FFFF);
-            self.ctx.RSSetState(e.ovl_rs.as_ref());
-            self.ctx.IASetInputLayout(e.pick_il.as_ref());
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-            self.ctx.VSSetShader(e.pick_vs.as_ref(), None);
-            self.ctx.VSSetConstantBuffers(0, Some(std::slice::from_ref(&e.pick_cb)));
+        // The unsigned integer target is cleared with zero bits.
+        self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
+        self.ctx.clear_depth_stencil_view(&dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
+        self.ctx.set_render_targets(&[Some(rtv)], Some(&dsv));
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        self.ctx.set_depth_stencil_state(e.pick_ds.as_ref(), 0);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_rasterizer_state(e.ovl_rs.as_ref());
+        self.ctx.set_input_layout(e.pick_il.as_ref());
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.vs_set_shader(e.pick_vs.as_ref());
+        self.ctx.vs_set_constant_buffers(0, std::slice::from_ref(&e.pick_cb));
 
-            // The pixel shader writes `id`.
-            self.ctx.PSSetConstantBuffers(0, Some(std::slice::from_ref(&e.pick_cb)));
-            self.ctx.PSSetShader(e.pick_ps.as_ref(), None);
-        }
+        // The pixel shader writes `id`.
+        self.ctx.ps_set_constant_buffers(0, std::slice::from_ref(&e.pick_cb));
+        self.ctx.ps_set_shader(e.pick_ps.as_ref());
 
         let view = DrawView {
             frustum: Frustum::from_view_projection(&vp_m),
             eye: params.camera.eye,
-            lod_scale: self.lod_scale,
-            min_ratio: self.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32,
+            lod_scale: self.settings.lod_scale,
+            min_ratio: self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32,
             ..Default::default()
         };
 
-        let (draws, terrain_draws) = (std::mem::take(&mut self.draws), std::mem::take(&mut self.terrain_draws));
+        let (draws, terrain_draws) = (std::mem::take(&mut self.draw_lists.draws), std::mem::take(&mut self.draw_lists.terrain_draws));
         for k in 0..2 {
             let set = if k == 0 { &draws } else { &terrain_draws };
             let mut vis = Visible::default();
@@ -461,40 +424,25 @@ impl Renderer {
             let (Some(inst_vb), Some(id_vb), Some(cb)) = (self.editor.pick_inst_vb.clone(), self.editor.pick_id_vb.clone(), self.editor.pick_cb.clone()) else { continue };
             let mut instances = vec![RigidInstance::default(); n];
             set.gather(&vis, &mut instances);
-            let instance_bytes = instances.iter().flat_map(|r| r.world.iter().flatten().chain(&r.p4).chain(&r.p5).chain(&r.p6).chain(&r.p7).flat_map(|f| f.to_le_bytes())).collect::<Vec<_>>();
-            if !write_dynamic(&self.ctx, &inst_vb, &instance_bytes) {
-                continue;
-            }
-
-            let ids = set.gather_ids(&vis).iter().flat_map(|id| id.to_le_bytes()).collect::<Vec<_>>();
-            if !write_dynamic(&self.ctx, &id_vb, &ids) {
+            if !write_dynamic(&self.ctx, &inst_vb, &instances) || !write_dynamic(&self.ctx, &id_vb, &set.gather_ids(&vis)) {
                 continue;
             }
 
             write_dynamic(&self.ctx, &cb, &frame_cb(&vp_m));
-            // SAFETY: drawing calls with buffers of this device.
-            unsafe {
-                self.ctx.IASetVertexBuffers(1, 2, Some([Some(inst_vb), Some(id_vb)].as_ptr()), Some([size_of::<RigidInstance>() as u32, 4].as_ptr()), Some([0u32, 0].as_ptr()));
-                for &b in &vis.active {
-                    let m = set.batch_mesh(b);
-                    self.ctx.IASetVertexBuffers(0, 1, Some(&m.vb), Some(&32), Some(&0));
-                    self.ctx.IASetIndexBuffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-                    self.ctx.DrawIndexedInstanced(m.index_count, vis.count[b as usize], 0, 0, vis.start[b as usize]);
-                }
+            self.ctx.set_vertex_buffers(1, &[Some(inst_vb), Some(id_vb)], &[size_of::<RigidInstance>() as u32, 4], &[0, 0]);
+            for &b in &vis.active {
+                let m = set.batch_mesh(b);
+                self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[32], &[0]);
+                self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, vis.start[b as usize]);
             }
         }
 
-        self.draws = draws;
-        self.terrain_draws = terrain_draws;
+        self.draw_lists.draws = draws;
+        self.draw_lists.terrain_draws = terrain_draws;
         let pick_box = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
-        // SAFETY: a copy between textures of this device; the mapped texel is read and unmapped.
-        unsafe {
-            self.ctx.OMSetRenderTargets(None, None);
-            self.ctx.CopySubresourceRegion(&staging, 0, 0, 0, 0, &id_tex, 0, Some(&pick_box));
-            let Some(ms) = map_read(&self.ctx, &staging, 0, true) else { return 0 };
-            let id = *ms.pData.cast::<u32>();
-            self.ctx.Unmap(&staging, 0);
-            id
-        }
+        self.ctx.set_render_targets(&[], None);
+        self.ctx.copy_subresource_region(&staging, 0, [0; 3], &id_tex, 0, Some(&pick_box));
+        self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0)
     }
 }

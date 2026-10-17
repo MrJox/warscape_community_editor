@@ -40,34 +40,22 @@ pub struct GpuTimer {
 }
 
 /// Starts a query, if it exists.
-///
-/// # Safety
-///
-/// The query must belong to the context's device.
-unsafe fn begin(ctx: &ID3D11DeviceContext, q: &Option<ID3D11Query>) {
+fn begin(ctx: &ID3D11DeviceContext, q: &Option<ID3D11Query>) {
     if let Some(q) = q {
-        // SAFETY: as the caller ensures.
-        unsafe { ctx.Begin(q) };
+        ctx.begin(q);
     }
 }
 
 /// Ends a query, if it exists.
-///
-/// # Safety
-///
-/// The query must belong to the context's device.
-unsafe fn end(ctx: &ID3D11DeviceContext, q: &Option<ID3D11Query>) {
+fn end(ctx: &ID3D11DeviceContext, q: &Option<ID3D11Query>) {
     if let Some(q) = q {
-        // SAFETY: as the caller ensures.
-        unsafe { ctx.End(q) };
+        ctx.end(q);
     }
 }
 
 fn new_query(dev: &ID3D11Device, kind: D3D11_QUERY, q: &mut Option<ID3D11Query>) -> Option<ID3D11Query> {
     if q.is_none() {
-        let d = D3D11_QUERY_DESC { Query: kind, MiscFlags: 0 };
-        // SAFETY: a plain creation call.
-        let _ = unsafe { dev.CreateQuery(&d, Some(q)) };
+        *q = dev.create_query(kind).ok();
     }
 
     q.clone()
@@ -102,11 +90,8 @@ impl GpuTimer {
         }
 
         f.sections.clear();
-        // SAFETY: queries of this device.
-        unsafe {
-            begin(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP_DISJOINT, &mut f.disjoint));
-            end(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut f.begin));
-        }
+        begin(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP_DISJOINT, &mut f.disjoint));
+        end(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut f.begin));
 
         self.in_frame = true;
         self.open = false;
@@ -119,20 +104,17 @@ impl GpuTimer {
         }
 
         let f = &mut self.ring[self.cur];
-        // SAFETY: queries of this device.
-        unsafe {
-            if self.open
-                && let Some(section) = f.sections.last()
-            {
-                end(&self.ctx, &section.end);
-            }
-
-            let mut section = Section { name: name.to_owned(), start: None, end: None };
-            new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut section.start);
-            new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut section.end);
-            end(&self.ctx, &section.start);
-            f.sections.push(section);
+        if self.open
+            && let Some(section) = f.sections.last()
+        {
+            end(&self.ctx, &section.end);
         }
+
+        let mut section = Section { name: name.to_owned(), start: None, end: None };
+        new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut section.start);
+        new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut section.end);
+        end(&self.ctx, &section.start);
+        f.sections.push(section);
 
         self.open = true;
     }
@@ -144,17 +126,14 @@ impl GpuTimer {
         }
 
         let f = &mut self.ring[self.cur];
-        // SAFETY: queries of this device.
-        unsafe {
-            if self.open
-                && let Some(section) = f.sections.last()
-            {
-                end(&self.ctx, &section.end);
-            }
-
-            end(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut f.finish));
-            end(&self.ctx, &f.disjoint);
+        if self.open
+            && let Some(section) = f.sections.last()
+        {
+            end(&self.ctx, &section.end);
         }
+
+        end(&self.ctx, &new_query(&self.dev, D3D11_QUERY_TIMESTAMP, &mut f.finish));
+        end(&self.ctx, &f.disjoint);
 
         self.open = false;
         f.pending = true;
@@ -163,10 +142,7 @@ impl GpuTimer {
     }
 
     fn read(&self, q: &Option<ID3D11Query>) -> Option<u64> {
-        let mut t = 0u64;
-        // SAFETY: the output is a local of the query's data size.
-        let hr = unsafe { self.ctx.GetData(q.as_ref()?, Some((&raw mut t).cast()), 8, 0) };
-        (hr.0 == 0).then_some(t)
+        self.ctx.get_data(q.as_ref()?, 0).ok().flatten()
     }
 
     fn collect(&mut self) {
@@ -176,17 +152,8 @@ impl GpuTimer {
                 continue;
             }
 
-            let mut dj = D3D11_QUERY_DATA_TIMESTAMP_DISJOINT::default();
             let Some(disjoint) = self.ring[index].disjoint.clone() else { continue };
-            // SAFETY: the output is a local of the query's data size.
-            let hr = unsafe {
-                self.ctx.GetData(&disjoint, Some((&raw mut dj).cast()), size_of::<D3D11_QUERY_DATA_TIMESTAMP_DISJOINT>() as u32,
-                    D3D11_ASYNC_GETDATA_DONOTFLUSH as u32)
-            };
-
-            if hr.0 != 0 {
-                break;
-            }
+            let Ok(Some(dj)) = self.ctx.get_data::<D3D11_QUERY_DATA_TIMESTAMP_DISJOINT>(&disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH as u32) else { break };
 
             self.ring[index].pending = false;
             if dj.Disjoint.as_bool() {
