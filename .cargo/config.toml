@@ -1,0 +1,3 @@
+[env]
+# Match the documented Windows generator and avoid auto-selecting a newer Visual Studio preview.
+CMAKE_GENERATOR_x86_64_pc_windows_msvc = "Visual Studio 17 2022"

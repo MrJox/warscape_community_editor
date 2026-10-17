@@ -12,11 +12,18 @@ path = "src/main.rs"
 [dependencies]
 dear-imgui-rs = "0.20"
 dear-imgui-sys = "0.20"
-sdl3-sys = "0.7"
 wce_d3d11 = { path = "../wce_d3d11" }
 wce_editor = { path = "../wce_editor" }
 wce_foundation = { path = "../wce_foundation" }
 wce_imgui = { path = "../wce_imgui" }
 wce_render = { path = "../wce_render" }
 wce_tile_tool = { path = "../wce_tile_tool" }
+wce_ui_tool = { path = "../wce_ui_tool" }
 wce_weather_tool = { path = "../wce_weather_tool" }
+
+[target.'cfg(windows)'.dependencies]
+# Build the same SDL3 version as sdl3-sys so Windows builds do not need a separate SDL SDK install.
+sdl3-sys = { version = "0.7", default-features = false, features = ["build-from-source"] }
+
+[target.'cfg(not(windows))'.dependencies]
+sdl3-sys = "0.7"

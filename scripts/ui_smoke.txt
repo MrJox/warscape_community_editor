@@ -1,0 +1,104 @@
+# The UI tool driven by script and the (scripted) mouse. %OUT% is the output folder. Mouse positions are window pixels for this tool.
+tool ui
+frames 3
+assert_tool ui
+ui_open "ui/campaign ui/settlement_captured"
+frames 30
+ui_assert_entries 32
+ui_select 1
+ui_assert_rect 1 202 687 875 337
+ui_assert_xml_roundtrip
+ui_save_xml "%OUT%/before.xml"
+assert_modified 0
+
+# a drag on the canvas is one undo entry, and undo gives back the same XML
+mouse drag 780 600 830 580 6
+frames 3
+assert_modified 1
+assert_history 1 1
+ui_save_xml "%OUT%/dragged.xml"
+undo
+frames 2
+assert_modified 0
+ui_save_xml "%OUT%/undone.xml"
+redo
+frames 2
+assert_modified 1
+undo
+
+# typed edits, structure, undo of all of it
+ui_select 1
+ui_set w 800
+# the panel is docked (bottom centre): a new width puts it back at its dock point
+ui_assert_rect 1 240 687 800 337
+ui_dup
+ui_assert_entries 63
+ui_delete
+frames 2
+ui_assert_entries 32
+ui_select 1
+ui_add testchild
+ui_assert_entries 33
+ui_select testchild
+ui_set x 5
+undo 99
+ui_assert_entries 32
+assert_modified 0
+ui_assert_xml_roundtrip
+
+# a pack save, the XML text in the editor, a picture
+ui_select 1
+ui_set x 300
+show_panel "UI XML"
+frames 20
+shot "%OUT%/ui_smoke.png"
+ui_save_pack "%OUT%/ui_smoke.pack"
+
+# what is drawn: components hidden at load (the seventh flag) are left out; skins and states are accepted
+ui_open "ui/frontend ui/battle_setup"
+frames 30
+ui_assert_entries 433
+ui_assert_shown 133
+ui_show_hidden on
+ui_assert_shown 433
+ui_show_hidden off
+ui_state hover
+ui_skin rohan
+ui_skin default
+ui_assert_shown 133
+
+# docking: sized to a 1920x1080 screen the Custom Battle panel (docked centre right) moves, the layout size puts it back
+ui_screen 1920x1080
+frames 3
+ui_assert_screen_rect 1 480 90 1440 900
+frames 3
+shot "%OUT%/ui_screen.png"
+frames 3
+ui_screen none
+ui_assert_screen_rect 1 0 0 1440 900
+
+# related layouts: drawn as reference only (the layout is not changed), switched off again
+ui_related on
+frames 5
+ui_assert_related 20
+frames 3
+shot "%OUT%/ui_related.png"
+frames 3
+ui_related off
+ui_assert_entries 433
+ui_assert_xml_roundtrip
+
+# animations: a fade plays on the canvas without touching the layout
+ui_open "ui/campaign ui/popup_game_saved"
+frames 30
+ui_animate 1 OnCreate 300
+frames 3
+shot "%OUT%/ui_animation.png"
+frames 3
+ui_animate none
+ui_screen 1920x1080
+ui_assert_screen_rect 1 849 5 222 40
+ui_screen none
+ui_assert_entries 3
+ui_assert_xml_roundtrip
+quit

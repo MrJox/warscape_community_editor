@@ -404,9 +404,12 @@ fn rebuild_assets(e: &Editor, st: &mut PanelState) {
     let mut last_folder = String::new();
     for path in vfs.files().range(st.asset_folder.clone()..).map(|(p, _)| p).take_while(|p| p.starts_with(&st.asset_folder)) {
         let rest = &path[st.asset_folder.len()..];
+
+        // a file counts when it passes the extension and text filters; folders show only if they hold such a file
+        let passes = (exts.is_empty() || exts.iter().any(|x| path.ends_with(x.as_str()))) && (filter.is_empty() || path.contains(&filter));
         if let Some(slash) = rest.find('/') {
             let sub = &rest[..slash];
-            if sub != last_folder {
+            if passes && sub != last_folder {
                 last_folder = sub.to_owned();
                 st.asset_folders.push(last_folder.clone());
             }
@@ -414,11 +417,7 @@ fn rebuild_assets(e: &Editor, st: &mut PanelState) {
             continue;
         }
 
-        if !exts.is_empty() && !exts.iter().any(|x| path.ends_with(x.as_str())) {
-            continue;
-        }
-
-        if !filter.is_empty() && !path.contains(&filter) {
+        if !passes {
             continue;
         }
 

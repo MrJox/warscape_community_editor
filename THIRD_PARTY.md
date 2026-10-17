@@ -8,6 +8,12 @@ Everything here is vendored under `third_party/` with its licence file. Permissi
 | ImGuizmo | master of 2026-08-08 (commit 18cef5e) | MIT | `third_party/imguizmo` (`ImGuizmo.cpp/.h`, `LICENSE`) | translate / rotate / scale gizmos in the viewport | **Local change (Phase 1 of the TEd parity plan):** `SetAllowedItem(ImGuiID)` and a `CanActivate()` that ignores that item, because the viewport's button is the hovered item over the whole 3D view.
 | zlib | 1.3.1 | zlib licence | `third_party/zlib` (deflate and inflate sources only; the licence text is in the header of `zlib.h`) | PNG encode and decode that reproduces the kit's encoder byte for byte (`formats/png_file`) |
 
+## Format knowledge from other projects
+
+| Project | Licence | Where | Used for |
+|---|---|---|---|
+| etwng by Tomasz Wegrzanowski (taw), `ui/` converter; research credits in its README: alpaca and Cpecific | MIT | `third_party/etwng/LICENSE`; ported to Rust in `crates/wce_ui_format` (the version-by-version layout of the UI file formats, the XML conventions and the float formatting) | UI layouts (`Version0xx`, `.cml`, `.fc`, `.twui.images`) to XML and back |
+
 ## Linux build dependencies (not vendored)
 
 The Linux build keeps the D3D11 renderer and runs it on a D3D11 implementation over Vulkan. `cmake/linux_deps.cmake` fetches and builds these at
