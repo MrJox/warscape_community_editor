@@ -54,6 +54,9 @@ pub struct Config {
     /// If the enabled mods are mounted.
     pub use_mods: bool,
 
+    /// The mods to mount, by file name in the data folder (first wins). `None`: the launcher's list if `use_mods`.
+    pub mod_packs: Option<Vec<String>>,
+
     /// Loose folders mounted above every pack, highest priority first.
     pub overlay_folders: Vec<PathBuf>,
 }
@@ -62,7 +65,7 @@ impl Config {
 
     /// The packs of a game in its folder, with its enabled mods and no overlay folders.
     pub fn new(game_dir: impl Into<PathBuf>, profile: GameProfile) -> Self {
-        Self { game_dir: game_dir.into(), profile, use_mods: true, overlay_folders: vec![] }
+        Self { game_dir: game_dir.into(), profile, use_mods: true, mod_packs: None, overlay_folders: vec![] }
     }
 }
 
@@ -134,7 +137,10 @@ impl Vfs {
             vfs.add(Pack { name, path: folder.clone(), is_mod: false, loose: true }, Source::Folder, paths);
         }
 
-        let order = config.profile.pack_order(&config.game_dir, config.use_mods);
+        let order = match &config.mod_packs {
+            Some(mods) => config.profile.pack_order_with(&config.game_dir, mods),
+            None => config.profile.pack_order(&config.game_dir, config.use_mods),
+        };
         vfs.missing_mods = order.missing_mods;
         for pack_ref in order.packs {
             let pack = RpfmPack::read_and_merge(std::slice::from_ref(&pack_ref.path), game, true, false, false)

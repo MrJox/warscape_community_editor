@@ -22,6 +22,7 @@ fn main() {
 
     let game = game.expect("--game <folder>");
     let vfs = wce_vfs::Vfs::mount(&wce_vfs::Config::new(game, wce_vfs::GameProfile::ATTILA)).expect("mount");
+    let (mut dock_checked, mut dock_grew, mut dock_wrong) = (0, 0, 0);
     let (mut comps, mut docked, mut off, mut pics, mut dpics, mut poff, mut moved_undocked, mut off_big) = (0, 0, 0, 0, 0, 0, 0, 0);
     for path in vfs.files().keys() {
         let name = path.rsplit('/').next().unwrap_or(path);
@@ -70,7 +71,30 @@ fn main() {
                         println!("component off: {path} {} dock {dock} off {:?} stored ({}, {}) docked ({}, {})", en.name, doff, en.ax, en.ay, r.x, r.y);
                     }
                 }
-            } else if en.depth > 0 && en.parent == Some(0) {
+            }
+
+            if dock > 0 && dock <= 9 && en.parent == Some(0) {
+                // a child of the root docked to one of its nine points: when the screen grows and the child keeps its size, it moves by
+                // 0, half or all of the growth, by the column (and row) of its dock point
+                let (a, b) = (rects[i], rects_big[i]);
+                let (dw, dh) = (rects_big[0].w - rects[0].w, rects_big[0].h - rects[0].h);
+                if (a.w - b.w).abs() < 0.5 && (a.h - b.h).abs() < 0.5 {
+                    let (col, row) = (((dock - 1) % 3) as f32, ((dock - 1) / 3) as f32);
+                    dock_checked += 1;
+                    if dw > 0.5 || dh > 0.5 {
+                        dock_grew += 1;
+                    }
+
+                    if ((b.x - a.x) - col * dw / 2.0).abs() > 1.01 || ((b.y - a.y) - row * dh / 2.0).abs() > 1.01 {
+                        dock_wrong += 1;
+                        if list {
+                            println!("docked child moved wrongly: {path} {} dock {dock} moved ({}, {}) for growth ({dw}, {dh})", en.name, b.x - a.x, b.y - a.y);
+                        }
+                    }
+                }
+            }
+
+            if dock <= 0 && en.depth > 0 && en.parent == Some(0) {
                 // an undocked child of the root must not move with the screen
                 let (a, b) = (rects[i], rects_big[i]);
                 if (a.x - b.x).abs() > 0.5 || (a.y - b.y).abs() > 0.5 {
@@ -106,7 +130,10 @@ fn main() {
     println!("{pics} pictures, {dpics} docked, {poff} docked pictures not where their dock puts them");
     println!("{moved_undocked} undocked root children moved when the screen grew (must be 0)");
 
-    if moved_undocked > 0 {
+    println!("{dock_checked} docked children of the root checked ({dock_grew} on a screen that grew), {dock_wrong} moved wrongly (must be 0)");
+
+    // the check must not be empty: some layout must have a docked root child that kept its size on a larger screen
+    if moved_undocked > 0 || dock_wrong > 0 || dock_grew == 0 {
         std::process::exit(1);
     }
 }

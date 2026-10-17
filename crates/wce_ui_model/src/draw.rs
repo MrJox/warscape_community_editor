@@ -380,8 +380,17 @@ impl UiModel {
                     text,
                     color: state.find("color").map(color_of).unwrap_or([255; 4]),
                     size: if size < 4.0 { 10.0 } else { size },
-                    halign: if int(state, "i", 2) == 4 { 1 } else { int(state, "i", 4).clamp(0, 2) as i32 },
-                    valign: if int(state, "i", 3) == 4 { 1 } else { 0 },
+                    // the game: right and centre are 3 and 4 of the horizontal value, bottom and centre 1 and 4 of the vertical; anything else is left / top
+                    halign: match int(state, "i", 2) {
+                        3 => 2,
+                        4 => 1,
+                        _ => 0,
+                    },
+                    valign: match int(state, "i", 3) {
+                        1 => 2,
+                        4 => 1,
+                        _ => 0,
+                    },
                     font,
                     category,
                     inset: [margin("left"), margin("top"), margin("right"), margin("bottom")],

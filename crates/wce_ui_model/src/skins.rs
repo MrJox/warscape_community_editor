@@ -2,6 +2,7 @@
 //! and from the default skin otherwise.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use wce_vfs::Vfs;
 
@@ -10,20 +11,60 @@ use crate::images;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skin {
     pub name: String,
-    /// Pictures in the skin's folder.
+    /// Pictures in the skin: those of the packs plus those of the loose folder.
     pub files: usize,
+    /// There is a folder for it on disk (the user's own, read before the packs).
+    pub loose: bool,
+    /// The mounted packs have pictures for it.
+    pub packed: bool,
 }
 
-/// The skins of the mounted packs: every folder under `ui/skins/`, `default` first.
-pub fn list(vfs: &Vfs) -> Vec<Skin> {
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+/// The names of the skin folders under `<project>/ui/skins`.
+pub fn loose_names(project: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(project.join("ui").join("skins"))
+        .map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_lowercase()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+fn count_files(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum()).unwrap_or(0)
+}
+
+fn entry<'a>(map: &'a mut BTreeMap<String, Skin>, name: &str) -> &'a mut Skin {
+    map.entry(name.to_string()).or_insert_with(|| Skin { name: name.to_string(), files: 0, loose: false, packed: false })
+}
+
+/// The skins: every folder under `ui/skins/` of the mounted packs and of the project's loose folder, `default` first. A skin in both is
+/// listed once, as loose and packed: the loose pictures are read first, the pack's fill in the rest.
+pub fn list(vfs: &Vfs, project: Option<&Path>) -> Vec<Skin> {
+    let mut map: BTreeMap<String, Skin> = BTreeMap::new();
     for p in vfs.files().keys() {
         if let Some((name, _)) = p.strip_prefix("ui/skins/").and_then(|r| r.split_once('/')) {
-            *counts.entry(name.to_string()).or_default() += 1;
+            let s = entry(&mut map, name);
+            for &i in vfs.owners(p) {
+                if vfs.packs().get(i).is_some_and(|pk| pk.loose) {
+                    s.loose = true;
+                } else {
+                    s.packed = true;
+                    s.files += 1;
+                    break;
+                }
+            }
         }
     }
 
-    let mut v: Vec<Skin> = counts.into_iter().map(|(name, files)| Skin { name, files }).collect();
+    if let Some(pd) = project {
+        for name in loose_names(pd) {
+            let n = count_files(&pd.join("ui").join("skins").join(&name));
+            let s = entry(&mut map, &name);
+            s.loose = true;
+            s.files += n;
+        }
+    }
+
+    let mut v: Vec<Skin> = map.into_values().collect();
     v.sort_by(|a, b| (b.name == "default").cmp(&(a.name == "default")).then(a.name.cmp(&b.name)));
     v
 }
