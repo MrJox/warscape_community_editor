@@ -37,19 +37,20 @@ impl RenderTarget {
             Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let mut target = Self { w: width, h: height, ..Default::default() };
-        // SAFETY: plain creation calls with valid descriptions.
-        let ok = unsafe {
-            dev.CreateTexture2D(&td, None, Some(&mut target.tex)).is_ok()
-                && target.tex.as_ref().is_some_and(|tex| dev.CreateRenderTargetView(tex, None, Some(&mut target.rtv)).is_ok())
-                && target.tex.as_ref().is_some_and(|tex| dev.CreateShaderResourceView(tex, None, Some(&mut target.srv)).is_ok())
-        };
+        let created = dev.create_texture_2d(&td, None).and_then(|tex| {
+            let rtv = dev.create_render_target_view(&tex, None)?;
+            let srv = dev.create_shader_resource_view(&tex, None)?;
+            Ok(Self { w: width, h: height, tex: Some(tex), rtv: Some(rtv), srv: Some(srv) })
+        });
 
-        if ok {
-            *self = target;
+        match created {
+            Ok(target) => {
+                *self = target;
+                true
+            }
+
+            Err(_) => false,
         }
-
-        ok
     }
 
     /// Reallocates when the size differs; true if the surface is usable afterwards.

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use wce_formats::png_file::PngFile;
 use wce_tile::height_field::{Brush, HeightField};
-use wce_tile::ted_scene::{TedScene, Vec3, format_general, format_ted_number, parse_vec3};
+use wce_foundation::math::Double3;
+use wce_tile::ted_scene::{TedScene, format_general, format_ted_number, parse_vec3};
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::{euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
@@ -28,11 +29,11 @@ impl Rng {
         lo + (hi - lo) * f64::from(self.next() % 1_000_000) / 1_000_000.0
     }
 
-    fn v(&mut self, lo: f64, hi: f64) -> Vec3 {
+    fn v(&mut self, lo: f64, hi: f64) -> Double3 {
         let a = self.d(lo, hi);
         let b = self.d(lo, hi);
         let c = self.d(lo, hi);
-        [a, b, c]
+        Double3::new(a, b, c)
     }
 
     fn pick(&mut self, v: &[usize]) -> usize {
@@ -228,8 +229,8 @@ fn scene_op(sc: &mut TedScene, r: &mut Rng, op: u32, k: usize) -> Result<String,
         15 if !wp.is_empty() => {
             let e = r.pick(&wp);
             let w = world_transform(sc, e);
-            let h = fnv_from(fnv(&f64s(&w.position)), &f64s(&w.rotation));
-            let h = fnv_from(h, &f64s(&euler_from_matrix(&w.rotation)));
+            let h = fnv_from(fnv(&f64s(&w.position.to_array())), &f64s(w.rotation.data()));
+            let h = fnv_from(h, &f64s(&euler_from_matrix(&w.rotation).to_array()));
             res = format!("{h:016x}");
         }
 
@@ -270,7 +271,7 @@ fn show(p: &mut TileProject, label: &str, fx: &Path, tmp: &Path, n: &mut usize, 
     println!("  heights {h:016x}");
     let wp = filtered(&p.scene, |i| p.scene.position(i).is_some());
     if let Some(&first) = wp.first() {
-        p.scene.translate(first, [1.0, 2.0, 3.0]).unwrap();
+        p.scene.translate(first, Double3::new(1.0, 2.0, 3.0)).unwrap();
     }
 
     if let Some(field) = &mut p.height {
@@ -346,7 +347,7 @@ fn main() {
 
         let p = ["vector", "euler", ""][pre as usize];
         let line = match parse_vec3(&s, p) {
-            Some(v) => format!("{:016x} {:016x} {:016x}\n", v[0].to_bits(), v[1].to_bits(), v[2].to_bits()),
+            Some(v) => format!("{:016x} {:016x} {:016x}\n", v.x.to_bits(), v.y.to_bits(), v.z.to_bits()),
             None => "none\n".to_owned(),
         };
 
@@ -371,7 +372,7 @@ fn main() {
                 let pre = if a == "orientation" { "euler" } else { "vector" };
                 let Some(v) = parse_vec3(&txt, pre) else { continue };
                 fmt_total += 1;
-                if format!("{pre}({},{},{})", format_ted_number(v[0]), format_ted_number(v[1]), format_ted_number(v[2])) == txt {
+                if format!("{pre}({},{},{})", format_ted_number(v.x), format_ted_number(v.y), format_ted_number(v.z)) == txt {
                     fmt_ok += 1;
                 }
             }

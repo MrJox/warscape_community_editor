@@ -3,14 +3,12 @@
 //! target's view shown with `Ui::image`).
 
 use std::collections::HashMap;
-use std::ffi::CString;
 
 use dear_imgui_rs::Context;
 use dear_imgui_rs::render::{DrawCmd, DrawData, DrawIdx, DrawVert, PendingFrame, SynchronousRendererConsumer, TextureFeedback, TextureOp};
 use dear_imgui_rs::texture::{TextureFormat, TextureId};
 use dear_imgui_rs::BackendFlags;
 use wce_d3d11::*;
-use windows_core::PCSTR;
 
 const SHADERS: &str = r#"
 cbuffer vertexBuffer : register(b0) { float4x4 ProjectionMatrix; };
@@ -47,23 +45,14 @@ impl From<windows_core::Error> for RendererError {
 }
 
 fn compile(entry: &str, target: &str) -> Result<Vec<u8>, RendererError> {
-    let (entry_c, target_c) = (CString::new(entry).unwrap_or_default(), CString::new(target).unwrap_or_default());
-    let (mut code, mut errors) = (None, None);
-    // SAFETY: the source, names and outputs are alive during the call.
-    let result = unsafe {
-        D3DCompile(SHADERS.as_ptr().cast(), SHADERS.len(), PCSTR(c"imgui".as_ptr().cast()), None, None, PCSTR(entry_c.as_ptr().cast()),
-            PCSTR(target_c.as_ptr().cast()), 0, 0, &raw mut code, &raw mut errors)
-    };
+    wce_d3d11::safe::compile(SHADERS, "imgui", entry, target).map_err(RendererError)
+}
 
-    let bytes = |blob: &ID3D10Blob| {
-        // SAFETY: the blob's buffer is valid for its size while the blob lives.
-        unsafe { std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()).to_vec() }
-    };
-
-    match (result.ok(), code) {
-        (Ok(()), Some(code)) => Ok(bytes(&code)),
-        _ => Err(RendererError(errors.as_ref().map(|e| String::from_utf8_lossy(&bytes(e)).into_owned()).unwrap_or_else(|| format!("{entry}: compile failed")))),
-    }
+/// The bytes of vertices: `DrawVert` is `#[repr(C)]` floats and a u32, without padding.
+fn vertex_bytes(v: &[DrawVert]) -> &[u8] {
+    const _: () = assert!(size_of::<DrawVert>() == 20);
+    // SAFETY: plain data without padding, read as bytes for the slice's lifetime.
+    unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), size_of_val(v)) }
 }
 
 /// A texture the renderer owns (a managed one) or shows (a user one).
@@ -109,13 +98,9 @@ impl D3D11Renderer {
         let _ = imgui.set_renderer_name(Some("wce_d3d11"));
         let consumer = imgui.create_synchronous_renderer_consumer().map_err(|e| RendererError(e.to_string()))?;
         let (vs_code, ps_code) = (compile("vs", "vs_4_0")?, compile("ps", "ps_4_0")?);
-        let element = |name: &'static std::ffi::CStr, format, offset| D3D11_INPUT_ELEMENT_DESC {
-            SemanticName: PCSTR(name.as_ptr().cast()), SemanticIndex: 0, Format: format, InputSlot: 0, AlignedByteOffset: offset,
-            InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA, InstanceDataStepRate: 0,
-        };
+        let element = |name, format, offset| InputElement::new(name, 0, format, 0, offset, false);
 
         let elements = [element(c"POSITION", DXGI_FORMAT_R32G32_FLOAT, 0), element(c"TEXCOORD", DXGI_FORMAT_R32G32_FLOAT, 8), element(c"COLOR", DXGI_FORMAT_R8G8B8A8_UNORM, 16)];
-        let (mut vs, mut ps, mut layout, mut cb, mut blend, mut raster, mut depth, mut linear, mut nearest) = (None, None, None, None, None, None, None, None, None);
         let blend_desc = D3D11_BLEND_DESC {
             AlphaToCoverageEnable: false.into(), IndependentBlendEnable: false.into(),
             RenderTarget: [D3D11_RENDER_TARGET_BLEND_DESC {
@@ -132,24 +117,12 @@ impl D3D11Renderer {
         };
 
         let cb_desc = D3D11_BUFFER_DESC { ByteWidth: 64, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, ..Default::default() };
-        // SAFETY: creation calls with valid descriptions and code.
-        unsafe {
-            dev.CreateVertexShader(&vs_code, None, Some(&mut vs)).ok()?;
-            dev.CreatePixelShader(&ps_code, None, Some(&mut ps)).ok()?;
-            dev.CreateInputLayout(&elements, &vs_code, Some(&mut layout)).ok()?;
-            dev.CreateBuffer(&cb_desc, None, Some(&mut cb)).ok()?;
-            dev.CreateBlendState(&blend_desc, Some(&mut blend)).ok()?;
-            dev.CreateRasterizerState(&raster_desc, Some(&mut raster)).ok()?;
-            dev.CreateDepthStencilState(&depth_desc, Some(&mut depth)).ok()?;
-            dev.CreateSamplerState(&sampler(D3D11_FILTER_MIN_MAG_MIP_LINEAR), Some(&mut linear)).ok()?;
-            dev.CreateSamplerState(&sampler(D3D11_FILTER_MIN_MAG_MIP_POINT), Some(&mut nearest)).ok()?;
-        }
-
-        let missing = || RendererError("a pipeline object was not created".to_owned());
         Ok(Self {
-            dev: dev.clone(), ctx: ctx.clone(), consumer, vs: vs.ok_or_else(missing)?, ps: ps.ok_or_else(missing)?, layout: layout.ok_or_else(missing)?, cb: cb.ok_or_else(missing)?,
-            blend: blend.ok_or_else(missing)?, raster: raster.ok_or_else(missing)?, depth: depth.ok_or_else(missing)?, linear: linear.ok_or_else(missing)?,
-            nearest: nearest.ok_or_else(missing)?, vb: None, ib: None, vb_size: 0, ib_size: 0, textures: HashMap::new(), managed: HashMap::new(), next_id: 1,
+            dev: dev.clone(), ctx: ctx.clone(), consumer, vs: dev.create_vertex_shader(&vs_code)?, ps: dev.create_pixel_shader(&ps_code)?,
+            layout: dev.create_input_layout(&elements, &vs_code)?, cb: dev.create_buffer(&cb_desc, None)?, blend: dev.create_blend_state(&blend_desc)?,
+            raster: dev.create_rasterizer_state(&raster_desc)?, depth: dev.create_depth_stencil_state(&depth_desc)?,
+            linear: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_LINEAR))?, nearest: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_POINT))?,
+            vb: None, ib: None, vb_size: 0, ib_size: 0, textures: HashMap::new(), managed: HashMap::new(), next_id: 1,
         })
     }
 
@@ -182,18 +155,11 @@ impl D3D11Renderer {
             Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let init = D3D11_SUBRESOURCE_DATA { pSysMem: rgba.as_ptr().cast(), SysMemPitch: width * 4, SysMemSlicePitch: 0 };
-        let (mut tex, mut srv) = (None, None);
-        // SAFETY: creation calls; the pixels outlive the call.
-        unsafe {
-            self.dev.CreateTexture2D(&desc, Some(&init), Some(&mut tex)).ok()?;
-            let t = tex.as_ref().ok_or_else(|| RendererError("no texture".to_owned()))?;
-            self.dev.CreateShaderResourceView(t, None, Some(&mut srv)).ok()?;
-        }
-
+        let tex = self.dev.create_texture_2d(&desc, Some(&[InitData::new(&rgba, width * 4)]))?;
+        let srv = self.dev.create_shader_resource_view(&tex, None)?;
         let id = self.next_id;
         self.next_id += 1;
-        self.textures.insert(id, Texture { tex, srv: srv.ok_or_else(|| RendererError("no view".to_owned()))? });
+        self.textures.insert(id, Texture { tex: Some(tex), srv });
         Ok(id)
     }
 
@@ -202,8 +168,7 @@ impl D3D11Renderer {
         for r in rects {
             let rgba = to_rgba(format, &r.data);
             let b = D3D11_BOX { left: u32::from(r.rect.x), top: u32::from(r.rect.y), front: 0, right: u32::from(r.rect.x + r.rect.w), bottom: u32::from(r.rect.y + r.rect.h), back: 1 };
-            // SAFETY: the box is inside the texture (Dear ImGui's rectangle) and the pixels cover it.
-            unsafe { self.ctx.UpdateSubresource(&tex, 0, Some(&b), rgba.as_ptr().cast(), u32::from(r.rect.w) * 4, 0) };
+            let _ = self.ctx.update_subresource(&tex, 0, Some(&b), &rgba, u32::from(r.rect.w) * 4, 0);
         }
     }
 
@@ -253,10 +218,7 @@ impl D3D11Renderer {
     fn ensure_buffers(&mut self, vtx: usize, idx: usize) -> Result<(), RendererError> {
         let make = |dev: &ID3D11Device, bytes: usize, bind: i32| -> Result<Option<ID3D11Buffer>, RendererError> {
             let desc = D3D11_BUFFER_DESC { ByteWidth: bytes as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: bind as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, ..Default::default() };
-            let mut b = None;
-            // SAFETY: a plain creation call.
-            unsafe { dev.CreateBuffer(&desc, None, Some(&mut b)).ok()? };
-            Ok(b)
+            Ok(Some(dev.create_buffer(&desc, None)?))
         };
 
         if self.vb.is_none() || self.vb_size < vtx {
@@ -279,31 +241,26 @@ impl D3D11Renderer {
         let mvp: [f32; 16] = [2.0 / (r - l), 0.0, 0.0, 0.0, 0.0, 2.0 / (t - b), 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, (r + l) / (l - r), (t + b) / (b - t), 0.5, 1.0];
         let viewport = D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: w * dd.framebuffer_scale()[0], Height: h * dd.framebuffer_scale()[1], MinDepth: 0.0, MaxDepth: 1.0 };
         let index_format = if size_of::<DrawIdx>() == 2 { DXGI_FORMAT_R16_UINT } else { DXGI_FORMAT_R32_UINT };
-        // SAFETY: state calls with objects of this device; the constant buffer is written while mapped.
-        unsafe {
-            let mut ms = D3D11_MAPPED_SUBRESOURCE::default();
-            if self.ctx.Map(&self.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut ms)).is_ok() {
-                std::ptr::copy_nonoverlapping(mvp.as_ptr(), ms.pData.cast::<f32>(), 16);
-                self.ctx.Unmap(&self.cb, 0);
-            }
-
-            self.ctx.RSSetViewports(Some(&[viewport]));
-            self.ctx.IASetInputLayout(&self.layout);
-            self.ctx.IASetVertexBuffers(0, 1, Some(&Some(vb.clone())), Some(&(size_of::<DrawVert>() as u32)), Some(&0));
-            self.ctx.IASetIndexBuffer(ib, index_format, 0);
-            self.ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST));
-            self.ctx.VSSetShader(&self.vs, None);
-            self.ctx.VSSetConstantBuffers(0, Some(&[Some(self.cb.clone())]));
-            self.ctx.PSSetShader(&self.ps, None);
-            self.ctx.PSSetSamplers(0, Some(&[Some(self.linear.clone())]));
-            self.ctx.GSSetShader(None, None);
-            self.ctx.HSSetShader(None, None);
-            self.ctx.DSSetShader(None, None);
-            self.ctx.CSSetShader(None, None);
-            self.ctx.OMSetBlendState(&self.blend, Some(&[0.0; 4]), 0xffff_ffff);
-            self.ctx.OMSetDepthStencilState(&self.depth, 0);
-            self.ctx.RSSetState(&self.raster);
+        if let Ok(mut ms) = self.ctx.map(&self.cb, 0, D3D11_MAP_WRITE_DISCARD, 0) {
+            ms.write(0, &mvp);
         }
+
+        self.ctx.set_viewports(&[viewport]);
+        self.ctx.set_input_layout(Some(&self.layout));
+        self.ctx.set_vertex_buffers(0, &[Some(vb.clone())], &[size_of::<DrawVert>() as u32], &[0]);
+        self.ctx.set_index_buffer(Some(ib), index_format, 0);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.vs_set_shader(Some(&self.vs));
+        self.ctx.vs_set_constant_buffers(0, &[Some(self.cb.clone())]);
+        self.ctx.ps_set_shader(Some(&self.ps));
+        self.ctx.ps_set_samplers(0, &[Some(self.linear.clone())]);
+        self.ctx.gs_set_shader(None);
+        self.ctx.hs_set_shader(None);
+        self.ctx.ds_set_shader(None);
+        self.ctx.cs_set_shader(None);
+        self.ctx.set_blend_state_factor(Some(&self.blend), [0.0; 4], 0xffff_ffff);
+        self.ctx.set_depth_stencil_state(Some(&self.depth), 0);
+        self.ctx.set_rasterizer_state(Some(&self.raster));
     }
 
     fn draw(&mut self, dd: &DrawData) -> Result<(), RendererError> {
@@ -315,23 +272,19 @@ impl D3D11Renderer {
         self.ensure_buffers(dd.total_vtx_count(), dd.total_idx_count())?;
         let (Some(vb), Some(ib)) = (self.vb.clone(), self.ib.clone()) else { return Ok(()) };
 
-        // Every list into one vertex and one index buffer.
-        // SAFETY: the buffers hold the totals (ensure_buffers) and are written while mapped.
-        unsafe {
-            let (mut vm, mut im) = (D3D11_MAPPED_SUBRESOURCE::default(), D3D11_MAPPED_SUBRESOURCE::default());
-            self.ctx.Map(&vb, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut vm)).ok()?;
-            self.ctx.Map(&ib, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut im)).ok()?;
-            let (mut vdst, mut idst) = (vm.pData.cast::<DrawVert>(), im.pData.cast::<DrawIdx>());
+        // Every list into one vertex and one index buffer (they hold the totals: ensure_buffers).
+        {
+            let (mut vm, mut im) = (self.ctx.map(&vb, 0, D3D11_MAP_WRITE_DISCARD, 0)?, self.ctx.map(&ib, 0, D3D11_MAP_WRITE_DISCARD, 0)?);
+            let (mut vat, mut iat) = (0, 0);
             for list in dd.draw_lists() {
-                let (v, i) = (list.vtx_buffer(), list.idx_buffer());
-                std::ptr::copy_nonoverlapping(v.as_ptr(), vdst, v.len());
-                std::ptr::copy_nonoverlapping(i.as_ptr(), idst, i.len());
-                vdst = vdst.add(v.len());
-                idst = idst.add(i.len());
-            }
+                let (v, i) = (vertex_bytes(list.vtx_buffer()), list.idx_buffer());
+                if !vm.write(vat, v) || !im.write(iat, i) {
+                    return Err(RendererError("the draw lists outgrew their buffers".to_owned()));
+                }
 
-            self.ctx.Unmap(&vb, 0);
-            self.ctx.Unmap(&ib, 0);
+                vat += v.len();
+                iat += size_of_val(i);
+            }
         }
 
         self.setup_state(dd, &vb, &ib);
@@ -350,19 +303,14 @@ impl D3D11Renderer {
 
                         let scissor = RECT { left: x0 as i32, top: y0 as i32, right: x1 as i32, bottom: y1 as i32 };
                         let srv = self.textures.get(&cmd_params.texture_id.id()).map(|t| t.srv.clone());
-                        // SAFETY: drawing calls within the buffers filled above.
-                        unsafe {
-                            self.ctx.RSSetScissorRects(Some(&[scissor]));
-                            self.ctx.PSSetShaderResources(0, Some(&[srv]));
-                            self.ctx.DrawIndexed(count as u32, (cmd_params.idx_offset + idx_base) as u32, (cmd_params.vtx_offset + vtx_base) as i32);
-                        }
+                        self.ctx.set_scissor_rects(&[scissor]);
+                        self.ctx.ps_set_shader_resources(0, &[srv]);
+                        self.ctx.draw_indexed(count as u32, (cmd_params.idx_offset + idx_base) as u32, (cmd_params.vtx_offset + vtx_base) as i32);
                     }
 
                     DrawCmd::ResetRenderState => self.setup_state(dd, &vb, &ib),
-                    // SAFETY: a state call.
-                    DrawCmd::SetSamplerLinear => unsafe { self.ctx.PSSetSamplers(0, Some(&[Some(self.linear.clone())])) },
-                    // SAFETY: a state call.
-                    DrawCmd::SetSamplerNearest => unsafe { self.ctx.PSSetSamplers(0, Some(&[Some(self.nearest.clone())])) },
+                    DrawCmd::SetSamplerLinear => self.ctx.ps_set_samplers(0, &[Some(self.linear.clone())]),
+                    DrawCmd::SetSamplerNearest => self.ctx.ps_set_samplers(0, &[Some(self.nearest.clone())]),
                     // The editor installs no draw callbacks: one is skipped.
                     DrawCmd::RawCallback(raw) => drop(raw),
                 }

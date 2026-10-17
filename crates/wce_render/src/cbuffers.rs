@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use wce_d3d11::{D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext};
+use wce_d3d11::{ContextExt, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, DeviceExt, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext};
 
 /// A variable of a buffer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,16 +115,14 @@ impl ConstantBuffers {
                     StructureByteStride: 0,
                 };
 
-                // SAFETY: the description is valid and the output is a local.
-                unsafe { dev.CreateBuffer(&desc, None, Some(&mut b.gpu)).ok()? };
+                b.gpu = Some(dev.create_buffer(&desc, None)?);
                 b.dirty = true;
             }
 
             if b.dirty
                 && let Some(gpu) = &b.gpu
             {
-                // SAFETY: the CPU copy has the buffer's size.
-                unsafe { ctx.UpdateSubresource(gpu, 0, None, b.cpu.as_ptr().cast(), 0, 0) };
+                ctx.update_subresource(gpu, 0, None, &b.cpu, 0, 0)?;
                 b.dirty = false;
             }
         }

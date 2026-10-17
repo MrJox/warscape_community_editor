@@ -1,10 +1,7 @@
 //! DDS loading straight into D3D11 (BCn uploaded as it is, no conversion). Game textures: DXT1 / DXT5 (buildings), cube maps
 //! (campaign skybox), volumes, arrays and uncompressed layouts.
 
-use std::ffi::c_void;
-
 use wce_d3d11::*;
-use windows_core::Interface;
 
 use crate::RenderError;
 
@@ -228,7 +225,7 @@ fn build_dds(dev: &ID3D11Device, l: &DdsLayout, data: &[u8], data_offset: usize,
                     return fail("dds: truncated data");
                 }
 
-                subs.push(D3D11_SUBRESOURCE_DATA { pSysMem: data[p - data_offset..].as_ptr().cast(), SysMemPitch: pitch as u32, SysMemSlicePitch: size as u32 });
+                subs.push(InitData { data: &data[p - data_offset..], row_pitch: pitch as u32, slice_pitch: size as u32 });
             }
 
             p += size * d as usize;
@@ -243,56 +240,39 @@ fn build_dds(dev: &ID3D11Device, l: &DdsLayout, data: &[u8], data_offset: usize,
     let format = if srgb { to_srgb(l.fmt) } else { l.fmt };
     let mut t = Texture { width, height, mips, depth: 1, format, ..Default::default() };
 
-    // SAFETY: the subresources point into `data`, which outlives the calls, with the pitches and sizes of the description.
-    unsafe {
-        if l.volume {
-            let vd = D3D11_TEXTURE3D_DESC {
-                Width: width, Height: height, Depth: l.depth, MipLevels: mips, Format: resource_format, Usage: D3D11_USAGE_IMMUTABLE,
-                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-            };
-
-            let mut tex = None;
-            if dev.CreateTexture3D(&vd, Some(subs.as_ptr()), Some(&mut tex)).is_err() {
-                return fail("dds: CreateTexture3D failed");
-            }
-
-            t.depth = l.depth;
-            let sd = srv_desc(format, D3D11_SRV_DIMENSION_TEXTURE3D, mips, 1);
-            let resource = tex.as_ref().map(|tex| tex.cast::<ID3D11Resource>()).transpose()?;
-            if dev.CreateShaderResourceView(resource.as_ref(), Some(&sd), Some(&mut t.srv)).is_err() {
-                return fail("dds: CreateShaderResourceView failed");
-            }
-
-            return Ok(t);
-        }
-
-        let td = D3D11_TEXTURE2D_DESC {
-            Width: width, Height: height, MipLevels: mips, ArraySize: l.faces, Format: resource_format,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
-            CPUAccessFlags: 0, MiscFlags: if l.cube { D3D11_RESOURCE_MISC_TEXTURECUBE as u32 } else { 0 },
+    if l.volume {
+        let vd = D3D11_TEXTURE3D_DESC {
+            Width: width, Height: height, Depth: l.depth, MipLevels: mips, Format: resource_format, Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
-        let mut tex = None;
-        if dev.CreateTexture2D(&td, Some(subs.as_ptr()), Some(&mut tex)).is_err() {
-            return fail("dds: CreateTexture2D failed");
-        }
-
-        t.cube = l.cube;
-        let dimension = if l.cube {
-            D3D11_SRV_DIMENSION_TEXTURECUBE
-        } else if l.array > 1 {
-            D3D11_SRV_DIMENSION_TEXTURE2DARRAY
-        } else {
-            D3D11_SRV_DIMENSION_TEXTURE2D
-        };
-
-        let sd = srv_desc(format, dimension, mips, l.array);
-        let resource = tex.as_ref().map(|tex| tex.cast::<ID3D11Resource>()).transpose()?;
-        if dev.CreateShaderResourceView(resource.as_ref(), Some(&sd), Some(&mut t.srv)).is_err() {
-            return fail("dds: CreateShaderResourceView failed");
-        }
+        let Ok(tex) = dev.create_texture_3d(&vd, Some(&subs)) else { return fail("dds: CreateTexture3D failed") };
+        t.depth = l.depth;
+        let sd = srv_desc(format, D3D11_SRV_DIMENSION_TEXTURE3D, mips, 1);
+        let Ok(srv) = dev.create_shader_resource_view(&tex, Some(&sd)) else { return fail("dds: CreateShaderResourceView failed") };
+        t.srv = Some(srv);
+        return Ok(t);
     }
 
+    let td = D3D11_TEXTURE2D_DESC {
+        Width: width, Height: height, MipLevels: mips, ArraySize: l.faces, Format: resource_format,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0, MiscFlags: if l.cube { D3D11_RESOURCE_MISC_TEXTURECUBE as u32 } else { 0 },
+    };
+
+    let Ok(tex) = dev.create_texture_2d(&td, Some(&subs)) else { return fail("dds: CreateTexture2D failed") };
+    t.cube = l.cube;
+    let dimension = if l.cube {
+        D3D11_SRV_DIMENSION_TEXTURECUBE
+    } else if l.array > 1 {
+        D3D11_SRV_DIMENSION_TEXTURE2DARRAY
+    } else {
+        D3D11_SRV_DIMENSION_TEXTURE2D
+    };
+
+    let sd = srv_desc(format, dimension, mips, l.array);
+    let Ok(srv) = dev.create_shader_resource_view(&tex, Some(&sd)) else { return fail("dds: CreateShaderResourceView failed") };
+    t.srv = Some(srv);
     Ok(t)
 }
 
@@ -426,11 +406,11 @@ pub fn load_dds_array(dev: &ID3D11Device, files: &[Option<&[u8]>], srgb: bool, f
         for neutral_mip in &neutral {
             let Ok((pitch, size)) = mip_size(&r, w, h) else { return (Texture::default(), mismatched) };
             let data = match file {
-                Some(bytes) if usable[i] && p + size <= bytes.len() => bytes[p..].as_ptr(),
-                _ => neutral_mip.as_ptr(),
+                Some(bytes) if usable[i] && p + size <= bytes.len() => &bytes[p..],
+                _ => neutral_mip.as_slice(),
             };
 
-            subs.push(D3D11_SUBRESOURCE_DATA { pSysMem: data.cast::<c_void>(), SysMemPitch: pitch as u32, SysMemSlicePitch: size as u32 });
+            subs.push(InitData { data, row_pitch: pitch as u32, slice_pitch: size as u32 });
             p += size;
             w = (w / 2).max(1);
             h = (h / 2).max(1);
@@ -443,22 +423,18 @@ pub fn load_dds_array(dev: &ID3D11Device, files: &[Option<&[u8]>], srgb: bool, f
         CPUAccessFlags: 0, MiscFlags: 0,
     };
 
-    let mut tex = None;
-    // SAFETY: the subresources point into the files and the neutral mips, which outlive the call.
-    let hr = unsafe { dev.CreateTexture2D(&td, Some(subs.as_ptr()), Some(&mut tex)) };
-    if hr.is_err() {
-        wce_foundation::log::warn(format!("texture array {}x{} x{}, {} mips, format {}: CreateTexture2D 0x{:08x}", r.width, r.height, files.len(), r.mips, td.Format, hr.0 as u32));
-        return (Texture::default(), mismatched);
-    }
+    let tex = match dev.create_texture_2d(&td, Some(&subs)) {
+        Ok(tex) => tex,
+        Err(error) => {
+            wce_foundation::log::warn(format!("texture array {}x{} x{}, {} mips, format {}: CreateTexture2D 0x{:08x}", r.width, r.height, files.len(), r.mips, td.Format, error.code().0 as u32));
+            return (Texture::default(), mismatched);
+        }
+    };
 
     let format = if srgb { to_srgb(r.fmt) } else { r.fmt };
     let mut t = Texture { width: r.width, height: r.height, mips: r.mips, depth: 1, format, ..Default::default() };
     let sd = srv_desc(format, D3D11_SRV_DIMENSION_TEXTURE2DARRAY, r.mips, files.len() as u32);
-    let resource = tex.as_ref().and_then(|tex| tex.cast::<ID3D11Resource>().ok());
-    // SAFETY: the resource is the texture just created.
-    if unsafe { dev.CreateShaderResourceView(resource.as_ref(), Some(&sd), Some(&mut t.srv)) }.is_err() {
-        t.srv = None;
-    }
+    t.srv = dev.create_shader_resource_view(&tex, Some(&sd)).ok();
 
     (t, mismatched)
 }
@@ -470,18 +446,9 @@ pub fn make_solid_texture(dev: &ID3D11Device, rgba: u32) -> Texture {
         Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
     };
 
-    let sd = D3D11_SUBRESOURCE_DATA { pSysMem: (&raw const rgba).cast(), SysMemPitch: 4, SysMemSlicePitch: 4 };
-    let mut t = Texture { width: 1, height: 1, mips: 1, depth: 1, format: td.Format, ..Default::default() };
-    let mut tex = None;
-    // SAFETY: the data is one pixel on the stack, alive during the calls.
-    unsafe {
-        let _ = dev.CreateTexture2D(&td, Some(&sd), Some(&mut tex));
-        if let Some(resource) = tex.and_then(|tex| tex.cast::<ID3D11Resource>().ok()) {
-            let _ = dev.CreateShaderResourceView(&resource, None, Some(&mut t.srv));
-        }
-    }
-
-    t
+    let texel = rgba.to_le_bytes();
+    let srv = dev.create_texture_2d(&td, Some(&[InitData { data: &texel, row_pitch: 4, slice_pitch: 4 }])).and_then(|tex| dev.create_shader_resource_view(&tex, None));
+    Texture { srv: srv.ok(), width: 1, height: 1, mips: 1, depth: 1, format: td.Format, ..Default::default() }
 }
 
 /// The box-filtered mip chain of an RGBA8 image, down to 1 x 1: (levels, widths, heights).
@@ -524,23 +491,9 @@ pub fn make_rgba_texture(dev: &ID3D11Device, w: u32, h: u32, rgba: &[u8], srgb: 
         Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
     };
 
-    let subs = levels.iter().zip(&lw)
-        .map(|(level, w)| D3D11_SUBRESOURCE_DATA { pSysMem: level.as_ptr().cast(), SysMemPitch: w * 4, SysMemSlicePitch: 0 })
-        .collect::<Vec<_>>();
-
-    let mut t = Texture::default();
-    let mut tex = None;
-    // SAFETY: the subresources point into `levels`, alive during the calls.
-    unsafe {
-        if dev.CreateTexture2D(&td, Some(subs.as_ptr()), Some(&mut tex)).is_err() {
-            return t;
-        }
-
-        let Some(resource) = tex.and_then(|tex| tex.cast::<ID3D11Resource>().ok()) else { return t };
-        if dev.CreateShaderResourceView(&resource, None, Some(&mut t.srv)).is_err() {
-            return t;
-        }
+    let subs = levels.iter().zip(&lw).map(|(level, w)| InitData::new(level, w * 4)).collect::<Vec<_>>();
+    match dev.create_texture_2d(&td, Some(&subs)).and_then(|tex| dev.create_shader_resource_view(&tex, None)) {
+        Ok(srv) => Texture { srv: Some(srv), width: w, height: h, mips: levels.len() as u32, depth: 1, format, ..Default::default() },
+        Err(_) => Texture::default(),
     }
-
-    Texture { width: w, height: h, mips: levels.len() as u32, depth: 1, format, ..t }
 }

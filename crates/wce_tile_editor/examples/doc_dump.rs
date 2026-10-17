@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use wce_editor_core::document::{Document, OutlinerNode, SaveTarget};
 use wce_editor_core::document_manager::DocumentManager;
-use wce_foundation::math::{Float3, Float4x4, normalize, rotation_y, translation};
+use wce_foundation::math::{Double3, Float3, Float4x4, normalize, rotation_y, translation};
 use wce_scene::render_scene::{Overlay, Payload, RenderScene, TerrainImage};
 use wce_tile::tile_project::TileProject;
 use wce_tile_editor::terrain_bake::{TerrainLook, TerrainView};
@@ -248,14 +248,14 @@ fn main() {
                     let e = pick_ins(&mut r).unwrap();
                     let (a, bb, c) = (r.f(-30.0, 30.0), r.f(-3.0, 3.0), r.f(-30.0, 30.0));
                     let g = u64::from(r.next() % 3);
-                    ok(d.set_local(e, Some([f64::from(a), f64::from(bb), f64::from(c)]), None, g))
+                    ok(d.set_local(e, Some(Double3::new(f64::from(a), f64::from(bb), f64::from(c))), None, g))
                 }
 
                 1 if ni != 0 => {
                     let e = pick_ins(&mut r).unwrap();
                     let a = r.f(-3.0, 3.0);
                     let g = u64::from(r.next() % 3);
-                    ok(d.set_local(e, None, Some([f64::from(a), 0.0, 0.1]), g))
+                    ok(d.set_local(e, None, Some(Double3::new(f64::from(a), 0.0, 0.1)), g))
                 }
 
                 2 if ni != 0 => {

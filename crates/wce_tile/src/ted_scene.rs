@@ -16,8 +16,7 @@ use std::sync::Arc;
 
 use wce_formats::c_num::{printf_g, strtod_prefix};
 use wce_formats::xml_doc::{XmlDoc, XmlSplice, encode_entities};
-
-pub type Vec3 = [f64; 3];
+use wce_foundation::math::Double3;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -71,7 +70,7 @@ pub fn format_general(v: f64) -> String {
 }
 
 /// "vector(1,2,3)" / "euler(..)", or "x,y,z" with an empty prefix.
-pub fn parse_vec3(text: &str, prefix: &str) -> Option<Vec3> {
+pub fn parse_vec3(text: &str, prefix: &str) -> Option<Double3> {
     let mut t = text;
     if !prefix.is_empty() {
         if !t.starts_with(prefix) || t.len() < prefix.len() + 2 || t.as_bytes()[prefix.len()] != b'(' || !t.ends_with(')') {
@@ -91,7 +90,7 @@ pub fn parse_vec3(text: &str, prefix: &str) -> Option<Vec3> {
         }
     }
 
-    Some(v)
+    Some(v.into())
 }
 
 /// The first byte of the line that holds `pos` (start of its indentation).
@@ -204,19 +203,19 @@ impl TedScene {
         self.doc.get(elem, "name").unwrap_or_default()
     }
 
-    pub fn position(&self, elem: usize) -> Option<Vec3> {
+    pub fn position(&self, elem: usize) -> Option<Double3> {
         parse_vec3(&self.doc.get(elem, "position")?, "vector")
     }
 
     /// orientation="euler(x,y,z)" (radians).
-    pub fn euler(&self, elem: usize) -> Option<Vec3> {
+    pub fn euler(&self, elem: usize) -> Option<Double3> {
         parse_vec3(&self.doc.get(elem, "orientation")?, "euler")
     }
 
     /// scale="vector(..)" or a plain number (uniform).
-    pub fn scale(&self, elem: usize) -> Option<Vec3> {
+    pub fn scale(&self, elem: usize) -> Option<Double3> {
         let v = self.doc.get(elem, "scale")?;
-        parse_vec3(&v, "vector").or_else(|| strtod_prefix(&v).map(|(d, _)| [d; 3]))
+        parse_vec3(&v, "vector").or_else(|| strtod_prefix(&v).map(|(d, _)| Double3::new(d, d, d)))
     }
 
     fn flags(&self, elem: usize) -> String {
@@ -234,20 +233,20 @@ impl TedScene {
     }
 
     /// A value equal (as float32) to the current one is a no-op.
-    pub fn set_position(&mut self, elem: usize, v: Vec3) {
+    pub fn set_position(&mut self, elem: usize, v: Double3) {
         self.set_vector(elem, "position", "vector", v);
     }
 
-    pub fn set_euler(&mut self, elem: usize, v: Vec3) {
+    pub fn set_euler(&mut self, elem: usize, v: Double3) {
         self.set_vector(elem, "orientation", "euler", v);
     }
 
     /// # Errors
     ///
     /// The element has no position.
-    pub fn translate(&mut self, elem: usize, delta: Vec3) -> Result<()> {
+    pub fn translate(&mut self, elem: usize, delta: Double3) -> Result<()> {
         let p = self.position(elem).ok_or("element has no position")?;
-        self.set_position(elem, [p[0] + delta[0], p[1] + delta[1], p[2] + delta[2]]);
+        self.set_position(elem, p + delta);
         Ok(())
     }
 
@@ -263,14 +262,14 @@ impl TedScene {
         self.doc.revert_all();
     }
 
-    fn set_vector(&mut self, elem: usize, attr: &str, prefix: &str, v: Vec3) {
+    fn set_vector(&mut self, elem: usize, attr: &str, prefix: &str, v: Double3) {
         if let Some(old) = self.doc.get(elem, attr).and_then(|cur| parse_vec3(&cur, prefix))
             && (0..3).all(|i| old[i] as f32 == v[i] as f32)
         {
             return;
         }
 
-        let text = format!("{prefix}({},{},{})", format_ted_number(v[0]), format_ted_number(v[1]), format_ted_number(v[2]));
+        let text = format!("{prefix}({},{},{})", format_ted_number(v.x), format_ted_number(v.y), format_ted_number(v.z));
         self.doc.set(elem, attr, &text);
     }
 
@@ -625,7 +624,7 @@ impl TedScene {
     }
 
     /// Local offset from the instance position (scene units).
-    pub fn point_position(&self, point_elem: usize) -> Option<Vec3> {
+    pub fn point_position(&self, point_elem: usize) -> Option<Double3> {
         parse_vec3(&self.doc.get(point_elem, "position")?, "")
     }
 
@@ -635,7 +634,7 @@ impl TedScene {
         let mut a = 0.0;
         for i in 0..pts.len() {
             let (Some(p), Some(q)) = (self.point_position(pts[i]), self.point_position(pts[(i + 1) % pts.len()])) else { return 0.0 };
-            a += p[0] * q[2] - q[0] * p[2];
+            a += p.x * q.z - q.x * p.z;
         }
 
         a.abs() / 2.0
@@ -648,8 +647,8 @@ impl TedScene {
         }
     }
 
-    fn point_text(local: Vec3) -> String {
-        format!("{},{},{}", format_general(local[0]), format_general(local[1]), format_general(local[2]))
+    fn point_text(local: Double3) -> String {
+        format!("{},{},{}", format_general(local.x), format_general(local.y), format_general(local.z))
     }
 
     /// Also refreshes `area`.
@@ -657,7 +656,7 @@ impl TedScene {
     /// # Errors
     ///
     /// No such point.
-    pub fn set_polygon_point(&mut self, elem: usize, index: usize, local: Vec3) -> Result<()> {
+    pub fn set_polygon_point(&mut self, elem: usize, index: usize, local: Double3) -> Result<()> {
         let pts = self.polygon_points(elem);
         let p = *pts.get(index).ok_or("point index out of range")?;
         self.doc.set(p, "position", &Self::point_text(local));
@@ -668,7 +667,7 @@ impl TedScene {
     /// # Errors
     ///
     /// No such point.
-    pub fn insert_polygon_point(&mut self, elem: usize, after_index: usize, local: Vec3) -> Result<()> {
+    pub fn insert_polygon_point(&mut self, elem: usize, after_index: usize, local: Double3) -> Result<()> {
         let pts = self.polygon_points(elem);
         let p = *pts.get(after_index).ok_or("point index out of range")?;
         let copy = self.doc.duplicate_element_inplace(p).map_err(xml_error)?;
@@ -700,7 +699,7 @@ impl TedScene {
     /// # Errors
     ///
     /// No such layer, or fewer than 2 points.
-    pub fn add_polygon(&mut self, layer: Option<usize>, kind: &str, name: &str, world_points: &[Vec3], extra: &BTreeMap<String, String>) -> Result<usize> {
+    pub fn add_polygon(&mut self, layer: Option<usize>, kind: &str, name: &str, world_points: &[Double3], extra: &BTreeMap<String, String>) -> Result<usize> {
         let layer = self.require_element(layer, "layer")?;
         if world_points.len() < 2 {
             return Err("a polygon needs at least 2 points".to_owned());
@@ -734,20 +733,18 @@ impl TedScene {
 
         // Centroid position, local points.
         let n = world_points.len() as f64;
-        let mut c = [0.0; 3];
-        for p in world_points {
-            for i in 0..3 {
-                c[i] += p[i] / n;
-            }
+        let mut c = Double3::ZERO;
+        for &p in world_points {
+            c += p / n;
         }
 
-        a.insert("position".to_owned(), format!("vector({},{},{})", format_ted_number(c[0]), format_ted_number(c[1]), format_ted_number(c[2])));
+        a.insert("position".to_owned(), format!("vector({},{},{})", format_ted_number(c.x), format_ted_number(c.y), format_ted_number(c.z)));
         a.insert("name".to_owned(), name.to_owned());
-        let local = world_points.iter().map(|p| [p[0] - c[0], p[1] - c[1], p[2] - c[2]]).collect::<Vec<_>>();
+        let local = world_points.iter().map(|&p| p - c).collect::<Vec<_>>();
         let mut area = 0.0;
         for i in 0..local.len() {
             let (p, q) = (local[i], local[(i + 1) % local.len()]);
-            area += p[0] * q[2] - q[0] * p[2];
+            area += p.x * q.z - q.x * p.z;
         }
 
         a.insert("area".to_owned(), format_ted_number(area.abs() / 2.0));
