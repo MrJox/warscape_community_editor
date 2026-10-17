@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use wce_foundation::math::Double3;
 use wce_tile::ted_scene::{TedScene, format_ted_number, parse_vec3};
 
 fn teds(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -67,7 +68,7 @@ fn main() {
                 let pre = if a == "orientation" { "euler" } else { "vector" };
                 let Some(v) = parse_vec3(&txt, pre) else { continue };
                 fmt_total += 1;
-                let back = format!("{pre}({},{},{})", format_ted_number(v[0]), format_ted_number(v[1]), format_ted_number(v[2]));
+                let back = format!("{pre}({},{},{})", format_ted_number(v.x), format_ted_number(v.y), format_ted_number(v.z));
                 if back == txt {
                     fmt_ok += 1;
                 } else if notes.len() < 8 {
@@ -77,7 +78,7 @@ fn main() {
 
             n += 1;
             if n % 997 == 0 {
-                let _ = sc.translate(e, [1.0, 0.0, 1.0]);
+                let _ = sc.translate(e, Double3::new(1.0, 0.0, 1.0));
             }
         }
 

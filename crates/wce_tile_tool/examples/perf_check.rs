@@ -215,7 +215,7 @@ fn tile_index_checks(g: &mut Gate, dir: &std::path::Path) {
         checked += 1;
         let w = world_transform(sc, e);
         let p = t.world_position(e);
-        if (p.x - (w.position[0] / u) as f32).abs() > 1e-3 || (p.y - w.position[1] as f32).abs() > 1e-3 || (p.z - (w.position[2] / u) as f32).abs() > 1e-3 {
+        if (p.x - (w.position.x / u) as f32).abs() > 1e-3 || (p.y - w.position.y as f32).abs() > 1e-3 || (p.z - (w.position.z / u) as f32).abs() > 1e-3 {
             bad += 1;
         }
 
@@ -223,7 +223,7 @@ fn tile_index_checks(g: &mut Gate, dir: &std::path::Path) {
         let s = sc.scale(e);
         for r in 0..3 {
             for c in 0..3 {
-                if (m.m[r][c] - (w.rotation[r * 3 + c] * s.map_or(1.0, |s| s[c])) as f32).abs() > 1e-4 {
+                if (m.m[r][c] - (w.rotation.m[r][c] * s.map_or(1.0, |s| s[c])) as f32).abs() > 1e-4 {
                     bad += 1;
                 }
             }
