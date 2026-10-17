@@ -16,6 +16,7 @@
 | 8 Retire the old apps | **Done, waiting for your go.** `legacy/` is gone, the old folders are archived, Phase 8 deviations below. |
 | 9 | Not started. |
 | Step 0 of the Rust/rpfm plan | **Done, waiting for your go** (2026-10-13). Pack access on RPFM 5.2's WebSocket API, rpfm_cli backend removed: `docs/vfs.md`, `docs/baseline.md` (Step 0). |
+| UI editor | **Built, waiting for your go** (2026-10-17). `docs/ui_editor.md`: crates `wce_ui_format` (UI binary <-> XML, byte for byte), `wce_ui_model`, `wce_ui_tool` (the UI tool: canvas, XML pane, fields), `wce_ui_cli` (`wce-ui` CLI and MCP server); gate `scripts/ui_check.sh`. Plugin side (uncommitted in attila-toolkit-marketplace): `wce-ui` MCP entry, launcher, skill `attila-ui-layouts`. |
 | Rust port | **Started** (2026-10-13). Renderer spike passed; crates `wce_d3d11`, `wce_vfs`, `wce_formats`, `wce_foundation`, `wce_assets`, `wce_scene`, `wce_render` (the whole renderer), `wce_editor_core`, `wce_weather`, `wce_tile`, `wce_tile_editor`. See "Rust port" below. |
 
 Phase 8 deviations: the `oracle` (BOB) gate was never built, so it did not run; the four legacy window shots (`shot_weather_{dry,rain,snow}`, `shot_tile`) left `gates.sh` and `shots.sh` with their apps: the same scenes are covered by the `wce.exe` captures that `scripts/shots.sh` compares (`capture_{dry,rain,snow}_1280x720`, `capture_tile_*`), and the window path by `app_check`;

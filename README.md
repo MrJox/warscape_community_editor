@@ -20,6 +20,16 @@ cmake --build build --config Release
 Executables land in `build/bin/<config>` (`wce.exe` and the gates). Use `--config RelWithDebInfo` for test builds while an editor
 is open (a Release build cannot overwrite a running exe).
 
+The Rust `wce` binary builds SDL3 from source. In PowerShell, use a short Cargo target path so SDL's MSBuild compiler check can create
+its temporary files:
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path $env:TEMP "wce-target"
+cargo build -p wce_app
+```
+
+The binary lands at `$env:TEMP\wce-target\debug\wce.exe`.
+
 ### Linux
 
 The renderer stays D3D11: it runs on DXVK-native (D3D11 over Vulkan) with vkd3d-utils for the shader compiler and reflection, in an SDL3

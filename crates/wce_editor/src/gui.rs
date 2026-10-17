@@ -536,6 +536,18 @@ impl DrawList {
         call!(sys::ImDrawList_AddText_Vec2(self.0, pos, col, r.start.cast(), r.end.cast()))
     }
 
+    /// A picture (a texture id from `Editor::images`) between two corners, with texture coordinates and a tint (IM_COL32).
+    pub fn image(&self, id: u64, min: Vec2, max: Vec2, uv0: Vec2, uv1: Vec2, tint: u32) {
+        let tex = sys::ImTextureRef_c { _TexData: std::ptr::null_mut(), _TexID: id };
+        call!(sys::ImDrawList_AddImage(self.0, tex, min, max, uv0, uv1, tint))
+    }
+
+    /// Text at an explicit size in pixels (the font's own size scaled).
+    pub fn text_sized(&self, size: f32, pos: Vec2, col: u32, text: &str) {
+        let r = text.as_bytes().as_ptr_range();
+        call!(sys::ImDrawList_AddText_FontPtr(self.0, std::ptr::null_mut(), size, pos, col, r.start.cast(), r.end.cast(), 0.0, std::ptr::null()))
+    }
+
     pub fn push_clip_rect(&self, min: Vec2, max: Vec2) {
         call!(sys::ImDrawList_PushClipRect(self.0, min, max, true))
     }
@@ -850,3 +862,37 @@ pub use sys::{
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
 pub const MOD_ALT: i32 = sys::ImGuiMod_Alt;
+
+
+// ---- multi-line text
+
+extern "C" fn resize_callback(data: *mut sys::ImGuiInputTextCallbackData) -> i32 {
+    // SAFETY: Dear ImGui passes its callback data; UserData is the `Vec<u8>` of `input_text_multiline`, which outlives the call.
+    unsafe {
+        let d = &mut *data;
+        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackResize as i32 {
+            let v = &mut *d.UserData.cast::<Vec<u8>>();
+            v.resize(d.BufSize.max(1) as usize, 0);
+            d.Buf = v.as_mut_ptr().cast();
+        }
+    }
+
+    0
+}
+
+/// A multi-line text box that grows with its text; true on every change.
+pub fn input_text_multiline(label: &str, value: &mut String, size: Vec2, flags: i32) -> bool {
+    let mut buf = value.as_bytes().to_vec();
+    buf.push(0);
+    let l = cs(label);
+    let changed = call!(sys::igInputTextMultiline(
+        l.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), size, flags | sys::ImGuiInputTextFlags_CallbackResize as i32, Some(resize_callback),
+        (&raw mut buf).cast(),
+    ));
+    if changed {
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        *value = String::from_utf8_lossy(&buf[..end]).into_owned();
+    }
+
+    changed
+}
