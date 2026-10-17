@@ -19,6 +19,7 @@ use wce_ui_model::fonts::FontLibrary;
 use wce_ui_model::DrawItem;
 use wce_ui_model::images;
 use wce_ui_model::related::{self, RelKind, Relation, RelationIndex};
+use wce_ui_model::props::{Control, Prop, PropEdit};
 use wce_ui_model::skins::{self, Skin};
 use wce_ui_model::{Entry, EntryKind, UiModel};
 
@@ -81,6 +82,27 @@ pub struct UiTool {
     pack_message: String,
     open_pack_popup: bool,
     anim: Option<AnimPlay>,
+    /// A component being renamed in the Layers panel: (its number, the text, frames since it started).
+    rename: Option<(usize, String, u8)>,
+    new_skin_popup: bool,
+    new_skin_name: String,
+    new_skin_msg: String,
+    /// What the skin list was built from: the mounted files and the loose skin folders.
+    skin_sig: (usize, Vec<String>),
+    export_popup: bool,
+    export_path: String,
+    export_msg: String,
+    /// Pictures read from the project folder, with the file's time: a change reloads them.
+    loose_imgs: HashMap<String, (PathBuf, std::time::SystemTime, [u8; 4])>,
+    /// `ui_mark_count`: the component count to compare with.
+    count_mark: usize,
+    watch_acc: f32,
+    /// The disk time each open layout had when last seen.
+    doc_stamps: HashMap<DocumentId, std::time::SystemTime>,
+    warned: HashSet<DocumentId>,
+    show_adv: bool,
+    /// Which state the Fields panel shows for a component (index), when it is not the default one.
+    state_pick: HashMap<Vec<usize>, usize>,
     related_on: bool,
     related_generic: bool,
     /// Paths of related layouts the user switched off.
@@ -151,6 +173,40 @@ impl UiTool {
         format!("{}|{}", self.skin, path)
     }
 
+    /// For the scripted checks: loads a picture the way the canvas would.
+    pub(crate) fn load_picture(&mut self, e: &mut Editor, path: &str) {
+        self.loads = 0;
+        self.want_image(e, path);
+    }
+
+    /// For the scripted checks: the first pixel of a picture read from the project folder, if it is loaded from there.
+    pub(crate) fn loose_pixel(&self, path: &str) -> Option<[u8; 4]> {
+        self.loose_imgs.get(&self.image_key(path)).map(|(_, _, px)| *px)
+    }
+
+    /// For the scripted checks: makes the next frame look for changed files at once.
+    pub(crate) fn watch_now(&mut self) {
+        self.watch_acc = 1.0;
+    }
+
+    pub(crate) fn mark_count(&mut self, n: usize) {
+        self.count_mark = n;
+    }
+
+    pub(crate) fn marked_count(&self) -> usize {
+        self.count_mark
+    }
+
+    /// (loose, packed) of a skin of the list; the list is made if it was not.
+    pub(crate) fn skin_info(&mut self, e: &Editor, name: &str) -> Option<(bool, bool)> {
+        self.load_skins(e);
+        self.skins.as_ref()?.iter().find(|s| s.name == name).map(|s| (s.loose, s.packed))
+    }
+
+    pub(crate) fn skin_selected(&self) -> &str {
+        &self.skin
+    }
+
     fn want_image(&mut self, e: &mut Editor, path: &str) {
         let key = self.image_key(path);
         if self.loads >= 6 || self.missing.contains(&key) || e.images.knows(&key) {
@@ -158,12 +214,29 @@ impl UiTool {
         }
 
         self.loads += 1;
+        let skin = (!self.skin.is_empty()).then_some(self.skin.clone());
+        // the project folder is read from disk each time, so a picture saved a moment ago shows
+        if let Some(pd) = e.project_dir() {
+            for cand in skins::candidates(path, skin.as_deref()) {
+                let f = pd.join(&cand);
+                if let Ok(bytes) = std::fs::read(&f) {
+                    if let Ok(img) = images::decode(&cand, &bytes) {
+                        let stamp = std::fs::metadata(&f).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                        let px0 = img.px.get(..4).map(|p| [p[0], p[1], p[2], p[3]]).unwrap_or([0; 4]);
+                        self.loose_imgs.insert(key.clone(), (f, stamp, px0));
+                        e.images.submit(&key, img.w, img.h, img.px);
+                        return;
+                    }
+                }
+            }
+        }
+
         let Some(vfs) = e.vfs().cloned() else {
             self.missing.insert(key);
             return;
         };
 
-        let skin = (!self.skin.is_empty()).then_some(self.skin.as_str());
+        let skin = skin.as_deref();
         for cand in skins::candidates(path, skin) {
             if let Ok(bytes) = vfs.read(&cand) {
                 if let Ok(img) = images::decode(&cand, &bytes) {
@@ -180,7 +253,13 @@ impl UiTool {
     fn load_skins(&mut self, e: &Editor) {
         if self.skins.is_none() {
             if let Some(vfs) = e.vfs() {
-                self.skins = Some(skins::list(vfs));
+                let pd = e.project_dir();
+                let list = skins::list(vfs, pd.as_deref());
+                if !self.skin.is_empty() && !list.iter().any(|s| s.name == self.skin) {
+                    self.skin.clear();
+                }
+
+                self.skins = Some(list);
             }
         }
     }
@@ -253,18 +332,37 @@ Only the preview: the file is not changed.");
         // skin
         gui::same_line();
         gui::set_next_item_width(140.0);
-        let skin_label = if self.skin.is_empty() { "default".to_owned() } else { self.skin.clone() };
-        if gui::begin_combo("Skin##skin", &skin_label) {
-            let list = self.skins.clone().unwrap_or_default();
+        let list = self.skins.clone().unwrap_or_default();
+        let cur = list.iter().find(|s| (self.skin.is_empty() && s.name == "default") || s.name == self.skin).cloned();
+        let cur_label = cur.as_ref().map(skin_label).unwrap_or_else(|| "default".to_owned());
+        gui::set_next_item_width(300.0);
+        if gui::begin_combo("Skin##skin", &cur_label) {
             for s in &list {
-                let label = format!("{}  ({})", s.name, s.files);
                 let on = (self.skin.is_empty() && s.name == "default") || self.skin == s.name;
-                if gui::selectable(&label, on, 0) {
+                if gui::selectable(&skin_label(s), on, 0) {
                     self.skin = if s.name == "default" { String::new() } else { s.name.clone() };
                 }
             }
 
             gui::end_combo();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("[loose] is a skin of your own, a folder on disk. Its pictures are read before the game's packs: a picture you do not provide comes from the pack's skin of the same name, if there is one, else from the default skin.");
+        }
+
+        gui::same_line();
+        if gui::small_button("New skin...") {
+            self.new_skin_popup = true;
+        }
+
+        if cur.as_ref().is_some_and(|s| s.loose) {
+            gui::same_line();
+            if gui::small_button("Open skin folder") {
+                if let Err(m) = self.open_skin_folder(e) {
+                    e.status(&m, true);
+                }
+            }
         }
     }
 
@@ -1129,15 +1227,14 @@ linked by the component name '{}'", r.path, r.via));
             return;
         };
 
-        let (entry, state_path) = {
+        let entry = {
             let d = ui_doc_ref(e, id).unwrap();
             let Some(en) = d.entries().get(i).cloned() else {
                 gui::end();
                 return;
             };
 
-            let sp = d.model().default_state_path(&en.path);
-            (en, sp)
+            en
         };
 
         gui::text(&format!("{}   [{}]", entry.name, i));
@@ -1145,66 +1242,573 @@ linked by the component name '{}'", r.path, r.via));
             self.entry_controls(e, id, &entry);
             self.animation_controls(e, id, &entry);
         }
-        let mut edit: Option<(Vec<usize>, usize, String, &'static str)> = None;
+        gui::checkbox("Advanced", &mut self.show_adv);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Also show the rarely needed properties. The whole file, field by field, is in the UI XML panel.");
+        }
+
+        let mut edit: Option<(Vec<usize>, usize, PropEdit, String)> = None;
         if gui::begin_tab_bar("##fields_tabs") {
-            let scopes: [(&str, Option<Vec<usize>>); 2] = [("Component", Some(entry.path.clone())), ("Default state", state_path)];
-            for (label, path) in scopes {
-                if gui::begin_tab_item(label, 0) {
-                    match path {
-                        None => gui::text_disabled("(none)"),
-                        Some(path) => {
-                            let fields = ui_doc_ref(e, id).unwrap().model().fields(&path);
-                            if gui::begin_table("##ft", 4, gui::TABLE_BORDERS | gui::TABLE_ROW_BG | gui::TABLE_SCROLL_Y | gui::TABLE_RESIZABLE, v2(0.0, 0.0)) {
-                                gui::table_setup_column("#", gui::COLUMN_WIDTH_FIXED, 30.0);
-                                gui::table_setup_column("Field", gui::COLUMN_WIDTH_STRETCH, 1.7);
-                                gui::table_setup_column("Type", gui::COLUMN_WIDTH_FIXED, 52.0);
-                                gui::table_setup_column("Value", gui::COLUMN_WIDTH_STRETCH, 1.3);
-                                gui::table_setup_scroll_freeze(0, 1);
-                                gui::table_headers_row();
-                                for f in &fields {
-                                    gui::table_next_row();
-                                    gui::table_next_column();
-                                    gui::text(&f.idx.to_string());
-                                    gui::table_next_column();
-                                    gui::text(if f.label.is_empty() { "-" } else { &f.label });
-                                    gui::table_next_column();
-                                    gui::text_disabled(&f.tag);
-                                    gui::table_next_column();
-                                    gui::push_id(&format!("{}{}", label, f.idx));
-                                    gui::set_next_item_width(-1.0);
-                                    if f.tag == "yes" || f.tag == "no" {
-                                        let mut on = f.tag == "yes";
-                                        if gui::checkbox("##v", &mut on) {
-                                            edit = Some((path.clone(), f.idx, if on { "yes" } else { "no" }.to_owned(), "Toggle field"));
-                                        }
-                                    } else {
-                                        let mut v = f.value.clone();
-                                        let enter = gui::input_text("##v", None, &mut v, 1024, gui::INPUT_ENTER_RETURNS_TRUE | gui::INPUT_AUTO_SELECT_ALL);
-                                        if (enter || gui::is_item_deactivated_after_edit()) && v != f.value {
-                                            edit = Some((path.clone(), f.idx, v, "Set field"));
-                                        }
-                                    }
+            if gui::begin_tab_item("Component", 0) {
+                edit = self.props_table(e, id, &entry.path, "c");
+                gui::end_tab_item();
+            }
 
-                                    gui::pop_id();
-                                }
-
-                                gui::end_table();
-                            }
-                        }
-                    }
-
-                    gui::end_tab_item();
+            if gui::begin_tab_item("State", 0) {
+                let st = self.state_tab(e, id, &entry);
+                if st.is_some() {
+                    edit = st;
                 }
+
+                gui::end_tab_item();
             }
 
             gui::end_tab_bar();
         }
 
-        if let Some((path, idx, value, name)) = edit {
+        if let Some((path, idx, change, name)) = edit {
+            // dragging a number or a colour is one undo step per property
+            let key = if matches!(change, PropEdit::Colour(_) | PropEdit::Drag(_)) {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                (&path, idx).hash(&mut h);
+                h.finish() | 1
+            } else {
+                0
+            };
             if let Some(d) = ui_doc(e, id) {
-                if let Err(msg) = d.edit(name, 0, |m| m.set_field(&path, idx, &value)) {
+                if let Err(msg) = d.edit(&name, key, |m| m.edit_prop(&path, idx, change)) {
                     e.status(&msg, true);
                 }
+            }
+        }
+
+        gui::end();
+    }
+
+    /// The fields of the component, state, picture or mouse action at `path` under the game's names, in groups.
+    fn props_table(&self, e: &Editor, id: DocumentId, path: &[usize], salt: &str) -> Option<(Vec<usize>, usize, PropEdit, String)> {
+        let props = ui_doc_ref(e, id)?.model().properties(path);
+        let mut out = None;
+        for g in props.groups {
+            let rows: Vec<&Prop> = props.items.iter().filter(|p| p.group == *g && (self.show_adv || !p.advanced)).collect();
+            if rows.is_empty() {
+                continue;
+            }
+
+            gui::separator_text(g);
+            if gui::begin_table(&format!("##pt{salt}{}{g}", path.len()), 2, gui::TABLE_ROW_BG, v2(0.0, 0.0)) {
+                gui::table_setup_column("Property", gui::COLUMN_WIDTH_STRETCH, 1.35);
+                gui::table_setup_column("Value", gui::COLUMN_WIDTH_STRETCH, 1.0);
+                for p in rows {
+                    gui::table_next_row();
+                    gui::table_next_column();
+                    gui::text(&p.name);
+                    if gui::is_item_hovered() {
+                        let mut tip = p.help.to_string();
+                        if !p.label.is_empty() {
+                            tip.push_str(&format!("{}Converter name: {}", if tip.is_empty() { "" } else { "\n\n" }, p.label));
+                        }
+
+                        if !tip.is_empty() {
+                            gui::set_tooltip(&tip);
+                        }
+                    }
+
+                    gui::table_next_column();
+                    gui::push_id(&format!("{salt}{}{}{}", path.len(), p.idx, p.name));
+                    gui::set_next_item_width(-1.0);
+                    if let Some(change) = prop_control(p) {
+                        out = Some((path.to_vec(), p.idx, change, format!("Set {}", p.name)));
+                    }
+
+                    gui::pop_id();
+                }
+
+                gui::end_table();
+            }
+        }
+
+        out
+    }
+
+    /// One state of the component (default: the default state), then its pictures and mouse actions.
+    fn state_tab(&mut self, e: &Editor, id: DocumentId, entry: &Entry) -> Option<(Vec<usize>, usize, PropEdit, String)> {
+        let (states, def_path) = {
+            let m = ui_doc_ref(e, id)?.model();
+            (m.state_paths(&entry.path), m.default_state_path(&entry.path))
+        };
+
+        if states.is_empty() {
+            gui::text_disabled("(this component has no states)");
+            return None;
+        }
+
+        let def_i = states.iter().position(|(p, _)| Some(p) == def_path.as_ref()).unwrap_or(0);
+        let sel = self.state_pick.get(&entry.path).copied().filter(|k| *k < states.len()).unwrap_or(def_i);
+        let label = |i: usize| format!("{}{}", states[i].1, if i == def_i { "  (default)" } else { "" });
+        gui::set_next_item_width(220.0);
+        if gui::begin_combo("State", &label(sel)) {
+            for i in 0..states.len() {
+                if gui::selectable(&label(i), i == sel, 0) {
+                    self.state_pick.insert(entry.path.clone(), i);
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        let sp = states[sel].0.clone();
+        let mut out = self.props_table(e, id, &sp, "s");
+
+        let m = ui_doc_ref(e, id)?.model();
+        let pics = m.state_children(&sp, "image_use");
+        if !pics.is_empty() && gui::collapsing_header(&format!("Pictures ({})##pics", pics.len()), 0) {
+            for (n, p) in pics.iter().enumerate() {
+                if gui::tree_node_id(&format!("pic{n}"), &format!("{}  {}", n + 1, m.picture_label(p))) {
+                    if let Some(x) = self.props_table(e, id, p, &format!("p{n}")) {
+                        out = Some(x);
+                    }
+
+                    gui::tree_pop();
+                }
+            }
+        }
+
+        let acts = m.state_children(&sp, "mouse_state");
+        if !acts.is_empty() && gui::collapsing_header(&format!("Mouse actions ({})##acts", acts.len()), 0) {
+            for (n, p) in acts.iter().enumerate() {
+                if gui::tree_node_id(&format!("act{n}"), &format!("{}  {}", n + 1, m.mouse_label(p))) {
+                    if let Some(x) = self.props_table(e, id, p, &format!("a{n}")) {
+                        out = Some(x);
+                    }
+
+                    gui::tree_pop();
+                }
+            }
+        }
+
+        out
+    }
+
+    // ---- project folder, export, hot reload
+
+    /// Makes `folder` the project: layouts are saved there, pictures put there show at once, and Export packs it.
+    pub(crate) fn set_project(&mut self, e: &mut Editor, folder: &str) -> Result<(), String> {
+        let f = folder.trim();
+        if f.is_empty() {
+            return Err("give a folder".into());
+        }
+
+        std::fs::create_dir_all(PathBuf::from(f).join("ui").join("skins")).map_err(|er| format!("cannot create {f}: {er}"))?;
+        e.settings().set("ui_project", f);
+        let _ = e.settings().save();
+        e.remount_vfs()?;
+        self.skins = None;
+        self.missing.clear();
+        self.loose_imgs.clear();
+        e.status(&format!("project folder: {f}"), false);
+        Ok(())
+    }
+
+    /// Saves the layouts with unsaved changes into the project folder, then writes every file of the folder into a new mod pack.
+    pub(crate) fn export_pack(&mut self, e: &mut Editor, pack: &str) -> Result<usize, String> {
+        let project = e.project_dir().ok_or("make a skin first (UI > New skin...)")?;
+        if !pack.to_lowercase().ends_with(".pack") {
+            return Err("the pack file must end in .pack".into());
+        }
+
+        let ids: Vec<DocumentId> = e.docs.order().iter().copied().filter(|&i| ui_doc_ref(e, i).is_some()).collect();
+        for id in ids {
+            let Some(d) = ui_doc(e, id) else { continue };
+            if d.modified() && !d.source.vfs_path.is_empty() {
+                let to = project.join(&d.source.vfs_path);
+                d.save(&wce_editor_core::document::SaveTarget { path: to })?;
+            }
+        }
+
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        collect_files(&project, &project, &mut files)?;
+        if files.is_empty() {
+            return Err("the project folder has no files yet".into());
+        }
+
+        wce_ui_model::pack::write_pack_many(std::path::Path::new(pack), &files)?;
+        e.settings().set("ui_export_pack", pack);
+        let _ = e.settings().save();
+        e.status(&format!("exported {} files to {pack}", files.len()), false);
+        Ok(files.len())
+    }
+
+    /// About once a second: reloads pictures and layouts whose files changed on disk, and notices pictures that appeared.
+    fn watch_tick(&mut self, e: &mut Editor) {
+        self.watch_acc += gui::io().DeltaTime;
+        if self.watch_acc < 1.0 {
+            return;
+        }
+
+        self.watch_acc = 0.0;
+        // the skin list follows the mounted files and the skin folders on disk
+        let sig = (e.vfs().map(|v| std::sync::Arc::as_ptr(v) as *const u8 as usize).unwrap_or(0), e.project_dir().map(|p| skins::loose_names(&p)).unwrap_or_default());
+        if sig != self.skin_sig {
+            self.skin_sig = sig;
+            self.skins = None;
+            self.missing.clear();
+        }
+
+        let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let changed: Vec<String> = self.loose_imgs.iter().filter(|(_, (p, t, _))| mtime(p) != Some(*t)).map(|(k, _)| k.clone()).collect();
+        for k in changed {
+            self.loose_imgs.remove(&k);
+            self.missing.remove(&k);
+            e.images.forget(&k);
+        }
+
+        if let Some(pd) = e.project_dir() {
+            let appeared: Vec<String> = self
+                .missing
+                .iter()
+                .filter(|k| {
+                    let (skin, path) = k.split_once('|').unwrap_or(("", k));
+                    let skin = (!skin.is_empty()).then_some(skin);
+                    skins::candidates(path, skin).iter().any(|c| pd.join(c).is_file())
+                })
+                .cloned()
+                .collect();
+            for k in appeared {
+                self.missing.remove(&k);
+            }
+        }
+
+        let project = e.project_dir();
+        let ids: Vec<DocumentId> = e.docs.order().iter().copied().filter(|&i| ui_doc_ref(e, i).is_some()).collect();
+        for id in ids {
+            let (path, modified) = {
+                let d = ui_doc_ref(e, id).unwrap();
+                let p = if d.source.vfs_path.is_empty() { Some(d.source.disk.clone()) } else { project.as_ref().map(|pd| pd.join(&d.source.vfs_path)) };
+                (p, d.modified())
+            };
+
+            let Some(path) = path.filter(|p| p.is_file()) else { continue };
+            let Some(now) = mtime(&path) else { continue };
+            let Some(&before) = self.doc_stamps.get(&id) else {
+                self.doc_stamps.insert(id, now);
+                continue;
+            };
+
+            if now == before {
+                continue;
+            }
+
+            self.doc_stamps.insert(id, now);
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let model = if wce_ui_format::looks_like_ui(&bytes) { UiModel::from_bytes(&bytes) } else { std::str::from_utf8(&bytes).map_err(|_| "not UTF-8".to_owned()).and_then(UiModel::from_xml) };
+            let Ok(model) = model else { continue };
+            let same = ui_doc_ref(e, id).and_then(|d| d.bytes().ok()).is_some_and(|b| b == bytes);
+            if same {
+                continue;
+            }
+
+            if modified {
+                if self.warned.insert(id) {
+                    e.status(&format!("{} changed on disk, but it has unsaved changes here; File > Revert loads the disk version", path.display()), true);
+                }
+            } else if let Some(d) = ui_doc(e, id) {
+                self.warned.remove(&id);
+                match d.reload(model) {
+                    Ok(()) => e.status(&format!("reloaded {} from disk", path.display()), false),
+                    Err(m) => e.status(&m, true),
+                }
+            }
+        }
+    }
+
+    /// The folder skins are made in, until the user has one: under Documents.
+    fn default_project_dir() -> PathBuf {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
+        home.join("Documents").join("WarscapeCommunityEditor").join("ui_skins_project")
+    }
+
+    /// Makes a skin of your own: a folder `ui/skins/<name>` in the project folder (made on first use), selected in the preview.
+    pub(crate) fn new_skin(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
+        let n: String = name.trim().to_lowercase().chars().map(|c| if c == ' ' { '_' } else { c }).collect();
+        if n.is_empty() || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err("a skin name is letters, digits, - and _".into());
+        }
+
+        if n == "default" {
+            return Err("\"default\" is the game's own skin: pick another name".into());
+        }
+
+        let root = match e.project_dir() {
+            Some(p) => p,
+            None => {
+                let p = Self::default_project_dir();
+                self.set_project(e, &p.display().to_string())?;
+                p
+            }
+        };
+
+        let dir = root.join("ui").join("skins").join(&n);
+        let existed = dir.is_dir();
+        std::fs::create_dir_all(&dir).map_err(|er| format!("cannot create {}: {er}", dir.display()))?;
+        self.skin = n.clone();
+        self.skins = None;
+        Ok(if existed { format!("skin {n} already existed: selected it ({})", dir.display()) } else { format!("skin {n} created: put your pictures in {}", dir.display()) })
+    }
+
+    /// Opens the folder of the selected loose skin in the file explorer.
+    fn open_skin_folder(&self, e: &Editor) -> Result<(), String> {
+        let root = e.project_dir().ok_or("no skin folder yet")?;
+        let dir = root.join("ui").join("skins").join(&self.skin);
+        if !dir.is_dir() {
+            return Err(format!("{} does not exist", dir.display()));
+        }
+
+        let shown = dir.display().to_string().replace('/', "\\");
+        std::process::Command::new("explorer").arg(shown).spawn().map(|_| ()).map_err(|er| format!("cannot open the file explorer: {er}"))
+    }
+
+    fn project_popups(&mut self, e: &mut Editor) {
+        if self.new_skin_popup {
+            self.new_skin_popup = false;
+            self.new_skin_name.clear();
+            self.new_skin_msg.clear();
+            gui::open_popup("New skin");
+        }
+
+        if gui::begin_popup_modal("New skin", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            let root = e.project_dir().unwrap_or_else(Self::default_project_dir);
+            gui::text_wrapped("Name your skin. The editor makes a folder with that name; put your PNG pictures in it (same names as the game's pictures in ui/skins/default) and the preview updates as you save them.");
+            gui::set_next_item_width(300.0);
+            gui::input_text("Name", Some("my_skin"), &mut self.new_skin_name, 64, 0);
+            let n = self.new_skin_name.trim().to_lowercase().replace(' ', "_");
+            if !n.is_empty() {
+                gui::text_disabled(&format!("Folder: {}", root.join("ui").join("skins").join(&n).display()));
+                let in_packs = self.skins.as_ref().is_some_and(|l| l.iter().any(|s| s.name == n && s.packed));
+                if in_packs {
+                    gui::push_text_wrap_pos(520.0);
+                    gui::text_colored([1.0, 0.8, 0.4, 1.0], "The game's packs already have a skin with this name. Your pictures replace the pack's pictures of the same name in the editor; pictures you do not provide still come from the pack.");
+                    gui::pop_text_wrap_pos();
+                }
+            }
+
+            if !self.new_skin_msg.is_empty() {
+                gui::text_colored([1.0, 0.6, 0.4, 1.0], &self.new_skin_msg);
+            }
+
+            if gui::button("Create") {
+                let name = self.new_skin_name.clone();
+                match self.new_skin(e, &name) {
+                    Ok(m) => {
+                        e.status(&m, false);
+                        gui::close_current_popup();
+                    }
+                    Err(m) => self.new_skin_msg = m,
+                }
+            }
+
+            gui::same_line();
+            if gui::button("Cancel") {
+                gui::close_current_popup();
+            }
+
+            gui::end_popup();
+        }
+
+        if self.export_popup {
+            self.export_popup = false;
+            self.export_msg.clear();
+            if self.export_path.is_empty() {
+                self.export_path = e.settings().get("ui_export_pack", None).filter(|p| !p.is_empty()).or_else(|| e.project_dir().map(|p| format!("{}.pack", p.display()))).unwrap_or_default();
+            }
+
+            gui::open_popup("Export mod pack");
+        }
+
+        if gui::begin_popup_modal("Export mod pack", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            gui::text_wrapped("Writes everything in the project folder (layouts you saved, your pictures) into one mod pack you can share. Layouts with unsaved changes are saved into the folder first. The game's own packs are never touched.");
+            gui::set_next_item_width(560.0);
+            gui::input_text("Pack file", Some("C:\\Mods\\my_ui_skin.pack"), &mut self.export_path, 1024, 0);
+            if !self.export_msg.is_empty() {
+                gui::text_wrapped(&self.export_msg);
+            }
+
+            if gui::button("Export") {
+                let p = self.export_path.clone();
+                self.export_msg = match self.export_pack(e, &p) {
+                    Ok(n) => format!("Done: {n} files written."),
+                    Err(m) => m,
+                };
+            }
+
+            gui::same_line();
+            if gui::button("Close") {
+                gui::close_current_popup();
+            }
+
+            gui::end_popup();
+        }
+    }
+
+    // ---- layers: make, remove, reorder and reparent components
+
+    /// Moves component `src` next to or into `target` (numbers in the layout's list), as a drop in the Layers panel does.
+    pub(crate) fn drop_layer(&mut self, e: &mut Editor, id: DocumentId, src: usize, target: usize, place: wce_ui_model::model::Place) -> Result<(), String> {
+        let ents = Self::entries_of(e, id);
+        let sp = ents.get(src).map(|en| en.path.clone()).ok_or("no such component")?;
+        let tp = ents.get(target).map(|en| en.path.clone()).ok_or("no such target")?;
+        let new = ui_doc(e, id).ok_or("no UI layout is open")?.edit("Move component", 0, |m| m.move_to(&sp, &tp, place, true))?;
+        self.select_path(e, id, &new);
+        Ok(())
+    }
+
+    pub(crate) fn rename_entry(&mut self, e: &mut Editor, id: DocumentId, idx: usize, name: &str) -> Result<(), String> {
+        let path = Self::entries_of(e, id).get(idx).map(|en| en.path.clone()).ok_or("no such component")?;
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return Err("a component needs a name".into());
+        }
+
+        ui_doc(e, id).ok_or("no UI layout is open")?.edit("Rename component", 0, |m| m.set_name(&path, &name))
+    }
+
+    fn layers_panel(&mut self, e: &mut Editor) {
+        gui::set_next_window_size(v2(300.0, 480.0), gui::COND_FIRST_USE_EVER);
+        if !gui::begin("UI Layers", None, 0) {
+            gui::end();
+            return;
+        }
+
+        let Some(id) = active_doc(e) else {
+            gui::text_disabled("No UI layout is open.");
+            gui::end();
+            return;
+        };
+
+        let sel = selected(e, id);
+        if self.rename.as_ref().is_some_and(|r| Some(r.0) != sel) {
+            self.rename = None;
+        }
+
+        // the buttons: one per thing a modder does to the structure
+        let mut run: Option<&str> = None;
+        let button = |label: &str, tip: &str, run: &mut Option<&str>, what: &'static str, enabled: bool| {
+            gui::begin_disabled(!enabled);
+            if gui::small_button(label) {
+                *run = Some(what);
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(tip);
+            }
+        };
+
+        let has = sel.is_some();
+        button("Add", "Add a new component inside the selected one (or inside the root when nothing is selected)", &mut run, "add", true);
+        gui::same_line();
+        button("Duplicate", "Copy the selected component, with everything inside it, right after it (Ctrl+D)", &mut run, "dup", has);
+        gui::same_line();
+        button("Delete", "Remove the selected component and everything inside it (Del)", &mut run, "del", has);
+        button("Up", "Earlier among its siblings: drawn earlier, so behind the ones after it", &mut run, "up", has);
+        gui::same_line();
+        button("Down", "Later among its siblings: drawn later, so in front of the ones before it", &mut run, "down", has);
+        gui::same_line();
+        button("In", "Make it a child of the sibling just above it; it stays where it is on screen", &mut run, "in", has);
+        gui::same_line();
+        button("Out", "Make it a sibling of its parent, right where it is on screen", &mut run, "out", has);
+        let r = match run {
+            Some("add") => {
+                if !has {
+                    select(e, id, 0);
+                }
+
+                let r = self.add_child(e, "new_component");
+                if r.is_ok() {
+                    if let Some(i) = selected(e, id) {
+                        self.rename = Some((i, "new_component".to_owned(), 0));
+                    }
+                }
+
+                r
+            }
+            Some("dup") => self.with_selected(e, "Duplicate component", |m, p| m.duplicate(p)),
+            Some("del") => {
+                self.delete_selected(e);
+                Ok(())
+            }
+            Some("up") => self.move_in_order(e, -1),
+            Some("down") => self.move_in_order(e, 1),
+            Some("in") => self.move_into_previous(e),
+            Some("out") => self.move_out(e),
+            _ => Ok(()),
+        };
+
+        if let Err(m) = r {
+            e.status(&m, true);
+        }
+
+        gui::separator();
+        let Some(d) = ui_doc_ref(e, id) else {
+            gui::end();
+            return;
+        };
+
+        let ents = d.entries();
+        let mut kids: Vec<Vec<usize>> = vec![vec![]; ents.len()];
+        for (i, en) in ents.iter().enumerate() {
+            if let Some(p) = en.parent {
+                kids[p].push(i);
+            }
+        }
+
+        let sel = selected(e, id);
+        let mut f = LayerFrame { sel, ..Default::default() };
+        if !ents.is_empty() {
+            layer_row(&mut self.rename, &mut f, &ents, &kids, 0, 0);
+        }
+
+        gui::separator();
+        gui::text_wrapped("Drag a row onto another: the middle makes it a child, the top or bottom edge puts it before or after. Double-click renames. Right-click for more.");
+
+        if let Some(i) = f.select {
+            select(e, id, i);
+        }
+
+        if let Some(i) = f.rename_start {
+            let name = ents.get(i).map(|en| en.name.clone()).unwrap_or_default();
+            select(e, id, i);
+            self.rename = Some((i, name, 0));
+        }
+
+        if let Some((i, name)) = f.rename_commit.take() {
+            self.rename = None;
+            if let Err(m) = self.rename_entry(e, id, i, &name) {
+                e.status(&m, true);
+            }
+        }
+
+        if let Some(c) = f.menu {
+            select(e, id, c.0);
+            let r = match c.1 {
+                "add" => self.add_child(e, "new_component"),
+                "dup" => self.with_selected(e, "Duplicate component", |m, p| m.duplicate(p)),
+                "del" => {
+                    self.delete_selected(e);
+                    Ok(())
+                }
+                _ => Ok(()),
+            };
+
+            if let Err(m) = r {
+                e.status(&m, true);
+            }
+        }
+
+        if let Some((src, target, place)) = f.drop {
+            if let Err(m) = self.drop_layer(e, id, src, target, place) {
+                e.status(&m, true);
             }
         }
 
@@ -1270,6 +1874,280 @@ linked by the component name '{}'", r.path, r.via));
     }
 }
 
+/// The control for one property; returns the change when the user made one this frame.
+fn prop_control(p: &Prop) -> Option<PropEdit> {
+    let text_edit = |value: &str, width: f32| -> Option<String> {
+        gui::set_next_item_width(width);
+        let mut v = value.to_owned();
+        let enter = gui::input_text("##v", None, &mut v, 1024, gui::INPUT_ENTER_RETURNS_TRUE | gui::INPUT_AUTO_SELECT_ALL);
+        ((enter || gui::is_item_deactivated_after_edit()) && v != value).then_some(v)
+    };
+
+    match &p.control {
+        Control::Check => {
+            let mut on = p.value == "yes";
+            gui::checkbox("##v", &mut on).then(|| PropEdit::Value(if on { "yes" } else { "no" }.into()))
+        }
+        Control::Bit { mask, byte } => {
+            let w = p.value.trim().parse::<i64>().unwrap_or(0) as u32;
+            let mut on = if *byte { w & mask != 0 } else { w & mask == *mask };
+            gui::checkbox("##v", &mut on).then_some(PropEdit::Bit { mask: *mask, byte: *byte, on })
+        }
+        Control::Choice(list) => {
+            let cur: i64 = p.value.trim().parse().unwrap_or(i64::MIN);
+            let preview = list.iter().find(|(n, _)| *n == cur).map(|(_, s)| s.clone()).unwrap_or_else(|| format!("Other ({})", p.value));
+            let mut out = None;
+            if gui::begin_combo("##v", &preview) {
+                for (n, s) in list {
+                    if gui::selectable(s, *n == cur, 0) {
+                        out = Some(PropEdit::Value(n.to_string()));
+                    }
+                }
+
+                gui::end_combo();
+            }
+
+            out
+        }
+        Control::Suggest(list) => {
+            let mut out = text_edit(&p.value, -86.0).map(PropEdit::Value);
+            gui::same_line();
+            gui::set_next_item_width(80.0);
+            if gui::begin_combo("##sug", "pick") {
+                for s in list.iter() {
+                    if gui::selectable(s, *s == p.value, 0) {
+                        out = Some(PropEdit::Value((*s).to_owned()));
+                    }
+                }
+
+                gui::end_combo();
+            }
+
+            out
+        }
+        Control::Text => text_edit(&p.value, -1.0).map(PropEdit::Value),
+        Control::Int => {
+            let mut n: i64 = p.value.trim().parse().unwrap_or(0);
+            let mut out = None;
+            gui::set_next_item_width(-52.0);
+            if gui::drag_i64("##v", &mut n, 1.0) {
+                out = Some(PropEdit::Drag(n.to_string()));
+            }
+
+            gui::same_line();
+            if gui::small_button("-") {
+                out = Some(PropEdit::Value((n - 1).to_string()));
+            }
+
+            gui::same_line();
+            if gui::small_button("+") {
+                out = Some(PropEdit::Value((n + 1).to_string()));
+            }
+
+            out
+        }
+        Control::Float => {
+            let mut f: f32 = p.value.trim().parse().unwrap_or(0.0);
+            let mut out = None;
+            gui::set_next_item_width(-52.0);
+            if gui::drag_f32("##v", &mut f, 0.01) {
+                out = Some(PropEdit::Drag(format!("{:?}", f)));
+            }
+
+            gui::same_line();
+            if gui::small_button("-") {
+                out = Some(PropEdit::Value(format!("{:?}", f - 0.1)));
+            }
+
+            gui::same_line();
+            if gui::small_button("+") {
+                out = Some(PropEdit::Value(format!("{:?}", f + 0.1)));
+            }
+
+            out
+        }
+        Control::Colour => {
+            let h = p.value.trim_start_matches('#');
+            let ch = |i: usize| u8::from_str_radix(h.get(i * 2..i * 2 + 2).unwrap_or("ff"), 16).unwrap_or(255);
+            let mut c = [ch(0) as f32 / 255.0, ch(1) as f32 / 255.0, ch(2) as f32 / 255.0, ch(3) as f32 / 255.0];
+            gui::color_edit4("##v", &mut c, 0).then(|| PropEdit::Colour([(c[0] * 255.0).round() as u8, (c[1] * 255.0).round() as u8, (c[2] * 255.0).round() as u8, (c[3] * 255.0).round() as u8]))
+        }
+        Control::Info => {
+            gui::text_disabled(&p.value);
+            None
+        }
+    }
+}
+
+/// Every file under `dir` as (path relative to `root`, lower case with `/`, bytes); hidden files and packs are left out.
+fn collect_files(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+    for ent in std::fs::read_dir(dir).map_err(|er| format!("cannot read {}: {er}", dir.display()))? {
+        let ent = ent.map_err(|er| er.to_string())?;
+        let p = ent.path();
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name.to_lowercase().ends_with(".pack") {
+            continue;
+        }
+
+        if p.is_dir() {
+            collect_files(root, &p, out)?;
+        } else if let Ok(rel) = p.strip_prefix(root) {
+            let inside = rel.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect::<Vec<_>>().join("/");
+            out.push((inside, std::fs::read(&p).map_err(|er| format!("cannot read {}: {er}", p.display()))?));
+        }
+    }
+
+    Ok(())
+}
+
+/// What the rows of the Layers panel asked for in one frame.
+#[derive(Default)]
+struct LayerFrame {
+    sel: Option<usize>,
+    select: Option<usize>,
+    rename_start: Option<usize>,
+    rename_commit: Option<(usize, String)>,
+    menu: Option<(usize, &'static str)>,
+    drop: Option<(usize, usize, wce_ui_model::model::Place)>,
+}
+
+/// One row of the Layers panel, and the rows below it when it is open.
+fn layer_row(rename: &mut Option<(usize, String, u8)>, f: &mut LayerFrame, ents: &[Entry], kids: &[Vec<usize>], i: usize, depth: usize) {
+    use wce_ui_model::model::Place;
+    let en = &ents[i];
+    gui::push_id_int(i as i32);
+    let leaf = kids[i].is_empty();
+    let mut flags = gui::TREE_OPEN_ON_ARROW | gui::TREE_SPAN_AVAIL_WIDTH;
+    if leaf {
+        flags |= gui::TREE_LEAF | gui::TREE_NO_PUSH_ON_OPEN;
+    } else if depth < 3 {
+        flags |= gui::TREE_DEFAULT_OPEN;
+    }
+
+    if f.sel == Some(i) {
+        flags |= gui::TREE_SELECTED;
+    }
+
+    let renaming = rename.as_ref().is_some_and(|r| r.0 == i);
+    let mut open = false;
+    if renaming {
+        let (_, text, age) = rename.as_mut().unwrap();
+        if *age == 0 {
+            gui::set_keyboard_focus_here(0);
+        }
+
+        gui::set_next_item_width(-1.0);
+        let enter = gui::input_text("##rename", None, text, 128, gui::INPUT_ENTER_RETURNS_TRUE | gui::INPUT_AUTO_SELECT_ALL);
+        let active = gui::is_item_active();
+        *age = age.saturating_add(1);
+        if enter || gui::is_item_deactivated_after_edit() {
+            f.rename_commit = Some((i, text.clone()));
+        } else if gui::is_key_pressed(gui::KEY_ESCAPE, false) || (*age > 2 && !active) {
+            *rename = None;
+        }
+    } else {
+        let mut label = if en.kind == EntryKind::Template { format!("template {}", en.name) } else { en.name.clone() };
+        if !en.class.is_empty() && en.kind == EntryKind::Entry {
+            label.push_str(&format!("  ({})", en.class));
+        }
+
+        if !en.visible {
+            label.push_str("  [hidden]");
+        }
+
+        open = gui::tree_node_ex(&label, flags);
+        if gui::is_item_clicked() && !gui::is_item_toggled_open() {
+            f.select = Some(i);
+        }
+
+        if gui::is_item_hovered() && gui::is_mouse_double_clicked(0) && !leaf_toggled() {
+            f.rename_start = Some(i);
+        }
+
+        if gui::begin_popup_context_item("##layer_menu") {
+            if gui::menu_item("Add child", None, false, true) {
+                f.menu = Some((i, "add"));
+            }
+
+            if gui::menu_item("Duplicate", None, false, i != 0) {
+                f.menu = Some((i, "dup"));
+            }
+
+            if gui::menu_item("Delete", None, false, i != 0) {
+                f.menu = Some((i, "del"));
+            }
+
+            if gui::menu_item("Rename", None, false, true) {
+                f.rename_start = Some(i);
+            }
+
+            gui::end_popup();
+        }
+
+        if i != 0 && gui::begin_drag_drop_source() {
+            gui::set_drag_drop_payload("UILAYER", &[i as i32]);
+            gui::text(&en.name);
+            gui::end_drag_drop_source();
+        }
+
+        if gui::begin_drag_drop_target() {
+            if let Some((data, delivered)) = gui::accept_drag_drop_payload("UILAYER") {
+                let (mn, mx) = gui::item_rect();
+                let h = mx.y - mn.y;
+                let y = gui::mouse_pos().y;
+                let place = if i == 0 || (y >= mn.y + h * 0.25 && y <= mx.y - h * 0.25) {
+                    Place::Inside
+                } else if y < mn.y + h * 0.25 {
+                    Place::Before
+                } else {
+                    Place::After
+                };
+
+                let dl = gui::window_draw_list();
+                let col = col32(255, 200, 60, 255);
+                match place {
+                    Place::Before => dl.line(v2(mn.x, mn.y), v2(mx.x, mn.y), col, 2.0),
+                    Place::After => dl.line(v2(mn.x, mx.y), v2(mx.x, mx.y), col, 2.0),
+                    Place::Inside => dl.rect(mn, mx, col, 0.0, 2.0),
+                }
+
+                if delivered {
+                    if let Some(&src) = data.first() {
+                        f.drop = Some((src as usize, i, place));
+                    }
+                }
+            }
+
+            gui::end_drag_drop_target();
+        }
+    }
+
+    if open && !leaf {
+        for &c in &kids[i] {
+            layer_row(rename, f, ents, kids, c, depth + 1);
+        }
+
+        gui::tree_pop();
+    }
+
+    gui::pop_id();
+}
+
+/// True while the mouse is on the arrow that opens a row (a double-click there only toggles it).
+fn leaf_toggled() -> bool {
+    gui::is_item_toggled_open()
+}
+
+/// A skin in the list: its name, how many pictures, and where it comes from.
+fn skin_label(s: &skins::Skin) -> String {
+    let origin = match (s.loose, s.packed) {
+        (true, true) => "  [loose, overrides game packs]",
+        (true, false) => "  [loose]",
+        _ => "",
+    };
+    format!("{}  ({}){}", s.name, s.files, origin)
+}
+
 fn ui_doc_ref(e: &Editor, id: DocumentId) -> Option<&UiDocument> {
     e.docs.find_as::<UiDocument>(id)
 }
@@ -1304,6 +2182,7 @@ impl Tool for UiTool {
         gui::dock_builder_dock_window("UI Canvas", center);
         gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Assets", left);
+        gui::dock_builder_dock_window("UI Layers", left);
         gui::dock_builder_dock_window("UI Fields", right);
         gui::dock_builder_dock_window("UI Related", right);
         gui::dock_builder_dock_window("Inspector", right);
@@ -1314,11 +2193,14 @@ impl Tool for UiTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         e.input_origin = Some(v2(0.0, 0.0));
+        self.watch_tick(e);
         self.canvas(e);
         self.xml_pane(e);
+        self.layers_panel(e);
         self.fields_panel(e);
         self.related_panel(e);
         self.pack_popup(e);
+        self.project_popups(e);
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {
@@ -1368,6 +2250,18 @@ impl Tool for UiTool {
                 self.open_pack_popup = true;
             }
 
+            gui::end_disabled();
+            gui::separator();
+            if gui::menu_item("New skin...", None, false, true) {
+                self.new_skin_popup = true;
+            }
+
+            if gui::menu_item("Export mod pack...", None, false, true) {
+                self.export_popup = true;
+            }
+
+            gui::begin_disabled(!has);
+
             if gui::menu_item("Export XML...", None, false, true) {
                 if let Some(id) = active_doc(e) {
                     let d = ui_doc_ref(e, id).unwrap();
@@ -1414,7 +2308,8 @@ impl Tool for UiTool {
         };
 
         log::info(format!("UI layout {path}: version {}, {} components", model.version, model.entries().len()));
-        Ok(Box::new(UiDocument::new(source, model, e.output_dir())))
+        let out = e.project_dir().unwrap_or_else(|| e.output_dir());
+        Ok(Box::new(UiDocument::new(source, model, out)))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

@@ -66,6 +66,28 @@ impl GameProfile {
     /// * `game_dir` - Folder of the game.
     /// * `use_mods` - If the enabled mods are included.
     pub fn pack_order(&self, game_dir: &Path, use_mods: bool) -> PackOrder {
+        let mods: Vec<String> = if use_mods { read_lines(&game_dir.join(self.used_mods_file)).iter().filter_map(|l| used_mod(l).map(str::to_owned)).collect() } else { vec![] };
+        self.pack_order_with(game_dir, &mods)
+    }
+
+    /// The packs of the game's release (the extra vanilla packs and the manifest's), without any mod.
+    pub fn release_pack_names(&self, game_dir: &Path) -> Vec<String> {
+        self.pack_order_with(game_dir, &[]).packs.into_iter().map(|p| p.name).collect()
+    }
+
+    /// The `.pack` files of the data folder that are not part of the release: the mods one can choose from, by file name.
+    pub fn available_mod_packs(&self, game_dir: &Path) -> Vec<String> {
+        let release = self.release_pack_names(game_dir);
+        let mut v: Vec<String> = std::fs::read_dir(game_dir.join(self.data_dir))
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        v.retain(|n| n.to_ascii_lowercase().ends_with(".pack") && !release.iter().any(|r| r.eq_ignore_ascii_case(n)));
+        v.sort_by_key(|n| n.to_ascii_lowercase());
+        v
+    }
+
+    /// Like `pack_order`, with the mods named by the caller (first listed wins) instead of the launcher's list.
+    pub fn pack_order_with(&self, game_dir: &Path, mods: &[String]) -> PackOrder {
         let data = game_dir.join(self.data_dir);
         let mut order = PackOrder::default();
         let mut add = |name: &str, is_mod: bool| {
@@ -82,12 +104,8 @@ impl GameProfile {
             }
         };
 
-        if use_mods {
-            for line in read_lines(&game_dir.join(self.used_mods_file)) {
-                if let Some(name) = used_mod(&line) {
-                    add(name, true);
-                }
-            }
+        for name in mods {
+            add(name, true);
         }
 
         for name in self.extra_vanilla {

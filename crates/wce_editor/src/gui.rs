@@ -329,6 +329,11 @@ pub fn drag_i64(label: &str, v: &mut i64, speed: f32) -> bool {
     call!(sys::igDragScalar(l.as_ptr(), sys::ImGuiDataType_S64, (v as *mut i64).cast(), speed, std::ptr::null(), std::ptr::null(), std::ptr::null(), 0))
 }
 
+pub fn drag_f32(label: &str, v: &mut f32, speed: f32) -> bool {
+    let l = cs(label);
+    call!(sys::igDragFloat(l.as_ptr(), v, speed, 0.0, 0.0, c"%.3f".as_ptr(), 0))
+}
+
 pub fn input_int(label: &str, v: &mut i32) -> bool {
     let l = cs(label);
     call!(sys::igInputInt(l.as_ptr(), v, 1, 100, 0))
@@ -606,6 +611,11 @@ pub fn is_window_hovered_with_children() -> bool {
     call!(sys::igIsWindowHovered(sys::ImGuiHoveredFlags_ChildWindows | sys::ImGuiHoveredFlags_RootAndChildWindows))
 }
 
+/// The last item's rectangle on screen: (top left, bottom right).
+pub fn item_rect() -> (Vec2, Vec2) {
+    (call!(sys::igGetItemRectMin()), call!(sys::igGetItemRectMax()))
+}
+
 pub fn mouse_pos() -> Vec2 {
     call!(sys::igGetMousePos())
 }
@@ -673,6 +683,11 @@ pub fn close_current_popup() {
 }
 
 // ---- item state
+
+/// Hovered, also when the item is disabled (to explain why).
+pub fn is_item_hovered_allow_disabled() -> bool {
+    call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenDisabled))
+}
 
 pub fn is_item_hovered() -> bool {
     call!(sys::igIsItemHovered(0))
@@ -849,7 +864,7 @@ pub use sys::{
     ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
     ImGuiKey_S as KEY_S, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z, ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK,
     ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING, ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING,
-    ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW, ImGuiTreeNodeFlags_Selected as TREE_SELECTED,
+    ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_Leaf as TREE_LEAF, ImGuiTreeNodeFlags_NoTreePushOnOpen as TREE_NO_PUSH_ON_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW, ImGuiTreeNodeFlags_Selected as TREE_SELECTED,
     ImGuiTreeNodeFlags_SpanAvailWidth as TREE_SPAN_AVAIL_WIDTH, ImGuiWindowFlags_AlwaysAutoResize as WINDOW_ALWAYS_AUTO_RESIZE,
     ImGuiWindowFlags_HorizontalScrollbar as WINDOW_HORIZONTAL_SCROLLBAR, ImGuiWindowFlags_MenuBar as WINDOW_MENU_BAR,
     ImGuiWindowFlags_NoBringToFrontOnFocus as WINDOW_NO_BRING_TO_FRONT, ImGuiWindowFlags_NoCollapse as WINDOW_NO_COLLAPSE, ImGuiWindowFlags_NoDocking as WINDOW_NO_DOCKING,

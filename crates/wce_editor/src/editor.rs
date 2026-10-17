@@ -122,6 +122,9 @@ pub struct Editor {
     pub(crate) test_keys: Vec<(i32, i32)>,
     first_run_game: String,
     first_run_message: String,
+    mod_checks: Vec<(bool, String)>,
+    mod_checks_for: String,
+    mods_popup: bool,
 
     /// Frame times (the app loop records them).
     pub perf: PerfStats,
@@ -161,7 +164,7 @@ impl Editor {
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, preview_doc: 0,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), perf: PerfStats::default(), wait_loaded_start: None, vsync: true, panels: Panels::default(),
+            first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, panels: Panels::default(),
             panel_data: PanelData::default(), images: Default::default(), input_origin: None, pending_shot: None,
         };
 
@@ -279,12 +282,138 @@ impl Editor {
         self.tool_info.get(self.active_tool).map_or(&[], |t| t.opens.as_slice())
     }
 
+    /// The UI project folder (`ui_project` in wce.ini): saved layouts and the user's pictures live there.
+    pub fn project_dir(&self) -> Option<PathBuf> {
+        self.settings.get("ui_project", None).map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()).map(PathBuf::from)
+    }
+
+    /// What to mount: the game's release packs, the mod packs the user chose, and the loose folders above them. The launcher's list of
+    /// enabled mods is not used.
+    fn vfs_config(&self, game_dir: String) -> Config {
+        let mut cfg = Config::new(PathBuf::from(game_dir), GameProfile::ATTILA);
+        cfg.use_mods = false;
+        cfg.mod_packs = Some(self.selected_mod_packs());
+        cfg.overlay_folders = self.overlay_folders();
+        cfg
+    }
+
+    /// The mod packs the user chose (`mod_packs` in wce.ini, `;` separated file names in the data folder).
+    pub fn selected_mod_packs(&self) -> Vec<String> {
+        self.settings.get("mod_packs", Some("WCE_MOD_PACKS")).map(|s| s.split(';').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect()).unwrap_or_default()
+    }
+
+    /// Chooses the mod packs and mounts the files again.
+    ///
+    /// # Errors
+    ///
+    /// The files cannot be mounted.
+    pub fn set_mod_packs(&mut self, names: &[String]) -> Result<(), String> {
+        self.settings.set("mod_packs", &names.join(";"));
+        let _ = self.settings.save();
+        self.remount_vfs()
+    }
+
+    /// The mod packs found in the game's data folder.
+    pub fn available_mod_packs(&self) -> Vec<String> {
+        let Some(dir) = self.settings.get("game_dir", Some("WCE_GAME")) else { return vec![] };
+        GameProfile::ATTILA.available_mod_packs(Path::new(&dir))
+    }
+
+    /// The check list of mod packs (first run and File > Mod packs).
+    fn mod_pack_checks(&mut self, game: &str) {
+        if self.mod_checks_for != game {
+            self.mod_checks_for = game.to_owned();
+            let chosen = self.selected_mod_packs();
+            let mut names = GameProfile::ATTILA.available_mod_packs(Path::new(game));
+            for c in &chosen {
+                if !names.iter().any(|n| n.eq_ignore_ascii_case(c)) {
+                    names.push(c.clone());
+                }
+            }
+
+            self.mod_checks = names.into_iter().map(|n| (chosen.iter().any(|c| c.eq_ignore_ascii_case(&n)), n)).collect();
+        }
+
+        if self.mod_checks.is_empty() {
+            gui::text_disabled("No mod packs found in the game's data folder.");
+            return;
+        }
+
+        if gui::begin_child("##modlist", gui::v2(560.0, 180.0), 1, 0) {
+            for (on, name) in self.mod_checks.iter_mut() {
+                gui::checkbox(name, on);
+            }
+        }
+
+        gui::end_child();
+    }
+
+    fn checked_mod_packs(&self) -> Vec<String> {
+        self.mod_checks.iter().filter(|(on, _)| *on).map(|(_, n)| n.clone()).collect()
+    }
+
+    fn draw_mods_popup(&mut self) {
+        if self.mods_popup {
+            self.mods_popup = false;
+            self.mod_checks_for.clear();
+            gui::open_popup("Mod packs");
+        }
+
+        if gui::begin_popup_modal("Mod packs", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            gui::text_wrapped("The editor reads the game's own (release) packs and, on top of them, only the mod packs ticked here. Your own loose skin folder is always read before all of them.");
+            let game = self.settings.get("game_dir", Some("WCE_GAME")).unwrap_or_default();
+            self.mod_pack_checks(&game);
+            if gui::button("Apply") {
+                let names = self.checked_mod_packs();
+                match self.set_mod_packs(&names) {
+                    Ok(()) => {
+                        self.activate_all_tools();
+                        self.status(&format!("{} mod pack(s) selected", names.len()), false);
+                    }
+                    Err(m) => self.status(&m, true),
+                }
+
+                gui::close_current_popup();
+            }
+
+            gui::same_line();
+            if gui::button("Cancel") {
+                gui::close_current_popup();
+            }
+
+            gui::end_popup();
+        }
+    }
+
+    /// Loose folders read before every pack, highest priority first: the project folder, then `overlay_folders` (wce.ini, `;` separated).
+    fn overlay_folders(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.project_dir().into_iter().collect();
+        if let Some(o) = self.settings.get("overlay_folders", Some("WCE_OVERLAY")) {
+            v.extend(o.split(';').map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from));
+        }
+
+        v
+    }
+
+    /// Mounts the files again (the project folder changed). The renderer keeps the files it was created with.
+    ///
+    /// # Errors
+    ///
+    /// The game folder is not set or cannot be read.
+    pub fn remount_vfs(&mut self) -> Result<(), String> {
+        let dir = self.settings.get("game_dir", Some("WCE_GAME")).or_else(|| std::env::var("ATTILA_DIR").ok()).ok_or("the game folder is not set")?;
+        let vfs = Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?;
+        self.vfs = Some(Arc::new(vfs));
+        self.images.clear();
+        Ok(())
+    }
+
     /// Mounts the packs and creates the renderer. False (with a message in the log) when the game is not configured: the first-run dialog opens.
     pub fn start(&mut self) -> bool {
         let game_dir = self.settings.get("game_dir", Some("WCE_GAME")).or_else(|| std::env::var("ATTILA_DIR").ok());
         log::info(format!("Data paths: game={}", game_dir.as_deref().unwrap_or("(unset)")));
         let mounted = game_dir.ok_or_else(|| "the game folder is not set".to_owned()).and_then(|dir| {
-            Vfs::mount(&Config::new(PathBuf::from(dir), GameProfile::ATTILA)).map_err(|e| e.to_string())
+            Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())
         });
 
         match mounted.and_then(|vfs| {
@@ -827,6 +956,7 @@ impl Editor {
         }
 
         gui::end();
+        self.draw_mods_popup();
         if self.first_run {
             self.draw_first_run();
             return;
@@ -1014,6 +1144,10 @@ impl Editor {
                 }
             }
 
+            if gui::menu_item("Mod packs...", None, false, true) {
+                self.mods_popup = true;
+            }
+
             if gui::menu_item("Save", Some("Ctrl+S"), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
@@ -1198,10 +1332,19 @@ impl Editor {
             gui::pop_text_wrap_pos();
         }
 
+        if game_ok {
+            gui::spacing();
+            gui::text_wrapped("Mod packs to read besides the game's own (optional; you can change this later in File > Mod packs):");
+            let game = self.first_run_game.clone();
+            self.mod_pack_checks(&game);
+        }
+
         gui::spacing();
         gui::begin_disabled(!game_ok);
         if gui::button("Save and continue") {
             gui::close_current_popup();
+            let chosen = self.checked_mod_packs().join(";");
+            self.settings.set("mod_packs", &chosen);
             let game = self.first_run_game.clone();
             if let Err(msg) = self.setup(&game) {
                 self.first_run_message = msg;

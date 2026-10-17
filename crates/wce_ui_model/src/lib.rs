@@ -14,8 +14,9 @@ pub mod render;
 pub mod skins;
 pub mod model;
 pub mod pack;
+pub mod props;
 pub mod related;
 
 pub use dom::{Dom, Element, Form, Node};
 pub use draw::{DrawItem, DrawKind, DrawOptions};
-pub use model::{Entry, EntryKind, Field, UiModel};
+pub use model::{Entry, EntryKind, Field, Place, UiModel};

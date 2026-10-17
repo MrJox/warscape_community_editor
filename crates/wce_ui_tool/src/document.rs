@@ -136,6 +136,16 @@ impl UiDocument {
         Ok(r)
     }
 
+    /// Replaces the layout with the one on disk, as an undoable step, and marks it saved.
+    pub fn reload(&mut self, model: UiModel) -> Result<(), String> {
+        self.edit("Reload from disk", 0, |after| {
+            *after = model;
+            Ok(())
+        })?;
+        self.history.mark_saved();
+        Ok(())
+    }
+
     /// Replaces the whole layout with the XML, if it parses and converts to a binary layout.
     pub fn set_xml(&mut self, xml: &str, key: u64) -> Result<(), String> {
         let m = UiModel::from_xml(xml)?;

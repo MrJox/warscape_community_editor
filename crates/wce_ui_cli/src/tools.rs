@@ -41,7 +41,7 @@ fn list_plain() -> Vec<Value> {
         tool("ui_close", "Close an open layout without saving.", vec![id.clone()], &[]),
         tool("ui_list_open", "List the open layouts.", vec![], &[]),
         tool("ui_tree", "The components of the layout, indented by depth: [number] name (class) @x,y WxH and the position on screen (docked components sit at their dock point plus dock offset, not at the stored offset; the stored one is shown when it differs). Numbers change after add, delete, duplicate, move and reparent; those return the new number.", vec![id.clone(), ("max_depth", prop("integer", "Deepest level to list (the root is 0).")), ("screen", prop("string", "Screen size like '1920x1080': positions as the game docks them there."))], &[]),
-        tool("ui_entry", "Details of one component: rectangle, parent, children and every primitive field (number, type, the name the format gives it, value). Use the field number with ui_set_field.", vec![id.clone(), entry("entry")], &["entry"]),
+        tool("ui_entry", "Details of one component: rectangle, parent, children, its properties under the game's names (group, kind, shown value, choices; set them with ui_set_property) and every primitive field (number, type, the name the converter gives it, value).", vec![id.clone(), entry("entry")], &["entry"]),
         tool("ui_state", "The fields of a component's default state (text, font, colours, shaders), with field numbers for ui_set_field (state=true).", vec![id.clone(), entry("entry")], &["entry"]),
         tool("ui_xml", "The XML of the whole layout, or of one component and everything below it.", vec![id.clone(), entry("entry")], &[]),
         tool(
@@ -55,6 +55,12 @@ fn list_plain() -> Vec<Value> {
             "Change a component: x/y (offset in its parent), w/h (size of its default state), name, text (of the default state) and color (RRGGBB or RRGGBBAA of the text).",
             vec![id.clone(), entry("entry"), ("x", prop("integer", "")), ("y", prop("integer", "")), ("w", prop("integer", "")), ("h", prop("integer", "")), ("name", prop("string", "")), ("text", prop("string", "")), ("color", prop("string", ""))],
             &["entry"],
+        ),
+        tool(
+            "ui_set_property",
+            "Set a property of a component (or of one of its states) by the name ui_entry / ui_state list under 'properties', for example 'Visible', 'Dock point' (a choice by name: 'Bottom centre'), 'Horizontal alignment', 'Interactive', 'Text colour' (#RRGGBB). Check boxes take yes/no. Prefer this to ui_set_field: it knows what the flags and numbers mean.",
+            vec![id.clone(), entry("entry"), ("name", prop("string", "Property name.")), ("value", prop("string", "New value.")), ("scope", prop("string", "'component' (default) or 'state' (the default state).")), ("state", prop("string", "Name of a state, instead of the default one."))],
+            &["entry", "name", "value"],
         ),
         tool(
             "ui_set_field",
