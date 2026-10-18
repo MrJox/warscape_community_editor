@@ -49,6 +49,8 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         ib: None,
         index_count: 0,
         alpha_mode: 0,
+        kind: Default::default(),
+        uv2_tile: [0.0; 2],
         offset: Float3::new(a, b, c),
         has_offset,
         tex: std::array::from_fn(|_| tex.clone()),

@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dear_imgui_sys as sys;
+use wce_editor_core::camera_controller::CameraController;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult, read_script};
 use wce_editor_core::document::Document;
 use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, cross, length, normalize, translation};
 use wce_foundation::profile;
 use wce_render::renderer::Renderer;
+use wce_scene::camera::Camera;
 use wce_scene::render_scene::{DocumentId, SourceRef};
 
 use crate::editor::{Answer, Editor, PromptKind};
@@ -508,7 +510,19 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("cam_info", "cam_info", "test: log the camera, the first selected item's position and the active document's history (for repro scripts)", |e, _| {
+    c.add("cam_look", "cam_look eye_x eye_y eye_z target_x target_y target_z", "orbit camera from an eye to a target, metres", |e, a| {
+        let v: Vec<f32> = a.iter().filter_map(|x| parse_float(x)).collect();
+        if v.len() != 6 || a.len() != 6 {
+            return fail("usage: cam_look eye_x eye_y eye_z target_x target_y target_z");
+        }
+
+        e.viewport.use_orbit();
+        let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
+        e.viewport.orbit_mut().set_camera(&cam);
+        ok("")
+    });
+
+    c.add("cam_info", "cam_info","test: log the camera, the first selected item's position and the active document's history (for repro scripts)", |e, _| {
         let c = e.viewport.camera();
         let mut s = format!("camera eye {:.2} {:.2} {:.2} target {:.2} {:.2} {:.2}", c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
         if let Some((first, w)) = first_selected_transform(e) {

@@ -2,7 +2,8 @@
 //! weather tool's default view; it publishes into the shared `RenderScene` like any document.
 //!
 //! A building is a folder of pieces; `<name>_pieceNN_destruct01` is each piece's intact state. Piece placement nodes in
-//! `<name>_tech.cs2.parsed` are identity in every file checked, so the pieces are drawn at the origin of the building (docs/re/renderer.md).
+//! `<name>_tech.cs2.parsed` are identity in every file checked, so the pieces are drawn at the origin of the building (docs/re/renderer.md). The
+//! meshes' file bounds are in the building's frame (the renderer adds each mesh's pivot to its vertices).
 
 use std::collections::BTreeMap;
 use std::io::Cursor;

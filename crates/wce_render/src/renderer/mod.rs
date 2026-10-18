@@ -18,7 +18,7 @@ use crate::cbuffers::{ConstantBuffers, Var};
 use crate::environment_apply::apply_environment;
 use crate::files::{Files, shared_reader};
 use crate::gpu_timer::GpuTimer;
-use crate::model_cache::{ModelCache, RigidInstance, TEX_SLOTS, TextureCache};
+use crate::model_cache::{MeshKind, ModelCache, RigidInstance, TEX_SLOTS, TextureCache};
 use crate::particles::{Frame, ParticleSystem};
 use crate::render_target::RenderTarget;
 use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, bind_shader};
@@ -49,6 +49,24 @@ pub(crate) const SKY_PS: &str = "dx11_sm_3_0_skydome.hlsl_ps_ps30_main";
 pub(crate) const RIGID_VS: &str = "dx11_sm_4_0_rigidcommon.hlsl_vs_vs30_main";
 pub(crate) const RIGID_GBUFFER_PS: &str = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps30_gbuffer";
 pub(crate) const RIGID_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const TILED_DIRT_GBUFFER_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmesh.hlsl_ps_ps30_gbuffer";
+pub(crate) const TILED_DIRT_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmesh.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const TERRAIN_BLEND_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_main";
+
+/// The TerrainBlend meshes with their own textures. The game draws them with ps30_null_gbuffer instead, from the terrain's virtual texture
+/// (the ground's colour under the building), which the editor doesn't build.
+pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_gbuffer";
+
+/// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, vertex and pixel shader, GPU timer label.
+/// rigidtileddirtmapmesh has no vertex shader of its own: rigidcommon's.
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 5] = [
+    (MeshKind::Standard, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
+    (MeshKind::Standard, true, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
+    (MeshKind::TiledDirtmap, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
+    (MeshKind::TiledDirtmap, true, RIGID_VS, TILED_DIRT_GBUFFER_ALPHA_PS, "gbuffer tiled dirt alpha-tested"),
+    (MeshKind::TerrainBlend, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
+];
+
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
 pub(crate) const TM_DOWN_LUMA: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image_store_luma";
 pub(crate) const TM_LUMA_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats";

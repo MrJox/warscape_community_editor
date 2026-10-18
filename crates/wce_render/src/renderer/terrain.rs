@@ -7,6 +7,9 @@
 //! 3. resolve: vs30_terrain_to_gbuffer + ps30_terrain_to_gbuffer_ss, fullscreen: the accumulated terrain targets (+ mid-distance detail, far
 //!    maps, snow) become the G-buffer channels 1 .. 4 of the terrain pixels (stencil 2 -> 1, so the lights treat them as geometry).
 //!
+//! TerrainBlend meshes (the ground skirts of buildings) join step 1 (rigidterrainblend vs30_main + rigidterrain ps30_geom into `zw`, stencil
+//! 2; vs30_geom + ps30_geom, their view-space depth, into `viewz`), so steps 2 and 3 give them the terrain's colour where they stand.
+//!
 //! Objects are drawn before (pass_gbuffer); the terrain only fills the pixels it wins the depth test for. The legacy terrain patches (rigid
 //! G-buffer, flat colour) remain for picking, shadows and the environment cube, and draw the ground of a scene whose terrain has no material.
 
@@ -27,6 +30,8 @@ const BLEND_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_blend";
 const BLEND_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps30_blend";
 const RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
+const BLEND_MESH_GEOM_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_geom";
+const BLEND_MESH_GEOM_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_geom";
 
 const PATCH_CELLS: i32 = 64;
 
@@ -533,6 +538,12 @@ impl Renderer {
         self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, 2);
         self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0);
 
+        // The TerrainBlend meshes, as more surface.
+        if let (Some(main_vs), Some(blend_geom_vs), Some(blend_geom_ps)) = (self.shader(TERRAIN_BLEND_VS), self.shader(BLEND_MESH_GEOM_VS), self.shader(BLEND_MESH_GEOM_PS)) {
+            self.draw_blend_meshes(&main_vs, &geom_ps, &zw_rtv, &ds_depth, 2);
+            self.draw_blend_meshes(&blend_geom_vs, &blend_geom_ps, &viewz_rtv, &ds_equal, 0);
+        }
+
         // ---- 2. The blend boxes.
         let el = [
             element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
@@ -694,6 +705,32 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+    }
+
+    /// Draws the TerrainBlend meshes the camera's G-buffer pass culled, from its instances, with a pair of shaders into one target.
+    fn draw_blend_meshes(&mut self, vs: &Rc<GameShader>, ps: &Rc<GameShader>, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
+        let Some(rigid_vs) = self.shader(RIGID_VS) else { return };
+        let Some(layout) = self.layout(&rigid_vs, "rigid_std", &rigid_layout()) else { return };
+        self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+        self.bind(vs);
+        self.bind(ps);
+        for &slot in vs.textures.values() {
+            self.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&self.res.instance_ids_srv));
+        }
+
+        let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+        let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+        let firsts = self.draw_lists.gbuffer_firsts;
+        let (_, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| m.kind == MeshKind::TerrainBlend);
+        self.draw_stats.triangles += triangles;
+        self.draw_lists.terrain_draws = terrain_draws;
+        self.draw_lists.draws = draws;
+        self.draw_lists.vis_terrain = vis_terrain;
+        self.draw_lists.vis = vis;
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.

@@ -59,16 +59,21 @@ pub struct MeshInstance {
     /// Use the file's LODs by camera distance and skip it when it is too small to see (the sample map keeps LOD 0 always).
     pub lod: bool,
 
-    /// Per-instance pixel shader inputs of rigidcommon (POSITION4..7); zero is the engine's default.
+    /// Per-instance pixel shader inputs of rigidcommon (POSITION4..7); [`DEFAULT_INSTANCE_PARAMS`] is the engine's default.
     pub p4: [f32; 4],
     pub p5: [f32; 4],
     pub p6: [f32; 4],
     pub p7: [f32; 4],
 }
 
+/// POSITION4..7 of an instance with nothing special: zero, except the opacity in POSITION4.w. rigidstandard's gbuffer_alpha_test multiplies
+/// the diffuse alpha by floor(w) * 0.001 before testing it against 0.5, so 0 there discards every pixel of alpha-tested meshes; 1000 is opaque.
+pub const DEFAULT_INSTANCE_PARAMS: [f32; 16] = [0.0, 0.0, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
 impl Default for MeshInstance {
     fn default() -> Self {
-        Self { model: String::new(), casts_shadow: true, lod: false, p4: [0.0; 4], p5: [0.0; 4], p6: [0.0; 4], p7: [0.0; 4] }
+        let p = |i: usize| std::array::from_fn(|k| DEFAULT_INSTANCE_PARAMS[i * 4 + k]);
+        Self { model: String::new(), casts_shadow: true, lod: false, p4: p(0), p5: p(1), p6: p(2), p7: p(3) }
     }
 }
 

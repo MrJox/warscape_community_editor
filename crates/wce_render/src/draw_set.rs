@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::EntityId;
+use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, EntityId};
 
 use crate::model_cache::{GpuMesh, GpuModel, RigidInstance};
 
@@ -262,7 +262,7 @@ impl DrawSet {
         self.model.push(mi);
         let mut f = if casts_shadow { CASTS_SHADOW } else { 0 } | if lod { LOD } else { 0 };
         self.world.push([world.m[0], world.m[1], world.m[2]]);
-        match params.filter(|p| p.iter().any(|v| *v != 0.0)) {
+        match params.filter(|p| **p != DEFAULT_INSTANCE_PARAMS) {
             Some(p) => {
                 f |= PARAMS;
                 self.params_index.push((self.params.len() / 16) as u32);
@@ -385,17 +385,19 @@ impl DrawSet {
     }
 
     /// Fills one record per instance: the item's world matrix (with the mesh offset applied) and its pixel-shader parameters.
+    ///
+    /// `dst` is usually a mapped GPU buffer (write-combined memory): each record is built locally and stored once, never read back.
     pub fn gather(&self, vis: &Visible, dst: &mut [RigidInstance]) {
         wce_prof!("drawset.gather");
         dst[..vis.order.len()].par_iter_mut().enumerate().for_each(|(k, r)| {
             let item = vis.order[k] as usize;
             let w = &self.world[item];
-            r.world = *w;
+            let mut world = *w;
             let mesh = self.batch_mesh(vis.batch_of[k]);
 
             // translation += rotation * offset
             if mesh.has_offset {
-                for (out, w) in r.world.iter_mut().zip(w) {
+                for (out, w) in world.iter_mut().zip(w) {
                     out[3] += w[0] * mesh.offset.x + w[1] * mesh.offset.y + w[2] * mesh.offset.z;
                 }
             }
@@ -404,13 +406,11 @@ impl DrawSet {
                 let at = self.params_index[item] as usize * 16;
                 std::array::from_fn(|i| self.params[at + i])
             } else {
-                [0.0; 16]
+                DEFAULT_INSTANCE_PARAMS
             };
 
-            r.p4.copy_from_slice(&params[0..4]);
-            r.p5.copy_from_slice(&params[4..8]);
-            r.p6.copy_from_slice(&params[8..12]);
-            r.p7.copy_from_slice(&params[12..16]);
+            let p = |i: usize| std::array::from_fn(|k| params[i * 4 + k]);
+            *r = RigidInstance { world, p4: p(0), p5: p(1), p6: p(2), p7: p(3) };
         });
     }
 

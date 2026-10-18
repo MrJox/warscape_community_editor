@@ -88,7 +88,7 @@ fn thread_pool_checks(g: &mut Gate) {
 fn mesh() -> GpuMesh {
     let tex = Arc::new(RwLock::new(Texture::default()));
     GpuMesh {
-        vb: None, ib: None, index_count: 0, alpha_mode: 0, offset: Float3::default(), has_offset: false, tex: std::array::from_fn(|_| tex.clone()),
+        vb: None, ib: None, index_count: 0, alpha_mode: 0, kind: Default::default(), uv2_tile: [0.0; 2], offset: Float3::default(), has_offset: false, tex: std::array::from_fn(|_| tex.clone()),
         bmin: Float3::default(), bmax: Float3::default(),
     }
 }

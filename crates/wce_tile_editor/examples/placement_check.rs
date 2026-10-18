@@ -159,6 +159,9 @@ struct Row {
     parent_mode: String,
     depth: i32,
     world_y: f64,
+
+    /// The y the file's transform chain gives (before snapping a landscape instance to the terrain).
+    file_y: f64,
     list_y: f64,
     terrain: f64,
     terrain2: f64,
@@ -389,6 +392,7 @@ fn main() {
             }
 
             r.world_y = f64::from(p.y);
+            r.file_y = w.position.y / doc.project().unit_scale;
             r.list_y = le.y;
             r.terrain = f64::from(t.terrain_height(p.x, p.z));
 
@@ -501,10 +505,10 @@ fn main() {
 
     if !csv.is_empty() {
         // The C++ stream wrote doubles with 6 significant digits.
-        let mut out = "tile\tkey\tmode\tgroup_mode\tdepth\tlf_offset\tworld_y\tlist_y\tterrain\tdx\tdz\trot\trot_mirrored\n".to_owned();
+        let mut out = "tile\tkey\tmode\tgroup_mode\tdepth\tlf_offset\tworld_y\tfile_y\tlist_y\tterrain\tdx\tdz\trot\trot_mirrored\n".to_owned();
         for r in &rows {
             out += &format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", r.tile, r.key, r.mode, r.parent_mode, r.depth, printf_g(r.lf_off), printf_g(r.world_y),
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", r.tile, r.key, r.mode, r.parent_mode, r.depth, printf_g(r.lf_off), printf_g(r.world_y), printf_g(r.file_y),
                 printf_g(r.list_y), printf_g(r.terrain), printf_g(r.dx), printf_g(r.dz), printf_g(r.rot), printf_g(r.rot_m),
             );
         }
