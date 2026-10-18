@@ -24,6 +24,7 @@ use crate::render_target::RenderTarget;
 use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, bind_shader};
 use crate::wind::WindSim;
 
+mod decals;
 mod draws;
 mod editor;
 mod passes;
@@ -373,6 +374,7 @@ pub struct Renderer {
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
+    pub(crate) decals: decals::DecalGpu,
     pub settings: RenderSettings,
 }
 
@@ -482,6 +484,7 @@ impl Renderer {
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
+            decals: decals::DecalGpu::default(),
             settings: RenderSettings::default(),
         })
     }
@@ -782,6 +785,9 @@ impl Renderer {
             self.gpu_timer.mark("terrain");
             self.pass_terrain_material(scene);
         }
+
+        self.gpu_timer.mark("decals");
+        self.pass_decals(scene);
 
         self.gpu_timer.mark("depth + ssao");
         self.analyse_depth(&cam);

@@ -48,6 +48,21 @@ pub enum Kind {
 
     /// River ribbons and sea / lake planes, drawn by the renderer's water pass.
     Water,
+
+    /// A projected decal, drawn by the renderer's decal pass.
+    Decal,
+}
+
+/// A projected decal: the entity's world matrix maps the unit box (-0.5 .. 0.5) onto the volume it paints, projected along its y axis. The
+/// model (rigidmodels/decals/...: that box) names the textures, `<model without extension>_diffuse.dds` and `_normal.dds` / `_parallax.dds`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decal {
+    /// VFS path of the .rigid_model_v2.
+    pub model: String,
+
+    /// The textures repeat over the decal (by its size) instead of stretching once over it.
+    pub tiled: bool,
+    pub opacity: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -384,6 +399,7 @@ pub enum Payload {
     Overlay(Overlay),
     CameraRig(CameraRig),
     Water(Water),
+    Decal(Decal),
 }
 
 impl Payload {
@@ -395,6 +411,7 @@ impl Payload {
             Self::Overlay(_) => Kind::Overlay,
             Self::CameraRig(_) => Kind::CameraRig,
             Self::Water(_) => Kind::Water,
+            Self::Decal(_) => Kind::Decal,
         }
     }
 }
