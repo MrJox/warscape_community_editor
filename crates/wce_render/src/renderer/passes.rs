@@ -120,7 +120,8 @@ impl Renderer {
 
                     r.bind(&ps);
                     bind_srv(&r.ctx, &ps, "s_fire_map", r.res.black_srv.as_ref());
-                    bind_srv(&r.ctx, &ps, "s_snow_normals", r.res.black_srv.as_ref());
+                    let snow = r.snow_normals_srv();
+                    bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
 
                     // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
                     bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());

@@ -28,7 +28,6 @@ const GRASS_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_gbuffer_grass";
 const GRASS_SHADOW_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_shadow_grass";
 const GRASS_SHADOW_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_shadow_grass";
 const DISSOLVE_MAP: &str = "commontextures/dissolve.dds";
-const SNOW_NORMALS: &str = "commontextures/snow_normal.dds";
 
 /// How far the grass is drawn: where the vertex shader has sunk it into the ground (1 / g_inv_lod_distance).
 pub(crate) const GRASS_DISTANCE: f32 = 100.0;
@@ -305,7 +304,7 @@ impl Renderer {
         let detail_normal = srv(tex(material.as_ref().map(|m| &m.detail_normal))).or_else(|| srv(Some(self.textures.flat_normal())));
         let dissolve = srv(self.textures.get(DISSOLVE_MAP, false)).or_else(|| self.res.white_srv.clone());
         // The engine binds the global snow normals (FUN_118ce490); the shader reads them only with snow (weather_shared).
-        let snow = srv(self.textures.get(SNOW_NORMALS, false)).or_else(|| self.res.black_srv.clone());
+        let snow = self.snow_normals_srv();
         let depth = if self.terrain.active { self.terrain.viewz.srv.clone() } else { self.res.white_srv.clone() };
 
         let rtvs = self.gbuffer.channels[..4].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();

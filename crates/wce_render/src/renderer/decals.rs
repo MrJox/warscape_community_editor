@@ -145,7 +145,8 @@ impl Renderer {
             }
 
             inst[12..15].copy_from_slice(&size);
-            inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 0.0]);
+            // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings).
+            inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 1.0]);
             let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt();
             d.items.push(DecalItem { model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
         };
@@ -248,12 +249,13 @@ impl Renderer {
         self.bind(&vs);
         self.bind(&ps);
         null_ps_srvs(&self.ctx, 16);
+        let snow = self.snow_normals_srv();
         {
             let ctx = &self.ctx;
             bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
             bind_srv(ctx, &ps, "s_gbuffer_normal", self.decals.normal_copy.srv.as_ref());
             bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
-            bind_srv(ctx, &ps, "s_snow_normals", self.res.black_srv.as_ref());
+            bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
             ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
             for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal"] {
                 bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());

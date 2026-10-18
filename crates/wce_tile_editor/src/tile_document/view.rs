@@ -110,7 +110,7 @@ impl Tile {
         }
     }
 
-    /// Whether a VFXInstance plays in the terrain look's season (`seasons`, all when missing; the looks have summer, autumn and winter).
+    /// Whether a VFXInstance plays in the terrain look's season (`seasons`, all when missing).
     fn in_season(&self, elem: usize) -> bool {
         let Some(text) = self.tscene().doc().get(elem, "seasons") else { return true };
         let on = wce_tile::properties::parse_seasons(&text);
@@ -626,7 +626,10 @@ impl Tile {
                 let world = props.map_or(w, |p| w * piece_local(p));
                 let levels = self.model_of(elem).map_or(1, |m| m.levels);
                 let model = props.map_or(piece.clone(), |p| piece_model(&piece, p.destruction_level, levels));
-                let e = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, p4, ..Default::default() }), self.source(item_of(elem)));
+                // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
+                // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
+                let p5 = [0.0, 0.0, 0.0, 1.0];
+                let e = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, p4, p5, ..Default::default() }), self.source(item_of(elem)));
                 if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
                     en.visible = false;
                 }

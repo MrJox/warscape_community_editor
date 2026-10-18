@@ -797,15 +797,17 @@ impl TileTool {
                 changed = true;
             }
 
-            let seasons = ["su", "au", "wi"];
+            // The game's four battle seasons; a texture without the season's variant falls back to summer (fn 0x1180cb20).
+            let seasons = ["sp", "su", "au", "wi"];
             let mut si = match look.season.as_str() {
-                "au" => 1,
-                "wi" => 2,
-                _ => 0,
+                "sp" => 0,
+                "au" => 2,
+                "wi" => 3,
+                _ => 1,
             };
 
             gui::set_next_item_width(80.0);
-            if gui::combo("season##ground", &mut si, &["summer", "autumn", "winter"]) {
+            if gui::combo("season##ground", &mut si, &["spring", "summer", "autumn", "winter"]) {
                 look.season = seasons[si as usize].to_owned();
                 changed = true;
             }

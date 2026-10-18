@@ -226,3 +226,24 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 
 
 - Debug views (TEd has them): *blend groups* (the four group weights as flat red / green / blue / yellow), *ground types* (the PNG as stored), *protection* (red = 1).
+
+## Seasons and snow (2026-10-18)
+
+- **Seasons:** the game has four battle seasons (SEASON_SPRING, SUMMER, AUTUMN, WINTER; texture codes sp / su / au / wi). The texture
+  array (fn 0x11821af0, filled by fn 0x1180cbf0 from `%s/%s/%s/%d_%s` and, for climate-change states, `%d_%s%c`) holds every season and
+  climate-change state: the blend shader's slot is mapping + z * (x * (y * g_remapped_season + g_climate_change_index) + T2.y) with
+  `g_array_section_sizes` (x, y, z). A missing texture falls back (fn 0x1180cb20) to lower climate-change states, then the climate's
+  summer, then the `default` climate by the same rules: what the editor's `climate_texture_path` does (no vanilla texture has a
+  climate-change suffix). The editor loads one season and climate (sections (1, 1, 0)); the tile look now offers spring too (trees ship
+  spring textures; the ground has a few).
+- **Detail maps:** the game looks for `medium_detail_map_<season>_*` and `medium_detail_map_snow_*` before the plain ones (fn 0x118209e0);
+  no vanilla climate ships them, so one pair per climate is right.
+- **Snow:** the weather node loads `commontextures/snow_normal.dds` as the global `s_snow_normals` (fn 0x118ce490); the editor now binds
+  it in the rigid, decal, terrain-blend and terrain resolve passes (it bound black or the flat normal). The terrain resolve snows when
+  `g_snowing_intensity` > 0 outside the campaign; leaves, branches and billboards likewise; rigid meshes also need the instance's
+  POSITION5.w > 0 and decals POSITION5.z: the editor sets both to 1 (ASSUMPTION: the engine's per-instance value was not traced).
+  `g_snowing_intensity` is the environment's WEATHER snowing_intensity (most files have 0; e.g. charlemagne/med_wi_land_day_snow_2 has 1).
+  The campaign's `snow_mask_<season>.dds` (main_attila_map, cha_attila_map) are map-level.
+- **Map-level, not in the tile's scope:** `definition.xml` gives the battle map's base terrain (2560 x 2560 for western_city_b/small); the
+  ground beyond the tile, the tile's `final_alpha` feather into it, the far maps and the outfield come from the map (the later tilemaps
+  scope). The tile's `outfield_mesh.rigid_model_v2` is a 49 x 49 low-resolution copy of the tile's own 1024 m.

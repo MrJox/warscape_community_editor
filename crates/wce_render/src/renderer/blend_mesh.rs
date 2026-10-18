@@ -50,7 +50,8 @@ impl Renderer {
         }
 
         self.bind(&ps);
-        bind_srv(&self.ctx, &ps, "s_snow_normals", self.res.black_srv.as_ref());
+        let snow = self.snow_normals_srv();
+        bind_srv(&self.ctx, &ps, "s_snow_normals", snow.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
         let slots = self.slots_of(&ps);
         let (instances, triangles) = self.draw_batches(sets, viss, firsts, |r, m| {
