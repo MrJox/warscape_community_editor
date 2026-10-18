@@ -63,9 +63,6 @@ pub struct Grass {
     /// VFS path of the .rigid_model_v2.
     pub model: String,
     pub instances: std::sync::Arc<Vec<[f32; 12]>>,
-
-    /// `sp`, `su`, `au` or `wi`: the diffuse is the season's `<name>_<season>_diffuse...` where there is one; empty for none.
-    pub season: String,
 }
 
 /// A projected decal: the entity's world matrix maps the unit box (-0.5 .. 0.5) onto the volume it paints, projected along its y axis. The
@@ -515,6 +512,10 @@ pub struct RenderScene {
     moved_base: u64,
 
     pub environment: EnvironmentSlot,
+
+    /// `sp`, `su`, `au` or `wi`: trees and grass draw their season's diffuse (`<name>_<season>_diffuse...`) where there is one; empty for
+    /// the plain ones.
+    pub vegetation_season: String,
 }
 
 impl Default for RenderScene {
@@ -531,6 +532,7 @@ impl Default for RenderScene {
             moved_log: vec![],
             moved_base: 0,
             environment: EnvironmentSlot::default(),
+            vegetation_season: String::new(),
         }
     }
 }

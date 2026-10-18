@@ -133,16 +133,23 @@ impl Renderer {
                     r.upload();
                 }
 
+                // Trees draw their season's diffuse (as grass does).
+                let seasonal = if m.kind.is_tree() { r.vegetation_diffuse(m) } else { None };
+
                 // The billboard's textures have names of their own.
                 if m.kind == MeshKind::TreeBillboard {
                     let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
-                    bind_srv(&r.ctx, &ps, "s_diffuse_map_tree", srv(crate::model_cache::TEX_DIFFUSE).as_ref());
+                    bind_srv(&r.ctx, &ps, "s_diffuse_map_tree", seasonal.clone().or_else(|| srv(crate::model_cache::TEX_DIFFUSE)).as_ref());
                     bind_srv(&r.ctx, &ps, "s_combined_normal_and_displacement", srv(crate::model_cache::TEX_NORMAL).as_ref());
                 }
 
                 for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {
                     let Some(slot) = slot else { continue };
-                    let srv = m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
+                    let srv = if t == crate::model_cache::TEX_DIFFUSE && seasonal.is_some() {
+                        seasonal.clone()
+                    } else {
+                        m.tex[t].read().ok().and_then(|tex| tex.srv.clone())
+                    };
                     r.ctx.ps_set_shader_resources(*slot, &[srv]);
                 }
 
@@ -347,7 +354,7 @@ impl Renderer {
                             return false;
                         }
 
-                        let srv = m.tex[crate::model_cache::TEX_DIFFUSE].read().ok().and_then(|t| t.srv.clone());
+                        let srv = r.vegetation_diffuse(m);
                         bind_srv(&r.ctx, tps, "s_diffuse_map", srv.as_ref());
                         bind_srv(&r.ctx, tps, "s_diffuse_map_tree", srv.as_ref());
                         true

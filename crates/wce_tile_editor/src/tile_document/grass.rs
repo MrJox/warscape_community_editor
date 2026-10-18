@@ -38,8 +38,8 @@ pub(crate) struct GrassState {
     /// Whether it was generated, and the list.
     pub list: Option<(bool, Arc<Vec<(String, Vec<(f32, f32)>)>>)>,
 
-    /// What the entities show (whether grass is shown, generated, the season) and their ids.
-    pub shown: Option<(bool, bool, String)>,
+    /// What the entities show (whether grass is shown, and generated) and their ids.
+    pub shown: Option<(bool, bool)>,
     pub entities: std::ops::Range<EntityId>,
 }
 
@@ -140,7 +140,12 @@ impl Tile {
 
     /// The grass entities follow the display (after a publish, which dropped them, or when grass is shown or hidden).
     pub(crate) fn update_grass(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {
-        let want = (self.display.show_grass, self.display.generate_grass, self.look.season.clone());
+        // The season of the trees' and grass' textures follows the ground's.
+        if scene.vegetation_season != self.look.season {
+            scene.vegetation_season.clone_from(&self.look.season);
+        }
+
+        let want = (self.display.show_grass, self.display.generate_grass);
         if !published && self.grass.shown.as_ref() == Some(&want) {
             return;
         }
@@ -195,7 +200,7 @@ impl Tile {
                 instances.push([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0], c[1], c[2], c[3]]);
             }
 
-            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances), season: self.look.season.clone() }), self.source(TERRAIN));
+            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances) }), self.source(TERRAIN));
             if let Some(en) = scene.find_mut(e) {
                 en.locked = true;
             }
