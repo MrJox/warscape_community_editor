@@ -264,6 +264,7 @@ that sets variables by name hash would not show up in this search; only a memory
     same factory call, and the battle trees ship the seasonal diffuses in bulk (~340 per season: `oak_au` / `oak_sp` / `oak_wi`; summer is
     the plain name unless a `_su` exists, as for the grass poppies). So battle vegetation takes the path; what the factory id is was not
     traced further.
-  - Follow-up: the editor swaps the seasonal diffuse for grass only; the trees (and their billboards) need the same.
+  - The editor does the swap for grass and for the trees' branches, leaves and billboards (G-buffer and shadow passes), from the scene's
+    `vegetation_season` (the tile's ground season).
 - `tree_metadata.txt` LOD distances vs the models' own.
 - The second instance matrix (untilted) vs the shader's TEXCOORD0..2 / 3..5: the editor feeds the tilted matrix to both.

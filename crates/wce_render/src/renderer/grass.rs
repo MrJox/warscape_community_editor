@@ -52,12 +52,15 @@ pub(crate) struct GrassGpu {
     scene_id: usize,
     revision: u64,
     sets: Vec<GrassSet>,
+
+    /// The scene's vegetation season (see `RenderScene::vegetation_season`), and which texture variants exist.
+    pub(crate) season: String,
+    variants: HashMap<String, bool>,
 }
 
 /// One grass entity: its model, patches and their grid.
 struct GrassSet {
     model: String,
-    season: String,
     instances: Arc<Vec<[f32; 12]>>,
     cells: HashMap<(i32, i32), Vec<u32>>,
 }
@@ -89,26 +92,34 @@ impl Renderer {
                 cells.entry(cell_of(m[3], m[11])).or_default().push(k as u32);
             }
 
-            g.sets.push(GrassSet { model: grass.model.clone(), season: grass.season.clone(), instances: grass.instances.clone(), cells });
+            g.sets.push(GrassSet { model: grass.model.clone(), instances: grass.instances.clone(), cells });
         }
     }
 
-    /// The mesh's diffuse, or its season's variant (the game's texture resolver FUN_1186c880, with seasons: `<prefix>_<season>_diffuse<rest>`
-    /// where that file exists).
-    fn grass_diffuse(&self, mesh: &crate::model_cache::GpuMesh, season: &str) -> Option<ID3D11ShaderResourceView> {
+    /// A vegetation mesh's diffuse: its season's variant (the game's texture resolver FUN_1186c880, with seasons:
+    /// `<prefix>_<season>_diffuse<rest>` where that file exists), else its own.
+    pub(crate) fn vegetation_diffuse(&mut self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
         let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
-        let seasonal = (!season.is_empty()).then(|| self.diffuse_variant(mesh, season)).flatten();
+        let season = self.grass.season.clone();
+        let seasonal = (!season.is_empty()).then(|| self.diffuse_variant(mesh, &season)).flatten();
         seasonal.and_then(|p| srv(self.textures.get(&p, true))).or_else(|| srv(Some(mesh.tex[crate::model_cache::TEX_DIFFUSE].clone())))
     }
 
-    /// The resolver's `<prefix>_<tag>_diffuse<rest>` of the mesh's diffuse, if that file exists.
-    fn diffuse_variant(&self, mesh: &crate::model_cache::GpuMesh, tag: &str) -> Option<String> {
+    /// The resolver's `<prefix>_<tag>_diffuse<rest>` of the mesh's diffuse, if that file exists (looked up once).
+    fn diffuse_variant(&mut self, mesh: &crate::model_cache::GpuMesh, tag: &str) -> Option<String> {
         let at = mesh.diffuse_path.find("_diffuse")?;
-        Some(format!("{}_{tag}{}", &mesh.diffuse_path[..at], &mesh.diffuse_path[at..])).filter(|p| self.files.exists(p))
+        let path = format!("{}_{tag}{}", &mesh.diffuse_path[..at], &mesh.diffuse_path[at..]);
+        if let Some(found) = self.grass.variants.get(&path) {
+            return found.then_some(path);
+        }
+
+        let found = self.files.exists(&path);
+        self.grass.variants.insert(path.clone(), found);
+        found.then_some(path)
     }
 
     /// The burnt look the shader blends in by the instance's burn (TEXCOORD4): the resolver's `_br` variant, black without one.
-    fn grass_burn(&self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
+    fn grass_burn(&mut self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
         self.diffuse_variant(mesh, "br")
             .and_then(|p| self.textures.get(&p, true))
             .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
@@ -133,7 +144,7 @@ impl Renderer {
 
     /// The patches within [`GRASS_DISTANCE`] of `eye` (and in the frustum, if any): their instances per model mesh (the pivot goes into the
     /// translation), in runs of (model, mesh, count).
-    fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32, String)>) {
+    fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
         let reach = GRASS_DISTANCE + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
         let mut all: Vec<f32> = vec![];
@@ -174,7 +185,7 @@ impl Renderer {
                     all.extend_from_slice(&[0.0; 4]);
                 }
 
-                runs.push((model.clone(), mi, near.len() as u32, set.season.clone()));
+                runs.push((model.clone(), mi, near.len() as u32));
             }
         }
 
@@ -222,9 +233,9 @@ impl Renderer {
             self.cbs.set_m("camera_VS_PS", "view_projection", vp.data());
             self.upload();
             let mut first = 0u32;
-            for (model, mi, count, season) in &runs {
+            for (model, mi, count) in &runs {
                 let mesh = &model.meshes[*mi];
-                let diffuse = self.grass_diffuse(mesh, season);
+                let diffuse = self.vegetation_diffuse(mesh);
                 bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
                 self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
                 self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
@@ -324,11 +335,12 @@ impl Renderer {
         }
 
         let mut first = 0u32;
-        for (model, mi, count, season) in runs {
+        for (model, mi, count) in runs {
             let mesh = &model.meshes[mi];
-            let diffuse = self.grass_diffuse(mesh, &season);
+            let diffuse = self.vegetation_diffuse(mesh);
             bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
-            bind_srv(&self.ctx, &ps, "burn_sampler", self.grass_burn(mesh).as_ref());
+            let burn = self.grass_burn(mesh);
+            bind_srv(&self.ctx, &ps, "burn_sampler", burn.as_ref());
             self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
             self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
             self.ctx.draw_indexed_instanced(mesh.index_count, count, 0, 0, first);

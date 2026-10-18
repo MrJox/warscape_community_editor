@@ -764,6 +764,7 @@ impl Renderer {
 
     /// Draws a scene (lit by its environment slot) as a view sees it into a target, at the target's size.
     pub fn render(&mut self, scene: &RenderScene, view_params: &ViewParams, target: &mut RenderTarget) {
+        self.grass.season.clone_from(&scene.vegetation_season);
         wce_prof!("render.total");
         let cam = view_params.camera;
         let time_s = view_params.time_s;
