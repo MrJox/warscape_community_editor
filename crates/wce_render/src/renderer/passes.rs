@@ -1,6 +1,6 @@
 //! The geometry, shadow and lighting passes.
 
-use wce_foundation::math::{Float3, Float4x4, inverse, length, look_at_lh, ortho_lh, translation};
+use wce_foundation::math::{Float3, Float4x4, cross, inverse, look_at_lh, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 
@@ -210,7 +210,7 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "s_environment", if self.env.active || !self.env.valid { self.sky.cube.srv.as_ref() } else { self.env.cube.srv.as_ref() });
         bind_srv(&self.ctx, &ps, "s_overlay", self.res.overlay_none_srv.as_ref());
         bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
-        bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.atlas.srv.as_ref());
+        bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
         bind_sampler(&self.ctx, &ps, "s_environment", self.states.s_clamp_linear.as_ref());
         bind_sampler(&self.ctx, &ps, "s_ssao", self.states.s_clamp_linear.as_ref());
@@ -255,34 +255,23 @@ impl Renderer {
         let inv_view = inverse(&cam_view);
         let tan_y = (cam.fov_y * 0.5).tan();
         let tan_x = tan_y * aspect;
-        let up = if light_dir.y.abs() > 0.99 { Float3::new(0.0, 0.0, 1.0) } else { Float3::new(0.0, 1.0, 0.0) };
+        let view_dir = normalize(cam.target - cam.eye);
+        let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view_dir));
 
         let mut matrices = [0.0f32; 64];
         let mut light_vp = [Float4x4::IDENTITY; 4];
         let mut texel_c = [0.0f32; 4];
         for c in 0..4 {
-            // The bounding sphere of the frustum slice (a stable size while the camera rotates).
+            // The frustum slice's corners (fn 0x11698df0), fitted as the game does (shadow_fit.rs).
             let pts: [Float3; 8] = std::array::from_fn(|k| {
                 let d = if k & 4 != 0 { splits[c + 1] } else { slice_near[c] };
                 let v = Float3::new(if k & 1 != 0 { 1.0 } else { -1.0 } * tan_x * d, if k & 2 != 0 { 1.0 } else { -1.0 } * tan_y * d, d);
                 inv_view.transform_point(v)
             });
 
-            let mut centre = Float3::default();
-            for p in &pts {
-                centre = centre + *p * 0.125;
-            }
-
-            let radius = pts.iter().fold(0.0f32, |r, p| r.max(length(*p - centre))).ceil();
-
-            // Snap the centre to shadow texels in light space to avoid shimmering.
-            let lview = look_at_lh(centre - light_dir * 2000.0, centre, up);
-            let texel = 2.0 * radius / (SHADOW_SIZE / 2) as f32;
-            texel_c[c] = texel;
-            let lc = lview.transform_point(centre);
-            let sx = (lc.x / texel).floor() * texel - lc.x;
-            let sy = (lc.y / texel).floor() * texel - lc.y;
-            light_vp[c] = ortho_lh(2.0 * radius, 2.0 * radius, 0.0, 4000.0) * translation(Float3::new(sx, sy, 0.0)) * lview;
+            let fit = shadow_fit::fit(&pts, light_dir, view_dir, side, slice_near[c]);
+            light_vp[c] = fit.view_proj;
+            texel_c[c] = fit.width / (SHADOW_SIZE / 2) as f32;
 
             // World -> atlas uv (y down) + depth: the lighting shader's lookup.
             let (bx, by) = (SHADOW_BOUNDS[c][0], SHADOW_BOUNDS[c][1]);
@@ -298,10 +287,6 @@ impl Renderer {
         let vs = self.shader(SHADOW_VS);
         let ps = self.shader(SHADOW_PS);
         self.ctx.set_render_targets(&[], None);
-        if let Some(rtv) = &self.shadow_map.atlas.rtv {
-            self.ctx.clear_render_target_view(rtv, [1.0; 4]);
-        }
-
         if let Some(dsv) = &self.shadow_map.dsv {
             self.ctx.clear_depth_stencil_view(dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
         }
@@ -313,7 +298,7 @@ impl Renderer {
         {
             self.ctx.set_input_layout(Some(&layout));
             self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.ctx.set_render_targets(std::slice::from_ref(&self.shadow_map.atlas.rtv), self.shadow_map.dsv.as_ref());
+            self.ctx.set_render_targets(&[], self.shadow_map.dsv.as_ref());
             self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
             self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
@@ -323,6 +308,7 @@ impl Renderer {
             let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+            let terrain_material = self.terrain.active && !self.env.active;
             for c in 0..4 {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = SHADOW_SIZE as f32 / 2.0;
@@ -349,6 +335,12 @@ impl Renderer {
 
                 terrain_draws.cull(&view, &mut vis_terrain);
                 draws.cull(&view, &mut vis);
+
+                // The material terrain casts with the game's terrain shadow shaders below, not as legacy patches.
+                if terrain_material {
+                    vis_terrain = Visible::default();
+                }
+
                 let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
                 for v in [&vis_terrain, &vis] {
                     self.draw_stats.views += 1;
@@ -359,6 +351,12 @@ impl Renderer {
                 let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
+                if terrain_material {
+                    self.ctx.set_rasterizer_state(self.states.rs_shadow_terrain.as_ref());
+                    self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c]);
+                    self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
+                    self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+                }
 
                 // The trees, with their own vertex format and shaders, alpha-tested on their diffuse map.
                 for (kind, pair) in &tree_shaders {
@@ -393,7 +391,7 @@ impl Renderer {
         }
 
         if self.settings.shadows {
-            self.ctx.set_render_targets(std::slice::from_ref(&self.shadow_map.atlas.rtv), self.shadow_map.dsv.as_ref());
+            self.ctx.set_render_targets(&[], self.shadow_map.dsv.as_ref());
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
             self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             self.draw_grass_shadows(scene, &light_vp, cam.eye);

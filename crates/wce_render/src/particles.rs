@@ -1335,8 +1335,10 @@ impl ParticleSystem {
     /// - direction (fn 0x1183f1a0): SpreadMethod true: elevation lerp(SpawnSpread) degrees above the horizon, azimuth random over the
     ///   circle, dir = (cos az cos el, sin el, -sin az cos el); false: away from SpawnPosition; both turned by the emitter and the instance;
     /// - velocity: dir * lerp(SpawnSpeed) * scale.
+    ///
     /// The owner's scale (+0x70) is the effect's and its emission multipliers (+0xb4, +0x78) are 1, as for an effect placed at a transform
-    /// (fn 0x1046c320; the marker path was not followed to the setters). Verified: the ring's x is the cosine (the sincos call, fn 0x119eb652, returns (sin, cos); x takes lane 1).
+    /// (fn 0x1046c320; the marker path was not followed to the setters). Verified: the ring's x is the cosine (the sincos call,
+    /// fn 0x119eb652, returns (sin, cos); x takes lane 1).
     fn spawn_world(&mut self, f: &Frame, out: &mut Vec<SpawnVertex>, free_slots: &mut u32) {
         let base = self.effect.emitters.len();
         for j in 0..self.world.len() {

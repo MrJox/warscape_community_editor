@@ -292,18 +292,55 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
   instead decode the callers of fn 0x118b40e0 for the EnvMapGen call and compare the draw's sprite count / list with the main
   view's, and check whether the env pass binds a different cloud_plane_PS block (fn 0x1191e430 fills it per plane).
 
+## Shadow casting (2026-10-18, Ghidra)
+
+- **Depth only.** In the DX11 path the shadow map (fn 0x117665e0, ShadowMapView) is the depth buffer `SHADOW_MAP_VIEW DB` in
+  TTF_R32_TYPELESS (engine format 0x25; the other shadow methods use TTF_DF24 0x22 / TTF_D24X8 0x23); the colour target
+  `SHADOW_MAP_VIEW RT` is only made when its format is not TTF_NUM_FORMATS (0x3f), which it is here. The light pass (fn 0x1178ae60)
+  binds the depth (view +0xa4) to all three shadow-buffer slots when the hardware flag (+0x2cd, set by every method) is on; the colour
+  target (+0xa0) is the software path's. So the `ps30_shadow` z / w colour output goes nowhere and the comparison sampler reads the
+  rasterised depth. The editor: an R32_TYPELESS texture, D32_FLOAT depth view and R32_FLOAT shader view, no colour target.
+- **Depth bias.** Every shadow rasterizer (vtable 0x11c8bb30, a subclass of the base description fn 0x116e4af0: solid, CULL_BACK,
+  depth clip on) gets its bias when it is created (fn 0x11767500 -> 0x11784690 -> 0x117846d0, once the shadow map object exists):
+  DepthBias = int(`g_new_depth_bias`) = 2500 (desc +0x14), SlopeScaledDepthBias = `g_new_slope_scale_depth_bias` = 1.8 (+0x1c), no
+  clamp. The presets some shaders write first (rigidterrain +0x9754: 1000 / -2, +0x9788: 0 / -2) are overwritten; the
+  `g_battle_*` / `g_campaign_*` bias tweakables have no reader. `g_new_shadow_map_sample_bias` (0) fills `g_sample_bias`, as the
+  dump shows. The rigid casters keep CULL_NONE (+0x1a60, cull field 1); the terrain's shadow_30_new technique keeps CULL_BACK.
+- **Terrain.** shadow_30_new (rigidterrain, technique +0x5bbc, rasterizer +0x9720) = `vs30_shadow_new` + `ps30_shadow`: the
+  height-map grid placed like geom_new (same vs_height_map_cb, the same 9 cm lift past 20 m from the camera). The editor draws the
+  material terrain into each cascade with it (the patches culled by the cascade's matrix); the legacy flat patches were receivers
+  only and still are. The camera position the lift reads in the shadow pass is the main camera's here (the shadow camera's in the
+  game is not checked; at most 9 cm).
+- Light depth range (fn 0x117329a0): the fitted extent plus a pull-back tweakable, `g_battle_terrain_on_shadow_cam_depth_offset_battle`
+  5000 m with battle terrain on, `shadow_cam_depth_offset_battle` 150 m without, `shadow_cam_depth_offset_campaign` 14 m on the
+  campaign map. The editor keeps its 4000 m range (part of the light-fit item below); at the depths the casters sit the bias unit is
+  2^-24 of the range either way.
+
 ## Remaining engine items, status (2026-10-08)
 - Lighting cross-fade: linear (b - a) * t + a on every field (fn 0x175f4e0). Colour conversion: pow 2.2 (verified).
 - Cloud columns: death limit (cells / 2) * cell angle matches the dumped sprite angles; the spawn timer restarts at 0 after
   a spawn (fn 0x1192a900). The interval (object +0x8) is still cell_angle / velocity by assumption (the dry file has
   cloud_velocity 0, so no dump shows a moving field).
 - Env-pass shadows: binding the main-camera shadow map changes the cube by < 1%; left off.
-- Shadow light fit (fn 0x117329a0): the engine takes a tight box of the 8 slice corners along the light axes; the editor
-  uses a bounding sphere. The dry dump's g_amHardSplit rows (cascade 0: (0.34657 -0.678929 0.04961 430.983),
-  (-1.13041 0.70789 -4.08327 -1160.33), (-0.533614 -0.412684 0.602179 459.788), (0.263156 -0.164795 0.950574 716.725),
-  light dir (-0.882881 -0.438358 0.168413)) do not reduce to a plain ortho * uv matrix (row norms 0.76, 4.3, 0.90, 1.0), so
-  the matrix layout is still to be understood before the fit can be reproduced and checked.
-- SSAO jitter texture: generator not found; the pattern is removed by the blur, so the HBAO sample content stays.
+- Shadow light fit (fn 0x117329a0, solved 2026-10-18, `renderer/shadow_fit.rs`): light-space perspective shadow maps (LiSPSM,
+  `warp_shadows` default on). The basis (fn 0x11758dd0): x = normalize(view x light), y = normalize(light x x) (the view direction made
+  perpendicular to the light), z = light; with |view . light| > 0.999 the camera's side vector stands in for the view. The slice's eight
+  corners (fn 0x11698df0, NDC (+-1, +-1) at the slice's near and far distances) give a tight light-space box; the eye sits at its x / y
+  centre, `g_battle_terrain_on_shadow_cam_depth_offset_battle` (5000 m) in front of its near z; depth = 5000 + the z extent. Without
+  the warp (view along the light) the matrix is that box's ortho (x, y to -1..1, z to 0..1). With it: sin(gamma) =
+  sqrt(1 - (view . z)^2), n = (z_n + sqrt(z_n (z_n + depth sin(gamma)))) / sin(gamma) (z_n = the slice's near distance, `warp_distance`
+  0), the projection centre C = eye + z depth / 2 - y (h / 2 + n), the half angle theta = the largest |acos| (fn 0x119efa10 is acosf) of
+  the corners' directions from C around y, f = n + h; the perspective rows r0 = x / sin(theta), r1 = -z 2n / depth, r2 = y f / (f - n)
+  (+ fn / (n - f)), r3 = y (all relative to C), and the game's remap (F = R W (P V)^-1 with R = [1 0 0 0; 0 0 2 -1; 0 -0.5 0 0.5;
+  0 0 0 1]) gives the view-projection rows (r0, 2 r2 - r3, 0.5 r3 - 0.5 r1, r3). The dry dump's g_amHardSplit cascade 0 matches this
+  structure exactly (w row a unit vector perpendicular to the light, y row parallel to it with n / f = 0.896, the depth row minus half
+  the w row along the light with n / depth = 0.753, x row perpendicular to both with 1 / sin(theta) = 2.89). Not snapped to texels
+  (the game does not either). The corners at the largest angle land at x = 1 / cos(theta) (the 1 / sin scale), as in the game.
+- SSAO jitter texture: generator not found; the pattern is removed by the blur, so the HBAO sample content stays. Leads (2026-10-18):
+  the SSAO view (vtable 0x11c9d758, resources fn 0x11766de0) makes it at view +0x7c, 256 x 256, flags 0xa0 (0x20 = CPU-written, as
+  against 0x84 for render targets), the first supported of two formats (fn 0x11759bb0), no initial data; its draw (fn 0x11729660) binds
+  it, and none of the view's methods write it. `CommonTextures/jitter3.dds` is the environment-specular view's (fn 0x11903ec0), and the
+  Gaussian noise fill fn 0x1174a080 (Box-Muller from the game's LCG, seed 0) is for another object's +0xe4 texture.
 
 ### Env-cube clouds: top face only (2026-10-08)
 - Per-face experiment (dry file): without clouds the side faces are +x 4.11 5.07 4.95, -x 2.13 2.92 3.01, +z 2.46 3.29 3.39,

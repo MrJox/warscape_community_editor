@@ -7,6 +7,7 @@ use crate::particles::blend_state;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct States {
     pub s_wrap_aniso: Option<ID3D11SamplerState>,
+    pub s_clamp_aniso: Option<ID3D11SamplerState>,
     pub s_wrap_linear: Option<ID3D11SamplerState>,
     pub s_wrap_point: Option<ID3D11SamplerState>,
     pub s_clamp_linear: Option<ID3D11SamplerState>,
@@ -19,6 +20,7 @@ pub(crate) struct States {
     pub rs_back: Option<ID3D11RasterizerState>,
     pub rs_none: Option<ID3D11RasterizerState>,
     pub rs_shadow: Option<ID3D11RasterizerState>,
+    pub rs_shadow_terrain: Option<ID3D11RasterizerState>,
     pub bs_opaque: Option<ID3D11BlendState>,
     pub bs_alpha: Option<ID3D11BlendState>,
     pub bs_additive_alpha: Option<ID3D11BlendState>,
@@ -35,6 +37,9 @@ impl States {
         };
 
         st.s_wrap_aniso = dev.create_sampler_state(&s).ok();
+        st.s_clamp_aniso = dev.create_sampler_state(&D3D11_SAMPLER_DESC {
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, ..s
+        }).ok();
 
         // The engine's sampler objects store D3D11 enums (filter 21 = MIN_MAG_MIP_LINEAR, address 1 = WRAP, 3 = CLAMP).
         s.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -100,9 +105,17 @@ impl States {
         });
 
         // Verified (rigid shader fn 0x116e5130, param_6 = 1 for rigidstandard: rasterizer +0x1a60 with cull field = 1): CULL_NONE, solid,
-        // depth clip on, no depth bias (the engine's state objects hold D3D11 enums).
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
+        // depth clip on (the engine's state objects hold D3D11 enums). Every shadow rasterizer (class vtable 0x11c8bb30) gets its bias when
+        // it is created (fns 0x11767500 -> 0x11784690 -> 0x117846d0): DepthBias = g_new_depth_bias (2500), SlopeScaledDepthBias =
+        // g_new_slope_scale_depth_bias (1.8), no clamp; the presets some shaders write first (terrain's 1000 / -2) are overwritten.
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthBias: 2500, SlopeScaledDepthBias: 1.8, DepthClipEnable: true.into(), ..Default::default()
+        };
+
         st.rs_shadow = dev.create_rasterizer_state(&rd).ok();
+
+        // The terrain's shadow technique (shadow_30_new) keeps the base description's cull (fn 0x116e4af0: CULL_BACK; terrain +0x9720).
+        st.rs_shadow_terrain = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, ..rd }).ok();
         let sm = D3D11_SAMPLER_DESC {
             Filter: D3D11_FILTER_MIN_MAG_MIP_POINT, AddressU: D3D11_TEXTURE_ADDRESS_WRAP, AddressV: D3D11_TEXTURE_ADDRESS_WRAP, AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
             MaxLOD: D3D11_FLOAT32_MAX, ..Default::default()
