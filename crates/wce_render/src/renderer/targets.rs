@@ -139,18 +139,25 @@ impl PostTargets {
     }
 }
 
-/// The cascaded shadow atlas (SHADOW_SIZE).
+/// The cascaded shadow atlas (SHADOW_SIZE), depth only as the game's DX11 path has it (fn 0x117665e0: "SHADOW_MAP_VIEW DB" in
+/// TTF_R32_TYPELESS, no colour target; the light pass samples the depth, fn 0x1178ae60).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShadowMap {
-    pub atlas: Target,
     pub dsv: Option<ID3D11DepthStencilView>,
+    pub srv: Option<ID3D11ShaderResourceView>,
 }
 
 impl ShadowMap {
     pub fn new(dev: &ID3D11Device) -> Self {
-        Self {
-            atlas: make_target(dev, SHADOW_SIZE, SHADOW_SIZE, DXGI_FORMAT_R32_FLOAT),
-            dsv: depth_target(dev, SHADOW_SIZE, SHADOW_SIZE, DXGI_FORMAT_D32_FLOAT),
-        }
+        let td = D3D11_TEXTURE2D_DESC {
+            Width: SHADOW_SIZE, Height: SHADOW_SIZE, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
+
+        let Ok(tex) = dev.create_texture_2d(&td, None) else { return Self::default() };
+        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC { Format: DXGI_FORMAT_D32_FLOAT, ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D, ..Default::default() };
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R32_FLOAT, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D), ..Default::default() };
+        sd.Anonymous.Texture2D.MipLevels = 1;
+        Self { dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(), srv: dev.create_shader_resource_view(&tex, Some(&sd)).ok() }
     }
 }

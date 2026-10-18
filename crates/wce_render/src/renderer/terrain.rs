@@ -30,6 +30,18 @@ const BLEND_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_blend";
 const BLEND_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps30_blend";
 const RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
+const SHADOW_NEW_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_shadow_new";
+const SHADOW_TERRAIN_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_shadow";
+
+/// The grid vertex (slot 0) and the instance's three world rows (slot 1), for geom_new and shadow_new.
+fn geom_layout() -> [InputElement; 4] {
+    [
+        element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
+        element(c"POSITION", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, true),
+        element(c"POSITION", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, true),
+        element(c"POSITION", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, true),
+    ]
+}
 
 const PATCH_CELLS: i32 = 64;
 
@@ -496,39 +508,18 @@ impl Renderer {
         }
 
         // ---- 1. The surface (per terrain entity: geometry, then the pixel shader's two outputs).
-        let mut ents = vec![];
-        for id in self.terrain.entities.clone() {
-            let Some(e) = scene.find(id) else { continue };
-            let Payload::Terrain(t) = &e.payload else { continue };
-            self.build_terrain_geo(id, t);
-            if let Some(material) = &t.material {
+        let ents = self.terrain_surface_entities(scene);
+        for e in &ents {
+            if let Payload::Terrain(Terrain { material: Some(material), .. }) = &e.payload {
                 self.build_terrain_material(material);
             }
-
-            let Some(g) = self.terrain.geo.get_mut(&id) else { continue };
-            if g.height_srv.is_none() {
-                continue;
-            }
-
-            g.kz = e.world.m[2][2];
-            g.tx = e.world.m[0][3];
-            g.ty = e.world.m[1][3];
-            g.tz = e.world.m[2][3];
-            ents.push(e);
         }
 
         if ents.is_empty() {
             return;
         }
 
-        let geom_el = [
-            element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
-            element(c"POSITION", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, true),
-            element(c"POSITION", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, true),
-            element(c"POSITION", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, true),
-        ];
-
-        let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_el) else { return };
+        let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_input_layout(Some(&geom_il));
@@ -639,12 +630,14 @@ impl Renderer {
             bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
             bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
             bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
-            ps_samplers(ctx, &blend_ps, &self.states.s_clamp_linear);
+            // The samplers as the blend shader declares them (fn 0x116fd320; filter / address are D3D11 enums): the texture-quality class
+            // (vtable 0x11c8bab8, the filter from the texture filtering setting, fn 0x1177f410: anisotropic 2..16 or trilinear) wraps,
+            // except s_alpha_map (clamp); s_depth_map and s_light_params are point / clamp; s_normal_array is trilinear / wrap.
+            ps_samplers(ctx, &blend_ps, &self.states.s_wrap_aniso);
+            bind_sampler(ctx, &blend_ps, "s_alpha_map", self.states.s_clamp_aniso.as_ref());
             bind_sampler(ctx, &blend_ps, "s_depth_map", self.states.s_clamp_point.as_ref());
             bind_sampler(ctx, &blend_ps, "s_light_params", self.states.s_clamp_point.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_diffuse_array", self.states.s_wrap_aniso.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_aniso.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_lf_normal_map", self.states.s_wrap_linear.as_ref());
+            bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_linear.as_ref());
 
             // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max), rotation index 0 and the layer base 0 (T3).
             let inst = [0.0, 1.0, 2.0, 3.0, m.x0 as f32, m.y0 as f32, m.z0 as f32, 0.0, m.x1 as f32, m.y1 as f32, m.z1 as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
@@ -718,13 +711,16 @@ impl Renderer {
         let dn = dn.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| g.lf_normal.srv.clone());
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_colour", dc.as_ref());
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_normal", dn.as_ref());
-        ps_samplers(ctx, &res_ps, &self.states.s_wrap_linear);
-        for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map", "s_mask_map"] {
+        // The samplers as the terrain shader declares them (fn 0x117000c0): the accumulation maps point / clamp, the detail, far, mask maps
+        // and the diffuse array the texture-quality class (anisotropic / wrap); s_snow_normals trilinear / wrap (fn 0x116f7b40). s_shroud
+        // is not declared there (clamp linear here, an all-white map).
+        ps_samplers(ctx, &res_ps, &self.states.s_wrap_aniso);
+        for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map"] {
             bind_sampler(ctx, &res_ps, n, self.states.s_clamp_point.as_ref());
         }
 
+        bind_sampler(ctx, &res_ps, "s_snow_normals", self.states.s_wrap_linear.as_ref());
         bind_sampler(ctx, &res_ps, "s_shroud", self.states.s_clamp_linear.as_ref());
-        bind_sampler(ctx, &res_ps, "s_diffuse_array", self.states.s_wrap_aniso.as_ref());
         ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);
         ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ctx.draw(6, 0);
@@ -739,7 +735,55 @@ impl Renderer {
     fn draw_terrain_surface(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
         self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
+        let view_proj = self.camera.main_view_proj;
+        let triangles = self.draw_terrain_patches(ents, vs, ps, &view_proj);
+        self.draw_stats.triangles += triangles;
+    }
 
+    /// The terrain entities the material pass draws, with their geometry built and placed.
+    fn terrain_surface_entities<'s>(&mut self, scene: &'s RenderScene) -> Vec<&'s wce_scene::render_scene::Entity> {
+        let mut ents = vec![];
+        for id in self.terrain.entities.clone() {
+            let Some(e) = scene.find(id) else { continue };
+            let Payload::Terrain(t) = &e.payload else { continue };
+            self.build_terrain_geo(id, t);
+            let Some(g) = self.terrain.geo.get_mut(&id) else { continue };
+            if g.height_srv.is_none() {
+                continue;
+            }
+
+            g.kz = e.world.m[2][2];
+            g.tx = e.world.m[0][3];
+            g.ty = e.world.m[1][3];
+            g.tz = e.world.m[2][3];
+            ents.push(e);
+        }
+
+        ents
+    }
+
+    /// The terrain into the bound shadow cascade, as the game casts it: the height-map grid with rigidterrain's `vs30_shadow_new` (geom_new's
+    /// placement plus a 9 cm lift past 20 m from the camera) and `ps30_shadow` (clip z / w). `view_proj` (the cascade's) culls the patches.
+    /// Returns the triangles drawn.
+    pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4) -> u64 {
+        let (Some(vs), Some(ps)) = (self.shader(SHADOW_NEW_VS), self.shader(SHADOW_TERRAIN_PS)) else {
+            return 0;
+        };
+
+        let ents = self.terrain_surface_entities(scene);
+        let Some(il) = self.layout(&vs, "terrain_shadow", &geom_layout()) else { return 0 };
+        if ents.is_empty() {
+            return 0;
+        }
+
+        self.ctx.set_input_layout(Some(&il));
+        self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.grid_vb), &[12], &[0]);
+        self.draw_terrain_patches(&ents, &vs, &ps, view_proj)
+    }
+
+    /// Draws the patches of every terrain entity inside `view_proj`, grouped by size, into the bound targets. Returns the triangles drawn.
+    fn draw_terrain_patches(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, view_proj: &Float4x4) -> u64 {
+        let mut triangles = 0;
         for e in ents {
             let Some(g) = self.terrain.geo.get(&e.id).cloned() else { continue };
 
@@ -763,7 +807,7 @@ impl Renderer {
             for p in &g.patches {
                 let wmin = [p.bmin[0] + g.tx, p.bmin[1] + g.ty, g.kz * p.bmin[2] + g.tz];
                 let wmax = [p.bmax[0] + g.tx, p.bmax[1] + g.ty, g.kz * p.bmax[2] + g.tz];
-                if !box_in_frustum(&self.camera.main_view_proj, wmin, wmax) {
+                if !box_in_frustum(view_proj, wmin, wmax) {
                     continue;
                 }
 
@@ -800,8 +844,10 @@ impl Renderer {
                 self.ctx.draw_indexed_instanced((cx * cz * 6) as u32, count, 0, 0, 0);
 
                 self.draw_stats.draw_calls += 1;
-                self.draw_stats.triangles += (cx * cz * 2) as u64 * u64::from(count);
+                triangles += (cx * cz * 2) as u64 * u64::from(count);
             }
         }
+
+        triangles
     }
 }

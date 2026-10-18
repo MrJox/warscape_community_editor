@@ -213,9 +213,19 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   `g_mid_distance_slope` (0.96, 3), `g_normal_scales` (1, 1, 1), `g_blend_gain` 1; in the live game `g_array_section_sizes` = (8, 5, 13), `g_light_params_texture_width` 32, `g_layer_exempt_groups` 1e6 (none),
   `g_refraction_depth` 0.75. `g_far_tile_distance` and `g_far_blend_range` are set very large here: the map-wide normal map, the far diffuse / normal maps and the mask map (`s_mask_map` = black) are a
   map-level feature (BOB's outfield data), not the tile's, and are switched off.
-- **Assumptions / open** (no in-game capture to compare against yet): the sampler states of the maps (clamp linear here), `g_overlay_view_projection` (identity, a constant overlay), the far-blend
-  and map-wide normal layers, the shadow-receiving variants of the shaders, `s_snow_normals` (a flat map: the snow branch needs `g_snowing_intensity` > 0), season mixing, the second and third
-  layer indices of the resolve (`g_layer1/2_texture_index`, the mask is black so they stay off), neighbour tiles (their alpha feather and the overlap between tiles), one detail texture pair per climate.
+- **Samplers (verified 2026-10-18)**: the engine's sampler objects hold a D3D11_SAMPLER_DESC at +8 (fn 0x116d3f70 defaults: point, wrap, anisotropy 1,
+  MaxLOD max; creation, fn 0x11767530, makes 16 copies with MinLOD 0..15 for streaming). The texture-quality class (vtable 0x11c8bab8) takes its filter
+  from the texture filtering setting (fn 0x1177f410: anisotropic 2 / 4 / 8 / 16, else trilinear). rigidterrain (fn 0x117000c0): `s_albedo_map`,
+  `s_terrain_normal_map`, `s_terrain_gloss_map`, `s_depth_map`, `s_low_res_height_map` point / clamp; the mid / near detail maps, the far and infield
+  maps, `s_mask_map` and `s_diffuse_array` quality / wrap; `s_normal_array` trilinear / wrap. The blend shader (fn 0x116fd320): `s_alpha_map`
+  quality / clamp; `s_index_map`, `s_blend_map`, `s_normal_map`, `s_lf_normal_map`, `s_diffuse_array` quality / wrap; `s_depth_map`, `s_light_params`
+  point / clamp; `s_normal_array` trilinear / wrap. `s_snow_normals` (fn 0x116f7b40) trilinear / wrap. The editor uses anisotropic 8 for the quality class.
+- **`g_overlay_view_projection` (verified)**: identity is the declared default (directional_light_PS fn 0x116d45c0, waterplane_VS fn 0x116d8fb0); a tile has
+  no overlay, so it stays. `s_overlay` (trilinear / clamp) must be (0, 0, 0, 1) for "no overlay" (see the resolve note above).
+- **Assumptions / open** (no in-game capture to compare against yet): the far-blend
+  and map-wide normal layers, season mixing (see "Seasons and snow" for the snow normals), the second and third
+  layer indices of the resolve (`g_layer1/2_texture_index`, the mask is black so they stay off; fn 0x118839d0 sets them from ints at the
+  drawable's +0x270 + 0x80 / + 0x84 and binds the mask from its +0x34 object, vfunc +0xac, beside the far maps: the map-level path, not followed further), neighbour tiles (their alpha feather and the overlap between tiles), one detail texture pair per climate.
 - **The CPU bake** (`tools/tile/terrain_bake`) remains only for TEd's debug views of the tile's maps (blend groups, ground types, protection): editor visualisations, not the game's look.
 
 ### What was measured about the inputs (Phase 3, black box)
@@ -247,3 +257,9 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 - **Map-level, not in the tile's scope:** `definition.xml` gives the battle map's base terrain (2560 x 2560 for western_city_b/small); the
   ground beyond the tile, the tile's `final_alpha` feather into it, the far maps and the outfield come from the map (the later tilemaps
   scope). The tile's `outfield_mesh.rigid_model_v2` is a 49 x 49 low-resolution copy of the tile's own 1024 m.
+
+## Shadow casting (2026-10-18)
+
+There are no shadow-receiving terrain variants: the terrain receives in the deferred directional light like everything else. It casts
+with its own technique, shadow_30_new = `vs30_shadow_new` + `ps30_shadow` (docs/re/renderer.md, "Shadow casting"): the same grid and
+height map as geom_new, CULL_BACK, the shadow rasterizers' bias (2500, slope 1.8). The editor draws it into every cascade.

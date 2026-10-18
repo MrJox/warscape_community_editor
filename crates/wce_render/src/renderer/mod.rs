@@ -31,6 +31,7 @@ mod draws;
 mod editor;
 mod passes;
 mod post;
+mod shadow_fit;
 mod shared;
 mod sky;
 mod states;
@@ -835,6 +836,8 @@ impl Renderer {
 
         self.apply_engine_ambient(&env);
 
+        // Before the shadows: the material terrain casts its own.
+        self.terrain.active = self.prepare_terrain_materials(scene);
         let aspect = width as f32 / height as f32;
         self.gpu_timer.mark("shadows");
         {
@@ -851,7 +854,6 @@ impl Renderer {
         self.ctx.set_viewports(&[main_vp]);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
 
-        self.terrain.active = self.prepare_terrain_materials(scene);
         self.gpu_timer.mark("gbuffer");
         {
             wce_prof!("render.gbuffer");

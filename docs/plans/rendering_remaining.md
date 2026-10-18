@@ -7,12 +7,13 @@ This file lists what is not done.
 ## Next: terrain open points
 
 From docs/re/terrain.md ("Assumptions / open"):
-- **Map-level (later tilemaps scope):** neighbour tiles, the outfield, the tile's `final_alpha` feather into the map's base terrain, and
-  the far maps (docs/re/terrain.md, "Seasons and snow").
+- **Map-level (later tilemaps scope):** neighbour tiles, the outfield, the tile's `final_alpha` feather into the map's base terrain, the
+  far maps (docs/re/terrain.md, "Seasons and snow"), and the resolve's second and third layers (`s_mask_map` and
+  `g_layer1/2_texture_index` come with the far maps, fn 0x118839d0; black / off for a lone tile).
 - Done 2026-10-18: seasons (spring added; the game's fallback matches) and snow (the global snow normals, the instance snow switch).
-- **Shadow-receiving terrain shader variants**, and the resolve's second and third layer indices (the mask is black, so they stay off).
-- **Unverified state:** the maps' sampler states (clamp linear here) and `g_overlay_view_projection` (identity). No in-game capture to
-  compare against yet.
+- Done 2026-10-18: terrain shadow casting (the game's shadow_30_new; there are no receiving variants), and with it the game's
+  depth-only shadow map and shadow depth bias for every caster.
+- Done 2026-10-18: the maps' sampler states (from the shaders' declarations) and `g_overlay_view_projection` (the declared identity).
 - Optional: the virtual texture path.
 
 ## Nice to have (future update, not done)
@@ -30,8 +31,11 @@ From docs/re/terrain.md ("Assumptions / open"):
 
 ## Smaller open rendering items
 
-- **Engine items** (docs/re/renderer.md, "Remaining engine items"): the shadow cascades' light fit (the engine fits a tight box, the
-  editor a bounding sphere), the env cube's top-face cloud colour, the SSAO jitter texture, the cloud columns' spawn interval.
+- **Engine items** (docs/re/renderer.md, "Remaining engine items"), not done yet:
+  - the env cube's top-face cloud colour (needs the EnvMapGen draw traced or a dump);
+  - the SSAO jitter texture (made at the SSAO view +0x7c, CPU-written; the code that fills it is not found yet, leads in renderer.md);
+  - the cloud columns' spawn interval (no dump with a moving cloud field).
+  Done 2026-10-18: the shadow cascades' light fit (the game's LiSPSM, verified against the dump).
 - **Placed VFX:** the game's use of the marker's season mask (+0x60) wasn't traced (every vanilla instance has all four seasons).
 - **Buildings:** the `destruction_level` saved in tile.ted is not applied when a tile opens (upstream's piece_model convention).
 - **Two-tile session:** opening a second tile keeps showing the first (predates the merge).
