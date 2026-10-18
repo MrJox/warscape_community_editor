@@ -73,13 +73,23 @@ pub(crate) struct TerrainGeo {
     tx: f32,
     ty: f32,
     tz: f32,
+
+    /// The height texture's sample spacing and the world x (= z) of its sample 0 (before the entity's translation).
+    tex_step: f32,
+    uv0: f32,
+
+    /// The shared map it reads (0: its own).
+    shared: u64,
     height_srv: Option<ID3D11ShaderResourceView>,
     patches: Vec<Patch>,
 }
 
 impl Default for TerrainGeo {
     fn default() -> Self {
-        Self { version: u64::MAX, tex: 0, step: 1.0, ox: 0.0, oz: 0.0, kz: 1.0, tx: 0.0, ty: 0.0, tz: 0.0, height_srv: None, patches: vec![] }
+        Self {
+            version: u64::MAX, tex: 0, step: 1.0, ox: 0.0, oz: 0.0, kz: 1.0, tx: 0.0, ty: 0.0, tz: 0.0, tex_step: 1.0, uv0: 0.0, shared: 0, height_srv: None,
+            patches: vec![],
+        }
     }
 }
 
@@ -105,6 +115,12 @@ pub(crate) struct TerrainGpuState {
     pub failed: bool,
     geo: BTreeMap<EntityId, TerrainGeo>,
     mat: BTreeMap<u64, TerrainMatGpu>,
+
+    /// The shared height maps by id: (texture side, view).
+    shared: BTreeMap<u64, (i32, Option<ID3D11ShaderResourceView>)>,
+
+    /// The climates' texture arrays by (paths, sRGB): the materials of a scene's tiles mostly use the same ones.
+    arrays: BTreeMap<(String, bool), Texture>,
     grid_ib: BTreeMap<(i32, i32), Option<ID3D11Buffer>>,
     entities: Vec<EntityId>,
     pub(crate) viewz: Target,
@@ -146,6 +162,11 @@ fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> bool {
 }
 
 /// The entity transforms the tile tool uses: a translation, and a scale of z (the height map's rows are not always as far apart as its columns).
+/// No rotation, no scale and no horizontal move (a terrain reading a shared height map: the map is in world coordinates).
+fn is_identity_placement(w: &Float4x4) -> bool {
+    is_simple_world(w) && (w.m[2][2] - 1.0).abs() < 1e-6 && w.m[0][3].abs() < 1e-6 && w.m[2][3].abs() < 1e-6
+}
+
 fn is_simple_world(w: &Float4x4) -> bool {
     for r in 0..3 {
         for c in 0..3 {
@@ -257,28 +278,27 @@ impl Renderer {
     /// with its own addressing: uv = world xz / g_world_dimensions + g_lf_uv_offset, the second axis flipped (row r = size - k), no clamp below
     /// sample 1: so the texture is square, padded by one sample at the low side, and `origin - step` is the world position of its sample 0.
     fn build_terrain_geo(&mut self, id: EntityId, t: &Terrain) {
-        if self.terrain.geo.get(&id).is_some_and(|g| g.version == t.version && g.height_srv.is_some()) {
+        let shared_id = t.shared.as_ref().map_or(0, |sh| sh.id);
+        if self.terrain.geo.get(&id).is_some_and(|g| g.version == t.version && g.shared == shared_id && g.height_srv.is_some()) {
             return;
         }
 
-        let mut g = TerrainGeo { version: t.version, step: t.step, ox: t.origin_x, oz: t.origin_z, ..Default::default() };
-        let s = t.nx.max(t.nz) + 2;
-        g.tex = s;
-        let h = |i: i32, j: i32| t.height_at(i.clamp(0, t.nx - 1), j.clamp(0, t.nz - 1));
-        let mut tex = vec![0.0f32; (s * s) as usize];
-        for r in 0..s {
-            for c in 0..s {
-                tex[(r * s + c) as usize] = h(c - 1, s - r - 1);
+        let mut g = TerrainGeo { version: t.version, step: t.step, ox: t.origin_x, oz: t.origin_z, shared: shared_id, ..Default::default() };
+        if let Some(sh) = &t.shared {
+            // A shared map: one texture for every terrain that reads it.
+            if !self.terrain.shared.contains_key(&sh.id) {
+                let srv = self.height_texture(sh.n + 2, |i, j| sh.height_at(i, j));
+                self.terrain.shared.insert(sh.id, (sh.n + 2, srv));
             }
+
+            let (side, srv) = self.terrain.shared[&sh.id].clone();
+            (g.tex, g.tex_step, g.uv0, g.height_srv) = (side, sh.step, sh.origin - sh.step, srv);
+        } else {
+            let s = t.nx.max(t.nz) + 2;
+            let srv = self.height_texture(s, |i, j| t.height_at(i.clamp(0, t.nx - 1), j.clamp(0, t.nz - 1)));
+            (g.tex, g.tex_step, g.uv0, g.height_srv) = (s, t.step, t.origin_x - t.step, srv);
         }
 
-        let td = D3D11_TEXTURE2D_DESC {
-            Width: s as u32, Height: s as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-        };
-
-        let sd = [InitData::new(bytemuck::cast_slice(&tex), (s * 4) as u32)];
-        g.height_srv = self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok();
         if g.height_srv.is_none() {
             self.terrain.geo.insert(id, g);
             return;
@@ -314,6 +334,24 @@ impl Renderer {
         }
 
         self.terrain.geo.insert(id, g);
+    }
+
+    /// A square height texture of side `s` in the shader's layout: sample (c, r) is grid vertex (c - 1, s - r - 1).
+    fn height_texture(&self, s: i32, h: impl Fn(i32, i32) -> f32) -> Option<ID3D11ShaderResourceView> {
+        let mut tex = vec![0.0f32; (s * s) as usize];
+        for r in 0..s {
+            for c in 0..s {
+                tex[(r * s + c) as usize] = h(c - 1, s - r - 1);
+            }
+        }
+
+        let td = D3D11_TEXTURE2D_DESC {
+            Width: s as u32, Height: s as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
+
+        let sd = [InitData::new(bytemuck::cast_slice(&tex), (s * 4) as u32)];
+        self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok()
     }
 
     fn terrain_grid_ib(&mut self, cx: i32, cz: i32) -> Option<ID3D11Buffer> {
@@ -409,8 +447,19 @@ impl Renderer {
             t
         };
 
-        g.diffuse = load_array(self, &m.diffuse, true);
-        g.normals = load_array(self, &m.normal_tex, false);
+        let array = |r: &mut Self, paths: &[String; 16], srgb: bool| {
+            let key = (paths.join("|"), srgb);
+            if let Some(t) = r.terrain.arrays.get(&key) {
+                return t.clone();
+            }
+
+            let t = load_array(r, paths, srgb);
+            r.terrain.arrays.insert(key, t.clone());
+            t
+        };
+
+        g.diffuse = array(self, &m.diffuse, true);
+        g.normals = array(self, &m.normal_tex, false);
         if g.diffuse.srv.is_none() || g.normals.srv.is_none() {
             self.error("terrain material: the texture arrays did not build".to_owned());
         }
@@ -425,11 +474,6 @@ impl Renderer {
         let sd = [InitData::new(bytemuck::cast_slice(&lp), 16 * 8)];
         if let Ok(tx) = self.dev.create_texture_2d(&td, Some(&sd)) {
             g.light_params = self.dev.create_shader_resource_view(&tx, None).ok();
-        }
-
-        // A few live at a time.
-        if self.terrain.mat.len() > 4 {
-            self.terrain.mat.clear();
         }
 
         self.terrain.mat.insert(m.id, g);
@@ -457,6 +501,16 @@ impl Renderer {
                 return false;
             }
 
+            // A shared map starts on the diagonal by construction; it needs the identity.
+            if t.shared.is_some() {
+                if !is_identity_placement(&e.world) {
+                    return false;
+                }
+
+                self.terrain.entities.push(e.id);
+                continue;
+            }
+
             // The shader has one uv offset for both axes (see build_terrain_geo): the padded origin over the padded size must be the same in x and z.
             let kz = e.world.m[2][2];
             let s = (t.nx.max(t.nz) + 2) as f32;
@@ -469,6 +523,12 @@ impl Renderer {
             self.terrain.entities.push(e.id);
         }
 
+        // The shared maps no terrain reads any more go.
+        let used: std::collections::BTreeSet<u64> = self.terrain.entities.iter().filter_map(|id| scene.find(*id)).filter_map(|e| match &e.payload {
+            Payload::Terrain(t) => t.shared.as_ref().map(|sh| sh.id),
+            _ => None,
+        }).collect();
+        self.terrain.shared.retain(|id, _| used.contains(id));
         total > 0 && self.terrain.entities.len() == total
     }
 
@@ -509,11 +569,24 @@ impl Renderer {
 
         // ---- 1. The surface (per terrain entity: geometry, then the pixel shader's two outputs).
         let ents = self.terrain_surface_entities(scene);
+
+        // The materials (and texture arrays) the scene's terrains use stay; the others go.
+        let used: std::collections::BTreeSet<u64> = ents.iter().filter_map(|e| match &e.payload {
+            Payload::Terrain(Terrain { material: Some(m), .. }) => Some(m.id),
+            _ => None,
+        }).collect();
+        self.terrain.mat.retain(|id, _| used.contains(id));
         for e in &ents {
             if let Payload::Terrain(Terrain { material: Some(material), .. }) = &e.payload {
                 self.build_terrain_material(material);
             }
         }
+
+        let arrays: std::collections::BTreeSet<(String, bool)> = ents.iter().filter_map(|e| match &e.payload {
+            Payload::Terrain(Terrain { material: Some(m), .. }) => Some([(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]),
+            _ => None,
+        }).flatten().collect();
+        self.terrain.arrays.retain(|k, _| arrays.contains(k));
 
         if ents.is_empty() {
             return;
@@ -788,7 +861,7 @@ impl Renderer {
             let Some(g) = self.terrain.geo.get(&e.id).cloned() else { continue };
 
             // vs_height_map_cb: the height texture (scale 1, no offset), its addressing, the world dimensions; river_CB has nothing to do with it.
-            let world_x = g.tex as f32 * g.step;
+            let world_x = g.tex as f32 * g.tex_step;
             let world_z = world_x * g.kz;
             let cbs = &mut self.cbs;
             cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[1.0]);
@@ -796,7 +869,7 @@ impl Renderer {
             cbs.set_f("vs_height_map_cb", "g_height_map_vertical_offset", &[0.0]);
             cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[g.tex as f32, g.tex as f32, 1.0 / g.tex as f32, 1.0 / g.tex as f32]);
             cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[world_x, world_z]);
-            cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[-(g.ox + g.tx - g.step) / world_x]);
+            cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[-(g.uv0 + g.tx) / world_x]);
             self.upload();
             self.bind(vs);
             self.bind(ps);

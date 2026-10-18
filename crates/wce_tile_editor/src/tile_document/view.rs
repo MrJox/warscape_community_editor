@@ -9,7 +9,7 @@ use wce_editor_core::document::OutlinerNode;
 use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
-use wce_scene::render_scene::{Decal, 
+use wce_scene::render_scene::{TerrainImage, Decal, 
     EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
@@ -76,6 +76,38 @@ fn link_colour(set: &str, alpha: f32) -> u32 {
     overlay_colour(0.35 + (h & 255) as f32 / 400.0, 0.35 + ((h >> 8) & 255) as f32 / 400.0, 0.35 + ((h >> 16) & 255) as f32 / 400.0, alpha)
 }
 
+/// Cuts a material's blend / index maps down to a rectangle inside the one they cover (whole pixels; the rectangle follows them).
+fn crop_material(m: &mut TerrainMaterial, x0: f64, z0: f64, x1: f64, z1: f64) {
+    let (w, h) = (m.blend.w, m.blend.h);
+    if w == 0 || h == 0 || m.x1 <= m.x0 || m.z1 <= m.z0 {
+        return;
+    }
+
+    let (ppx, ppz) = (f64::from(w) / (m.x1 - m.x0), f64::from(h) / (m.z1 - m.z0));
+    let (i0, j0) = (((x0 - m.x0) * ppx).round().clamp(0.0, f64::from(w - 1)) as u32, ((z0 - m.z0) * ppz).round().clamp(0.0, f64::from(h - 1)) as u32);
+    let (i1, j1) = (((x1 - m.x0) * ppx).round().clamp(f64::from(i0 + 1), f64::from(w)) as u32, ((z1 - m.z0) * ppz).round().clamp(f64::from(j0 + 1), f64::from(h)) as u32);
+    let crop = |img: &TerrainImage| -> TerrainImage {
+        let Some(px) = &img.rgba else { return img.clone() };
+        if img.w != w || img.h != h {
+            return img.clone();
+        }
+
+        let mut out = Vec::with_capacity(((i1 - i0) * (j1 - j0) * 4) as usize);
+        for j in j0..j1 {
+            let row = (j * w) as usize * 4;
+            out.extend_from_slice(&px[row + i0 as usize * 4..row + i1 as usize * 4]);
+        }
+
+        TerrainImage { w: i1 - i0, h: j1 - j0, rgba: Some(Arc::new(out)) }
+    };
+
+    m.blend = crop(&m.blend);
+    m.index = crop(&m.index);
+    let (nx0, nz0) = (m.x0 + f64::from(i0) / ppx, m.z0 + f64::from(j0) / ppz);
+    let (nx1, nz1) = (m.x0 + f64::from(i1) / ppx, m.z0 + f64::from(j1) / ppz);
+    (m.x0, m.z0, m.x1, m.z1) = (nx0, nz0, nx1, nz1);
+}
+
 fn empty_overlay() -> Payload {
     Payload::Overlay(Overlay { pickable: false, ..Default::default() })
 }
@@ -89,6 +121,18 @@ impl Tile {
     // ---- ground look
 
     /// The ground's look: a view setting, not an edit (not on the undo stack and not saved).
+    /// Draws the terrain over the tile's own cells only (the map context draws its neighbours where the border was), or all of it again.
+    pub fn set_clip_to_tile(&mut self, scene: &mut RenderScene, on: bool) {
+        if self.clip_to_tile == on {
+            return;
+        }
+
+        self.clip_to_tile = on;
+        if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
+            self.update_terrain(scene, false);
+        }
+    }
+
     pub fn terrain_look(&self) -> &TerrainLook {
         &self.look
     }
@@ -221,6 +265,7 @@ impl Tile {
 
         if self.material_base.is_none() || self.material_look != self.look {
             self.material_base = None;
+            self.material_clip_id = 0;
             self.material_look = self.look.clone();
             if !self.has_blend_area() {
                 self.terrain_note = "plain tiled texture (the tile has no database entry or no height map: no blend map area)".to_owned();
@@ -261,6 +306,16 @@ impl Tile {
 
         self.ground_info = self.ground_info_base.clone();
         let mut m = (**self.material_base.as_ref()?).clone();
+        if self.clip_to_tile {
+            // Other maps: another material for the renderer (it keeps a material's maps by its id).
+            crop_material(&mut m, 0.0, 0.0, self.extent_x(), self.extent_z());
+            if self.material_clip_id == 0 {
+                self.material_clip_id = next_id(&MATERIAL_IDS);
+            }
+
+            m.id = self.material_clip_id;
+        }
+
         let k = self.project.mpp_z() / self.project.mpp_x();
         m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
         self.normal_id = next_id(&NORMAL_IDS);
@@ -560,17 +615,26 @@ impl Tile {
             self.terrain_stride = 1;
             let stride = self.terrain_stride;
             let p = &self.project;
-            let mut t = Terrain { nx: ((hf.width() as i32 - 1) / stride + 1).max(2), nz: ((hf.height() as i32 - 1) / stride + 1).max(2), ..Default::default() };
+            // The pixels drawn: all, or the tile's own cells (the border cut off).
+            let (px0, pz0, px1, pz1) = if self.clip_to_tile && p.bordered() {
+                let (bx, bz) = ((p.border_m() / p.mpp_x()).round() as i32, (p.border_m() / p.mpp_z()).round() as i32);
+                let (ix, iz) = (((p.border_m() + self.extent_x()) / p.mpp_x()).round() as i32, ((p.border_m() + self.extent_z()) / p.mpp_z()).round() as i32);
+                (bx, bz, ix.min(hf.width() as i32 - 1), iz.min(hf.height() as i32 - 1))
+            } else {
+                (0, 0, hf.width() as i32 - 1, hf.height() as i32 - 1)
+            };
+
+            let mut t = Terrain { nx: ((px1 - px0) / stride + 1).max(2), nz: ((pz1 - pz0) / stride + 1).max(2), ..Default::default() };
             let k = (p.mpp_z() / p.mpp_x()) as f32;
             t.step = (p.mpp_x() * f64::from(stride)) as f32;
-            t.origin_x = -p.border_m() as f32;
-            t.origin_z = -p.border_m() as f32 / k;
+            t.origin_x = (f64::from(px0) * p.mpp_x() - p.border_m()) as f32;
+            t.origin_z = (f64::from(pz0) * p.mpp_z() - p.border_m()) as f32 / k;
             let (nx, unit) = (t.nx, p.unit_scale);
             t.heights = vec![0.0; t.nx as usize * t.nz as usize];
             t.heights.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
                 for (i, h) in row.iter_mut().enumerate() {
-                    let x = (i as i32 * stride).min(hf.width() as i32 - 1) as u32;
-                    let y = (j as i32 * stride).min(hf.height() as i32 - 1) as u32;
+                    let x = (px0 + i as i32 * stride).min(px1) as u32;
+                    let y = (pz0 + j as i32 * stride).min(pz1) as u32;
                     *h = (hf.metres(x, y) / unit) as f32;
                 }
             });

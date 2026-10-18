@@ -1,4 +1,4 @@
-# Battle maps (2026-10-18, in progress)
+# Battle maps (2026-10-18 / 19)
 
 What surrounds a tile in a battle: the map it is placed in. Goal: show a tile in the context of a kit battle map (the user picks the
 map, and where a tile appears more than once, which placement).
@@ -20,7 +20,8 @@ map, and where a tile appears more than once, which placement).
 
 ## BOB's fill (`Warscape.AssemblyKit.dll` WARSCAPE::EDITOR_TILE_MAP; ported: `wce_tile::battle_map::fill`)
 
-Exact against BOB on all 68 kit settlement maps (`--example battle_map_check`, oracles from BOB's Terrain processor).
+Exact against BOB on all 68 kit settlement maps and the campaign map `main_attila_map` (268 944 placements) (`--example
+battle_map_check`, oracles from BOB's Terrain processor; the campaign map takes BOB 5 minutes).
 
 - **Database** (`post_load_fixup`): tile set `i` = `0x80000000 | (i + 1)` (`_settings.xml` order, then "user" and "assembly_kit" when
   absent); tiles sorted by area (width x height) descending, then link targets descending, then location ascending (a total order),
@@ -48,8 +49,10 @@ Exact against BOB on all 68 kit settlement maps (`--example battle_map_check`, o
 - **Flow** (`calculate_flow`): from each river mouth, a breadth-first walk over the links into `river` / `river_crossing`; every tile reached
   takes, as its flip (flag 4), the `is_entry` of its `river` / `river_transition_end` link that lands on the tile it was reached from.
 - **Heights** (`calculate_lf_min_maxs`): per placed tile, the min / max of the lf height field (`lf_heights.tif` / 65535) over the tile's
-  box grown by 2 cells, in map fractions clamped to 0..1, times the field's size, the start rounded half to even.
-- Not ported: resource tiles (scan 8 needs a resource map; the campaign map's), custom geometry, `also_place_tile_set`, shared geometry.
+  box grown by 2 cells, in map fractions clamped to 0..1, times the field's size, all in single precision, the start truncated (on the campaign map, 1437 rows at 4 pixels per
+  cell, a start of 92 comes out as 91.99999 and takes one more row).
+- Not ported: resource tiles (scan 8 reads `EmpireDesignData/campaign_maps/<campaign>/dynamic_resources.png`, which the kit lacks; BOB
+  then skips the scan), custom geometry, `also_place_tile_set`, shared geometry.
 
 ## BOB's output: `terrain.tile_list` (game reader fn 0x118ff250)
 
@@ -73,12 +76,74 @@ plains (aa .. ad) elsewhere.
 - Land battles: `terrain.pack` `terrain/battles/main_attila_map/` (lf height map, 736 normal chunks, tile_map.tiles / .index / .png,
   locations.blm + masks, 2074 deployment files). Historical battles: `terrain2.pack` `terrain/battles/<name>/` (lf heights, normals,
   terrain.tile_list). The settlement maps are not packed on their own.
-- `tile_map.index` (fn 0x118ffb60): u32 version (3), u32 width, u32 height, u32 chunk count (736), then per chunk u32 x, y, w, h
-  (75 x 75 cells at a 64 cell stride): the normal chunks. `tile_map.tiles`: two arrays of 16 byte cell records (the same fields as a
-  placement: name index, x, y, flags, bytes), then a name table; the exact layout of the kit's file is still open.
+- `tile_map.index` + `tile_map.tiles` (BOB's `TILE_MAP::save` 0x102e3770, game reader fn 0x118ffb60; `wce_tile::battle_map::tile_map`):
+  version 9 in terrain.pack. The index is u32 version, width, height (2032 x 1437). The tiles file is the tile layer then the geometry
+  layer, one 20-byte cell each (i32 index: > 0 the 1-based name placed with its origin here, < 0 -(origin cell + 1), 0 empty; u16 rotation
+  0x10 .. 0x80 | layer bits 0x700, an empty cell 0x10; u16 x 2 origin; u8 climate; u8 flipped (the river flow); f32 x 2 lf min / max),
+  then u32 name count and the names (u16 length + bytes) in placement order. The game also reads versions 6 / 7 (16-byte cells, a chunk
+  list of 75 x 75 cell rects in the index): the kit's `main_attila_map/tile_map.tiles` / `.index` are such an old file (7 names, it
+  matches nothing) and are not the reference.
+- terrain.pack's tiles are not BOB's fill of the kit's map: the same 665 names, statistically the same placements, but only about 72 %
+  of the origins hold the same tile (other sources or database at CA). Their tile sets follow the kit's `tile_map.png` (terrain.pack's
+  `tile_map.png` differs from it in 75 743 cells). For the campaign in game, terrain.pack's file is the one to show.
+- `locations.blm` (game reader fn 0x118573a0; `wce_tile::battle_map::locations`): "BLMF", u32 version 8, u32 type count 9, u32 width,
+  height; per battle type a name (u16 length) and u32 count, then 9 x i32 per location: the cell rect (x0, y0, x1, y1 inclusive), centre,
+  an id (-1, or 0xffff0000 + n for coastal / bridge battles), 0, 0. Then u32 cell count and a climate table. Counts: land_normal 2,
+  settlement_unfortified 123, land_ambush 23 560, naval_normal 23, port_assault 67, coastal_battle 224, settlement_standard 186,
+  unfortified_port 44, land_bridge 665. A settlement_standard rect starts at its settlement tile's origin (186 settlement tiles placed).
+  `locations.blm.mask0`: one u16 per cell (bit flags, meaning open). The battle setup that picks one is fn 0x10b93720.
+
+## Heights of a placed tile (game)
+
+- The battle ground is `LF(x, z) * lf_height - vertical_offset + the tile's own height` (rigidterrain `vs30_geom_new`: `y = t_low_res_height_map *
+  g_height_map_lf_scale + hf * g_height_map_hf_scale - g_height_map_vertical_offset`, the HF coming with the tile mesh's vertices;
+  RENDER_PARAMS `lf_height` 3000, `hf_height` 1, `vertical_offset` 20).
+- Nothing flattens the LF under a tile: BOB's `lf_height_map.dds` is the map's `lf_heights.tif` (237 of 46.7 million pixels differ by 1 on
+  the campaign map), and the shipped tiles' `lf_influence_map.png` are 1 everywhere. The campaign LF is mostly flat under settlements
+  (range over the tile: median 2.7 m, 10th percentile 0, 90th 35 m). A placement's LF min / max (2 cells around the tile) is the vertical
+  extent of its blend box (`g_blend_lf_min_max`).
+- Not traced: whether the game lifts a tile's buildings by the LF too (the building list's y is used as it is; on the kit maps the LF
+  under the settlements is flat, so it doesn't show there).
+
+## The map context in the editor (Tile panel > Map context; command `map_context`)
+
+- Maps: the game's campaign battle map (terrain.pack `terrain/battles/main_attila_map`: `tile_map.*`, `lf_height_map.dds`, `locations.blm`)
+  and the kit's battle maps (filled by the port, `lf_heights.tif`). `wce_tile::battle_map::context`: the placements, where a tile is
+  placed, the neighbours within a radius, each placement's frame transform (unit tests against `rotate_in_tile_space`); the cells no
+  neighbour covers get LF ground (`Context::uncovered`).
+- `wce_tile_editor::tile_document::context`: each distinct neighbour tile is opened (4 at a time) and published once into a scratch
+  scene, then copied per placement through its transform; terrain is resampled into the open frame (the renderer's height lookup is by
+  world position, so a terrain entity can't be rotated) with one material per tile and rotation (blend / index resampled over the tile
+  without its border, normal map from the tile's own heights).
+- While the context is shown the open tile is drawn over its own cells only (`Tile::set_clip_to_tile`: terrain and material maps without
+  the height map's border); its border lay over the neighbours (it hid the river tiles around Rome and z-fought with them).
+- Terrain: the game's terrain vertex shader (`vs30_geom_new`) samples its height texture at `world.xz / g_world_dimensions +
+  g_lf_uv_offset` with ONE offset for both axes, so a height texture must start at the same world x and z. A lone tile does; neighbours
+  around it don't, and the renderer then dropped the game's terrain pass for the whole scene (plain ground everywhere, the open tile too).
+  As the game does with its map-wide LF texture, the neighbours read one shared height map (`SharedHeights`, square, on the diagonal, 2 m,
+  over all of them) and the ground beyond another (LF pixels); each terrain keeps its own grid for the patches. Every context terrain has a
+  material (the cells no tile covers: a neighbour's material averaged to one colour). The renderer also kept at most 4 terrain materials
+  (cleared when more were built in one frame, so most drew without textures): it now keeps the ones the frame uses and shares the climates'
+  texture arrays between materials.
+- Water: the renderer draws water vertices as they are (no entity world matrix), so the neighbours' river ribbons are moved into the frame
+  and lifted per vertex when the context is built. The tiles' sea planes are dropped for one sea plane at 0 m over the whole context
+  (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is -vertical_offset, -20 m, under the open sea); with it the coast around
+  Rome falls where the coast tiles are.
+- The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`):
+  that tile can't be opened, its cells show the LF ground.
+- ASSUMPTIONS: the open tile is shown at its own heights, so the context is relative to it: a neighbour point at its height + (LF - the
+  mean LF under the open tile) / unit_scale, objects lifted by that at their position; seams can be off by up to half the LF range under
+  the open tile (the report gives it). The LF slope is not in a neighbour's shading normals. The neighbours' borders (overlap cells) and
+  final_alpha feathering are not drawn (hard edges between tiles). Where the near (2 m) and far (LF pixel) maps meet, a thin crack can show.
+- Checked on western_city_b small: in its kit map (18 neighbours) and at the campaign's (480, 461), rotated 270 degrees (130 neighbours from
+  45 tiles, 1.2 s, about 1 GB peak): roads and fields run on across the seams, rotated tiles included. western_city_rome small at the
+  campaign's (619, 676): the Tiber goes on through the river tiles north and south of the city (its links: river at cells (3, -1) and
+  (3, 8), the map's river tiles at x 622) down to the coast.
+- Earlier version that grew the window until no neighbour stuck out: on the campaign it ran through the 12 x 12 sea and mountain tiles to
+  200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).
 
 ## Open
 
 - The flags / byte / floats of a placement; the header fields after the origin.
 - How the game places and blends the tiles (lf heights, the tiles' own heights, final_alpha, the far / outfield maps).
-- main_attila_map's tile_map.tiles layout; the battle locations in its .terry and how a settlement's battle picks its area.
+- How a campaign battle picks its location and area (fn 0x10b93720); `locations.blm.mask0`.

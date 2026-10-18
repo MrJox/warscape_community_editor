@@ -1,15 +1,19 @@
 //! A battle map's tiles: the kit's battle maps (`raw_data/terrain/battles/<map>`) filled with tiles as BOB's Terrain processor does
 //! (docs/re/battle_maps.md), for showing a tile in its map.
 
+pub mod context;
 pub mod fill;
+pub mod locations;
 pub mod tile_db;
 pub mod tile_list;
+pub mod tile_map;
 
 use std::path::Path;
 
 use fill::{MapImages, TileMapFill};
 use tile_db::TileDatabase;
 use tile_list::{TileList, TileListPlacement};
+use tile_map::TileMap;
 use wce_formats::image_containers::TiffFile;
 use wce_formats::png_file::PngFile;
 
@@ -36,12 +40,8 @@ fn tiff_heights(bytes: &[u8]) -> Result<(Vec<f32>, u32, u32), String> {
     Ok((v, t.width, t.height))
 }
 
-/// Fills a kit battle map (`map`: the map's folder) with the tiles of `db` and returns the battle field as BOB writes it.
-///
-/// # Errors
-///
-/// Fails when the map's tile map can't be read.
-pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<String>), String> {
+/// Reads a kit map's images and fills its tile map (`build_tile_map`, then the low-frequency heights).
+fn fill<'a>(db: &'a TileDatabase, map: &Path) -> Result<TileMapFill<'a>, String> {
     let read = |name: &str| std::fs::read(map.join(name));
     let (w, h, tiles) = png_rgb(&read("tile_map.png").map_err(|e| format!("tile_map.png: {e}"))?)?;
     let climate = read("climate_map.png").ok().and_then(|b| png_rgb(&b).ok()).filter(|c| c.0 == w && c.1 == h);
@@ -58,6 +58,28 @@ pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<Stri
         fill.calculate_lf_min_maxs(field, fw, fh);
     }
 
+    Ok(fill)
+}
+
+/// Fills a kit battle map (`map`: the map's folder) and returns its tile map as `TILE_MAP::save` writes it (the campaign map's
+/// `tile_map.tiles`), and BOB's messages.
+///
+/// # Errors
+///
+/// Fails when the map's tile map can't be read.
+pub fn fill_kit_tile_map(db: &TileDatabase, map: &Path) -> Result<(TileMap, Vec<String>), String> {
+    let fill = fill(db, map)?;
+    Ok((fill.tile_map(), fill.messages))
+}
+
+/// Fills a kit battle map (`map`: the map's folder) with the tiles of `db` and returns the battle field as BOB writes it.
+///
+/// # Errors
+///
+/// Fails when the map's tile map can't be read.
+pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<String>), String> {
+    let fill = fill(db, map)?;
+    let (w, h) = (fill.w, fill.h);
     let placements = fill.battle_field();
     let mut list = TileList {
         version: 11,
@@ -89,4 +111,49 @@ pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<Stri
     }
 
     Ok((list, fill.messages))
+}
+
+/// The kit's battle maps (folders of `<raw_data>/terrain/battles` with a `tile_map.png`), sorted.
+pub fn kit_maps(raw_root: &Path) -> Vec<String> {
+    let dir = raw_root.join("terrain").join("battles");
+    let mut out: Vec<String> = std::fs::read_dir(&dir)
+        .map(|d| d.filter_map(Result::ok).filter(|e| e.path().join("tile_map.png").is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// A kit map filled as BOB does, with its `lf_heights.tif`.
+///
+/// # Errors
+///
+/// The map's tile map can't be read.
+pub fn load_kit_map(db: &TileDatabase, map: &Path) -> Result<context::PlacedMap, String> {
+    let (list, _) = fill_kit_map(db, map)?;
+    let lf = std::fs::read(map.join("lf_heights.tif")).ok().and_then(|b| TiffFile::parse(&b).ok()).filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
+        .map(|t| context::LfField { w: t.width, h: t.height, values: t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() });
+    let name = map.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(context::PlacedMap::from_tile_list(&name, &list, db, lf))
+}
+
+/// A 16-bit single-channel DDS (BOB's `lf_height_map.dds`: a 128-byte header, then the rows).
+pub fn l16_dds_heights(b: &[u8]) -> Option<context::LfField> {
+    let u32_at = |p: usize| b.get(p..p + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    if b.get(..4)? != b"DDS " {
+        return None;
+    }
+
+    let (h, w) = (u32_at(12)?, u32_at(16)?);
+    let data = b.get(128..128 + w as usize * h as usize * 2)?;
+    Some(context::LfField { w, h, values: data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() })
+}
+
+/// A shipped map (the campaign's `terrain/battles/main_attila_map`): its `tile_map.index` / `.tiles` and `lf_height_map.dds`.
+///
+/// # Errors
+///
+/// The tile map doesn't read.
+pub fn load_game_map(name: &str, db: &TileDatabase, index: &[u8], tiles: &[u8], lf_dds: Option<&[u8]>) -> Result<context::PlacedMap, String> {
+    let map = TileMap::parse(index, tiles)?;
+    Ok(context::PlacedMap::from_tile_map(name, &map, db, lf_dds.and_then(l16_dds_heights)))
 }

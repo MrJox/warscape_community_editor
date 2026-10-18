@@ -2,7 +2,7 @@
 //! rotation goes on every cell, from the map's `tile_map.png` (a tile set, tile or variation colour per cell) and `climate_map.png`, then the
 //! battle field the Terrain processor writes as `terrain.tile_list`.
 //!
-//! Not ported yet: resource tiles, custom geometry, `also_place_tile_set` and shared geometry tiles (no vanilla tile set has one).
+//! Not ported yet: resource tiles (no kit map has their input), custom geometry, `also_place_tile_set` and shared geometry tiles (no vanilla tile set has one).
 
 use super::tile_db::{LinkTest, SET_BIT, TileDatabase, VARIATION_BIT};
 
@@ -40,6 +40,11 @@ pub struct Cell {
     pub flipped: bool,
     pub lf_min: f32,
     pub lf_max: f32,
+}
+
+impl Cell {
+    /// A cell nothing is placed on (TILE_MAP's constructor: rotation 0x10).
+    pub const EMPTY: Self = Self { index: 0, rotation: 0x10, layer_bits: 0, origin_x: 0, origin_y: 0, climate: 0, flipped: false, lf_min: 0.0, lf_max: 0.0 };
 }
 
 /// The game's random generator, as BOB's map uses it (fn 0x102806a0, seed 0x12344332).
@@ -122,7 +127,7 @@ impl<'a> TileMapFill<'a> {
         let n = (w * h) as usize;
         let mut f = Self {
             db, w, h, ids: vec![0; n], climates: vec![0; n], areas: vec![[i32::MAX, i32::MAX, i32::MIN + 1, i32::MIN + 1]; db.sets.len()],
-            rng: Rng(0x1234_4332), layers: [vec![Cell::default(); n], vec![Cell::default(); n]], placed: vec![],
+            rng: Rng(0x1234_4332), layers: [vec![Cell::EMPTY; n], vec![Cell::EMPTY; n]], placed: vec![],
             links: vec![vec![false; db.sets.len() + 1]; n], messages: vec![],
         };
 
@@ -715,7 +720,9 @@ impl<'a> TileMapFill<'a> {
 
     /// `TILE_MAP::calculate_lf_min_maxs` (0x102e6ec0): the low-frequency height range under every placed tile, two cells around it.
     pub fn calculate_lf_min_maxs(&mut self, field: &[f32], fw: u32, fh: u32) {
-        let (mw, mh) = (f64::from(self.w), f64::from(self.h));
+        // In single precision, the start truncated (__ftol), as BOB computes it: on the campaign map (1437 rows, 4 field pixels per cell)
+        // a start of 92 comes out as 91.99999 and takes one more row; the 64-cell maps are exact either way.
+        let (mw, mh) = (self.w as f32, self.h as f32);
         for layer in 0..2 {
             for c in 0..self.layers[layer].len() {
                 let cell = self.layers[layer][c];
@@ -725,18 +732,18 @@ impl<'a> TileMapFill<'a> {
 
                 let (t, _) = self.placed[(cell.index - 1) as usize];
                 let tile = &self.db.tiles[t];
-                let size = f64::from(tile.width.max(tile.height));
+                let size = tile.width.max(tile.height) as f32;
                 let clamp = |v: f32| v.clamp(0.0, 1.0);
-                let x0 = clamp((f64::from(i32::from(cell.origin_x) - 2) / mw) as f32);
-                let y0 = clamp((f64::from(i32::from(cell.origin_y) - 2) / mh) as f32);
-                let x1 = clamp(((f64::from(cell.origin_x) + size + 2.0) / mw) as f32);
-                let y1 = clamp(((f64::from(cell.origin_y) + size + 2.0) / mh) as f32);
+                let x0 = clamp((i32::from(cell.origin_x) - 2) as f32 / mw);
+                let y0 = clamp((i32::from(cell.origin_y) - 2) as f32 / mh);
+                let x1 = clamp((f32::from(cell.origin_x) + size + 2.0) / mw);
+                let y1 = clamp((f32::from(cell.origin_y) + size + 2.0) / mh);
                 let (sx, sy) = (x0 * fw as f32, y0 * fh as f32);
                 let (ex, ey) = (x1 * fw as f32, y1 * fh as f32);
                 let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-                let mut py = sy.round_ties_even() as i64;
+                let mut py = sy as i64;
                 while (py as f32) < ey {
-                    let mut px = sx.round_ties_even() as i64;
+                    let mut px = sx as i64;
                     while (px as f32) < ex {
                         let v = field.get(py as usize * fw as usize + px as usize).copied().unwrap_or(0.0);
                         lo = lo.min(v);
@@ -751,6 +758,28 @@ impl<'a> TileMapFill<'a> {
                 cell.lf_min = lo;
                 cell.lf_max = hi;
             }
+        }
+    }
+
+    /// The tile map as `TILE_MAP::save` writes it.
+    pub fn tile_map(&self) -> super::tile_map::TileMap {
+        use super::tile_map::{TileMap, TileMapCell};
+
+        let cell = |c: &Cell| TileMapCell {
+            index: c.index,
+            flags: (c.rotation & 0xf0) | (c.layer_bits & 0x700),
+            origin: [c.origin_x, c.origin_y],
+            climate: c.climate,
+            flipped: u8::from(c.flipped),
+            lf: [c.lf_min, c.lf_max],
+        };
+
+        TileMap {
+            version: 9,
+            width: self.w,
+            height: self.h,
+            layers: [self.layers[0].iter().map(cell).collect(), self.layers[1].iter().map(cell).collect()],
+            names: self.placed.iter().map(|&(t, v)| self.db.tile_location_of(t, v)).collect(),
         }
     }
 

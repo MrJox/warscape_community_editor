@@ -267,6 +267,10 @@ pub struct Terrain {
     /// When set, the ground is drawn by the game's terrain shaders (the legacy patches stay for picking, shadows and the environment cube).
     pub material: Option<Arc<TerrainMaterial>>,
 
+    /// When set, the game's terrain shaders take the heights from this map (shared by several terrains, like the game's map-wide one) and
+    /// `heights` only bound the patches; the entity's world matrix must be the identity.
+    pub shared: Option<Arc<SharedHeights>>,
+
     /// Change it when the heights or the texture change: the renderer rebuilds the mesh.
     pub version: u64,
 }
@@ -286,8 +290,29 @@ impl Default for Terrain {
             lod: false,
             skin: None,
             material: None,
+            shared: None,
             version: 0,
         }
+    }
+}
+
+/// A square grid of heights several terrain entities draw from (the game's terrain vertex shader has one uv offset for both axes, so a
+/// height texture must start at the same world x and z: this one does, at `origin`): vertex (i, j) at x = origin + i * step,
+/// z = origin + j * step, y = heights[j * n + i].
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedHeights {
+    pub origin: f32,
+    pub step: f32,
+    pub n: i32,
+    pub heights: Vec<f32>,
+
+    /// Changes with the content.
+    pub id: u64,
+}
+
+impl SharedHeights {
+    pub fn height_at(&self, i: i32, j: i32) -> f32 {
+        self.heights.get((j.clamp(0, self.n - 1) * self.n + i.clamp(0, self.n - 1)) as usize).copied().unwrap_or(0.0)
     }
 }
 
@@ -411,7 +436,8 @@ pub struct WaterVertex {
     pub fade: f32,
 }
 
-/// A water surface as a triangle mesh in world coordinates (the entity's world matrix is applied on top), drawn with the game's
+/// A water surface as a triangle mesh in world coordinates (the renderer draws the vertices as they are: the entity's world matrix is not
+/// applied, keep it the identity), drawn with the game's
 /// shaders (rigidriver for a river, waterplane for the sea or lake plane).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Water {
