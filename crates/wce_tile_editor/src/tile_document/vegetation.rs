@@ -6,11 +6,12 @@
 //! when the tree is freeform and on the terrain otherwise, scaled by the scale byte / 127, turned by a random yaw. The yaw comes from the
 //! MSVC rand LCG seeded with 0x49710ae3 at the start of every list (of every worker's share of it, so the game's yaws depend on its thread
 //! count; this is the one-worker sequence). Every tree is tilted to the terrain: its up axis goes along the terrain normal measured 0.5 m around it.
-//! The static VEGETATION_INSTANCEs are list trees in the game, so they are drawn tilted too.
+//! The static VEGETATION_INSTANCEs are list trees in the game, so they are drawn tilted too, and with the model the shown list's climate
+//! converts their key to (`per_climate_tree_conversions.xml`, as BOB writes them into the list).
 //!
 //! A list the tile has no packed file for (a raw tile BOB hasn't processed, or `gen:<list>` asked for) is generated as BOB would
-//! (`wce_tile::vegetation`), from the tile's seeds, height map, saved blend map and exclusion polygons and the Assembly Kit's vegetation
-//! parameters. It holds the generated trees only (BOB adds the static ones on top).
+//! (`wce_tile::vegetation`), from the tile's seeds, height map, saved blend map, exclusion polygons and static trees and the Assembly
+//! Kit's vegetation parameters.
 
 use std::collections::HashSet;
 use std::io::Cursor;
@@ -134,6 +135,23 @@ impl Tile {
         names
     }
 
+    /// The climate whose conversions the static trees are drawn with: the shown list's (none for `default` or no list).
+    pub(crate) fn vegetation_climate(&self) -> String {
+        self.display.tree_list.trim_start_matches(GENERATED_PREFIX).to_lowercase()
+    }
+
+    /// A vegetation key as the shown list's climate converts it (BOB's static trees in that list), or the key itself.
+    pub(crate) fn converted_vegetation_key(&self, key: &str) -> String {
+        let climate = self.vegetation_climate();
+        if climate.is_empty() {
+            return key.to_owned();
+        }
+
+        self.generation_params()
+            .and_then(|p| p.conversions.get(&climate).and_then(|t| t.get(&key.to_lowercase())).cloned())
+            .unwrap_or_else(|| key.to_owned())
+    }
+
     fn generation_params(&self) -> Option<Arc<GenerationParams>> {
         self.trees
             .params
@@ -165,7 +183,8 @@ impl Tile {
         let files = self.files.clone();
         let exists = |p: &str| files.as_deref().is_none_or(|f| f.exists(&p.replace('\\', "/").to_lowercase()));
         let start = std::time::Instant::now();
-        let generated = vegetation::generated_trees(&inputs, &params, category, seeds, &exists);
+        let statics = vegetation::static_trees(self.tscene(), &inputs);
+        let generated = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
         log::info(format!("{name}: {} trees generated in {:.2} s", generated.len(), start.elapsed().as_secs_f32()));
 
         // Grouped by path as the list stores them (paths differing only in case are separate lists), in the list's order: the yaws restart
@@ -250,12 +269,29 @@ impl Tile {
 
         if !published {
             scene.remove_range(self.trees.entities.clone());
+            self.update_static_tree_models(scene);
         }
 
         let first = scene.next_id();
         let added = if want.1 { 0 } else { self.add_list_trees(scene, layer) };
         self.trees.entities = first..first + added as EntityId;
         self.trees.shown = Some(want);
+    }
+
+    /// The static instances' model entities with the model of their key as the shown list's climate converts it.
+    fn update_static_tree_models(&mut self, scene: &mut RenderScene) {
+        for &e in &self.instances.clone() {
+            if self.first_entity.get(e).is_none_or(|&f| f == 0) || self.entity_count[e] != 1 || self.tscene().type_of(e) != "VEGETATION_INSTANCE" {
+                continue;
+            }
+
+            let Some(model) = self.vegetation_instance_model(e) else { continue };
+            if let Some(Payload::MeshInstance(mi)) = scene.find(self.first_entity[e]).map(|en| en.payload.clone())
+                && mi.model != model
+            {
+                scene.update_payload(self.first_entity[e], Payload::MeshInstance(MeshInstance { model, ..mi }));
+            }
+        }
     }
 
     /// Adds the list's trees that are not static instances to the layer; they can't be selected (they belong to the seeds, not to tile.ted).

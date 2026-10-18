@@ -5,7 +5,8 @@
 //!
 //! `--oracle-dir` compares against BOB's fresh output in a kit's working_data instead of the packs.
 //!
-//! `order` is whether every key's patches are in the list's order (their yaws in the game).
+//! `order` is whether every key's patches are in the list's order (their yaws in the game); `max dy` the largest height difference of the
+//! patches both have, ours rounded as the list stores them (f16, to nearest, ties toward zero).
 
 use std::collections::HashSet;
 use std::io::Cursor;
@@ -17,6 +18,19 @@ use rpfm_lib::files::fastbin_lists::GrassListFile;
 use wce_tile::tile_project::TileProject;
 use wce_tile::vegetation::{self, grass};
 use wce_vfs::{Config, GameProfile, Vfs};
+
+/// A value as BOB's f16 conversion (`FUN_10057610`) stores it: to nearest, ties toward zero (`(bits + 0xfff) >> 13`); normal range and the
+/// subnormal step below it.
+fn f16_round(v: f32) -> f32 {
+    if v == 0.0 {
+        return 0.0;
+    }
+
+    let ulp = 2f64.powf(f64::from(v.abs()).log2().floor().max(-14.0) - 10.0);
+    let r = f64::from(v.abs()) / ulp;
+    let n = if r.fract() == 0.5 { r.floor() } else { r.round() };
+    (n * ulp).copysign(f64::from(v)) as f32
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -61,13 +75,16 @@ fn main() {
             let mine_list = grass::generate_grass(&inputs, &params, seed);
             let mine: HashSet<(String, i64, i64)> = mine_list.iter().map(|g| key(&g.key, g.x, g.z)).collect();
             let same = mine.intersection(&theirs).count();
+            let their_y: std::collections::HashMap<(String, i64, i64), f32> =
+                list.grass_list().grass_list().iter().flat_map(|v| v.value().iter().map(move |i| (key(v.key(), *i.x(), *i.z()), *i.y()))).collect();
+            let dy = mine_list.iter().filter_map(|g| their_y.get(&key(&g.key, g.x, g.z)).map(|y| (y - f16_round(g.y)).abs())).fold(0.0f32, f32::max);
             // The order of each key's patches (their yaws in the game).
             let ordered = list.grass_list().grass_list().iter().all(|v| {
                 let theirs = v.value().iter().map(|i| key(v.key(), *i.x(), *i.z()));
                 let ours = mine_list.iter().filter(|g| g.key == *v.key()).map(|g| key(&g.key, g.x, g.z));
                 theirs.eq(ours)
             });
-            let mut line = format!("{folder}\ttheirs {}\tmine {}\tsame {same}\torder {}", theirs.len(), mine.len(), if ordered { "same" } else { "differs" });
+            let mut line = format!("{folder}\ttheirs {}\tmine {}\tsame {same}\torder {}\tmax dy {dy:.3}", theirs.len(), mine.len(), if ordered { "same" } else { "differs" });
             if args.iter().any(|a| a == "--order") {
                 for v in list.grass_list().grass_list() {
                     let theirs: Vec<(i64, i64)> = v.value().iter().map(|i| ((*i.x() * 2.0).round() as i64, (*i.z() * 2.0).round() as i64)).collect();

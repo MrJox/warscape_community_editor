@@ -140,8 +140,9 @@ Ghidra project `~/wce_re/bob_proj` (`EmpireUtility.AssemblyKit.dll` with its exp
 (`FUN_100477a0`) drives it once per generation category (`generation_categories.xml`: default, ROME_Atlantic, ..., outfield_tents).
 
 **Inputs** (prepare action `FUN_1004bc40`):
-- Heights: `height_map_0.png` converted to floats, then `h * variation.scale + variation.min_height` (`FUN_1004ad30`).
-- Blend: `blend_map.tif` (1 mip, 16 x L16) converted to 16 floats per pixel. A texture is 4 channels; texture i is the tile's custom texture
+- Heights: `height_map_0.png` converted to floats (`raw * (1 / 65535)`: dividing is an ulp off in places), then
+  `h * variation.scale + variation.min_height` (`FUN_1004ad30`).
+- Blend: `blend_map.tif` (1 mip, 16 x L16) converted to 16 floats per pixel (`raw * (1 / 65535)` too). A texture is 4 channels; texture i is the tile's custom texture
   group i (`TILE::custom_texture_group_name`, the ground groups settlement_1 .. forest), so a channel is `texture * 4 + channel`. A channel
   value is divided by the sum of its texture's 4 channels when that sum is over 1 (`FUN_1028bb40`).
 - Cells: every subtile with `TILE::subtile_masked_valid(x, y)`, stored as (x, height - 1 - y). A pixel's cell is
@@ -168,7 +169,8 @@ Verified on Rome's `default` list: every generated tree (x.5, z.5) is a candidat
 `channel_group` texture sum is over a threshold gets weight `channel_range_probability(value of channel_group_for_probability / channel_number)
 + height_range_probability(h)`, cumulative in the map's order, one LCG draw `hi * k * total`); the group's objects of the generator's mask get
 weight `blendmap_range_probability(sum of the group's channel textures) + height_range_probability(h)`, one draw picks one; its size is
-`size_low + hi(lcg) * k * (size_high - size_low) * blend_sum`. Then `group_objects` (an object with grouping probability re-rolls neighbours
+`hi(lcg) * k * (size_high - size_low) * blend_sum + size_low` (`get_random_size`, x87: each step rounded to double, then to f32; in f32
+it is an ulp off often enough to flip `ceil(size * 127)` on 25 corpus lists). Then `group_objects` (an object with grouping probability re-rolls neighbours
 within its grouping radius) and `remove_objects_based_on_min_seperation`.
 
 **Group objects** (`group_objects`, after every candidate): the chosen objects in the order of a `std::map` keyed by (min_sep, x, y); an
@@ -188,23 +190,54 @@ following a removed one in that node is not looked at; reproducing this was the 
 adds its whole subtree, a node touching it adds itself (when it has entries) and recurses. Position maps hash `bits(x) ^ bits(y) ^ 0x4a545eed`.
 
 **Output** (BOB_Vegetation): the generated map in bucket order; type 1 (tree) objects go to the tree list at (x / 2, (cells_y * 256 - y) / 2) for
-Rome's 2.0 scale, height sampled from the height map (x 0.5 m rounding), scale byte `ceil(size * 127)`, is_freeform 0, model path
-`BattleTerrain/vegetation/` + model + `.rigid_model_v2`.
+Rome's 2.0 scale, scale byte `ceil(size * 127)`, is_freeform 0, model path `BattleTerrain/vegetation/` + model + `.rigid_model_v2`.
+
+**List heights** (the tree writer at 0x10048bc4, ACTION_GRASS::run the same): an object whose stored height is 0 (every generated one) gets
+`heights(col, row) * height_alpha(col, row)`. The pixel is `col = trunc(tri_density + x / cell)`, `row` the same from y: x87 with the
+control word `| 0xc00`, so truncation, which for a candidate at pixel i gives 128 + i (one more than the pixel it was generated at). Each
+field is indexed with its own width; a pixel off the height map is dropped (grass counts it as an invalid position). The grass list then
+stores x, y, z as f16 (`FUN_10057610`: to nearest, ties toward zero, the `(bits + 0xfff) >> 13` kind).
+
+The height alpha map comes from `WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_height_alpha_map(variation, true, true)` (Warscape.AssemblyKit.dll
+0x104be170), which calls `build_hf_influence_map` (0x104bc450). Ghidra folded the getters, so its names there (`RIGID_SPHERE_COLLIDER::body`,
+`TILE_LINK::link_test`...) stand for the tile's width, height and the like. Port: `wce_tile::vegetation::height_alpha`.
+- Inputs: the subtile mask (`subtile_masked_valid`, rows flipped as the generator stores them), the subtile size (`raw_data_tri_density`),
+  and the link points of the tile's links that blend: the link set's tile set has a `linking_tile` in `_settings.xml`, the test isn't
+  `TLT_NOT_EQUALS`, and `no_offline_blend` is off.
+- The field is `(w + 2) * size + 1` by `(h + 2) * size + 1` (a subtile of border all round), filled with 0. Each valid subtile (y outer, x
+  inner) takes 8 neighbour flags, 1 where that neighbour subtile is valid and 0 at the tile's edge.
+- A link point on the rim (`x < 1 || x >= w || y < 1 || y >= h` after the row flip) sets the side flag of the subtile it is next to. Then a
+  corner that is 0 becomes 1 when its two sides differ.
+- For u (rows) and v (columns) in 0..=size: `t = L(u, up, down) * L(v, left, right) * L(u, L(v, ul, ur), L(v, dl, dr)) * 2.1`, and the
+  value at (size + x * size + v, size + y * size + u) is `(1 - 1 / powf(e, t²)) / 0.98784482`. `powf` is MSVC's SSE2 one (double inside,
+  one rounding), with e as an f32.
+- Then, after every subtile, each link point fills its border subtile: up / down are 1 when the point's column is on the tile, left / right
+  when its row is, and any side with another link point next to it is 1. A corner is 1 when its two sides differ. The value is
+  `1 - 1 / powf(e, t²)`, without the normalisation. The fill covers the shared edge row or column too, so the tile's edge pixels next to a
+  link take the link's values.
+- `L(i, a, b)` (FUN_104bdef0): half = (size + 0.5) / 2. Below (size + 1) / 2 it is `a + (1 - a) * clamp(i - 2, 0, 5000) / half`; from
+  there on, `b + (1 - b) * clamp(size - i - 2, 0, 5000) / half`.
+
+The tile's `final_alpha.dds` (R32F, the tile without the border) is TEd's saved copy of the same map. It is not always current
+(terrain_plains/2x1/aa is 1.2% off), so the port builds the map itself. Verified against fresh BOB: tree list y exact on every list of the
+six tiles below, river/2x2_lt_rb/aa included (its two river links: without them y is off by up to 11.6 m); grass y exact after the f16
+rounding (western_city_b/small 700,339 patches).
 
 **Verified** (Python prototype `/tmp/wce_re/proto`, then the Rust port): every generated tree of `attila_steppes_plains/1x1/aa` (ROME_Med 184,
 ROME_Destruct 196, ROME_Destructdes 62) equal to the packed lists in position, model and scale byte. Rome's raw tile drifts from its packed lists
 after the first columns (the kit's Rome raw data is not the revision CA built the packs from).
 
 **Corpus** (`cargo run --release -p wce_tile --example veg_check -- <game>`: every Assembly Kit tile's generated trees against its packed
-`<category>.tree_list.bin`): 1,969 of 2,788 lists exact, 138 more over 90%. ROME_Med 599 / 640, ROME_Destructdes 606 / 650; the rest is below.
+`<category>.tree_list.bin`): 1,995 of 2,788 lists exact, 112 more over 90%. ROME_Med 604 / 640, ROME_Destructdes 622 / 650; the rest is below
+(stale packs, see below).
 Also verified on the corpus: the grid uses the variation's `raw_data_tri_density`; the scale byte wraps (`ceil(size * 127) as i64 & 0xff`),
 it doesn't saturate; trees whose model file doesn't exist are dropped; exclusion polygons include hidden ones.
 
 **BOB as the oracle** (2026-10-18): the lists that don't match the packs are stale packs, not generator differences. BOB run headless
 on the kit's current data writes exactly the port's lists (position, model, scale byte) for every category, ROME_Destruct, the atlantic
 climates and outfield_tents included. Checked tiles: farm_eastern/1x1/ab, farm_eastern/2x2/aa, terrain_plains/1x1/aa, terrain_plains/2x1/aa
-and settlement_western_cities/western_city_b/small (rome_atlantic 13,954 / 13,954). Only y differs (up to 4.6 m: the height alpha map,
-below). Grass is exact against fresh BOB too (farm_eastern/2x2/aa 43,846, western_city_b/small 700,339, order included), with one exception
+settlement_western_cities/western_city_b/small (rome_atlantic 13,954 / 13,954) and river/2x2_lt_rb/aa, y included (List heights,
+above). Grass is exact against fresh BOB too (farm_eastern/2x2/aa 43,846, western_city_b/small 700,339, order included), with one exception
 that is BOB's and not the port's. On farm_eastern/1x1/ab, `n = cell² · total · density` = 4 · 16900 · 0.07 lands exactly on 4732 in f32
 (the SSE code at 0x102ae49a). CA's packed list and the port use 4732 keys. BOB under Wine behaves as if the product rounded up: 4733
 keys, total2 16904, a different stream, which reproduces its candidates exactly. That points at the floating-point environment under Wine
@@ -245,6 +278,70 @@ heights equal to the low end get +0.001 first. Weights add (height + blend), in 
 (signed chars); iteration is bucket by bucket. Parameter files: every `BattleTerrain\vegetation\*tree_parameters.xml`, `tree` / `prop` /
 `decal` / `vfx` / `group` children.
 
+## Static trees and the per-climate conversions (2026-10-18)
+
+Every tree list BOB writes holds the tile's static trees too (BOB_Vegetation `FUN_100477a0`):
+- **Collected** (`FUN_1003f390`, only when the tile has a `VegetationExclusionPolygonInstance`): every `VEGETATION_INSTANCE` (hidden ones
+  too) whose world position is inside one of the exclusion polygons (the OUTLINE contains above), into a position-keyed CA map (the
+  first at a position stays). Its key, `scale` (`toDouble`, 1 when missing), `surface_mode == MSM_FREEFORM` and its world y as the stored
+  height. In the shipped tiles the polygons cover every instance but a few (western_city_b/small: 26,333 of 26,337).
+- **World position**: `QTU::TedEntity::world_transform` (QtToolUtility.AssemblyKit.dll 0x10027760) in f32. Each entity's local matrix
+  comes from `sscanf` floats of `position`, `orientation` (`FUN_100af1e0`: euler to rotation, three `sincos`, the order in the port) and
+  `scale` (only a `vector(..)`, else 1). The world matrix is the parent's times the local one, each element summed left to right. f64
+  is an ulp off in x often enough to matter.
+- **Per category** (`FUN_1003fb00`): the key `species.variant` goes through the category's table from
+  `per_climate_tree_conversions.xml` (`FUN_1004e440`: per lower-case climate, lower-case old -> new, a later entry overwriting). A converted
+  key is lower case, an unconverted one keeps its case, which matters to the sort by path. The model is `shrubs\species\variant` when
+  `battleterrain/vegetation/` + that + `.rigid_model_v2` exists, else `trees\species\variant` (logged when neither exists). The tree goes
+  into the tree generator's map at its position (insert-if-absent) after the generation, so it doesn't take part in it.
+- **Written** with the generated trees (List heights): a stored height that isn't 0 is used as it is; 0 (an instance at y 0) gets the
+  terrain's like a generated tree. The scale byte is `ceil(size * 127)`, the item's flag the freeform flag. The writer's model check drops
+  a model that doesn't exist. Being in the same map, the statics take their place in the MSVC sort by path, so they shift the yaws of the
+  generated trees that share their model.
+
+Verified (`veg_check --full`: the whole list, every float, the freeform flag, each path's order) against fresh BOB on every category of
+11 tiles, the statics included (western_city_b/small 40,287 / 40,287 on rome_atlantic, farm_sassanid/2x3/aa, farm_eastern/1x1/ab with
+288 olives that become oaks on the atlantic climates).
+
+The editor draws a VEGETATION_INSTANCE with the model of its key as the shown list's climate converts it (the shrubs-then-trees rule too)
+and swaps the models when the list changes. Its generated lists (`gen:<list>`) are the full lists, static trees included.
+
+## Props, decals and VFX (`<category>_procedural_bmd_data.bin`, 2026-10-18)
+
+BOB writes a `BATTLE_MAP_DEFINITION_DATA` (v6) per category next to the tree list, with an XML twin; everything but `PROPS` and
+`PARTICLE_EMITTERS` is empty. The writer (`FUN_100477a0`, the switch on the object's type at 0x10048c86) uses the trees' bounds, pixel and
+height (List heights) for every type, and checks the model file only for trees. Port: `vegetation::generated_props` / `generated_vfx`.
+- **Props** (type 2, from the tree generator): `PROPS` marker v2, key `RigidModels/` + model + `.rigid_model_v2`, the transform the size
+  times identity with the position in the last row, `type` 0, `allow_in_outfield` from the object's flag, `clamp_to_surface` and `is_fauna`
+  off, snow and destruction on, `decal_params_tiled` on. Its decal parameter and scale are uninitialised stack memory in BOB's files (values
+  like 1e-33); the port writes 0. A prop re-rolled by a leader from another group keeps its type, so a `<tree>` model can come out as a prop.
+- **Decals** (type 4): their own generator with the decal seed but `max_trees_per_metre_squared` as the density (not `max_decals`: with it
+  the positions don't match). Written as props with `type` 1, key `RigidModels/Decals/` + model + `.rigid_model_v2`, decal parallax 1, decal
+  scale (size, size, size), not tiled. The transform rotates up (0, 1, 0) onto the normal (gx, gy, 1) / len, which treats a z-up normal as
+  y-up, so a decal on flat ground stands at 90 degrees about x. gx and gy are 3x3 Sobel sums (`FUN_10013ba0`, `FUN_10013cc0`, kernel
+  [1 0 -1; 2 0 -2; 1 0 -1] and its transpose, f32 sums, then / 9 on the x87) of the height field at (trunc(x / cell), trunc(y / cell)).
+  The clamps and the row stride there are the tile's extent in scene units, not the field's size, so BOB samples the field misindexed; the
+  port does the same. The quaternion is identity when n.y >= 0.9999. Otherwise its angle is `acos(n.y)` and its axis (n.z, 0, -n.x)
+  normalised ((1, 0, 0) if that is 0); half the angle goes through `sincos`. Then the usual rotation matrix (SSE, the order in the port),
+  each row times the size, with the position as the last row.
+- **VFX** (type 8, its own generator: the VFX seed and `max_vfx_per_metre_squared`): `PARTICLE_EMITTERS` marker v4, key `vfx/` + model +
+  `.rigid_model_v2`, `instance_name` the model, an identity rotation at the position, emission rate 1, autoplay, `scale` the size,
+  `use_in_outfield` from the object's flag, snow and destruction inside and outside on. The shipped kit's only VFX object is the yurts'
+  chimney smoke (outfield_tents).
+- **Order**: the markers of a key are in generation order, props before decals. The keys come out in the order of BOB's `MARKER_TABLE`, a
+  tree of the key's path parts in a `CA::HashTableNoRemove` (linear probing; the hasher `FUN_10011aa0` didn't decompile) walked by its flat
+  marker iterator. That is not reproduced: the port puts the keys in the order they first appear. The order has no effect in the game.
+- rpfm read the v4 particle emitter marker with the emission rate before the transform; it comes after it (fixed in the fork). Read the
+  wrong way round, the position lands in m23 and every element moves one place, which the identity rotation and the emission rate of 1
+  hid.
+
+The shipped parameter files have no props and no decals (one `dryb_b` prop shows up through re-rolls only when a parameter file adds props).
+Verified with a test file in the scratch kit (`~/wce_re/bobkit_tests/zztest_tree_parameters.xml`: a group in ROME_Med with a prop and a
+decal) against fresh BOB on terrain_plains/1x1/aa, terrain_rolling_hills_med/1x1/aa and river/2x2_lt_rb/aa: every prop and decal bit-exact
+(2,447 on the river tile), each key's markers in the same order. VFX: exact on six tiles (167 / 167 on light_forest_rolling/4x4/aa).
+`cargo run --release -p wce_tile --example bmd_check -- <game> [filter] [--diff] [--oracle-dir <working_data>] [--params-dir <dir>]`.
+Against the packs most outfield_tents VFX lists differ: the packs are stale there like the tree lists.
+
 ## Tint colours (`g_tint_colours`)
 
 The leaf and billboard shaders read `g_tint_colours` for the per-instance tint (the instance seed picks between the colours). In the dll:
@@ -273,9 +370,9 @@ that sets variables by name hash would not show up in this search; only a memory
   - Exclusion polygons: OUTLINE contains (FUN_10a7d7e0) is a half-open crossing count without division; ported. The one tree BOB
     places inside a polygon (ctesiphon) is a static tree on the half-metre grid, so ctesiphon is exact.
   - The yurt file's only `<include_in_outfield />` has a non-breaking space before `/>`, so in BOB no object has the flag.
-  - List heights: BOB writes height × the height alpha map (`WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_height_alpha_map`, TEd's terrain node,
-    in a DLL not imported yet) at the tree's pixel. The game ignores the stored y (trees go on the terrain).
-  - Not done: props / decals / VFX outputs, merging static trees, the per-climate conversions on write.
+  - Settled: list heights (List heights, above). The game ignores the stored y anyway (trees go on the terrain).
+  - Done: props, decals and VFX, the static trees and the per-climate conversions (above). Writing the files is not done (the
+    editor generates and draws them).
 - **Grass, settled as far as the game's static code goes:**
   - The playable-area box: the tile's grass list is moved into the battle's frame (`GRASS_LIST::transform`, a 4×3 matrix per tile
     when the battle map is assembled) and patches must fit in ±s around the battle's origin. That depends on the battle, not on the
