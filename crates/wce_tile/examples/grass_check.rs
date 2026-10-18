@@ -1,7 +1,9 @@
 //! The grass generator against the game's packed `default.grass_list.bin` of every Assembly Kit tile that has one: per tile, the list's
 //! patches, ours, and how many are the same (key, x, z), in parallel.
 //!
-//!   cargo run --release -p wce_tile --example grass_check -- <game> [filter] [--diff] [--order]
+//!   cargo run --release -p wce_tile --example grass_check -- <game> [filter] [--diff] [--order] [--oracle-dir <working_data dir>]
+//!
+//! `--oracle-dir` compares against BOB's fresh output in a kit's working_data instead of the packs.
 //!
 //! `order` is whether every key's patches are in the list's order (their yaws in the game).
 
@@ -21,6 +23,7 @@ fn main() {
     let game = PathBuf::from(&args[0]);
     let filter = args.get(1).filter(|a| !a.starts_with("--")).cloned().unwrap_or_default();
     let diff = args.iter().any(|a| a == "--diff");
+    let oracle_dir: Option<PathBuf> = args.iter().position(|a| a == "--oracle-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let raw = game.join("assembly_kit").join("raw_data");
     let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::ATTILA)).expect("vfs");
     let params = grass::GrassParams::load(&game.join("assembly_kit/working_data/terrain/vegetation/battle/grass/max_grass.xml")).expect("max_grass.xml");
@@ -46,7 +49,11 @@ fn main() {
             };
 
             let Some(seed) = vegetation::grass_seed(&project.scene) else { return format!("{folder}\tno grass seed") };
-            let Ok(bytes) = vfs.read(&format!("{folder}/default.grass_list.bin")) else { return format!("{folder}\tno list") };
+            let bytes = match oracle_dir.as_ref() {
+                Some(dir) => std::fs::read(dir.join(folder).join("default.grass_list.bin")).ok(),
+                None => vfs.read(&format!("{folder}/default.grass_list.bin")).ok(),
+            };
+            let Some(bytes) = bytes else { return format!("{folder}\tno list") };
             let Ok(list) = GrassListFile::decode(&mut Cursor::new(bytes), &None) else { return format!("{folder}\tlist does not decode") };
             let key = |k: &str, x: f32, z: f32| (k.to_owned(), (x * 2.0).round() as i64, (z * 2.0).round() as i64);
             let theirs: HashSet<(String, i64, i64)> =

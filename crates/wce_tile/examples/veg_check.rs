@@ -24,6 +24,7 @@ fn main() {
     let mask_mode: Option<String> = args.iter().position(|a| a == "--mask").and_then(|i| args.get(i + 1)).cloned();
     let excl: Option<String> = args.iter().position(|a| a == "--excl").and_then(|i| args.get(i + 1)).cloned();
     let only: Option<String> = args.iter().position(|a| a == "--category").and_then(|i| args.get(i + 1)).cloned();
+    let oracle_dir: Option<PathBuf> = args.iter().position(|a| a == "--oracle-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let raw = game.join("assembly_kit").join("raw_data");
     let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::ATTILA)).expect("vfs");
     let params = GenerationParams::load(&game.join("assembly_kit/working_data/BattleTerrain/vegetation")).expect("params");
@@ -91,7 +92,14 @@ fn main() {
                 }
 
                 let Some(category) = params.category(&name) else { continue };
-                let Ok(bytes) = vfs.read(&format!("{folder}/{name}.tree_list.bin")) else { continue };
+                // --oracle-dir: BOB's fresh output (a kit's working_data) instead of the packs; file names keep the category's case.
+                let bytes = match oracle_dir.as_ref() {
+                    Some(dir) => std::fs::read_dir(dir.join(&folder)).ok().and_then(|rd| {
+                        rd.flatten().find(|e| e.file_name().to_string_lossy().to_lowercase() == format!("{name}.tree_list.bin")).and_then(|e| std::fs::read(e.path()).ok())
+                    }),
+                    None => vfs.read(&format!("{folder}/{name}.tree_list.bin")).ok(),
+                };
+                let Some(bytes) = bytes else { continue };
                 let Ok(list) = TreeListFile::decode(&mut Cursor::new(bytes), &None) else { continue };
                 let mut theirs: HashMap<(i64, i64), (String, u8, f32)> = HashMap::new();
                 for v in list.tree_list().tree_list() {
