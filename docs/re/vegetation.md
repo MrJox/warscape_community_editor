@@ -135,7 +135,7 @@ positions with other keys in local clusters: their raw blend maps drifted from t
 
 ## BOB's generator (BOB_Vegetation + EmpireUtility, 2026-10-18, in progress)
 
-Ghidra project `/tmp/wce_re/bob_proj` (`EmpireUtility.AssemblyKit.dll` with its exported names, `BOB_Vegetation.AssemblyKit.dll`). The generator is
+Ghidra project `~/wce_re/bob_proj` (`EmpireUtility.AssemblyKit.dll` with its exported names, `BOB_Vegetation.AssemblyKit.dll`). The generator is
 `EMPIREUTILITY::PROCEDURAL_OBJECTS` (ProceduralObjects.cpp, ProceduralPointGeneration.cpp, ImageValueDataProvider.cpp); BOB_Vegetation's action
 (`FUN_100477a0`) drives it once per generation category (`generation_categories.xml`: default, ROME_Atlantic, ..., outfield_tents).
 
@@ -200,6 +200,30 @@ after the first columns (the kit's Rome raw data is not the revision CA built th
 Also verified on the corpus: the grid uses the variation's `raw_data_tri_density`; the scale byte wraps (`ceil(size * 127) as i64 & 0xff`),
 it doesn't saturate; trees whose model file doesn't exist are dropped; exclusion polygons include hidden ones.
 
+**BOB as the oracle** (2026-10-18): the lists that don't match the packs are stale packs, not generator differences. BOB run headless
+on the kit's current data writes exactly the port's lists (position, model, scale byte) for every category, ROME_Destruct, the atlantic
+climates and outfield_tents included. Checked tiles: farm_eastern/1x1/ab, farm_eastern/2x2/aa, terrain_plains/1x1/aa, terrain_plains/2x1/aa
+and settlement_western_cities/western_city_b/small (rome_atlantic 13,954 / 13,954). Only y differs (up to 4.6 m: the height alpha map,
+below). Grass is exact against fresh BOB too (farm_eastern/2x2/aa 43,846, western_city_b/small 700,339, order included), with one exception
+that is BOB's and not the port's. On farm_eastern/1x1/ab, `n = cell² · total · density` = 4 · 16900 · 0.07 lands exactly on 4732 in f32
+(the SSE code at 0x102ae49a). CA's packed list and the port use 4732 keys. BOB under Wine behaves as if the product rounded up: 4733
+keys, total2 16904, a different stream, which reproduces its candidates exactly. That points at the floating-point environment under Wine
+(SSE rounding mode); the packs are the reference on such ties.
+
+Running BOB headless (Wine; `~/wce_re/scripts/bob_veg.sh <tile path under terrain/tiles/battle> ...`):
+- A scratch kit (`~/wce_re/bobkit`, wine drive `t:`) of symlinks to the real kit, so BOB writes nowhere real. The script turns the tile's
+  path into real directories and copies the variant itself.
+- `binaries\BOB\<name>_configuration.xml`, run as `wine start /wait /d 'T:\assembly_kit\binaries'
+  'T:\assembly_kit\binaries\BOB.AssemblyKit.exe' /dont_stop_on_error /configuration:<name> /offline`. BOB appends `_configuration.xml`
+  itself; a missing file brings up a "failed to load configuration" dialog.
+- The configuration (`<bob_configuration>`): `<processors><processor>Vegetation</processor></processors>`. `<directories>` must list the
+  tile's `&lt;raw&gt;/terrain/tiles/battle/<tile>` plus `&lt;working&gt;/battleterrain/vegetation` and
+  `&lt;working&gt;/terrain/vegetation/battle/grass`; with none, BOB selects no actions. `<selected_consumers>` takes the tile's `tile.ted`.
+  Then `retail` 0, `silent` 1, `scan_perforce` 0, `merge_for_checkin_mode` 3, `keep_output` 0, `load_asset_graph` 0.
+- Output goes to `working_data/terrain/tiles/battle/<tile>/<Category>.tree_list.bin` (the category's case) and `default.grass_list.bin`,
+  with the log in `binaries/bob.log`. A 2x2 tile takes about a minute.
+- `veg_check` / `grass_check` take `--oracle-dir <kit>/working_data` to compare against that output instead of the packs.
+
 **Parameter semantics** (`parse_object_parameters_xml`, `generate_objects`, `choose_group_for_position`): the objects map is keyed
 `group + "_" + model` and keeps the first definition; the category and humidity maps hold pointers into it, so a later file that puts an existing
 key in another category gives that category the first file's parameters. Groups keep their first definition too. A generator's groups come from
@@ -243,27 +267,12 @@ that sets variables by name hash would not show up in this search; only a memory
   vegetation.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
   has no packed file for (or `gen:<list>` / grass *generated*). Open:
-  - The atlantic family: ROME_Destruct on forest tiles (293 / 654), the climate lists of settlements, farms and roads (rome_atlantic
-    73 / 121) and outfield_tents (the `atl_yurt*` groups). All use atlantic-style parameter files; ROME_Med (599 / 640) and
-    ROME_Destructdes (606 / 650) don't. The main loop's random stream stays in step, so the difference is in grouping or the minimum
-    separation. Traced on farm_eastern/1x1/ab: BOB kept a separation-3 stone that mine removed. Mine had re-rolled a neighbour exactly on
-    a leader's grouping radius (2) to a separation-1 stone, which then removed it. BOB evidently didn't re-roll it, and the shifted
-    grouping draws change the rest.
-    Checked against the decompile and found equal:
-    - group_objects: leader order (std::map on min separation, x, y), the leader's current group and original grouping values,
-      the neighbour's blend and height, the type mask, the two size draws;
-    - valid_group_for_position: the channel group sum, then the probability group's sum through the zero-checked channel range;
-    - the quadtree: build, container, depth-first query, circle-box test;
-    - the CA map: insert, rehash and copy order;
-    - remove_objects_based_on_min_seperation: the outer loop over a straight copy of the live map, the skip after each erase.
-    Also ruled out, measured: other outer orders, the leader's blend or height for the re-roll, a strict radius test. Next step: BOB
-    itself as a black box under Wine (it ran here for the startpos work) with modified parameter files (grouping off, ...), which needs
-    its configuration format and a scratch kit.
+  - Settled: the atlantic family (ROME_Destruct on forest tiles, the settlement / farm / road climate lists) and outfield_tents differ
+    from the packs because the packs are stale. Fresh BOB output equals the port (above), so the corpus numbers against the packs are a
+    floor, not a measure of the port.
   - Exclusion polygons: OUTLINE contains (FUN_10a7d7e0) is a half-open crossing count without division; ported. The one tree BOB
     places inside a polygon (ctesiphon) is a static tree on the half-metre grid, so ctesiphon is exact.
-  - outfield_tents is empty for the farm_eastern / farm_western / settlement / road tiles in the packs. Their tile database entries
-    are identical to farm_sassanid's (which has tents) apart from the location, so those lists look stale. The yurt file's only
-    `<include_in_outfield />` has a non-breaking space before `/>`, so in BOB no object has the flag.
+  - The yurt file's only `<include_in_outfield />` has a non-breaking space before `/>`, so in BOB no object has the flag.
   - List heights: BOB writes height × the height alpha map (`WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_height_alpha_map`, TEd's terrain node,
     in a DLL not imported yet) at the tree's pixel. The game ignores the stored y (trees go on the terrain).
   - Not done: props / decals / VFX outputs, merging static trees, the per-climate conversions on write.
