@@ -1208,9 +1208,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     // ---- ground look
     c.add(
-        "tile_terrain", "tile_terrain blended|flat [climate] [season su|au|wi]",
+        "tile_terrain", "tile_terrain blended|flat [climate] [season sp|su|au|wi]",
         "the ground colour of the open tile: the blend map mixed from the climate's textures, or the plain tiled texture", |e, a| {
-            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_terrain blended|flat [climate] [season su|au|wi]") };
+            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_terrain blended|flat [climate] [season sp|su|au|wi]") };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let mut look = d.tile().terrain_look().clone();
             match a[0].as_str() {

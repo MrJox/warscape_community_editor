@@ -47,6 +47,8 @@ pub(crate) use states::States;
 pub(crate) use targets::{GBuffer, PostTargets, ShadowMap, Target, depth_target, make_target};
 
 // Shader choices: the highest-quality dx11 variants.
+/// The global snow normals every shader with snow reads (s_snow_normals): the weather node loads them (fn 0x118ce490).
+pub(crate) const SNOW_NORMALS: &str = "commontextures/snow_normal.dds";
 pub(crate) const SKY_VS: &str = "dx11_sm_3_0_skydome.hlsl_vs_vs30_main";
 pub(crate) const SKY_GEN_PS: &str = "dx11_sm_3_0_skydome.hlsl_ps_ps30_skygen";
 pub(crate) const SKY_PS: &str = "dx11_sm_3_0_skydome.hlsl_ps_ps30_main";
@@ -631,6 +633,11 @@ impl Renderer {
 
     pub fn cbuffers(&mut self) -> &mut ConstantBuffers {
         &mut self.cbs
+    }
+
+    /// The global snow normals (black until loaded: the shaders read them only while it snows).
+    pub(crate) fn snow_normals_srv(&mut self) -> Option<ID3D11ShaderResourceView> {
+        self.textures.get(SNOW_NORMALS, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.black_srv.clone())
     }
 
     pub fn particles(&mut self) -> &mut ParticleSystem {

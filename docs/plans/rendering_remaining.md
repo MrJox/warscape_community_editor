@@ -7,13 +7,9 @@ This file lists what is not done.
 ## Next: terrain open points
 
 From docs/re/terrain.md ("Assumptions / open"):
-- **Neighbour tiles and the outfield:** the kit's `final_alpha.dds` feather (0 at the edge, ramping to 1 over about 25 m), and the overlap
-  between tiles. The alpha map is 1 everywhere for now.
-- **Far maps:** the map-wide normal map, the far diffuse and normal maps and the mask map (BOB's outfield data). These are map-level and
-  switched off (`g_far_tile_distance` / `g_far_blend_range` very large, `s_mask_map` black).
-- **Season mixing:** `g_array_section_sizes` is (1, 1, 0, 0), so the season and climate indices don't move the slot. The game uses
-  (8, 5, 13).
-- **Snow:** `s_snow_normals` is a flat map. The snow branch needs `g_snowing_intensity` > 0.
+- **Map-level (later tilemaps scope):** neighbour tiles, the outfield, the tile's `final_alpha` feather into the map's base terrain, and
+  the far maps (docs/re/terrain.md, "Seasons and snow").
+- Done 2026-10-18: seasons (spring added; the game's fallback matches) and snow (the global snow normals, the instance snow switch).
 - **Shadow-receiving terrain shader variants**, and the resolve's second and third layer indices (the mask is black, so they stay off).
 - **Unverified state:** the maps' sampler states (clamp linear here) and `g_overlay_view_projection` (identity). No in-game capture to
   compare against yet.

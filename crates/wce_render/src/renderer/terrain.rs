@@ -702,6 +702,7 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         let dc = if m.detail_colour.is_empty() { None } else { self.textures.get(&m.detail_colour, false) };
         let dn = if m.detail_normal.is_empty() { None } else { self.textures.get(&m.detail_normal, false) };
+        let snow = self.snow_normals_srv();
         let ctx = &self.ctx;
         bind_srv(ctx, &res_ps, "s_albedo_map", self.terrain.acc[0].srv.as_ref());
         bind_srv(ctx, &res_ps, "s_terrain_normal_map", self.terrain.acc[1].srv.as_ref());
@@ -711,7 +712,7 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_mask_map", g.black.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
-        bind_srv(ctx, &res_ps, "s_snow_normals", g.lf_normal.srv.as_ref());
+        bind_srv(ctx, &res_ps, "s_snow_normals", snow.as_ref());
         bind_srv(ctx, &res_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
         let dc = dc.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
         let dn = dn.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| g.lf_normal.srv.clone());
