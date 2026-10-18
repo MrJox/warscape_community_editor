@@ -1079,7 +1079,7 @@ impl TileDocument {
         ins.edit_color4("bounds_colour", "bounds_colour", &mut p.bounds_colour);
         ins.edit_bool("show_collision", "show_collision", &mut p.show_collision);
         ins.edit_checks("seasons", "seasons", &["Winter", "Spring", "Summer", "Autumn"], &mut p.seasons);
-        let mut level = if p.destruction_level < 0 { levels - 1 } else { p.destruction_level.clamp(0, levels - 1) };
+        let mut level = p.destruction_level.clamp(0, levels - 1);
         if ins.edit_int_slider("destruction_level", "destruction_level", &mut level, 0, levels - 1) {
             p.destruction_level = level;
         }

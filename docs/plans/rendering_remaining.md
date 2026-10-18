@@ -37,5 +37,4 @@ From docs/re/terrain.md ("Assumptions / open"):
   - the cloud columns' spawn interval (no dump with a moving cloud field).
   Done 2026-10-18: the shadow cascades' light fit (the game's LiSPSM, verified against the dump).
 - **Placed VFX:** the game's use of the marker's season mask (+0x60) wasn't traced (every vanilla instance has all four seasons).
-- **Buildings:** the `destruction_level` saved in tile.ted is not applied when a tile opens (upstream's piece_model convention).
 - **Two-tile session:** opening a second tile keeps showing the first (predates the merge).
