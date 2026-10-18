@@ -76,6 +76,13 @@ ShipAmbientmap 530 (all drawn before), and:
 Note: the editor draws a building at its `destruct01` pieces unless its destruction level is edited in the Property Editor; the
 `destruction_level` saved in tile.ted (321 damaged decal buildings on eastern_city_a/medium) is not applied when the tile opens.
 
+- Placeholder textures (verified 2026-10-18, the material resolver fn 0x1186c880, every rigid material): a texture path containing
+  `/test_gray` loads `CommonTextures/default_grey`, `/test_black`, `/test_mask` and `/test_gloss` `default_black`, `/test_white`
+  `default_white` (`_srgb` in colour slots), `/flatnormal` `default_normal`. The placeholders' own files differ: flatnormal.dds is an
+  RGB (128, 128, 255) DXT1 normal, which the shaders' `.wy` decode turns sideways. That made the terrain-blend decks of bridges
+  (vertex alpha 0, but `ps_terrain_material` adds its unit normal to the terrain's accumulation unweighted, as the game's ONE / ONE
+  blend does, fn 0x116caef0) show bands of tilted normals.
+
 ## Point lights (2026-10-18)
 
 - **Data.** `POINT_LIGHT_INSTANCE` (5.4k in the corpus; 1,141 on western_city_b/small, mostly `window_orange_01` groups): radius,

@@ -155,7 +155,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion> on|off | gfx lod_scale <x> | gfx min_pixels <x>",
+        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
         "renderer features and the detail settings of the tile views (speed against quality)", |e, a| {
             let Some(r) = e.renderer() else { return fail("no renderer") };
             if a.len() != 2 {
@@ -166,6 +166,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 "lod_scale" => r.settings.lod_scale = atof(&a[1]) as f32,
                 "min_pixels" => r.settings.min_pixels = atof(&a[1]) as f32,
                 "shadow_min_texels" => r.settings.shadow_min_texels = atof(&a[1]) as f32,
+                "view" => {
+                    use wce_render::renderer::View;
+                    r.settings.view = match a[1].as_str() {
+                        "final" => View::Final,
+                        "hdr" => View::HdrRaw,
+                        "albedo" => View::Albedo,
+                        "normal" => View::Normal,
+                        "specular" => View::Specular,
+                        "depth" => View::Depth,
+                        "ao" => View::Ao,
+                        _ => return fail(format!("unknown view '{}' (final, hdr, albedo, normal, specular, depth, ao)", a[1])),
+                    };
+                }
+
                 _ => {
                     let on = a[1] != "off" && a[1] != "0";
                     let flag = match a[0].as_str() {
