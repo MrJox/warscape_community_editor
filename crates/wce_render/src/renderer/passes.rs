@@ -13,7 +13,7 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 const SHADOW_ROWS: [[f32; 4]; 4] = [[60.0, 180.0, 180.0, 180.0], [30.0, 90.0, 210.0, 210.0], [30.0, 90.0, 210.0, 450.0], [30.0, 90.0, 210.0, 450.0]];
 
 /// The atlas quadrants of the four cascades.
-const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5], [0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
+pub(crate) const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5], [0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
 
 impl Renderer {
 
@@ -196,7 +196,7 @@ impl Renderer {
     ///   start = min, scale = (max - min) / (far - near);
     /// - s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)] (shadow_split_blend_fraction
     ///   0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2) (final_shadow_split_blend_fraction 0.2).
-    pub(crate) fn pass_shadows(&mut self, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
+    pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
         let row = SHADOW_ROWS[self.settings.shadow_quality.clamp(0, 3) as usize];
         let n = cam.znear.max(1.0);
         let far_q = n + row[0] + row[1] + row[2] + row[3];
@@ -362,6 +362,13 @@ impl Renderer {
             self.draw_lists.draws = draws;
             self.draw_lists.vis_terrain = vis_terrain;
             self.draw_lists.vis = vis;
+        }
+
+        if self.settings.shadows {
+            self.ctx.set_render_targets(std::slice::from_ref(&self.shadow_map.atlas.rtv), self.shadow_map.dsv.as_ref());
+            self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
+            self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.draw_grass_shadows(scene, &light_vp, cam.eye);
         }
 
         self.ctx.set_render_targets(&[], None);

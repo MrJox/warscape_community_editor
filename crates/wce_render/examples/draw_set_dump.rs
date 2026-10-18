@@ -55,6 +55,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         offset: Float3::new(a, b, c),
         has_offset,
         tex: std::array::from_fn(|_| tex.clone()),
+        diffuse_path: String::new(),
         bmin: Float3::default(),
         bmax: Float3::default(),
     }

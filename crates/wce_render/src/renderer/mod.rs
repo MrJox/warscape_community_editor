@@ -819,7 +819,7 @@ impl Renderer {
         self.gpu_timer.mark("shadows");
         {
             wce_prof!("render.shadows");
-            self.pass_shadows(&cam, aspect, -env.to_sun(), time_s);
+            self.pass_shadows(scene, &cam, aspect, -env.to_sun(), time_s);
         }
 
         let view_m = look_at_lh(cam.eye, cam.target, Float3::new(0.0, 1.0, 0.0));

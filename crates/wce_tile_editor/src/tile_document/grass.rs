@@ -4,9 +4,10 @@
 //! (else the `default` folder's).
 //!
 //! How the game places a patch (empire.retail.dll "Grass Display" FUN_105103e0 and its job FUN_10515960, docs/re/vegetation.md): at the stored
-//! x and z (the stored height is not used) on the terrain, tilted to the terrain normal, turned by a random yaw from the MSVC rand LCG seeded
-//! with 0x49710ae3 at the start of every key's patches (of every worker's share of them: this is the one-worker sequence), not scaled. The game
-//! also drops the patches on slopes steeper than a tweaker angle, which is not known yet: none are dropped here.
+//! x and z (the stored height is not used) on the terrain, tilted to the terrain normal measured half the patch model's size to each side,
+//! not scaled. Patches on slopes steeper than `GRASS_ANGLE_CULL_AMOUNT` (0.7 rad) are dropped; the others are turned by a random yaw from the
+//! MSVC rand LCG seeded with 0x49710ae3 at the start of every key's patches (of every worker's share of them: this is the one-worker
+//! sequence), which steps only for the patches kept.
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -18,11 +19,18 @@ use wce_foundation::math::{Float3, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, Grass, LayerId, Payload, RenderScene};
 use wce_tile::vegetation::{self, grass::{GrassParams, generate_grass}};
 
+use super::vegetation::tilt;
 use super::{TERRAIN, Tile};
 
 const SEED: u32 = 0x4971_0ae3;
 const YAW_STEP: f32 = f32::from_bits(0x38c9_10a4);
 const LIST: &str = "default";
+
+/// The `GRASS_ANGLE_CULL_AMOUNT` tweaker's default: a patch stays where the terrain normal's y is above its cosine.
+const ANGLE_CULL: f32 = 0.7;
+
+/// FUN_10515960: the heights are measured max(the model's x / z extent, 0.4) * 0.5 metres to each side.
+const MIN_SPAN: f32 = 0.4;
 
 /// The decoded or generated list (per key: its patches' x and z) and the entities drawing it.
 #[derive(Clone, Debug, Default)]
@@ -30,8 +38,8 @@ pub(crate) struct GrassState {
     /// Whether it was generated, and the list.
     pub list: Option<(bool, Arc<Vec<(String, Vec<(f32, f32)>)>>)>,
 
-    /// What the entities show (whether grass is shown, and generated) and their ids.
-    pub shown: Option<(bool, bool)>,
+    /// What the entities show (whether grass is shown, generated, the season) and their ids.
+    pub shown: Option<(bool, bool, String)>,
     pub entities: std::ops::Range<EntityId>,
 }
 
@@ -113,10 +121,27 @@ impl Tile {
             .find(|p| files.exists(p))
     }
 
+    /// The larger of a grass model's x and z extents (LOD 0), in metres.
+    fn grass_model_size(&self, path: &str) -> Option<f32> {
+        use rpfm_lib::files::rigidmodel::RigidModel;
+        let bytes = self.files.as_deref()?.read(path).ok()?;
+        let model = RigidModel::decode(&mut Cursor::new(bytes), &Some(Default::default())).ok()?;
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for block in model.lods().first()?.mesh_blocks() {
+            for v in block.mesh().vertices() {
+                let p = v.position();
+                lo = [lo[0].min(p.x), lo[1].min(p.z)];
+                hi = [hi[0].max(p.x), hi[1].max(p.z)];
+            }
+        }
+
+        (lo[0] <= hi[0]).then(|| (hi[0] - lo[0]).max(hi[1] - lo[1]))
+    }
+
     /// The grass entities follow the display (after a publish, which dropped them, or when grass is shown or hidden).
     pub(crate) fn update_grass(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {
-        let want = (self.display.show_grass, self.display.generate_grass);
-        if !published && self.grass.shown == Some(want) {
+        let want = (self.display.show_grass, self.display.generate_grass, self.look.season.clone());
+        if !published && self.grass.shown.as_ref() == Some(&want) {
             return;
         }
 
@@ -147,20 +172,30 @@ impl Tile {
                 continue;
             };
 
+            let half = self.grass_model_size(&model).unwrap_or(0.0).max(MIN_SPAN) * 0.5;
+            let height = |x: f32, z: f32| self.project.height_at(f64::from(x), f64::from(z)) as f32;
+            let min_ny = ANGLE_CULL.cos();
             let mut rand = SEED;
             let mut instances = Vec::with_capacity(patches.len());
             for &(x, lz) in patches {
+                // The slope over the patch (height drop per metre along x and z).
+                let z = extent - lz;
+                let sx = (height(x - half, z) - height(x + half, z)) / (2.0 * half);
+                let sz = (height(x, z - half) - height(x, z + half)) / (2.0 * half);
+                if 1.0 / (sx * sx + 1.0 + sz * sz).sqrt() <= min_ny {
+                    continue;
+                }
+
                 rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
                 let yaw = (rand >> 16) as f32 * YAW_STEP;
-                let z = extent - lz;
-                let y = (self.project.height_at(f64::from(x), f64::from(z)) / self.unit()) as f32;
-                let w = translation(Float3::new(x, y, z)) * self.terrain_tilt(x, z) * rotation_y(-yaw) * scaling(1.0 / unit);
+                let y = height(x, z) / unit;
+                let w = translation(Float3::new(x, y, z)) * tilt(sx / unit, sz / unit) * rotation_y(-yaw) * scaling(1.0 / unit);
                 let r = |i: usize| [w.m[i][0], w.m[i][1], w.m[i][2], w.m[i][3]];
                 let (a, b, c) = (r(0), r(1), r(2));
                 instances.push([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0], c[1], c[2], c[3]]);
             }
 
-            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances) }), self.source(TERRAIN));
+            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances), season: self.look.season.clone() }), self.source(TERRAIN));
             if let Some(en) = scene.find_mut(e) {
                 en.locked = true;
             }

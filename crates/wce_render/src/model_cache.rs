@@ -148,6 +148,9 @@ pub struct GpuMesh {
     pub has_offset: bool,
     pub tex: [SharedTexture; TEX_SLOTS],
 
+    /// The VFS path the diffuse texture was loaded from (empty for none): the grass pass derives the seasonal variants from it.
+    pub diffuse_path: String,
+
     /// The bounds of the vertices (model space, before `offset`).
     pub bmin: Float3,
     pub bmax: Float3,
@@ -431,6 +434,18 @@ pub struct ModelCache {
 }
 
 /// The texture a material gives a slot, or a fallback.
+/// The path a material texture loads from: where the material says, else under the same name next to the model.
+fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
+    let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/"))?;
+    if textures.get(&path, true).is_some() {
+        return Some(path);
+    }
+
+    let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
+    let local = format!("{dir}/{name}");
+    textures.get(&local, true).is_some().then_some(local)
+}
+
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
 fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
@@ -571,6 +586,7 @@ impl ModelInner {
                     material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white()),
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
                 ],
+                diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
             })
@@ -1082,6 +1098,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
         tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white()],
+        diffuse_path: String::new(),
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
     };
