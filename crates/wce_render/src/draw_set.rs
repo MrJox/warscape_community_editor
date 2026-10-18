@@ -120,13 +120,16 @@ pub struct View {
 
     /// LOD items with a smaller radius are skipped (shadow texels).
     pub min_radius: f32,
+
+    /// Items farther than this (their sphere's nearest point) are skipped; 0: no limit.
+    pub max_distance: f32,
 }
 
 impl Default for View {
 
     /// As the C++ default: LOD distances unscaled.
     fn default() -> Self {
-        Self { frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0 }
+        Self { frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0, max_distance: 0.0 }
     }
 }
 
@@ -326,6 +329,14 @@ impl DrawSet {
                 let s = &self.sphere[i * 4..i * 4 + 4];
                 if v.frustum.outside(s, s[3]) {
                     continue;
+                }
+
+                if v.max_distance > 0.0 {
+                    let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+                    let reach = v.max_distance + s[3];
+                    if dx * dx + dy * dy + dz * dz > reach * reach {
+                        continue;
+                    }
                 }
 
                 let me = &self.models[self.model[i] as usize];

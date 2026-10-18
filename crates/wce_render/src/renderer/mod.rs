@@ -401,7 +401,46 @@ impl Default for FrameClock {
 }
 
 /// The renderer: the game's passes over a set of GPU subsystems.
+/// The ids of the scene's entities of the kinds a pass looks for every frame (water, point lights, terrain), rebuilt when the scene's structure
+/// changes: a scene with a map context has over a million entities, and walking them all once per pass cost milliseconds each.
+#[derive(Default)]
+pub(crate) struct KindIndex {
+    scene: usize,
+    revision: u64,
+    pub water: Vec<wce_scene::render_scene::EntityId>,
+    pub lights: Vec<wce_scene::render_scene::EntityId>,
+    pub terrain: Vec<wce_scene::render_scene::EntityId>,
+}
+
+impl KindIndex {
+    fn refresh(&mut self, scene: &RenderScene) {
+        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision());
+        if (self.scene, self.revision) == key {
+            return;
+        }
+
+        (self.scene, self.revision) = key;
+        self.water.clear();
+        self.lights.clear();
+        self.terrain.clear();
+        for e in scene.entities() {
+            match &e.payload {
+                wce_scene::render_scene::Payload::Water(_) => self.water.push(e.id),
+                wce_scene::render_scene::Payload::PointLight(_) => self.lights.push(e.id),
+                wce_scene::render_scene::Payload::Terrain(_) => self.terrain.push(e.id),
+                _ => {}
+            }
+        }
+    }
+
+    /// The entities of a list that still exist, in scene order.
+    pub fn entities<'s>(ids: &[wce_scene::render_scene::EntityId], scene: &'s RenderScene) -> Vec<&'s wce_scene::render_scene::Entity> {
+        ids.iter().filter_map(|&id| scene.find(id)).collect()
+    }
+}
+
 pub struct Renderer {
+    pub(crate) kinds: KindIndex,
     pub(crate) dev: ID3D11Device,
     pub(crate) ctx: ID3D11DeviceContext,
     pub(crate) files: Arc<dyn Files>,
@@ -525,6 +564,7 @@ impl Renderer {
             dev: dev.clone(),
             ctx: ctx.clone(),
             files,
+            kinds: KindIndex::default(),
             cbs,
             lib: ShaderLibrary::new(dev),
             shader_failures: vec![],
@@ -794,6 +834,7 @@ impl Renderer {
         }
 
         let env = scene.environment.resolved();
+        self.kinds.refresh(scene);
 
         // Fixed-step runs load every texture whole: frame N must be the same every run.
         self.textures.set_streaming(!self.settings.deterministic);
@@ -838,6 +879,7 @@ impl Renderer {
 
         // Before the shadows: the material terrain casts its own.
         self.terrain.active = self.prepare_terrain_materials(scene);
+        self.terrain.lod_eye = cam.eye;
         let aspect = width as f32 / height as f32;
         self.gpu_timer.mark("shadows");
         {

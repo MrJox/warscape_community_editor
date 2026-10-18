@@ -27,6 +27,9 @@ const DECAL_VS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_vs_vs30_main";
 const DECAL_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_diffuse";
 
 /// Floats of one instance: POSITION1..3 (world rows), POSITION4 (size), POSITION5 (tiled, opacity, snow), POSITION6 (unused by the shaders).
+/// A decal is drawn while its radius covers at least this many pixels.
+const DECAL_MIN_PIXELS: f32 = 3.0;
+
 const INSTANCE_FLOATS: usize = 24;
 
 /// The decal pass's state.
@@ -182,10 +185,20 @@ impl Renderer {
 
         // The visible decals, in runs of one model.
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
+
+        // Decals smaller than a few pixels on screen are skipped (ASSUMPTION: the game's own decal distance was not traced; a map context
+        // around a city has some 180,000 of them).
+        let (eye, min_ratio) = (self.camera.eye, DECAL_MIN_PIXELS * self.camera.px_ratio);
         let mut all = vec![];
         let mut runs: Vec<(u32, u32)> = vec![];
         for item in &self.decals.items {
             if frustum.outside(&item.sphere[..3], item.sphere[3]) {
+                continue;
+            }
+
+            let (dx, dy, dz) = (item.sphere[0] - eye.x, item.sphere[1] - eye.y, item.sphere[2] - eye.z);
+            let r = item.sphere[3] / min_ratio;
+            if dx * dx + dy * dy + dz * dz > r * r {
                 continue;
             }
 

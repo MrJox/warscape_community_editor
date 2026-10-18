@@ -87,7 +87,8 @@ impl Renderer {
         // The GPU copies of the meshes: rebuilt when an entity's version moves on, dropped with the entity.
         let mut keep = BTreeMap::new();
         let mut any = false;
-        for e in scene.entities() {
+        let water = KindIndex::entities(&self.kinds.water, scene);
+        for e in water.iter().copied() {
             let Payload::Water(w) = &e.payload else { continue };
             if w.verts.is_empty() || w.indices.is_empty() {
                 continue;
@@ -213,7 +214,7 @@ impl Renderer {
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
         let inst_stride = if rivers { 64u32 } else { 96 };
-        for e in scene.entities() {
+        for e in water.iter().copied() {
             let Payload::Water(w) = &e.payload else { continue };
             let Some(mesh) = self.water.meshes.get(&e.id) else { continue };
             if w.river != rivers || !scene.drawable(e) {
