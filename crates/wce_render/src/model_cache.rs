@@ -487,8 +487,37 @@ pub struct ModelCache {
 
 /// The texture a material gives a slot, or a fallback.
 /// The path a material texture loads from: where the material says, else under the same name next to the model.
-fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
+/// The engine's stand-ins for the art tools' placeholder textures (the material resolver fn 0x1186c880, first match wins, `\name` or
+/// `/name` anywhere in the path): test_gray -> default_grey, test_black / test_mask / test_gloss -> default_black, test_white ->
+/// default_white (with `_srgb` for a colour slot), flatnormal -> default_normal. The placeholders' own files are not what the game draws
+/// (flatnormal.dds is an RGB normal, which the shaders' .wy decode turns sideways).
+fn engine_default(path: &str, srgb: bool) -> Option<String> {
+    let lower = path.to_lowercase();
+    let has = |name: &str| lower.contains(&format!("/{name}")) || lower.contains(&format!("\\{name}"));
+    let named = |base: &str| if srgb { format!("commontextures/{base}_srgb.dds") } else { format!("commontextures/{base}.dds") };
+    if has("test_gray") {
+        Some(named("default_grey"))
+    } else if has("test_black") || has("test_mask") {
+        Some(named("default_black"))
+    } else if has("test_white") {
+        Some(named("default_white"))
+    } else if has("test_gloss") {
+        Some(named("default_black"))
+    } else if has("flatnormal") {
+        Some("commontextures/default_normal.dds".to_owned())
+    } else {
+        None
+    }
+}
+
+/// A material texture's path, the engine's stand-in for a placeholder (when it loads) taking its place.
+fn material_path(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool) -> Option<String> {
     let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/"))?;
+    Some(engine_default(&path, srgb).filter(|d| textures.get(d, srgb).is_some()).unwrap_or(path))
+}
+
+fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
+    let path = material_path(textures, material, kind, true)?;
     if textures.get(&path, true).is_some() {
         return Some(path);
     }
@@ -501,7 +530,7 @@ fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_l
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
 fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
-    let Some(path) = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/")) else { return fallback };
+    let Some(path) = material_path(textures, material, kind, srgb) else { return fallback };
     textures.get(&path, srgb)
         .or_else(|| {
             let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
