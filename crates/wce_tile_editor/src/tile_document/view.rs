@@ -47,13 +47,15 @@ fn piece_local(p: &PieceProps) -> Float4x4 {
 
 /// The model of a piece at a destruction level of a building that has `levels`: the highest level is the intact piece (`..._destruct01`, what the
 /// tile draws), each lower one the next more damaged file (`..._destruct02` ...), level 0 the last.
+/// The piece file of a destruction level: 0 is the intact `destruct01` (the vanilla tiles store 0 on almost every building), level `n` is
+/// `destruct{n + 1}`, up to the building's last level.
 fn piece_model(base: &str, level: i64, levels: u32) -> String {
     let top = i64::from(levels.max(1)) - 1;
-    if level < 0 || level >= top {
+    if level <= 0 || !base.contains("destruct01") {
         return base.to_owned();
     }
 
-    base.replacen("destruct01", &format!("destruct{:02}", top - level + 1), 1)
+    base.replacen("destruct01", &format!("destruct{:02}", level.min(top) + 1), 1)
 }
 
 fn bits_equal(a: &[OverlayVertex], b: &[OverlayVertex]) -> bool {
@@ -620,12 +622,14 @@ impl Tile {
                 MeshInstance::default().p4
             };
 
+            // The building's saved destruction level, unless a piece was given its own this session.
+            let levels = self.model_of(elem).map_or(1, |m| m.levels);
+            let saved = self.saved_destruction_level(elem, levels);
             let (mut first, mut count) = (0, 0u8);
             for (i, piece) in pieces.into_iter().enumerate() {
                 let props = self.piece_props.get(&(elem, i));
                 let world = props.map_or(w, |p| w * piece_local(p));
-                let levels = self.model_of(elem).map_or(1, |m| m.levels);
-                let model = props.map_or(piece.clone(), |p| piece_model(&piece, p.destruction_level, levels));
+                let model = piece_model(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), levels);
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 let p5 = [0.0, 0.0, 0.0, 1.0];
@@ -667,31 +671,9 @@ impl Tile {
             }
         }
 
-        // A point light, as the game builds it from point_light_marker.markers (fn 0x10407e90): radius, colour, colour_scale, colour_min,
-        // the animation and its speeds; the falloff is always smooth there (falloff_type is not read) and the phase comes from the game's
-        // random generator, not random_offset.
+        // A point light (point_light).
         if self.tscene().type_of(elem) == "POINT_LIGHT_INSTANCE" {
-            let doc = self.tscene().doc();
-            let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
-            let c = doc.get(elem, "colour").and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or([1.0; 4]);
-            let speed = doc.get(elem, "animation_speed_scale").and_then(|v| wce_tile::properties::parse_vec2(&v)).unwrap_or([0.0; 2]);
-            let animation = match doc.get(elem, "animation_type").as_deref() {
-                Some("LAT_RADIUS_SIN") => 1,
-                Some("LAT_RADIUS_SIN_SIN") => 2,
-                _ => 0,
-            };
-
-            let light = PointLight {
-                colour: [c[0], c[1], c[2]],
-                colour_scale: num("colour_scale", 1.0),
-                colour_min: num("colour_min", 0.0),
-                radius: num("radius", 1.0),
-                smooth: true,
-                animation,
-                speed,
-                phase: self.light_phase(elem),
-            };
-
+            let light = self.point_light(elem);
             let e = scene.add(layer, self.world_matrix(elem), Payload::PointLight(light), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
@@ -702,13 +684,7 @@ impl Tile {
 
         // A placed effect (autoplay="false" ones wait for a script: not drawn; out of the look's season: not drawn; BOB writes the seasons as a
         // mask into the markers, +0x60). The scale is in metres as BOB writes it (tile scale / unit).
-        if self.tscene().type_of(elem) == "VFXInstance"
-            && let Some(effect) = self.tscene().doc().get(elem, "vfx").filter(|v| !v.is_empty())
-            && self.tscene().doc().get(elem, "autoplay").is_none_or(|v| v != "false")
-            && self.in_season(elem)
-        {
-            let scale = self.tscene().doc().get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
-            let vfx = VfxEmitter { effect, scale: scale as f32 };
+        if let Some(vfx) = self.vfx_emitter(elem) {
             let e = scene.add(layer, self.world_matrix(elem), Payload::VfxEmitter(vfx), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
@@ -838,12 +814,77 @@ impl Tile {
         self.lod_eye = Float3::new(1e30, 1e30, 1e30);
     }
 
+    /// A point light, as the game builds it from point_light_marker.markers (fn 0x10407e90): radius, colour, colour_scale, colour_min,
+    /// the animation and its speeds; the falloff is always smooth there (falloff_type is not read) and the phase comes from the game's
+    /// random generator, not random_offset.
+    fn point_light(&self, elem: usize) -> PointLight {
+        let doc = self.tscene().doc();
+        let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
+        let c = doc.get(elem, "colour").and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or([1.0; 4]);
+        let speed = doc.get(elem, "animation_speed_scale").and_then(|v| wce_tile::properties::parse_vec2(&v)).unwrap_or([0.0; 2]);
+        let animation = match doc.get(elem, "animation_type").as_deref() {
+            Some("LAT_RADIUS_SIN") => 1,
+            Some("LAT_RADIUS_SIN_SIN") => 2,
+            _ => 0,
+        };
+
+        PointLight {
+            colour: [c[0], c[1], c[2]],
+            colour_scale: num("colour_scale", 1.0),
+            colour_min: num("colour_min", 0.0),
+            radius: num("radius", 1.0),
+            smooth: true,
+            animation,
+            speed,
+            phase: self.light_phase(elem),
+        }
+    }
+
+    /// A VFXInstance's effect, when it plays (an effect is set, autoplay is on and it is in the terrain look's season).
+    fn vfx_emitter(&self, elem: usize) -> Option<VfxEmitter> {
+        let doc = self.tscene().doc();
+        if self.tscene().type_of(elem) != "VFXInstance" || doc.get(elem, "autoplay").is_some_and(|v| v == "false") || !self.in_season(elem) {
+            return None;
+        }
+
+        let effect = doc.get(elem, "vfx").filter(|v| !v.is_empty())?;
+        let scale = doc.get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
+        Some(VfxEmitter { effect, scale: scale as f32 })
+    }
+
+    /// A light's or an effect's entity follows its edited attributes (an effect that stops or starts playing is removed or added).
+    fn refresh_payload(&mut self, scene: &mut RenderScene, elem: usize) {
+        let first = self.first_entity.get(elem).copied().unwrap_or(0);
+        match self.tscene().type_of(elem) {
+            "POINT_LIGHT_INSTANCE" if first != 0 => scene.update_payload(first, Payload::PointLight(self.point_light(elem))),
+            "VFXInstance" => match (first != 0, self.vfx_emitter(elem)) {
+                (true, Some(vfx)) => scene.update_payload(first, Payload::VfxEmitter(vfx)),
+                (true, None) => {
+                    scene.remove(first);
+                    self.first_entity[elem] = 0;
+                    self.entity_count[elem] = 0;
+                }
+                (false, Some(vfx)) if self.shown(elem) => {
+                    let e = scene.add(self.layer, self.world_matrix(elem), Payload::VfxEmitter(vfx), self.source(item_of(elem)));
+                    self.first_entity[elem] = e;
+                    self.entity_count[elem] = 1;
+                    if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+                        en.locked = true;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
     pub(crate) fn refresh_item(&mut self, scene: &mut RenderScene, elem: usize) {
         if !self.is_instance(elem) {
             return;
         }
 
         self.index_edited(elem);
+        self.refresh_payload(scene, elem);
         if self.first_entity.get(elem).is_some_and(|&f| f != 0) {
             let w = self.drawn_matrix(elem);
             for k in 0..u64::from(self.entity_count[elem]) {
@@ -867,6 +908,15 @@ impl Tile {
     }
 
     /// The pieces whose properties were edited: their entities follow (the position, the visibility, the destruction level).
+    /// The `destruction_level` the tile stores for a building (0, intact, when it has one level or none is written).
+    fn saved_destruction_level(&self, elem: usize, levels: u32) -> i64 {
+        if levels <= 1 {
+            return 0;
+        }
+
+        self.tscene().doc().get(elem, "destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0)
+    }
+
     pub(crate) fn flush_pieces(&mut self, scene: &mut RenderScene) {
         if self.piece_pending.is_empty() || self.scene_key != scene_key(scene) {
             return;
@@ -882,7 +932,9 @@ impl Tile {
             let id = first + k as EntityId;
             scene.update_world(id, self.world_matrix(elem) * piece_local(&p));
             let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
-            let model = piece_model(&base, p.destruction_level, self.model_of(elem).map_or(1, |m| m.levels));
+            let levels = self.model_of(elem).map_or(1, |m| m.levels);
+            let level = if p.destruction_level < 0 { self.saved_destruction_level(elem, levels) } else { p.destruction_level };
+            let model = piece_model(&base, level, levels);
             if let Some(en) = scene.find_mut(id) {
                 en.visible = p.visible;
                 if let Payload::MeshInstance(mi) = &mut en.payload {
@@ -1180,13 +1232,14 @@ mod tests {
     }
 
     #[test]
-    fn the_highest_level_is_the_intact_piece() {
+    fn level_zero_is_the_intact_piece() {
         let base = "rigidmodels/buildings/house/house_piece01_destruct01.rigid_model_v2";
         assert_eq!(piece_model(base, -1, 3), base);
-        assert_eq!(piece_model(base, 2, 3), base, "the highest of 3 levels");
+        assert_eq!(piece_model(base, 0, 3), base, "level 0 of 3");
         assert_eq!(piece_model(base, 1, 3), base.replace("destruct01", "destruct02"));
-        assert_eq!(piece_model(base, 0, 3), base.replace("destruct01", "destruct03"));
-        assert_eq!(piece_model(base, 0, 1), base, "one level: only the intact piece");
+        assert_eq!(piece_model(base, 2, 3), base.replace("destruct01", "destruct03"));
+        assert_eq!(piece_model(base, 5, 3), base.replace("destruct01", "destruct03"), "clamped to the last level");
+        assert_eq!(piece_model(base, 1, 1), base, "one level: only the intact piece");
     }
 }
 
