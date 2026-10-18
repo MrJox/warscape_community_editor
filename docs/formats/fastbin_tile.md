@@ -4,12 +4,12 @@ All little endian. Every file: `"FASTBIN0"` (8 bytes), `u16 version`, payload. `
 
 | File | Version | Payload | Corpus |
 | --- | --- | --- | --- |
-| `*.tree_list.bin` | 3 | `u32 n_types`, then n x { `str name`, `u32 n`, n x { `f32 x, f32 y, f32 z, u16 w` } } | 562 files |
+| `*.tree_list.bin` | 1 (1-3) | `u32 n_types`, then n x { `str name`, `u32 n`, n x { `f32 x, f32 y, f32 z, u8 scale, u8 is_freeform` (+ `u8 is_burnable` in v2) } } | 562 files |
 | `default.grass_list.bin` | 1 | `u32 n_groups`, then n x { `str name` (e.g. `grass/0`), `u32 n`, n x 6 bytes } | 81 |
 | `civilian_deployment.bin` | 1 | `u32 n`, n x { `u16 flag` (=1), `str kind` (`Agricultural`), `str size` (`small`), `u32 np`, np x { `f32 x, f32 z` } } | 85 |
 | `civilian_shelter.bin` | 1 | `u32 n`, n x { `u16 flag` (=1), `f32 x1, z1, x2, z2`, `u32 capacity` } | 85 |
 
-Notes: the 6-byte grass entry looks like `u16 half-float x`, `u16` (high bit set, meaning unknown), `u16 half-float z` (count matches the BOB log "N valid positions": 11050 x 6 + 49 header = 66349 bytes); kept opaque. `w` of a tree is 0x007f in the samples (probably packed scale/rotation). Tree types use backslashes in names.
+Notes: the 6-byte grass entry is three halfs: x, the height (BOB writes the height map's; the game reads the terrain instead) and z (`docs/re/vegetation.md`; count matches the BOB log "N valid positions": 11050 x 6 + 49 header = 66349 bytes). A tree's scale byte is the scale x 127; `is_freeform` 0 puts the tree on the terrain; there is no rotation (the game draws one at random); see `docs/re/vegetation.md` for the frame (z counted from the far edge). Tree types use backslashes in names. Within a type, BOB's order is that of an MSVC std::sort by type name (`docs/re/vegetation.md`), which the game's yaws depend on.
 
 # BATTLE_MAP_DEFINITION_DATA binary (`*_procedural_bmd_data.bin`, `bmd_data_escalation{1,2,3}.bin`)
 

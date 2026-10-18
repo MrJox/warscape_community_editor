@@ -18,6 +18,8 @@ mod commands;
 mod edits;
 mod index;
 mod pick;
+mod grass;
+mod vegetation;
 mod view;
 
 use std::any::Any;
@@ -39,6 +41,7 @@ use wce_vfs::files::Files;
 use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::index::style_of;
+pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrushKind {
@@ -82,13 +85,22 @@ pub struct TileDisplay {
 
     /// River ribbons and the sea / lake plane (the water pass); drawn whatever the spline layers' eye says.
     pub show_water: bool,
+
+    /// The procedural trees drawn: the name of one of the tile's tree lists (`default`, a climate key like `rome_med`), empty for none.
+    pub tree_list: String,
+
+    /// The grass of BOB's `default.grass_list.bin`, near the camera.
+    pub show_grass: bool,
+
+    /// Generate the grass from the seed (as BOB would) even when the tile has a packed list.
+    pub generate_grass: bool,
 }
 
 impl Default for TileDisplay {
     fn default() -> Self {
         Self {
             hidden_types: BTreeSet::new(), show_polygons: true, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true,
-            show_links: false, show_water: true,
+            show_links: false, show_water: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false,
         }
     }
 }
@@ -350,6 +362,10 @@ pub struct Tile {
     /// How long opening took, by phase.
     pub load_info: String,
     pub(crate) idx: Index,
+
+    /// The decoded tree list of the display's `tree_list`.
+    pub(crate) trees: vegetation::TreeList,
+    pub(crate) grass: grass::GrassState,
 }
 
 pub(crate) fn scene_key(scene: &RenderScene) -> usize {
@@ -389,7 +405,7 @@ impl TileDocument {
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
-            last_message: String::new(), load_info: String::new(), idx: Index::default(),
+            last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
         };
 
         tile.build_index();

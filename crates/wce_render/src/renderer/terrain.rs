@@ -98,7 +98,7 @@ pub(crate) struct TerrainGpuState {
     grid_ib: BTreeMap<(i32, i32), Option<ID3D11Buffer>>,
     entities: Vec<EntityId>,
     zw: Target,
-    viewz: Target,
+    pub(crate) viewz: Target,
     acc: [Target; 3],
     rt_w: u32,
     rt_h: u32,

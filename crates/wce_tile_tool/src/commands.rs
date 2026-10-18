@@ -1042,6 +1042,37 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("tree_list", "tree_list [name | gen:name | none]", "draw one of the tile's procedural tree lists (BOB's <name>.tree_list.bin: default, a climate key; gen:<name> generates it from the seeds, again on every call); no name: log the lists", |e, a| {
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let lists = d.tile().tree_lists().to_vec();
+        let Some(name) = a.first() else { return ok(format!("tree lists: {} (drawn: {})", lists.join(", "), d.tile().display().tree_list)) };
+        let name = if *name == "none" { String::new() } else { name.to_lowercase() };
+        if !name.is_empty() && !lists.contains(&name) {
+            return fail(format!("no tree list {name}; the tile has: {}", lists.join(", ")));
+        }
+
+        d.tile_mut().display_mut().tree_list = name;
+        d.tile_mut().reload_tree_list();
+        ok("")
+    });
+
+    c.add("grass", "grass on|off|generated|packed", "draw the tile's grass near the camera: on / off; packed: BOB's default.grass_list.bin when the tile has one; generated: from the seed (again on every call)", |e, a| {
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let t = d.tile_mut();
+        match a.first().map(String::as_str) {
+            Some("on") => t.display_mut().show_grass = true,
+            Some("off") => t.display_mut().show_grass = false,
+            Some("generated") => {
+                t.display_mut().generate_grass = true;
+                t.reload_grass();
+            }
+            Some("packed") => t.display_mut().generate_grass = false,
+            _ => return fail("usage: grass on|off|generated|packed"),
+        }
+
+        ok("")
+    });
+
     c.add("assert_water", "assert_water <pieces n>", "test: the tile has n water meshes (river splines + the sea plane) in the scene (after a frame)", |e, a| {
         let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: assert_water <pieces n>") };
         let t = d.tile();

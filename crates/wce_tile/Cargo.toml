@@ -11,4 +11,6 @@ wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
 
 [dev-dependencies]
+rpfm_lib.workspace = true
 tempfile = "3"
+wce_vfs = { path = "../wce_vfs" }

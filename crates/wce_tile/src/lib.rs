@@ -4,4 +4,5 @@
 pub mod height_field;
 pub mod ted_scene;
 pub mod tile_project;
+pub mod vegetation;
 pub mod world_transform;
