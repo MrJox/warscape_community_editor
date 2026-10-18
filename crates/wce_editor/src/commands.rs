@@ -189,6 +189,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("frame_cap", "frame_cap [fps | 0]", "the frame rate cap of interactive sessions (0: none), kept in wce.ini; no argument: log it", |e, a| {
+        match a.first() {
+            None => ok(format!("frame cap {}", e.frame_cap())),
+            Some(v) => match v.parse::<u32>() {
+                Ok(fps) => {
+                    e.set_frame_cap(fps);
+                    ok(format!("frame cap {fps}"))
+                }
+
+                Err(_) => fail("usage: frame_cap [fps | 0]"),
+            },
+        }
+    });
+
     c.add("vsync", "vsync on|off", "present with or without waiting for the monitor (off: frame rate is the real cost of a frame)", |e, a| {
         if a.len() != 1 {
             return fail("usage: vsync on|off");
