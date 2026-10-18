@@ -247,12 +247,17 @@ fn place_terrain(t: &Template, a: &Affine2, lift: &(dyn Fn(f64, f64) -> f32 + Sy
         let mut mm = (**m).clone();
         (mm.x0, mm.z0, mm.x1, mm.z1) = (m.x0 + dx, m.z0 + dz, m.x1 + dx, m.z1 + dz);
         let (lo, hi) = terrain.heights.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-        (mm.y0, mm.y1) = (f64::from(lo) - 20.0, f64::from(hi) + 200.0);
+        (mm.y0, mm.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
         terrain.material = Some(Arc::new(mm));
     }
 
     terrain
 }
+
+/// The vertical extent of a context terrain's blend box around its heights (scene units): the box is drawn over the screen and every pixel
+/// of it runs the blend shader, so it stays close to the ground (enough for the buildings' terrain skirts).
+const BOX_BELOW: f64 = 5.0;
+const BOX_ABOVE: f64 = 30.0;
 
 /// The neighbours' height spacing (scene units): the shared map's.
 const NEIGHBOUR_STEP: f64 = 2.0;
@@ -467,7 +472,7 @@ pub fn build_context(rq: &ContextRequest, files: Option<Arc<dyn Files>>) -> Cont
             m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, step, step, w, h);
             (m.x0, m.z0, m.x1, m.z1) = (b[0], b[1], b[2], b[3]);
             let (lo, hi) = t.heights.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-            (m.y0, m.y1) = (f64::from(lo) - 20.0, f64::from(hi) + 200.0);
+            (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
             m.id = next_id(&MATERIAL_IDS);
             m.normal_id = next_id(&NORMAL_IDS);
             t.material = Some(Arc::new(m));

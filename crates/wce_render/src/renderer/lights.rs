@@ -80,7 +80,7 @@ impl Renderer {
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
         let time = self.clock.last_time.max(0.0);
         let (mut smooth, mut linear) = (vec![], vec![]);
-        for e in scene.entities() {
+        for e in KindIndex::entities(&self.kinds.lights, scene) {
             let Payload::PointLight(l) = &e.payload else { continue };
             let c = [e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]];
             if l.radius <= 0.0 || !scene.drawable(e) || frustum.outside(&c, l.radius) {

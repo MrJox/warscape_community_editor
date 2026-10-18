@@ -5,6 +5,9 @@ use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 
 use super::*;
+
+/// How far the environment cube's scene reaches (scene units).
+const ENV_CUBE_RANGE: f32 = 2000.0;
 use crate::draw_set::{Frustum, View as DrawView, Visible};
 use crate::model_cache::{GpuMesh, MeshKind, TEX_SLOTS};
 use crate::shader_lib::{bind_sampler, bind_srv};
@@ -48,7 +51,14 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // The ground first, as the entity order had it (equal depths: the first one drawn wins).
-        let view = self.camera_view(if self.env.active { 0.5 } else { 1.0 });
+        let mut view = self.camera_view(if self.env.active { 0.5 } else { 1.0 });
+
+        // The environment cube is taken from one point for reflections and the ambient: what is kilometres away adds nothing to it
+        // (ASSUMPTION: the game's EnvMapGen range was not traced; 2 km).
+        if self.env.active {
+            view.max_distance = ENV_CUBE_RANGE;
+        }
+
         let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
         let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
         terrain_draws.cull(&view, &mut vis_terrain);

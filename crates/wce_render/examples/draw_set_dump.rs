@@ -117,6 +117,7 @@ fn main() {
             coarser: if v == 3 { 1 } else { 0 },
             min_ratio: if v == 4 { 0.01 } else { 0.0 },
             min_radius: if v == 2 { 3.0 } else { 0.0 },
+            max_distance: 0.0,
         };
 
         println!("frustum {:016x}", floats(view.frustum.p.iter().flat_map(|p| p.n.iter().chain(std::iter::once(&p.d)))));

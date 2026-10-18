@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use wce_foundation::math::Float4x4;
+use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial};
 
@@ -44,6 +44,9 @@ fn geom_layout() -> [InputElement; 4] {
 }
 
 const PATCH_CELLS: i32 = 64;
+
+/// A patch at this many grid steps from the eye starts to skip vertices (see draw_terrain_patches).
+const LOD_STEPS: f32 = 128.0;
 
 /// The instance buffer's size.
 const INSTANCE_BYTES: usize = 64 * 4096;
@@ -80,6 +83,9 @@ pub(crate) struct TerrainGeo {
 
     /// The shared map it reads (0: its own).
     shared: u64,
+
+    /// Coarser index buffers with distance.
+    lod: bool,
     height_srv: Option<ID3D11ShaderResourceView>,
     patches: Vec<Patch>,
 }
@@ -87,7 +93,7 @@ pub(crate) struct TerrainGeo {
 impl Default for TerrainGeo {
     fn default() -> Self {
         Self {
-            version: u64::MAX, tex: 0, step: 1.0, ox: 0.0, oz: 0.0, kz: 1.0, tx: 0.0, ty: 0.0, tz: 0.0, tex_step: 1.0, uv0: 0.0, shared: 0, height_srv: None,
+            version: u64::MAX, tex: 0, step: 1.0, ox: 0.0, oz: 0.0, kz: 1.0, tx: 0.0, ty: 0.0, tz: 0.0, tex_step: 1.0, uv0: 0.0, shared: 0, lod: false, height_srv: None,
             patches: vec![],
         }
     }
@@ -112,6 +118,9 @@ pub(crate) struct TerrainMatGpu {
 #[derive(Default)]
 pub(crate) struct TerrainGpuState {
     pub active: bool,
+
+    /// The frame camera's eye, for the patches' level of detail (the shadow pass runs before the camera is set).
+    pub lod_eye: Float3,
     pub failed: bool,
     geo: BTreeMap<EntityId, TerrainGeo>,
     mat: BTreeMap<u64, TerrainMatGpu>,
@@ -121,7 +130,8 @@ pub(crate) struct TerrainGpuState {
 
     /// The climates' texture arrays by (paths, sRGB): the materials of a scene's tiles mostly use the same ones.
     arrays: BTreeMap<(String, bool), Texture>,
-    grid_ib: BTreeMap<(i32, i32), Option<ID3D11Buffer>>,
+    /// Index buffers of a patch of cx x cz cells at a stride, and their index counts.
+    grid_ib: BTreeMap<(i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
     pub(crate) viewz: Target,
     acc: [Target; 3],
@@ -283,7 +293,7 @@ impl Renderer {
             return;
         }
 
-        let mut g = TerrainGeo { version: t.version, step: t.step, ox: t.origin_x, oz: t.origin_z, shared: shared_id, ..Default::default() };
+        let mut g = TerrainGeo { version: t.version, step: t.step, ox: t.origin_x, oz: t.origin_z, shared: shared_id, lod: t.lod, ..Default::default() };
         if let Some(sh) = &t.shared {
             // A shared map: one texture for every terrain that reads it.
             if !self.terrain.shared.contains_key(&sh.id) {
@@ -354,27 +364,59 @@ impl Renderer {
         self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok()
     }
 
-    fn terrain_grid_ib(&mut self, cx: i32, cz: i32) -> Option<ID3D11Buffer> {
-        if let Some(ib) = self.terrain.grid_ib.get(&(cx, cz)) {
+    /// The index buffer of a patch of `cx` x `cz` cells joining every `k`-th vertex (`k` divides both): blocks of k x k cells, two triangles
+    /// each, but the blocks along the patch's edges keep every edge vertex (a fan from the block's centre), so patches at any two strides
+    /// meet without cracks.
+    fn terrain_grid_ib(&mut self, cx: i32, cz: i32, k: i32) -> (Option<ID3D11Buffer>, u32) {
+        if let Some(ib) = self.terrain.grid_ib.get(&(cx, cz, k)) {
             return ib.clone();
         }
 
         let row = PATCH_CELLS + 1;
+        let v = |x: i32, z: i32| (z * row + x) as u16;
         let mut idx = Vec::<u16>::with_capacity((cx * cz * 6) as usize);
-        for z in 0..cz {
-            for x in 0..cx {
-                let a = (z * row + x) as u16;
-                let (b, c) = (a + 1, a + row as u16);
-                let d = c + 1;
+        let mut z0 = 0;
+        while z0 < cz {
+            let mut x0 = 0;
+            while x0 < cx {
+                let (x1, z1) = (x0 + k, z0 + k);
+                let (a, b, c, d) = (v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1));
+                let (left, right, bottom, top) = (x0 == 0, x1 == cx, z0 == 0, z1 == cz);
+                if k == 1 || !(left || right || bottom || top) {
+                    // x right, z up (looking down +y): clockwise = front (the surface faces +y).
+                    idx.extend([a, c, b, b, c, d]);
+                } else {
+                    // The perimeter clockwise (up the left side, along the top, down the right, back along the bottom), every vertex on a patch
+                    // edge, the corners only elsewhere; a fan from the centre (clockwise too).
+                    let mut ring = vec![];
+                    let side = |ring: &mut Vec<u16>, fine: bool, from: (i32, i32), dir: (i32, i32)| {
+                        let n = if fine { k } else { 1 };
+                        let st = k / n;
+                        for i in 0..n {
+                            ring.push(v(from.0 + dir.0 * i * st, from.1 + dir.1 * i * st));
+                        }
+                    };
 
-                // x right, z up (looking down +y): clockwise = front (the surface faces +y).
-                idx.extend([a, c, b, b, c, d]);
+                    side(&mut ring, left, (x0, z0), (0, 1));
+                    side(&mut ring, top, (x0, z1), (1, 0));
+                    side(&mut ring, right, (x1, z1), (0, -1));
+                    side(&mut ring, bottom, (x1, z0), (-1, 0));
+                    let centre = v(x0 + k / 2, z0 + k / 2);
+                    for i in 0..ring.len() {
+                        idx.extend([centre, ring[i], ring[(i + 1) % ring.len()]]);
+                    }
+                }
+
+                x0 = x1;
             }
+
+            z0 += k;
         }
 
         let ib = immutable_buffer(&self.dev, &idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
-        self.terrain.grid_ib.insert((cx, cz), ib.clone());
-        ib
+        let out = (ib, idx.len() as u32);
+        self.terrain.grid_ib.insert((cx, cz, k), out.clone());
+        out
     }
 
     /// The GPU side of a terrain material: the tile's maps (mipmapped), the climate's texture arrays, the light parameter texture.
@@ -490,7 +532,7 @@ impl Renderer {
         }
 
         let mut total = 0;
-        for e in scene.entities() {
+        for e in KindIndex::entities(&self.kinds.terrain, scene) {
             let Payload::Terrain(t) = &e.payload else { continue };
             if !scene.drawable(e) {
                 continue;
@@ -636,9 +678,21 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.terrain.rs_front_cull.as_ref());
         self.ctx.set_input_layout(Some(&il));
 
+        // The boxes by material (a context's placements of one tile share theirs): one bind, the boxes as instances.
+        let mut by_material: Vec<(std::sync::Arc<TerrainMaterial>, Vec<f32>)> = vec![];
         for e in &ents {
             let Payload::Terrain(t) = &e.payload else { continue };
             let Some(m) = t.material.clone() else { continue };
+
+            // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max), rotation index 0 and the layer base 0 (T3).
+            let inst = [0.0, 1.0, 2.0, 3.0, m.x0 as f32, m.y0 as f32, m.z0 as f32, 0.0, m.x1 as f32, m.y1 as f32, m.z1 as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
+            match by_material.iter_mut().find(|(have, _)| have.id == m.id) {
+                Some((_, v)) => v.extend(inst),
+                None => by_material.push((m, inst.to_vec())),
+            }
+        }
+
+        for (m, boxes) in by_material {
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
             let cbs = &mut self.cbs;
 
@@ -712,18 +766,17 @@ impl Renderer {
             bind_sampler(ctx, &blend_ps, "s_light_params", self.states.s_clamp_point.as_ref());
             bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_linear.as_ref());
 
-            // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max), rotation index 0 and the layer base 0 (T3).
-            let inst = [0.0, 1.0, 2.0, 3.0, m.x0 as f32, m.y0 as f32, m.z0 as f32, 0.0, m.x1 as f32, m.y1 as f32, m.z1 as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
             let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-            if !ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &inst)) {
-                continue;
+            for chunk in boxes.chunks(INSTANCE_BYTES / 4 / 16 * 16) {
+                if !ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, chunk)) {
+                    continue;
+                }
+
+                ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb.clone())], &[12, 64], &[0, 0]);
+                ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                ctx.draw_indexed_instanced(36, (chunk.len() / 16) as u32, 0, 0, 0);
+                self.draw_stats.draw_calls += 1;
             }
-
-            ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb)], &[12, 64], &[0, 0]);
-            ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-            ctx.draw_indexed_instanced(36, 1, 0, 0, 0);
-
-            self.draw_stats.draw_calls += 1;
         }
 
         // ---- 2b. The terrain-blend meshes' own material (`custom_material`): added to the accumulation with the weight 10 * vertex alpha.
@@ -854,70 +907,100 @@ impl Renderer {
         self.draw_terrain_patches(&ents, &vs, &ps, view_proj)
     }
 
-    /// Draws the patches of every terrain entity inside `view_proj`, grouped by size, into the bound targets. Returns the triangles drawn.
+    /// Draws the patches of every terrain entity inside `view_proj`, grouped by size and stride, into the bound targets. The terrains that read
+    /// one shared height map share their constants and go out in the same batches. Returns the triangles drawn.
     fn draw_terrain_patches(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, view_proj: &Float4x4) -> u64 {
-        let mut triangles = 0;
-        for e in ents {
+        // Groups: a shared map's terrains together, the others one by one (in the entities' order).
+        let mut groups: Vec<(u64, Vec<TerrainGeo>)> = vec![];
+        for (n, e) in ents.iter().enumerate() {
             let Some(g) = self.terrain.geo.get(&e.id).cloned() else { continue };
+            let key = if g.shared != 0 { g.shared } else { u64::MAX - n as u64 };
+            match groups.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, v)) => v.push(g),
+                None => groups.push((key, vec![g])),
+            }
+        }
+
+        let eye = self.terrain.lod_eye;
+        let mut triangles = 0;
+        for (_, geos) in groups {
+            let g0 = &geos[0];
 
             // vs_height_map_cb: the height texture (scale 1, no offset), its addressing, the world dimensions; river_CB has nothing to do with it.
-            let world_x = g.tex as f32 * g.tex_step;
-            let world_z = world_x * g.kz;
+            let world_x = g0.tex as f32 * g0.tex_step;
+            let world_z = world_x * g0.kz;
             let cbs = &mut self.cbs;
             cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[1.0]);
             cbs.set_f("vs_height_map_cb", "g_height_map_hf_scale", &[1.0]);
             cbs.set_f("vs_height_map_cb", "g_height_map_vertical_offset", &[0.0]);
-            cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[g.tex as f32, g.tex as f32, 1.0 / g.tex as f32, 1.0 / g.tex as f32]);
+            cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[g0.tex as f32, g0.tex as f32, 1.0 / g0.tex as f32, 1.0 / g0.tex as f32]);
             cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[world_x, world_z]);
-            cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[-(g.uv0 + g.tx) / world_x]);
+            cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[-(g0.uv0 + g0.tx) / world_x]);
             self.upload();
             self.bind(vs);
             self.bind(ps);
-            bind_srv(&self.ctx, vs, "t_low_res_height_map", g.height_srv.as_ref());
+            bind_srv(&self.ctx, vs, "t_low_res_height_map", g0.height_srv.as_ref());
 
-            // The batches: (cx, cz) -> instance rows.
-            let mut batches: Vec<(i32, i32, Vec<f32>, u32)> = vec![];
-            for p in &g.patches {
-                let wmin = [p.bmin[0] + g.tx, p.bmin[1] + g.ty, g.kz * p.bmin[2] + g.tz];
-                let wmax = [p.bmax[0] + g.tx, p.bmax[1] + g.ty, g.kz * p.bmax[2] + g.tz];
-                if !box_in_frustum(view_proj, wmin, wmax) {
-                    continue;
-                }
-
-                let at = match batches.iter().position(|b| b.0 == p.cx && b.1 == p.cz) {
-                    Some(at) => at,
-                    None => {
-                        batches.push((p.cx, p.cz, vec![], 0));
-                        batches.len() - 1
+            // The batches: (cx, cz, stride) -> instance rows.
+            let mut batches: Vec<(i32, i32, Vec<f32>, u32, i32)> = vec![];
+            for g in &geos {
+                for p in &g.patches {
+                    let wmin = [p.bmin[0] + g.tx, p.bmin[1] + g.ty, g.kz * p.bmin[2] + g.tz];
+                    let wmax = [p.bmax[0] + g.tx, p.bmax[1] + g.ty, g.kz * p.bmax[2] + g.tz];
+                    if !box_in_frustum(view_proj, wmin, wmax) {
+                        continue;
                     }
-                };
 
-                let tx = g.ox + g.tx + (p.pi * PATCH_CELLS) as f32 * g.step;
-                let tz = g.kz * (g.oz + (p.pj * PATCH_CELLS) as f32 * g.step) + g.tz;
+                    // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
+                    // vertex from 512 m, every 4th from 1 km ...), a power of two that divides the patch.
+                    let k = if g.lod {
+                        let (lo, hi) = ([wmin[0].min(wmax[0]), wmin[1], wmin[2].min(wmax[2])], [wmin[0].max(wmax[0]), wmax[1], wmin[2].max(wmax[2])]);
+                        let (dx, dy, dz) = (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
+                        let d = (dx * dx + dy * dy + dz * dz).sqrt() / (LOD_STEPS * g.step);
+                        let mut k = 1;
+                        while k < PATCH_CELLS && d >= (2 * k) as f32 && p.cx % (2 * k) == 0 && p.cz % (2 * k) == 0 {
+                            k *= 2;
+                        }
 
-                // World x = gx * step + tx, the height texture's y (+ ty), world z = gz * step * kz + tz.
-                batches[at].2.extend([g.step, 0.0, 0.0, tx, 0.0, 0.0, 0.0, g.ty, 0.0, 0.0, g.step * g.kz, tz]);
-                batches[at].3 += 1;
+                        k
+                    } else {
+                        1
+                    };
+
+                    let at = match batches.iter().position(|b| b.0 == p.cx && b.1 == p.cz && b.4 == k) {
+                        Some(at) => at,
+                        None => {
+                            batches.push((p.cx, p.cz, vec![], 0, k));
+                            batches.len() - 1
+                        }
+                    };
+
+                    let tx = g.ox + g.tx + (p.pi * PATCH_CELLS) as f32 * g.step;
+                    let tz = g.kz * (g.oz + (p.pj * PATCH_CELLS) as f32 * g.step) + g.tz;
+
+                    // World x = gx * step + tx, the height texture's y (+ ty), world z = gz * step * kz + tz.
+                    batches[at].2.extend([g.step, 0.0, 0.0, tx, 0.0, 0.0, 0.0, g.ty, 0.0, 0.0, g.step * g.kz, tz]);
+                    batches[at].3 += 1;
+                }
             }
 
-            for (cx, cz, rows, count) in batches {
-                let bytes = rows.len() * 4;
-                if bytes > INSTANCE_BYTES {
-                    continue;
-                }
-
-                let ib = self.terrain_grid_ib(cx, cz);
+            for (cx, cz, rows, _, k) in batches {
+                let (ib, index_count) = self.terrain_grid_ib(cx, cz, k);
                 let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-                if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &rows)) {
-                    continue;
+
+                // As many instances as the buffer holds per draw.
+                for chunk in rows.chunks(INSTANCE_BYTES / 4 / 12 * 12) {
+                    if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, chunk)) {
+                        continue;
+                    }
+
+                    let count = (chunk.len() / 12) as u32;
+                    self.ctx.set_vertex_buffers(1, &[Some(inst_vb.clone())], &[48], &[0]);
+                    self.ctx.set_index_buffer(ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                    self.ctx.draw_indexed_instanced(index_count, count, 0, 0, 0);
+                    self.draw_stats.draw_calls += 1;
+                    triangles += u64::from(index_count / 3) * u64::from(count);
                 }
-
-                self.ctx.set_vertex_buffers(1, &[Some(inst_vb)], &[48], &[0]);
-                self.ctx.set_index_buffer(ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-                self.ctx.draw_indexed_instanced((cx * cz * 6) as u32, count, 0, 0, 0);
-
-                self.draw_stats.draw_calls += 1;
-                triangles += (cx * cz * 2) as u64 * u64::from(count);
             }
         }
 
