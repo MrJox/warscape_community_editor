@@ -6,7 +6,7 @@ use wce_scene::camera::Camera;
 
 use super::*;
 use crate::draw_set::{Frustum, View as DrawView, Visible};
-use crate::model_cache::TEX_SLOTS;
+use crate::model_cache::{GpuMesh, MeshKind, TEX_SLOTS};
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 /// Battle rows of the split table (dll+0x1c88aa0), indexed by gfx_shadow_quality.
@@ -35,18 +35,11 @@ impl Renderer {
             return;
         }
 
-        let vs = self.shader(RIGID_VS);
-        let ps_opaque = self.shader(RIGID_GBUFFER_PS);
-        let ps_alpha = self.shader(RIGID_GBUFFER_ALPHA_PS);
-        let (Some(vs), Some(ps_opaque)) = (vs, ps_opaque) else { return };
+        // Every rigid vertex shader has the same inputs: one layout.
+        let Some(vs) = self.shader(RIGID_VS) else { return };
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-        self.bind(&vs);
-        for &slot in vs.textures.values() {
-            self.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&self.res.instance_ids_srv));
-        }
 
         // The ground first, as the entity order had it (equal depths: the first one drawn wins).
         let view = self.camera_view(if self.env.active { 0.5 } else { 1.0 });
@@ -73,27 +66,51 @@ impl Renderer {
 
         wce_prof!("render.gbuffer.draw");
 
-        // Opaque meshes, then alpha-tested ones.
-        let has_alpha = ps_alpha.is_some();
-        for pass in 0..2 {
-            let Some(ps) = (if pass == 0 { Some(ps_opaque.clone()) } else { ps_alpha.clone() }) else { continue };
+        // One sub-pass per shader pair (GBUFFER_PASSES). An alpha-tested mesh whose material has no alpha-test shader is drawn opaque; a mesh
+        // whose material has no shaders at all is not drawn. With the game's terrain pass, TerrainBlend meshes are drawn there instead: the
+        // terrain's material is projected onto them.
+        self.draw_lists.gbuffer_firsts = firsts;
+        let shaders = GBUFFER_PASSES.map(|(_, _, vs, ps, _)| self.shader(vs).zip(self.shader(ps)));
+        let blend_in_terrain = self.terrain.active;
+        let pass_of = |m: &GpuMesh| {
+            if m.kind == MeshKind::TerrainBlend && blend_in_terrain {
+                return None;
+            }
+
+            let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1)?;
+            let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());
+            alpha.or(Some(opaque).filter(|&k| shaders[k].is_some()))
+        };
+
+        for (pass, pair) in shaders.iter().enumerate() {
+            let Some((vs, ps)) = pair.clone() else { continue };
             if !self.env.active {
-                self.gpu_timer.mark(if pass == 0 { "gbuffer opaque" } else { "gbuffer alpha-tested" });
+                self.gpu_timer.mark(GBUFFER_PASSES[pass].4);
             }
 
             let slots = self.slots_of(&ps);
             let mut bound = false;
             let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m| {
-                if i32::from(m.alpha_mode == 1 && has_alpha) != pass {
+                if pass_of(m) != Some(pass) {
                     return false;
                 }
 
                 if !bound {
+                    r.bind(&vs);
+                    for &slot in vs.textures.values() {
+                        r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                    }
+
                     r.bind(&ps);
                     bind_srv(&r.ctx, &ps, "s_fire_map", r.res.black_srv.as_ref());
                     bind_srv(&r.ctx, &ps, "s_snow_normals", r.res.black_srv.as_ref());
                     ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
                     bound = true;
+                }
+
+                if m.kind == MeshKind::TiledDirtmap {
+                    r.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
+                    r.upload();
                 }
 
                 for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {

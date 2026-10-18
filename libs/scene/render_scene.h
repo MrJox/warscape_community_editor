@@ -39,12 +39,16 @@ enum class Kind {
     Water,             // river ribbons and sea / lake planes, drawn by the renderer's water pass (docs/re/water.md)
 };
 
+// POSITION4..7 of an instance with nothing special: zero, except the opacity in POSITION4.w. rigidstandard's gbuffer_alpha_test multiplies
+// the diffuse alpha by floor(w) * 0.001 before testing it against 0.5, so 0 there discards every pixel of alpha-tested meshes; 1000 is opaque.
+inline constexpr float kDefaultInstanceParams[16] = {0, 0, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 struct MeshInstance {
     std::string model;               // VFS path of the .rigid_model_v2
     bool casts_shadow = true;
     bool lod = false;                // use the file's LODs by camera distance and skip it when it is too small to see (the sample map keeps LOD 0 always)
-    // Per-instance pixel shader inputs of rigidcommon (POSITION4..7, docs/re/renderer.md); zero = the engine's default.
-    float p4[4] = {0, 0, 0, 0}, p5[4] = {0, 0, 0, 0}, p6[4] = {0, 0, 0, 0}, p7[4] = {0, 0, 0, 0};
+    // Per-instance pixel shader inputs of rigidcommon (POSITION4..7, docs/re/renderer.md); kDefaultInstanceParams = the engine's default.
+    float p4[4] = {0, 0, 0, 1000}, p5[4] = {0, 0, 0, 0}, p6[4] = {0, 0, 0, 0}, p7[4] = {0, 0, 0, 0};
 };
 
 // A regular grid of heights: vertex (i, j) is at x = origin_x + i * step, z = origin_z + j * step, y = heights[j * nx + i]

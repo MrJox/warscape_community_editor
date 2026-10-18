@@ -54,6 +54,87 @@ every normal-less mesh are lit differently since (max 29 levels on the dry captu
      z: the layer-exempt-group mask result, w: the weighted per-layer value `g_blend_pixel_scale_array[...].z`)`. The alpha channel blends the pass into the G-buffer.
 3. **Far blend** replaces pass 2 beyond `g_far_tile_distance` with the coarse map-wide material (`g_far_world_*_uv_offset`, `g_far_blend_range`).
 
+## TerrainBlend meshes (`rigidterrainblend.hlsl`, 2026-10-18, from the shader code)
+
+Buildings carry ground skirts (ramps, banks, earthworks) as rigid-model meshes of material type TerrainBlend (86): the default static vertex
+layout (rpfm_lib read them as two float4s until 2026-10-18), the same vertex inputs as rigidcommon, often no textures of their own. They take
+the ground's colour in one of two ways:
+
+- **Terrain pass.** `vs30_geom` + `ps30_geom` write the mesh's view-space depth (`dp4(world, view row 2)`), the value `ps_depth` writes for the
+  terrain surface; `ps30_blend` reconstructs positions from the z / w target and the resolve reads the view-depth one, so a mesh written into both
+  (with stencil 2) is painted by the blend and resolve passes like the ground at its x, z. The z / w value has no rigidterrainblend shader:
+  `vs30_main` (world position in `TEXCOORD0`) + rigidterrain's `ps30_geom` produce it. The tool does this (`draw_blend_meshes`); vertical faces
+  get the top-down projection's streaks.
+- **Virtual texture.** `ps30_null_gbuffer`, the same pixel shader body as the terrain surface's `rigidterrain.hlsl` `ps30_geom_vtex`: both read
+  the terrain's virtual texture (next section) and write the terrain pass's intermediate targets, which `ps30_terrain_to_gbuffer_ts` resolves.
+
+Without a terrain material (the weather tool's flat ground) the tool draws them with `ps30_gbuffer` and their own textures (white when they
+have none).
+
+## The terrain virtual texture (`virtualtexture.hlsl`, 2026-10-18, from the shader code)
+
+The game has two ways to colour the terrain. The **screen-space** one is the tool's (`ps30_blend` boxes every frame, `ps30_terrain_to_gbuffer_ss`).
+The **virtual texture** one bakes the same blend into a page cache once and lets the surface sample it. Not implemented by the tool. Shaders:
+
+| Entry | Role |
+|---|---|
+| `vs30_quad_main` | fullscreen / viewport quad: `pos = v0.xz * 2 - 1`, z 0, w 1 (no constants) |
+| `ps30_page_touch` | feedback: which pages, at which mip, the frame needs |
+| `ps30_copy_blend_to_cache` (`_with_coastline_`) | bakes a blended page into the cache atlas |
+| `ps30_page_table_replace` | points the page table at a newly resident page |
+| `rigidterrain ps30_geom_vtex`, `rigidterrainblend ps30_null_gbuffer` | the surface and TerrainBlend meshes reading the cache (same body) |
+| `rigidterrain ps30_terrain_to_gbuffer_ts` | resolve of the virtual-texture targets into the G-buffer |
+
+**`cbTerrainVirtualTexture`** (c0..c2 = `g_terrain_vtex_constants_0..2`; the meaning is inferred from the arithmetic):
+
+- `c0.xy`: world x, z of the terrain's uv origin; `c0.zw`: page-table size in texels at mip 0;
+- `c1.x`: one page's extent in uv at mip 0 (1 / pages across); `c1.y`: the virtual texture's size in texels at mip 0 (the mip selection's
+  scale); `c1.w`: 1 / world size;
+- `c2.y`: a page's stride in the cache atlas (uv), `c2.z`: a page's interior in the atlas (uv), `c2.w`: the interior's offset (the border, uv);
+  `c1.z`, `c2.x` are not read by these shaders.
+
+**Reading** (`ps30_geom_vtex` / `ps30_null_gbuffer`; `v1.xyz` = world position, from `vs30_geom_new` or `rigidterrainblend vs30_main`):
+
+1. `uv = ((x - c0.x) * c1.w, 1 - (z - c0.y) * c1.w)`; `t = uv * c1.y`; `lod = max(0, 0.5 * log2(max(|ddx t|^2, |ddy t|^2)))`.
+2. Two mips, `A = floor(lod)` and `B = max(floor(lod) - 1, 0)`, blended by `frac(lod)` (B at 0, A at 1): one level finer than plain trilinear.
+3. Per mip m: page-table texel `floor(uv * c0.zw / 2^m)`, read with `sample_l` at that texel's corner and level m (a point-sampled, mipped
+   page table, `t0` / `vtex_page_table_sampler`); `round_ni(rgb * 255 + 0.5)` = (page x, page y, page mip p). The page holding `uv` at mip p
+   spans `2^p * c1.x` in uv; `in_page = frac(uv / (2^p * c1.x))`; atlas uv = `(page x, page y) * c2.y + in_page * c2.z + c2.w`.
+4. `t1` (`vtex_diffuse_cache_sampler`) and `t2` (`vtex_normal_cache_sampler`) at that atlas uv (plain `sample`).
+5. Outputs: `o0 = (diffuse.rgb, 1)`, `o1 = normal cache (rgba)`, `o2 = 0`, `o3.x = z / w` (`view_projection` rows 2 / 3). The four targets are
+   the terrain pass's albedo, normal, gloss and z / w targets (the tool's `acc[0..2]` and `zw`); the view-depth target comes from `ps_depth`
+   as before.
+
+**Resolving** (`ps30_terrain_to_gbuffer_ts`, the `_ss` resolve's twin): the albedo is read as is (`_ss` divides by `alpha + 0.001`: the blend's
+premultiplied sums), the gloss target swizzled `.wxyz`; it writes the G-buffer (`o0 = normal * 0.5 + 0.5`, `o1 = sqrt(albedo)`,
+`o2 = (1, 1, 1, 1 / 255)`, `o3.x` depth, `o4 = 0`). The virtual texture has no light parameters (`o2 = 0` above).
+
+**Filling a page** (`ps30_copy_blend_to_cache`, `cbCopyBlendToCache`): the page's area is first blended into `land_albedo` / `land_normal`
+(the `ps30_blend` outputs: premultiplied colour and normal); the shader is drawn over the page's slot in the atlas (viewport) and writes
+`o0 = (albedo.rgb / albedo.a, albedo.a)` to the diffuse cache and `o1 = (normal.xyz / albedo.a * 0.5 + 0.5, normal.w)` to the normal cache.
+Source uv: `((pos.x - h - vp.x) * vp.z, 1 - (pos.y - h - vp.y) * vp.w)`, `vp` = `g_viewport_pos_inv_size` (slot x, y, 1 / w, 1 / h),
+`h` = `g_to_shfs_lhfs_hfo.x` (the half-pixel offset, as `camera_VS_PS` +448). `g_world_scale_offset`, `g_height_texture_sizes` and
+`g_virtual_height` are declared but not read here (presumably for the page's blend draw). The coastline variant takes `sea_albedo` /
+`sea_normal` where the sea's alpha is non-zero (sea over land), and divides the normal by its own source's alpha.
+
+**Page table update** (`ps30_page_table_replace`, `cbPageTableReplace`): drawn over a region of one page-table mip (uv = `pos * g_MulAdd.xy
++ g_MulAdd.zw`); every texel whose entry (read at level `g_OldPage_SampleMip.z`) equals `g_OldPage_SampleMip.xy` (within 0.001) becomes
+`g_Replacement`, others are kept. So each page-table texel names the best resident page covering it, coarser pages standing in until a finer
+one is baked.
+
+**Feedback** (`ps30_page_touch`, `cbPageTouch.xyz` = (1 / feedback width, 1 / feedback height, mip bias)): per feedback pixel, the depth
+buffer (`t0`, its `.x`: the shader reads `t0.yzxw` and uses `.z`) is unprojected with `camera_VS_PS` rows 21, 23, 24 (`inv_view_projection` x,
+z, w) to world x, z; sky (depth 1) is discarded. Mip = `max(floor(lod) + bias, 0)` as above; page = `floor(uv / (2^mip * c1.x))`; written as
+`(page.x mod 256, page.y mod 256, page.x / 256 + 16 * (page.y / 256), mip + 1) / 255` (alpha 0 = nothing): the CPU reads it back and
+schedules the pages.
+
+**For the tool** (the plan, not done): a single resident "page" per terrain is enough to use the game's readers. Bake the tile's blend once
+top-down (an orthographic view: `zw` from the surface, the blend boxes into the three accumulators), copy it into a one-page cache with
+`ps30_copy_blend_to_cache`, and use a 1 x 1 page table holding (0, 0, 0) (`c0.zw = (1, 1)`, `c1.x = 1`, `c2 = (0, 1, 1 - 2b, b)` for a border
+b); `ps30_geom_vtex` / `ps30_null_gbuffer` then read it and `_ts` resolves. Resolution is the limit (2048^2 over a 1024 m tile is 0.5 m per
+texel against the blend pass's per-pixel detail), which real paging (feedback, page bake, table update) lifts. The weather tool's flat
+ground could use the same path with a cache baked from its tiled diffuse and a flat normal.
+
 ## Resources
 
 | Name | Kind | Source (to be confirmed per item) |

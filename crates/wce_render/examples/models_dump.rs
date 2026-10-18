@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use wce_d3d11::*;
 use wce_foundation::math::Float3;
-use wce_render::model_cache::{GpuMesh, GpuModel, ModelCache, SharedReader, SharedTexture, TEX_SLOTS, TextureCache};
+use wce_render::model_cache::{GpuMesh, GpuModel, ModelCache, SharedReader, SharedTexture, TEX_NORMAL, TextureCache};
 use wce_scene::render_scene::{Terrain, TerrainSkin};
 
 fn b(f: f32) -> String {
@@ -70,7 +70,8 @@ impl Gpu {
     }
 
     fn mesh(&self, m: &GpuMesh) {
-        let tex = (0..TEX_SLOTS).map(|k| format!("{},", self.tex(&m.tex[k]))).collect::<String>();
+        // The standard material's five slots: the C++ cache has no others.
+        let tex = (0..=TEX_NORMAL).map(|k| format!("{},", self.tex(&m.tex[k]))).collect::<String>();
         println!("    mesh n{} a{} off={}/{} b={}..{} vb={} ib={} tex={tex}", m.index_count, m.alpha_mode, v3(m.offset), i32::from(m.has_offset), v3(m.bmin), v3(m.bmax),
             self.buf(m.vb.as_ref()), self.buf(m.ib.as_ref()));
     }

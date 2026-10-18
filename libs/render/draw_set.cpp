@@ -2,6 +2,7 @@
 
 #include "foundation/profile.h"
 #include "foundation/thread_pool.h"
+#include "scene/render_scene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -100,7 +101,7 @@ uint32_t DrawSet::add(const GpuModel* model, const float4x4& world, const float*
     world_.push_back(w);
     if (params) {
         bool any = false;
-        for (int i = 0; i < 16; ++i) any = any || params[i] != 0.0f;
+        for (int i = 0; i < 16; ++i) any = any || params[i] != kDefaultInstanceParams[i];
         if (any) {
             f |= kParams;
             params_index_.push_back(uint32_t(params_.size() / 16));
@@ -219,7 +220,7 @@ void DrawSet::gather(const Visible& vis, RigidInstance* dst) const {
                     r.world[row][3] += w.m[row][0] * mesh->offset.x + w.m[row][1] * mesh->offset.y + w.m[row][2] * mesh->offset.z;
             }
             if (flags_[item] & kParams) std::memcpy(r.p4, &params_[size_t(params_index_[item]) * 16], 64);
-            else std::memset(r.p4, 0, 64);
+            else std::memcpy(r.p4, kDefaultInstanceParams, 64);
         }
     });
 }

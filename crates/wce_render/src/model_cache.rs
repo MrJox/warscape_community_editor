@@ -54,15 +54,33 @@ unsafe impl Send for Texture {}
 // SAFETY: a texture is a free-threaded view and plain data.
 unsafe impl Sync for Texture {}
 
-/// The five texture slots of the rigid standard material, in the order of [`GpuMesh::tex`].
+/// The texture slots of the rigid materials, in the order of [`GpuMesh::tex`]: the five of the standard material, then the tiled dirt map's
+/// two.
 pub const TEX_DIFFUSE: usize = 0;
 pub const TEX_SPECULAR: usize = 1;
 pub const TEX_GLOSS: usize = 2;
 pub const TEX_COLOUR_MASK: usize = 3;
 pub const TEX_NORMAL: usize = 4;
-pub const TEX_SLOTS: usize = 5;
+pub const TEX_DETAIL: usize = 5;
+pub const TEX_ALPHA_MASK: usize = 6;
+pub const TEX_SLOTS: usize = 7;
 
-const TEX_NAMES: [&str; TEX_SLOTS] = ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map"];
+const TEX_NAMES: [&str; TEX_SLOTS] = ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask"];
+
+/// Which of the game's rigid shaders draw a mesh (its material type).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeshKind {
+    /// DefaultMaterial: rigidstandard.
+    #[default]
+    Standard,
+
+    /// TiledDirtmap: rigidtileddirtmapmesh, rigidstandard plus a tiled dirt map (`s_detail_map` at uv * `g_uv2_tile_interval`) faded by an
+    /// alpha mask (`s_alpha_mask` at the second uv).
+    TiledDirtmap,
+
+    /// TerrainBlend (a building's ground skirt): rigidterrainblend.
+    TerrainBlend,
+}
 
 /// The shader name of a texture slot (`s_diffuse_map`...); empty for other slots.
 pub fn gpu_texture_name(slot: usize) -> &'static str {
@@ -82,7 +100,13 @@ pub struct GpuMesh {
     pub index_count: u32,
     pub alpha_mode: i32,
 
-    /// The mesh-local origin (terrain patches keep half-float positions small); zero for models.
+    pub kind: MeshKind,
+
+    /// The tiled dirt map's repeats per uv unit (the material's floats 0 and 1, `rigid_config_PS.g_uv2_tile_interval`); TiledDirtmap only.
+    pub uv2_tile: [f32; 2],
+
+    /// The mesh-local origin: a model mesh's pivot (its material's `v_pivot`: the vertices are stored around it), a terrain patch's corner
+    /// (half-float positions stay small).
     pub offset: Float3,
     pub has_offset: bool,
     pub tex: [SharedTexture; TEX_SLOTS],
@@ -404,12 +428,22 @@ impl ModelInner {
         let textures = &self.textures;
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
             let (mesh, material) = (block.mesh(), block.material());
-            if *mesh.material_type() != MaterialType::DefaultMaterial || *material.vertex_format() != VertexFormat::Static
+            let kind = match mesh.material_type() {
+                MaterialType::DefaultMaterial => MeshKind::Standard,
+                MaterialType::TiledDirtmap => MeshKind::TiledDirtmap,
+                MaterialType::TerrainBlend => MeshKind::TerrainBlend,
+                _ => return None,
+            };
+
+            if *material.vertex_format() != VertexFormat::Static
                 || mesh.vertices().is_empty() || mesh.indices().is_empty()
             {
                 return None;
             }
 
+            let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+
+            // The three material types share the default layout.
             let mut vertices = Vec::with_capacity(mesh.vertices().len() * 32);
             for vertex in mesh.vertices() {
                 vertex.write(&mut vertices, 6, VertexFormat::Static, MaterialType::DefaultMaterial).ok()?;
@@ -434,14 +468,18 @@ impl ModelInner {
                 ib: Some(ib),
                 index_count: mesh.indices().len() as u32,
                 alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
-                offset: Float3::default(),
-                has_offset: false,
+                kind,
+                uv2_tile: if kind == MeshKind::TiledDirtmap { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
+                offset: pivot,
+                has_offset: pivot != Float3::default(),
                 tex: [
                     material_texture(textures, material, TextureType::Diffuse, true, textures.white()),
                     material_texture(textures, material, TextureType::Specular, true, textures.black()),
                     material_texture(textures, material, TextureType::GlossMap, false, textures.black()),
                     material_texture(textures, material, TextureType::Mask, false, textures.black()),
                     material_texture(textures, material, TextureType::Normal, false, textures.flat_normal()),
+                    material_texture(textures, material, TextureType::TilingDirtUV2, true, textures.white()),
+                    material_texture(textures, material, TextureType::DirtAlphaMask, false, textures.white()),
                 ],
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
@@ -467,8 +505,9 @@ impl ModelInner {
 
             if l == 0 {
                 for g in &meshes {
-                    gm.bmin = Float3::new(gm.bmin.x.min(g.bmin.x), gm.bmin.y.min(g.bmin.y), gm.bmin.z.min(g.bmin.z));
-                    gm.bmax = Float3::new(gm.bmax.x.max(g.bmax.x), gm.bmax.y.max(g.bmax.y), gm.bmax.z.max(g.bmax.z));
+                    let (lo, hi) = (g.bmin + g.offset, g.bmax + g.offset);
+                    gm.bmin = Float3::new(gm.bmin.x.min(lo.x), gm.bmin.y.min(lo.y), gm.bmin.z.min(lo.z));
+                    gm.bmax = Float3::new(gm.bmax.x.max(hi.x), gm.bmax.y.max(hi.y), gm.bmax.z.max(hi.z));
                 }
 
                 gm.meshes = meshes;
@@ -947,9 +986,11 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         ib: None,
         index_count: 0,
         alpha_mode: 0,
+        kind: MeshKind::Standard,
+        uv2_tile: [0.0; 2],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal()],
+        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white()],
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
     };

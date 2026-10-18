@@ -21,6 +21,7 @@ use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::{Document, SaveTarget};
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::math::Float3;
+use wce_tile::world_transform::world_transform;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
 
@@ -889,10 +890,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_dump_placement", "tile_dump_placement <file.tsv>",
-        "write every instance with its surface mode, world position and the terrain height under it (TSV), to study placement", |e, a| {
+        "write every instance with its surface mode, world position, the y of the file's transforms (before the landscape snap) and the terrain height under it (TSV), to study placement", |e, a| {
             let (Some(d), Some(path)) = (document(e), a.first()) else { return fail("usage: tile_dump_placement <file.tsv>") };
             let t = d.tile();
-            let mut out = "elem\ttype\tname\tmode\twx\twy\twz\tterrain\n".to_owned();
+            let mut out = "elem\ttype\tname\tmode\twx\twy\twz\tfile_y\tterrain\n".to_owned();
             for &el in t.instances() {
                 let w = t.world_position(el);
                 let mode = match t.placement(el) {
@@ -904,7 +905,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 // The C++ stream wrote floats with 6 significant digits.
                 let g = |v: f32| wce_formats::c_num::printf_g(f64::from(v));
                 out += &format!(
-                    "{el}\t{}\t{}\t{mode}\t{}\t{}\t{}\t{}\n", t.tscene().type_of(el), t.tscene().name(el), g(w.x), g(w.y), g(w.z), g(t.terrain_height(w.x, w.z)),
+                    "{el}\t{}\t{}\t{mode}\t{}\t{}\t{}\t{}\t{}\n", t.tscene().type_of(el), t.tscene().name(el), g(w.x), g(w.y), g(w.z),
+                    g(world_transform(t.tscene(), el).position.y as f32), g(t.terrain_height(w.x, w.z)),
                 );
             }
 

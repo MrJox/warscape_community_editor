@@ -73,6 +73,9 @@ pub(crate) struct SceneDraws {
     pub vis: Visible,
     pub vis_terrain: Visible,
     pub ring: InstanceRing,
+
+    /// The first instance of each set in the ring as the camera's G-buffer pass wrote them (the terrain pass draws the same instances).
+    pub gbuffer_firsts: [u32; 2],
 }
 
 impl Renderer {
