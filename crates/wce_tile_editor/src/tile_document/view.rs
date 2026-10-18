@@ -198,7 +198,7 @@ impl Tile {
             let (x0, z0, x1, z1) = self.blend_area();
             self.material_id += 1;
             let rq = MaterialRequest {
-                folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, x1, z1, y0: h.min_height(), y1: h.min_height() + h.scale(),
+                folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, x1, z1, y0: h.min_height() / p.unit_scale, y1: (h.min_height() + h.scale()) / p.unit_scale,
                 look: self.look.clone(), id: self.material_id,
             };
 
@@ -276,7 +276,7 @@ impl Tile {
                     let Some(pos) = vec("position") else { continue };
                     let world = |q: Double3| {
                         let p = w.position + w.rotation * q;
-                        [p.x / u, p.y, p.z / u]
+                        [p.x / u, p.y / u, p.z / u]
                     };
 
                     let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
@@ -317,7 +317,7 @@ impl Tile {
                     let x = bez(a.x, a.cout[0], b.cin[0], b.x, t);
                     let z = bez(a.z, a.cout[2], b.cin[2], b.z, t);
                     let off = a.offset + (b.offset - a.offset) * t;
-                    let y = if landscape { f64::from(self.terrain_height(x as f32, z as f32)) + off } else { bez(a.y, a.cout[1], b.cin[1], b.y, t) };
+                    let y = if landscape { f64::from(self.terrain_height(x as f32, z as f32)) + off / u } else { bez(a.y, a.cout[1], b.cin[1], b.y, t) };
                     samples.push(Sample {
                         x, z, y, width: a.width + (b.width - a.width) * t, flow: a.flow + (b.flow - a.flow) * t, foam: a.foam + (b.foam - a.foam) * t,
                     });
@@ -525,13 +525,13 @@ impl Tile {
             t.step = (p.mpp_x() * f64::from(stride)) as f32;
             t.origin_x = -p.border_m() as f32;
             t.origin_z = -p.border_m() as f32 / k;
-            let nx = t.nx;
+            let (nx, unit) = (t.nx, p.unit_scale);
             t.heights = vec![0.0; t.nx as usize * t.nz as usize];
             t.heights.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
                 for (i, h) in row.iter_mut().enumerate() {
                     let x = (i as i32 * stride).min(hf.width() as i32 - 1) as u32;
                     let y = (j as i32 * stride).min(hf.height() as i32 - 1) as u32;
-                    *h = hf.metres(x, y) as f32;
+                    *h = (hf.metres(x, y) / unit) as f32;
                 }
             });
 
@@ -947,7 +947,7 @@ impl Tile {
         let u = self.unit();
         self.tscene().polygon_points(elem).into_iter().filter_map(|p| self.tscene().point_position(p)).map(|v| {
             let p = w.position + w.rotation * v;
-            Float3::new((p.x / u) as f32, p.y as f32, (p.z / u) as f32)
+            Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
         }).collect()
     }
 

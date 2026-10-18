@@ -38,7 +38,7 @@ fn close(a: Double3, b: Double3) -> bool {
 
 /// A world position in scene units (`unit` per metre horizontally).
 fn scene_point(p: Float3, unit: f64) -> Double3 {
-    Double3::new(f64::from(p.x) * unit, f64::from(p.y), f64::from(p.z) * unit)
+    Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit)
 }
 
 /// The rotation (upper 3x3) of a world matrix.
@@ -77,7 +77,7 @@ impl Tile {
     pub(crate) fn local_for_world_y(&self, elem: usize, world_y: f64) -> Double3 {
         let pw = parent_transform(self.tscene(), elem);
         let mut w = world_transform(self.tscene(), elem);
-        w.position.y = world_y;
+        w.position.y = world_y * self.unit();
         pw.rotation.transpose() * (w.position - pw.position)
     }
 
@@ -159,7 +159,7 @@ impl Tile {
 
     fn apply_brush(&mut self, kind: BrushKind, x: f32, z: f32, s: &BrushSettings, dt: f32) {
         let p = &mut self.project;
-        let (cx, cy, mpp) = (p.pixel_x(f64::from(x)), p.pixel_z(f64::from(z)), p.mpp_x());
+        let (cx, cy, mpp, unit) = (p.pixel_x(f64::from(x)), p.pixel_z(f64::from(z)), p.mpp_x(), p.unit_scale);
         let Some(hf) = &mut p.height else { return };
         if !self.stroke_open {
             let _ = hf.begin_edit();
@@ -172,12 +172,13 @@ impl Tile {
         let _ = match kind {
             BrushKind::Raise => {
                 b.strength = 1.0;
-                hf.raise(&b, f64::from(s.strength * dt))
+                // Heights are world units here, scene units in the height map.
+                hf.raise(&b, f64::from(s.strength * dt) * unit)
             }
 
             BrushKind::Lower => {
                 b.strength = 1.0;
-                hf.raise(&b, f64::from(-s.strength * dt))
+                hf.raise(&b, f64::from(-s.strength * dt) * unit)
             }
 
             BrushKind::Smooth => {
@@ -187,7 +188,7 @@ impl Tile {
 
             BrushKind::Flatten => {
                 b.strength = soft;
-                hf.flatten(&b, f64::from(s.flatten_height))
+                hf.flatten(&b, f64::from(s.flatten_height) * unit)
             }
 
             BrushKind::Level => {
@@ -364,7 +365,7 @@ impl TileDocument {
 
             // The copy stands on the terrain.
             if t.placement_of_attr(copy) == Placement::Landscape {
-                y = f64::from(t.landscape_y(copy, ((w.position.x + 4.0 * u) / u) as f32, (w.position.z / u) as f32));
+                y = f64::from(t.landscape_y(copy, ((w.position.x + 4.0 * u) / u) as f32, (w.position.z / u) as f32)) * u;
             }
 
             set_world_position(self.tscene_mut(), copy, Double3::new(w.position.x + 4.0 * u, y, w.position.z));
@@ -802,7 +803,7 @@ impl TileDocument {
                 it.mode_new = Some(text.to_owned());
             }
 
-            let file_y = world_transform(t.tscene(), e).position.y as f32;
+            let file_y = (world_transform(t.tscene(), e).position.y / t.unit()) as f32;
             if mode == Placement::Landscape {
                 // Freeform -> Landscape snaps (TEd writes the terrain height); a landscape item is shown on the terrain even when its file is not.
                 let p = t.world_position(e);
@@ -851,7 +852,7 @@ impl TileDocument {
             let y = t.landscape_y(e, p.x, p.z);
 
             // The file's own y (see snap_landscape_world): this writes the shown height into it.
-            if (y - world_transform(t.tscene(), e).position.y as f32).abs() < 1e-5 {
+            if (y - (world_transform(t.tscene(), e).position.y / t.unit()) as f32).abs() < 1e-5 {
                 continue;
             }
 
@@ -1107,13 +1108,13 @@ impl TileDocument {
             let u = t.unit();
 
             // The new world position in scene units, local to the parent.
-            let mut wp = Double3::new(f64::from(now.m[0][3]) * u, f64::from(now.m[1][3]), f64::from(now.m[2][3]) * u);
+            let mut wp = Double3::new(f64::from(now.m[0][3]) * u, f64::from(now.m[1][3]) * u, f64::from(now.m[2][3]) * u);
 
             // As in TEd: x / z move a landscape instance over the terrain, y is the terrain's (a y handle does nothing). The float32 noise of a
             // y-axis drag at 1000 m is 6e-5.
             if t.placement(e) == Placement::Landscape {
                 let same_xz = (now.m[0][3] - before.m[0][3]).abs() < 2e-4 && (now.m[2][3] - before.m[2][3]).abs() < 2e-4;
-                wp.y = if same_xz { f64::from(before.m[1][3]) } else { f64::from(t.landscape_y(e, now.m[0][3], now.m[2][3])) };
+                wp.y = u * if same_xz { f64::from(before.m[1][3]) } else { f64::from(t.landscape_y(e, now.m[0][3], now.m[2][3])) };
             }
 
             let lp = pw.rotation.transpose() * (wp - pw.position);

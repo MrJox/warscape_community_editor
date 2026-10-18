@@ -75,7 +75,7 @@ pub(crate) fn matrix_of(w: &WorldTransform, unit: f64, scale: Option<Double3>) -
     }
 
     m.m[0][3] = (w.position.x / unit) as f32;
-    m.m[1][3] = w.position.y as f32;
+    m.m[1][3] = (w.position.y / unit) as f32;
     m.m[2][3] = (w.position.z / unit) as f32;
     m
 }
@@ -120,9 +120,9 @@ impl Tile {
         self.project.extent_z()
     }
 
-    /// Metres: the terrain height under (x, z).
+    /// World units: the terrain height under (x, z).
     pub fn terrain_height(&self, x: f32, z: f32) -> f32 {
-        self.project.height_at(f64::from(x), f64::from(z)) as f32
+        (self.project.height_at(f64::from(x), f64::from(z)) / self.unit()) as f32
     }
 
     pub fn landscape_y(&self, _elem: usize, x: f32, z: f32) -> f32 {
@@ -175,7 +175,7 @@ impl Tile {
     }
 
     fn metres(&self, w: &WorldTransform) -> Float3 {
-        Float3::new((w.position.x / self.unit()) as f32, w.position.y as f32, (w.position.z / self.unit()) as f32)
+        Float3::new((w.position.x / self.unit()) as f32, (w.position.y / self.unit()) as f32, (w.position.z / self.unit()) as f32)
     }
 
     pub fn world_position(&self, elem: usize) -> Float3 {
@@ -186,13 +186,17 @@ impl Tile {
         self.metres(&world_transform(self.tscene(), elem))
     }
 
+    /// The matrix an instance's model is drawn with: the instance's scale divided by the unit scale on every axis. The world here is scene
+    /// space with x and z divided by the unit scale; drawn at full size, models were twice as large as TEd shows them (docs/formats/tile_ted.md).
     pub fn world_matrix(&self, elem: usize) -> Float4x4 {
+        let model = |s: Double3| s * (1.0 / self.unit());
         if self.idx.valid && elem < self.idx.slot.len() {
             let s = self.idx.scale[elem];
-            return matrix_of(&self.idx.world[self.idx.slot[elem] as usize], self.unit(), Some(s.map(f64::from).into()));
+            return matrix_of(&self.idx.world[self.idx.slot[elem] as usize], self.unit(), Some(model(s.map(f64::from).into())));
         }
 
-        matrix_of(&world_transform(self.tscene(), elem), self.unit(), self.tscene().scale(elem))
+        let s = self.tscene().scale(elem).unwrap_or(Double3::new(1.0, 1.0, 1.0));
+        matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(s)))
     }
 
     pub fn building_model(&self, key: &str) -> Option<&BuildingModel> {
@@ -211,7 +215,8 @@ impl Tile {
     /// What a click ray tests against.
     pub fn marker_radius(&self, elem: usize) -> f32 {
         if let Some(m) = self.model_of(elem).filter(|m| m.ok) {
-            let e = m.bmax - m.bmin;
+            // Model space; drawn divided by the unit scale (world_matrix).
+            let e = (m.bmax - m.bmin) * (1.0 / self.unit() as f32);
             return (0.5 * e.x.max(e.y).max(e.z)).clamp(2.0, 80.0);
         }
 
@@ -672,7 +677,7 @@ impl Tile {
             let a = at as usize;
             mk.elem[a] = i;
             mk.x[a] = (w.position.x / unit) as f32;
-            mk.y[a] = w.position.y as f32;
+            mk.y[a] = (w.position.y / unit) as f32;
             mk.z[a] = (w.position.z / unit) as f32;
             mk.slot[i] = Some(at);
         }
