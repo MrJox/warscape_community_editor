@@ -69,6 +69,19 @@ pub const TEX_SLOTS: usize = 8;
 const TEX_NAMES: [&str; TEX_SLOTS] =
     ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map"];
 
+impl MeshKind {
+    pub fn is_tree(self) -> bool {
+        matches!(self, Self::TreeBranch | Self::TreeLeaf | Self::TreeBillboard)
+    }
+}
+
+/// The Tree vertex format: position, LOD position, normal, tangent, bitangent (f16 x 4 each), uv, LOD weights, an unused pair (f16 x 2
+/// each), colour and wind weight (f16 x 4). rigidbranchcommon_v3 / rigidleafcommon_v3 draw weight.x * position + weight.y * LOD position.
+pub const TREE_STRIDE: u32 = 60;
+
+/// The Billboard vertex format: the quad's corner (f16 x 4: x across, y up, in metres) and uv (f16 x 2).
+pub const BILLBOARD_STRIDE: u32 = 12;
+
 /// Which of the game's rigid shaders draw a mesh (its material type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeshKind {
@@ -86,6 +99,14 @@ pub enum MeshKind {
     /// ShipAmbientmap (many buildings, despite the name): rigidambientmapmesh, rigidstandard with the diffuse multiplied by a baked ambient
     /// occlusion map (`s_ambient_map`) at the second uv.
     AmbientMap,
+
+    /// Tree / TreeLeaf meshes (vertex format Tree, [`TREE_STRIDE`] bytes): rigidbranch_v3 / rigidleaf_v3, with their own vertex shaders.
+    TreeBranch,
+    TreeLeaf,
+
+    /// TreeBillboardMaterial (vertex format Billboard, [`BILLBOARD_STRIDE`] bytes): a tree's farthest LOD, a quad turned to the camera
+    /// showing one of four views (rigidtreebillboard); its diffuse in the diffuse slot, the normal and displacement map in the normal slot.
+    TreeBillboard,
 }
 
 /// The shader name of a texture slot (`s_diffuse_map`...); empty for other slots.
@@ -105,6 +126,9 @@ pub struct GpuMesh {
     pub ib: Option<ID3D11Buffer>,
     pub index_count: u32,
     pub alpha_mode: i32,
+
+    /// Bytes per vertex: 32 (the default static layout), [`TREE_STRIDE`] for trees.
+    pub stride: u32,
 
     pub kind: MeshKind,
 
@@ -434,26 +458,38 @@ impl ModelInner {
         let textures = &self.textures;
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
             let (mesh, material) = (block.mesh(), block.material());
-            let kind = match mesh.material_type() {
-                MaterialType::DefaultMaterial => MeshKind::Standard,
-                MaterialType::TiledDirtmap => MeshKind::TiledDirtmap,
-                MaterialType::TerrainBlend => MeshKind::TerrainBlend,
-                MaterialType::ShipAmbientmap => MeshKind::AmbientMap,
+            let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
+                (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
+                (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
+                (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
+                (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
+                (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
+                (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
+                (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
                 _ => return None,
             };
 
-            if *material.vertex_format() != VertexFormat::Static
-                || mesh.vertices().is_empty() || mesh.indices().is_empty()
-            {
+            if mesh.vertices().is_empty() || mesh.indices().is_empty() {
                 return None;
             }
 
             let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
 
-            // These material types share the default layout.
-            let mut vertices = Vec::with_capacity(mesh.vertices().len() * 32);
+            // The static material types share the default layout; trees have theirs. Written back as rpfm_lib reads them: the file's bytes.
+            let stride = match format {
+                VertexFormat::Tree => TREE_STRIDE,
+                VertexFormat::Billboard => BILLBOARD_STRIDE,
+                _ => 32,
+            };
+
+            let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
             for vertex in mesh.vertices() {
-                vertex.write(&mut vertices, 6, VertexFormat::Static, MaterialType::DefaultMaterial).ok()?;
+                let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
+                vertex.write(&mut vertices, 6, format, mtype).ok()?;
+            }
+
+            if vertices.len() != mesh.vertices().len() * stride as usize {
+                return None;
             }
 
             let indices = mesh.indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
@@ -461,20 +497,51 @@ impl ModelInner {
             let ib = immutable_buffer(self.dev.device(), &indices, D3D11_BIND_INDEX_BUFFER)?;
 
             // The bounds come from the vertices: the file's are not trusted (a culling sphere that is too small drops visible geometry).
+            // A tree vertex is drawn somewhere between its two positions (f16 at bytes 0 and 8): both count.
             let (mut lo, mut hi) = ([1e30f32; 3], [-1e30f32; 3]);
-            for vertex in mesh.vertices() {
-                let p = vertex.position();
-                for (a, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+            let half = |v: &[u8], at: usize| half_to_float(u16::from_le_bytes([v[at], v[at + 1]]));
+            let mut grow = |p: [f32; 3]| {
+                for (a, v) in p.into_iter().enumerate() {
                     lo[a] = lo[a].min(v);
                     hi[a] = hi[a].max(v);
                 }
+            };
+
+            if format == VertexFormat::Tree {
+                for v in vertices.chunks_exact(stride as usize) {
+                    grow([half(v, 0), half(v, 2), half(v, 4)]);
+                    grow([half(v, 8), half(v, 10), half(v, 12)]);
+                }
+            } else if format == VertexFormat::Billboard {
+                // The quad turns around the vertical axis: as far in z as in x.
+                for v in vertices.chunks_exact(stride as usize) {
+                    let (x, y) = (half(v, 0), half(v, 2));
+                    grow([x, y, x]);
+                    grow([-x, y, -x]);
+                }
+            } else {
+                for vertex in mesh.vertices() {
+                    let p = vertex.position();
+                    grow([p.x, p.y, p.z]);
+                }
             }
+
+            // A billboard's normal and displacement map is named after its diffuse.
+            let normal = if kind == MeshKind::TreeBillboard {
+                material.textures().iter().find(|t| *t.tex_type() == TextureType::Diffuse)
+                    .and_then(|t| t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds")))
+                    .and_then(|path| textures.get(&path, false))
+                    .unwrap_or_else(|| textures.flat_normal())
+            } else {
+                material_texture(textures, material, TextureType::Normal, false, textures.flat_normal())
+            };
 
             Some(GpuMesh {
                 vb: Some(vb),
                 ib: Some(ib),
                 index_count: mesh.indices().len() as u32,
                 alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
+                stride,
                 kind,
                 uv2_tile: if kind == MeshKind::TiledDirtmap { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
                 offset: pivot,
@@ -484,7 +551,7 @@ impl ModelInner {
                     material_texture(textures, material, TextureType::Specular, true, textures.black()),
                     material_texture(textures, material, TextureType::GlossMap, false, textures.black()),
                     material_texture(textures, material, TextureType::Mask, false, textures.black()),
-                    material_texture(textures, material, TextureType::Normal, false, textures.flat_normal()),
+                    normal,
                     material_texture(textures, material, TextureType::TilingDirtUV2, true, textures.white()),
                     material_texture(textures, material, TextureType::DirtAlphaMask, false, textures.white()),
                     material_texture(textures, material, TextureType::AmbientOcclusion, false, textures.white()),
@@ -994,6 +1061,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         ib: None,
         index_count: 0,
         alpha_mode: 0,
+        stride: 32,
         kind: MeshKind::Standard,
         uv2_tile: [0.0; 2],
         offset: Float3::new(x0, miny, z0),

@@ -352,7 +352,8 @@ impl Tile {
         // Which type ids are layers / never instances.
         let layer_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "LayerInstance" | "UserInstanceGroup" | "INSTANCE_GROUP" | "SCENE_GRAPH")).collect::<Vec<_>>();
         let plain_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "point" | "points" | "children" | "camera")).collect::<Vec<_>>();
-        let key_type = ix.type_names.iter().position(|s| s == "BUILDING_INSTANCE");
+        // Buildings and vegetation name their model by key.
+        let key_types = [ix.type_names.iter().position(|s| s == "BUILDING_INSTANCE"), ix.type_names.iter().position(|s| s == "VEGETATION_INSTANCE")];
 
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
@@ -441,7 +442,7 @@ impl Tile {
             }
 
             ix.slot[i] = slot;
-            if Some(ix.type_[i] as usize) == key_type && ix.kind[i] & INSTANCE_BIT != 0
+            if key_types.contains(&Some(ix.type_[i] as usize)) && ix.kind[i] & INSTANCE_BIT != 0
                 && let Some(k) = doc.find_attr(i, "key")
             {
                 let key = text(doc.attr_raw(i, k)).into_owned();
@@ -534,7 +535,8 @@ impl Tile {
                 continue;
             }
 
-            let pieces = folders.remove(&key).unwrap_or_default();
+            // A vegetation key is <species>.<variant>: one model in the trees' folder.
+            let pieces = folders.remove(&key).unwrap_or_else(|| vegetation_model(self.files.as_deref(), &key).into_iter().collect());
             let ok = !pieces.is_empty();
             wanted += pieces.len();
             if !ok {
@@ -698,6 +700,13 @@ impl Tile {
 }
 
 /// `Tile::snap_landscape_world` on index arrays that may be under construction.
+/// The model of a vegetation key (`beech.beech_e`: battleterrain/vegetation/trees/beech/beech_e.rigid_model_v2), if it exists.
+fn vegetation_model(files: Option<&dyn wce_vfs::files::Files>, key: &str) -> Option<String> {
+    let (species, variant) = key.split_once('.')?;
+    let path = format!("battleterrain/vegetation/trees/{species}/{variant}.rigid_model_v2");
+    files?.exists(&path).then_some(path)
+}
+
 fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform) {
     if t.project.height.is_none() || elem >= mode.len() || mode[elem] != 1 {
         return;

@@ -566,9 +566,20 @@ impl Tile {
 
         if let Some(pieces) = self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.clone()) {
             let w = self.world_matrix(elem);
+
+            // Trees (rigidleaf_v3 / rigidbranch_v3) read POSITION4 as (tint and wind seed, 1 - dissolve, burn): a seed per instance, nothing
+            // dissolved (0 discards every leaf).
+            let p4 = if self.tscene().type_of(elem) == "VEGETATION_INSTANCE" {
+                let seed = ((elem as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 16_777_216.0;
+                [seed, 1.0, 0.0, 1000.0]
+            } else {
+                MeshInstance::default().p4
+            };
+
             let (mut first, mut count) = (0, 0u8);
             for piece in pieces {
-                let e = scene.add(layer, w, Payload::MeshInstance(MeshInstance { model: piece, lod: true, ..Default::default() }), self.source(item_of(elem)));
+                let mi = MeshInstance { model: piece, lod: true, p4, ..Default::default() };
+                let e = scene.add(layer, w, Payload::MeshInstance(mi), self.source(item_of(elem)));
 
                 // The pieces of a building get consecutive ids.
                 if count == 0 {

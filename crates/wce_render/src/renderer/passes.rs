@@ -35,10 +35,16 @@ impl Renderer {
             return;
         }
 
-        // Every rigid vertex shader has the same inputs: one layout.
+        // The rigid vertex shaders share one layout, the tree ones another.
         let Some(vs) = self.shader(RIGID_VS) else { return };
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
+        let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout()));
+        let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
+        self.cbs.set_f("tree_billboard_constants", "g_tint_colours", &[1.0; 12]);
         self.ctx.set_input_layout(Some(&layout));
+
+        // White: no tint (the engine's values per climate have not been looked for).
+        self.cbs.set_f("vegetation_tint_colours", "g_tint_colours", &[1.0; 12]);
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // The ground first, as the entity order had it (equal depths: the first one drawn wins).
@@ -88,6 +94,15 @@ impl Renderer {
                 self.gpu_timer.mark(GBUFFER_PASSES[pass].4);
             }
 
+            let pass_layout = match GBUFFER_PASSES[pass].0 {
+                MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
+                MeshKind::TreeBillboard => billboard_layout.as_ref(),
+                _ => Some(&layout),
+            };
+
+            let Some(pass_layout) = pass_layout else { continue };
+            self.ctx.set_input_layout(Some(pass_layout));
+
             let slots = self.slots_of(&ps);
             let mut bound = false;
             let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m| {
@@ -104,6 +119,11 @@ impl Renderer {
                     r.bind(&ps);
                     bind_srv(&r.ctx, &ps, "s_fire_map", r.res.black_srv.as_ref());
                     bind_srv(&r.ctx, &ps, "s_snow_normals", r.res.black_srv.as_ref());
+
+                    // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
+                    bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());
+                    bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
+                    r.upload();
                     ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
                     bound = true;
                 }
@@ -111,6 +131,13 @@ impl Renderer {
                 if m.kind == MeshKind::TiledDirtmap {
                     r.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
                     r.upload();
+                }
+
+                // The billboard's textures have names of their own.
+                if m.kind == MeshKind::TreeBillboard {
+                    let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
+                    bind_srv(&r.ctx, &ps, "s_diffuse_map_tree", srv(crate::model_cache::TEX_DIFFUSE).as_ref());
+                    bind_srv(&r.ctx, &ps, "s_combined_normal_and_displacement", srv(crate::model_cache::TEX_NORMAL).as_ref());
                 }
 
                 for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {
@@ -263,9 +290,13 @@ impl Renderer {
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
             self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
 
+            let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
+            let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout()));
+            let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             for c in 0..4 {
+                self.ctx.set_input_layout(Some(&layout));
                 let half = SHADOW_SIZE as f32 / 2.0;
                 self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
                 self.cbs.set_m("camera_VS_PS", "view_projection", light_vp[c].data());
@@ -297,9 +328,34 @@ impl Renderer {
                 }
 
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
-                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, _| true);
+                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
+
+                // The trees, with their own vertex format and shaders, alpha-tested on their diffuse map.
+                for (kind, pair) in &tree_shaders {
+                    let Some((tvs, tps)) = pair else { continue };
+                    let kind_layout = if *kind == MeshKind::TreeBillboard { &billboard_layout } else { &tree_layout };
+                    let Some(kind_layout) = kind_layout else { continue };
+                    self.ctx.set_input_layout(Some(kind_layout));
+                    self.bind(tvs);
+                    self.bind(tps);
+                    bind_srv(&self.ctx, tps, "s_dissolve_map", self.res.white_srv.as_ref());
+                    ps_samplers(&self.ctx, tps, &self.states.s_wrap_linear);
+                    let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m| {
+                        if m.kind != *kind {
+                            return false;
+                        }
+
+                        let srv = m.tex[crate::model_cache::TEX_DIFFUSE].read().ok().and_then(|t| t.srv.clone());
+                        bind_srv(&r.ctx, tps, "s_diffuse_map", srv.as_ref());
+                        bind_srv(&r.ctx, tps, "s_diffuse_map_tree", srv.as_ref());
+                        true
+                    });
+
+                    self.draw_stats.shadow_instances += instances;
+                    self.draw_stats.shadow_triangles += triangles;
+                }
             }
 
             self.draw_lists.terrain_draws = terrain_draws;
