@@ -54,6 +54,9 @@ pub enum Kind {
 
     /// A grass model's patches, drawn by the renderer's grass pass.
     Grass,
+
+    /// A point light, drawn by the renderer's light pass.
+    PointLight,
 }
 
 /// One grass model's patches (rigidgrass, drawn instanced near the camera). Each instance is the rows of its 3x4 world matrix; the entity's
@@ -63,6 +66,33 @@ pub struct Grass {
     /// VFS path of the .rigid_model_v2.
     pub model: String,
     pub instances: std::sync::Arc<Vec<[f32; 12]>>,
+}
+
+/// A point light at the entity's origin (the game's point_light_marker.markers record): it lights the G-buffer inside its radius.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PointLight {
+    /// The tile's colour (argb(r, g, b, a) holds r, g, b, a; the alpha is not used).
+    pub colour: [f32; 3],
+    pub colour_scale: f32,
+
+    /// Added to colour_scale (the floor of the animated lights).
+    pub colour_min: f32,
+
+    /// World units, as the tile stores it.
+    pub radius: f32,
+
+    /// WPLFT_SMOOTH ((1 - d / r)^2), else WPLFT_LINEAR (1 - d / r). The game draws a map's lights smooth whatever the tile says.
+    pub smooth: bool,
+
+    /// 0 none (LAT_NONE), 1 LAT_RADIUS_SIN, 2 LAT_RADIUS_SIN_SIN: the colour (not the radius) goes as colour_scale * |sin(t * speed.x +
+    /// phase)| (times |sin(t * speed.y + phase)| for 2) + colour_min.
+    pub animation: u8,
+
+    /// animation_speed_scale (radians per second).
+    pub speed: [f32; 2],
+
+    /// The sine's offset in radians.
+    pub phase: f32,
 }
 
 /// A projected decal: the entity's world matrix maps the unit box (-0.5 .. 0.5) onto the volume it paints, projected along its y axis. The
@@ -413,6 +443,7 @@ pub enum Payload {
     Water(Water),
     Decal(Decal),
     Grass(Grass),
+    PointLight(PointLight),
 }
 
 impl Payload {
@@ -426,6 +457,7 @@ impl Payload {
             Self::Water(_) => Kind::Water,
             Self::Decal(_) => Kind::Decal,
             Self::Grass(_) => Kind::Grass,
+            Self::PointLight(_) => Kind::PointLight,
         }
     }
 }

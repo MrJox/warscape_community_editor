@@ -130,9 +130,16 @@ impl Renderer {
                     bound = true;
                 }
 
-                if m.kind == MeshKind::TiledDirtmap {
+                if matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
                     r.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
                     r.upload();
+                }
+
+                // rigidwithdirtmesh names its dirt map and mask differently.
+                if m.kind == MeshKind::Dirtmap {
+                    let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
+                    bind_srv(&r.ctx, &ps, "s_decal_dirt_map", srv(crate::model_cache::TEX_DETAIL).as_ref());
+                    bind_srv(&r.ctx, &ps, "s_decal_dirt_mask", srv(crate::model_cache::TEX_ALPHA_MASK).as_ref());
                 }
 
                 // Trees draw their season's diffuse (as grass does).
@@ -348,7 +355,7 @@ impl Renderer {
                 }
 
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
-                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree());
+                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
 

@@ -244,6 +244,13 @@ impl Renderer {
                         }
                     }
 
+                    // The light's reach.
+                    Payload::PointLight(l) => {
+                        let c = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
+                        let r = Float3::new(l.radius, l.radius, l.radius);
+                        sel.box_wire(c - r, c + r, yellow);
+                    }
+
                     _ => {}
                 }
             }

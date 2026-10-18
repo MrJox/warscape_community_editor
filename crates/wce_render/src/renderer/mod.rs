@@ -25,6 +25,7 @@ use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, bind_shader};
 use crate::wind::WindSim;
 
 mod decals;
+mod lights;
 mod grass;
 mod draws;
 mod editor;
@@ -54,6 +55,8 @@ pub(crate) const RIGID_GBUFFER_PS: &str = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps3
 pub(crate) const RIGID_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidstandard.hlsl_ps_ps30_gbuffer_alpha_test";
 pub(crate) const TILED_DIRT_GBUFFER_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmesh.hlsl_ps_ps30_gbuffer";
 pub(crate) const TILED_DIRT_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmesh.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const DIRT_GBUFFER_PS: &str = "dx11_sm_3_0_rigidwithdirtmesh.hlsl_ps_ps30_gbuffer";
+pub(crate) const DIRT_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidwithdirtmesh.hlsl_ps_ps30_gbuffer_alpha_test";
 pub(crate) const AMBIENT_MAP_GBUFFER_PS: &str = "dx11_sm_3_0_rigidambientmapmesh.hlsl_ps_ps30_gbuffer";
 pub(crate) const AMBIENT_MAP_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidambientmapmesh.hlsl_ps_ps30_gbuffer_alpha_test";
 pub(crate) const TREE_BRANCH_VS: &str = "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_vs_vs30_main";
@@ -70,11 +73,13 @@ pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend
 
 /// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, vertex and pixel shader, GPU timer label.
 /// rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 10] = [
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 12] = [
     (MeshKind::Standard, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
     (MeshKind::Standard, true, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
     (MeshKind::TiledDirtmap, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
     (MeshKind::TiledDirtmap, true, RIGID_VS, TILED_DIRT_GBUFFER_ALPHA_PS, "gbuffer tiled dirt alpha-tested"),
+    (MeshKind::Dirtmap, false, RIGID_VS, DIRT_GBUFFER_PS, "gbuffer dirt"),
+    (MeshKind::Dirtmap, true, RIGID_VS, DIRT_GBUFFER_ALPHA_PS, "gbuffer dirt alpha-tested"),
     (MeshKind::AmbientMap, false, RIGID_VS, AMBIENT_MAP_GBUFFER_PS, "gbuffer ambient map"),
     (MeshKind::AmbientMap, true, RIGID_VS, AMBIENT_MAP_GBUFFER_ALPHA_PS, "gbuffer ambient map alpha-tested"),
     (MeshKind::TreeBranch, false, TREE_BRANCH_VS, TREE_BRANCH_PS, "gbuffer tree branches"),
@@ -431,6 +436,7 @@ pub struct Renderer {
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
     pub(crate) decals: decals::DecalGpu,
+    pub(crate) lights: lights::LightGpu,
     pub(crate) grass: grass::GrassGpu,
     pub settings: RenderSettings,
 }
@@ -542,6 +548,7 @@ impl Renderer {
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
             decals: decals::DecalGpu::default(),
+            lights: lights::LightGpu::default(),
             grass: grass::GrassGpu::default(),
             settings: RenderSettings::default(),
         })
@@ -863,6 +870,7 @@ impl Renderer {
         self.pass_sun(&env, &view_m, &proj);
         self.pass_clouds(&env);
         self.pass_directional_light();
+        self.pass_point_lights(scene);
         self.gpu_timer.mark("sea");
         self.pass_water(scene, false);
         self.pass_fog();

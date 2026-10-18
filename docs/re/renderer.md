@@ -51,6 +51,77 @@ Matrices: clip.i = dot(pos, row i) — row-major upload, column-vector maths.
 | colorimetry gamma | assumption 2.2 (graphics option) |
 | **HDR light scale** | **key open item**: with `g_hdr_on` the lighting and fog shaders multiply light colours by 0.004 (1/250); ambient by 360*0.004. So the engine's `sun_colour` constant is ~250x the plain linear(colour)*scale. Exact factor: memory dump |
 
+## Building mesh materials (2026-10-18)
+
+LOD 0 meshes of the 2,279 models under `rigidmodels/buildings/` by material: DefaultMaterial 17,349, TiledDirtmap 2,842, TerrainBlend 699,
+ShipAmbientmap 530 (all drawn before), and:
+- **Dirtmap** (8 models: `norse_statue_medium`, placed 223 times, and the `rock_desert_*` rocks): `rigidwithdirtmesh` G-buffer shaders
+  (`ps30_gbuffer`, `_alpha_test`) on rigidcommon's vertex shader. rigidstandard plus `s_decal_dirt_map` at uv * `g_uv2_tile_interval`
+  (`rigid_config_PS` +32, the material's floats 0 and 1, as for TiledDirtmap) + the instance's POSITION5.yz (0: not set by the tool),
+  faded by `s_decal_dirt_mask` at the uv: the dirt map's xy bends the normal and its w times the mask's darkens the colour towards
+  (0.03, 0.025, 0.02) and dulls the specular. Textures: `DecalDirtmap`, `DecalDirtmask`. Drawn (MeshKind::Dirtmap).
+- **ProjectedDecalV2 / V3** (176 meshes in 135 models, all in damaged `destruct02+` pieces: rubble): an 8 corner box, the material's name
+  the texture base (`rigidmodels/buildings/textures/rubble_1` -> `_diffuse.dds`, `_normal.dds`), `decal_center` / `decal_size`; V3 boxes
+  are turned about y by the angle in the material's `uk_4` (1.2217 rad = 70 degrees for eastern_agora_2storey_building_01). Corners: 0..3
+  the top face (0 -> 3 along x, 0 -> 1 along z), 4..7 below them (all 176). Drawn by the decal pass (rigidprojecteddecal `ps30_diffuse`) at
+  the building's world matrix times the box, opaque, not tiled. The game registers `main` (pass 2) and `main_bugged` (pass 8, `ps30_diffuse_bugged`:
+  the box axes not normalised) techniques; which one a model decal takes was not traced. The decal also covers what is next to the ruin
+  inside its box (a neighbour's roof), as the shader only fades by how much a surface faces the box's y axis.
+- **Uk54 / Uk56 / Uk57** (7 models: `carthage_cothon_ring_v6`, `greek_agora_*`, `greek_statue_*`): the same geometry four times, no
+  textures, a `texture_directory` that is not in the packs, and `filters` `Dry=On` / `Snow=On` (54), `Burning=On` (56), `Rain=On` (57)
+  (the engine's STANDARD_RIGID_NODE_FILTERS). Not drawn; only `greek_statue_hera` is placed (once).
+- **Weighted** (the battering rams' `_weighted_anim` models, placed by no tile): skinned. Not drawn.
+- **Water** (Uk8 vertices: `garden_fountain`, `garden_pool_1`, `tannery`, `water_plane`): with the water planes.
+
+Note: the editor draws a building at its `destruct01` pieces unless its destruction level is edited in the Property Editor; the
+`destruction_level` saved in tile.ted (321 damaged decal buildings on eastern_city_a/medium) is not applied when the tile opens.
+
+## Point lights (2026-10-18)
+
+- **Data.** `POINT_LIGHT_INSTANCE` (5.4k in the corpus; 1,141 on western_city_b/small, mostly `window_orange_01` groups): radius,
+  `colour="argb(r,g,b,a)"` (r, g, b, a order despite the name: 1.0, 0.596, 0.459 is warm), colour_scale (`[0, 5]`), colour_min,
+  falloff_type `WPLFT_SMOOTH` / `WPLFT_LINEAR`, animation_type `LAT_NONE` / `LAT_RADIUS_SIN` / `LAT_RADIUS_SIN_SIN`, random_offset, animation_speed_scale.
+  BOB packs them into `point_light_marker.markers`: UTF-16 headers `BASE_MARKER_REPOSITORY` / `POINT_LIGHT_MARKER`, u32 3 at 0x88, the count at
+  0x8e, records from 0x92: f32 x, y, z, radius, r, g, b, colour_scale; a byte (1); u16 + `LAT_*`; 4 f32 (animation_speed_scale x, y, colour_min,
+  random_offset); u16 + `WPLFT_*`. Radius, colour and scale are the tile's values unchanged. The positions are in another frame than the
+  editor's world: the first light at editor (434.588, 11.107, 623.643) is (434.59, 22.21, 400.36) in the markers (x equal, y doubled,
+  z mirrored; the game puts the y on the ground height, see Map lights). Not resolved further, as the editor draws from tile.ted.
+- **Shaders** (`PointLightSmoothFalloff.hlsl` / `PointLightLinearFalloff.hlsl`, registered by fn 0x116f1a30 through fn 0x116e3bc0 with
+  the `_Shadow` variants and the `slm` / `skinlm`, high / low def, `_ms` techniques): vs30_main draws POSITION0 * POSITION2.w +
+  POSITION2.xyz (POSITION2 = centre, radius) and passes POSITION1 (the colour) on. ps30_slm_highdef rebuilds the world position from the
+  depth channel (`point_light_PS.g_viewport_offset_scale`, as the decals), then attenuation = saturate(1 - d / r), squared when smooth; the
+  directional light's diffuse and specular from the G-buffer, times SSAO. With `g_hdr_on` the diffuse is multiplied by 0.004 (the sun's
+  1 / 5000 scale); without it the specular by 273.
+- **Pipeline** (fn 0x116e3bc0's state objects): blend ONE / ONE add, write mask rgb (the alpha keeps the directional light's refraction
+  weight); rasterizer cull mode 2 (front faces culled: the inside of the volume is drawn).
+- **Map lights** (verified in the code). The battle loader (fn 0x10dcc6f0) reads the tile's marker files into a marker container (fn
+  0x10ab5e90), transforms them by the tile placement (fn 0x10de4470: positions by its matrix, the point lights' radius by its scale), and
+  fn 0x10407e90 turns each point light record into a runtime light. The record (0x40 bytes, read by fn 0x10ac38b0): +4 position, +0x10
+  radius, +0x14 rgb, +0x20 colour_scale, +0x24 the LAT enum (`LAT_NONE` 0, `LAT_RADIUS_SIN` 1, `LAT_RADIUS_SIN_SIN` 2), +0x28 / +0x2c
+  animation_speed_scale, +0x30 colour_min, +0x34 random_offset, +0x38 the WPLFT enum (`WPLFT_LINEAR` 0, `WPLFT_SMOOTH` 1), +0x3c the
+  file's byte (1 everywhere; it picks which ground height the y is put on, fn 0x10db8260). In the file the four floats after the LAT
+  string are (speed x, speed y, colour_min, random_offset): the two `colour_min="0.2"` lights of western_city_b/small are (1, 2, 0.2, 2).
+  BOB writes the lights in tile.ted document order (all 1,141 records match by index).
+  The runtime light (0x3c bytes): position, rgb +0xc, radius +0x18, animation +0x1c (the LAT enum), speeds +0x20 / +0x24, colour_scale
+  +0x28, colour_min +0x2c, phase +0x30, smooth +0x34, cast shadow +0x38. fn 0x10407e90 sets the phase from the game's generator (seed
+  0x12344321, state = state * 0x343fd + 0x269ec3 per light, phase = (state >> 16) * (1 / 65535)), smooth = 1 and cast shadow = 0: a map's
+  lights are all drawn smooth (falloff_type is not read; 112 of western_city_b/small's are WPLFT_LINEAR) and random_offset is not used.
+  The lighting node (fn 0x118ed4a0, "Lighting Node draw_update_node", lights at +0x1c0 / +0x1c4) submits each one every frame.
+- **Colour** (verified in the code; no gamma conversion anywhere on the way). The submission (fn 0x118d9680): colour * (colour_scale +
+  colour_min) for LAT_NONE; colour * (colour_scale * |sin(t * speed_x + phase)| + colour_min) for 1; the same with |sin(t * speed_x +
+  phase) * sin(t * speed_y + phase)| for 2 (the sine's argument reduced by 2 pi; the "radius" animations modulate the colour, not the
+  radius). The add-light method (fn 0x118dc6c0, vtable +0x58) multiplies the colour by fn 0x11753690: the `MAX_HDR_SUN_COLOUR_SCALE` tweak
+  (Scene.cpp, default 25000, object 0x12a37730 +0x48) * 0.2 = 5000 when HDR is on, else 1 (the factor the shader's 0.004 undoes), and
+  files the light by falloff and shadow; the draw (fn 0x118de4a0 pass 0x1b -> fn 0x118da9a0) copies it into POSITION1 = (colour, 1),
+  POSITION2 = (centre, radius). The light definitions' XML (fn 0x11900a40: `LIGHTS` / `POINT_LIGHT`: name, red, green, blue, radius,
+  falloff, animation, animation_x, animation_y, colour_min, colour_scale, shadow `LOW` / `HIGH`, for lights attached by name) goes the same
+  way with its own falloff and shadow.
+- **Editor.** `Payload::PointLight` per shown instance (colour, colour_scale, colour_min, radius, the animation, its speeds and the game's
+  phase from the light's index among the tile's lights, hidden ones included (visibility is the editor's only); always smooth); the light pass (`renderer/lights.rs`) after the directional
+  light: a cube around each light's sphere, back faces, no depth test, stencil = geometry, instanced per falloff, the colour animated with
+  the frame clock. The window lights give small warm pools at night and are faint by day. Selecting a light draws its radius as a box.
+  Not drawn: shadow-casting lights (only the XML definitions can ask for them).
+
 ## Test map
 
 A battle building is a folder of pieces; `<name>_pieceNN_destruct01.rigid_model_v2` is each piece's intact state. Piece placement nodes in `<name>_tech.cs2.parsed` were identity in every file checked, so pieces are drawn at the building origin. Each mesh's vertices are stored around its material's `v_pivot`, which places them in the building's frame: drawn at vertex + pivot (2026-10-18; ignoring it sank most buildings by about half their height and put docks 9 m up; tile instances also scale the geometry, see docs/formats/tile_ted.md). Evidence: the meshes' own `min_bb` / `max_bb` are vertex bounds + pivot; the tech file's bounding box fits vertex + pivot better than the bare vertices in 862 of 946 building models with a non-zero pivot (`30_30_10`, pivot (15, 5, -15): exactly); the amphitheater's centred vertices (y +-6.59, pivot y 6.47) stand on the ground only with it. 11 models have different pivots per mesh.

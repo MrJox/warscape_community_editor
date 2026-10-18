@@ -411,7 +411,11 @@ impl Tile {
         let layer_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "LayerInstance" | "UserInstanceGroup" | "INSTANCE_GROUP" | "SCENE_GRAPH")).collect::<Vec<_>>();
         let plain_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "point" | "points" | "children" | "camera")).collect::<Vec<_>>();
         // Buildings and vegetation name their model by key.
-        let key_types = [ix.type_names.iter().position(|s| s == "BUILDING_INSTANCE"), ix.type_names.iter().position(|s| s == "VEGETATION_INSTANCE")];
+        let key_types = [
+            ix.type_names.iter().position(|s| s == "BUILDING_INSTANCE"),
+            ix.type_names.iter().position(|s| s == "VEGETATION_INSTANCE"),
+            ix.type_names.iter().position(|s| s == "SIMPLE_MESH_INSTANCE"),
+        ];
 
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
@@ -609,8 +613,16 @@ impl Tile {
                 continue;
             }
 
-            // A vegetation key is <species>.<variant>: one model in the trees' folder.
-            let pieces = folders.remove(&key).unwrap_or_else(|| vegetation_model(self.files.as_deref(), &key).into_iter().collect());
+            // A vegetation key is <species>.<variant>: one model in the trees' folder. A SIMPLE_MESH_INSTANCE's key is the model's path
+            // (`RigidModels/Buildings/water_plane/water_plane.rigid_model_v2`, some with backslashes).
+            let pieces = folders.remove(&key).unwrap_or_else(|| {
+                if key.to_lowercase().ends_with(".rigid_model_v2") {
+                    let path = key.replace('\\', "/").to_lowercase();
+                    self.files.as_deref().is_some_and(|f| f.exists(&path)).then_some(path).into_iter().collect()
+                } else {
+                    vegetation_model(self.files.as_deref(), &key).into_iter().collect()
+                }
+            });
             let ok = !pieces.is_empty();
             wanted += pieces.len();
             if !ok {
@@ -708,11 +720,13 @@ impl Tile {
         self.type_counts.clear();
         let (mut counts, mut marker_counts) = (vec![0u32; types], vec![0u32; types]);
         let mut is_marker = vec![false; n];
+        self.type_ordinal = vec![0; n];
         for i in 0..n {
             if ix.kind[i] & INSTANCE_BIT == 0 {
                 continue;
             }
 
+            self.type_ordinal[i] = counts[ix.type_[i] as usize];
             counts[ix.type_[i] as usize] += 1;
             self.instances.push(i);
 
