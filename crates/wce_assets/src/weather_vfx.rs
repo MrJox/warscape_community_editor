@@ -25,6 +25,7 @@ pub struct ActiveEmitter {
     pub tint_min: [f32; 4],
     pub tint_max: [f32; 4],
     pub particle_lifetime_bias: [f32; 2],
+    pub emitter_lifetime_bias: [f32; 2],
 
     /// The middle of the reference's scale range (the weather uses it); a placed instance draws its own in `scale_range`.
     pub scale: f32,
@@ -310,6 +311,7 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
                 tint_min,
                 tint_max,
                 particle_lifetime_bias: ov.map_or([0.0; 2], |ov| ov.particle_lifetime_bias),
+                emitter_lifetime_bias: ov.map_or([0.0; 2], |ov| ov.emitter_lifetime_bias),
                 scale: 0.5 * (vfx_ref.scale_min + vfx_ref.scale_max),
                 scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
                 pos: vfx_ref.pos,

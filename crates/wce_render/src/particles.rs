@@ -228,6 +228,9 @@ struct WorldInstance {
     area_blend: f32,
     lifetime_bias: f32,
 
+    /// Added to the emitter's LifeTime (the reference's emitter_lifetime_bias draw).
+    emitter_life_bias: f32,
+
     /// The clock when it started.
     start: f32,
 
@@ -841,15 +844,20 @@ impl ParticleSystem {
                     }
 
                     None => {
-                        // ASSUMPTION: the instance's generator is seeded from its key (RandomSeed -1 = random in the game).
-                        let mut rng = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ 0x2545_F491;
-                        let scale = fx.scale * lerp(em.scale_range[0], em.scale_range[1], game_rand(&mut rng));
+                        // Per reference, one set of draws shared by its emitters (fn 0x1181a930 / 0x117f1860, from the shared generator):
+                        // scale lerp(scale_min, max), then one blend for the tint's four channels, the particle lifetime bias and the
+                        // emitter lifetime bias. The generators are seeded from the key: every vanilla emitter has RandomSeed -1 (random).
+                        let mut shared = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ em.instance.bytes().fold(0x2545_F491u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+                        let ref_scale = lerp(em.scale_range[0], em.scale_range[1], game_rand(&mut shared));
+                        let (t_tint, t_life, t_emitter) = (game_rand(&mut shared), game_rand(&mut shared), game_rand(&mut shared));
+                        let mut rng = shared ^ (k as u32).wrapping_mul(0x85EB_CA6B);
                         let area_blend = game_rand(&mut rng);
-                        let lifetime_bias = lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], game_rand(&mut rng));
-                        let tint = std::array::from_fn(|c| 0.5 * (em.tint_min[c] + em.tint_max[c]));
+                        let tint = std::array::from_fn(|c| lerp(em.tint_min[c], em.tint_max[c], t_tint));
                         WorldInstance {
-                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale, tint, rng, area_blend,
-                            lifetime_bias, start: clock, last_spawn: clock, st: EmitterState::default(),
+                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, tint, rng,
+                            area_blend, lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
+                            emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
+                            start: clock, last_spawn: clock, st: EmitterState::default(),
                         }
                     }
                 };
@@ -1327,8 +1335,8 @@ impl ParticleSystem {
     /// - direction (fn 0x1183f1a0): SpreadMethod true: elevation lerp(SpawnSpread) degrees above the horizon, azimuth random over the
     ///   circle, dir = (cos az cos el, sin el, -sin az cos el); false: away from SpawnPosition; both turned by the emitter and the instance;
     /// - velocity: dir * lerp(SpawnSpeed) * scale.
-    /// ASSUMPTION: the owner's scale (+0x70) is the effect's, and its emission multipliers (+0xb4, +0x78) are 1, as for the weather (not
-    /// traced for placed effects); the ring's x takes the sincos call's second lane.
+    /// The owner's scale (+0x70) is the effect's and its emission multipliers (+0xb4, +0x78) are 1, as for an effect placed at a transform
+    /// (fn 0x1046c320; the marker path was not followed to the setters). Verified: the ring's x is the cosine (the sincos call, fn 0x119eb652, returns (sin, cos); x takes lane 1).
     fn spawn_world(&mut self, f: &Frame, out: &mut Vec<SpawnVertex>, free_slots: &mut u32) {
         let base = self.effect.emitters.len();
         for j in 0..self.world.len() {
@@ -1356,7 +1364,7 @@ impl ParticleSystem {
             let (life_lo, life_hi) = d.range("ParticleLifeTime", 1.0, 1.0);
             let (start_lo, start_hi) = d.range("StartTime", 0.0, 0.0);
             let (emitter_life_lo, emitter_life_hi) = d.range("LifeTime", 50.0, 50.0);
-            let emitter_life = (0.5 * (emitter_life_lo + emitter_life_hi)).max(0.001);
+            let emitter_life = (0.5 * (emitter_life_lo + emitter_life_hi) + inst.emitter_life_bias).max(0.001);
             let pre = (-0.5 * (start_lo + start_hi)).max(0.0);
             let (mut window_start, mut window) = (inst.last_spawn, (self.clock - inst.last_spawn).max(0.0));
             if !inst.st.started {
@@ -1444,7 +1452,7 @@ impl ParticleSystem {
                 let angle = lerp(arc[0], arc[1], game_rand(&mut inst.rng)) * PI / 180.0;
                 let r = lerp(inner, outer, game_rand(&mut inst.rng));
                 let b = [game_rand(&mut self.global_rng), game_rand(&mut self.global_rng), game_rand(&mut self.global_rng)];
-                let local = Float3::new(angle.sin() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.cos() * r + size[2] * (b[0] - 0.5)) * scale;
+                let local = Float3::new(angle.cos() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.sin() * r + size[2] * (b[0] - 0.5)) * scale;
                 let offset = rotate(&emitter_rot, local) + spawn_pos * scale;
                 let pos = inst.pos + rotate(&inst.rot, offset);
 
@@ -1542,7 +1550,8 @@ impl ParticleSystem {
             layers[at(0, i)..at(0, i) + 4].copy_from_slice(&[pos.x, pos.y, pos.z, self.clock]);
             layers[at(1, i)..at(1, i) + 4].copy_from_slice(&[delta.x, delta.y, delta.z, dt]);
 
-            // ASSUMPTION: the tint is the middle of the reference's tint range.
+            // The weather's tint: the middle of the reference's range (the game draws one blend per reference, fn 0x117f1860; every weather
+            // reference has equal bounds).
             for c in 0..4 {
                 layers[at(2, i) + c] = 0.5 * (a.tint_min[c] + a.tint_max[c]);
             }
