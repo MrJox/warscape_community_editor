@@ -20,7 +20,7 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of};
 use wce_vfs::normalize;
 
 pub const POLYGON_TYPES: [&str; 5] =
@@ -833,6 +833,43 @@ impl TileTool {
         }
 
         gui::text_disabled(d.tile().water_note());
+
+        // BOB's procedural trees: one list per climate key, plus default; gen:<list> generates them from the seeds.
+        let mut lists = vec!["none".to_owned()];
+        lists.extend(d.tile().tree_lists().iter().cloned());
+        let shown = d.tile().display().tree_list.clone();
+        let generated = format!("{GENERATED_PREFIX}{shown}");
+        let mut li = lists.iter().position(|l| *l == shown).or_else(|| lists.iter().position(|l| *l == generated)).unwrap_or(0) as i32;
+        let items = lists.iter().map(String::as_str).collect::<Vec<_>>();
+        gui::set_next_item_width(160.0);
+        if gui::combo("procedural trees", &mut li, &items) {
+            d.tile_mut().display_mut().tree_list = if li == 0 { String::new() } else { lists[li as usize].clone() };
+        }
+
+        let mut grass = d.tile().display().show_grass;
+        if gui::checkbox("grass", &mut grass) {
+            d.tile_mut().display_mut().show_grass = grass;
+        }
+
+        gui::same_line();
+        let mut generated = d.tile().display().generate_grass;
+        if gui::checkbox("generated##grass", &mut generated) {
+            d.tile_mut().display_mut().generate_grass = generated;
+        }
+
+        if generated {
+            gui::same_line();
+            if gui::button("regenerate##grass") {
+                d.tile_mut().reload_grass();
+            }
+        }
+
+        if lists[li as usize].starts_with(GENERATED_PREFIX) {
+            gui::same_line();
+            if gui::button("regenerate") {
+                d.tile_mut().reload_tree_list();
+            }
+        }
         for f in &shader_failures {
             gui::text_colored(BAD, &format!("game shader not loaded: {f}"));
         }

@@ -63,7 +63,7 @@ fn empty_overlay() -> Payload {
 
 impl Tile {
 
-    fn source(&self, item: u64) -> SourceRef {
+    pub(crate) fn source(&self, item: u64) -> SourceRef {
         SourceRef { doc: self.id, item }
     }
 
@@ -565,7 +565,7 @@ impl Tile {
         }
 
         if let Some(pieces) = self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.clone()) {
-            let w = self.world_matrix(elem);
+            let w = self.drawn_matrix(elem);
 
             // Trees (rigidleaf_v3 / rigidbranch_v3) read POSITION4 as (tint and wind seed, 1 - dissolve, burn): a seed per instance, nothing
             // dissolved (0 discards every leaf).
@@ -711,6 +711,9 @@ impl Tile {
             self.add_item_entities(scene, layer, e);
         }
 
+        self.update_list_trees(scene, layer, true);
+        self.update_grass(scene, layer, true);
+
         let types = self.idx.type_names.len();
         self.batch_entity = vec![0; types];
         for t in 0..types {
@@ -734,7 +737,7 @@ impl Tile {
 
         self.index_edited(elem);
         if self.first_entity.get(elem).is_some_and(|&f| f != 0) {
-            let w = self.world_matrix(elem);
+            let w = self.drawn_matrix(elem);
             for k in 0..u64::from(self.entity_count[elem]) {
                 scene.update_world(self.first_entity[elem] + k as EntityId, w);
             }
@@ -786,6 +789,9 @@ impl Tile {
         if self.links_dirty && !self.stroke_open {
             self.rebuild_links(scene, layer);
         }
+
+        self.update_list_trees(scene, layer, false);
+        self.update_grass(scene, layer, false);
 
         // A type that has markers now but had none when the tile was published (buildings whose models turned out not to load) needs its
         // overlay entity.

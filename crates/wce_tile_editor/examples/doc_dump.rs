@@ -79,6 +79,7 @@ fn scene_hash(s: &RenderScene) -> u64 {
             Payload::CameraRig(_) => 4,
             Payload::Water(_) => 5,
             Payload::Decal(_) => 6,
+            Payload::Grass(_) => 7,
         };
 
         h = u8_(index, h);
@@ -133,6 +134,11 @@ fn scene_hash(s: &RenderScene) -> u64 {
                 h = fs_(&d.model, h);
                 h = u8_(u64::from(d.tiled), h);
                 h = f32s(&[d.opacity], h);
+            }
+
+            Payload::Grass(g) => {
+                h = fs_(&g.model, h);
+                h = f32s(&g.instances.iter().flatten().copied().collect::<Vec<_>>(), h);
             }
 
             Payload::Water(w) => {

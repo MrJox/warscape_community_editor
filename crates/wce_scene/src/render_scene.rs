@@ -51,6 +51,18 @@ pub enum Kind {
 
     /// A projected decal, drawn by the renderer's decal pass.
     Decal,
+
+    /// A grass model's patches, drawn by the renderer's grass pass.
+    Grass,
+}
+
+/// One grass model's patches (rigidgrass, drawn instanced near the camera). Each instance is the rows of its 3x4 world matrix; the entity's
+/// own matrix is not used.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Grass {
+    /// VFS path of the .rigid_model_v2.
+    pub model: String,
+    pub instances: std::sync::Arc<Vec<[f32; 12]>>,
 }
 
 /// A projected decal: the entity's world matrix maps the unit box (-0.5 .. 0.5) onto the volume it paints, projected along its y axis. The
@@ -400,6 +412,7 @@ pub enum Payload {
     CameraRig(CameraRig),
     Water(Water),
     Decal(Decal),
+    Grass(Grass),
 }
 
 impl Payload {
@@ -412,6 +425,7 @@ impl Payload {
             Self::CameraRig(_) => Kind::CameraRig,
             Self::Water(_) => Kind::Water,
             Self::Decal(_) => Kind::Decal,
+            Self::Grass(_) => Kind::Grass,
         }
     }
 }
@@ -561,6 +575,11 @@ impl RenderScene {
         self.index.reserve(n);
     }
 
+    /// The id the next added entity gets.
+    pub fn next_id(&self) -> EntityId {
+        self.next_entity
+    }
+
     pub fn add(&mut self, layer: LayerId, world: Float4x4, payload: Payload, source: SourceRef) -> EntityId {
         let id = self.next_entity;
         self.next_entity += 1;
@@ -644,6 +663,11 @@ impl RenderScene {
         self.entities.remove(at as usize);
         self.reindex();
         self.touch();
+    }
+
+    /// Removes the entities with ids in `ids` (one pass, for many entities added in a row).
+    pub fn remove_range(&mut self, ids: std::ops::Range<EntityId>) {
+        self.retain_entities(|e| !ids.contains(&e.id));
     }
 
     /// Keeps the layer, drops its entities.

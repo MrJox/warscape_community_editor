@@ -75,6 +75,10 @@ impl MeshKind {
     }
 }
 
+/// The Grass vertex format: position (f16 x 4), uv (f32 x 2), normal, tangent and colour (u8 x 4 each; the colour's alpha is how much the
+/// vertex sways and sinks with distance: 0 at the roots).
+pub const GRASS_STRIDE: u32 = 28;
+
 /// The Tree vertex format: position, LOD position, normal, tangent, bitangent (f16 x 4 each), uv, LOD weights, an unused pair (f16 x 2
 /// each), colour and wind weight (f16 x 4). rigidbranchcommon_v3 / rigidleafcommon_v3 draw weight.x * position + weight.y * LOD position.
 pub const TREE_STRIDE: u32 = 60;
@@ -103,6 +107,9 @@ pub enum MeshKind {
     /// Tree / TreeLeaf meshes (vertex format Tree, [`TREE_STRIDE`] bytes): rigidbranch_v3 / rigidleaf_v3, with their own vertex shaders.
     TreeBranch,
     TreeLeaf,
+
+    /// Grass (vertex format Grass, [`GRASS_STRIDE`] bytes): rigidgrass, drawn by the grass pass from the scene's grass entities.
+    Grass,
 
     /// TreeBillboardMaterial (vertex format Billboard, [`BILLBOARD_STRIDE`] bytes): a tree's farthest LOD, a quad turned to the camera
     /// showing one of four views (rigidtreebillboard); its diffuse in the diffuse slot, the normal and displacement map in the normal slot.
@@ -424,10 +431,15 @@ pub struct ModelCache {
 }
 
 /// The texture a material gives a slot, or a fallback.
-fn material_texture(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
-    material.textures().iter()
-        .find(|t| *t.tex_type() == kind)
-        .and_then(|t| textures.get(t.path(), srgb))
+/// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
+/// models name the rome_atlantic folder's textures, which are only in their own folder).
+fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
+    let Some(path) = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/")) else { return fallback };
+    textures.get(&path, srgb)
+        .or_else(|| {
+            let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
+            textures.get(&format!("{dir}/{name}"), srgb)
+        })
         .unwrap_or(fallback)
 }
 
@@ -447,8 +459,9 @@ impl ModelInner {
             RigidModel::decode(&mut Cursor::new(&bytes), &Some(extra)).map_err(|error| format!("rmv2: {error}"))?
         };
 
-        if *model.version() != 6 {
-            return Err(format!("rmv2: version {} (expected 6)", model.version()));
+        // Version 5 (some grass) is read into the same vertices, written back as 6.
+        if !matches!(*model.version(), 5 | 6) {
+            return Err(format!("rmv2: version {} (expected 5 or 6)", model.version()));
         }
 
         if model.lods().is_empty() {
@@ -466,6 +479,7 @@ impl ModelInner {
                 (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
                 (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
                 (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
+                (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
                 _ => return None,
             };
 
@@ -479,6 +493,7 @@ impl ModelInner {
             let stride = match format {
                 VertexFormat::Tree => TREE_STRIDE,
                 VertexFormat::Billboard => BILLBOARD_STRIDE,
+                VertexFormat::Grass => GRASS_STRIDE,
                 _ => 32,
             };
 
@@ -533,7 +548,7 @@ impl ModelInner {
                     .and_then(|path| textures.get(&path, false))
                     .unwrap_or_else(|| textures.flat_normal())
             } else {
-                material_texture(textures, material, TextureType::Normal, false, textures.flat_normal())
+                material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
             };
 
             Some(GpuMesh {
@@ -547,14 +562,14 @@ impl ModelInner {
                 offset: pivot,
                 has_offset: pivot != Float3::default(),
                 tex: [
-                    material_texture(textures, material, TextureType::Diffuse, true, textures.white()),
-                    material_texture(textures, material, TextureType::Specular, true, textures.black()),
-                    material_texture(textures, material, TextureType::GlossMap, false, textures.black()),
-                    material_texture(textures, material, TextureType::Mask, false, textures.black()),
+                    material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
+                    material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
+                    material_texture(textures, path, material, TextureType::GlossMap, false, textures.black()),
+                    material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
                     normal,
-                    material_texture(textures, material, TextureType::TilingDirtUV2, true, textures.white()),
-                    material_texture(textures, material, TextureType::DirtAlphaMask, false, textures.white()),
-                    material_texture(textures, material, TextureType::AmbientOcclusion, false, textures.white()),
+                    material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white()),
+                    material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white()),
+                    material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
                 ],
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
