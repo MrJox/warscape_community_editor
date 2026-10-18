@@ -91,7 +91,7 @@ impl Renderer {
                     continue;
                 }
 
-                self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[32], &[0]);
+                self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[0]);
                 self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
                 self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, firsts[k] + vis.start[b as usize]);
 

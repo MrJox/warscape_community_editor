@@ -54,6 +54,12 @@ pub(crate) const TILED_DIRT_GBUFFER_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmes
 pub(crate) const TILED_DIRT_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidtileddirtmapmesh.hlsl_ps_ps30_gbuffer_alpha_test";
 pub(crate) const AMBIENT_MAP_GBUFFER_PS: &str = "dx11_sm_3_0_rigidambientmapmesh.hlsl_ps_ps30_gbuffer";
 pub(crate) const AMBIENT_MAP_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidambientmapmesh.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const TREE_BRANCH_VS: &str = "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_vs_vs30_main";
+pub(crate) const TREE_BRANCH_PS: &str = "dx11_sm_3_0_rigidbranch_v3.hlsl_ps_ps30_gbuffer";
+pub(crate) const TREE_LEAF_VS: &str = "dx11_sm_3_0_rigidleafcommon_v3.hlsl_vs_vs30_main";
+pub(crate) const TREE_LEAF_PS: &str = "dx11_sm_3_0_rigidleaf_v3.hlsl_ps_ps30_gbuffer";
+pub(crate) const TREE_BILLBOARD_VS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_vs_vs30_main";
+pub(crate) const TREE_BILLBOARD_PS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_ps_ps30_gbuffer";
 pub(crate) const TERRAIN_BLEND_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_main";
 
 /// The TerrainBlend meshes with their own textures. The game draws them with ps30_null_gbuffer instead, from the terrain's virtual texture
@@ -62,13 +68,16 @@ pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend
 
 /// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, vertex and pixel shader, GPU timer label.
 /// rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 7] = [
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 10] = [
     (MeshKind::Standard, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
     (MeshKind::Standard, true, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
     (MeshKind::TiledDirtmap, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
     (MeshKind::TiledDirtmap, true, RIGID_VS, TILED_DIRT_GBUFFER_ALPHA_PS, "gbuffer tiled dirt alpha-tested"),
     (MeshKind::AmbientMap, false, RIGID_VS, AMBIENT_MAP_GBUFFER_PS, "gbuffer ambient map"),
     (MeshKind::AmbientMap, true, RIGID_VS, AMBIENT_MAP_GBUFFER_ALPHA_PS, "gbuffer ambient map alpha-tested"),
+    (MeshKind::TreeBranch, false, TREE_BRANCH_VS, TREE_BRANCH_PS, "gbuffer tree branches"),
+    (MeshKind::TreeLeaf, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
+    (MeshKind::TreeBillboard, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
     (MeshKind::TerrainBlend, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
 ];
 
@@ -102,6 +111,13 @@ pub(crate) const SSAO_BLUR_Y_PS: &str = "dx11_sm_3_0_ssao.hlsl_ps_pixel_blur_y";
 pub(crate) const CLOUD_VS: &str = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
 pub(crate) const CLOUD_PS: &str = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
+
+/// The tree casters: their vertex shaders (wind, LOD blend) and alpha-tested pixel shaders (the leaves' also dissolve).
+pub(crate) const TREE_SHADOW_PASSES: [(MeshKind, &str, &str); 3] = [
+    (MeshKind::TreeBranch, "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_ps_ps30_shadow"),
+    (MeshKind::TreeLeaf, "dx11_sm_3_0_rigidleafcommon_v3.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidleafcommon_v3.hlsl_ps_ps30_shadow"),
+    (MeshKind::TreeBillboard, "dx11_sm_3_0_rigidtreebillboard.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidtreebillboard.hlsl_ps_ps30_shadow"),
+];
 
 /// Memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600.
 pub(crate) const SUN_DISTANCE: f32 = 7600.0;
@@ -148,6 +164,44 @@ pub(crate) fn rigid_layout() -> Vec<InputElement> {
     }
 
     el
+}
+
+/// The inputs of the tree vertex shaders (rigidbranchcommon_v3, rigidleafcommon_v3), from their code: the Tree vertex
+/// ([`crate::model_cache::TREE_STRIDE`] bytes: POSITION0 position, 1 LOD position, 2..4 normal / tangent / bitangent, 5 uv, 6 the two LOD
+/// weights, 7 colour and wind weight; bytes 48..52 unused) and the instance (TEXCOORD0..2 the world rows for the position, TEXCOORD3..5 the
+/// ones for the LOD position: the same rows here, TEXCOORD6 (tint and wind seed, 1 - dissolve, burn) = the rigid instance's POSITION4).
+pub(crate) fn tree_layout() -> Vec<InputElement> {
+    let h4 = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    let mut el = vec![
+        element(c"POSITION", 0, h4, 0, 0, false),
+        element(c"POSITION", 1, h4, 0, 8, false),
+        element(c"POSITION", 2, h4, 0, 16, false),
+        element(c"POSITION", 3, h4, 0, 24, false),
+        element(c"POSITION", 4, h4, 0, 32, false),
+        element(c"POSITION", 5, DXGI_FORMAT_R16G16_FLOAT, 0, 40, false),
+        element(c"POSITION", 6, DXGI_FORMAT_R16G16_FLOAT, 0, 44, false),
+        element(c"POSITION", 7, h4, 0, 52, false),
+    ];
+
+    for i in 0..6 {
+        el.push(element(c"TEXCOORD", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i % 3) * 16, true));
+    }
+
+    el.push(element(c"TEXCOORD", 6, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, true));
+    el
+}
+
+/// The inputs of rigidtreebillboard's vertex shaders: the Billboard vertex ([`crate::model_cache::BILLBOARD_STRIDE`] bytes: POSITION0
+/// the corner, TEXCOORD0 the uv) and the instance's POSITION5 .. 7 (filled by the draw set's gather: TEXCOORD1 position and 1 - dissolve,
+/// TEXCOORD2 facing, tint seed and size, TEXCOORD3 burn).
+pub(crate) fn billboard_layout() -> Vec<InputElement> {
+    vec![
+        element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false),
+        element(c"TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, 8, false),
+        element(c"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 64, true),
+        element(c"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 80, true),
+        element(c"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 96, true),
+    ]
 }
 
 /// The view of a cube face.

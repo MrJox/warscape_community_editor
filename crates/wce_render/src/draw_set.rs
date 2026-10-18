@@ -299,7 +299,8 @@ impl DrawSet {
         let me = &self.models[self.model[item as usize] as usize];
         let s = &self.sphere[item as usize * 4..item as usize * 4 + 4];
         let (dx, dy, dz) = (s[0] - eye.x, s[1] - eye.y, s[2] - eye.z);
-        let dist = (dx * dx + dy * dy + dz * dz).sqrt() / lod_scale;
+        let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt() / lod_scale / item_scale.max(1e-3);
         let last = me.lod_distance.len() - 1;
         let mut lod = 0;
         while lod < last && dist > me.lod_distance[lod] {
@@ -336,7 +337,10 @@ impl DrawSet {
                         continue;
                     }
 
-                    let d = dist * inv_scale;
+                    // LOD distances are the model's own units: a model drawn at another scale (tiles: 1 / unit) switches at the scaled
+                    // distances.
+                    let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
+                    let d = dist * inv_scale / item_scale.max(1e-3);
                     let last = me.lod_distance.len() - 1;
                     while lod < last && d > me.lod_distance[lod] {
                         lod += 1;
@@ -410,7 +414,17 @@ impl DrawSet {
             };
 
             let p = |i: usize| std::array::from_fn(|k| params[i * 4 + k]);
-            *r = RigidInstance { world, p4: p(0), p5: p(1), p6: p(2), p7: p(3) };
+            let (mut p5, mut p6) = (p(1), p(2));
+
+            // A tree billboard (rigidtreebillboard vs30_main) reads POSITION5 as (position, 1 - dissolve) and POSITION6 as (facing x, tint
+            // seed, facing z, size): from the world matrix (its z axis faces, its y axis is the size) and the seed of POSITION4.
+            if mesh.kind == crate::model_cache::MeshKind::TreeBillboard {
+                let size = (world[0][1] * world[0][1] + world[1][1] * world[1][1] + world[2][1] * world[2][1]).sqrt();
+                p5 = [world[0][3], world[1][3], world[2][3], 1.0];
+                p6 = [world[0][2], params[0], world[2][2], size];
+            }
+
+            *r = RigidInstance { world, p4: p(0), p5, p6, p7: p(3) };
         });
     }
 
