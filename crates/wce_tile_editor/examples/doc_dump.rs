@@ -78,6 +78,7 @@ fn scene_hash(s: &RenderScene) -> u64 {
             Payload::Overlay(_) => 3,
             Payload::CameraRig(_) => 4,
             Payload::Water(_) => 5,
+            Payload::Decal(_) => 6,
         };
 
         h = u8_(index, h);
@@ -128,6 +129,12 @@ fn scene_hash(s: &RenderScene) -> u64 {
             }
 
             Payload::Overlay(o) => h = overlay(o, h),
+            Payload::Decal(d) => {
+                h = fs_(&d.model, h);
+                h = u8_(u64::from(d.tiled), h);
+                h = f32s(&[d.opacity], h);
+            }
+
             Payload::Water(w) => {
                 let floats = w.verts.iter().flat_map(|v| [v.x, v.y, v.z, v.across, v.u, v.v, v.flow, v.fade]).collect::<Vec<_>>();
                 h = f32s(&floats, h);

@@ -9,7 +9,7 @@ use wce_editor_core::document::OutlinerNode;
 use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
-use wce_scene::render_scene::{
+use wce_scene::render_scene::{Decal, 
     EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
@@ -586,6 +586,20 @@ impl Tile {
                         en.locked = true;
                     }
                 }
+            }
+        }
+
+        // A projected decal paints the ground (and anything else) inside its box; its key is the decal's model.
+        if self.tscene().type_of(elem) == "ProjectedDecalInstance"
+            && let Some(model) = self.tscene().doc().get(elem, "key").filter(|k| !k.is_empty())
+        {
+            let tiled = self.tscene().doc().get(elem, "tiled").is_some_and(|v| v == "true");
+            let decal = Decal { model: model.replace('\\', "/"), tiled, opacity: 1.0 };
+            let e = scene.add(layer, self.world_matrix(elem), Payload::Decal(decal), self.source(item_of(elem)));
+            self.first_entity[elem] = e;
+            self.entity_count[elem] = 1;
+            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+                en.locked = true;
             }
         }
 
