@@ -5,7 +5,7 @@
 //! Open layers are remembered by their name path, which survives the index shifts of structural edits (a node id made of the element index
 //! would not).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, DrawList, Vec2, col32, v2};
@@ -75,26 +75,46 @@ fn label_of(sc: &TedScene, e: usize) -> String {
 impl TileTool {
     pub(crate) fn rebuild_tree(&mut self, d: &TileDocument) {
         self.tree_rows.clear();
+        self.tree_filter_seen = self.tree_filter.clone();
         let sc = d.tile().tscene();
         let Some(g) = sc.scene_graph() else { return };
+
+        // With a filter: only the elements that match or hold a match, their layers open.
+        let filter = self.tree_filter.trim().to_lowercase();
+        let keep = (!filter.is_empty()).then(|| {
+            let mut keep = HashSet::new();
+            mark_matches(sc, g, &filter, &mut keep);
+            keep.insert(g);
+            keep
+        });
+
         let mut stack = vec![(g, 0usize, "root".to_owned())];
 
         // Depth first, children in order: the stack holds them reversed.
         while let Some((e, depth, key)) = stack.pop() {
             let layer = sc.is_layer(e);
-            let kids = if layer { sc.children(e) } else { vec![] };
-            let open = depth == 0 || (layer && !kids.is_empty() && self.tree_open.contains(&key));
+            let mut kids = if layer { sc.children(e) } else { vec![] };
+            let all_kids = kids.clone();
+            if let Some(keep) = &keep {
+                kids.retain(|k| keep.contains(k));
+            }
+
+            let open = depth == 0 || (layer && !kids.is_empty() && (keep.is_some() || self.tree_open.contains(&key)));
             self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, open, kids: kids.len() });
             if !open {
                 continue;
             }
 
+            // The keys count every child, shown or not: a filtered row keeps the key it has unfiltered.
             let mut seen: HashMap<String, usize> = HashMap::new();
             let mut children = vec![];
-            for k in kids {
+            for k in all_kids {
                 let nm = label_of(sc, k);
                 let ordinal = seen.entry(nm.clone()).or_default();
-                children.push((k, depth + 1, format!("{key}/{nm}#{ordinal}")));
+                if kids.contains(&k) {
+                    children.push((k, depth + 1, format!("{key}/{nm}#{ordinal}")));
+                }
+
                 *ordinal += 1;
             }
 
@@ -132,10 +152,66 @@ impl TileTool {
         self.rename_buf = d.tile().tscene().name(elem);
     }
 
+    /// Opens the layers above an element picked elsewhere (the viewport) and asks for its row to be scrolled into view. An element inside a
+    /// group that the tree does not expand is shown through the group's row.
+    pub(crate) fn reveal(&mut self, d: &TileDocument, elem: usize) {
+        let sc = d.tile().tscene();
+
+        // The layers above (nearest first; the file nests a `children` element between a layer and its contents, so the tree's parent of an
+        // element is the nearest layer above it), and the row: the element itself, or the ancestor that is a child of the nearest layer.
+        let mut layers = vec![];
+        let mut p = parent_layer(sc, elem);
+        while let Some(l) = p {
+            layers.push(l);
+            p = parent_layer(sc, l);
+        }
+
+        let Some(&nearest) = layers.first() else { return };
+        let kids = sc.children(nearest);
+        let mut row = elem;
+        while !kids.contains(&row) {
+            let Some(up) = sc.doc().elements()[row].parent else { return };
+            row = up;
+        }
+
+        // Their keys as rebuild_tree makes them, from the scene graph down.
+        layers.reverse();
+        let Some(first) = layers.iter().position(|&l| Some(l) == sc.scene_graph()) else { return };
+        let mut key = "root".to_owned();
+        self.tree_open.insert(key.clone());
+        for w in layers[first..].windows(2) {
+            let (layer, child) = (w[0], w[1]);
+            let nm = label_of(sc, child);
+            let ordinal = sc.children(layer).into_iter().take_while(|&k| k != child).filter(|&k| label_of(sc, k) == nm).count();
+            key = format!("{key}/{nm}#{ordinal}");
+            self.tree_open.insert(key.clone());
+        }
+
+        self.tree_open_version += 1;
+        self.tree_scroll_to = Some(row);
+    }
+
     /// The open-state key of an element: the name path of the layers above it (see `rebuild_tree`).
     pub(crate) fn tree_key_of(&self, elem: usize) -> String {
         self.tree_rows.iter().find(|r| r.elem == elem).map(|r| r.key.clone()).unwrap_or_default()
     }
+}
+
+/// Marks the elements under `e` that match the filter (name or type, lower-cased) or hold one; true when `e` is marked.
+fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>) -> bool {
+    let mut any = false;
+    if sc.is_layer(e) {
+        for k in sc.children(e) {
+            any |= mark_matches(sc, k, filter, keep);
+        }
+    }
+
+    if any || label_of(sc, e).to_lowercase().contains(filter) || sc.type_of(e).to_lowercase().contains(filter) {
+        keep.insert(e);
+        return true;
+    }
+
+    false
 }
 
 /// Where a drop on a row puts the dragged items.
@@ -166,7 +242,19 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         return;
     };
 
-    if tool.tree_doc != id || tool.tree_version != Some(d.tile().structure_version()) || tool.tree_open_version_seen != Some(tool.tree_open_version) {
+    // A selection made elsewhere (the viewport): open the tree down to it and scroll it into view. The tree's own clicks mark what they
+    // selected as followed already.
+    let first = selected(e).first().copied();
+    if first != tool.tree_synced {
+        tool.tree_synced = first;
+        if let Some(el) = first {
+            tool.reveal(d, el);
+        }
+    }
+
+    if tool.tree_doc != id || tool.tree_version != Some(d.tile().structure_version()) || tool.tree_open_version_seen != Some(tool.tree_open_version)
+        || tool.tree_filter != tool.tree_filter_seen
+    {
         tool.rebuild_tree(d);
     }
 
@@ -232,6 +320,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             tool.request_delete(e);
         }
     }
+
+    gui::set_next_item_width(-1.0);
+    gui::input_text("##treefilter", Some("Filter by name or type"), &mut tool.tree_filter, 256, 0);
 
     // ---- the tree
     let footer = gui::frame_height_with_spacing() * 1.2;
@@ -335,6 +426,15 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     let mut actions = vec![];
     let mut pending_drop: Option<(Vec<usize>, usize, Option<usize>)> = None;
     let mut activate = false;
+    if let Some(target) = tool.tree_scroll_to.take()
+        && let Some(i) = tool.tree_rows.iter().position(|r| r.elem == target)
+    {
+        let (y, h) = (i as f32 * row_h, gui::window_height());
+        if y < gui::scroll_y() || y + row_h > gui::scroll_y() + h {
+            gui::set_scroll_y((y - (h - row_h) * 0.5).max(0.0));
+        }
+    }
+
     {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let t = d.tile();
@@ -598,9 +698,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         });
     }
 
-    // A click on a row makes the tile the active document.
+    // A click on a row makes the tile the active document; the tree does not scroll to what it selected itself.
     if activate {
         e.docs.set_active(id);
+        tool.tree_synced = selected(e).first().copied();
     }
 
     // Keys while the pointer is over the tree.

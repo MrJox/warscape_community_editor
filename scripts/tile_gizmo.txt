@@ -1,5 +1,5 @@
 # The translate gizmo with the scripted mouse (Phase 1 of docs/plans/tile_ted_parity.md): a drag aimed at a handle moves the selected building along that
-# world axis, one undo entry per drag, and does not turn the camera; a drag that misses every handle does not orbit while the gizmo is shown, Alt + drag does.
+# world axis, one undo entry per drag, and does not turn the camera; a drag that starts off every handle orbits, gizmo shown or not.
 tile "%TILE%"
 frames 3
 tile_select BUILDING_INSTANCE
@@ -31,11 +31,12 @@ assert_history 4 4
 assert_cam_same
 undo 4
 assert_modified 0
-# a left drag over empty ground: no orbit while the gizmo is shown
+# a left drag over empty ground orbits, gizmo shown or not, and edits nothing
 mouse drag 10% 80% 30% 80% 6
 frames 3
-assert_cam_same
+assert_cam_moved
 assert_history 4 0
+cam_mark
 # the right button still orbits
 mouse drag 50% 80% 60% 80% 6 right
 frames 3
