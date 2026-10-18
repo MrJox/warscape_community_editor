@@ -55,7 +55,7 @@ unsafe impl Send for Texture {}
 unsafe impl Sync for Texture {}
 
 /// The texture slots of the rigid materials, in the order of [`GpuMesh::tex`]: the five of the standard material, then the tiled dirt map's
-/// two.
+/// two, then the ambient map's one.
 pub const TEX_DIFFUSE: usize = 0;
 pub const TEX_SPECULAR: usize = 1;
 pub const TEX_GLOSS: usize = 2;
@@ -63,9 +63,11 @@ pub const TEX_COLOUR_MASK: usize = 3;
 pub const TEX_NORMAL: usize = 4;
 pub const TEX_DETAIL: usize = 5;
 pub const TEX_ALPHA_MASK: usize = 6;
-pub const TEX_SLOTS: usize = 7;
+pub const TEX_AMBIENT: usize = 7;
+pub const TEX_SLOTS: usize = 8;
 
-const TEX_NAMES: [&str; TEX_SLOTS] = ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask"];
+const TEX_NAMES: [&str; TEX_SLOTS] =
+    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map"];
 
 /// Which of the game's rigid shaders draw a mesh (its material type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -80,6 +82,10 @@ pub enum MeshKind {
 
     /// TerrainBlend (a building's ground skirt): rigidterrainblend.
     TerrainBlend,
+
+    /// ShipAmbientmap (many buildings, despite the name): rigidambientmapmesh, rigidstandard with the diffuse multiplied by a baked ambient
+    /// occlusion map (`s_ambient_map`) at the second uv.
+    AmbientMap,
 }
 
 /// The shader name of a texture slot (`s_diffuse_map`...); empty for other slots.
@@ -432,6 +438,7 @@ impl ModelInner {
                 MaterialType::DefaultMaterial => MeshKind::Standard,
                 MaterialType::TiledDirtmap => MeshKind::TiledDirtmap,
                 MaterialType::TerrainBlend => MeshKind::TerrainBlend,
+                MaterialType::ShipAmbientmap => MeshKind::AmbientMap,
                 _ => return None,
             };
 
@@ -443,7 +450,7 @@ impl ModelInner {
 
             let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
 
-            // The three material types share the default layout.
+            // These material types share the default layout.
             let mut vertices = Vec::with_capacity(mesh.vertices().len() * 32);
             for vertex in mesh.vertices() {
                 vertex.write(&mut vertices, 6, VertexFormat::Static, MaterialType::DefaultMaterial).ok()?;
@@ -480,6 +487,7 @@ impl ModelInner {
                     material_texture(textures, material, TextureType::Normal, false, textures.flat_normal()),
                     material_texture(textures, material, TextureType::TilingDirtUV2, true, textures.white()),
                     material_texture(textures, material, TextureType::DirtAlphaMask, false, textures.white()),
+                    material_texture(textures, material, TextureType::AmbientOcclusion, false, textures.white()),
                 ],
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
@@ -990,7 +998,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         uv2_tile: [0.0; 2],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white()],
+        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white()],
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
     };
