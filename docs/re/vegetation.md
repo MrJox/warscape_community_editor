@@ -243,13 +243,29 @@ that sets variables by name hash would not show up in this search; only a memory
   vegetation.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
   has no packed file for (or `gen:<list>` / grass *generated*). Open:
-  - ROME_Destruct on forest tiles (293 / 654 exact). The main loop's random stream stays in step: probing the oracle positions, the draw offset
-    jumps and comes back to 0. The differences come from grouping / minimum separation. Not explained by first / last / per-category parameters
-    or by dropping a single group. `per_climate_tree_conversions.xml` maps models per climate; it's not yet known whether it plays a part.
-  - Settlement climate lists (~74 / 121): the stream differs from the first candidate; a few of BOB's trees fall inside our exclusion polygons, so
-    the point-in-outline edge rule (`UTILITYLIB::OUTLINE` contains, `FUN_10a7d7e0`) is the suspect.
-  - outfield_tents (88 / 239): the yurt file (malformed attribute at line 68).
-  - List heights are off by up to ~10 on some tiles (the height alpha map is not applied).
+  - The atlantic family: ROME_Destruct on forest tiles (293 / 654), the climate lists of settlements, farms and roads (rome_atlantic
+    73 / 121) and outfield_tents (the `atl_yurt*` groups). All use atlantic-style parameter files; ROME_Med (599 / 640) and
+    ROME_Destructdes (606 / 650) don't. The main loop's random stream stays in step, so the difference is in grouping or the minimum
+    separation. Traced on farm_eastern/1x1/ab: BOB kept a separation-3 stone that mine removed. Mine had re-rolled a neighbour exactly on
+    a leader's grouping radius (2) to a separation-1 stone, which then removed it. BOB evidently didn't re-roll it, and the shifted
+    grouping draws change the rest.
+    Checked against the decompile and found equal:
+    - group_objects: leader order (std::map on min separation, x, y), the leader's current group and original grouping values,
+      the neighbour's blend and height, the type mask, the two size draws;
+    - valid_group_for_position: the channel group sum, then the probability group's sum through the zero-checked channel range;
+    - the quadtree: build, container, depth-first query, circle-box test;
+    - the CA map: insert, rehash and copy order;
+    - remove_objects_based_on_min_seperation: the outer loop over a straight copy of the live map, the skip after each erase.
+    Also ruled out, measured: other outer orders, the leader's blend or height for the re-roll, a strict radius test. Next step: BOB
+    itself as a black box under Wine (it ran here for the startpos work) with modified parameter files (grouping off, ...), which needs
+    its configuration format and a scratch kit.
+  - Exclusion polygons: OUTLINE contains (FUN_10a7d7e0) is a half-open crossing count without division; ported. The one tree BOB
+    places inside a polygon (ctesiphon) is a static tree on the half-metre grid, so ctesiphon is exact.
+  - outfield_tents is empty for the farm_eastern / farm_western / settlement / road tiles in the packs. Their tile database entries
+    are identical to farm_sassanid's (which has tents) apart from the location, so those lists look stale. The yurt file's only
+    `<include_in_outfield />` has a non-breaking space before `/>`, so in BOB no object has the flag.
+  - List heights: BOB writes height × the height alpha map (`WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_height_alpha_map`, TEd's terrain node,
+    in a DLL not imported yet) at the tree's pixel. The game ignores the stored y (trees go on the terrain).
   - Not done: props / decals / VFX outputs, merging static trees, the per-climate conversions on write.
 - **Grass, settled as far as the game's static code goes:**
   - The playable-area box: the tile's grass list is moved into the battle's frame (`GRASS_LIST::transform`, a 4×3 matrix per tile

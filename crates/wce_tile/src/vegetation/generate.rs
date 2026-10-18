@@ -156,18 +156,25 @@ impl TileInputs {
     }
 }
 
+/// `UTILITYLIB::OUTLINE` contains (FUN_10a7d7e0): a crossing count over the edges from each point to the next, half-open in y (from the
+/// lower end, excluding the upper), crossing when (y - y0) * (x1 - x0) > (x - x0) * (y1 - y0) with (x0, y0) the lower end; no division.
 pub fn point_in(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
-    let mut c = false;
+    let mut inside = false;
     let n = poly.len();
     for i in 0..n {
-        let (xi, yi) = poly[i];
-        let (xj, yj) = poly[(i + n - 1) % n];
-        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-            c = !c;
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let (lo, hi) = if a.1 <= b.1 { (a, b) } else { (b, a) };
+        if lo.1 <= y && y < hi.1 {
+            let lhs = (y - lo.1) * (hi.0 - lo.0);
+            let rhs = (x - lo.0) * (hi.1 - lo.1);
+            if lhs > rhs {
+                inside = !inside;
+            }
         }
     }
 
-    c
+    inside
 }
 
 /// A candidate (`PROCEDURAL_POINT_GENERATION::generate_points`).
@@ -413,6 +420,11 @@ fn circle_box(c: (f32, f32, f32), b: (f32, f32, f32, f32)) -> u8 {
 
 /// One generator (`PROCEDURAL_OBJECTS` + `generate_objects`) of a category and object mask, its seed and density. The objects left, in
 /// the order of BOB's generated map.
+fn trace_window() -> Option<(f32, f32, f32)> {
+    let v: Vec<f32> = std::env::var("WCE_VEG_TRACE").ok()?.split(',').filter_map(|x| x.parse().ok()).collect();
+    (v.len() == 3).then(|| (v[0], v[1], v[2]))
+}
+
 pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> Vec<Chosen> {
     let objects = &params.objects;
 
@@ -440,6 +452,10 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
     }
 
     let mut tree = Quadtree::new((minx - 0.5, miny - 0.5), (maxx + 0.5, maxy + 0.5), 7);
+    let h_scene = inputs.cells_y as f32 * 128.0 * inputs.render_scale;
+    let tw = trace_window();
+    let traced = |x: f32, y: f32| tw.is_some_and(|(cx, cz, r)| (x / inputs.render_scale - cx).abs() <= r && ((h_scene - y) / inputs.render_scale - cz).abs() <= r);
+    let lp = |x: f32, y: f32| (x / inputs.render_scale, (h_scene - y) / inputs.render_scale);
     let mut live: CaMap<Vec2Key, Chosen> = CaMap::default();
     let mut blends: CaMap<Vec2Key, f32> = CaMap::default();
     let mut chosen_order: Vec<(f32, f32, f32)> = vec![];
@@ -535,6 +551,10 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
             kind: op.kind,
         };
 
+        if traced(p.x, p.y) {
+            eprintln!("stage1 {:?} {} group {} ms {}", lp(p.x, p.y), op.model, op.group, op.min_separation);
+        }
+
         chosen_order.push((op.min_separation, p.x, p.y));
         live.insert(key, c.clone());
         let n = tree.container((p.x - 0.01, p.y - 0.01, p.x + 0.01, p.y + 0.01));
@@ -558,6 +578,9 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
 
         let mut nodes = vec![];
         tree.query(0, (lx, ly, gr), &mut nodes);
+        if traced(lx, ly) {
+            eprintln!("leader {:?} gr {gr} nodes {:?}", lp(lx, ly), nodes.iter().map(|&n| (n, tree.nodes[n].min, tree.nodes[n].max, tree.nodes[n].items.keys().iter().map(|k| lp(k.0, k.1)).collect::<Vec<_>>())).collect::<Vec<_>>());
+        }
         for n in nodes {
             for okey in tree.nodes[n].items.keys() {
                 if okey == lkey {
@@ -591,6 +614,10 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
                 }
 
                 let op = &objects[o];
+                if traced(okey.0, okey.1) {
+                    eprintln!("group  {:?} <- leader {:?}: {} ms {}", lp(okey.0, okey.1), lp(lx, ly), op.model, op.min_separation);
+                }
+
                 let s1 = op.random_size(&mut rand, b);
                 let le = live.get_mut(&okey).expect("checked");
                 le.model.clone_from(&op.model);
@@ -649,6 +676,10 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
                 };
 
                 if remove {
+                    if traced(okey.0, okey.1) {
+                        eprintln!("remove {:?} by {:?} (ms {} vs {}) in live {}", lp(okey.0, okey.1), lp(ekey.0, ekey.1), ms, oms, live.contains(&okey));
+                    }
+
                     live.remove(&okey);
                     tree.nodes[n].items.remove(&okey);
                     // BOB's loop advances twice after an erase: the entry after the removed one is never looked at.

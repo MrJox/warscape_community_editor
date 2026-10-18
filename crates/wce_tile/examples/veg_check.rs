@@ -126,6 +126,18 @@ fn main() {
                 }
 
                 let exists = |p: &str| vfs.exists(&p.replace('\\', "/").to_lowercase());
+                if let Some(i) = args.iter().position(|a| a == "--at") {
+                    let v: Vec<f32> = args[i + 1].split(',').map(|x| x.parse().unwrap()).collect();
+                    let density = params.densities[category].trees;
+                    let chosen = vegetation::generate::generate(&params, &inputs, category, vegetation::params::TREE | vegetation::params::PROP, seeds.trees, density);
+                    let h_m = inputs.cells_y as f32 * 128.0 * inputs.render_scale;
+                    for c in &chosen {
+                        let (lx, lz) = (c.x / inputs.render_scale, (h_m - c.y) / inputs.render_scale);
+                        if (lx - v[0]).abs() <= v[2] && (lz - v[1]).abs() <= v[2] {
+                            lines.push(format!("  chosen ({lx}, {lz}) {} group {} minsep {} width {} size {}", c.model, c.group, c.min_separation, c.width, c.size));
+                        }
+                    }
+                }
                 let mine = vegetation::generated_trees(&inputs, &params, category, seeds, &exists);
                 if args.iter().any(|a| a == "--inside") {
                     let h_m = inputs.cells_y as f32 * 128.0 * inputs.render_scale;
@@ -144,6 +156,18 @@ fn main() {
                     }
 
                     lines.push(format!("  theirs inside my exclusions: {inside} {ex:?}"));
+                    let scene = &project.scene;
+                    let doc = scene.doc();
+                    let polys: Vec<usize> = doc.elements().iter().enumerate().filter(|(_, e)| e.name == "VegetationExclusionPolygonInstance").map(|(i, _)| i).collect();
+                    for &(x, z) in &ex {
+                        let (gx, gy) = (x * inputs.render_scale, h_m - z * inputs.render_scale);
+                        for (k, poly) in inputs.exclusions.iter().enumerate() {
+                            if vegetation::generate::point_in(poly, gx, gy) {
+                                let e = polys.get(k).copied().unwrap_or(0);
+                                lines.push(format!("    in polygon {k} (elem {e}) visible {} points {} attrs {:?}", scene.visible(e), poly.len(), doc.elements()[e].attrs.iter().map(|a| format!("{:?}", a)).collect::<Vec<_>>()));
+                            }
+                        }
+                    }
                 }
 
                 if args.iter().any(|a| a == "--order") {
