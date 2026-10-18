@@ -2,6 +2,7 @@
 //!
 //!   pack_dump list <pack>                 one line per file: path, a tab, its size
 //!   pack_dump get <pack> <inside> <out>   writes one file of the pack
+//!   pack_dump find <pack> <text>          the paths containing the text (sizes not read)
 
 use rpfm_lib::files::pack::Pack;
 use rpfm_lib::games::supported_games::SupportedGames;
@@ -31,6 +32,12 @@ fn main() {
     };
 
     match cmd.as_str() {
+        "find" => {
+            let text = a.get(2).map(|t| t.to_lowercase()).unwrap_or_default();
+            for n in names.iter().filter(|n| n.contains(&text)) {
+                println!("{n}");
+            }
+        }
         "list" => {
             for n in &names {
                 println!("{n}\t{}", read(n).len());
