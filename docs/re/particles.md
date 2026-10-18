@@ -225,5 +225,15 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
   the reference's range and its scale = effect scale * a draw in the reference's scale range; effect lights go into the point light
   pass. The weather spawn is unchanged (spawn_dump identical). ASSUMPTIONS: owner +0x70 = the effect's scale, +0x78 and +0xb4 = 1 (as
   the weather's; the owner was not traced for placed effects); the ring's x is the sincos call's second lane; the rigid light's phase is
-  0; the instance generator is seeded from the entity id. Not done: seasons, rigid emitters with other models (debris, icons: no
-  tile effect uses them), soft-shadowed particles.
+  0; the instance generator is seeded from the entity id.
+- **Rigid bursts** (fn 0x11895130): a burst at T makes round(lerp(RigidsPerBurst)) rigids spread over lerp(BurstIntervalLength), each
+  living lerp(RigidLifeTime); the next burst is at T + lerp(BurstInterval) + length (Bursts of them unless InfiniteBursts). The fires'
+  light keeps one rigid alive (64 s interval and life); the storm lightning (`library_vfx_weather_rain` lightning_point_light: 1-3
+  rigids of 0.1-0.15 s every 30-60 s, ParticleScale 400 -> 400 -> 0.2, `vfx_lightning` 4.85 / 4.85 / 5.0, radius 1: a 400 m flash 10 m
+  above the camera) is enabled only by `weather_vfx_rain_storm_camp` (the campaign's `C_rain stormy`). The editor draws the weather's
+  lights at the camera as well.
+- **Seasons.** BOB writes VFXInstance's seasons as a mask into the marker (+0x60, 15 = all four; every corpus instance has all four).
+  The editor draws an effect only in its seasons (the terrain look's su / au / wi). The game's check of the mask was not traced.
+- **Rigid particles with other models** (debris, mud, splinters, icons, the blood and impact decals of action effects; no tile or
+  battle weather effect uses them): each rigid is a physics body (fn 0x11829920: velocity * owner +0x38, orientation quaternion, angular
+  velocity, placed by fn 0x1184cf80) of the engine's rigid simulation; not drawn.
