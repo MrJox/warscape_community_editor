@@ -206,7 +206,7 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
   - emission: accum += min(dt, 0.1) * rate * owner +0xb4 * owner +0x78^2, rate = lerp(emission_min(t), emission_max(t), f) with f per
     instance; floor(gate * floor(accum)) particles spread evenly over the frame (t_i = last + dt (i + 1) / n);
   - per particle, the instance's generator (+0xc0) in this order: lifetime lerp(ParticleLifeTime) + instance +0xa0; arc angle
-    lerp(SpawnArc) degrees; radius lerp(inner, outer) where inner / outer = lerp(curve min, curve max, the instance's area blend +0xd8)
+    lerp(SpawnArc) degrees (x = cos, z = sin: fn 0x119eb652 returns (sin, cos), x takes lane 1); radius lerp(inner, outer) where inner / outer = lerp(curve min, curve max, the instance's area blend +0xd8)
     (fn 0x117ba420; the curve time is age / LifeTime, wrapped with SpawnAreaLoopAnim); then the shared generator (DAT_11da7408) for the
     box: size per axis (fn 0x117ba1a0, the same blend) * (rand - 0.5); offset = (ring + box) * owner +0x78 * (owner +0x70 * instance
     +0x70), turned by the emitter's quaternion (EmitterRotation with the spin), + SpawnPosition * scale, turned by the instance's;
@@ -222,10 +222,22 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
   rigid's ParticleScale curve * the effect's scale), a per-instance phase (render context +0x30). Building models carry no lights.
 - **Editor** (`particles.rs`): world instances after the weather's emitters (constants rows: weather, then each loaded effect's
   emitters; emitter instances 256 per texture row), the decoded spawn, CullDistances.w stops spawning, the instance's tint = the middle of
-  the reference's range and its scale = effect scale * a draw in the reference's scale range; effect lights go into the point light
-  pass. The weather spawn is unchanged (spawn_dump identical). ASSUMPTIONS: owner +0x70 = the effect's scale, +0x78 and +0xb4 = 1 (as
-  the weather's; the owner was not traced for placed effects); the ring's x is the sincos call's second lane; the rigid light's phase is
-  0; the instance generator is seeded from the entity id.
+  the reference draws (below); effect lights go into the point light pass. The weather spawn is unchanged (spawn_dump identical).
+- **Verified assumptions** (2026-10-18):
+  - Reference draws (fn 0x1181a930 -> fn 0x117f1860): per placed effect and reference, from the shared generator, one scale
+    lerp(scale_min, scale_max) (into each emitter instance's +0x70: the owner's +0x70 is the effect's), then one blend for the tint
+    (all four channels, lerp(tint_min, tint_max)), one for the particle lifetime bias (+0xa0) and one for the emitter lifetime bias (added
+    to its LifeTime, +0xdc); every emitter of the reference shares them. The editor draws them so (the weather keeps the middles: its
+    references have equal bounds).
+  - The owner (the effect instance, ctor fn 0x117cfbc0: +0x70 = 1, +0x74 = -1, +0x78 = 1, +0xb4 = 1, +0xb8 = 1, velocity +0x48 = 0;
+    setters: vtable +0x3c -> +0x70, +0x50 -> +0x78, +0x60 -> +0xb4): an effect placed at a transform (fn 0x1046c320) gets +0x70 = the
+    transform's scale and +0x78 = 1; the marker path (fn 0x10407e90 -> records of 0x40: effect, position, rotation, scale = marker
+    +0x5c, autoplay +0x54) was not followed to the setter calls, so the editor uses that pattern: owner scale = the effect's scale,
+    +0x78 = +0xb4 = 1.
+  - The ring: fn 0x119eb652 (the CRT's sincosf) returns (sin, cos); x takes the cosine.
+  - Seeds: all 509 vanilla emitters have RandomSeed -1 (random per instance in the game); the editor seeds from the entity id.
+  - Open: the rigid light's phase (the render parameters' +0x30 passed to fn 0x117f9800; 0 here) and the game's use of the marker's
+    season mask.
 - **Rigid bursts** (fn 0x11895130): a burst at T makes round(lerp(RigidsPerBurst)) rigids spread over lerp(BurstIntervalLength), each
   living lerp(RigidLifeTime); the next burst is at T + lerp(BurstInterval) + length (Bursts of them unless InfiniteBursts). The fires'
   light keeps one rigid alive (64 s interval and life); the storm lightning (`library_vfx_weather_rain` lightning_point_light: 1-3
