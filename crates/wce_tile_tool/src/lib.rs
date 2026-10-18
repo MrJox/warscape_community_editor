@@ -4,6 +4,7 @@
 //! action is a command too (`commands`), so scripts and menus use the same code.
 
 pub mod commands;
+pub mod context_panel;
 pub mod scene_panel;
 pub mod tool;
 

@@ -15,6 +15,7 @@
 //! which scene it published into by its address only.
 
 mod commands;
+pub mod context;
 mod edits;
 mod index;
 mod pick;
@@ -385,6 +386,13 @@ pub struct Tile {
     /// The decoded tree list of the display's `tree_list`.
     pub(crate) trees: vegetation::TreeList,
     pub(crate) grass: grass::GrassState,
+
+    /// Draw the terrain (and its material) over the tile's own cells only, without the height map's border: the map context's neighbours
+    /// are drawn there.
+    pub(crate) clip_to_tile: bool,
+
+    /// The material id of the clipped maps (0: none yet).
+    pub(crate) material_clip_id: u64,
 }
 
 pub(crate) fn scene_key(scene: &RenderScene) -> usize {
@@ -489,6 +497,7 @@ impl TileDocument {
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
+            clip_to_tile: false, material_clip_id: 0,
         };
 
         tile.build_index();

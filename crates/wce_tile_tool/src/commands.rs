@@ -311,6 +311,106 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [neighbour cells] [ground cells]",
+        "show the open tile among its neighbours in a battle map (waits for the build); 'campaign' is the game's campaign battle map",
+        |e, a| {
+            let Some(name) = a.first() else { return fail("usage: map_context <map | campaign> [placement | x y rotation] [radius] [far]") };
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            with_tile(e, |t, e| {
+                use crate::context_panel::{GAME_MAP, load_map, location_names};
+                let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
+                let files = e.files();
+                let ui = &mut t.context;
+                ui.refresh_maps(&raw, files.as_deref());
+                let want = if name == "campaign" { GAME_MAP.to_owned() } else { name.clone() };
+                let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}; maps: {}", ui.maps.join(", "))) };
+                ui.map = k as i32;
+                if ui.loaded.as_ref().is_none_or(|l| l.0 != want) {
+                    let db = match wce_tile::battle_map::tile_db::TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database")) {
+                        Ok(db) => db,
+                        Err(err) => return fail(err),
+                    };
+
+                    match load_map(&want, &raw, &db, files.as_deref()) {
+                        Ok((m, l)) => ui.loaded = Some((want.clone(), m, l)),
+                        Err(err) => return fail(err),
+                    }
+                }
+
+                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+                ui.find_placements(d);
+                let cell = a.get(1).is_some_and(|w| w == "cell");
+                let rest = &a[if cell { 2 } else { 1 }..];
+                let nums: Vec<i32> = rest.iter().map(|v| atoi(v) as i32).collect();
+                let used = if cell || ui.placements.is_empty() {
+                    if nums.len() < 3 && cell {
+                        return fail("usage: map_context <map> cell <x> <y> <rotation degrees> [radius] [far]");
+                    }
+
+                    ui.choice = ui.placements.len();
+                    if nums.len() >= 3 {
+                        ui.manual = [nums[0], nums[1], nums[2] / 90];
+                        3
+                    } else {
+                        0
+                    }
+                } else if let Some(&n) = nums.first() {
+                    ui.choice = (n.max(0) as usize).min(ui.placements.len() - 1);
+                    1
+                } else {
+                    ui.choice = 0;
+                    0
+                };
+
+                if let Some(&r) = nums.get(used) {
+                    ui.radius = r.max(1);
+                }
+
+                if let Some(&f) = nums.get(used + 1) {
+                    ui.far = f.max(0);
+                }
+
+                ui.shown = true;
+                let Some(rq) = ui.request(d) else { return fail("no request (no map or no kit)") };
+                let mut built = wce_tile_editor::tile_document::context::build_context(&rq, files);
+                ui.build += 1;
+                ui.publish(e, id, &mut built);
+                let (_, map, loc) = ui.loaded.as_ref().expect("a map");
+                let places: Vec<String> = ui.placements.iter().map(|&i| {
+                    let p = &map.placements[i];
+                    format!("({}, {}) {:#x} {}", p.x, p.y, p.rotation, location_names(loc.as_ref(), p.x, p.y))
+                }).collect();
+                ok(format!("{}; placements: [{}]", built.report, places.join("; ")))
+            })
+        },
+    );
+
+    c.add("map_context_async", "map_context_async <map | campaign>", "test: what the Map context section does when shown with a map (reads and builds on the worker thread)", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: map_context_async <map | campaign>") };
+        with_tile(e, |t, e| {
+            let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
+            let files = e.files();
+            let ui = &mut t.context;
+            ui.refresh_maps(&raw, files.as_deref());
+            let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
+            let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}")) };
+            ui.map = k as i32;
+            ui.shown = true;
+            ui.loaded = None;
+            ui.start_map(&raw, files);
+            ok("started")
+        })
+    });
+
+    c.add("map_context_off", "map_context_off", "take the map context off the scene", |e, _| {
+        with_tile(e, |t, e| {
+            t.context.shown = false;
+            t.context.clear(e);
+            ok("")
+        })
+    });
+
     c.add("tiles", "tiles [filter words]", "list the tile database entries of the kits (the tile browser's rows), optionally filtered; says how many", |e, a| {
         with_tile(e, |t, e| {
             let roots = t.kit_roots(e);

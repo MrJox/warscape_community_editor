@@ -171,6 +171,9 @@ pub struct TileTool {
     env: Option<AssetVariationDb>,
     wq: BTreeMap<String, String>,
     env_status: String,
+
+    /// The Map context section (the tiles around the open one).
+    pub(crate) context: crate::context_panel::ContextUi,
 }
 
 impl Default for TileTool {
@@ -185,7 +188,7 @@ impl Default for TileTool {
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, env: None,
-            wq: BTreeMap::from([("map".to_owned(), "default_map".to_owned())]), env_status: String::new(),
+            wq: BTreeMap::from([("map".to_owned(), "default_map".to_owned())]), env_status: String::new(), context: Default::default(),
         }
     }
 }
@@ -694,6 +697,7 @@ impl TileTool {
         }
 
         self.draw_entry_section(e, id);
+        self.context.draw(e, id);
         gui::separator();
         gui::checkbox("snap to grid", &mut self.snap_grid);
         gui::same_line();
@@ -1474,7 +1478,10 @@ impl Tool for TileTool {
             self.grabbing = false;
             self.stroke_active = false;
             self.mode = TileMode::Select;
+            self.context.tile_changed(e, id);
         }
+
+        self.context.poll(e, id);
 
         // Structural edits move element indices: the command says what is selected afterwards.
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");

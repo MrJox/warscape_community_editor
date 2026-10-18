@@ -75,6 +75,9 @@ fn main() {
             }
 
             if lf_only {
+                println!("   names equal {}, strings {:?} / {:?}, campaign {} / {}, version {} / {}", got.names == want.names, got.strings, want.strings, got.is_campaign, want.is_campaign, got.version, want.version);
+                let lf: Vec<_> = got.placements.iter().zip(&want.placements).enumerate().filter(|(_, (a, b))| a.lf != b.lf).collect();
+                println!("   lf differs on {} placements; first {:?}", lf.len(), lf.iter().take(3).map(|(i, (a, b))| (*i, a.lf, b.lf, a.x, a.y)).collect::<Vec<_>>());
                 println!("   header got  {:?} {:?} {:?} {:?} {:?} {:?}", got.lf_position, got.lf_scale, got.battle_size, got.battle_centre, got.origin_offset, got.bounds);
                 println!("   header want {:?} {:?} {:?} {:?} {:?} {:?}", want.lf_position, want.lf_scale, want.battle_size, want.battle_centre, want.origin_offset, want.bounds);
             }

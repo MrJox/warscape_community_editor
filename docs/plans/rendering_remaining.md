@@ -7,7 +7,8 @@ This file lists what is not done.
 ## Next: terrain open points
 
 From docs/re/terrain.md ("Assumptions / open"):
-- **Map-level (later tilemaps scope):** neighbour tiles, the outfield, the tile's `final_alpha` feather into the map's base terrain, the
+- **Map-level (later tilemaps scope):** neighbour tiles (done 2026-10-19 as the Tile panel's Map context, docs/re/battle_maps.md; their
+  shading normals without the LF slope, no borders / feathering), the outfield, the tile's `final_alpha` feather into the map's base terrain, the
   far maps (docs/re/terrain.md, "Seasons and snow"), and the resolve's second and third layers (`s_mask_map` and
   `g_layer1/2_texture_index` come with the far maps, fn 0x118839d0; black / off for a lone tile).
 - Done 2026-10-18: seasons (spring added; the game's fallback matches) and snow (the global snow normals, the instance snow switch).
