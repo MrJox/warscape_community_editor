@@ -252,6 +252,55 @@ struct LightDef {
     smooth: bool,
 }
 
+/// The bursts of a rigid emitter (fn 0x11895130): a burst at T spawns round(lerp(RigidsPerBurst)) rigids spread over its length
+/// (lerp(BurstIntervalLength)), each living lerp(RigidLifeTime); the next burst is at T + lerp(BurstInterval) + length; Bursts of them
+/// unless InfiniteBursts.
+#[derive(Clone, Debug, Default)]
+struct RigidBursts {
+    next: f32,
+    left: i32,
+    started: bool,
+
+    /// (birth, life) of the live rigids.
+    rigids: Vec<(f32, f32)>,
+    rng: u32,
+}
+
+impl RigidBursts {
+    fn update(&mut self, d: &wce_assets::vfx_def::VfxEmitterDef, clock: f32, start: f32) {
+        let range = |name: &str, lo: f32, hi: f32| d.range(name, lo, hi);
+        if !self.started {
+            self.started = true;
+            self.next = start;
+            let (b0, b1) = range("Bursts", 1.0, 1.0);
+            self.left = lerp(b0, b1, game_rand(&mut self.rng)).round() as i32;
+        }
+
+        let infinite = d.b("InfiniteBursts", false);
+        let mut guard = 0;
+        while self.next <= clock && (infinite || self.left > 0) && guard < 64 {
+            guard += 1;
+            let (i0, i1) = range("BurstInterval", 0.0, 0.0);
+            let (l0, l1) = range("BurstIntervalLength", 0.0, 0.0);
+            let (n0, n1) = range("RigidsPerBurst", 1.0, 1.0);
+            let (r0, r1) = range("RigidLifeTime", 2.0, 2.0);
+            let interval = lerp(i0, i1, game_rand(&mut self.rng));
+            let length = lerp(l0, l1, game_rand(&mut self.rng));
+            let n = lerp(n0, n1, game_rand(&mut self.rng)).round().max(0.0) as u32;
+            for i in 0..n {
+                let birth = self.next + length * i as f32 / n as f32;
+                let life = lerp(r0, r1, game_rand(&mut self.rng)).max(1e-3);
+                self.rigids.push((birth, life));
+            }
+
+            self.left -= 1;
+            self.next += (interval + length).max(1e-3);
+        }
+
+        self.rigids.retain(|&(birth, life)| birth + life > clock);
+    }
+}
+
 /// A light of a placed effect: a rigid emitter whose model is a point light.
 #[derive(Clone, Debug)]
 struct WorldLight {
@@ -264,6 +313,7 @@ struct WorldLight {
     rot: Float4x4,
     scale: f32,
     start: f32,
+    bursts: RigidBursts,
 }
 
 /// A point light of the placed effects this frame, for the light pass.
@@ -415,6 +465,9 @@ pub struct ParticleSystem {
     world: Vec<WorldInstance>,
     world_lights: Vec<WorldLight>,
 
+    /// The weather's rigid lights (at the camera) and their bursts.
+    weather_lights: Vec<RigidBursts>,
+
     /// `lighting/lights.xml`, and per light model its StaticPointLight meshes, loaded on first use.
     light_defs: Option<BTreeMap<String, LightDef>>,
     light_models: BTreeMap<String, Vec<(String, Float3)>>,
@@ -511,6 +564,7 @@ impl ParticleSystem {
             world_libs: BTreeMap::new(),
             world: vec![],
             world_lights: vec![],
+            weather_lights: vec![],
             light_defs: None,
             light_models: BTreeMap::new(),
             global_rng: 0x1234_5678,
@@ -820,8 +874,11 @@ impl ParticleSystem {
 
                 let reference = Float3::new(light.pos[0], light.pos[1], light.pos[2]);
                 let scale = fx.scale * 0.5 * (light.scale_range[0] + light.scale_range[1]);
-                let start = old_lights.get(&(fx.key, k)).map_or(clock, |l| l.start);
-                self.world_lights.push(WorldLight { key: fx.key, effect: e, light: k, pos: origin + rotate(&rot, reference * fx.scale), rot, scale, start });
+                let (start, bursts) = old_lights.get(&(fx.key, k)).map_or_else(
+                    || (clock, RigidBursts { rng: (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ 0x6C8E_9CF5 ^ k as u32, ..Default::default() }),
+                    |l| (l.start, l.bursts.clone()),
+                );
+                self.world_lights.push(WorldLight { key: fx.key, effect: e, light: k, pos: origin + rotate(&rot, reference * fx.scale), rot, scale, start, bursts });
             }
         }
 
@@ -831,14 +888,14 @@ impl ParticleSystem {
         }
     }
 
-    /// The point lights of the placed effects now. A rigid point light emitter keeps one rigid alive (Bursts 1, BurstInterval and
-    /// RigidLifeTime 64 s for the fires): the model's StaticPointLight is submitted every frame (fn 0x117f9800) at the rigid's matrix times
+    /// The point lights of the placed effects and the weather now. A rigid point light emitter makes rigids in bursts ([`RigidBursts`];
+    /// the fires keep one alive: BurstInterval and RigidLifeTime 64 s; the storms' lightning flashes 1-3 for 0.1 s every 30-60 s): the model's StaticPointLight is submitted every frame (fn 0x117f9800) at the rigid's matrix times
     /// the mesh pivot, with radius = the definition's * the matrix's scale (the rigid's ParticleScale curve, start -> mid -> end over its
     /// life, times the effect's scale), and the definition's colour, colour_scale, colour_min and animation (as the tile's lights, see
     /// renderer/lights.rs). Lights beyond the emitter's CullDistances.w are skipped. ASSUMPTION: the per-instance phase (render context
     /// +0x30) is 0; the rigid's position is SpawnPosition * scale (the fire lights have no spawn area).
     pub fn effect_lights(&mut self, eye: Float3) -> Vec<EffectPointLight> {
-        if self.world_lights.is_empty() || !self.enabled {
+        if (self.world_lights.is_empty() && self.effect.lights.is_empty()) || !self.enabled {
             return vec![];
         }
 
@@ -851,48 +908,75 @@ impl ParticleSystem {
             self.light_defs = Some(defs);
         }
 
+        // The light models of the weather's lights (the placed effects' are read when they are placed).
+        for light in &self.effect.lights {
+            if !self.light_models.contains_key(&light.model) {
+                let lights = (self.reader)(&light.model).map(|bytes| model_lights(&bytes)).unwrap_or_default();
+                self.light_models.insert(light.model.clone(), lights);
+            }
+        }
+
+        if self.weather_lights.len() != self.effect.lights.len() {
+            self.weather_lights = (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
+        }
+
         let defs = self.light_defs.take().unwrap_or_default();
+        let clock = self.clock;
         let mut out = vec![];
-        for wl in &self.world_lights {
-            let light = &self.world_effects[wl.effect].lights[wl.light];
+        let mut emit = |light: &wce_assets::weather_vfx::EffectLight, pos: Float3, rot: &Float4x4, scale: f32, bursts: &mut RigidBursts, start: f32, models: &BTreeMap<String, Vec<(String, Float3)>>| {
             let d = &light.def;
             let mut cull = [0.0f32; 4];
             d.vec("CullDistances", &mut cull);
             let mut sp = [0.0f32; 3];
             d.vec("SpawnPosition", &mut sp);
-            let base = wl.pos + rotate(&wl.rot, Float3::new(sp[0], sp[1], sp[2]) * wl.scale);
+            let base = pos + rotate(rot, Float3::new(sp[0], sp[1], sp[2]) * scale);
+            bursts.update(d, clock, start);
             if cull[3] > 0.0 && length(eye - base) > cull[3] {
-                continue;
+                return;
             }
 
-            // The rigid's age in its cycle, and its scale curve.
-            let (life_lo, life_hi) = d.range("RigidLifeTime", 64.0, 64.0);
-            let life = (0.5 * (life_lo + life_hi)).max(0.001);
-            let t = ((self.clock - wl.start).max(0.0) % life) / life;
             let (mut s0, mut s1, mut s2) = ([1.0f32; 2], [1.0f32; 2], [1.0f32; 2]);
             d.vec("ParticleScaleStart", &mut s0);
             d.vec("ParticleScaleMid", &mut s1);
             d.vec("ParticleScaleEnd", &mut s2);
             let mid = d.f("ParticleScaleMidPointTime", 0.5).clamp(1e-4, 1.0 - 1e-4);
-            let curve = if t < mid { lerp(s0[0], s1[0], t / mid) } else { lerp(s1[0], s2[0], (t - mid) / (1.0 - mid)) };
-            let time = self.clock;
-            for (name, pivot) in self.light_models.get(&light.model).map_or(&[][..], |v| &v[..]) {
-                let Some(def) = defs.get(name) else { continue };
-                let wave = |speed: f32| (time * speed).sin().abs();
-                let level = match def.animation {
-                    1 => def.colour_scale * wave(def.speed[0]) + def.colour_min,
-                    2 => def.colour_scale * (wave(def.speed[0]) * wave(def.speed[1])) + def.colour_min,
-                    _ => def.colour_scale + def.colour_min,
-                };
+            for &(birth, life) in &bursts.rigids {
+                if birth > clock {
+                    continue;
+                }
 
-                let rigid_scale = curve * wl.scale;
-                out.push(EffectPointLight {
-                    pos: base + rotate(&wl.rot, *pivot * rigid_scale),
-                    colour: def.colour.map(|c| c * level),
-                    radius: def.radius * rigid_scale,
-                    smooth: def.smooth,
-                });
+                let t = ((clock - birth) / life).clamp(0.0, 1.0);
+                let curve = if t < mid { lerp(s0[0], s1[0], t / mid) } else { lerp(s1[0], s2[0], (t - mid) / (1.0 - mid)) };
+                let rigid_scale = curve * scale;
+                for (name, pivot) in models.get(&light.model).map_or(&[][..], |v| &v[..]) {
+                    let Some(def) = defs.get(name) else { continue };
+                    let wave = |speed: f32| (clock * speed).sin().abs();
+                    let level = match def.animation {
+                        1 => def.colour_scale * wave(def.speed[0]) + def.colour_min,
+                        2 => def.colour_scale * (wave(def.speed[0]) * wave(def.speed[1])) + def.colour_min,
+                        _ => def.colour_scale + def.colour_min,
+                    };
+
+                    out.push(EffectPointLight {
+                        pos: base + rotate(rot, *pivot * rigid_scale),
+                        colour: def.colour.map(|c| c * level),
+                        radius: def.radius * rigid_scale,
+                        smooth: def.smooth,
+                    });
+                }
             }
+        };
+
+        for wl in &mut self.world_lights {
+            let light = &self.world_effects[wl.effect].lights[wl.light];
+            emit(light, wl.pos, &wl.rot, wl.scale, &mut wl.bursts, wl.start, &self.light_models);
+        }
+
+        // The weather's: camera-following, at the reference's position, scale = the middle of its range.
+        for (light, bursts) in self.effect.lights.iter().zip(self.weather_lights.iter_mut()) {
+            let pos = eye + Float3::new(light.pos[0], light.pos[1], light.pos[2]);
+            let scale = 0.5 * (light.scale_range[0] + light.scale_range[1]);
+            emit(light, pos, &Float4x4::IDENTITY, scale, bursts, 0.0, &self.light_models);
         }
 
         self.light_defs = Some(defs);
@@ -937,6 +1021,7 @@ impl ParticleSystem {
 
     pub fn restart(&mut self) {
         self.state = vec![EmitterState::default(); self.effect.emitters.len()];
+        self.weather_lights = (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
         self.clock = 0.0;
         self.alive = 0;
         self.clear = true;
@@ -1710,5 +1795,54 @@ impl ParticleSystem {
         self.ctx.gs_set_shader(None);
 
         self.unbind();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn emitter(props: &str) -> wce_assets::vfx_def::VfxEmitterDef {
+        let xml = format!(r#"<vfx><emitters><emitter type="burst_rigid" id="e">{props}</emitter></emitters></vfx>"#);
+        let doc = wce_formats::xml_doc::XmlDoc::parse(xml.into_bytes()).unwrap();
+        wce_assets::vfx_def::parse_vfx(&doc).emitters.remove(0)
+    }
+
+    #[test]
+    fn lightning_flashes_in_bursts() {
+        // library_vfx_weather_rain's lightning_point_light.
+        let d = emitter(r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
+            <ranged_property name="BurstInterval" min="30" max="60"/><ranged_property name="BurstIntervalLength" min="0.2" max="0.4"/>
+            <ranged_property name="RigidLifeTime" min="0.1" max="0.15"/><ranged_property name="RigidsPerBurst" min="1" max="3"/>"#);
+        let mut b = RigidBursts { rng: 7, ..Default::default() };
+        let (mut lit, mut flashes, mut was_lit) = (0, 0, false);
+        let mut t = 0.0;
+        while t < 600.0 {
+            b.update(&d, t, 0.0);
+            let now_lit = b.rigids.iter().any(|&(birth, life)| birth <= t && t < birth + life);
+            lit += i32::from(now_lit);
+            flashes += i32::from(now_lit && !was_lit);
+            was_lit = now_lit;
+            t += 0.01;
+        }
+
+        // About one burst every 45 s for 600 s, each lit for a fraction of a second.
+        assert!((10..=25).contains(&flashes), "{flashes} flashes");
+        assert!(lit < 600, "lit {lit} hundredths");
+    }
+
+    #[test]
+    fn fire_light_stays_on() {
+        // library_vfx_fire_smoke_loop's fire_point_light.
+        let d = emitter(r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
+            <ranged_property name="BurstInterval" min="64" max="64"/><ranged_property name="BurstIntervalLength" min="0" max="0"/>
+            <ranged_property name="RigidLifeTime" min="64" max="64"/><ranged_property name="RigidsPerBurst" min="1" max="1"/>"#);
+        let mut b = RigidBursts::default();
+        let mut t = 0.0;
+        while t < 300.0 {
+            b.update(&d, t, 0.0);
+            assert_eq!(b.rigids.iter().filter(|&&(birth, life)| birth <= t && t < birth + life).count(), 1, "at {t}");
+            t += 0.25;
+        }
     }
 }

@@ -96,9 +96,29 @@ impl Tile {
             return;
         }
 
+        let season_changed = look.season != self.look.season;
         self.look = look;
         if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
             self.update_terrain(scene, false);
+        }
+
+        // The placed effects play in their seasons only: their entities are made again.
+        if season_changed && self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
+            let layer = self.layer;
+            self.rebuild_items(true);
+            self.publish_items(scene, layer, true);
+        }
+    }
+
+    /// Whether a VFXInstance plays in the terrain look's season (`seasons`, all when missing; the looks have summer, autumn and winter).
+    fn in_season(&self, elem: usize) -> bool {
+        let Some(text) = self.tscene().doc().get(elem, "seasons") else { return true };
+        let on = wce_tile::properties::parse_seasons(&text);
+        match self.look.season.as_str() {
+            "wi" => on[0],
+            "sp" => on[1],
+            "au" => on[3],
+            _ => on[2],
         }
     }
 
@@ -677,10 +697,12 @@ impl Tile {
             }
         }
 
-        // A placed effect (autoplay="false" ones wait for a script: not drawn). The scale is in metres as BOB writes it (tile scale / unit).
+        // A placed effect (autoplay="false" ones wait for a script: not drawn; out of the look's season: not drawn; BOB writes the seasons as a
+        // mask into the markers, +0x60). The scale is in metres as BOB writes it (tile scale / unit).
         if self.tscene().type_of(elem) == "VFXInstance"
             && let Some(effect) = self.tscene().doc().get(elem, "vfx").filter(|v| !v.is_empty())
             && self.tscene().doc().get(elem, "autoplay").is_none_or(|v| v != "false")
+            && self.in_season(elem)
         {
             let scale = self.tscene().doc().get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
             let vfx = VfxEmitter { effect, scale: scale as f32 };

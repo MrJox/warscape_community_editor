@@ -135,6 +135,9 @@ pub struct WeatherVfx {
     pub definition: WeatherDefinition,
     pub emitters: Vec<ActiveEmitter>,
 
+    /// Point lights of rigid emitters (the storms' lightning), camera-following like the rest.
+    pub lights: Vec<EffectLight>,
+
     /// Skipped emitters and missing files, for the UI.
     pub notes: Vec<String>,
 }
@@ -206,6 +209,7 @@ pub fn load_weather_vfx(read: &VfxReader, definition_name: &str) -> Result<Weath
 
         let effect = load_effect_with(read, top_name, &mut libs);
         out.emitters.extend(effect.emitters);
+        out.lights.extend(effect.lights);
         out.notes.extend(effect.notes);
     }
 
