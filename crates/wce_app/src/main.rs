@@ -411,6 +411,16 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
 
             let cpu_end = Instant::now();
             let _ = swap.Present(if batch || !editor.vsync { 0 } else { 1 }, 0);
+
+            // Interactive frames wait out the rest of their share of the cap; shots, captures and frames of a running script (the startup
+            // commands, perf measurements) run free.
+            if !batch && editor.script().done() && editor.frame_cap() > 0 {
+                let budget = std::time::Duration::from_secs_f64(1.0 / f64::from(editor.frame_cap()));
+                if let Some(rest) = budget.checked_sub(frame_start.elapsed()) {
+                    std::thread::sleep(rest);
+                }
+            }
+
             let now = Instant::now();
             editor.perf.record(now.duration_since(last_frame).as_secs_f64() * 1e3, cpu_end.duration_since(frame_start).as_secs_f64() * 1e3);
             last_frame = now;

@@ -124,6 +124,10 @@ ImGui runs with docking and no ini file. Each tool has its own layout file `<set
 Steam library's Attila folder (registry `SteamPath` + `libraryfolders.vdf`) and a nearby RPFM folder, lets you browse, and **Save and continue** (command `setup`) writes `wce.ini`,
 mounts and starts the active tool.
 
+`frame_cap` (View > Frame rate cap, command `frame_cap`, environment `WCE_FRAME_CAP`; default 60, 0 = none) holds an interactive session to that many frames per
+second: rendering the scene as fast as a fast laptop display refreshes kept the GPU at 100 % until it throttled itself (to 180 MHz of 3090 on the RTX 5070 Ti
+laptop, 10x slower frames). Shots, captures and frames while a script runs are not capped (perf measurements stay the real cost of a frame).
+
 ## Command line
 
 ```

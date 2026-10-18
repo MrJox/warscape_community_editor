@@ -132,6 +132,10 @@ pub struct Editor {
 
     /// The app loop presents with it (command `vsync`, environment WCE_VSYNC=0).
     pub vsync: bool,
+
+    /// Frames per second an interactive session is held to (0: no limit; wce.ini `frame_cap`, environment WCE_FRAME_CAP). A laptop GPU
+    /// rendering the scene as fast as a fast display refreshes heats up and throttles itself to a fraction of its clock.
+    frame_cap: u32,
     pub panels: Panels,
     pub(crate) panel_data: PanelData,
 
@@ -155,6 +159,9 @@ impl CommandHost for Editor {
     }
 }
 
+/// The frame cap of a new install.
+pub const DEFAULT_FRAME_CAP: u32 = 60;
+
 impl Editor {
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Self {
         let mut e = Self {
@@ -164,12 +171,24 @@ impl Editor {
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, preview_doc: 0,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, panels: Panels::default(),
+            first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), images: Default::default(), input_origin: None, pending_shot: None,
         };
 
+        e.frame_cap = e.settings.get("frame_cap", Some("WCE_FRAME_CAP")).and_then(|v| v.trim().parse().ok()).unwrap_or(DEFAULT_FRAME_CAP);
         crate::commands::register_builtin(&mut e.commands);
         e
+    }
+
+    pub fn frame_cap(&self) -> u32 {
+        self.frame_cap
+    }
+
+    /// Sets the frame cap (0: no limit) and keeps it in wce.ini.
+    pub fn set_frame_cap(&mut self, fps: u32) {
+        self.frame_cap = fps;
+        self.settings.set("frame_cap", &fps.to_string());
+        let _ = self.settings.save();
     }
 
     // ---- setup
@@ -1253,6 +1272,17 @@ impl Editor {
 
             gui::menu_item_toggle("Grid", &mut self.viewport.show_grid);
             gui::menu_item_toggle("Snap", &mut self.viewport.snap);
+            gui::separator();
+            if gui::begin_menu("Frame rate cap") {
+                for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {
+                    if gui::menu_item(label, None, self.frame_cap == fps, true) {
+                        self.set_frame_cap(fps);
+                    }
+                }
+
+                gui::end_menu();
+            }
+
             gui::end_menu();
         }
 
