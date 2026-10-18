@@ -80,6 +80,7 @@ fn scene_hash(s: &RenderScene) -> u64 {
             Payload::Water(_) => 5,
             Payload::Decal(_) => 6,
             Payload::Grass(_) => 7,
+            Payload::PointLight(_) => 8,
         };
 
         h = u8_(index, h);
@@ -134,6 +135,13 @@ fn scene_hash(s: &RenderScene) -> u64 {
                 h = fs_(&d.model, h);
                 h = u8_(u64::from(d.tiled), h);
                 h = f32s(&[d.opacity], h);
+            }
+
+            Payload::PointLight(l) => {
+                h = f32s(&l.colour, h);
+                h = f32s(&[l.colour_scale, l.colour_min, l.radius], h);
+                h = u8_(u64::from(l.smooth) + 2 * u64::from(l.animation), h);
+                h = f32s(&[l.speed[0], l.speed[1], l.phase], h);
             }
 
             Payload::Grass(g) => {

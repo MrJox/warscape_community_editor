@@ -114,7 +114,12 @@ impl Renderer {
         }
 
         self.water.meshes = keep;
-        if !any {
+
+        // The water meshes of models (water planes, fountains) the camera's G-buffer pass found visible: drawn with the sea plane.
+        let model_water = !rivers && [(&self.draw_lists.terrain_draws, &self.draw_lists.vis_terrain), (&self.draw_lists.draws, &self.draw_lists.vis)]
+            .iter()
+            .any(|(set, vis)| vis.active.iter().any(|&b| set.batch_mesh(b).kind == crate::model_cache::MeshKind::Water));
+        if !any && !model_water {
             return;
         }
 
@@ -220,6 +225,30 @@ impl Renderer {
             ctx.draw_indexed_instanced(mesh.index_count, 1, 0, 0, 0);
 
             self.draw_stats.draw_calls += 1;
+        }
+
+        // The models' water meshes: the same shaders, the vertices in model space (f16 position) and the instance's world rows from the
+        // G-buffer pass's instances (POSITION1..3; the shader reads nothing else of them).
+        if model_water {
+            // The shader declares the sea quad's inputs too (TEXCOORD0, POSITION4..6), unread: the uv and the instance's other rows.
+            let mut el = vec![element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, 8, false)];
+            for i in 0..6 {
+                el.push(element(c"POSITION", 1 + i, f4, 1, i * 16, true));
+            }
+
+            if let Some(model_layout) = self.layout(&vs, "sea_model", &el) {
+                self.ctx.set_input_layout(Some(&model_layout));
+                self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<crate::model_cache::RigidInstance>() as u32)], &[0]);
+                let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+                let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+                let firsts = self.draw_lists.gbuffer_firsts;
+                let (_, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| m.kind == crate::model_cache::MeshKind::Water);
+                self.draw_stats.triangles += triangles;
+                self.draw_lists.terrain_draws = terrain_draws;
+                self.draw_lists.draws = draws;
+                self.draw_lists.vis_terrain = vis_terrain;
+                self.draw_lists.vis = vis;
+            }
         }
 
         null_ps_srvs(&self.ctx, 16);

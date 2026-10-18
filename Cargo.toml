@@ -13,5 +13,5 @@ windows-core = "0.100"
 windows-link = "0.100"
 windows-bindgen = "0.100"
 
-# rpfm_lib with the Attila formats added for the editor (rpfm branch wce_formats). A path for now, until that branch is pushed.
-rpfm_lib = { path = "../rpfm_wce_formats/rpfm_lib", default-features = false }
+# rpfm_lib from rpfm's develop branch (which has the Attila formats the editor needs), checked out next to this repo.
+rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }

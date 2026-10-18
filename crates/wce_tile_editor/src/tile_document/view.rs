@@ -10,7 +10,7 @@ use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{Decal, 
-    EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
+    EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
@@ -389,11 +389,12 @@ impl Tile {
             new_water.push(wt);
         }
 
-        // The sea / lake plane. Which tiles have open water is a matter of the tile set: a river tile's terrain also goes below 0 (the ford's
-        // heights are all <= 0) and has no sea.
+        // The sea plane. Which tiles have open water is a matter of the tile set: a river tile's terrain also goes below 0 (the ford's heights
+        // are all <= 0) and has no sea. Lakes are not: every lakes tile has its water as SIMPLE_MESH_INSTANCE water planes (water_plane
+        // models scaled over the lake, at the lake's own height: -6.9 m on lakes/10x10/aa), drawn as models.
         let p = &self.project;
         let set = p.entry.as_ref().map(|e| e.tile_set()).unwrap_or_default();
-        let sea_set = matches!(set.as_str(), "sea" | "sea_coast" | "sea_coast_landing" | "lakes" | "river_mouth");
+        let sea_set = matches!(set.as_str(), "sea" | "sea_coast" | "sea_coast_landing" | "river_mouth");
         let sea = sea_set && p.has_height() && p.info.found && p.info.min_height < -0.5;
         if sea {
             let b = p.border_m() as f32;
@@ -643,9 +644,47 @@ impl Tile {
             }
         }
 
+        // A point light, as the game builds it from point_light_marker.markers (fn 0x10407e90): radius, colour, colour_scale, colour_min,
+        // the animation and its speeds; the falloff is always smooth there (falloff_type is not read) and the phase comes from the game's
+        // random generator, not random_offset.
+        if self.tscene().type_of(elem) == "POINT_LIGHT_INSTANCE" {
+            let doc = self.tscene().doc();
+            let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
+            let c = doc.get(elem, "colour").and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or([1.0; 4]);
+            let speed = doc.get(elem, "animation_speed_scale").and_then(|v| wce_tile::properties::parse_vec2(&v)).unwrap_or([0.0; 2]);
+            let animation = match doc.get(elem, "animation_type").as_deref() {
+                Some("LAT_RADIUS_SIN") => 1,
+                Some("LAT_RADIUS_SIN_SIN") => 2,
+                _ => 0,
+            };
+
+            let light = PointLight {
+                colour: [c[0], c[1], c[2]],
+                colour_scale: num("colour_scale", 1.0),
+                colour_min: num("colour_min", 0.0),
+                radius: num("radius", 1.0),
+                smooth: true,
+                animation,
+                speed,
+                phase: self.light_phase(elem),
+            };
+
+            let e = scene.add(layer, self.world_matrix(elem), Payload::PointLight(light), self.source(item_of(elem)));
+            self.first_entity[elem] = e;
+            self.entity_count[elem] = 1;
+            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+                en.locked = true;
+            }
+        }
+
         if self.display.show_polygons && self.is_polygon(elem) {
             self.rebuild_polygon(scene, layer, elem);
         }
+    }
+
+    /// The phase the game gives this light: the tile's lights in document order (hidden ones too) are the markers file's order (BOB's).
+    fn light_phase(&self, elem: usize) -> f32 {
+        light_phase(self.type_ordinal.get(elem).copied().unwrap_or(0))
     }
 
     fn rebuild_polygon(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
@@ -1092,6 +1131,15 @@ mod tests {
     use super::piece_model;
 
     #[test]
+    fn light_phase_steps_the_generator() {
+        let mut state = 0x1234_4321u32;
+        for n in 0..2000 {
+            state = state.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+            assert_eq!(super::light_phase(n), (state >> 16) as f32 * 1.525_902_2e-5, "light {n}");
+        }
+    }
+
+    #[test]
     fn the_highest_level_is_the_intact_piece() {
         let base = "rigidmodels/buildings/house/house_piece01_destruct01.rigid_model_v2";
         assert_eq!(piece_model(base, -1, 3), base);
@@ -1100,4 +1148,24 @@ mod tests {
         assert_eq!(piece_model(base, 0, 3), base.replace("destruct01", "destruct03"));
         assert_eq!(piece_model(base, 0, 1), base, "one level: only the intact piece");
     }
+}
+
+/// The phase of the n-th light (from 0) of a map's point_light_marker.markers (fn 0x10407e90): the game's generator seeded with
+/// 0x12344321, stepped once per light (state * 0x343fd + 0x269ec3), (state >> 16) * (1 / 65535) radians.
+pub(crate) fn light_phase(n: u32) -> f32 {
+    // n + 1 steps: the affine step's power by squaring.
+    let (mut a, mut c) = (1u32, 0u32);
+    let (mut ba, mut bc) = (0x343fdu32, 0x269ec3u32);
+    let mut k = n + 1;
+    while k != 0 {
+        if k & 1 != 0 {
+            (a, c) = (ba.wrapping_mul(a), ba.wrapping_mul(c).wrapping_add(bc));
+        }
+
+        (ba, bc) = (ba.wrapping_mul(ba), ba.wrapping_mul(bc).wrapping_add(bc));
+        k >>= 1;
+    }
+
+    let state = a.wrapping_mul(0x1234_4321).wrapping_add(c);
+    (state >> 16) as f32 * 1.525_902_2e-5
 }

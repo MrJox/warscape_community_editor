@@ -51,6 +51,9 @@ pub(crate) struct DecalGpu {
     /// The drawable decals of the scene, sorted by model, rebuilt when the scene changes (its address and revision): a frame only culls them.
     scene_id: usize,
     revision: u64,
+
+    /// The model cache's revision when they were collected (a building's decal boxes come with its model).
+    models_revision: u64,
     models: Vec<String>,
     items: Vec<DecalItem>,
 }
@@ -117,28 +120,24 @@ impl Renderer {
     /// The scene's drawable decals, sorted by model (see [`DecalGpu::items`]).
     fn collect_decals(&mut self, scene: &RenderScene) {
         let id = std::ptr::from_ref(scene) as usize;
+        let models_revision = self.models.revision();
         let d = &mut self.decals;
-        if d.scene_id == id && d.revision == scene.revision() && !d.items.is_empty() {
+        if d.scene_id == id && d.revision == scene.revision() && d.models_revision == models_revision && !d.items.is_empty() {
             return;
         }
 
         d.scene_id = id;
         d.revision = scene.revision();
+        d.models_revision = models_revision;
         d.items.clear();
-        let mut index = BTreeMap::<&str, u32>::new();
+        let mut index = BTreeMap::<String, u32>::new();
         let mut models = vec![];
-        for e in scene.entities() {
-            let Payload::Decal(decal) = &e.payload else { continue };
-            if !scene.drawable(e) {
-                continue;
-            }
-
-            let model = *index.entry(decal.model.as_str()).or_insert_with(|| {
-                models.push(decal.model.clone());
+        let mut push = |name: &str, w: &Float4x4, tiled: bool, opacity: f32| {
+            let model = *index.entry(name.to_owned()).or_insert_with(|| {
+                models.push(name.to_owned());
                 (models.len() - 1) as u32
             });
 
-            let w = &e.world;
             let size = axis_sizes(w);
             let mut inst = [0.0f32; INSTANCE_FLOATS];
             for row in 0..3 {
@@ -146,9 +145,30 @@ impl Renderer {
             }
 
             inst[12..15].copy_from_slice(&size);
-            inst[16..19].copy_from_slice(&[if decal.tiled { 1.0 } else { 0.0 }, decal.opacity, 0.0]);
+            inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 0.0]);
             let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt();
             d.items.push(DecalItem { model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
+        };
+
+        for e in scene.entities() {
+            if !scene.drawable(e) {
+                continue;
+            }
+
+            match &e.payload {
+                Payload::Decal(decal) => push(&decal.model, &e.world, decal.tiled, decal.opacity),
+
+                // The decal meshes of a model (rubble around a ruin), once the model has loaded: its world matrix times the decal's box,
+                // stretched once over it, opaque.
+                Payload::MeshInstance(mi) => {
+                    let (Some(gm), _) = self.models.peek(&mi.model) else { continue };
+                    for decal in &gm.decals {
+                        push(&decal.texture, &(e.world * decal.matrix), false, 1.0);
+                    }
+                }
+
+                _ => {}
+            }
         }
 
         d.items.sort_by_key(|i| i.model);

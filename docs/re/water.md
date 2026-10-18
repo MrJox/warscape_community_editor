@@ -37,7 +37,15 @@ Textures (in the packs): `battleterrain/river/river_normal.dds`, `river_diffuse.
     **`terrain_offset` above the terrain under the point** (osgiliath: terrain at the river centre -7.7 m, `terrain_offset` 6 -> water at -1.7 m, banks at +1.1 m; lothlorien's creek 0.1 m above the ground).
   - **Width**: 2 in the small creek, 50 .. 120 on the big rivers. The carved bed is about 40 .. 80 m wide where `width` is 90 .. 120 (a profile across the heights): the tool takes `width` as the full width in metres.
   - The layer of the splines is hidden in some tiles (`flags=" OIF_ACTIVE"` for osgiliath's `rivers`): the water is still drawn, in TEd and here.
-- **Sea and lakes**: the tile sets `sea`, `sea_coast`, `sea_coast_landing`, `lakes`, `river_mouth` have heights below 0 (lakes: min_height -17 .. -40 with scale 20 .. 43); the water surface is at y = 0 and the terrain cuts it. River tiles also go below 0 (the ford's heights are all <= 0) and have no
+- **Lakes and water planes (2026-10-18)**: lakes are not a plane at y = 0. Every `lakes` tile (22) has its water as
+  `SIMPLE_MESH_INSTANCE`s of `RigidModels/Buildings/water_plane/water_plane.rigid_model_v2` (1,145 such instances in the kit, also in
+  settlements, river starts, swamps and dunes), scaled over the lake (`scale="vector(1150,1,800)"`) and placed freeform at the lake's height
+  (-6.9 m on lakes/10x10/aa). The model is one mesh of material `Water` (83) in vertex format Uk8 (12 bytes: f16 position, f16 uv); fountains,
+  garden pools and the tannery carry `Water` meshes too. `waterplane.hlsl` `vs30_water_battle` reads only the position and the instance's world
+  rows (P1..P3; the ripples' uv are world x / z * 0.01 scrolled by the clock), so the tool draws these meshes with the sea plane's shaders in
+  the sea pass, from the G-buffer pass's visible instances. The D3D shader declares TEXCOORD0 and POSITION4..6 as well (the input layout
+  must provide them).
+- **Sea**: the tile sets `sea`, `sea_coast`, `sea_coast_landing`, `river_mouth` have heights below 0 (lakes: min_height -17 .. -40 with scale 20 .. 43); the water surface is at y = 0 and the terrain cuts it. River tiles also go below 0 (the ford's heights are all <= 0) and have no
   plane: the rule is the tile set. BOB writes `hf_water_map.data` and the ground type map carries `GT_SHALLOW_WATER` / `GT_DEEP_WATER`; neither is read yet.
 - Environment: `lighting` has `deep_water` / `shallow_water` colours and `refraction_scatter` / `sea_bed_scatter`, already mapped into `lighting_VS_PS` (`g_deep_water_colour`, ...).
 

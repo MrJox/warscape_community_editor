@@ -17,7 +17,7 @@ use rpfm_lib::files::rigidmodel::vertices::VertexFormat;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_d3d11::*;
 use wce_foundation::jobs::{Handle, JobPool, io_pool};
-use wce_foundation::math::{Float3, normalize};
+use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, Payload, RenderScene, Terrain};
 
@@ -86,6 +86,9 @@ pub const TREE_STRIDE: u32 = 60;
 /// The Billboard vertex format: the quad's corner (f16 x 4: x across, y up, in metres) and uv (f16 x 2).
 pub const BILLBOARD_STRIDE: u32 = 12;
 
+/// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
+pub const WATER_STRIDE: u32 = 12;
+
 /// Which of the game's rigid shaders draw a mesh (its material type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeshKind {
@@ -99,6 +102,15 @@ pub enum MeshKind {
 
     /// TerrainBlend (a building's ground skirt): rigidterrainblend.
     TerrainBlend,
+
+    /// Water (vertex format Uk8, 12 bytes: f16 position, f16 uv): the water planes of lakes and the water of fountains and pools. Drawn by
+    /// the water pass with the sea plane's waterplane shaders (they read only the position: the ripples follow world x / z), not as a mesh.
+    Water,
+
+    /// Dirtmap (statues, desert rocks): rigidwithdirtmesh, rigidstandard plus a dirt map (`s_decal_dirt_map`, its xy a normal offset and w
+    /// the dirt, at uv * `g_uv2_tile_interval` + the instance's POSITION5.yz) faded by `s_decal_dirt_mask` at the uv: darkens the colour
+    /// towards (0.03, 0.025, 0.02), dulls the specular and bends the normal.
+    Dirtmap,
 
     /// ShipAmbientmap (many buildings, despite the name): rigidambientmapmesh, rigidstandard with the diffuse multiplied by a baked ambient
     /// occlusion map (`s_ambient_map`) at the second uv.
@@ -180,6 +192,46 @@ pub struct GpuModel {
     /// Of the LOD 0 meshes, with their offsets.
     pub bmin: Float3,
     pub bmax: Float3,
+
+    /// The projected decals of LOD 0 (ProjectedDecal* meshes): drawn by the decal pass, not as meshes.
+    pub decals: Vec<ModelDecal>,
+}
+
+/// A projected decal mesh of a model: an 8 corner box (ProjectedDecalV3 boxes are turned about y) and the decal's textures by name.
+#[derive(Clone, Debug, Default)]
+pub struct ModelDecal {
+    /// `<texture>_diffuse.dds`, `_normal.dds` / `_parallax.dds` (the material's name, `rigidmodels/buildings/textures/rubble_1`).
+    pub texture: String,
+
+    /// Model space: the unit box (-0.5 .. 0.5) onto the decal's box; its axes are the box's edges (columns), y the projection axis.
+    pub matrix: Float4x4,
+}
+
+/// The box of a decal mesh from its corners. Building models order them 0..3 the top face (0 -> 3 along x, 0 -> 1 along z) and 4..7 the
+/// same corners at the bottom (all 176 decal meshes of rigidmodels/buildings/); other orders (the standalone decal models count the corners
+/// in binary) give the corners' axis-aligned bounds.
+fn decal_box(corners: &[[f32; 3]]) -> Option<Float4x4> {
+    if corners.len() != 8 {
+        return None;
+    }
+
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let mut axes = [sub(corners[3], corners[0]), sub(corners[0], corners[4]), sub(corners[1], corners[0])];
+    let len = axes.map(|v| dot(v, v).sqrt());
+    let square = (0..3).all(|i| (i + 1..3).all(|j| dot(axes[i], axes[j]).abs() <= 1e-2 * len[i] * len[j]));
+    if !square || axes[1][1] <= 0.0 || len.contains(&0.0) {
+        let (lo, hi) = corners.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), c| (std::array::from_fn(|k| lo[k].min(c[k])), std::array::from_fn(|k| hi[k].max(c[k]))));
+        axes = [[hi[0] - lo[0], 0.0, 0.0], [0.0, hi[1] - lo[1], 0.0], [0.0, 0.0, hi[2] - lo[2]]];
+    }
+
+    let mut m = Float4x4::IDENTITY;
+    for r in 0..3 {
+        let c = corners.iter().map(|v| v[r]).sum::<f32>() / 8.0;
+        m.m[r] = [axes[0][r], axes[1][r], axes[2][r], c];
+    }
+
+    Some(m)
 }
 
 // SAFETY: free-threaded buffers and shared textures, and plain data.
@@ -490,11 +542,13 @@ impl ModelInner {
                 (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
                 (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
+                (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
                 (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
                 (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
                 (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
                 (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
                 (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
+                (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
                 _ => return None,
             };
 
@@ -509,6 +563,7 @@ impl ModelInner {
                 VertexFormat::Tree => TREE_STRIDE,
                 VertexFormat::Billboard => BILLBOARD_STRIDE,
                 VertexFormat::Grass => GRASS_STRIDE,
+                VertexFormat::Uk8 => WATER_STRIDE,
                 _ => 32,
             };
 
@@ -573,7 +628,7 @@ impl ModelInner {
                 alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
                 stride,
                 kind,
-                uv2_tile: if kind == MeshKind::TiledDirtmap { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
+                uv2_tile: if matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
                 offset: pivot,
                 has_offset: pivot != Float3::default(),
                 tex: [
@@ -582,8 +637,18 @@ impl ModelInner {
                     material_texture(textures, path, material, TextureType::GlossMap, false, textures.black()),
                     material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
                     normal,
-                    material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white()),
-                    material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white()),
+                    // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
+                    // the dirt amount) and dirt mask.
+                    if kind == MeshKind::Dirtmap {
+                        material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
+                    } else {
+                        material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
+                    },
+                    if kind == MeshKind::Dirtmap {
+                        material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
+                    } else {
+                        material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
+                    },
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
                 ],
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
@@ -599,9 +664,39 @@ impl ModelInner {
             ..Default::default()
         };
 
+        // LOD 0's projected decals.
+        if let Some(lod) = model.lods().first() {
+            for block in lod.mesh_blocks() {
+                let decal = matches!(
+                    block.mesh().material_type(),
+                    MaterialType::ProjectedDecal | MaterialType::ProjectedDecalV2 | MaterialType::ProjectedDecalV3 | MaterialType::ProjectedDecalV4
+                );
+                if !decal {
+                    continue;
+                }
+
+                let corners: Vec<[f32; 3]> = block.mesh().vertices().iter().map(|v| { let p = v.position(); [p.x, p.y, p.z] }).collect();
+                if let Some(matrix) = decal_box(&corners) {
+                    gm.decals.push(ModelDecal { texture: block.material().name().to_owned(), matrix });
+                }
+            }
+        }
+
         for (l, lod) in model.lods().iter().enumerate() {
             let meshes = lod.mesh_blocks().iter().filter_map(make_mesh).collect::<Vec<_>>();
             if meshes.is_empty() {
+                // A model of decals only (its boxes give the bounds).
+                if l == 0 && !gm.decals.is_empty() {
+                    for d in &gm.decals {
+                        let r = (0..3).map(|c| (0..3).map(|k| d.matrix.m[k][c] * d.matrix.m[k][c]).sum::<f32>().sqrt()).sum::<f32>() * 0.5;
+                        let c = Float3::new(d.matrix.m[0][3], d.matrix.m[1][3], d.matrix.m[2][3]);
+                        gm.bmin = Float3::new(gm.bmin.x.min(c.x - r), gm.bmin.y.min(c.y - r), gm.bmin.z.min(c.z - r));
+                        gm.bmax = Float3::new(gm.bmax.x.max(c.x + r), gm.bmax.y.max(c.y + r), gm.bmax.z.max(c.z + r));
+                    }
+
+                    continue;
+                }
+
                 if l == 0 {
                     return Ok(None);
                 }
