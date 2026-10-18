@@ -137,6 +137,11 @@ fn scene_hash(s: &RenderScene) -> u64 {
                 h = f32s(&[d.opacity], h);
             }
 
+            Payload::VfxEmitter(v) => {
+                h = fs_(&v.effect, h);
+                h = f32s(&[v.scale], h);
+            }
+
             Payload::PointLight(l) => {
                 h = f32s(&l.colour, h);
                 h = f32s(&[l.colour_scale, l.colour_min, l.radius], h);

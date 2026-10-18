@@ -303,10 +303,13 @@ impl Terrain {
     }
 }
 
+/// A placed effect: `vfx/<effect>.xml` at the entity's world matrix (rotation and position), drawn by the particle system.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VfxEmitter {
-    /// The vfx definition name; not drawn yet.
     pub effect: String,
+
+    /// The effect's scale (the tile's scale / unit_scale, as BOB writes the markers).
+    pub scale: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

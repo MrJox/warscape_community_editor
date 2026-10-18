@@ -99,6 +99,17 @@ impl Renderer {
             out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, c[0], c[1], c[2], l.radius]);
         }
 
+        // The placed effects' lights (fire VFX): their colour already carries its level.
+        for l in self.particles.effect_lights(self.camera.eye) {
+            let c = [l.pos.x, l.pos.y, l.pos.z];
+            if l.radius <= 0.0 || frustum.outside(&c, l.radius) {
+                continue;
+            }
+
+            let out = if l.smooth { &mut smooth } else { &mut linear };
+            out.extend([l.colour[0] * SUN_HDR_SCALE, l.colour[1] * SUN_HDR_SCALE, l.colour[2] * SUN_HDR_SCALE, 1.0, c[0], c[1], c[2], l.radius]);
+        }
+
         let (n_smooth, n_linear) = ((smooth.len() / INSTANCE_FLOATS) as u32, (linear.len() / INSTANCE_FLOATS) as u32);
         if n_smooth + n_linear == 0 {
             return;

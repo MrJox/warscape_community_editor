@@ -191,3 +191,39 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
   accumulate-or-spawn alternation that would explain the rain dump's accumulator of 9.025 (still not reproduced).
 - Verified from the game's vfx XML: soft-edge property is `soft_factor`; `legacy_lighting`, `ParticlesFollowTerrain`,
   `ParticlesLocalSpace` exist (always false in the shipped files).
+
+## Placed effects (tile VFX, 2026-10-18)
+
+- **Data.** `VFXInstance` (vfx, scale, position / orientation, seasons, autoplay, use_in_outfield). The corpus places 18 effects
+  (`enviro_vfx_fire_loop` 28.9k, chimney smokes, mists, fire + smoke, mountain clouds, swarms, braziers, volcanoes). BOB writes the
+  Normal layers' instances to `particle_emitter_marker.markers` (42 on western_city_b/small: rotation, position, flags, the scale halved:
+  tile scale / unit_scale, 0.4 -> 0.2) and the escalation layers' to the bmd_data_escalation files (the 322 fires of that tile).
+  `vfx/<name>.xml` is vfx_references to libraries (or, `enviro_mountain_cloud`, `enviro_vfx_sand_drift`, its own emitters).
+- **Emitters** (decoded, fn 0x1188e240 continuous, fn 0x1181bdc0 spawn, fn 0x1183fa30 / 0x1183f4a0 position, fn 0x1183f1a0 direction,
+  fn 0x11835b50 lifetime; the descriptor is the property list of fn 0x117c1c20, each value at its property's offset + 4: ParticleLifeTime
+  +0x74, SpawnSpeed +0x12c, SpawnSpread +0x138, SpreadMethod +0x144, SpawnPosition +0x188, SpawnArc +0x198, SpawnAreaCurve +0x1b8,
+  SpawnAreaBox +0x1e8):
+  - emission: accum += min(dt, 0.1) * rate * owner +0xb4 * owner +0x78^2, rate = lerp(emission_min(t), emission_max(t), f) with f per
+    instance; floor(gate * floor(accum)) particles spread evenly over the frame (t_i = last + dt (i + 1) / n);
+  - per particle, the instance's generator (+0xc0) in this order: lifetime lerp(ParticleLifeTime) + instance +0xa0; arc angle
+    lerp(SpawnArc) degrees; radius lerp(inner, outer) where inner / outer = lerp(curve min, curve max, the instance's area blend +0xd8)
+    (fn 0x117ba420; the curve time is age / LifeTime, wrapped with SpawnAreaLoopAnim); then the shared generator (DAT_11da7408) for the
+    box: size per axis (fn 0x117ba1a0, the same blend) * (rand - 0.5); offset = (ring + box) * owner +0x78 * (owner +0x70 * instance
+    +0x70), turned by the emitter's quaternion (EmitterRotation with the spin), + SpawnPosition * scale, turned by the instance's;
+  - direction: SpreadMethod: elevation lerp(SpawnSpread) degrees above the horizon, azimuth rand16 * 2 pi / 65535 (fn 0x1183b120:
+    (cos az cos el, sin el, -sin az cos el)); otherwise away from SpawnPosition; speed lerp(SpawnSpeed) * scale (+ the owner's velocity).
+  - The vertex shader multiplies ParticleCullDistances by the emitter instance's scale (layer 3 .y) and drops particles whose tint
+    alpha (layer 2 .w) is <= 0.01.
+- **Lights.** Rigid emitters (`burst_rigid`, `continuous_rigid`) whose RigidModelFile is under `point_lights/` spawn a model with a
+  StaticPointLight mesh (6 such models; the material holds the light's name and pivot). The rigid model render (fn 0x117f9800) submits
+  each light mesh through the lighting node's named-light method (vtable +0x60, fn 0x118dc650): index of the name in
+  `lighting/lights.xml` (14 POINT_LIGHTs: red, green, blue, radius, falloff, animation ANIMATION_RADIUS_SIN / _SIN_SIN, animation_x / y,
+  colour_min, colour_scale, shadow; none sets shadow), position = rigid matrix * pivot, radius scale = the matrix's x axis length (the
+  rigid's ParticleScale curve * the effect's scale), a per-instance phase (render context +0x30). Building models carry no lights.
+- **Editor** (`particles.rs`): world instances after the weather's emitters (constants rows: weather, then each loaded effect's
+  emitters; emitter instances 256 per texture row), the decoded spawn, CullDistances.w stops spawning, the instance's tint = the middle of
+  the reference's range and its scale = effect scale * a draw in the reference's scale range; effect lights go into the point light
+  pass. The weather spawn is unchanged (spawn_dump identical). ASSUMPTIONS: owner +0x70 = the effect's scale, +0x78 and +0xb4 = 1 (as
+  the weather's; the owner was not traced for placed effects); the ring's x is the sincos call's second lane; the rigid light's phase is
+  0; the instance generator is seeded from the entity id. Not done: seasons, rigid emitters with other models (debris, icons: no
+  tile effect uses them), soft-shadowed particles.
