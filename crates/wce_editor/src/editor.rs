@@ -992,7 +992,7 @@ impl Editor {
                     (gui::KEY_W, crate::viewport::GizmoMode::Translate), (gui::KEY_E, crate::viewport::GizmoMode::Rotate), (gui::KEY_R, crate::viewport::GizmoMode::Scale),
                     (gui::KEY_Q, crate::viewport::GizmoMode::Off),
                 ] {
-                    if gui::is_key_pressed(key, false) && !fly {
+                    if gui::is_key_pressed(key, false) && !fly && !gui::is_mouse_down(1) {
                         self.viewport.gizmo = mode;
                     }
                 }

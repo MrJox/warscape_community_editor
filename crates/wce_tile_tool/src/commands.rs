@@ -201,6 +201,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("scene_filter", "scene_filter [text]", "filter the Scene panel's tree by name or type (no text: clear it)", |e, a| {
+        let text = a.join(" ");
+        with_tile(e, |t, _| {
+            t.tree_filter = text;
+            ok("")
+        })
+    });
+
     c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level", "what the left mouse button does in the viewport", |e, a| {
         let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level") };
         let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };

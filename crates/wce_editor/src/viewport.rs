@@ -68,6 +68,9 @@ pub struct Viewport {
 
     /// The active tool owns the current left-button gesture.
     tool_drag: bool,
+
+    /// The current left-button gesture started off the gizmo and the tool: it turns the camera even when it crosses a gizmo handle.
+    orbit_drag: bool,
     image_origin: gui::Vec2,
 }
 
@@ -76,7 +79,7 @@ impl Default for Viewport {
         Self {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, image_origin: gui::v2(0.0, 0.0),
+            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -506,19 +509,27 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let io = gui::io();
     let mut input = CameraInput { dt: io.DeltaTime, ..Default::default() };
     let tool_drag = e.viewport.tool_drag;
+    // A left drag that starts off the gizmo and the tool turns the orbit camera, gizmo shown or not; one that starts on a handle is the gizmo's.
+    if hovered && gui::is_mouse_clicked(0) {
+        e.viewport.orbit_drag = !over_gizmo && !tool_drag && !claims;
+    }
+
+    if !gui::is_mouse_down(0) {
+        e.viewport.orbit_drag = false;
+    }
+
     if hovered || active {
         input.dx = io.MouseDelta.x;
         input.dy = io.MouseDelta.y;
         input.wheel = if hovered { io.MouseWheel } else { 0.0 };
-        if !over_gizmo {
-            // While a gizmo is shown a left drag that missed it does not orbit (it would turn the view under a user who just aimed badly at a
-            // handle): Alt + left or the right button do.
-            let left = gui::is_mouse_down(0) && !tool_drag && !claims && (gizmo_target.is_none() || alt);
+        let left = e.viewport.orbit_drag;
+        if !over_gizmo || left {
             input.rotate = if fly { gui::is_mouse_down(1) && active } else { (left || gui::is_mouse_down(1)) && active };
             input.pan = gui::is_mouse_down(2) && active;
         }
 
-        if fly && gui::is_mouse_down(1) && !io.WantTextInput {
+        // WASD (Q / E down / up, Shift faster) while the right button is held, in both controllers; without it W / E / R / Q pick the gizmo.
+        if gui::is_mouse_down(1) && active && !io.WantTextInput {
             input.forward = gui::is_key_down(gui::KEY_W);
             input.back = gui::is_key_down(gui::KEY_S);
             input.left = gui::is_key_down(gui::KEY_A);

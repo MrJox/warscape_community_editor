@@ -62,8 +62,9 @@ pub trait CameraController {
     fn lens_mut(&mut self) -> &mut Lens;
 }
 
-/// Turns around a target: rotate with the mouse, pan with the middle button, wheel zooms. The formulas of the weather tool's viewport, so
-/// existing `--cam` values mean the same.
+/// Turns around a target: rotate with the mouse, pan with the middle button, wheel zooms, WASD moves the target along the ground (Q / E
+/// down / up, faster with Shift, at a speed that follows the distance). The formulas of the weather tool's viewport, so existing `--cam`
+/// values mean the same.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCamera {
     pub lens: Lens,
@@ -111,6 +112,29 @@ impl CameraController for OrbitCamera {
 
         if input.wheel != 0.0 {
             self.dist = (self.dist * 0.9f32.powf(input.wheel)).clamp(2.0, 6000.0);
+        }
+
+        // Forward is where the camera looks, flattened: the eye sits at target + (sin yaw, ., -cos yaw) * dist.
+        let fwd = Float3::new(-self.yaw.sin(), 0.0, self.yaw.cos());
+        let right = Float3::new(self.yaw.cos(), 0.0, self.yaw.sin());
+        let mut m = Float3::new(0.0, 0.0, 0.0);
+        for (on, d) in [(input.forward, fwd), (input.back, -fwd), (input.right, right), (input.left, -right)] {
+            if on {
+                m = m + d;
+            }
+        }
+
+        if input.up {
+            m.y += 1.0;
+        }
+
+        if input.down {
+            m.y -= 1.0;
+        }
+
+        if m != Float3::default() {
+            let speed = self.dist.max(10.0) * if input.fast { 4.0 } else { 1.0 };
+            self.target = self.target + normalize(m) * (speed * input.dt);
         }
     }
 

@@ -251,6 +251,14 @@ pub fn scroll_max_y() -> f32 {
     call!(sys::igGetScrollMaxY())
 }
 
+pub fn set_scroll_y(y: f32) {
+    call!(sys::igSetScrollY_Float(y))
+}
+
+pub fn window_height() -> f32 {
+    call!(sys::igGetWindowHeight())
+}
+
 pub fn set_keyboard_focus_here(offset: i32) {
     call!(sys::igSetKeyboardFocusHere(offset))
 }
