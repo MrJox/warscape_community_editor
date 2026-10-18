@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{Payload, RenderScene};
 
@@ -24,7 +25,10 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const GRASS_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_main_grass";
 const GRASS_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_gbuffer_grass";
+const GRASS_SHADOW_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_shadow_grass";
+const GRASS_SHADOW_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_shadow_grass";
 const DISSOLVE_MAP: &str = "commontextures/dissolve.dds";
+const SNOW_NORMALS: &str = "commontextures/snow_normal.dds";
 
 /// How far the grass is drawn: where the vertex shader has sunk it into the ground (1 / g_inv_lod_distance).
 pub(crate) const GRASS_DISTANCE: f32 = 100.0;
@@ -53,6 +57,7 @@ pub(crate) struct GrassGpu {
 /// One grass entity: its model, patches and their grid.
 struct GrassSet {
     model: String,
+    season: String,
     instances: Arc<Vec<[f32; 12]>>,
     cells: HashMap<(i32, i32), Vec<u32>>,
 }
@@ -84,18 +89,33 @@ impl Renderer {
                 cells.entry(cell_of(m[3], m[11])).or_default().push(k as u32);
             }
 
-            g.sets.push(GrassSet { model: grass.model.clone(), instances: grass.instances.clone(), cells });
+            g.sets.push(GrassSet { model: grass.model.clone(), season: grass.season.clone(), instances: grass.instances.clone(), cells });
         }
     }
 
-    pub(crate) fn pass_grass(&mut self, scene: &RenderScene) {
-        wce_prof!("render.grass");
-        self.collect_grass(scene);
-        if self.grass.sets.is_empty() {
-            return;
-        }
+    /// The mesh's diffuse, or its season's variant (the game's texture resolver FUN_1186c880, with seasons: `<prefix>_<season>_diffuse<rest>`
+    /// where that file exists).
+    fn grass_diffuse(&self, mesh: &crate::model_cache::GpuMesh, season: &str) -> Option<ID3D11ShaderResourceView> {
+        let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let seasonal = (!season.is_empty()).then(|| self.diffuse_variant(mesh, season)).flatten();
+        seasonal.and_then(|p| srv(self.textures.get(&p, true))).or_else(|| srv(Some(mesh.tex[crate::model_cache::TEX_DIFFUSE].clone())))
+    }
 
-        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), self.shader(GRASS_PS)) else { return };
+    /// The resolver's `<prefix>_<tag>_diffuse<rest>` of the mesh's diffuse, if that file exists.
+    fn diffuse_variant(&self, mesh: &crate::model_cache::GpuMesh, tag: &str) -> Option<String> {
+        let at = mesh.diffuse_path.find("_diffuse")?;
+        Some(format!("{}_{tag}{}", &mesh.diffuse_path[..at], &mesh.diffuse_path[at..])).filter(|p| self.files.exists(p))
+    }
+
+    /// The burnt look the shader blends in by the instance's burn (TEXCOORD4): the resolver's `_br` variant, black without one.
+    fn grass_burn(&self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
+        self.diffuse_variant(mesh, "br")
+            .and_then(|p| self.textures.get(&p, true))
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.res.black_srv.clone())
+    }
+
+    fn grass_layout(&mut self, vs: &GameShader) -> Option<ID3D11InputLayout> {
         let b4 = DXGI_FORMAT_B8G8R8A8_UNORM;
         let mut el = vec![
             element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false),
@@ -108,15 +128,16 @@ impl Renderer {
             el.push(element(c"TEXCOORD", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true));
         }
 
-        let Some(layout) = self.layout(&vs, "grass", &el) else { return };
+        self.layout(vs, "grass", &el)
+    }
 
-        // The patches near the camera, per model mesh (the pivot goes into the translation), in runs.
-        let eye = self.camera.eye;
-        let frustum = Frustum::from_view_projection(&self.camera.view_proj);
+    /// The patches within [`GRASS_DISTANCE`] of `eye` (and in the frustum, if any): their instances per model mesh (the pivot goes into the
+    /// translation), in runs of (model, mesh, count).
+    fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32, String)>) {
         let reach = GRASS_DISTANCE + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
         let mut all: Vec<f32> = vec![];
-        let mut runs: Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)> = vec![];
+        let mut runs = vec![];
         for set in &self.grass.sets {
             let Some(model) = self.models.model(&set.model) else { continue };
             let mut near: Vec<u32> = vec![];
@@ -126,7 +147,7 @@ impl Renderer {
                     for &k in list {
                         let m = &set.instances[k as usize];
                         let (dx, dy, dz) = (m[3] - eye.x, m[7] - eye.y, m[11] - eye.z);
-                        if dx * dx + dy * dy + dz * dz <= reach * reach && !frustum.outside(&[m[3], m[7], m[11]], PATCH_RADIUS) {
+                        if dx * dx + dy * dy + dz * dz <= reach * reach && !frustum.is_some_and(|f| f.outside(&[m[3], m[7], m[11]], PATCH_RADIUS)) {
                             near.push(k);
                         }
                     }
@@ -153,13 +174,17 @@ impl Renderer {
                     all.extend_from_slice(&[0.0; 4]);
                 }
 
-                runs.push((model.clone(), mi, near.len() as u32));
+                runs.push((model.clone(), mi, near.len() as u32, set.season.clone()));
             }
         }
 
+        (all, runs)
+    }
+
+    fn upload_grass(&mut self, all: &[f32]) -> Option<ID3D11Buffer> {
         let total = all.len() / INSTANCE_FLOATS;
         if total == 0 {
-            return;
+            return None;
         }
 
         if total > self.grass.inst_capacity {
@@ -167,10 +192,65 @@ impl Renderer {
             self.grass.inst_vb = dynamic_buffer(&self.dev, self.grass.inst_capacity * INSTANCE_FLOATS * 4, D3D11_BIND_VERTEX_BUFFER);
         }
 
-        let Some(inst_vb) = self.grass.inst_vb.clone() else { return };
-        if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &all)) {
+        let inst_vb = self.grass.inst_vb.clone()?;
+        self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, all)).then_some(inst_vb)
+    }
+
+    /// The grass casters (vs30_shadow_grass / ps30_shadow_grass: the same sway and sinking, alpha-tested on the diffuse times how much the
+    /// blade faces the light, against the dissolve map) into the shadow cascades: the patches near the camera, every cascade. The game draws
+    /// them there (FUN_118900c0: the shadow pass picks the grass shader's `shadowmap` technique, as the leaves').
+    pub(crate) fn draw_grass_shadows(&mut self, scene: &RenderScene, light_vp: &[Float4x4; 4], eye: Float3) {
+        self.collect_grass(scene);
+        if self.grass.sets.is_empty() {
             return;
         }
+
+        let (Some(vs), Some(ps)) = (self.shader(GRASS_SHADOW_VS), self.shader(GRASS_SHADOW_PS)) else { return };
+        let Some(layout) = self.grass_layout(&vs) else { return };
+        let (all, runs) = self.gather_grass(eye, None);
+        let Some(inst_vb) = self.upload_grass(&all) else { return };
+        let dissolve = self.textures.get(DISSOLVE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.bind(&vs);
+        self.bind(&ps);
+        ps_samplers(&self.ctx, &ps, &self.states.s_wrap_linear);
+        bind_srv(&self.ctx, &ps, "s_dissolve_map", dissolve.as_ref());
+        for (c, vp) in light_vp.iter().enumerate() {
+            let half = SHADOW_SIZE as f32 / 2.0;
+            self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, super::passes::SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
+            self.cbs.set_m("camera_VS_PS", "view_projection", vp.data());
+            self.upload();
+            let mut first = 0u32;
+            for (model, mi, count, season) in &runs {
+                let mesh = &model.meshes[*mi];
+                let diffuse = self.grass_diffuse(mesh, season);
+                bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
+                self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
+                self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                self.ctx.draw_indexed_instanced(mesh.index_count, *count, 0, 0, first);
+                self.draw_stats.draw_calls += 1;
+                self.draw_stats.shadow_instances += u64::from(*count);
+                self.draw_stats.shadow_triangles += u64::from(mesh.index_count / 3) * u64::from(*count);
+                first += count;
+            }
+        }
+
+        self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
+    }
+
+    pub(crate) fn pass_grass(&mut self, scene: &RenderScene) {
+        wce_prof!("render.grass");
+        self.collect_grass(scene);
+        if self.grass.sets.is_empty() {
+            return;
+        }
+
+        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), self.shader(GRASS_PS)) else { return };
+        let Some(layout) = self.grass_layout(&vs) else { return };
+        let frustum = Frustum::from_view_projection(&self.camera.view_proj);
+        let (all, runs) = self.gather_grass(self.camera.eye, Some(&frustum));
+        let Some(inst_vb) = self.upload_grass(&all) else { return };
 
         if self.grass.bs.is_none() {
             let blend = D3D11_RENDER_TARGET_BLEND_DESC {
@@ -185,10 +265,13 @@ impl Renderer {
             self.grass.bs = self.dev.create_blend_state(&desc).ok();
         }
 
-        // grass_PS as the shader object's constructor sets it; ps_height_map_cb as the terrain pass left it (or its values without one).
+        // grass_PS as the grass draw (FUN_118858a0) sets it: g_alpha = the grass_alpha_mul / grass_alpha_add tweakers (2.5, 0: the roots blend
+        // into the ground), g_normal_scale_bias (1, 0) for a normal map without the flag, g_inv_lod_distance 1 / a distance setting (the shaders
+        // hard-code 100 m); the rest as the shader object's constructor leaves them. ps_height_map_cb as the terrain pass left it (or its
+        // values without one).
         let cbs = &mut self.cbs;
         cbs.set_f("grass_PS", "g_inv_lod_distance", &[1.0 / GRASS_DISTANCE]);
-        cbs.set_f("grass_PS", "g_alpha", &[0.0, 1.0]);
+        cbs.set_f("grass_PS", "g_alpha", &[2.5, 0.0]);
         cbs.set_f("grass_PS", "g_normal_scale_bias", &[1.0, 0.0]);
         cbs.set_f("grass_PS", "g_far_addition", &[-1.0]);
         cbs.set_f("grass_PS", "g_far_scale", &[1.0, 1.0]);
@@ -210,6 +293,8 @@ impl Renderer {
         let detail_colour = srv(tex(material.as_ref().map(|m| &m.detail_colour))).or_else(|| self.res.white_srv.clone());
         let detail_normal = srv(tex(material.as_ref().map(|m| &m.detail_normal))).or_else(|| srv(Some(self.textures.flat_normal())));
         let dissolve = srv(self.textures.get(DISSOLVE_MAP, false)).or_else(|| self.res.white_srv.clone());
+        // The engine binds the global snow normals (FUN_118ce490); the shader reads them only with snow (weather_shared).
+        let snow = srv(self.textures.get(SNOW_NORMALS, false)).or_else(|| self.res.black_srv.clone());
         let depth = if self.terrain.active { self.terrain.viewz.srv.clone() } else { self.res.white_srv.clone() };
 
         let rtvs = self.gbuffer.channels[..4].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
@@ -233,16 +318,17 @@ impl Renderer {
             bind_srv(ctx, &ps, "s_mid_distance_detail_map_colour", detail_colour.as_ref());
             bind_srv(ctx, &ps, "s_mid_distance_detail_map_normal", detail_normal.as_ref());
             bind_srv(ctx, &ps, "s_near_distance_detail_map_colour", self.res.white_srv.as_ref());
-            bind_srv(ctx, &ps, "s_snow_normals", self.res.black_srv.as_ref());
+            bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
             bind_sampler(ctx, &ps, "s_depth_map", self.states.s_clamp_point.as_ref());
             bind_sampler(ctx, &ps, "s_far_diffuse_map", self.states.s_clamp_linear.as_ref());
         }
 
         let mut first = 0u32;
-        for (model, mi, count) in runs {
+        for (model, mi, count, season) in runs {
             let mesh = &model.meshes[mi];
-            let diffuse = mesh.tex[crate::model_cache::TEX_DIFFUSE].read().ok().and_then(|t| t.srv.clone());
+            let diffuse = self.grass_diffuse(mesh, &season);
             bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
+            bind_srv(&self.ctx, &ps, "burn_sampler", self.grass_burn(mesh).as_ref());
             self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
             self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
             self.ctx.draw_indexed_instanced(mesh.index_count, count, 0, 0, first);

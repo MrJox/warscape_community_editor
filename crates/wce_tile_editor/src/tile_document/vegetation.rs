@@ -306,7 +306,7 @@ impl Tile {
 }
 
 /// The rotation taking the up axis to the normal of a terrain whose height drops by `dx` along +x and `dz` along +z over 1 m.
-fn tilt(dx: f32, dz: f32) -> Float4x4 {
+pub(crate) fn tilt(dx: f32, dz: f32) -> Float4x4 {
     let l = (dx * dx + 1.0 + dz * dz).sqrt();
     let (nx, ny, nz) = (dx / l, 1.0 / l, dz / l);
     let r = (nx * nx + ny * ny).sqrt();

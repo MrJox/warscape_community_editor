@@ -68,10 +68,12 @@ Items are three halfs: x, the height, z (list frame as the trees': z from the fa
 **Game placement** ("Grass Display" FUN_105103e0, its job FUN_10515960 through the splitter FUN_10507520). Per key, the model is
 `<key>.rigid_model_v2` resolved by the model lookup (in the climate's `terrain/vegetation/battle/grass/<climate>/` folder; climates lack some
 groups, which the `default` folder has). Per patch: x at +0, z at +4 (the height at +2 is read but unused). It takes the terrain height there
-and the terrain normal from heights each side; patches whose normal.y is not above cos(a tweaker angle, FUN_100c0100, not identified) are
-dropped. A 32-byte record follows: the model, the position, the normal and a yaw. The yaw comes from the MSVC LCG seeded with 0x49710ae3 per
-job (chunks of 1024 items × workers: the one-worker sequence is per key), yaw = (s >> 16) · f32(0x38c910a4). There is no scale. The editor
-tilts the patch to the normal and turns it by the yaw, as the trees.
+and the terrain normal from the heights h = max(the model's x / z extent, 0.4) · 0.5 metres to each side (a central difference over the
+patch). It drops a patch whose model box is not inside a square of half-size s around the battle's
+origin (s from the grass system's virtual +0x78), and one whose normal.y is not above
+cos(`GRASS_ANGLE_CULL_AMOUNT`, a tweaker at 0x122c95a8, default 0.7 rad). For a kept patch the LCG steps: a 32-byte record (model, position,
+normal, yaw). The LCG is seeded with 0x49710ae3 per job (chunks of 1024 items × workers: the one-worker sequence is per key),
+yaw = (s >> 16) · f32(0x38c910a4). There is no scale. The editor tilts the patch to that normal and turns it by the yaw.
 
 **Shaders** (`rigidgrass.hlsl`; the shader object FUN_116e69f0 builds `shadowmap`, `zprefill` + `gbuffer_zequals`, `gbuffer`, `gbuffer_ms` and
 OIT variants).
@@ -85,10 +87,29 @@ OIT variants).
 - It writes the normal, sqrt(colour), specular (1, 1, 1, 0) and z / w. Its alpha fades the patch with distance where the scene behind it is
   close (`s_depth_map`, linear view depth).
 - The `gbuffer` blend state: RT0..2 src alpha / inv src alpha, alpha zero / inv src alpha.
-- `grass_PS` defaults (FUN_116d8090, the values the editor uses; the writer was not found):
-  - `g_inv_lod_distance` 0.01, `g_alpha` (0, 1), `g_normal_scale_bias` (1, 0), `g_far_scale` (0, 0), `g_clip_bias` 0.
-  - `g_far_addition` −1, which turns the `s_far_diffuse_map` tint off: sat(g_far_addition − colour.w + 1) = 0.
-- Material textures that are not where the material says (the `default` models name the rome_atlantic folder's) are next to the model.
+- `grass_PS`: the grass draw FUN_118858a0 (the render node's vtable at 0x11cbda34..) sets:
+  - `g_alpha` = (`grass_alpha_mul` 2.5, `grass_alpha_add` 0): tweakers from RigidMesh_v2.cpp. The roots (colour alpha 0) blend into the ground.
+  - `g_inv_lod_distance` = 1 / the grass system's integer at +0x80. No grass shader reads it (cb[0].x of `grass_PS` in none of the
+    gbuffer, z-prefill, no-clip, MSAA, shadow or OIT variants). The extent is the shaders' own 100 m: the tips reach the roots, and the
+    alpha reaches 0 there.
+  - `g_normal_scale_bias` = (1, 0), or (2, −1) for a flagged normal map.
+  - The rest keep the constructor's defaults (FUN_116d8090): `g_far_scale` (0, 0), `g_clip_bias` 0, and `g_far_addition` −1, which turns
+    the `s_far_diffuse_map` tint off: sat(g_far_addition − colour.w + 1) = 0.
+- Techniques (FUN_118900c0, per render pass): the shadow pass draws `shadowmap` (grass casts shadows, as the leaves). The G-buffer pass
+  draws `gbuffer`, or `zprefill` then `gbuffer_zequals` with the z-prefill on, or `gbuffer_ms` with MSAA.
+- Textures (the material resolver FUN_1186c880):
+  - `test_gray` / `test_black` / `test_mask` / `test_white` / `test_gloss` / `flatnormal` names become `CommonTextures/default_*`.
+  - The grass render node (constructor FUN_117c74a0) loads `commontextures/dissolve.dds` for `s_dissolve_map`. A global weather object
+    (FUN_118ce490) loads `commontextures/snow_normal.dds` for `s_snow_normals`.
+  - With seasons, a `<prefix>_diffuse<rest>` texture loads `<prefix>_<season>_diffuse<rest>` for sp / su / au / wi where it exists, and
+    `_br` / `_sn` variants. The climate grass folders have `grass_su`, `grass_au`, `grass_wi`, `grass_sp`; summer `rome_continental` grass
+    is poppies.
+  - With alpha blending on (manager+0x716bc, the setting that "Disabled Alpha-blending" turns off: 2, or 1 with more than 2 of the
+    value at vfunc +0x128), the diffuse of two material types becomes `<name>_ab.dds`. These are the OIT grass techniques' textures; the
+    G-buffer path uses the plain ones.
+  - A texture that doesn't load falls back to `CommonTextures/default_white`. The editor instead looks under the same name next to the
+    model (the `default` models name rome_atlantic textures that are only in their own folder). That gives `default/mud/2` (whose
+    texture names a legacy `battleterrain/...` path) a pale blue-white tuft; the game would draw it white.
 
 **BOB's generator** (`ACTION_GRASS::run` FUN_10007570 in BOB_Vegetation; `EMPIREUTILITY::PROCEDURAL_GRASS`; port:
 `wce_tile::vegetation::grass`).
@@ -230,8 +251,19 @@ that sets variables by name hash would not show up in this search; only a memory
   - outfield_tents (88 / 239): the yurt file (malformed attribute at line 68).
   - List heights are off by up to ~10 on some tiles (the height alpha map is not applied).
   - Not done: props / decals / VFX outputs, merging static trees, the per-climate conversions on write.
-- **Grass in the game, not reproduced yet:** the slope cutoff angle (FUN_100c0100), the grass shadows (`vs30_shadow_grass`), the live
-  `grass_PS` values (defaults used), seasonal textures (the climate folders have `_su_` / `_au_` / `_wi_` diffuses; the models name the plain
-  one).
+- **Grass, settled as far as the game's static code goes:**
+  - The playable-area box: the tile's grass list is moved into the battle's frame (`GRASS_LIST::transform`, a 4×3 matrix per tile
+    when the battle map is assembled) and patches must fit in ±s around the battle's origin. That depends on the battle, not on the
+    tile, so the editor draws the whole tile.
+  - `gfx_grass_quality`: the preference becomes `GRASS_QUALITY` in the graphics presets (FUN_11725c30, preset +0x30, manager
+    +0x7167c). The only reader is a virtual getter (manager vtable +0x21c), and no call to it was found in the binary. Nothing in the
+    grass placement, constants, shaders or technique choice depends on it. The editor draws the maximum (what the user's preferences
+    have).
+  - The seasonal path: the resolver's flag comes from the node base (FUN_117be1b0): 1 when an id the node factory holds
+    (FUN_1185b0c0's `this`+0xc, not the mesh's material type) is 0x40, 0x5b, 0x5c, 0x6e or 0x6f. The tree and grass nodes come from the
+    same factory call, and the battle trees ship the seasonal diffuses in bulk (~340 per season: `oak_au` / `oak_sp` / `oak_wi`; summer is
+    the plain name unless a `_su` exists, as for the grass poppies). So battle vegetation takes the path; what the factory id is was not
+    traced further.
+  - Follow-up: the editor swaps the seasonal diffuse for grass only; the trees (and their billboards) need the same.
 - `tree_metadata.txt` LOD distances vs the models' own.
 - The second instance matrix (untilted) vs the shader's TEXCOORD0..2 / 3..5: the editor feeds the tilted matrix to both.
