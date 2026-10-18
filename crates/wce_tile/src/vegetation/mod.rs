@@ -1,13 +1,13 @@
-//! A tile's procedural vegetation as BOB generates it (stage C of docs/plans/tile.md): the trees of `<category>.tree_list.bin` from the raw
-//! tile (heights, blend map, mask, the seeds of tile.ted) and the Assembly Kit's vegetation parameters. docs/re/vegetation.md has the RE.
-//!
-//! Not done yet: the props / decals / VFX outputs (`_procedural_bmd_data`), the grass list, merging the static trees
-//! and the per-climate conversions into the written list.
+//! A tile's procedural vegetation as BOB generates it (stage C of docs/plans/tile.md) from the raw tile (heights, blend map, mask, the seeds
+//! and static trees of tile.ted) and the Assembly Kit's vegetation parameters: the trees of `<category>.tree_list.bin` (static trees
+//! included, converted per climate), the props, decals and VFX of `<category>_procedural_bmd_data.bin`, and the grass list.
+//! docs/re/vegetation.md has the RE.
 
 pub mod ca_map;
 pub mod ca_xml;
 pub mod generate;
 pub mod grass;
+pub mod height_alpha;
 pub mod msvc_sort;
 pub mod params;
 
@@ -110,8 +110,33 @@ pub fn read_blend_map(path: &Path) -> Result<(usize, usize, Vec<f32>), String> {
         return Err(format!("{}: not 16 samples of 16 bits", path.display()));
     }
 
-    let blend = tif.pixels.as_chunks::<2>().0[..n * 16].iter().map(|b| f32::from(u16::from_le_bytes(*b)) / 65535.0).collect();
+    // As the heights: BOB's image conversion multiplies by 1 / 65535.
+    let blend = tif.pixels.as_chunks::<2>().0[..n * 16].iter().map(|b| f32::from(u16::from_le_bytes(*b)) * (1.0 / 65535.0)).collect();
     Ok((tif.width as usize, tif.height as usize, blend))
+}
+
+/// The cells of the tile's links that blend with the neighbour (`build_height_alpha_map`): the link's tile set has a linking tile (in the
+/// kit's `_settings.xml`), the test is not `TLT_NOT_EQUALS` and the link doesn't have `no_offline_blend`.
+fn blending_links(entry: &wce_formats::tile_entry::TileEntry) -> Vec<(i32, i32)> {
+    let links = entry.links();
+    if links.is_empty() {
+        return vec![];
+    }
+
+    let settings = entry.file().parent().and_then(Path::parent).map(|d| d.join("_settings.xml"));
+    let Some(doc) = settings.and_then(|p| std::fs::read(p).ok()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).ok()) else { return vec![] };
+    let linking: HashSet<String> = doc
+        .elements()
+        .iter()
+        .enumerate()
+        .filter(|(i, e)| e.name == "TILE_SET" && doc.get(*i, "linking_tile").is_some_and(|t| !t.is_empty()))
+        .filter_map(|(i, _)| doc.get(i, "name"))
+        .collect();
+    links
+        .iter()
+        .filter(|l| linking.contains(&l.link_set) && l.test != "TLT_NOT_EQUALS" && !l.no_offline_blend)
+        .map(|l| (l.x, l.y))
+        .collect()
 }
 
 /// The generator's inputs from a raw tile.
@@ -124,7 +149,8 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
     let mut heights = Vec::with_capacity(map_w * map_h);
     for y in 0..map_h as u32 {
         for x in 0..map_w as u32 {
-            heights.push((f32::from(hf.raw(x, y)) / 65535.0) * scale + min);
+            // BOB's image conversion multiplies by 1 / 65535 (dividing is an ulp off in places).
+            heights.push((f32::from(hf.raw(x, y)) * (1.0 / 65535.0)) * scale + min);
         }
     }
 
@@ -133,6 +159,8 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
         return Err(format!("blend_map.tif is {bw}x{bh}, the height map {map_w}x{map_h}"));
     }
 
+    let cells = cells(entry.width(), entry.height(), &entry.mask());
+    let height_alpha = height_alpha::HeightAlpha::build(entry.width(), entry.height(), variation.raw_data_tri_density, &cells, &blending_links(entry));
     let tg = entry.texture_group();
     Ok(TileInputs {
         heights,
@@ -143,7 +171,8 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
         cells_y: entry.height(),
         tri_density: variation.raw_data_tri_density,
         texture_groups: vec![tg.red, tg.green, tg.blue, tg.alpha],
-        cells: cells(entry.width(), entry.height(), &entry.mask()),
+        cells,
+        height_alpha,
         render_scale: project.unit_scale as f32,
         exclusions: exclusions(&project.scene),
     })
@@ -151,7 +180,223 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
 
 /// The generated trees of a category's tree list (no static trees), in BOB's order.
 pub fn generated_trees(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, model_exists: &dyn Fn(&str) -> bool) -> Vec<ListTree> {
+    tree_list(inputs, params, category, seeds, &[], model_exists)
+}
+
+/// A category's tree list as BOB writes it: the generated trees and the static ones (`statics`, from [`static_trees`]) converted for the
+/// category, in the list's order.
+pub fn tree_list(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, statics: &[StaticTree], model_exists: &dyn Fn(&str) -> bool) -> Vec<ListTree> {
     let density = params.densities.get(category).map_or(0.0, |d| d.trees);
-    let chosen = generate::generate(params, inputs, category, params::TREE | params::PROP, seeds.trees, density);
+    let name = params.categories.get(category).map(String::as_str).unwrap_or_default();
+    let statics: Vec<Chosen> = statics.iter().map(|s| static_chosen(params, name, s, model_exists)).collect();
+    let chosen = generate::generate_with(params, inputs, category, params::TREE | params::PROP, seeds.trees, density, &statics);
     generate::to_tree_list(inputs, &chosen, model_exists)
+}
+
+/// A `VEGETATION_INSTANCE` BOB adds to every tree list (FUN_1003f390), in the generator's frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StaticTree {
+    /// `species.variant` (`beech.beech_f`).
+    pub key: String,
+    pub x: f32,
+    pub y: f32,
+
+    /// The instance's world y.
+    pub height: f32,
+
+    /// `scale` (1 when missing).
+    pub size: f32,
+
+    /// `surface_mode` is `MSM_FREEFORM`.
+    pub freeform: bool,
+}
+
+/// `QTU::TedEntity::world_transform`'s translation, in BOB's float arithmetic (QtToolUtility): each element's local matrix from its
+/// `position` and `orientation` (`sscanf` floats; `FUN_100af1e0` for the rotation; unit scale, as a `scale` that isn't `vector(..)` leaves
+/// it), and the world matrix as the parent's times the local one, the products summed left to right.
+fn ted_world_position(scene: &TedScene, elem: usize) -> [f32; 3] {
+    let doc = scene.doc();
+    let vec3 = |e: usize, attr: &str, prefix: &str| -> [f32; 3] {
+        let parse = || -> Option<[f32; 3]> {
+            let v = doc.get(e, attr)?;
+            let inner = v.trim().strip_prefix(prefix)?.strip_prefix('(')?.strip_suffix(')')?;
+            let mut it = inner.split(',').map(|t| t.trim().parse::<f64>().ok().map(|f| f as f32));
+            Some([it.next()??, it.next()??, it.next()??])
+        };
+        parse().unwrap_or([0.0; 3])
+    };
+    let sincos = |a: f32| ((f64::from(a)).sin() as f32, (f64::from(a)).cos() as f32);
+
+    // FUN_100af1e0: euler (x, y, z) to a row-major rotation, translation in the last column.
+    let rotation = |e: [f32; 3]| -> [f32; 16] {
+        let (s0, c0) = sincos(e[0]);
+        let f1 = -s0;
+        let (s1, c1) = sincos(-e[1]);
+        let mut f2 = (1.0 - c1) * c0;
+        let f3 = f2 * c0 + c1;
+        let mut f6 = f1 * s1;
+        let f4 = -f6;
+        let f5 = f1 * (1.0 - c1) * f1 + c1;
+        f2 *= f1;
+        let f7 = s1 * c0;
+        let l14 = f2 * s0;
+        let f11 = f3 * c0 - l14;
+        let f8 = -f7;
+        let f9 = f6 * c0 - f8 * s0;
+        f2 *= c0;
+        let f10 = f2 - f5 * s0;
+        let f1b = f5 * c0 + l14;
+        let f2b = f3 * s0 + f2;
+        f6 = f8 * c0 + f6 * s0;
+        let (s2, c2) = sincos(e[2]);
+        let f3b = -s2;
+        let mut m = [0.0f32; 16];
+        m[0] = f3b * f9 + f11 * c2;
+        m[4] = f11 * s2 + f9 * c2;
+        m[8] = f10;
+        m[1] = f3b * c1 + c2 * f4;
+        m[5] = s2 * f4 + c2 * c1;
+        m[9] = f7;
+        m[2] = f3b * f6 + f2b * c2;
+        m[6] = f6 * c2 + f2b * s2;
+        m[10] = f1b;
+        m[15] = 1.0;
+        m
+    };
+
+    let mut chain = vec![];
+    let mut e = Some(elem);
+    while let Some(x) = e {
+        chain.push(x);
+        e = doc.elements()[x].parent;
+    }
+
+    let mut world: Option<[f32; 16]> = None;
+    for &x in chain.iter().rev() {
+        if doc.get(x, "position").is_none() && doc.get(x, "orientation").is_none() {
+            continue;
+        }
+
+        let mut local = rotation(vec3(x, "orientation", "euler"));
+        let p = vec3(x, "position", "vector");
+        (local[3], local[7], local[11]) = (p[0], p[1], p[2]);
+        world = Some(match world {
+            None => local,
+            Some(w) => {
+                let mut r = [0.0f32; 16];
+                for i in 0..4 {
+                    for j in 0..4 {
+                        r[i * 4 + j] = w[i * 4] * local[j] + w[i * 4 + 1] * local[4 + j] + w[i * 4 + 2] * local[8 + j] + w[i * 4 + 3] * local[12 + j];
+                    }
+                }
+                r
+            }
+        });
+    }
+
+    world.map_or([0.0; 3], |w| [w[3], w[7], w[11]])
+}
+
+/// The tile's static trees as BOB collects them: only when the tile has a `VegetationExclusionPolygonInstance`, every `VEGETATION_INSTANCE`
+/// (hidden ones too) whose world position is inside one of the exclusion polygons, the first one at a position; in the order of that
+/// position map (a CA map), which is the order BOB adds them to each list in.
+pub fn static_trees(scene: &TedScene, inputs: &TileInputs) -> Vec<StaticTree> {
+    let doc = scene.doc();
+    if !doc.elements().iter().any(|e| e.name == "VegetationExclusionPolygonInstance") {
+        return vec![];
+    }
+
+    let mut map: ca_map::CaMap<ca_map::Vec2Key, StaticTree> = ca_map::CaMap::default();
+    for (elem, e) in doc.elements().iter().enumerate() {
+        if e.name != "VEGETATION_INSTANCE" {
+            continue;
+        }
+
+        let [x, y, z] = ted_world_position(scene, elem);
+        if !inputs.exclusions.iter().any(|poly| generate::point_in(poly, x, z)) {
+            continue;
+        }
+
+        let size = doc.get(elem, "scale").and_then(|s| wce_formats::c_num::strtod(s.trim())).map_or(1.0, |v| v as f32);
+        let st = StaticTree {
+            key: doc.get(elem, "key").unwrap_or_default(),
+            x,
+            y: z,
+            height: y,
+            size,
+            freeform: doc.get(elem, "surface_mode").as_deref() == Some("MSM_FREEFORM"),
+        };
+        map.insert(ca_map::Vec2Key(x, z), st);
+    }
+
+    map.iter().map(|(_, s)| s.clone()).collect()
+}
+
+/// FUN_1003fb00: a static tree as the category's list has it. The key goes through the category's `per_climate_tree_conversions.xml` table
+/// (lower case: a converted key is lower case, an unconverted one keeps its case); the model is `shrubs\<species>\<variant>` if that exists,
+/// else `trees\<species>\<variant>` (also when neither does: the list writer then leaves it out).
+fn static_chosen(params: &GenerationParams, category: &str, s: &StaticTree, model_exists: &dyn Fn(&str) -> bool) -> Chosen {
+    let split = |key: &str| match key.split_once('.') {
+        Some((a, b)) => (a.to_owned(), b.to_owned()),
+        None => (key.to_owned(), key.to_owned()),
+    };
+
+    let (mut species, mut variant) = split(&s.key);
+    if let Some(table) = params.conversions.get(&category.to_lowercase())
+        && let Some(new) = table.get(&format!("{}.{}", species.to_lowercase(), variant.to_lowercase()))
+    {
+        (species, variant) = split(new);
+    }
+
+    let shrub = format!("shrubs\\{species}\\{variant}");
+    let model = if model_exists(&format!("battleterrain/vegetation/{shrub}.rigid_model_v2")) { shrub } else { format!("trees\\{species}\\{variant}") };
+    Chosen {
+        model,
+        x: s.x,
+        y: s.y,
+        size: s.size,
+        min_separation: 0.0,
+        grouping_probability: 0.0,
+        grouping_radius: 0.0,
+        width: 0.0,
+        group: String::new(),
+        include_in_outfield: false,
+        kind: params::TREE,
+        height: s.height,
+        freeform: s.freeform,
+    }
+}
+
+/// The generated props of a category (the props of its `_procedural_bmd_data`): the tree generator's props, then the decal generator's
+/// decals (props of type 1), grouped by key ([`by_key`]). The decal generator runs with the decal seed but the trees' density
+/// (`max_trees_per_metre_squared`, not `max_decals`), as BOB does.
+pub fn generated_props(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds) -> Vec<generate::ListProp> {
+    let d = params.densities.get(category).copied().unwrap_or_default();
+    let props = generate::to_prop_list(inputs, &generate::generate(params, inputs, category, params::TREE | params::PROP, seeds.trees, d.trees));
+    let decals = generate::to_decal_list(inputs, &generate::generate(params, inputs, category, params::DECAL, seeds.decals, d.trees));
+    by_key(props.into_iter().chain(decals), |p| p.key.clone())
+}
+
+/// Entries grouped by key, each key's in the order they were added, as BOB's marker tables hold them. The keys go in the order they first
+/// appear; BOB's table (`MARKER_TABLE`: a tree of the key's path parts in a `CA::HashTableNoRemove`, walked by its flat marker iterator)
+/// orders them otherwise, which is not reproduced. The order has no effect in the game.
+fn by_key<T>(items: impl Iterator<Item = T>, key: impl Fn(&T) -> String) -> Vec<T> {
+    let mut groups: Vec<(String, Vec<T>)> = vec![];
+    for item in items {
+        let k = key(&item);
+        match groups.iter_mut().find(|(g, _)| *g == k) {
+            Some((_, v)) => v.push(item),
+            None => groups.push((k, vec![item])),
+        }
+    }
+
+    groups.into_iter().flat_map(|(_, v)| v).collect()
+}
+
+/// The generated VFX of a category (the particle emitters of its `_procedural_bmd_data`): the VFX generator, with the tile's VFX seed and
+/// the category's `max_vfx_per_metre_squared`.
+pub fn generated_vfx(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds) -> Vec<generate::ListVfx> {
+    let density = params.densities.get(category).map_or(0.0, |d| d.vfx);
+    let chosen = generate::generate(params, inputs, category, params::VFX, seeds.vfx, density);
+    by_key(generate::to_vfx_list(inputs, &chosen).into_iter(), |v| v.key.clone())
 }

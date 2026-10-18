@@ -102,8 +102,11 @@ pub struct ObjectParams {
 }
 
 impl ObjectParams {
+    /// `get_random_size`: `hi * k * range * blend + low` on the x87, so every step is rounded to double (MSVC's 53-bit precision) and
+    /// only the result to f32.
     pub fn random_size(&self, rand: &mut super::generate::Rand, blend: f32) -> f32 {
-        rand.unit() * self.size_range * blend + self.size_low
+        let k = f64::from(f32::from_bits(0x3780_0080));
+        (f64::from(rand.hi()) * k * f64::from(self.size_range) * f64::from(blend) + f64::from(self.size_low)) as f32
     }
 }
 
@@ -146,6 +149,9 @@ pub struct GenerationParams {
 
     /// The parameter files read, in order.
     pub files: Vec<String>,
+
+    /// `per_climate_tree_conversions.xml`: per lower-case climate, lower-case `species.variant` -> its replacement (a later entry wins).
+    pub conversions: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 }
 
 fn value_f32(el: &Element, name: &str) -> f32 {
@@ -178,6 +184,22 @@ impl GenerationParams {
                         decals: value_f32(c, "max_decals_per_metre_squared"),
                         vfx: value_f32(c, "max_vfx_per_metre_squared"),
                     };
+                }
+            }
+        }
+
+        // FUN_1004e440 (QtXml: the climate's `name`, each `conversion`'s `old_model` / `new_model`); a missing file is no conversions.
+        if let Ok(bytes) = read("per_climate_tree_conversions.xml") {
+            let doc = ca_xml::parse(&bytes);
+            if let Some(root) = doc.child("dataroot") {
+                for c in root.children.iter().filter(|c| c.name == "climate") {
+                    let climate = c.attribute("name").unwrap_or_default().to_lowercase();
+                    let map = p.conversions.entry(climate).or_default();
+                    for conv in c.children.iter().filter(|c| c.name == "conversion") {
+                        let old = conv.attribute("old_model").unwrap_or_default().to_lowercase();
+                        let new = conv.attribute("new_model").unwrap_or_default().to_lowercase();
+                        map.insert(old, new);
+                    }
                 }
             }
         }

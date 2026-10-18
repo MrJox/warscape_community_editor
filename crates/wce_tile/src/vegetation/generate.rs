@@ -55,6 +55,9 @@ pub struct TileInputs {
 
     /// `VegetationExclusionPolygonInstance` outlines, in generator coordinates.
     pub exclusions: Vec<Vec<(f32, f32)>>,
+
+    /// What the lists' heights are multiplied by.
+    pub height_alpha: super::height_alpha::HeightAlpha,
 }
 
 impl TileInputs {
@@ -69,6 +72,21 @@ impl TileInputs {
         let w = (self.cells_x as i32 + 2) * self.tri_density as i32 + 2 * b;
         let h = (self.cells_y as i32 + 2) * self.tri_density as i32 + 2 * b;
         (w.max(0) as u32, h.max(0) as u32)
+    }
+
+    /// The height map pixel a list writer samples for a generator position (ACTION_GENERATE_VEGETATION / ACTION_GRASS::run):
+    /// `tri_density + p / cell`, truncated (x87 with the rounding set to chop).
+    pub fn list_pixel(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+        let inv_cell = 1.0 / self.cell();
+        let tri = f64::from(self.tri_density);
+        let col = (tri + f64::from(x * inv_cell)).trunc() as i64;
+        let row = (tri + f64::from(y * inv_cell)).trunc() as i64;
+        (col >= 0 && row >= 0 && (col as usize) < self.map_w && (row as usize) < self.map_h).then_some((col as usize, row as usize))
+    }
+
+    /// A list's height at a [`Self::list_pixel`]: the height map times the height alpha map.
+    pub fn list_height(&self, col: usize, row: usize) -> f32 {
+        self.heights[row * self.map_w + col] * self.height_alpha.get(col, row)
     }
 
     /// Metres per pixel of the grid, in scene units: m_terrain_tile_size (128) / tri_density * render_scale.
@@ -278,6 +296,12 @@ pub struct Chosen {
     pub group: String,
     pub include_in_outfield: bool,
     pub kind: u32,
+
+    /// A static tree's height (its instance's world y); 0 for a generated object, whose list height is the terrain's.
+    pub height: f32,
+
+    /// A static tree whose instance is `MSM_FREEFORM`.
+    pub freeform: bool,
 }
 
 /// The cumulative pick of BOB's `MAP<float, ...>`: the first entry whose running total is >= r.
@@ -426,6 +450,21 @@ fn trace_window() -> Option<(f32, f32, f32)> {
 }
 
 pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> Vec<Chosen> {
+    generate_with(params, inputs, category, mask, seed, density, &[])
+}
+
+/// [`generate`], then `statics` added to the generated map (where nothing is at their position yet), as BOB adds the static trees to the tree
+/// generator's map before writing: they don't take part in the generation, but their place in the map's order is the list's.
+pub fn generate_with(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32, statics: &[Chosen]) -> Vec<Chosen> {
+    let mut live = generate_map(params, inputs, category, mask, seed, density);
+    for c in statics {
+        live.insert(Vec2Key(c.x, c.y), c.clone());
+    }
+
+    live.iter().map(|(_, c)| c.clone()).collect()
+}
+
+fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> CaMap<Vec2Key, Chosen> {
     let objects = &params.objects;
 
     // The category's objects of the generator's humidity (0, arid), by group, in the category map's order.
@@ -440,7 +479,7 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
     let mut rand = Rand(seed);
     let points = candidates(inputs, density, &mut rand);
     if points.is_empty() {
-        return vec![];
+        return CaMap::default();
     }
 
     let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, 0.0f32, 0.0f32);
@@ -549,6 +588,8 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
             group: op.group.clone(),
             include_in_outfield: op.include_in_outfield,
             kind: op.kind,
+            height: 0.0,
+            freeform: false,
         };
 
         if traced(p.x, p.y) {
@@ -689,7 +730,7 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
         }
     }
 
-    live.iter().map(|(_, c)| c.clone()).collect()
+    live
 }
 
 /// `valid_group_for_position`.
@@ -716,6 +757,9 @@ pub struct ListTree {
     pub y: f32,
     pub z: f32,
     pub scale_byte: u8,
+
+    /// A static tree from an `MSM_FREEFORM` instance.
+    pub freeform: bool,
 }
 
 /// BOB_Vegetation's output: the trees (type 1) of a generator in the list frame, in the list's order (x and z in metres, z from the far edge), on the terrain;
@@ -724,8 +768,6 @@ pub fn to_tree_list(inputs: &TileInputs, chosen: &[Chosen], model_exists: &dyn F
     let rs = inputs.render_scale;
     let w_m = inputs.cells_x as f32 * 128.0 * rs;
     let h_m = inputs.cells_y as f32 * 128.0 * rs;
-    let inv_cell = 1.0 / inputs.cell();
-    let tri = inputs.tri_density as f32;
     let mut out = vec![];
     for c in chosen.iter().filter(|c| c.kind == super::params::TREE) {
         let x = c.x * (1.0 / rs);
@@ -734,26 +776,217 @@ pub fn to_tree_list(inputs: &TileInputs, chosen: &[Chosen], model_exists: &dyn F
             continue;
         }
 
-        let col = (tri + c.x * inv_cell).round_ties_even() as i64;
-        let row = (tri + c.y * inv_cell).round_ties_even() as i64;
-        if col < 0 || row < 0 || col as usize >= inputs.map_w || row as usize >= inputs.map_h {
-            continue;
-        }
+        // A stored height (a static tree's) is used as it is; otherwise the terrain's, if the pixel is on the height map.
+        let y = if c.height != 0.0 {
+            c.height
+        } else {
+            let Some((col, row)) = inputs.list_pixel(c.x, c.y) else { continue };
+            inputs.list_height(col, row)
+        };
 
         let path = format!("BattleTerrain/vegetation/{}.rigid_model_v2", c.model);
         if !model_exists(&path) {
             continue;
         }
 
-        let y = inputs.heights[row as usize * inputs.map_w + col as usize];
-
         // The byte is the low 8 bits of ceil(size * 127): sizes over 2 wrap.
-        out.push(ListTree { path, x, y, z, scale_byte: ((c.size * 127.0).ceil() as i64 & 0xff) as u8 });
+        out.push(ListTree { path, x, y, z, scale_byte: ((c.size * 127.0).ceil() as i64 & 0xff) as u8, freeform: c.freeform });
     }
 
     // Written through a vector sorted by path (case and all) with MSVC's std::sort, which is not stable: it decides the order of a model's
     // trees in the list, and with it their yaws in the game.
     super::msvc_sort::sort(&mut out, &|a: &ListTree, b: &ListTree| a.path < b.path);
+    out
+}
+
+/// A `PROP` of a category's `_procedural_bmd_data` (a prop object, type 2; decals are props of type 1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListProp {
+    /// `RigidModels/` + model + `.rigid_model_v2` (decals: `RigidModels/Decals/` + model + `.rigid_model_v2`).
+    pub key: String,
+
+    /// Row-major, translation in the last row (m30, m31, m32).
+    pub transform: [f32; 16],
+
+    /// 0 for a prop, 1 for a decal.
+    pub prop_type: u32,
+    pub allow_in_outfield: bool,
+    pub decal_parallax: f32,
+    pub decal_scale: [f32; 3],
+    pub decal_tiled: bool,
+}
+
+/// BOB_Vegetation's output for the props (type 2) of a generator, in the generated map's order, with the trees' bounds and heights: scaled by
+/// the size, unrotated, and the marker's defaults (not clamped, not fauna, snow and destruction on). The model file isn't checked. BOB leaves
+/// a prop's decal parameters uninitialised (stack garbage in its files); they are written as 0.
+pub fn to_prop_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListProp> {
+    let rs = inputs.render_scale;
+    let w_m = inputs.cells_x as f32 * 128.0 * rs;
+    let h_m = inputs.cells_y as f32 * 128.0 * rs;
+    let mut out = vec![];
+    for c in chosen.iter().filter(|c| c.kind == super::params::PROP) {
+        let x = c.x * (1.0 / rs);
+        let z = (h_m - c.y) * (1.0 / rs);
+        if !(0.0 < x && x <= w_m && 0.0 < z && z < h_m) {
+            continue;
+        }
+
+        let Some((col, row)) = inputs.list_pixel(c.x, c.y) else { continue };
+        let y = inputs.list_height(col, row);
+        let s = c.size;
+        out.push(ListProp {
+            key: format!("RigidModels/{}.rigid_model_v2", c.model),
+            transform: [s, 0.0, 0.0, 0.0, 0.0, s, 0.0, 0.0, 0.0, 0.0, s, 0.0, x, y, z, 1.0],
+            prop_type: 0,
+            allow_in_outfield: c.include_in_outfield,
+            decal_parallax: 0.0,
+            decal_scale: [0.0; 3],
+            decal_tiled: true,
+        });
+    }
+
+    out
+}
+
+/// `FUN_10013ba0` / `FUN_10013cc0`: a 3x3 Sobel sum around (col, row) over 9, the coordinates clamped to `w` x `h` and the row stride `w`
+/// (BOB passes the tile's extent in scene units, not the field's size). `transpose` gives the y gradient.
+fn sobel(field: &[f32], w: f32, h: f32, col: i32, row: i32, transpose: bool) -> f32 {
+    const K: [f32; 9] = [1.0, 0.0, -1.0, 2.0, 0.0, -2.0, 1.0, 0.0, -1.0];
+    let (max_c, max_r, stride) = ((w - 1.0) as i32, (h - 1.0) as i32, w as i32);
+    let mut sum = 0.0f32;
+    for o in 0..3 {
+        for i in 0..3 {
+            // Plain: kernel row o, column i at (col - 1 + i, row - 1 + o). Transposed: kernel [i][o] at the same pixel.
+            let (c, r, k) = if transpose { (col - 1 + i, row - 1 + o, K[(i * 3 + o) as usize]) } else { (col - 1 + i, row - 1 + o, K[(o * 3 + i) as usize]) };
+            let c = c.clamp(0, max_c.max(0));
+            let r = r.clamp(0, max_r.max(0));
+            let v = field.get((r * stride + c) as usize).copied().unwrap_or(0.0);
+            sum += v * k;
+        }
+    }
+
+    (f64::from(sum) / 9.0) as f32
+}
+
+/// BOB_Vegetation's output for the decals (type 4) of a generator, as props of type 1 in the generated map's order: rotated from up to the
+/// normal of the height field's Sobel gradients at (x / cell, y / cell), with the normal taken as (gx, gy, 1) (so a flat decal stands at
+/// 90 degrees about x), scaled by the size; decal parallax 1 and the size as the decal scale, not tiled.
+pub fn to_decal_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListProp> {
+    let rs = inputs.render_scale;
+    let w_m = inputs.cells_x as f32 * 128.0 * rs;
+    let h_m = inputs.cells_y as f32 * 128.0 * rs;
+    let inv_cell = 1.0 / inputs.cell();
+    let mut out = vec![];
+    for c in chosen.iter().filter(|c| c.kind == super::params::DECAL) {
+        let x = c.x * (1.0 / rs);
+        let z = (h_m - c.y) * (1.0 / rs);
+        if !(0.0 < x && x <= w_m && 0.0 < z && z < h_m) {
+            continue;
+        }
+
+        let Some((col, row)) = inputs.list_pixel(c.x, c.y) else { continue };
+        let y = inputs.list_height(col, row);
+
+        let (pc, pr) = ((c.x * inv_cell) as i32, (c.y * inv_cell) as i32);
+        let a = sobel(&inputs.heights, w_m, h_m, pc, pr, false);
+        let b = sobel(&inputs.heights, w_m, h_m, pc, pr, true);
+        let len = (b * b + a * a + 1.0).sqrt();
+        let inv = 1.0 / len;
+        let (na, nb) = (a * inv, b * inv);
+
+        // The quaternion from up (0, 1, 0) to the normal (identity when it is vertical enough).
+        let (mut qx, mut qy, mut qz, mut qw) = (0.0f32, 0.0f32, 0.0f32, 1.0f32);
+        if nb < f32::from_bits(0x3f7f_f972) {
+            let angle = f64::from(nb).acos() as f32;
+            let (ax, az) = (inv, -na);
+            let l2 = (ax * ax + az * az).sqrt();
+            let (ux, uz) = if l2 > 0.0 { let r = 1.0 / l2; (r * ax, r * az) } else { (1.0, 0.0) };
+            let half = f64::from(angle * 0.5);
+            let (s, co) = (half.sin() as f32, half.cos() as f32);
+            qx = ux * s;
+            qy = s * 0.0;
+            qz = uz * s;
+            qw = co;
+        }
+
+        let xx2 = qx * 2.0 * qx;
+        let yy2 = qy * 2.0 * qy;
+        let xy2 = qx * 2.0 * qy;
+        let xz2 = qx * 2.0 * qz;
+        let zz2 = qz * 2.0 * qz;
+        let wz2 = qw * 2.0 * qz;
+        let yz2 = qz * (qy * 2.0);
+        let wy2 = qw * 2.0 * qy;
+        let wx2 = qw * 2.0 * qx;
+        let r = [
+            [(1.0 - yy2) - zz2, wz2 + xy2, xz2 - wy2],
+            [xy2 - wz2, (1.0 - xx2) - zz2, wx2 + yz2],
+            [wy2 + xz2, yz2 - wx2, (1.0 - xx2) - yy2],
+        ];
+        let s = c.size;
+        out.push(ListProp {
+            key: format!("RigidModels/Decals/{}.rigid_model_v2", c.model),
+            transform: [
+                r[0][0] * s, r[0][1] * s, r[0][2] * s, 0.0,
+                r[1][0] * s, r[1][1] * s, r[1][2] * s, 0.0,
+                r[2][0] * s, r[2][1] * s, r[2][2] * s, 0.0,
+                x, y, z, 1.0,
+            ],
+            prop_type: 1,
+            allow_in_outfield: c.include_in_outfield,
+            decal_parallax: 1.0,
+            decal_scale: [s, s, s],
+            decal_tiled: false,
+        });
+    }
+
+    out
+}
+
+/// A `PARTICLE_EMITTER` of a category's `_procedural_bmd_data` (a VFX object, type 8).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListVfx {
+    /// `vfx/` + model + `.rigid_model_v2`.
+    pub key: String,
+
+    /// The marker's `instance_name`: the model.
+    pub instance_name: String,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+
+    /// The marker's `scale`: the object's size.
+    pub scale: f32,
+    pub use_in_outfield: bool,
+}
+
+/// BOB_Vegetation's output for the VFX objects (type 8) of a generator, in the generated map's order, with the trees' bounds and heights.
+/// The marker has an identity rotation at (x, y, z), emission rate 1, autoplay, and snow and destruction inside and outside on. Unlike the
+/// trees, the model file isn't checked.
+pub fn to_vfx_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListVfx> {
+    let rs = inputs.render_scale;
+    let w_m = inputs.cells_x as f32 * 128.0 * rs;
+    let h_m = inputs.cells_y as f32 * 128.0 * rs;
+    let mut out = vec![];
+    for c in chosen.iter().filter(|c| c.kind == super::params::VFX) {
+        let x = c.x * (1.0 / rs);
+        let z = (h_m - c.y) * (1.0 / rs);
+        if !(0.0 < x && x <= w_m && 0.0 < z && z < h_m) {
+            continue;
+        }
+
+        let Some((col, row)) = inputs.list_pixel(c.x, c.y) else { continue };
+        out.push(ListVfx {
+            key: format!("vfx/{}.rigid_model_v2", c.model),
+            instance_name: c.model.clone(),
+            x,
+            y: inputs.list_height(col, row),
+            z,
+            scale: c.size,
+            use_in_outfield: c.include_in_outfield,
+        });
+    }
+
     out
 }
 

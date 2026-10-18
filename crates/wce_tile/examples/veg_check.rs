@@ -2,7 +2,10 @@
 //! them): per tile and category, the list's generated trees (those on the 0.5 m grid), ours, and how many are the same (position, model,
 //! scale byte).
 //!
-//!   cargo run --release -p wce_tile --example veg_check -- <game folder> [filter] [--heights]
+//!   cargo run --release -p wce_tile --example veg_check -- <game folder> [filter] [--diff] [--full] [--oracle-dir <working_data dir>]
+//!
+//! `--full` also compares the whole list as BOB writes it (static trees included, every value exact, each model's order); `WCE_DY_EXACT`
+//! prints the height difference unrounded.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -196,6 +199,68 @@ fn main() {
                     lines.push(format!("  order: {ok} of {total} models"));
                 }
 
+                // --full: the whole list as BOB writes it (static trees too), every value exact, and each path's order (the yaws).
+                if args.iter().any(|a| a == "--full") {
+                    let statics = vegetation::static_trees(&project.scene, &inputs);
+                    let full = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
+                    let entry = |p: &str, x: f32, y: f32, z: f32, s: u8, f: u8| format!("{p} {:08x} {:08x} {:08x} {s} {f}", (x + 0.0).to_bits(), (y + 0.0).to_bits(), (z + 0.0).to_bits());
+                    let theirs_all: Vec<String> = list
+                        .tree_list()
+                        .tree_list()
+                        .iter()
+                        .flat_map(|v| v.value().iter().map(move |t| entry(v.key(), *t.x(), *t.y(), *t.z(), (t.scale() * 127.0).round() as u8, *t.flags())))
+                        .collect();
+                    let mine_all: Vec<String> = full.iter().map(|t| entry(&t.path, t.x, t.y, t.z, t.scale_byte, u8::from(t.freeform))).collect();
+                    let mut pool: HashMap<&String, usize> = HashMap::new();
+                    for t in &theirs_all {
+                        *pool.entry(t).or_default() += 1;
+                    }
+                    let mut same_all = 0;
+                    for m in &mine_all {
+                        if let Some(n) = pool.get_mut(m).filter(|n| **n > 0) {
+                            *n -= 1;
+                            same_all += 1;
+                        }
+                    }
+                    let per_path = |l: &[String]| {
+                        let mut m: Vec<(String, Vec<String>)> = vec![];
+                        for e in l {
+                            let p = e.split(' ').next().unwrap_or_default().to_owned();
+                            match m.iter_mut().find(|(k, _)| *k == p) {
+                                Some((_, v)) => v.push(e.clone()),
+                                None => m.push((p, vec![e.clone()])),
+                            }
+                        }
+                        m.sort();
+                        m
+                    };
+                    let order = if per_path(&theirs_all) == per_path(&mine_all) { "same" } else { "differs" };
+                    lines.push(format!("{folder}\t{name}\tfull\ttheirs {}\tmine {}\tsame {same_all}\tstatic {}\torder {order}", theirs_all.len(), mine_all.len(), statics.len()));
+                    if diff {
+                        let mut pool: Vec<&String> = mine_all.iter().collect();
+                        let mut only_theirs = vec![];
+                        for t in &theirs_all {
+                            match pool.iter().position(|m| *m == t) {
+                                Some(i) => {
+                                    pool.swap_remove(i);
+                                }
+                                None => only_theirs.push(t),
+                            }
+                        }
+                        let parse = |e: &str| {
+                            let f: Vec<&str> = e.split(' ').collect();
+                            let h = |i: usize| f32::from_bits(u32::from_str_radix(f[i], 16).unwrap_or(0));
+                            (f[0].to_owned(), h(1), h(2), h(3))
+                        };
+                        for t in only_theirs.iter().take(6) {
+                            let (tp, tx, ty, tz) = parse(t);
+                            let near = pool.iter().map(|m| parse(m)).filter(|m| m.0 == tp).min_by(|a, b| ((a.1 - tx).abs() + (a.3 - tz).abs()).total_cmp(&((b.1 - tx).abs() + (b.3 - tz).abs())));
+                            lines.push(format!("  only theirs {tp} ({tx}, {ty}, {tz}) nearest mine {:?}", near.map(|n| (n.1, n.2, n.3))));
+                        }
+                        lines.push(format!("  only mine {} e.g. {:?}", pool.len(), pool.iter().take(2).map(|m| parse(m)).collect::<Vec<_>>()));
+                    }
+                }
+
                 let mut same = 0;
                 let mut dy = 0.0f32;
                 for t in &mine {
@@ -208,7 +273,7 @@ fn main() {
                     }
                 }
 
-                lines.push(format!("{folder}\t{name}\ttheirs {}\tmine {}\tsame {same}\tmax dy {dy:.3}", theirs.len(), mine.len()));
+                lines.push(format!("{folder}\t{name}\ttheirs {}\tmine {}\tsame {same}\tmax dy {}", theirs.len(), mine.len(), if std::env::var_os("WCE_DY_EXACT").is_some() { format!("{dy:e}") } else { format!("{dy:.3}") }));
                 vegetation::generate::probe::REPORT.with_borrow_mut(|r| {
                     for l in r.drain(..) {
                         lines.push(format!("  {l}"));

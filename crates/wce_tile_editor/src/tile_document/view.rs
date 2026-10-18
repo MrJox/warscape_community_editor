@@ -564,7 +564,13 @@ impl Tile {
             return;
         }
 
-        if let Some(pieces) = self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.clone()) {
+        let pieces = if self.tscene().type_of(elem) == "VEGETATION_INSTANCE" {
+            self.model_of(elem).filter(|m| m.ok).and_then(|_| self.vegetation_instance_model(elem)).map(|m| vec![m])
+        } else {
+            self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.clone())
+        };
+
+        if let Some(pieces) = pieces {
             let w = self.drawn_matrix(elem);
 
             // Trees (rigidleaf_v3 / rigidbranch_v3) read POSITION4 as (tint and wind seed, 1 - dissolve, burn): a seed per instance, nothing

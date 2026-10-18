@@ -117,29 +117,31 @@ pub fn generate_grass(inputs: &TileInputs, params: &GrassParams, seed: u32) -> V
     }
 
     let mut rand = Rand(seed);
-    let mut placed: CaMap<Vec2Key, (String, u32, u32, u32)> = CaMap::default();
+    let mut placed: CaMap<Vec2Key, (String, u32)> = CaMap::default();
     for name in groups.keys() {
         let points = candidates_with(inputs, params.density_of(name), &mut rand, &|_, _| false);
         for p in points {
             if let Some((group, index)) = choose(inputs, params, &groups, p.px, p.py) {
-                placed.insert(Vec2Key(p.x, p.y), (group, index, p.px, p.py));
+                placed.insert(Vec2Key(p.x, p.y), (group, index));
             }
         }
     }
 
-    // ACTION_GRASS::run: to the list's frame; positions off the tile are left out.
+    // ACTION_GRASS::run: to the list's frame; positions off the tile or off the height map are left out. The height is the list writer's
+    // (the height map times the height alpha map).
     let rs = inputs.render_scale;
     let w_scene = inputs.cells_x as f32 * 128.0 * rs;
     let h_scene = inputs.cells_y as f32 * 128.0 * rs;
     let mut out = vec![];
-    for (k, (group, index, px, py)) in placed.iter() {
+    for (k, (group, index)) in placed.iter() {
         let x = (1.0 / rs) * k.0;
         let z = (h_scene - k.1) * (1.0 / rs);
         if x <= 0.0 || w_scene < x || z <= 0.0 || h_scene <= z {
             continue;
         }
 
-        out.push(GrassItem { key: format!("{group}/{index}"), x, y: inputs.height(*px, *py), z });
+        let Some((col, row)) = inputs.list_pixel(k.0, k.1) else { continue };
+        out.push(GrassItem { key: format!("{group}/{index}"), x, y: inputs.list_height(col, row), z });
     }
 
     // Written through a vector sorted by key with MSVC's std::sort (not stable: it decides the order of a key's patches).

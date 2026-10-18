@@ -199,6 +199,14 @@ impl Tile {
         matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(s)))
     }
 
+    /// The model a VEGETATION_INSTANCE is drawn with: its key's, converted for the shown list's climate (the instance's own model when the
+    /// converted key has none).
+    pub(crate) fn vegetation_instance_model(&self, elem: usize) -> Option<String> {
+        let key = self.tscene().doc().get(elem, "key")?;
+        let converted = self.converted_vegetation_key(&key);
+        vegetation_model(self.files.as_deref(), &converted).or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
+    }
+
     pub fn building_model(&self, key: &str) -> Option<&BuildingModel> {
         self.models.get(key)
     }
@@ -700,11 +708,15 @@ impl Tile {
 }
 
 /// `Tile::snap_landscape_world` on index arrays that may be under construction.
-/// The model of a vegetation key (`beech.beech_e`: battleterrain/vegetation/trees/beech/beech_e.rigid_model_v2), if it exists.
-fn vegetation_model(files: Option<&dyn wce_vfs::files::Files>, key: &str) -> Option<String> {
+/// The model of a vegetation key (`beech.beech_e`), as BOB picks it for the tree lists: battleterrain/vegetation/shrubs/<species>/<variant>
+/// if that exists, else .../trees/<species>/<variant>; None if neither does.
+pub(crate) fn vegetation_model(files: Option<&dyn wce_vfs::files::Files>, key: &str) -> Option<String> {
     let (species, variant) = key.split_once('.')?;
-    let path = format!("battleterrain/vegetation/trees/{species}/{variant}.rigid_model_v2");
-    files?.exists(&path).then_some(path)
+    let files = files?;
+    ["shrubs", "trees"]
+        .iter()
+        .map(|dir| format!("battleterrain/vegetation/{dir}/{species}/{variant}.rigid_model_v2").to_lowercase())
+        .find(|path| files.exists(path))
 }
 
 fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform) {
