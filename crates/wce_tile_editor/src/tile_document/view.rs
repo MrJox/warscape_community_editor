@@ -10,7 +10,7 @@ use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{Decal, 
-    EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
+    EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
@@ -670,6 +670,21 @@ impl Tile {
             };
 
             let e = scene.add(layer, self.world_matrix(elem), Payload::PointLight(light), self.source(item_of(elem)));
+            self.first_entity[elem] = e;
+            self.entity_count[elem] = 1;
+            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+                en.locked = true;
+            }
+        }
+
+        // A placed effect (autoplay="false" ones wait for a script: not drawn). The scale is in metres as BOB writes it (tile scale / unit).
+        if self.tscene().type_of(elem) == "VFXInstance"
+            && let Some(effect) = self.tscene().doc().get(elem, "vfx").filter(|v| !v.is_empty())
+            && self.tscene().doc().get(elem, "autoplay").is_none_or(|v| v != "false")
+        {
+            let scale = self.tscene().doc().get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
+            let vfx = VfxEmitter { effect, scale: scale as f32 };
+            let e = scene.add(layer, self.world_matrix(elem), Payload::VfxEmitter(vfx), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
             if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {

@@ -432,6 +432,9 @@ pub struct Renderer {
     pub(crate) tonemap: ToneMap,
     pub(crate) depth_range: DepthRange,
     pub(crate) particles: ParticleSystem,
+
+    /// The scene (address, revision) the particles' placed effects were gathered from.
+    pub(crate) vfx_scene: (usize, u64),
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
@@ -544,6 +547,7 @@ impl Renderer {
             tonemap: ToneMap::new(dev),
             depth_range: DepthRange::default(),
             particles,
+            vfx_scene: (0, u64::MAX),
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
@@ -892,6 +896,17 @@ impl Renderer {
             width,
             height,
         };
+
+        // The placed effects (tile VFX instances), gathered again when the scene changes.
+        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision());
+        if self.vfx_scene != scene_key {
+            self.vfx_scene = scene_key;
+            let effects = scene.entities().iter().filter(|e| scene.drawable(e)).filter_map(|e| match &e.payload {
+                wce_scene::render_scene::Payload::VfxEmitter(v) => Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world: e.world, scale: v.scale }),
+                _ => None,
+            }).collect::<Vec<_>>();
+            self.particles.set_world_effects(&effects);
+        }
 
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);

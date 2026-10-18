@@ -8,9 +8,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::f32::consts::PI;
 
 use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, vfx_bits};
-use wce_assets::weather_vfx::{VfxReader, WeatherVfx, load_weather_vfx};
+use wce_assets::weather_vfx::{Effect, VfxReader, WeatherVfx, load_effect_with, load_weather_vfx};
+use wce_assets::vfx_def::VfxFile;
 use wce_d3d11::*;
-use wce_foundation::math::{Float3, Float4x4, rotation_x, rotation_y, rotation_z};
+use wce_foundation::math::{Float3, Float4x4, length, normalize, rotation_x, rotation_y, rotation_z};
 use windows_core::Interface;
 
 use crate::cbuffers::ConstantBuffers;
@@ -190,6 +191,182 @@ pub struct SpawnVertex {
     pub vel_life: [f32; 4],
 }
 
+/// A placed effect (a tile's VFXInstance): `vfx/<effect>.xml` at a world transform (rotation and position; scale is `scale`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldEffect {
+    /// Stable across frames (the entity id): an effect keeps its particles and emitter state while it stays.
+    pub key: u64,
+    pub effect: String,
+    pub world: Float4x4,
+
+    /// The effect's scale: the tile's `scale` / unit_scale, as BOB writes it into particle_emitter_marker.markers.
+    pub scale: f32,
+}
+
+/// One emitter of a placed effect: an emitter instance after the weather's.
+#[derive(Clone, Debug)]
+struct WorldInstance {
+    key: u64,
+
+    /// Into `world_effects`, and the emitter there.
+    effect: usize,
+    emitter: usize,
+    pos: Float3,
+
+    /// The rotation (no translation) and its quaternion (x, y, z, w).
+    rot: Float4x4,
+    quat: [f32; 4],
+
+    /// The total scale: the effect's times the reference's (drawn in its range).
+    scale: f32,
+    tint: [f32; 4],
+
+    /// The instance's own generator (game: emitter instance +0xc0, 0x343fd / 0x269ec3).
+    rng: u32,
+
+    /// The spawn area's min -> max blend (+0xd8) and the particle lifetime bias (+0xa0), drawn once.
+    area_blend: f32,
+    lifetime_bias: f32,
+
+    /// The clock when it started.
+    start: f32,
+
+    /// The last spawn time (fn 0x1188e240 spreads a frame's particles evenly from it).
+    last_spawn: f32,
+    st: EmitterState,
+}
+
+/// A `lighting/lights.xml` POINT_LIGHT (read by fn 0x11900a40): the light a rigid model's StaticPointLight mesh names.
+#[derive(Clone, Debug, PartialEq)]
+struct LightDef {
+    colour: [f32; 3],
+    radius: f32,
+
+    /// 0 none, 1 ANIMATION_RADIUS_SIN, 2 ANIMATION_RADIUS_SIN_SIN (they modulate the colour).
+    animation: u8,
+    speed: [f32; 2],
+    colour_scale: f32,
+    colour_min: f32,
+
+    /// `falloff`: smooth unless it says linear.
+    smooth: bool,
+}
+
+/// A light of a placed effect: a rigid emitter whose model is a point light.
+#[derive(Clone, Debug)]
+struct WorldLight {
+    key: u64,
+
+    /// Into `world_effects[effect].lights`.
+    effect: usize,
+    light: usize,
+    pos: Float3,
+    rot: Float4x4,
+    scale: f32,
+    start: f32,
+}
+
+/// A point light of the placed effects this frame, for the light pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectPointLight {
+    pub pos: Float3,
+
+    /// The colour times its level this frame (before the HDR scale).
+    pub colour: [f32; 3],
+    pub radius: f32,
+    pub smooth: bool,
+}
+
+/// The StaticPointLight meshes of a rigid model: (light name, pivot).
+fn model_lights(bytes: &[u8]) -> Vec<(String, Float3)> {
+    use rpfm_lib::files::rigidmodel::RigidModel;
+    use rpfm_lib::files::rigidmodel::materials::MaterialType;
+    use rpfm_lib::files::{Decodeable, DecodeableExtraData};
+    let Ok(model) = RigidModel::decode(&mut std::io::Cursor::new(bytes), &Some(DecodeableExtraData::default())) else { return vec![] };
+    let Some(lod) = model.lods().first() else { return vec![] };
+    lod.mesh_blocks().iter()
+        .filter(|b| *b.mesh().material_type() == MaterialType::StaticPointLight)
+        .map(|b| {
+            let p = b.material().v_pivot();
+            (b.material().name().to_string(), Float3::new(p.x, p.y, p.z))
+        })
+        .collect()
+}
+
+/// `lighting/lights.xml`.
+fn parse_light_defs(bytes: &[u8]) -> BTreeMap<String, LightDef> {
+    let mut out = BTreeMap::new();
+    let Ok(doc) = wce_formats::xml_doc::XmlDoc::parse(bytes.to_vec()) else { return out };
+    for e in 0..doc.elements().len() {
+        if doc.elements()[e].name != "POINT_LIGHT" {
+            continue;
+        }
+
+        let n = |name: &str, d: f32| doc.get(e, name).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
+        let animation = match doc.get(e, "animation").as_deref() {
+            Some("ANIMATION_RADIUS_SIN") => 1,
+            Some("ANIMATION_RADIUS_SIN_SIN") => 2,
+            _ => 0,
+        };
+
+        out.insert(doc.get(e, "name").unwrap_or_default(), LightDef {
+            colour: [n("red", 0.0), n("green", 0.0), n("blue", 0.0)],
+            radius: n("radius", 0.0),
+            animation,
+            speed: [n("animation_x", 0.0), n("animation_y", 0.0)],
+            colour_scale: n("colour_scale", 1.0),
+            colour_min: n("colour_min", 0.0),
+            smooth: !doc.get(e, "falloff").is_some_and(|v| v.to_lowercase().contains("linear")),
+        });
+    }
+
+    out
+}
+
+/// The rotation part of a matrix applied to a vector.
+fn rotate(m: &Float4x4, v: Float3) -> Float3 {
+    Float3::new(
+        m.m[0][0] * v.x + m.m[0][1] * v.y + m.m[0][2] * v.z,
+        m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z,
+        m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z,
+    )
+}
+
+/// A world matrix's rotation without its scale, and the quaternion (x, y, z, w) of it.
+fn rotation_of(w: &Float4x4) -> (Float4x4, [f32; 4]) {
+    let mut r = Float4x4::IDENTITY;
+    for c in 0..3 {
+        let len = (w.m[0][c] * w.m[0][c] + w.m[1][c] * w.m[1][c] + w.m[2][c] * w.m[2][c]).sqrt().max(1e-12);
+        for row in 0..3 {
+            r.m[row][c] = w.m[row][c] / len;
+        }
+    }
+
+    let m = &r.m;
+    let trace = m[0][0] + m[1][1] + m[2][2];
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [(m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s, 0.25 * s]
+    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
+        let s = (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt() * 2.0;
+        [0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s]
+    } else if m[1][1] > m[2][2] {
+        let s = (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt() * 2.0;
+        [(m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s]
+    } else {
+        let s = (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt() * 2.0;
+        [(m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s, (m[1][0] - m[0][1]) / s]
+    };
+
+    (r, q)
+}
+
+/// The game's generator step (0x343fd / 0x269ec3) and its [0, 1] number ((state >> 16) / 65535).
+fn game_rand(state: &mut u32) -> f32 {
+    *state = state.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+    (*state >> 16) as f32 * 1.525_902_2e-5
+}
+
 /// What a frame gives the particles.
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
@@ -230,6 +407,23 @@ pub struct ParticleSystem {
     loaded: bool,
     effect: WeatherVfx,
     state: Vec<EmitterState>,
+
+    /// The placed effects' definitions (loaded once per name; their emitters' constants rows follow the weather's) and emitter instances.
+    world_effects: Vec<Effect>,
+    world_names: BTreeMap<String, usize>,
+    world_libs: BTreeMap<String, VfxFile>,
+    world: Vec<WorldInstance>,
+    world_lights: Vec<WorldLight>,
+
+    /// `lighting/lights.xml`, and per light model its StaticPointLight meshes, loaded on first use.
+    light_defs: Option<BTreeMap<String, LightDef>>,
+    light_models: BTreeMap<String, Vec<(String, Float3)>>,
+
+    /// The game's shared generator (DAT_11da7408: the spawn box's three numbers).
+    global_rng: u32,
+
+    /// The emitter instance texture's rows (256 instances each).
+    emitter_rows: usize,
     clock: f32,
     alive: u32,
     rng: u32,
@@ -312,6 +506,15 @@ impl ParticleSystem {
             loaded: false,
             effect: WeatherVfx::default(),
             state: vec![],
+            world_effects: vec![],
+            world_names: BTreeMap::new(),
+            world_libs: BTreeMap::new(),
+            world: vec![],
+            world_lights: vec![],
+            light_defs: None,
+            light_models: BTreeMap::new(),
+            global_rng: 0x1234_5678,
+            emitter_rows: 1,
             clock: 0.0,
             alive: 0,
             rng: 0x123_4567,
@@ -444,13 +647,7 @@ impl ParticleSystem {
         self.particles = [make_target(DXGI_FORMAT_R32G32B32A32_FLOAT, 3), make_target(DXGI_FORMAT_R32G32B32A32_FLOAT, 3)];
         self.keys = [make_target(DXGI_FORMAT_R32G32_FLOAT, 1), make_target(DXGI_FORMAT_R32G32_FLOAT, 1)];
 
-        let ed = D3D11_TEXTURE2D_DESC {
-            Width: EMITTER_WIDTH as u32, Height: 1, MipLevels: 1, ArraySize: EMITTER_LAYERS as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-        };
-
-        self.emitter_tex = dev.create_texture_2d(&ed, None).ok();
-        self.emitter_srv = self.emitter_tex.as_ref().and_then(|tex| dev.create_shader_resource_view(tex, None).ok());
+        self.create_emitter_texture(1);
 
         // A flat normal (1 slice) and a still sea surface (2 slices; the game logic's collision is off for weather).
         let flat = 0xFFFF_8080u32.to_le_bytes();
@@ -529,6 +726,184 @@ impl ParticleSystem {
         self.rs_none = dev.create_rasterizer_state(&rd).ok();
     }
 
+    /// The emitter instance texture (g_emitter_instances: 6 layers of 256 x `rows`; the shaders address instance i at (i % 256, i / 256)).
+    fn create_emitter_texture(&mut self, rows: usize) {
+        let ed = D3D11_TEXTURE2D_DESC {
+            Width: EMITTER_WIDTH as u32, Height: rows as u32, MipLevels: 1, ArraySize: EMITTER_LAYERS as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
+
+        self.emitter_tex = self.dev.create_texture_2d(&ed, None).ok();
+        self.emitter_srv = self.emitter_tex.as_ref().and_then(|tex| self.dev.create_shader_resource_view(tex, None).ok());
+        self.emitter_rows = rows;
+    }
+
+    /// The placed effects of this frame. Effects are loaded on first use (their emitters become constants rows after the weather's);
+    /// an effect that stays (same key and name) keeps its emitter state, so its particles carry on.
+    pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
+        let mut loaded_new = false;
+        for fx in effects {
+            if !self.world_names.contains_key(&fx.effect) {
+                let effect = load_effect_with(&*self.reader, &fx.effect, &mut self.world_libs);
+                for note in &effect.notes {
+                    self.error(format!("{}: {note}", fx.effect));
+                }
+
+                self.world_names.insert(fx.effect.clone(), self.world_effects.len());
+                self.world_effects.push(effect);
+                loaded_new = true;
+            }
+        }
+
+        if loaded_new {
+            let rows = self.effect.emitters.len() + self.world_effects.iter().map(|e| e.emitters.len()).sum::<usize>();
+            if rows > MAX_EMITTERS {
+                self.error(format!("{rows} emitter definitions, more than the {MAX_EMITTERS} the shaders' constant arrays hold: the rest are not drawn"));
+            }
+
+            self.build_emitter_gpu();
+        }
+
+        // Keep the state of the instances that stay.
+        let mut old = BTreeMap::<(u64, usize), WorldInstance>::new();
+        for inst in self.world.drain(..) {
+            old.insert((inst.key, inst.emitter), inst);
+        }
+
+        let clock = self.clock;
+        let mut world = Vec::new();
+        for fx in effects {
+            let e = self.world_names[&fx.effect];
+            let (rot, quat) = rotation_of(&fx.world);
+            let origin = Float3::new(fx.world.m[0][3], fx.world.m[1][3], fx.world.m[2][3]);
+            for (k, em) in self.world_effects[e].emitters.iter().enumerate() {
+                let reference = Float3::new(em.pos[0], em.pos[1], em.pos[2]);
+                let inst = match old.remove(&(fx.key, k)).filter(|inst| inst.effect == e) {
+                    Some(mut inst) => {
+                        inst.pos = origin + rotate(&rot, reference * fx.scale);
+                        inst.rot = rot;
+                        inst.quat = quat;
+                        inst
+                    }
+
+                    None => {
+                        // ASSUMPTION: the instance's generator is seeded from its key (RandomSeed -1 = random in the game).
+                        let mut rng = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ 0x2545_F491;
+                        let scale = fx.scale * lerp(em.scale_range[0], em.scale_range[1], game_rand(&mut rng));
+                        let area_blend = game_rand(&mut rng);
+                        let lifetime_bias = lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], game_rand(&mut rng));
+                        let tint = std::array::from_fn(|c| 0.5 * (em.tint_min[c] + em.tint_max[c]));
+                        WorldInstance {
+                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale, tint, rng, area_blend,
+                            lifetime_bias, start: clock, last_spawn: clock, st: EmitterState::default(),
+                        }
+                    }
+                };
+
+                world.push(inst);
+            }
+        }
+
+        self.world = world;
+
+        // The effects' lights (their rigid point light models, read once).
+        let old_lights = std::mem::take(&mut self.world_lights).into_iter().map(|l| ((l.key, l.light), l)).collect::<BTreeMap<_, _>>();
+        for fx in effects {
+            let e = self.world_names[&fx.effect];
+            let (rot, _) = rotation_of(&fx.world);
+            let origin = Float3::new(fx.world.m[0][3], fx.world.m[1][3], fx.world.m[2][3]);
+            for (k, light) in self.world_effects[e].lights.iter().enumerate() {
+                if !self.light_models.contains_key(&light.model) {
+                    let lights = (self.reader)(&light.model).map(|bytes| model_lights(&bytes)).unwrap_or_default();
+                    self.light_models.insert(light.model.clone(), lights);
+                }
+
+                let reference = Float3::new(light.pos[0], light.pos[1], light.pos[2]);
+                let scale = fx.scale * 0.5 * (light.scale_range[0] + light.scale_range[1]);
+                let start = old_lights.get(&(fx.key, k)).map_or(clock, |l| l.start);
+                self.world_lights.push(WorldLight { key: fx.key, effect: e, light: k, pos: origin + rotate(&rot, reference * fx.scale), rot, scale, start });
+            }
+        }
+
+        let rows = (self.effect.emitters.len() + self.world.len()).div_ceil(EMITTER_WIDTH).max(1);
+        if rows > self.emitter_rows {
+            self.create_emitter_texture(rows.next_power_of_two());
+        }
+    }
+
+    /// The point lights of the placed effects now. A rigid point light emitter keeps one rigid alive (Bursts 1, BurstInterval and
+    /// RigidLifeTime 64 s for the fires): the model's StaticPointLight is submitted every frame (fn 0x117f9800) at the rigid's matrix times
+    /// the mesh pivot, with radius = the definition's * the matrix's scale (the rigid's ParticleScale curve, start -> mid -> end over its
+    /// life, times the effect's scale), and the definition's colour, colour_scale, colour_min and animation (as the tile's lights, see
+    /// renderer/lights.rs). Lights beyond the emitter's CullDistances.w are skipped. ASSUMPTION: the per-instance phase (render context
+    /// +0x30) is 0; the rigid's position is SpawnPosition * scale (the fire lights have no spawn area).
+    pub fn effect_lights(&mut self, eye: Float3) -> Vec<EffectPointLight> {
+        if self.world_lights.is_empty() || !self.enabled {
+            return vec![];
+        }
+
+        if self.light_defs.is_none() {
+            let defs = (self.reader)("lighting/lights.xml").map(|bytes| parse_light_defs(&bytes)).unwrap_or_default();
+            if defs.is_empty() {
+                self.error("lighting/lights.xml: no point light definitions".to_owned());
+            }
+
+            self.light_defs = Some(defs);
+        }
+
+        let defs = self.light_defs.take().unwrap_or_default();
+        let mut out = vec![];
+        for wl in &self.world_lights {
+            let light = &self.world_effects[wl.effect].lights[wl.light];
+            let d = &light.def;
+            let mut cull = [0.0f32; 4];
+            d.vec("CullDistances", &mut cull);
+            let mut sp = [0.0f32; 3];
+            d.vec("SpawnPosition", &mut sp);
+            let base = wl.pos + rotate(&wl.rot, Float3::new(sp[0], sp[1], sp[2]) * wl.scale);
+            if cull[3] > 0.0 && length(eye - base) > cull[3] {
+                continue;
+            }
+
+            // The rigid's age in its cycle, and its scale curve.
+            let (life_lo, life_hi) = d.range("RigidLifeTime", 64.0, 64.0);
+            let life = (0.5 * (life_lo + life_hi)).max(0.001);
+            let t = ((self.clock - wl.start).max(0.0) % life) / life;
+            let (mut s0, mut s1, mut s2) = ([1.0f32; 2], [1.0f32; 2], [1.0f32; 2]);
+            d.vec("ParticleScaleStart", &mut s0);
+            d.vec("ParticleScaleMid", &mut s1);
+            d.vec("ParticleScaleEnd", &mut s2);
+            let mid = d.f("ParticleScaleMidPointTime", 0.5).clamp(1e-4, 1.0 - 1e-4);
+            let curve = if t < mid { lerp(s0[0], s1[0], t / mid) } else { lerp(s1[0], s2[0], (t - mid) / (1.0 - mid)) };
+            let time = self.clock;
+            for (name, pivot) in self.light_models.get(&light.model).map_or(&[][..], |v| &v[..]) {
+                let Some(def) = defs.get(name) else { continue };
+                let wave = |speed: f32| (time * speed).sin().abs();
+                let level = match def.animation {
+                    1 => def.colour_scale * wave(def.speed[0]) + def.colour_min,
+                    2 => def.colour_scale * (wave(def.speed[0]) * wave(def.speed[1])) + def.colour_min,
+                    _ => def.colour_scale + def.colour_min,
+                };
+
+                let rigid_scale = curve * wl.scale;
+                out.push(EffectPointLight {
+                    pos: base + rotate(&wl.rot, *pivot * rigid_scale),
+                    colour: def.colour.map(|c| c * level),
+                    radius: def.radius * rigid_scale,
+                    smooth: def.smooth,
+                });
+            }
+        }
+
+        self.light_defs = Some(defs);
+        out
+    }
+
+    /// The constants row of a world instance.
+    fn world_row(&self, inst: &WorldInstance) -> usize {
+        self.effect.emitters.len() + self.world_effects[..inst.effect].iter().map(|e| e.emitters.len()).sum::<usize>() + inst.emitter
+    }
+
     /// Loads the effect of a weather definition, restarting the simulation. It reloads when the name or `revision` (the editor's edit
     /// counter of open vfx / weather XML) changes; live particles are kept when the reload gives the same emitters.
     pub fn set_weather(&mut self, definition_name: &str, revision: u64) {
@@ -574,12 +949,20 @@ impl ParticleSystem {
         let mut normal = TextureArrayBuilder { srgb: false, slices: BTreeMap::new(), textures: vec![] };
         let mut tex_errors = vec![];
         self.has_distortion = false;
-        let n = self.effect.emitters.len();
-        for e in 0..n {
-            let (dpath, npath) = (self.effect.emitters[e].k.diffuse.clone(), self.effect.emitters[e].k.normal.clone());
+        // The rows: the weather's emitters, then each placed effect's.
+        let mut sources = (0..self.effect.emitters.len()).map(|e| (usize::MAX, e)).collect::<Vec<_>>();
+        for (fx, effect) in self.world_effects.iter().enumerate() {
+            sources.extend((0..effect.emitters.len()).map(|e| (fx, e)));
+        }
+
+        sources.truncate(MAX_EMITTERS);
+        let n = sources.len();
+        for (e, &(fx, i)) in sources.iter().enumerate() {
+            let k = if fx == usize::MAX { &self.effect.emitters[i].k } else { &self.world_effects[fx].emitters[i].k };
+            let (dpath, npath) = (k.diffuse.clone(), k.normal.clone());
             let ds = diffuse.add(&self.dev, &*self.reader, &mut self.texture_cache, &dpath, &mut tex_errors);
             let ns = normal.add(&self.dev, &*self.reader, &mut self.texture_cache, &npath, &mut tex_errors);
-            let k = &mut self.effect.emitters[e].k;
+            let k = if fx == usize::MAX { &mut self.effect.emitters[i].k } else { &mut self.world_effects[fx].emitters[i].k };
             k.behaviour_mask[1] = ds.unwrap_or(0);
             k.behaviour_mask[2] = ns.unwrap_or(0);
             if ds.is_none() {
@@ -628,8 +1011,9 @@ impl ParticleSystem {
         let layers = n.max(1);
         let slice = 8 * VFX_CURVE_WIDTH * 4;
         let mut texels = vec![1.0f32; layers * slice];
-        for (l, chunk) in texels.chunks_mut(slice).enumerate().take(n) {
-            chunk.copy_from_slice(self.effect.emitters[l].k.curves.as_flattened().as_flattened());
+        for (chunk, &(fx, i)) in texels.chunks_mut(slice).zip(&sources) {
+            let k = if fx == usize::MAX { &self.effect.emitters[i].k } else { &self.world_effects[fx].emitters[i].k };
+            chunk.copy_from_slice(k.curves.as_flattened().as_flattened());
         }
 
         let subs = texels.chunks(slice)
@@ -843,7 +1227,170 @@ impl ParticleSystem {
             }
         }
 
+        self.spawn_world(f, &mut out, &mut free_slots);
         out
+    }
+
+    /// The placed effects' particles, as the game's continuous emitter makes them (fn 0x1188e240 -> fn 0x1181bdc0):
+    /// - emission: accumulate min(dt, 0.1) * rate (lerp(min, max curve, a per-instance blend), times the owner's multipliers +0xb4 and
+    ///   +0x78^2), spawn floor(gate * floor(accum)) spread evenly from the last spawn time, the burst gate as for the weather;
+    /// - lifetime (fn 0x11835b50): lerp(ParticleLifeTime) + the instance's lifetime bias;
+    /// - position (fn 0x1183f4a0): a ring (angle lerp(SpawnArc) degrees, radius lerp(inner, outer, random) where inner and outer are the
+    ///   SpawnAreaCurve min -> max lerped by the instance's area blend) plus a box (SpawnAreaBox size per axis, the same blend, times
+    ///   (random - 0.5) from the shared generator), times the scale; turned by EmitterRotation, plus SpawnPosition * scale, turned by the
+    ///   instance's rotation, plus its position;
+    /// - direction (fn 0x1183f1a0): SpreadMethod true: elevation lerp(SpawnSpread) degrees above the horizon, azimuth random over the
+    ///   circle, dir = (cos az cos el, sin el, -sin az cos el); false: away from SpawnPosition; both turned by the emitter and the instance;
+    /// - velocity: dir * lerp(SpawnSpeed) * scale.
+    /// ASSUMPTION: the owner's scale (+0x70) is the effect's, and its emission multipliers (+0xb4, +0x78) are 1, as for the weather (not
+    /// traced for placed effects); the ring's x takes the sincos call's second lane.
+    fn spawn_world(&mut self, f: &Frame, out: &mut Vec<SpawnVertex>, free_slots: &mut u32) {
+        let base = self.effect.emitters.len();
+        for j in 0..self.world.len() {
+            let row = self.world_row(&self.world[j]);
+            if row >= MAX_EMITTERS {
+                continue;
+            }
+
+            let (e, k) = (self.world[j].effect, self.world[j].emitter);
+            let a = &self.world_effects[e].emitters[k];
+            let d = a.def.clone();
+            let infinite = a.infinite_life;
+            let inst = &mut self.world[j];
+
+            // The emitter's culling distance (CullDistances.w): no spawning beyond it.
+            let mut cull = [0.0f32; 4];
+            d.vec("CullDistances", &mut cull);
+            let dist = length(f.eye - inst.pos);
+            if cull[3] > 0.0 && dist > cull[3] {
+                inst.st.rate_accum = 0.0;
+                inst.last_spawn = self.clock;
+                continue;
+            }
+
+            let (life_lo, life_hi) = d.range("ParticleLifeTime", 1.0, 1.0);
+            let (start_lo, start_hi) = d.range("StartTime", 0.0, 0.0);
+            let (emitter_life_lo, emitter_life_hi) = d.range("LifeTime", 50.0, 50.0);
+            let emitter_life = (0.5 * (emitter_life_lo + emitter_life_hi)).max(0.001);
+            let pre = (-0.5 * (start_lo + start_hi)).max(0.0);
+            let (mut window_start, mut window) = (inst.last_spawn, (self.clock - inst.last_spawn).max(0.0));
+            if !inst.st.started {
+                inst.st.started = true;
+                window_start = self.clock - pre;
+                window = pre + f.dt;
+            }
+
+            let age = self.clock - inst.start + pre;
+            if !infinite && !d.b("InfiniteLife", false) && age > emitter_life {
+                continue;
+            }
+
+            let loop_rate = d.b("EmissionLoopAnim", false);
+            let t_rate = if loop_rate { (age / emitter_life) % 1.0 } else { (age / emitter_life).min(1.0) };
+            let loop_area = d.b("SpawnAreaLoopAnim", true);
+            let t_area = if loop_area { (age / emitter_life) % 1.0 } else { (age / emitter_life).min(1.0) };
+            if inst.st.rate_blend < 0.0 {
+                inst.st.rate_blend = game_rand(&mut inst.rng);
+            }
+
+            let curve = |name: &str, sub: &str, t: f32| d.curve(name, sub).map_or(0.0, |c| c.eval(t));
+            let rate = lerp(curve("EmissionRateCurve", "emission_min", t_rate), curve("EmissionRateCurve", "emission_max", t_rate), inst.st.rate_blend).max(0.0);
+
+            // The burst gate (fn 0x1180c680 / 0x1180bf70).
+            let (bi_lo, bi_hi) = d.range("BurstInterval", 0.0, 0.0);
+            let (bl_lo, bl_hi) = d.range("BurstIntervalLength", 0.0, 0.0);
+            if inst.st.burst_interval < 0.0 {
+                inst.st.burst_interval = lerp(bi_lo, bi_hi, game_rand(&mut inst.rng));
+                inst.st.burst_length = lerp(bl_lo, bl_hi, game_rand(&mut inst.rng));
+            }
+
+            let mut gate = 1.0f32;
+            if inst.st.burst_interval > 0.0 {
+                gate = if inst.st.burst_timer <= inst.st.burst_length { 1.0 } else { 0.0 };
+                if inst.st.burst_length + inst.st.burst_interval <= inst.st.burst_timer {
+                    inst.st.burst_interval = lerp(bi_lo, bi_hi, game_rand(&mut inst.rng));
+                    inst.st.burst_length = lerp(bl_lo, bl_hi, game_rand(&mut inst.rng));
+                    inst.st.burst_timer = 0.0;
+                } else {
+                    inst.st.burst_timer += f.dt;
+                }
+            }
+
+            inst.st.rate_accum += rate * if window <= f.dt + 1e-6 { window.min(0.1) } else { window };
+            let whole = inst.st.rate_accum.floor();
+            let count = (gate * whole).floor() as u32;
+            inst.st.rate_accum -= whole;
+            inst.last_spawn = self.clock;
+            if count == 0 {
+                continue;
+            }
+
+            let blend = inst.area_blend;
+            let ring = |sub: [&str; 2]| lerp(curve("SpawnAreaCurve", sub[0], t_area), curve("SpawnAreaCurve", sub[1], t_area), blend);
+            let (inner, outer) = (ring(["inner_radius_min", "inner_radius_max"]), ring(["outer_radius_min", "outer_radius_max"]));
+            let size = [["x_min", "x_max"], ["y_min", "y_max"], ["z_min", "z_max"]]
+                .map(|[lo, hi]| lerp(curve("SpawnAreaBox", lo, t_area), curve("SpawnAreaBox", hi, t_area), blend));
+            let mut arc = [0.0f32, 360.0];
+            d.vec("SpawnArc", &mut arc);
+            let mut sp = [0.0f32; 3];
+            d.vec("SpawnPosition", &mut sp);
+            let spawn_pos = Float3::new(sp[0], sp[1], sp[2]);
+            let (speed_lo, speed_hi) = d.range("SpawnSpeed", 0.0, 0.0);
+            let (spread_lo, spread_hi) = d.range("SpawnSpread", 90.0, 90.0);
+            let cone = d.b("SpreadMethod", true);
+            let mut er = [0.0f32; 3];
+            d.vec("EmitterRotation", &mut er);
+            let emitter_rot = rotation_z(er[2] * PI / 180.0) * rotation_y(er[1] * PI / 180.0) * rotation_x(er[0] * PI / 180.0);
+            let scale = inst.scale;
+
+            let mut batch = 0u32;
+            let mut latest_death = 0.0f32;
+            for p in 0..count {
+                if *free_slots == 0 {
+                    break;
+                }
+
+                let spawn_t = window_start + window * (p + 1) as f32 / count as f32;
+                let life = (lerp(life_lo, life_hi, game_rand(&mut inst.rng)) + inst.lifetime_bias).max(0.01);
+                if spawn_t + life <= self.clock {
+                    continue;
+                }
+
+                let angle = lerp(arc[0], arc[1], game_rand(&mut inst.rng)) * PI / 180.0;
+                let r = lerp(inner, outer, game_rand(&mut inst.rng));
+                let b = [game_rand(&mut self.global_rng), game_rand(&mut self.global_rng), game_rand(&mut self.global_rng)];
+                let local = Float3::new(angle.sin() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.cos() * r + size[2] * (b[0] - 0.5)) * scale;
+                let offset = rotate(&emitter_rot, local) + spawn_pos * scale;
+                let pos = inst.pos + rotate(&inst.rot, offset);
+
+                let dir = if cone {
+                    let az = game_rand(&mut inst.rng) * 2.0 * PI;
+                    let el = lerp(spread_lo, spread_hi, game_rand(&mut inst.rng)) * PI / 180.0;
+                    Float3::new(az.cos() * el.cos(), el.sin(), -(az.sin() * el.cos()))
+                } else {
+                    let away = offset - spawn_pos * scale;
+                    if length(away) > 0.0 { normalize(away) } else { Float3::new(0.0, 1.0, 0.0) }
+                };
+
+                let speed = lerp(speed_lo, speed_hi, game_rand(&mut inst.rng)) * scale;
+                let vel = rotate(&inst.rot, rotate(&emitter_rot, dir)) * speed;
+                let steps = if spawn_t < self.clock - SUB_STEP { ((self.clock - spawn_t) / SUB_STEP).floor() } else { 0.0 };
+                let seed = game_rand(&mut self.global_rng);
+                out.push(SpawnVertex {
+                    id_seed_steps: [(base + j) as f32, seed, steps, 0.0],
+                    pos_time: [pos.x, pos.y, pos.z, spawn_t],
+                    vel_life: [vel.x, vel.y, vel.z, life],
+                });
+
+                latest_death = latest_death.max(spawn_t + life);
+                batch += 1;
+                *free_slots -= 1;
+            }
+
+            if batch > 0 {
+                inst.st.deaths.push_back((latest_death, batch));
+            }
+        }
     }
 
     /// The CPU step of a frame before the GPU passes: advances the clock (dt capped at 0.1 s) and updates the alive estimate (particles
@@ -852,7 +1399,7 @@ impl ParticleSystem {
         let dt = dt.clamp(0.0, 0.1);
         self.clock += dt;
         self.alive = 0;
-        for st in &mut self.state {
+        for st in self.state.iter_mut().chain(self.world.iter_mut().map(|inst| &mut inst.st)) {
             while st.deaths.front().is_some_and(|(death, _)| *death <= self.clock) {
                 st.deaths.pop_front();
             }
@@ -890,7 +1437,7 @@ impl ParticleSystem {
 
     /// Simulates, sorts, spawns and draws one frame.
     pub fn render(&mut self, f: &Frame, lib: &mut ShaderLibrary, read: &FileReader, cbs: &mut ConstantBuffers) {
-        if !self.enabled || self.effect.emitters.is_empty() {
+        if !self.enabled || (self.effect.emitters.is_empty() && self.world.is_empty()) {
             return;
         }
 
@@ -898,8 +1445,9 @@ impl ParticleSystem {
         let dt = self.advance(f.dt);
 
         // The emitter instances (g_emitter_instances, 6 layers).
-        let mut layers = vec![0.0f32; EMITTER_LAYERS * EMITTER_WIDTH * 4];
-        let at = |layer: usize, e: usize| (layer * EMITTER_WIDTH + e) * 4;
+        let per_layer = EMITTER_WIDTH * self.emitter_rows;
+        let mut layers = vec![0.0f32; EMITTER_LAYERS * per_layer * 4];
+        let at = |layer: usize, e: usize| (layer * per_layer + e) * 4;
         for i in 0..self.effect.emitters.len().min(self.state.len()) {
             let a = &self.effect.emitters[i];
             let st = &mut self.state[i];
@@ -922,9 +1470,30 @@ impl ParticleSystem {
             layers[at(5, i) + 3] = 1.0;
         }
 
+        // The placed effects' emitters follow the weather's.
+        let base = self.effect.emitters.len();
+        for j in 0..self.world.len() {
+            let row = self.world_row(&self.world[j]);
+            let i = base + j;
+            if i >= per_layer || row >= MAX_EMITTERS {
+                continue;
+            }
+
+            let inst = &mut self.world[j];
+            let delta = if inst.st.started { inst.pos - inst.st.last_pos } else { Float3::default() };
+            inst.st.last_pos = inst.pos;
+            layers[at(0, i)..at(0, i) + 4].copy_from_slice(&[inst.pos.x, inst.pos.y, inst.pos.z, self.clock]);
+            layers[at(1, i)..at(1, i) + 4].copy_from_slice(&[delta.x, delta.y, delta.z, dt]);
+            layers[at(2, i)..at(2, i) + 4].copy_from_slice(&inst.tint);
+            layers[at(3, i)] = row as f32;
+            layers[at(3, i) + 1] = inst.scale;
+            layers[at(4, i)..at(4, i) + 4].copy_from_slice(&inst.quat);
+            layers[at(5, i) + 3] = 1.0;
+        }
+
         if let Some(tex) = &self.emitter_tex {
             for l in 0..EMITTER_LAYERS {
-                let _ = self.ctx.update_subresource(tex, l as u32, None, bytemuck::cast_slice(&layers[at(l, 0)..]), (EMITTER_WIDTH * 16) as u32, 0);
+                let _ = self.ctx.update_subresource(tex, l as u32, None, bytemuck::cast_slice(&layers[at(l, 0)..at(l + 1, 0)]), (EMITTER_WIDTH * 16) as u32, (per_layer * 16) as u32);
             }
         }
 
