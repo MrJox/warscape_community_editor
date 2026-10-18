@@ -914,7 +914,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let g = |v: f32| wce_formats::c_num::printf_g(f64::from(v));
                 out += &format!(
                     "{el}\t{}\t{}\t{mode}\t{}\t{}\t{}\t{}\t{}\n", t.tscene().type_of(el), t.tscene().name(el), g(w.x), g(w.y), g(w.z),
-                    g(world_transform(t.tscene(), el).position.y as f32), g(t.terrain_height(w.x, w.z)),
+                    g((world_transform(t.tscene(), el).position.y / d.project().unit_scale) as f32), g(t.terrain_height(w.x, w.z)),
                 );
             }
 

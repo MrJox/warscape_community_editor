@@ -391,10 +391,12 @@ fn main() {
                 a = sc.doc().elements()[anc].parent;
             }
 
-            r.world_y = f64::from(p.y);
-            r.file_y = w.position.y / doc.project().unit_scale;
+            // Scene units, as the export's: the tool's world is scene space divided by the unit scale.
+            let unit = doc.project().unit_scale;
+            r.world_y = f64::from(p.y) * unit;
+            r.file_y = w.position.y;
             r.list_y = le.y;
-            r.terrain = f64::from(t.terrain_height(p.x, p.z));
+            r.terrain = f64::from(t.terrain_height(p.x, p.z)) * unit;
 
             // The other candidate formula: the 16-bit sample read as the campaign LF height, raw * lf_height / 65535 - vertical_offset
             // (_settings.xml: 3000 and 20).

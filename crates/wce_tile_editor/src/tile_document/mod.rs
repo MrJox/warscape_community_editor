@@ -6,8 +6,9 @@
 //! element indices + 1 (item 0 is the terrain). Edits are commands: attribute edits on the TedScene (moves, rotations), text splice records for
 //! structural edits (duplicate, delete, layers, polygons), and brush strokes on the height field that merge into one entry per stroke.
 //!
-//! World space is metres: x = scene x / unit_scale, y = scene y, z = scene z / unit_scale (the legacy Studio's frame); the height map covers
-//! [-128, extent + 128] m, see `TileProject`.
+//! World space is scene space divided by the unit scale on every axis: x = scene x / unit_scale, y = scene y / unit_scale, z = scene z /
+//! unit_scale, models and heights included, so the world has TEd's proportions (docs/formats/tile_ted.md; the legacy Studio divided x and z
+//! only, which drew the terrain and every height twice as tall). The height map covers [-128, extent + 128] world units, see `TileProject`.
 //!
 //! The model the commands edit is [`Tile`] (everything but the undo stack); [`TileDocument`] is the stack around it. Where the C++ document kept
 //! a pointer to the render scene it publishes into, the scene is passed in (`set_terrain_look`, `diagnostics`), and the document remembers
