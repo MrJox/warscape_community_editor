@@ -29,6 +29,20 @@ From docs/re/terrain.md ("Assumptions / open"):
   battle with fires on screen, break on fn 0x118dc650 (the named-light submit) and log its fourth argument, or take a memory dump and
   read the live rigid-model instances.
 
+## Shadow stability (later)
+
+The game's shadows flicker and "retreat" (worse at low fps); the renderer reproduces it, since it follows the game's code. Causes from the
+code (not yet isolated one by one in captures):
+- **Stale split distances:** the cascades are scaled to the depth buffer analysis (min / max visible depth), read back two frames late
+  (as ported; the game's own latency not verified) and converted with the current camera. At low fps that is more camera movement:
+  zooming in, the first cascade starts past the nearest geometry and the near shadows come back over the next frames.
+- **Per-frame fit:** the LiSPSM warp and the tight box are refitted every frame, not snapped to texels: edges crawl as the camera moves.
+- A shader patch can't fix either (the matrices and splits come from the CPU); it could only widen the cascade blend / end fade.
+- To try, editor first (scripted zoom at a forced low frame rate, before / after): 1. start the first cascade at the camera's near
+  plane, keep the measured max; 2. pad the range by the camera's movement since the measurement; 3. an optional "stable shadows" mode
+  (sphere fit snapped to texels, as before the LiSPSM port). In the game: the `warp_shadows` / `split_d0..3` tweakables (if a release
+  build can set them), or a DLL patch of the split setup (fn 0x11784c00).
+
 ## Smaller open rendering items
 
 - **Engine items** (docs/re/renderer.md, "Remaining engine items"), not done yet:
