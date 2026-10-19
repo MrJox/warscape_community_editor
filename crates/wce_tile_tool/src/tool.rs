@@ -292,6 +292,18 @@ impl TileTool {
         roots
     }
 
+    /// Shows or hides the sea at 0 m: the tile's plane and the map context's sea; kept in wce.ini for the next tiles.
+    pub fn set_show_sea(&mut self, e: &mut Editor, id: DocumentId, on: bool) {
+        if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+            d.tile_mut().display_mut().show_sea = on;
+            d.tile_mut().display_changed();
+        }
+
+        self.context.show_sea(e, on);
+        e.settings().set(SHOW_SEA_KEY, if on { "1" } else { "0" });
+        let _ = e.settings().save();
+    }
+
     /// Opens a tile by its database entry (an _tile_database/TILES/*.xml path, or a name like "assembly_kit/osgiliath_test" / the entry's
     /// file name), by a variation folder, a tile folder or a tile.ted. `variation` picks one of the entry's variations (a leaf folder name or a
     /// number; empty = the first).
@@ -834,10 +846,18 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         gui::text_wrapped(d.tile().terrain_note());
         let mut water = d.tile().display().show_water;
-        if gui::checkbox("water (rivers, sea / lake)", &mut water) {
+        if gui::checkbox("water (rivers)", &mut water) {
             d.tile_mut().display_mut().show_water = water;
             d.tile_mut().display_changed();
         }
+
+        gui::same_line();
+        let mut sea = d.tile().display().show_sea;
+        if gui::checkbox("sea at 0 m", &mut sea) {
+            self.set_show_sea(e, id, sea);
+        }
+
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
 
         gui::text_disabled(d.tile().water_note());
 
@@ -1419,6 +1439,13 @@ pub(crate) fn matches_words(en: &wce_formats::tile_index::TileIndexEntry, words:
     words.iter().all(|w| hay.contains(&w.to_lowercase()))
 }
 
+/// wce.ini: the sea at 0 m shown (1, the default) or hidden (0).
+const SHOW_SEA_KEY: &str = "tile_show_sea";
+
+fn show_sea_setting(e: &mut Editor) -> bool {
+    e.settings().get(SHOW_SEA_KEY, None).is_none_or(|v| v != "0")
+}
+
 impl Tool for TileTool {
     fn id(&self) -> &str {
         "tile"
@@ -1762,7 +1789,9 @@ impl Tool for TileTool {
             self.status = project.warning.clone();
         }
 
-        Ok(Box::new(TileDocument::new(project, e.files())))
+        let mut doc = TileDocument::new(project, e.files());
+        doc.tile_mut().display_mut().show_sea = show_sea_setting(e);
+        Ok(Box::new(doc))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

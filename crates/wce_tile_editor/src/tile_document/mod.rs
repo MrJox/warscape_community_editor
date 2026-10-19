@@ -86,8 +86,12 @@ pub struct TileDisplay {
     /// The tile database entry's link rules and targets on the edge cells (read-only view).
     pub show_links: bool,
 
-    /// River ribbons and the sea / lake plane (the water pass); drawn whatever the spline layers' eye says.
+    /// River ribbons (the water pass); drawn whatever the spline layers' eye says.
     pub show_water: bool,
+
+    /// TEd's sea: a plane at 0 m over every tile, drawn for context (not an entity of the tile). The map context draws its own sea while it
+    /// is shown; this hides both.
+    pub show_sea: bool,
 
     /// The procedural trees drawn: the name of one of the tile's tree lists (`default`, a climate key like `rome_med`), empty for none.
     pub tree_list: String,
@@ -103,7 +107,7 @@ impl Default for TileDisplay {
     fn default() -> Self {
         Self {
             hidden_types: BTreeSet::new(), show_polygons: true, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true,
-            show_links: false, show_water: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false,
+            show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false,
         }
     }
 }

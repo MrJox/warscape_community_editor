@@ -1402,11 +1402,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if (x0 - ex).abs() < 0.01 && (z0 - ez).abs() < 0.01 { ok("") } else { fail(format!("cell corner is {}, {}", f6(x0), f6(z0))) }
     });
 
-    c.add("tile_water", "tile_water on|off", "show or hide the water (river ribbons, sea / lake plane) of the open tile", |e, a| {
+    c.add("tile_water", "tile_water on|off", "show or hide the river water of the open tile", |e, a| {
         let (Some(d), Some(w)) = (document(e), a.first().filter(|w| *w == "on" || *w == "off")) else { return fail("usage: tile_water on|off") };
         d.tile_mut().display_mut().show_water = w == "on";
         d.tile_mut().display_changed();
         ok("")
+    });
+
+    c.add("tile_sea", "tile_sea on|off", "show or hide the sea at 0 m (the tile's plane and the map context's sea; kept in wce.ini)", |e, a| {
+        let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_sea on|off") };
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        with_tile(e, |t, e| {
+            t.set_show_sea(e, id, w == "on");
+            ok("")
+        })
     });
 
     c.add("tree_list", "tree_list [name | gen:name | none]", "draw one of the tile's procedural tree lists (BOB's <name>.tree_list.bin: default, a climate key; gen:<name> generates it from the seeds, again on every call); no name: log the lists", |e, a| {

@@ -2,7 +2,7 @@
 
 > **Status (2026-10-10, after Phase 4a / 4b and the read-only part of 6a; the user said go for Phase 4 and the links view).**
 > - Phases 0, 0b, 1, 2 done; Phase 3 done in two steps: the first version baked the colour on the CPU, and on 2026-10-10 (rule: everything rendered uses the game's shaders) the ground is drawn by the game's own terrain passes (`rigidterrain` `vs30_geom_new` + `ps30_geom` / `ps_depth`, `vs30_blend` + `ps30_blend`, `ps30_terrain_to_gbuffer_ss`; `docs/re/terrain.md`, "The tool's terrain pass"). Open: neighbour tiles / alpha feather, far maps, season mixing, in-game comparison (the user postponed it).
-> - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane; since 2026-10-10 drawn by the game's own shaders) done; 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
+> - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane; since 2026-10-10 drawn by the game's own shaders) done (since 2026-10-19 the sea is TEd's: a plane at 0 m on every tile, a view toggle kept in wce.ini, rivers at their splines' stored heights); 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
 
 Written after the user's report on the Tile tool in `wce.exe`:
 
