@@ -16,6 +16,14 @@ From docs/re/terrain.md ("Assumptions / open"):
   depth-only shadow map and shadow depth bias for every caster.
 - Done 2026-10-18: the maps' sampler states (from the shaders' declarations) and `g_overlay_view_projection` (the declared identity).
 - Optional: the virtual texture path.
+- **To review (2026-10-19): terrain detail.** The terrain looks much more detailed in game than in the editor (a coastal battle's beach:
+  sand ripples, pebbles and wet-sand darkening that the editor's terrain doesn't show). Compare a capture of the same tile and camera
+  in game and in the editor, and check the near detail maps, the material layers' detail normals and the mip / LOD choices.
+- **In progress (2026-10-19): shore foam on the battle sea.** The game draws a band of breaking-wave foam where the sea meets the
+  shore; the battle `waterplane` shader has no foam input. The engine has a coast-foam ocean (`ocean2.hlsl`, the "SeaV2" component:
+  `terrain/ocean/coast_foam_mips`, `land_1024_coast`, `coast_amplitude_mask_1`, `ocean_v2_coast` cbuffer), but a memory dump of a coastal
+  battle shows the sea there is drawn by the Sea Display with `ocean.hlsl` (foam, sea and swell surfaces, a sea bed info texture), not
+  waterplane and not ocean2: docs/re/water.md, "The battle sea of a coastal battle".
 
 ## Nice to have (future update, not done)
 
