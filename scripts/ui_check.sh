@@ -5,6 +5,7 @@
 #  - wce_ui_model: the tree prints back the same XML, entries and edits work on every layout; every field has a name and a control and an edit that
 #    writes the value a field has changes nothing; docked components move with the screen by the share their dock point says;
 #  - making, removing, reordering and reparenting components keep every layout whole and put each component where it was asked (structure_check);
+#  - the XML under the game's names turns back into the converter's XML and the file's bytes on every layout (named_check);
 #  - which files are read: release packs only plus chosen mods, loose folders first, the skin list (sources_check);
 #  - wce-ui: render size, XML round trip, pack save read back, properties set by name, the MCP stdio server;
 #  - wce.exe (scripts/ui_smoke.txt): the tool's edits, undo, previews, skins of your own, pictures and layouts that change on disk, export,
@@ -37,6 +38,10 @@ tail -2 "$OUT/layout.log"
 echo "== structure (make, remove, reorder, reparent)"
 cargo run --release -q -p wce_ui_model --example structure_check -- --game "$GAME" > "$OUT/structure.log" 2>&1 || fail "structure_check (see $OUT/structure.log)"
 tail -1 "$OUT/structure.log"
+
+echo "== XML under the game's names (back to the converter's XML and the file's bytes, on every layout)"
+cargo run --release -q -p wce_ui_model --example named_check -- --game "$GAME" > "$OUT/named.log" 2>&1 || fail "named_check (see $OUT/named.log)"
+tail -2 "$OUT/named.log"
 
 echo "== properties (game names and controls for every field)"
 cargo run --release -q -p wce_ui_model --example props_check -- --game "$GAME" > "$OUT/props.log" 2>&1 || fail "props_check (see $OUT/props.log)"
@@ -136,6 +141,7 @@ WCE_SETTINGS_DIR="$(cygpath -w "$D/settings")" timeout 300 "$TARGET/release/wce.
 rc=$?; echo "wce.exe script: exit $rc"; [ $rc = 0 ] || { fail "script"; grep -E "error|FAILED" "$D/run.log" | head -5; }
 cmp -s "$D/before.xml" "$D/undone.xml" || fail "undo did not give back the same XML"
 cmp -s "$D/before.xml" "$D/dragged.xml" && fail "the drag did not change the layout"
+cmp -s "$D/reset_before.xml" "$D/reset_after.xml" || fail "reset all changes did not give back the same XML"
 
 # the pack the editor saved: the layout with the offset that was set
 "$PD" get "$D/ui_smoke.pack" "$L" "$D/smoke_layout.bin" || fail "read the layout back from ui_smoke.pack"

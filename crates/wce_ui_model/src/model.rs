@@ -139,7 +139,7 @@ impl UiModel {
     }
 
     pub fn from_xml(xml: &str) -> Result<Self, String> {
-        let dom = Dom::parse(xml)?;
+        let dom = crate::named::to_raw(&Dom::parse(xml)?)?;
         let version = dom.root.attr("version").and_then(|v| v.trim().parse().ok()).ok_or("the root element needs a version attribute")?;
         Ok(Self { dom: Rc::new(dom), version })
     }
@@ -720,5 +720,23 @@ fn apply_ids(e: &mut Element, map: &[(u32, u32)]) {
         if let Node::Elem(c) = c {
             apply_ids(c, map);
         }
+    }
+}
+
+impl UiModel {
+    /// The layout as XML under the game's names (see `named`).
+    pub fn to_named_xml(&self) -> String {
+        crate::named::to_named(&self.dom, self.version).to_xml()
+    }
+
+    /// One component (and everything below it) as XML under the game's names.
+    pub fn entry_to_named_xml(&self, path: &[usize]) -> Option<String> {
+        let el = self.dom.at(path)?;
+        Some(Dom { root: crate::named::element_to_named(el, self.version) }.to_xml())
+    }
+
+    /// An element from XML of either form, as the converter's element (for replacing a component).
+    pub fn fragment_from_xml(&self, xml: &str) -> Result<crate::dom::Element, String> {
+        crate::named::element_to_raw(&Dom::parse(xml)?.root, self.version)
     }
 }

@@ -677,6 +677,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("ui_reset_all", "ui_reset_all", "Throws away every change since the layout was opened or saved", |e, _| {
+        let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
+        match tool_doc(e, id).map(|d| d.reset_all()) {
+            Some(Ok(())) => ok("reset"),
+            Some(Err(m)) => fail(m),
+            None => fail("no UI layout is open"),
+        }
+    });
+
     c.add("ui_assert_xml_roundtrip", "ui_assert_xml_roundtrip", "Fails unless the layout converts to binary and back to the same XML", |e, _| {
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
         let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };

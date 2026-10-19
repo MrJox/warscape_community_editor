@@ -13,6 +13,7 @@ pub mod layout;
 pub mod render;
 pub mod skins;
 pub mod model;
+pub mod named;
 pub mod pack;
 pub mod props;
 pub mod related;
