@@ -13,6 +13,7 @@ use wce_foundation::wce_prof;
 
 use crate::height_field::HeightField;
 use crate::ted_scene::TedScene;
+use crate::world_transform::world_transform;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -49,6 +50,73 @@ impl Default for TileInfo {
             overlap_border_size: 0.0, raw_data_tri_density: 0, found: false,
         }
     }
+}
+
+/// The line `baked = a + b * map` through (map metres with the entry's numbers, baked metres) samples, or `None` when no line fits 60 % of
+/// them within 5 cm, with a relief (not only on flat ground), and clearly better than the identity (the entry's own numbers). The baked heights
+/// differ from the map where the bake blended neighbours or carved rivers, so this is a robust line (RANSAC over pairs of samples, then a
+/// least squares fit of its inliers), not a plain regression. Returns (a, b, inliers).
+pub fn fit_baked_heights(pairs: &[(f64, f64)]) -> Option<(f64, f64, usize)> {
+    if pairs.len() < 100 {
+        return None;
+    }
+
+    let near = |a: f64, b: f64, p: &(f64, f64)| (p.1 - (a + b * p.0)).abs() <= 0.05;
+    let count = |a: f64, b: f64| pairs.iter().filter(|p| near(a, b, p)).count();
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed as usize % pairs.len()
+    };
+
+    let mut best = (0.0, 1.0, 0usize);
+    for _ in 0..3000 {
+        let (p, q) = (pairs[next()], pairs[next()]);
+        if (q.0 - p.0).abs() < 1.0 {
+            continue;
+        }
+
+        let b = (q.1 - p.1) / (q.0 - p.0);
+        if !(0.2..5.0).contains(&b) {
+            continue;
+        }
+
+        let a = p.1 - b * p.0;
+        let c = count(a, b);
+        if c > best.2 {
+            best = (a, b, c);
+        }
+    }
+
+    let (mut a, mut b) = (best.0, best.1);
+    for _ in 0..3 {
+        let inliers = pairs.iter().filter(|p| near(a, b, p)).collect::<Vec<_>>();
+        let n = inliers.len() as f64;
+        if n < 2.0 {
+            return None;
+        }
+
+        let (mc, mb) = (inliers.iter().map(|p| p.0).sum::<f64>() / n, inliers.iter().map(|p| p.1).sum::<f64>() / n);
+        let var = inliers.iter().map(|p| (p.0 - mc) * (p.0 - mc)).sum::<f64>() / n;
+        if var < 0.25 {
+            return None;
+        }
+
+        b = inliers.iter().map(|p| (p.0 - mc) * (p.1 - mb)).sum::<f64>() / n / var;
+        a = mb - b * mc;
+    }
+
+    let inliers = pairs.iter().filter(|p| near(a, b, p)).collect::<Vec<_>>();
+    let n = inliers.len() as f64;
+    let mc = inliers.iter().map(|p| p.0).sum::<f64>() / n;
+    let spread = (inliers.iter().map(|p| (p.0 - mc) * (p.0 - mc)).sum::<f64>() / n).sqrt();
+    if !(0.2..5.0).contains(&b) || inliers.len() * 5 < pairs.len() * 3 || spread < 0.5 || inliers.len() * 2 < count(0.0, 1.0) * 3 {
+        return None;
+    }
+
+    Some((a, b, inliers.len()))
 }
 
 /// The raw_data folder an entry file or a tile path lives under (the part before terrain/tiles), if there is one.
@@ -126,6 +194,9 @@ pub struct TileProject {
 
     /// Scene units per metre horizontally.
     pub unit_scale: f64,
+
+    /// Which min_height / scale the height map uses when it is not the entry's (see `calibrate_from_final_heights`), empty otherwise.
+    pub height_calibration: String,
 }
 
 /// What the parallel half of opening reads besides the scene.
@@ -244,10 +315,111 @@ impl TileProject {
             Some(_) => String::new(),
         };
 
-        Ok(Self {
+        let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, unit_scale: 2.0,
-        })
+            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(),
+        };
+
+        project.calibrate_from_final_heights();
+        if project.height_calibration.is_empty() {
+            project.calibrate_from_instances();
+        }
+
+        Ok(project)
+    }
+
+    /// A tile without a usable `final_heights.dds` (or whose bake does not fit): the landscape instances say what the terrain was when they were
+    /// placed. TEd puts a Landscape instance on the terrain at placement, so the heights of the map at their places, with the numbers it had then,
+    /// are their y. When most of them (60 %) fit one line of (map metres, y) and the entry's own numbers fit far fewer, the map has other numbers
+    /// than the entry (the entry changed after the placing), and those numbers are used, as with the baked heights.
+    fn calibrate_from_instances(&mut self) {
+        let Some(field) = self.height.as_ref() else { return };
+        if !self.bordered() {
+            return;
+        }
+
+        let sc = &self.scene;
+        let els = sc.doc().elements();
+        let landscape = |e: usize| {
+            matches!(els[e].name.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "ProjectedDecalInstance")
+                && els[e].children.is_empty()
+                && sc.doc().get(e, "surface_mode").is_some_and(|m| m == "MSM_LANDSCAPE")
+                && sc.position(e).is_some()
+        };
+
+        let all = (0..els.len()).filter(|&e| landscape(e)).collect::<Vec<_>>();
+        let stride = (all.len() / 20_000).max(1);
+        let pairs = all.iter().step_by(stride).map(|&e| {
+            let w = world_transform(sc, e);
+            (field.sample(self.pixel_x(w.position.x / self.unit_scale), self.pixel_z(w.position.z / self.unit_scale)), w.position.y)
+        }).collect::<Vec<_>>();
+
+        let (min, scale) = (field.min_height(), field.scale());
+        let Some((a, b, inliers)) = fit_baked_heights(&pairs) else { return };
+        let (new_min, new_scale) = (a + b * min, b * scale);
+        if (new_min - min).abs() <= 0.03 * scale.abs() && (new_scale - scale).abs() <= 0.03 * scale.abs() {
+            return;
+        }
+
+        self.height_calibration = format!(
+            "height scale from the placed landscape instances: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {inliers} of {} instances sit on it within 5 cm)", pairs.len()
+        );
+        wce_foundation::log::info(format!("{}: {}", self.dir.display(), self.height_calibration));
+        if let Some(field) = self.height.as_mut() {
+            field.recalibrate(new_min, new_scale);
+        }
+    }
+
+    /// BOB's `final_heights.dds` (R32F metres over the tile without its border, one sample per `extent / (n - 1)` m) is what the game draws, and
+    /// what the instances were snapped to. In some tiles the entry's min_height / scale are not the numbers the height map was baked with
+    /// (dunedain_city_a: entry -12.26 / 24.55, the bake -14 / 17.75: the terrain came out 5 m off and every building floated or sank). When
+    /// the samples of the map fit the baked heights with other numbers (most of the samples within centimetres), those numbers are used.
+    fn calibrate_from_final_heights(&mut self) {
+        let Some(field) = self.height.as_ref() else { return };
+        if !self.bordered() {
+            return;
+        }
+
+        let Ok(bytes) = std::fs::read(self.dir.join("final_heights.dds")) else { return };
+        let word = |at: usize| bytes.get(at..at + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+
+        // "DDS ", the header size, D3DFMT_R32F as the pixel format's FourCC.
+        let (fw, fh) = (word(16) as usize, word(12) as usize);
+        if bytes.len() < 128 || &bytes[..4] != b"DDS " || word(4) != 124 || word(84) != 114 || fw < 2 || fh < 2 || bytes.len() < 128 + fw * fh * 4 {
+            return;
+        }
+
+        let sample = |i: usize, j: usize| f64::from(f32::from_le_bytes([bytes[128 + (j * fw + i) * 4], bytes[129 + (j * fw + i) * 4], bytes[130 + (j * fw + i) * 4], bytes[131 + (j * fw + i) * 4]]));
+        let (si, sj) = ((fw / 100).max(1), (fh / 100).max(1));
+        let mut pairs = vec![];
+        for j in (0..fh).step_by(sj) {
+            for i in (0..fw).step_by(si) {
+                let (x, z) = (i as f64 * self.extent_x() / (fw - 1) as f64, j as f64 * self.extent_z() / (fh - 1) as f64);
+                let baked = sample(i, j);
+                if baked.is_finite() {
+                    pairs.push((field.sample(self.pixel_x(x), self.pixel_z(z)), baked));
+                }
+            }
+        }
+
+        if pairs.len() < 100 {
+            return;
+        }
+
+        let (min, scale) = (field.min_height(), field.scale());
+        let Some((a, b, inliers)) = fit_baked_heights(&pairs) else { return };
+        let (new_min, new_scale) = (a + b * min, b * scale);
+
+        // The bake of every tile comes out about 1.2 % lower than its entry says (the buildings of those tiles follow the entry): not a stale entry.
+        if (new_min - min).abs() <= 0.03 * scale.abs() && (new_scale - scale).abs() <= 0.03 * scale.abs() {
+            return;
+        }
+
+        self.height_calibration = format!("height scale from final_heights.dds: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {} of {} samples fit to 0.05 m)", inliers, pairs.len());
+        wce_foundation::log::info(format!("{}: {}", self.dir.display(), self.height_calibration));
+        if let Some(field) = self.height.as_mut() {
+            field.recalibrate(new_min, new_scale);
+        }
     }
 
     /// Writes tile.ted (when the scene is modified, or `force_scene`) and height_map_0.png (when `height_dirty`, or `force_height`); the
@@ -355,5 +527,42 @@ impl TileProject {
 
     pub fn height_at(&self, x_m: f64, z_m: f64) -> f64 {
         self.height.as_ref().map_or(0.0, |h| h.sample(self.pixel_x(x_m), self.pixel_z(z_m)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_baked_heights;
+
+    /// Samples of `baked = -14 + 17.75 / 24.55 * (map - -12.26 ...)`: the map in metres with the entry's numbers, the baked heights with
+    /// the numbers the map was baked with, a third of them overwritten (blended neighbours, carved rivers).
+    fn samples(entry: (f64, f64), baked: (f64, f64)) -> Vec<(f64, f64)> {
+        (0..4000).map(|i| {
+            let raw = f64::from((i * 7919) % 65536);
+            let on_map = entry.0 + raw / 65535.0 * entry.1;
+            let truth = baked.0 + raw / 65535.0 * baked.1;
+            (on_map, if i % 3 == 0 { truth + 3.0 + f64::from(i % 17) } else { truth })
+        }).collect()
+    }
+
+    #[test]
+    fn a_stale_entry_is_found_through_the_outliers() {
+        let (a, b, inliers) = fit_baked_heights(&samples((-12.26, 24.553), (-14.0, 17.75))).expect("a fit");
+        let (min, scale) = (a + b * -12.26, b * 24.553);
+        assert!((min - -14.0).abs() < 0.01 && (scale - 17.75).abs() < 0.01, "min {min} scale {scale}");
+        assert!(inliers > 2500);
+    }
+
+    #[test]
+    fn the_entrys_own_numbers_need_no_fit() {
+        assert!(fit_baked_heights(&samples((-5.0, 40.0), (-5.0, 40.0))).is_none());
+    }
+
+    #[test]
+    fn flat_ground_and_noise_fit_nothing() {
+        let flat = (0..500).map(|i| (1.0 + f64::from(i % 3) * 0.001, 2.0)).collect::<Vec<_>>();
+        assert!(fit_baked_heights(&flat).is_none());
+        let noise = (0..2000).map(|i| (f64::from((i * 31) % 97), f64::from((i * 57) % 101) * 0.37)).collect::<Vec<_>>();
+        assert!(fit_baked_heights(&noise).is_none());
     }
 }

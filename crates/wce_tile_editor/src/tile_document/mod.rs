@@ -26,6 +26,7 @@ use std::any::Any;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use wce_editor_core::command::{CommandStack, Dirty, History};
 use wce_editor_core::document::{Document, DocumentCore, OutlinerNode, SaveTarget};
@@ -34,6 +35,7 @@ use wce_formats::tile_climate::ClimateList;
 use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
+use wce_tile::building_db::BuildingDb;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::WorldTransform;
 use wce_vfs::files::Files;
@@ -119,6 +121,10 @@ pub struct BuildingModel {
 
     /// Every piece has loaded or failed.
     pub resolved: bool,
+
+    /// The number of destruction levels of the building (the highest `destructNN` of its piece files): `destruction_level` of an instance goes
+    /// from 0 to this - 1 (TEd: `building->num_destruction_levels()`). 0 when it is not known.
+    pub levels: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -350,6 +356,16 @@ pub struct Tile {
     pub(crate) skin_id: u64,
     pub(crate) terrain_note: String,
     pub(crate) climates: OnceCell<ClimateList>,
+
+    /// The kit's `battlefield_buildings` (categories), read on first use.
+    pub(crate) building_db: OnceCell<BuildingDb>,
+
+    /// Text typed into a line edit of the Property Editor and not applied yet, by (element, attribute): it is applied when the typing ends.
+    pub(crate) drafts: HashMap<(usize, String), String>,
+
+    /// The edited pieces of buildings by (building element, piece), and the pieces whose entities still have to follow their properties.
+    pub(crate) piece_props: HashMap<(usize, usize), PieceProps>,
+    pub(crate) piece_pending: Vec<(usize, usize)>,
     pub(crate) material_base: Option<Arc<TerrainMaterial>>,
     pub(crate) material_look: TerrainLook,
     pub(crate) material_id: u64,
@@ -372,6 +388,16 @@ pub(crate) fn scene_key(scene: &RenderScene) -> usize {
     scene as *const RenderScene as usize
 }
 
+/// Ids of ground skins, materials and normal maps. The renderer keeps GPU copies by these ids, so they must differ between tiles: a counter per
+/// tile would give every tile's first material the id 1, and the second tile opened would draw with the first one's maps and textures.
+pub(crate) static SKIN_IDS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static MATERIAL_IDS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static NORMAL_IDS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn next_id(counter: &AtomicU64) -> u64 {
+    counter.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 pub struct TileDocument {
     core: DocumentCore,
     pub(crate) history: CommandStack<Tile>,
@@ -382,9 +408,63 @@ pub fn item_of(elem: usize) -> u64 {
     elem as u64 + 1
 }
 
-/// The element of an item; `None` for the terrain.
+/// The element of an item; `None` for the terrain and for the pieces of a building.
 pub fn elem_of(item: u64) -> Option<usize> {
+    if item & PIECE_ITEM != 0 {
+        return None;
+    }
+
     item.checked_sub(1).map(|e| e as usize)
+}
+
+/// The pieces of a building are children of it in TEd's Scene tab ("building piece", one node per mesh). Their items have this bit, the
+/// building's element in bits 16..50 and the number of the piece in the low 16 bits.
+pub const PIECE_ITEM: u64 = 1 << 50;
+
+pub fn piece_item(elem: usize, piece: usize) -> u64 {
+    PIECE_ITEM | ((elem as u64) << 16) | (piece as u64 & 0xffff)
+}
+
+/// (building element, piece number) of a piece item.
+pub fn piece_of(item: u64) -> Option<(usize, usize)> {
+    (item & PIECE_ITEM != 0).then_some((((item & (PIECE_ITEM - 1)) >> 16) as usize, (item & 0xffff) as usize))
+}
+
+/// The properties of one building piece (`BUILDING_PIECE_INSTANCE`). TEd makes the pieces when it loads a building and does not write them to
+/// the tile (a BUILDING_INSTANCE has no children in any tile.ted): what is edited here lasts for the session. The values a new piece has are
+/// what TEd shows for one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PieceProps {
+    pub visible: bool,
+    pub active: bool,
+    pub draggable: bool,
+    pub freeform: bool,
+    pub position: [f32; 3],
+
+    /// Radians.
+    pub euler: [f32; 3],
+    pub scale: [f32; 3],
+    pub opacity: f32,
+    pub burn: bool,
+    pub burn_amount: f32,
+    pub glow_amount: f32,
+    pub dirt_level: f32,
+    pub bounds_colour: [f32; 4],
+    pub show_collision: bool,
+    pub seasons: [bool; 4],
+
+    /// The destruction level; -1 is the building's highest one (the intact piece, `destruct01`: every new building has `levels - 1`, and so do
+    /// most instances of the kit's tiles).
+    pub destruction_level: i64,
+}
+
+impl Default for PieceProps {
+    fn default() -> Self {
+        Self {
+            visible: true, active: true, draggable: false, freeform: true, position: [0.0; 3], euler: [0.0; 3], scale: [1.0; 3], opacity: 1.0, burn: false,
+            burn_amount: 0.0, glow_amount: 0.0, dirt_level: 0.0, bounds_colour: [1.0; 4], show_collision: false, seasons: [true; 4], destruction_level: -1,
+        }
+    }
 }
 
 pub const TERRAIN: u64 = 0;
@@ -403,7 +483,7 @@ impl TileDocument {
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
-            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), material_base: None,
+            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
         };

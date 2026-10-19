@@ -110,6 +110,12 @@ impl HeightField {
         r.clamp(0.0, 65535.0).round() as u16
     }
 
+    /// Another min_height / scale for the same samples (before any edit: the undo records hold samples, not metres).
+    pub fn recalibrate(&mut self, min_height: f64, scale: f64) {
+        self.min = min_height;
+        self.scale = scale;
+    }
+
     pub fn min_height(&self) -> f64 {
         self.min
     }

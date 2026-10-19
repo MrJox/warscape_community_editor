@@ -13,10 +13,10 @@ use wce_scene::render_scene::{Decal,
     EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
-use wce_tile::world_transform::world_transform;
+use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
 use super::index::{matrix_of, style_of};
-use super::{GroundInfo, LinkCell, Placement, TERRAIN, Tile, elem_of, item_of, scene_key};
+use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, Placement, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, terrain_normal_image};
 
@@ -37,6 +37,23 @@ struct RiverPoint {
     /// Control handles as world positions (x, z metres, y local metres).
     cin: [f64; 3],
     cout: [f64; 3],
+}
+
+/// A piece's own transform inside its building: the position (scene units), the euler angles (radians) and the scale.
+fn piece_local(p: &PieceProps) -> Float4x4 {
+    let w = WorldTransform { position: Double3::new(f64::from(p.position[0]), f64::from(p.position[1]), f64::from(p.position[2])), rotation: euler_matrix(Double3::new(f64::from(p.euler[0]), f64::from(p.euler[1]), f64::from(p.euler[2]))) };
+    matrix_of(&w, 1.0, Some(Double3::new(f64::from(p.scale[0]), f64::from(p.scale[1]), f64::from(p.scale[2]))))
+}
+
+/// The model of a piece at a destruction level of a building that has `levels`: the highest level is the intact piece (`..._destruct01`, what the
+/// tile draws), each lower one the next more damaged file (`..._destruct02` ...), level 0 the last.
+fn piece_model(base: &str, level: i64, levels: u32) -> String {
+    let top = i64::from(levels.max(1)) - 1;
+    if level < 0 || level >= top {
+        return base.to_owned();
+    }
+
+    base.replacen("destruct01", &format!("destruct{:02}", top - level + 1), 1)
 }
 
 fn bits_equal(a: &[OverlayVertex], b: &[OverlayVertex]) -> bool {
@@ -159,7 +176,7 @@ impl Tile {
 
         // The terrain entity's z axis is scaled by k (rows of the height map vs columns): the skin is in the terrain's own coordinates.
         let k = self.project.mpp_z() / self.project.mpp_x();
-        self.skin_id += 1;
+        self.skin_id = next_id(&SKIN_IDS);
         let skin = Arc::new(TerrainSkin {
             x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id,
         });
@@ -196,7 +213,7 @@ impl Tile {
             let p = &self.project;
             let h = p.height.as_ref().expect("a height map");
             let (x0, z0, x1, z1) = self.blend_area();
-            self.material_id += 1;
+            self.material_id = next_id(&MATERIAL_IDS);
             let rq = MaterialRequest {
                 folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, x1, z1, y0: h.min_height() / p.unit_scale, y1: (h.min_height() + h.scale()) / p.unit_scale,
                 look: self.look.clone(), id: self.material_id,
@@ -224,7 +241,7 @@ impl Tile {
         let mut m = (**self.material_base.as_ref()?).clone();
         let k = self.project.mpp_z() / self.project.mpp_x();
         m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
-        self.normal_id += 1;
+        self.normal_id = next_id(&NORMAL_IDS);
         m.normal_id = self.normal_id;
         Some(Arc::new(m))
     }
@@ -583,9 +600,15 @@ impl Tile {
             };
 
             let (mut first, mut count) = (0, 0u8);
-            for piece in pieces {
-                let mi = MeshInstance { model: piece, lod: true, p4, ..Default::default() };
-                let e = scene.add(layer, w, Payload::MeshInstance(mi), self.source(item_of(elem)));
+            for (i, piece) in pieces.into_iter().enumerate() {
+                let props = self.piece_props.get(&(elem, i));
+                let world = props.map_or(w, |p| w * piece_local(p));
+                let levels = self.model_of(elem).map_or(1, |m| m.levels);
+                let model = props.map_or(piece.clone(), |p| piece_model(&piece, p.destruction_level, levels));
+                let e = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, p4, ..Default::default() }), self.source(item_of(elem)));
+                if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
+                    en.visible = false;
+                }
 
                 // The pieces of a building get consecutive ids.
                 if count == 0 {
@@ -745,7 +768,8 @@ impl Tile {
         if self.first_entity.get(elem).is_some_and(|&f| f != 0) {
             let w = self.drawn_matrix(elem);
             for k in 0..u64::from(self.entity_count[elem]) {
-                scene.update_world(self.first_entity[elem] + k as EntityId, w);
+                let world = self.piece_props.get(&(elem, k as usize)).map_or(w, |p| w * piece_local(p));
+                scene.update_world(self.first_entity[elem] + k as EntityId, world);
             }
         }
 
@@ -760,6 +784,34 @@ impl Tile {
 
         if self.is_polygon(elem) && self.display.show_polygons && self.shown(elem) {
             self.rebuild_polygon(scene, self.layer, elem);
+        }
+    }
+
+    /// The pieces whose properties were edited: their entities follow (the position, the visibility, the destruction level).
+    pub(crate) fn flush_pieces(&mut self, scene: &mut RenderScene) {
+        if self.piece_pending.is_empty() || self.scene_key != scene_key(scene) {
+            return;
+        }
+
+        for (elem, k) in std::mem::take(&mut self.piece_pending) {
+            let Some(first) = self.first_entity.get(elem).copied().filter(|&f| f != 0) else { continue };
+            if k >= usize::from(self.entity_count[elem]) {
+                continue;
+            }
+
+            let p = self.piece_props.get(&(elem, k)).cloned().unwrap_or_default();
+            let id = first + k as EntityId;
+            scene.update_world(id, self.world_matrix(elem) * piece_local(&p));
+            let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
+            let model = piece_model(&base, p.destruction_level, self.model_of(elem).map_or(1, |m| m.levels));
+            if let Some(en) = scene.find_mut(id) {
+                en.visible = p.visible;
+                if let Payload::MeshInstance(mi) = &mut en.payload {
+                    mi.model = model;
+                }
+            }
+
+            scene.touch();
         }
     }
 
@@ -883,6 +935,7 @@ impl Tile {
     /// overlay.
     pub fn set_highlight(&mut self, scene: &mut RenderScene, selected: &[usize], polygon_point: Option<usize>, handle_size: f32, tool_overlay: &Overlay) {
         wce_prof!("tile.set_highlight");
+        self.flush_pieces(scene);
         if self.scene_key != scene_key(scene) || self.overlay_entity == 0 {
             return;
         }
@@ -933,6 +986,14 @@ impl Tile {
             let kids = sc.children(e);
             let count = if kids.is_empty() { String::new() } else { format!(", {}", kids.len()) };
             let mut n = OutlinerNode { label: format!("{label}  [{ty}{count}]"), source: t.source(item_of(e)), selectable: ty != "SCENE_GRAPH", children: vec![] };
+
+            // TEd lists the meshes of a building as its children, "building piece" each.
+            if ty == "BUILDING_INSTANCE" && let Some(m) = t.model_of(e).filter(|m| m.ok) {
+                for i in 0..m.pieces.len().min(0xffff) {
+                    n.children.push(OutlinerNode { label: "building piece".to_owned(), source: t.source(piece_item(e, i)), selectable: true, children: vec![] });
+                }
+            }
+
             for (shown, &k) in kids.iter().enumerate() {
                 if shown + 1 > 300 {
                     n.children.push(OutlinerNode { label: format!("... {} more", kids.len() - 300), source: t.source(TERRAIN), selectable: false, children: vec![] });
@@ -955,6 +1016,10 @@ impl Tile {
     }
 
     pub(crate) fn describe(&self, item: SourceRef) -> String {
+        if let Some((e, k)) = piece_of(item.item) {
+            return format!("building piece {k} of '{}'", self.tscene().name(e));
+        }
+
         let Some(e) = elem_of(item.item) else { return "Terrain".to_owned() };
         if e >= self.tscene().doc().elements().len() {
             return String::new();
@@ -1019,5 +1084,20 @@ impl Tile {
     /// How many building keys each instance type has, for tests.
     pub fn models(&self) -> &BTreeMap<String, super::BuildingModel> {
         &self.models
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::piece_model;
+
+    #[test]
+    fn the_highest_level_is_the_intact_piece() {
+        let base = "rigidmodels/buildings/house/house_piece01_destruct01.rigid_model_v2";
+        assert_eq!(piece_model(base, -1, 3), base);
+        assert_eq!(piece_model(base, 2, 3), base, "the highest of 3 levels");
+        assert_eq!(piece_model(base, 1, 3), base.replace("destruct01", "destruct02"));
+        assert_eq!(piece_model(base, 0, 3), base.replace("destruct01", "destruct03"));
+        assert_eq!(piece_model(base, 0, 1), base, "one level: only the intact piece");
     }
 }

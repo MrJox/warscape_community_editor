@@ -140,6 +140,69 @@ impl Inspector for ImGuiInspector {
     fn gesture_ended(&mut self) -> bool {
         self.ended
     }
+
+    fn edit_slider(&mut self, field: &str, label: &str, v: &mut f32, lo: f32, hi: f32) -> bool {
+        self.label(label, false);
+        gui::set_next_item_width(72.0);
+        let mut changed = gui::drag_float(&format!("##{}.box", self.path(field)), v, (hi - lo) * 0.005, lo, hi, "%.3f");
+        let mut ended = gui::is_item_deactivated_after_edit();
+        gui::same_line();
+        gui::set_next_item_width(-1.0);
+        changed |= gui::slider_float(&format!("##{}.slider", self.path(field)), v, lo, hi, "");
+        ended |= gui::is_item_deactivated_after_edit();
+        self.ended = ended;
+        changed
+    }
+
+    fn edit_int_slider(&mut self, field: &str, label: &str, v: &mut i64, lo: i64, hi: i64) -> bool {
+        self.label(label, false);
+        let mut small = (*v).clamp(lo, hi) as i32;
+        gui::set_next_item_width(-1.0);
+        let changed = gui::slider_int(&self.id(field), &mut small, lo as i32, hi as i32);
+        self.finish_widget();
+        if changed {
+            *v = i64::from(small);
+        }
+
+        changed
+    }
+
+    fn edit_angle(&mut self, field: &str, label: &str, radians: &mut f32, max: f32) -> bool {
+        self.label(label, true);
+        let mut deg = radians.to_degrees();
+        let changed = gui::drag_float(&self.id(field), &mut deg, 0.5, 0.0, max.to_degrees(), "%.1f\u{b0}");
+        self.finish_widget();
+        if changed {
+            *radians = deg.to_radians();
+        }
+
+        changed
+    }
+
+    fn edit_checks(&mut self, field: &str, label: &str, names: &[&str], on: &mut [bool]) -> bool {
+        gui::text(label);
+        let mut changed = false;
+        let mut ended = false;
+        for (i, name) in names.iter().enumerate() {
+            if i % 2 == 1 {
+                gui::same_line_at(label_column() + 110.0);
+            } else {
+                if i > 0 {
+                    gui::text("");
+                }
+
+                gui::same_line_at(label_column());
+            }
+
+            if gui::checkbox(&format!("{name}##{}.{name}", self.path(field)), &mut on[i]) {
+                changed = true;
+                ended = true;
+            }
+        }
+
+        self.ended = ended;
+        changed
+    }
 }
 
 // ---- panel state

@@ -34,6 +34,7 @@ mod shared;
 mod sky;
 mod states;
 mod targets;
+mod blend_mesh;
 mod terrain;
 mod water;
 

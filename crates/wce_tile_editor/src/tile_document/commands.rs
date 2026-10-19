@@ -24,6 +24,9 @@ pub(crate) struct TedMoveCommand {
     pub old_pos_text: Option<String>,
     pub old_euler_text: Option<String>,
     pub gesture: u64,
+
+    /// A layer or group: everything below it moved, the whole tile is republished.
+    pub whole: bool,
 }
 
 impl TedMoveCommand {
@@ -97,7 +100,7 @@ impl Command<Tile> for TedMoveCommand {
     }
 
     fn dirty_items(&self) -> Vec<u64> {
-        vec![item_of(self.elem)]
+        if self.whole { vec![] } else { vec![item_of(self.elem)] }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -184,6 +187,7 @@ impl Command<Tile> for TedSpliceCommand {
 
         t.idx.valid = false;
         t.structure_version += 1;
+        t.piece_props.clear();
         t.hint = Some(self.sel_after.clone());
     }
 
@@ -191,7 +195,78 @@ impl Command<Tile> for TedSpliceCommand {
         let _ = t.project.scene.unapply(&self.record);
         t.idx.valid = false;
         t.structure_version += 1;
+        t.piece_props.clear();
         t.hint = Some(self.sel_before.clone());
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// One property of the Property Editor: the attribute texts of one element (the property and its twin) are replaced, undo puts the old bytes
+/// back. The steps of one drag of a slider merge.
+pub(crate) struct TedAttrCommand {
+    pub name: String,
+    pub elem: usize,
+
+    /// (attribute, text before, text after)
+    pub steps: Vec<(String, String, String)>,
+    pub gesture: u64,
+
+    /// The edit changes what is drawn from the element index (a building's key): the index and the models are rebuilt.
+    pub rebuild: bool,
+}
+
+impl TedAttrCommand {
+    fn put(&self, t: &mut Tile, after: bool) {
+        for (attr, old, new) in &self.steps {
+            let text = if after { new } else { old };
+            t.project.scene.set_attr(self.elem, attr, text);
+            t.sync_pieces(self.elem, attr, text);
+        }
+
+        if self.rebuild {
+            t.idx.valid = false;
+            t.structure_version += 1;
+        } else {
+            t.index_attr_edited(self.elem);
+        }
+    }
+}
+
+impl Command<Tile> for TedAttrCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.put(t, true);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        self.put(t, false);
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ ((self.elem as u64) << 20) } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0) {
+            return false;
+        }
+
+        for (mine, theirs) in self.steps.iter_mut().zip(&n.steps) {
+            mine.2.clone_from(&theirs.2);
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        if self.rebuild { vec![] } else { vec![item_of(self.elem)] }
     }
 
     fn as_any(&self) -> &dyn Any {

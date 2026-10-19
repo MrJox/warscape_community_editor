@@ -524,19 +524,24 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("cam_look", "cam_look eye_x eye_y eye_z target_x target_y target_z", "orbit camera from an eye to a target, metres", |e, a| {
+    c.add("cam_look", "cam_look <x> <y> <z> | cam_look eye_x eye_y eye_z target_x target_y target_z", "orbit camera: move its target (metres), keeping its angles and distance; or from an eye to a target", |e, a| {
         let v: Vec<f32> = a.iter().filter_map(|x| parse_float(x)).collect();
-        if v.len() != 6 || a.len() != 6 {
-            return fail("usage: cam_look eye_x eye_y eye_z target_x target_y target_z");
+        if v.len() != a.len() || !(v.len() == 3 || v.len() == 6) {
+            return fail("usage: cam_look x y z | cam_look eye_x eye_y eye_z target_x target_y target_z");
         }
 
         e.viewport.use_orbit();
-        let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
-        e.viewport.orbit_mut().set_camera(&cam);
+        if v.len() == 3 {
+            e.viewport.orbit_mut().target = Float3::new(v[0], v[1], v[2]);
+        } else {
+            let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
+            e.viewport.orbit_mut().set_camera(&cam);
+        }
+
         ok("")
     });
 
-    c.add("cam_info", "cam_info","test: log the camera, the first selected item's position and the active document's history (for repro scripts)", |e, _| {
+    c.add("cam_info", "cam_info", "test: log the camera, the first selected item's position and the active document's history (for repro scripts)", |e, _| {
         let c = e.viewport.camera();
         let mut s = format!("camera eye {:.2} {:.2} {:.2} target {:.2} {:.2} {:.2}", c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
         if let Some((first, w)) = first_selected_transform(e) {

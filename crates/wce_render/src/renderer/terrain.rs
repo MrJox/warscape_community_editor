@@ -30,8 +30,6 @@ const BLEND_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_blend";
 const BLEND_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps30_blend";
 const RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
-const BLEND_MESH_GEOM_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_geom";
-const BLEND_MESH_GEOM_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_geom";
 
 const PATCH_CELLS: i32 = 64;
 
@@ -97,7 +95,6 @@ pub(crate) struct TerrainGpuState {
     mat: BTreeMap<u64, TerrainMatGpu>,
     grid_ib: BTreeMap<(i32, i32), Option<ID3D11Buffer>>,
     entities: Vec<EntityId>,
-    zw: Target,
     pub(crate) viewz: Target,
     acc: [Target; 3],
     rt_w: u32,
@@ -109,6 +106,7 @@ pub(crate) struct TerrainGpuState {
     inst_vb: Option<ID3D11Buffer>,
     ds_depth: Option<ID3D11DepthStencilState>,
     ds_equal: Option<ID3D11DepthStencilState>,
+    ds_lequal: Option<ID3D11DepthStencilState>,
     ds_stencil: Option<ID3D11DepthStencilState>,
     ds_resolve: Option<ID3D11DepthStencilState>,
     bs_add: Option<ID3D11BlendState>,
@@ -175,6 +173,9 @@ impl Renderer {
 
         // The same surface again (view-space depth): exactly the pixels it won.
         t.ds_equal = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_EQUAL, ..Default::default() });
+
+        // The terrain-blend meshes' view-space depth comes from another vertex shader than their G-buffer pass: not bit for bit the same depth.
+        t.ds_lequal = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() });
 
         // Only the terrain pixels (stencil 2) ...
         let keep = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL, ..replace };
@@ -473,8 +474,7 @@ impl Renderer {
         };
 
         // The targets.
-        if self.terrain.zw.tex.is_none() || self.terrain.rt_w != self.gbuffer.w || self.terrain.rt_h != self.gbuffer.h {
-            self.terrain.zw = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
+        if self.terrain.viewz.tex.is_none() || self.terrain.rt_w != self.gbuffer.w || self.terrain.rt_h != self.gbuffer.h {
             self.terrain.viewz = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
             for i in 0..3 {
                 self.terrain.acc[i] = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -485,7 +485,9 @@ impl Renderer {
         }
 
         null_ps_srvs(&self.ctx, 16);
-        for rtv in [&self.terrain.zw.rtv, &self.terrain.viewz.rtv].into_iter().flatten() {
+        // The clip z / w of the blend boxes' depth map is the G-buffer's own depth channel (the terrain-blend meshes wrote theirs in the geometry pass; the
+        // surface adds its own below), not cleared here.
+        if let Some(rtv) = &self.terrain.viewz.rtv {
             self.ctx.clear_render_target_view(rtv, [1.0, 0.0, 0.0, 1.0]);
         }
 
@@ -533,16 +535,25 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.grid_vb), &[12], &[0]);
 
-        let (zw_rtv, viewz_rtv) = (self.terrain.zw.rtv.clone(), self.terrain.viewz.rtv.clone());
+        let (zw_rtv, viewz_rtv) = (self.gbuffer.channels[3].rtv.clone(), self.terrain.viewz.rtv.clone());
         let (ds_depth, ds_equal) = (self.terrain.ds_depth.clone(), self.terrain.ds_equal.clone());
         self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, 2);
         self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0);
 
-        // The TerrainBlend meshes, as more surface.
-        if let (Some(main_vs), Some(blend_geom_vs), Some(blend_geom_ps)) = (self.shader(TERRAIN_BLEND_VS), self.shader(BLEND_MESH_GEOM_VS), self.shader(BLEND_MESH_GEOM_PS)) {
-            self.draw_blend_meshes(&main_vs, &geom_ps, &zw_rtv, &ds_depth, 2);
-            self.draw_blend_meshes(&blend_geom_vs, &blend_geom_ps, &viewz_rtv, &ds_equal, 0);
-        }
+        // The terrain-blend meshes' view-space depth (`geometry_30`): the resolve places them with it.
+        let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+        let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+        let firsts = self.draw_lists.gbuffer_firsts;
+        let d = blend_mesh::BlendDraw {
+            vs: blend_mesh::BLEND_GEOM_VS, ps: blend_mesh::BLEND_GEOM_PS, targets: vec![viewz_rtv.clone()], depth_stencil: self.terrain.ds_lequal.clone(), stencil_ref: 0,
+            blend: self.states.bs_opaque.clone(),
+        };
+
+        self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
+        self.draw_lists.terrain_draws = terrain_draws;
+        self.draw_lists.draws = draws;
+        self.draw_lists.vis_terrain = vis_terrain;
+        self.draw_lists.vis = vis;
 
         // ---- 2. The blend boxes.
         let el = [
@@ -619,7 +630,7 @@ impl Renderer {
             self.bind(&blend_ps);
             null_ps_srvs(&self.ctx, 16);
             let ctx = &self.ctx;
-            bind_srv(ctx, &blend_ps, "s_depth_map", self.terrain.zw.srv.as_ref());
+            bind_srv(ctx, &blend_ps, "s_depth_map", self.gbuffer.channels[3].srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_index_map", g.index.srv.as_ref());
@@ -647,6 +658,22 @@ impl Renderer {
             ctx.draw_indexed_instanced(36, 1, 0, 0, 0);
 
             self.draw_stats.draw_calls += 1;
+        }
+
+        // ---- 2b. The terrain-blend meshes' own material (`custom_material`): added to the accumulation with the weight 10 * vertex alpha.
+        {
+            let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+            let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+            let d = blend_mesh::BlendDraw {
+                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_MATERIAL_PS, targets: self.terrain.acc.iter().map(|a| a.rtv.clone()).collect(),
+                depth_stencil: self.terrain.ds_equal.clone(), stencil_ref: 0, blend: self.terrain.bs_add.clone(),
+            };
+
+            self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
+            self.draw_lists.terrain_draws = terrain_draws;
+            self.draw_lists.draws = draws;
+            self.draw_lists.vis_terrain = vis_terrain;
+            self.draw_lists.vis = vis;
         }
 
         // ---- 3. The resolve: the terrain pixels into the G-buffer.
@@ -705,32 +732,6 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
-    }
-
-    /// Draws the TerrainBlend meshes the camera's G-buffer pass culled, from its instances, with a pair of shaders into one target.
-    fn draw_blend_meshes(&mut self, vs: &Rc<GameShader>, ps: &Rc<GameShader>, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
-        let Some(rigid_vs) = self.shader(RIGID_VS) else { return };
-        let Some(layout) = self.layout(&rigid_vs, "rigid_std", &rigid_layout()) else { return };
-        self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
-        self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
-        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
-        self.ctx.set_input_layout(Some(&layout));
-        self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
-        self.bind(vs);
-        self.bind(ps);
-        for &slot in vs.textures.values() {
-            self.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&self.res.instance_ids_srv));
-        }
-
-        let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
-        let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
-        let firsts = self.draw_lists.gbuffer_firsts;
-        let (_, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| m.kind == MeshKind::TerrainBlend);
-        self.draw_stats.triangles += triangles;
-        self.draw_lists.terrain_draws = terrain_draws;
-        self.draw_lists.draws = draws;
-        self.draw_lists.vis_terrain = vis_terrain;
-        self.draw_lists.vis = vis;
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
