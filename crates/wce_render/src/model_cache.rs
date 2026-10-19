@@ -288,6 +288,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl TextureInner {
+    /// Logs (once) something that loads but deserves attention; not an error.
+    fn warn(&self, message: String) {
+        if lock(&self.logged).insert(message.clone()) {
+            log::warn(format!("texture {message}"));
+        }
+    }
+
     fn error(&self, level: LogLevel, message: String) {
         if lock(&self.logged).insert(message.clone()) {
             log::add(level, format!("texture {message}"));
@@ -378,6 +385,10 @@ impl TextureCache {
         // Stage one: only the small mips, from the tail of the file. When they don't load, the whole file is tried below.
         let header = &bytes[..bytes.len().min(148)];
         let plan = plan_dds_stream(header, bytes.len(), 256);
+        if plan.width > 0 && !(plan.width.is_power_of_two() && plan.height.is_power_of_two()) {
+            inner.warn(format!("{path}: {} x {} is not a power of two (slower to sample and to stream)", plan.width, plan.height));
+        }
+
         let first = (inner.streaming.load(Ordering::Relaxed) && plan.ok)
             .then(|| load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb))
             .and_then(|tail| tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok());
