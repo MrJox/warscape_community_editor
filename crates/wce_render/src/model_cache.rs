@@ -345,37 +345,31 @@ impl TextureCache {
             }
         };
 
-        // Stage one: only the small mips, from the tail of the file.
-        if inner.streaming.load(Ordering::Relaxed) {
-            let header = &bytes[..bytes.len().min(148)];
-            let plan = plan_dds_stream(header, bytes.len(), 256);
-            if plan.ok {
-                let first = match load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb) {
-                    Ok(texture) => Arc::new(RwLock::new(texture)),
-                    Err(error) => {
-                        inner.error(format!("{path}: {error}"));
-                        return None;
-                    }
-                };
+        // Stage one: only the small mips, from the tail of the file. When they don't load, the whole file is tried below.
+        let header = &bytes[..bytes.len().min(148)];
+        let plan = plan_dds_stream(header, bytes.len(), 256);
+        let first = (inner.streaming.load(Ordering::Relaxed) && plan.ok)
+            .then(|| load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb))
+            .and_then(|tail| tail.map_err(|error| inner.error(format!("{path}: streamed: {error}"))).ok());
+        if let Some(first) = first {
+            let first = Arc::new(RwLock::new(first));
+            inner.loaded.fetch_add(1, Ordering::Relaxed);
+            inner.upgrades_inflight.fetch_add(1, Ordering::AcqRel);
+            let (job_inner, target, path) = (inner.clone(), first.clone(), path.to_owned());
 
-                inner.loaded.fetch_add(1, Ordering::Relaxed);
-                inner.upgrades_inflight.fetch_add(1, Ordering::AcqRel);
-                let (job_inner, target, path) = (inner.clone(), first.clone(), path.to_owned());
+            // After every model load that is queued.
+            let handle = io_pool().post(move || {
+                wce_prof!("texture.upgrade");
+                match load_dds(job_inner.dev.device(), &bytes, srgb) {
+                    Ok(full) => lock(&job_inner.upgrades).push((target, full)),
+                    Err(error) => job_inner.error(format!("{path}: {error}")),
+                }
 
-                // After every model load that is queued.
-                let handle = io_pool().post(move || {
-                    wce_prof!("texture.upgrade");
-                    match load_dds(job_inner.dev.device(), &bytes, srgb) {
-                        Ok(full) => lock(&job_inner.upgrades).push((target, full)),
-                        Err(error) => job_inner.error(format!("{path}: {error}")),
-                    }
+                job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
+            }, JobPool::current_priority() + 1.0e6);
 
-                    job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
-                }, JobPool::current_priority() + 1.0e6);
-
-                lock(&inner.upgrade_jobs).push(handle);
-                return Some(first);
-            }
+            lock(&inner.upgrade_jobs).push(handle);
+            return Some(first);
         }
 
         wce_prof!("texture.create");
