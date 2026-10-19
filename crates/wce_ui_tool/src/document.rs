@@ -70,6 +70,8 @@ pub struct UiDocument {
     entries: RefCell<Option<(u64, Rc<Vec<Entry>>)>>,
     draw: RefCell<Option<(u64, Rc<Vec<DrawItem>>)>>,
     xml: RefCell<Option<(u64, Rc<String>)>>,
+    /// The layout as opened or last saved: what "reset all changes" goes back to.
+    saved: UiModel,
 }
 
 /// Selection item of the entry at `index` of `entries()`.
@@ -84,7 +86,7 @@ pub fn index_of(item: u64) -> Option<usize> {
 
 impl UiDocument {
     pub fn new(source: Source, model: UiModel, out_dir: PathBuf) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), source, out_dir, entries: RefCell::new(None), draw: RefCell::new(None), xml: RefCell::new(None) }
+        Self { core: DocumentCore::new(), saved: model.clone(), history: CommandStack::new(model), source, out_dir, entries: RefCell::new(None), draw: RefCell::new(None), xml: RefCell::new(None) }
     }
 
     pub fn model(&self) -> &UiModel {
@@ -143,6 +145,20 @@ impl UiDocument {
             Ok(())
         })?;
         self.history.mark_saved();
+        self.saved = self.history.model().clone();
+        Ok(())
+    }
+
+    /// Puts the layout back as it was opened or last saved, as one undoable step.
+    pub fn reset_all(&mut self) -> Result<(), String> {
+        let saved = self.saved.clone();
+        self.edit("Reset all changes", 0, |after| {
+            *after = saved;
+            Ok(())
+        })?;
+        self.history.break_merge();
+        // the layout is now what the file on disk holds
+        self.history.mark_saved();
         Ok(())
     }
 
@@ -158,13 +174,13 @@ impl UiDocument {
 
     /// Replaces one component (a `uientry` or `template` element) with the XML.
     pub fn set_entry_xml(&mut self, path: &[usize], xml: &str, key: u64) -> Result<(), String> {
-        let frag = wce_ui_model::Dom::parse(xml)?;
-        if frag.root.name != "uientry" && frag.root.name != "template" {
-            return Err("the element must be <uientry> or <template>".into());
+        let frag_root = self.model().fragment_from_xml(xml)?;
+        if frag_root.name != "uientry" && frag_root.name != "template" {
+            return Err("the element must be a <component> (<uientry>) or <template>".into());
         }
         let path = path.to_vec();
         self.edit("Edit XML", key, |after| {
-            *after.dom_mut().at_mut(&path).ok_or("the component is gone")? = frag.root;
+            *after.dom_mut().at_mut(&path).ok_or("the component is gone")? = frag_root;
             after.clone().to_bytes().map_err(|e| format!("does not convert to a layout: {e}"))?;
             Ok(())
         })
@@ -242,6 +258,7 @@ impl Document for UiDocument {
 
         std::fs::write(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))?;
         self.history.mark_saved();
+        self.saved = self.history.model().clone();
         if self.source.vfs_path.is_empty() {
             self.source.disk = to;
         }

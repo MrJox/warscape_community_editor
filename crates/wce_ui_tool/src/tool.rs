@@ -59,6 +59,8 @@ struct XmlPane {
     last_edit: f64,
     error: String,
     whole: bool,
+    /// Show the converter's own XML instead of the one under the game's names.
+    raw: bool,
 }
 
 #[derive(Default)]
@@ -320,6 +322,18 @@ Only the preview: the file is not changed.");
         gui::checkbox("Related", &mut self.related_on);
         if gui::is_item_hovered() {
             gui::set_tooltip("Draw the layouts this one is used with, faded, as reference only (not editable). Choose which in the UI Related panel.");
+        }
+
+        gui::same_line();
+        let changed = active_doc(e).and_then(|id| ui_doc_ref(e, id)).is_some_and(|d| d.modified());
+        gui::begin_disabled(!changed);
+        if gui::small_button("Reset all changes") {
+            self.reset_all(e);
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the layout back as it was when opened or last saved. Ctrl+Z brings the changes back.");
         }
 
         if self.anim.is_some() {
@@ -1106,6 +1120,17 @@ linked by the component name '{}'", r.path, r.via));
         })
     }
 
+    /// Throws away every change since the layout was opened or saved (one undo step).
+    fn reset_all(&mut self, e: &mut Editor) {
+        let Some(id) = active_doc(e) else { return };
+        let r = ui_doc(e, id).map(|d| d.reset_all());
+        match r {
+            Some(Ok(())) => e.status("all changes undone (Ctrl+Z brings them back)", false),
+            Some(Err(m)) => e.status(&m, true),
+            None => {}
+        }
+    }
+
     // ---- XML pane
 
     fn xml_pane(&mut self, e: &mut Editor) {
@@ -1127,10 +1152,12 @@ linked by the component name '{}'", r.path, r.via));
         let key = (id, version, scope, self.xml.whole);
         if key != self.xml.shown && !self.xml.edited {
             let d = ui_doc_ref(e, id).unwrap();
-            self.xml.text = if self.xml.whole {
-                d.xml().as_ref().clone()
-            } else {
-                sel.and_then(|i| d.entries().get(i).and_then(|en| d.model().dom.at(&en.path).map(|el| wce_ui_model::Dom { root: el.clone() }.to_xml()))).unwrap_or_default()
+            self.xml.text = match (self.xml.whole, self.xml.raw) {
+                (true, true) => d.xml().as_ref().clone(),
+                (true, false) => d.model().to_named_xml(),
+                (false, raw) => sel
+                    .and_then(|i| d.entries().get(i).and_then(|en| if raw { d.model().dom.at(&en.path).map(|el| wce_ui_model::Dom { root: el.clone() }.to_xml()) } else { d.model().entry_to_named_xml(&en.path) }))
+                    .unwrap_or_default(),
             };
             self.xml.shown = key;
             self.xml.error.clear();
@@ -1138,6 +1165,16 @@ linked by the component name '{}'", r.path, r.via));
 
         if gui::checkbox("Whole file", &mut self.xml.whole) {
             self.xml.edited = false;
+        }
+
+        gui::same_line();
+        if gui::checkbox("Converter names", &mut self.xml.raw) {
+            self.xml.edited = false;
+            self.xml.shown = (0, 0, None, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Off: the fields are named as in the Fields panel (offset_x, visible, ...). On: the converter's own tags and guesses (<i>, <yes />). Either form can be edited.");
         }
 
         gui::same_line();
@@ -2206,6 +2243,11 @@ impl Tool for UiTool {
     fn draw_menus(&mut self, e: &mut Editor) {
         if gui::begin_menu("UI") {
             let has = active_doc(e).is_some();
+            let changed = active_doc(e).and_then(|id| ui_doc_ref(e, id)).is_some_and(|d| d.modified());
+            if gui::menu_item("Reset all changes", None, false, changed) {
+                self.reset_all(e);
+            }
+
             let sel = has && active_doc(e).and_then(|id| selected(e, id)).is_some();
             gui::begin_disabled(!sel);
             if gui::menu_item("Add child", None, false, true) {

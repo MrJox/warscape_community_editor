@@ -313,8 +313,13 @@ impl Session {
                 if let Some(e) = a.get("entry") {
                     let (_, en) = self.resolve(&id, e)?;
                     let el = d.model.dom.at(&en.path).ok_or("entry vanished")?;
+                    if arg_b(a, "named").unwrap_or(false) {
+                        return Ok(Reply::text(d.model.entry_to_named_xml(&en.path).ok_or("entry vanished")?));
+                    }
                     let dom = wce_ui_model::Dom { root: el.clone() };
                     Ok(Reply::text(dom.to_xml()))
+                } else if arg_b(a, "named").unwrap_or(false) {
+                    Ok(Reply::text(d.model.to_named_xml()))
                 } else {
                     Ok(Reply::text(d.model.to_xml()))
                 }
@@ -324,13 +329,13 @@ impl Session {
                 let xml = arg_str(a, "xml").ok_or("'xml' is required")?;
                 if let Some(e) = a.get("entry") {
                     let (_, en) = self.resolve(&id, e)?;
-                    let frag = wce_ui_model::Dom::parse(xml)?;
-                    if frag.root.name != "uientry" && frag.root.name != "template" {
-                        return Err("the replacement must be a <uientry> or <template> element".into());
-                    }
                     let d = self.doc_mut(&id)?;
+                    let frag_root = d.model.fragment_from_xml(xml)?;
+                    if frag_root.name != "uientry" && frag_root.name != "template" {
+                        return Err("the replacement must be a <component> (<uientry>) or <template> element".into());
+                    }
                     let mut trial = d.model.clone();
-                    *trial.dom_mut().at_mut(&en.path).ok_or("entry vanished")? = frag.root;
+                    *trial.dom_mut().at_mut(&en.path).ok_or("entry vanished")? = frag_root;
                     trial.to_bytes().map_err(|e| format!("the replacement does not convert: {e}"))?;
                     d.model = trial;
                 } else {

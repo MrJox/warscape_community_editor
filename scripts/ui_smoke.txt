@@ -88,6 +88,27 @@ ui_save_pack "%OUT%/ui_smoke.pack"
 undo 99
 assert_modified 0
 
+# reset all changes: several different edits are all thrown away at once (the layout reads as it did), and one undo brings them back
+ui_select 1
+ui_save_xml "%OUT%/reset_before.xml"
+ui_set x 41
+ui_add reset_probe
+ui_select reset_probe
+ui_set y 9
+assert_modified 1
+ui_reset_all
+frames 2
+assert_modified 0
+ui_save_xml "%OUT%/reset_after.xml"
+ui_assert_count_delta 0
+undo
+frames 2
+assert_modified 1
+ui_assert_count_delta 1
+redo
+frames 2
+assert_modified 0
+
 # what is drawn: with hidden components honoured fewer are drawn than there are (this layout has components that are hidden at load); with
 # them shown, all are
 ui_open "ui/frontend ui/battle_setup"

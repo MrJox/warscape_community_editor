@@ -201,18 +201,18 @@ pub const SOUND_CATEGORIES: &[&str] = &[
 ];
 
 /// A field with where it sits among the labelled ones: the last label before it and how many unlabelled fields came since.
-struct Item {
-    idx: usize,
-    tag: String,
-    value: String,
-    label: String,
-    after: String,
-    since: usize,
-    nth: usize,
+pub(crate) struct Item {
+    pub(crate) idx: usize,
+    pub(crate) tag: String,
+    pub(crate) value: String,
+    pub(crate) label: String,
+    pub(crate) after: String,
+    pub(crate) since: usize,
+    pub(crate) nth: usize,
 }
 
-struct Def {
-    name: &'static str,
+pub(crate) struct Def {
+    pub(crate) name: &'static str,
     help: &'static str,
     group: &'static str,
     control: Control,
@@ -241,7 +241,7 @@ fn tidy(label: &str) -> String {
     }
 }
 
-fn items(el: &Element) -> Vec<Item> {
+pub(crate) fn items(el: &Element) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     let mut after = String::new();
     let mut since = 0usize;
@@ -576,7 +576,7 @@ impl Prop {
 }
 
 /// The mask bits of an integer word are shown as check boxes.
-fn bits_for(kind: &str, it: &Item, v: u32) -> Option<Vec<(u32, bool, &'static str, &'static str)>> {
+pub(crate) fn bits_for(kind: &str, it: &Item, v: u32) -> Option<Vec<(u32, bool, &'static str, &'static str)>> {
     match kind {
         "state" if it.tag == "i" && it.since == 0 && (it.after == "bottom ?" || it.after == "y ?") => {
             let mut b = vec![
@@ -617,7 +617,7 @@ fn hidden(kind: &str, it: &Item, v: u32) -> bool {
     }
 }
 
-fn component_def(it: &Item, v: u32) -> Option<Def> {
+pub(crate) fn component_def(it: &Item, v: u32) -> Option<Def> {
     // The fields that have no label of their own are named by the labelled field before them.
     if it.label.is_empty() {
         return match (it.after.as_str(), it.since, it.tag.as_str()) {
@@ -667,7 +667,7 @@ fn component_def(it: &Item, v: u32) -> Option<Def> {
     }
 }
 
-fn state_def(it: &Item, v: u32) -> Option<Def> {
+pub(crate) fn state_def(it: &Item, v: u32) -> Option<Def> {
     if it.label.is_empty() {
         let editor_pos = it.tag == "i" && matches!(it.after.as_str(), "text shader vars" | "text shader name") && it.since < 2 && it.nth == 0;
         if editor_pos {
@@ -709,7 +709,7 @@ fn state_def(it: &Item, v: u32) -> Option<Def> {
     }
 }
 
-fn picture_def(it: &Item, v: u32) -> Option<Def> {
+pub(crate) fn picture_def(it: &Item, v: u32) -> Option<Def> {
     if it.label.is_empty() {
         return if it.tag == "u" && it.since == 0 && it.after.is_empty() {
             d("Picture", "Picture", Control::Choice(vec![]), "Which of the component's pictures (its picture list) this use draws.")
@@ -749,7 +749,7 @@ fn picture_def(it: &Item, v: u32) -> Option<Def> {
     }
 }
 
-fn mouse_def(it: &Item) -> Option<Def> {
+pub(crate) fn mouse_def(it: &Item) -> Option<Def> {
     if it.label.is_empty() {
         return match (it.after.as_str(), it.since, it.tag.as_str()) {
             ("type", 0, "u") => d("Go to state", "Mouse action", Control::Choice(vec![]), "The state the component changes to."),

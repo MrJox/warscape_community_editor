@@ -33,10 +33,12 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 * **UI Canvas**: the layout drawn from its default states: pictures from the game's packs (mod packs over vanilla; a picture that is not found is a
   magenta outline), text with the editor's font. Click selects the topmost component under the cursor, drag moves, the eight handles resize, the
   wheel zooms, middle mouse or Space+drag pans, arrows nudge (Shift: 10), Delete deletes, Ctrl+D duplicates. Outlines / Pictures / Text toggles.
+* **Reset all changes** (UI menu, and the button in the toolbar): puts the layout back as it was when opened or last saved; Ctrl+Z brings the changes back.
 * **UI XML**: the XML of the selected component (or the whole file). Typing applies when you pause for a third of a second, if the XML parses and
   converts to a layout; otherwise the message says why and the canvas keeps the last good state. Edits made on the canvas show here at once.
 * **UI Fields**: every primitive of the component (and of its default state) with the name the format gives it; Enter or leaving the field commits.
 * **Outliner** (the tree of components, with the click selecting on the canvas), **Inspector** (name, offsets, size, text, text colour), **History**.
+  The fields carry the names of the Fields panel (`<offset_x>`, `<visible>yes</visible>`, `<component>`, `<picture_use>`); tick *Converter names* for the converter's own tags and guessed comments. Either form can be edited and pasted, and the file saved is the same. Fields the editor has no name for keep their primitive tag (`<i>`) and comment. Values are shown as stored (a dock point is its number); the Fields panel shows them in words.
 
 Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. Menu `UI`: add child, duplicate, delete, paint
 order, move into the previous sibling / out of the parent (the place on screen is kept), save into a mod pack, export XML.

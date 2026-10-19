@@ -43,10 +43,10 @@ fn list_plain() -> Vec<Value> {
         tool("ui_tree", "The components of the layout, indented by depth: [number] name (class) @x,y WxH and the position on screen (docked components sit at their dock point plus dock offset, not at the stored offset; the stored one is shown when it differs). Numbers change after add, delete, duplicate, move and reparent; those return the new number.", vec![id.clone(), ("max_depth", prop("integer", "Deepest level to list (the root is 0).")), ("screen", prop("string", "Screen size like '1920x1080': positions as the game docks them there."))], &[]),
         tool("ui_entry", "Details of one component: rectangle, parent, children, its properties under the game's names (group, kind, shown value, choices; set them with ui_set_property) and every primitive field (number, type, the name the converter gives it, value).", vec![id.clone(), entry("entry")], &["entry"]),
         tool("ui_state", "The fields of a component's default state (text, font, colours, shaders), with field numbers for ui_set_field (state=true).", vec![id.clone(), entry("entry")], &["entry"]),
-        tool("ui_xml", "The XML of the whole layout, or of one component and everything below it.", vec![id.clone(), entry("entry")], &[]),
+        tool("ui_xml", "The XML of the whole layout, or of one component and everything below it. With named=true the fields carry the names of ui_entry's properties (<offset_x>, <visible>yes</visible>, <component>) instead of the converter's tags and guessed comments; ui_set_xml and from-xml take either form.", vec![id.clone(), entry("entry"), ("named", prop("boolean", "Use the game's names."))], &[]),
         tool(
             "ui_set_xml",
-            "Replace the XML of the whole layout, or of one component (a <uientry> or <template> element). Rejected, leaving the layout unchanged, if it does not parse or does not convert back to a binary layout. Array counts are corrected on save.",
+            "Replace the XML of the whole layout, or of one component (a <uientry>/<component> or <template> element), in the converter's form or the named one (see ui_xml). Rejected, leaving the layout unchanged, if it does not parse or does not convert back to a binary layout. Array counts are corrected on save.",
             vec![id.clone(), entry("entry"), ("xml", prop("string", "The XML."))],
             &["xml"],
         ),
