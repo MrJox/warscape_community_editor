@@ -321,7 +321,7 @@ pub fn plan_dds_stream(header: &[u8], file_size: usize, max_dim: u32) -> DdsStre
 
     // D3D11 wants a block compressed texture's top mip in whole blocks: a 1024 x 4048 atlas (TDD's barbarian_atlas, vanilla's
     // western_barbarian_atlas) would start at 64 x 253. Start at a larger mip instead.
-    let whole_blocks = |s: u32| (l.width >> s).max(1) % 4 == 0 && (l.height >> s).max(1) % 4 == 0;
+    let whole_blocks = |s: u32| (l.width >> s).max(1).is_multiple_of(4) && (l.height >> s).max(1).is_multiple_of(4);
     while is_block(l.fmt) && skip > 0 && !whole_blocks(skip) {
         skip -= 1;
     }

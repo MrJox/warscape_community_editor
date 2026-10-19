@@ -655,6 +655,7 @@ impl ParticleSystem {
 
     fn error(&mut self, e: String) {
         if !self.errors.contains(&e) {
+            wce_foundation::log::error(format!("vfx {e}"));
             self.errors.push(e);
         }
     }
