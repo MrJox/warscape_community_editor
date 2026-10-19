@@ -43,12 +43,15 @@ pub(crate) struct WaterGpu {
     meshes: BTreeMap<EntityId, WaterMesh>,
 
     /// The half-resolution scene colour (rgb) + the refraction weight (a), s_terrain_refraction.
-    refr: Target,
+    pub(crate) refr: Target,
     refr_w: u32,
     refr_h: u32,
     river_inst_vb: Option<ID3D11Buffer>,
     sea_inst_vb: Option<ID3D11Buffer>,
-    ds: Option<ID3D11DepthStencilState>,
+    pub(crate) ds: Option<ID3D11DepthStencilState>,
+
+    /// The sea planes' ocean pass (renderer/ocean.rs).
+    pub(crate) ocean: super::ocean::OceanGpu,
 }
 
 /// The size of a water vertex.
@@ -152,6 +155,16 @@ impl Renderer {
         }
 
         self.water_refraction();
+
+        // The sea planes: the game's ocean shaders (renderer/ocean.rs); rivers and the models' water planes below.
+        if !rivers {
+            self.draw_ocean(scene, &water);
+            if !model_water {
+                null_ps_srvs(&self.ctx, 16);
+                self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+                return;
+            }
+        }
         let nt = self.textures.get(if rivers { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let layout = if rivers {
@@ -217,7 +230,7 @@ impl Renderer {
         for e in water.iter().copied() {
             let Payload::Water(w) = &e.payload else { continue };
             let Some(mesh) = self.water.meshes.get(&e.id) else { continue };
-            if w.river != rivers || !scene.drawable(e) {
+            if !rivers || !w.river || !scene.drawable(e) {
                 continue;
             }
 
