@@ -126,6 +126,9 @@ impl Tile {
         }
 
         self.clip_to_tile = on;
+
+        // The tile's own sea gives way to the map context's.
+        self.water_dirty = true;
         if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
             self.update_terrain(scene, false);
         }
@@ -336,8 +339,9 @@ impl Tile {
     /// the exported river_spline*.xml the game reads has the points' stored heights and no terrain_offset. terrain_offset is the point's height
     /// over the ground under it when TEd placed it (osgiliath minor: 23 of 26 points to the millimetre; up to 0.8 m off where the ground changed
     /// since). Adding it to the ground under every sample lifted the water of osgiliath minor's second river over the ford it starts on.
-    /// The sea plane: a tile of a sea tile set whose terrain goes below 0 gets a plane at y = 0 over the bordered tile; the depth test
-    /// cuts it where the ground is higher.
+    /// The sea plane: TEd draws the sea at 0 m over every tile, whatever its tile set, as context (it is not in the file); so does this, over
+    /// the bordered tile, unless the map context is shown (it draws the sea over the whole area, at 0 m relative to the open tile's place).
+    /// The depth test cuts it where the ground is higher.
     fn rebuild_water(&mut self, scene: &mut RenderScene, layer: LayerId) {
         for &e in &self.water_entities {
             scene.remove(e);
@@ -346,7 +350,7 @@ impl Tile {
         self.water_entities.clear();
         self.water_dirty = false;
         self.water_note.clear();
-        if !self.display.show_water {
+        if !self.display.show_water && !self.display.show_sea {
             self.water_note = "water hidden".to_owned();
             return;
         }
@@ -357,7 +361,7 @@ impl Tile {
         let sc = self.tscene();
         let els = sc.doc().elements();
         for e in 0..els.len() {
-            if els[e].name != "SplineRiverInstance" {
+            if els[e].name != "SplineRiverInstance" || !self.display.show_water {
                 continue;
             }
 
@@ -464,15 +468,11 @@ impl Tile {
             new_water.push(wt);
         }
 
-        // The sea plane. Which tiles have open water is a matter of the tile set: a river tile's terrain also goes below 0 (the ford's heights
-        // are all <= 0) and has no sea. Lakes are not: every lakes tile has its water as SIMPLE_MESH_INSTANCE water planes (water_plane
-        // models scaled over the lake, at the lake's own height: -6.9 m on lakes/10x10/aa), drawn as models.
-        let p = &self.project;
-        let set = p.entry.as_ref().map(|e| e.tile_set()).unwrap_or_default();
-        let sea_set = matches!(set.as_str(), "sea" | "sea_coast" | "sea_coast_landing" | "river_mouth");
-        let sea = sea_set && p.has_height() && p.info.found && p.info.min_height < -0.5;
+        // The sea plane. Lakes are not the sea: a lakes tile has its water as SIMPLE_MESH_INSTANCE water planes (water_plane models scaled
+        // over the lake, at the lake's own height: -6.9 m on lakes/10x10/aa), drawn as models.
+        let sea = self.display.show_sea && !self.clip_to_tile;
         if sea {
-            let b = p.border_m() as f32;
+            let b = self.project.border_m() as f32;
             let (x0, z0, x1, z1) = (-b, -b, self.extent_x() as f32 + b, self.extent_z() as f32 + b);
             let v = |x: f32, z: f32| WaterVertex { x, y: 0.0, z, across: 0.0, u: x, v: z, flow: 0.0, fade: 1.0 };
             new_water.push(Water { river: false, foam: 0.0, verts: vec![v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1)], indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() });
@@ -486,7 +486,7 @@ impl Tile {
         }
 
         self.water_note = if rivers != 0 || sea {
-            format!("{rivers} river spline(s) ({ribbons} samples){}", if sea { ", a sea / lake plane at 0 m" } else { "" })
+            format!("{rivers} river spline(s) ({ribbons} samples){}", if sea { ", the sea at 0 m" } else { "" })
         } else {
             "no water in this tile".to_owned()
         };

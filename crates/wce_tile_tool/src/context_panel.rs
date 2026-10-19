@@ -10,7 +10,7 @@ use std::sync::mpsc::{Receiver, channel};
 use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::log;
-use wce_scene::render_scene::{DocumentId, LayerId};
+use wce_scene::render_scene::{DocumentId, LayerId, Payload};
 use wce_tile::battle_map::context::{PlacedMap, Spot};
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
@@ -234,12 +234,35 @@ impl ContextUi {
         // The open tile's height map border would lie over the neighbours.
         if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
             d.tile_mut().set_clip_to_tile(&mut e.scene, true);
+            let sea = d.tile().display().show_sea;
+            self.show_sea(e, sea);
         }
 
         self.status = built.report.clone();
         log::info(format!("map context: {}", built.report));
         for m in built.missing.iter().take(10) {
             log::info(format!("map context: not opened: {m}"));
+        }
+    }
+
+    /// Shows or hides the context's sea (the tile's sea toggle).
+    pub fn show_sea(&self, e: &mut Editor, on: bool) {
+        if self.layer == 0 {
+            return;
+        }
+
+        let seas = e.scene.entities().iter()
+            .filter(|en| en.layer == self.layer && matches!(&en.payload, Payload::Water(w) if !w.river) && en.visible != on)
+            .map(|en| en.id)
+            .collect::<Vec<_>>();
+        for id in &seas {
+            if let Some(en) = e.scene.find_mut(*id) {
+                en.visible = on;
+            }
+        }
+
+        if !seas.is_empty() {
+            e.scene.touch();
         }
     }
 
