@@ -2,109 +2,54 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Configure WCE (Visual Studio 2022 x64)",
-            "type": "process",
-            "command": "cmake",
-            "args": [
-                "-S", "${workspaceFolder}",
-                "-B", "${workspaceFolder}/build",
-                "-G", "Visual Studio 17 2022",
-                "-A", "x64"
-            ],
-            "options": { "cwd": "${workspaceFolder}" },
-            "problemMatcher": []
-        },
-        {
             "label": "Build WCE (Debug)",
             "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "wce"],
+            "command": "cargo",
+            "args": ["build", "-p", "wce_app"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
             "group": "build",
-            "problemMatcher": "$msCompile"
+            "problemMatcher": "$rustc"
         },
         {
             "label": "Build WCE (Release)",
             "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Release", "--target", "wce"],
+            "command": "cargo",
+            "args": ["build", "--release", "-p", "wce_app"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
+            "problemMatcher": "$rustc"
         },
         {
             "label": "Run WCE (Debug build, without debugger)",
             "type": "process",
-            "command": "${workspaceFolder}/build/bin/Debug/wce.exe",
-            "args": [],
+            "command": "cargo",
+            "args": ["run", "-p", "wce_app"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Build WCE (Debug)",
-            "dependsOrder": "sequence",
-            "problemMatcher": []
+            "problemMatcher": "$rustc"
         },
         {
             "label": "Run WCE (Release build, without debugger)",
             "type": "process",
-            "command": "${workspaceFolder}/build/bin/Release/wce.exe",
-            "args": [],
+            "command": "cargo",
+            "args": ["run", "--release", "-p", "wce_app"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Build WCE (Release)",
-            "dependsOrder": "sequence",
-            "problemMatcher": []
+            "problemMatcher": "$rustc"
         },
         {
             "label": "Build All (Debug)",
             "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug"],
+            "command": "cargo",
+            "args": ["build", "--workspace", "--bins", "--examples"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
+            "problemMatcher": "$rustc"
         },
         {
-            "label": "Build All (Release)",
+            "label": "Run all tests",
             "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Release"],
+            "command": "cargo",
+            "args": ["test", "--workspace"],
             "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Build unit_tests (Debug)",
-            "type": "process",
-            "command": "cmake",
-            "args": ["--build", "${workspaceFolder}/build", "--config", "Debug", "--target", "unit_tests"],
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Configure WCE (Visual Studio 2022 x64)",
-            "dependsOrder": "sequence",
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "Run fast tests (CTest)",
-            "type": "process",
-            "command": "ctest",
-            "args": ["--test-dir", "${workspaceFolder}/build", "-C", "Debug", "-L", "fast", "--output-on-failure"],
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Build All (Debug)",
-            "dependsOrder": "sequence",
             "group": "test",
-            "problemMatcher": []
-        },
-        {
-            "label": "Run all tests (CTest)",
-            "type": "process",
-            "command": "ctest",
-            "args": ["--test-dir", "${workspaceFolder}/build", "-C", "Debug", "--output-on-failure"],
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Build All (Debug)",
-            "dependsOrder": "sequence",
-            "problemMatcher": []
+            "problemMatcher": "$rustc"
         }
     ]
 }

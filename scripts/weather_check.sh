@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # The weather tool of wce.exe, scripted (scripts/weather_smoke.txt) twice in throw-away settings and output folders. Checks that the saved file differs
 # from the pack file in exactly the edited line, and that a capture of the edited scene is the same in both runs.
-#   scripts/weather_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo)
+#   scripts/weather_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/weather_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
 ENV_PATH=weather/charlemagne/med_sp_land_day_dry.environment
 CAND="${WCE_WEATHER_CANDIDATES:-2}"
@@ -34,7 +34,8 @@ if [ -f "$OUT/saved1/$ENV_PATH" ]; then
     cmp -s "$OUT/saved1/$ENV_PATH" "$OUT/saved2/$ENV_PATH" && echo "both runs saved the same bytes" || { echo "runs saved different bytes"; bad=1; }
 else echo "no saved file"; bad=1; fi
 # the saved weather database: XML and FASTBIN convert into each other byte for byte (the old variation_e2e check)
-conv="$BIN/variation_convert.exe"
+conv="$BIN/examples/variation_convert.exe"
+[ -x "$conv" ] || (cd "$ROOT" && cargo build --release -q -p wce_weather --example variation_convert)
 if [ -f "$OUT/saved1/warscape_asset_variation_db/warscape_asset_variation_db.bin" ] && [ -x "$conv" ]; then
     d="$OUT/saved1/warscape_asset_variation_db"
     "$conv" "$(cygpath -w "$d/warscape_asset_variation_db.bin")" "$(cygpath -w "$OUT/from_bin.xml")" > /dev/null

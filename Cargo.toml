@@ -1,4 +1,4 @@
-# Rust port of the editor (PLAN.md, "Rust port"). The C++ tree keeps building with CMake until the port reaches parity.
+# The editor (PLAN.md, "Rust port"). CMake is left only for the Linux D3D11 libraries (cmake/linux_deps.cmake).
 [workspace]
 resolver = "3"
 members = ["crates/*"]

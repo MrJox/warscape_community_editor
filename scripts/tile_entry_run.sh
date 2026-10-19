@@ -3,7 +3,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/tile_entry_run}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"

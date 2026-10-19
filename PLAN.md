@@ -76,8 +76,8 @@ lists it); on Linux they link DXVK-native and vkd3d-utils from `build/_deps/pref
 libraries find each other. COM methods are `extern "system"`, the native ABI on Linux, which DXVK-native and the patched vkd3d use.
 
 Layout: a Cargo workspace at the repo root, one crate per layer under `crates/` (same dependency direction as the C++ libs: d3d11/foundation,
-vfs, formats, assets, scene, render, editor, tools, app). The C++ tree keeps building and stays the reference for the gates until the Rust
-app reaches parity, as in the C++ merge. rpfm_lib is a path dependency on the `wce_formats` worktree until that branch is pushed.
+vfs, formats, assets, scene, render, editor, tools, app). The C++ tree was the reference for the differential checks below; with those done
+it was removed (2026-10-19), and only `cmake/linux_deps.cmake` is left of the CMake build. rpfm_lib is a path dependency on the `wce_formats` worktree until that branch is pushed.
 UI: dear-imgui-rs (Dear ImGui 1.92.9 docking) with dear-imguizmo and the SDL3 platform backend; the D3D11 renderer backend is ours.
 ImGuizmo is upstream's (dear-imguizmo-sys); instead of the local `SetAllowedItem` change, the viewport clears its button from Dear ImGui's hovered and active ids while `Manipulate` runs.
 

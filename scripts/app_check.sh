@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Runs wce.exe on scripts/app_smoke.txt with a throw-away settings folder (the real wce.ini is copied in, layouts are not shared).
 # The script ends with an offscreen capture; a second run must reproduce it byte for byte (fixed-step clock, deterministic readbacks).
-#   scripts/app_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo)
+#   scripts/app_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(cd "$(dirname "${1:-$ROOT/build/app_check/x}")" 2>/dev/null && pwd)/$(basename "${1:-$ROOT/build/app_check}")"
 [ -n "${1:-}" ] || OUT="$ROOT/build/app_check"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
 # The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"

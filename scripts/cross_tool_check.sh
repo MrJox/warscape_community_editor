@@ -6,11 +6,11 @@
 #  - the preview lights the tile (the capture differs), follows an edit of the file, ends with `preview_weather none` and with the closing of the document
 #    (the captures equal the ones without a preview);
 #  - the two runs write the same bytes and the same captures.
-#   scripts/cross_tool_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo), WCE_GAME
+#   scripts/cross_tool_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/cross_tool_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"

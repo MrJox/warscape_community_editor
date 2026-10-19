@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Opens one tile of every tile set of the assembly kits (the first by name; the battle and the campaign kit) in wce.exe, renders a frame offscreen and checks that it neither crashes nor logs an error.
 # Several minutes: part of the corpus gates.
-#   scripts/tile_open_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo), WCE_GAME
+#   scripts/tile_open_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/tile_open_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 ROOTS=("$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles" "$GAME/assembly_kit_campaign_tilemap/raw_data/terrain/tiles")
