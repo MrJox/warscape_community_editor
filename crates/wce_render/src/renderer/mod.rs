@@ -39,6 +39,7 @@ mod targets;
 mod blend_mesh;
 mod terrain;
 mod water;
+mod ocean;
 
 pub(crate) use draws::{NO_ITEM, SceneDraws};
 pub(crate) use post::{DepthRange, ToneMap};

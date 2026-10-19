@@ -74,7 +74,7 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
   own (slot 0x17: formats 0x2b / 0x35, fn 0x11700e90; believed to be the **sea bed info** the vertex shader samples) and three float grids
   (slots 0x1f-0x2f: 256 x 256, 128 x 128, 256 x 256, sized from its settings at +0x70 / +0x74). In battle it also builds a
   **`RADIAL_MESH`** (fn 0x116e47e0, vtable rva 0x1ca62c4): 80 segments around, rings from its settings, the sea's surface mesh.
-- **The shader is `ocean.hlsl`** (sm_4_0; registered by fn 0x116e0cf0: `vs30_main` + `ps30_main_{ultra,high,medium,low}_water_quality`,
+- **The shader is `ocean.hlsl`** (sm_4_0; registered next to the ocean2 materials, strings at rva 0x16e0a77 .. 0x16e0b5a; its samplers in fn 0x116e1f20: `vs30_main` + `ps30_main_{ultra,high,medium,low}_water_quality`,
   `main_prefill_40`), not waterplane. Proof from the dump: the only outside reference to the Sea Display's combined_foam texture is a
   material texture table whose slots are `g_foam_anim_texture` (Sea Display slot 0x14), `g_sea_surface` (0x15), `g_swell_surface` (0x16),
   `g_static_foam_texture` (combined_foam), `g_reflection_texture`, `g_refraction_texture`: ocean.hlsl's inputs. The vertex shader also reads
@@ -96,3 +96,23 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
 - How this was found (reusable): string VAs scanned in .text, Ghidra headless decompiles (`C:\Users\frodo\ghidra_work`), and a minidump
   read with a small reader (module list + Memory64 list): count heap objects by vtable, follow pointers from known objects, and read
   variable objects (+0x08 name, +0x14 slot in the cbuffer's CPU copy).
+- **What the ocean shaders do** (DXBC disassembly of `dx11_sm_4_0_ocean.hlsl_vs_vs30_main` and `_ps_ps30_main_ultra_water_quality`):
+  - Vertex input: `POSITION0` the displaced surface point (y = the wave height), `POSITION1` the rest point (its xz give the uv:
+    `* g_sea_uv_scale` and `* g_swell_uv_scale`; projected at the water level `g_vs_sea_info.z` for the reflection / refraction
+    coordinates), `TEXCOORD0.x` passed on (the pixel shader doesn't read it). No world matrix: the vertices are in world space.
+  - `sea_bed_info_texture` covers x, z in [-1024, 1024] (`(x + 1024) / 2048`; outside it the point keeps its own height); red is the
+    ground height, `r * g_vs_sea_info.y + g_vs_sea_info.x` (-20 .. 5 m). Over shallow ground the waves blend into a small ripple
+    (`-(sin(0.02 x + t) + sin(0.02 z + t) + sin(0.04 x + 2 t) + sin(0.04 z + 2 t) + 4) / 8`, by `saturate((ripple - ground) * 0.05)`), and
+    where the ground is above 0 the point is pushed down to -4 m (`saturate(2 * ground)`), under the terrain.
+  - The normal: two detail normal samples (`g_detail_normal_uv_scale1/2`, scrolled by time * `g_detail_normal_uv_speed1/2` and fixed
+    factors) combined with the sea and swell surfaces, which hold **angles** ((x - 0.5) * 2 pi, sin / cos): 0.5 is a flat surface.
+  - **Foam**: the water depth comes from the depth channel (the reconstructed ground point under the pixel). Whitecaps: the animated
+    foam array (slices `g_foam_anim_data.x / .y` blended by `.z`, at the sea uv), faded over 1000 m, sharpened with the static foam at
+    uv * 15. **Shore foam**: the static foam texture at uv * 7.5 scrolled by +- time * 0.05, both layers multiplied, where the depth is
+    under 1.6 m (`1 - saturate(depth - 0.6)`); the whole foam fades out in the last 0.6 m (`min(depth * 1.667, 1)`). The foam colour is
+    (0.4, 0.5, 0.6) lit by the sun and the ambient, mixed with the colour overlay.
+  - Outputs as waterplane: the G-buffer channels 1 .. 3 (normal, w 0.12; (0, 0, 0, 0.02); (1, 1, 1, 0.0157)) and the lit colour, opaque.
+- **The editor (2026-10-19, interim)**: `renderer/ocean.rs` draws the sea planes with these shaders and the dump's constants, the sea bed
+  texture built from the scene's terrains, `combined_foam.dds` and `water_detail_normal.dds`; still sea (neutral sea / swell surfaces),
+  no whitecaps (empty foam array), a grid instead of the radial mesh. The shore foam already shows. To do: the surfaces' simulation,
+  the foam animation, the radial mesh, the sea bed texture's real content and the constants' sources.
