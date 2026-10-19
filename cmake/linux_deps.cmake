@@ -1,6 +1,6 @@
 # Linux: the D3D11 renderer runs on DXVK-native (D3D11 and DXGI on Vulkan, SDL3 windows) and the shader compiler/reflection come from
 # vkd3d-utils. Both are fetched and built once, at configure time, into <build>/_deps/prefix; later configures reuse them.
-# Needs: git, meson + ninja, glslang, a C/C++ compiler, autotools + bison + flex + widl (wine), perl, and the SDL3, Vulkan and libcurl
+# Needs: git, meson + ninja, glslang, a C/C++ compiler, autotools + bison + flex + widl (wine), perl, and the SDL3 and Vulkan
 # development files.
 
 set(WCE_DXVK_TAG "v3.1.1" CACHE STRING "DXVK-native release to build")
@@ -97,14 +97,3 @@ if(NOT EXISTS "${WCE_VKD3D_STAMP}")
     wce_dep_run("vkd3d install" ${CMAKE_COMMAND} -E chdir "${src}/build" ${WCE_MAKE} install)
     file(WRITE "${WCE_VKD3D_STAMP}" "")
 endif()
-
-# ---- imported targets
-add_library(wce_dxvk INTERFACE)
-# platform/linux/include first: it adds what DXVK's headers lack (wrl/client.h).
-target_include_directories(wce_dxvk SYSTEM INTERFACE "${CMAKE_SOURCE_DIR}/platform/linux/include" "${WCE_DEPS_PREFIX}/include/dxvk")
-target_link_libraries(wce_dxvk INTERFACE "${WCE_DEPS_PREFIX}/lib/libdxvk_d3d11.so" "${WCE_DEPS_PREFIX}/lib/libdxvk_dxgi.so")
-add_library(wce_d3dcompiler INTERFACE)
-target_link_libraries(wce_d3dcompiler INTERFACE wce_dxvk "${WCE_DEPS_PREFIX}/lib/libvkd3d-utils.so")
-
-# The executables find the libraries in <build>/_deps/prefix/lib without LD_LIBRARY_PATH.
-set(CMAKE_BUILD_RPATH "${WCE_DEPS_PREFIX}/lib")

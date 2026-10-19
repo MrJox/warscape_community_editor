@@ -3,11 +3,11 @@
 # (wce --tool weather --open ... --frames 20 --capture), so the "startup set" is exactly what that run mounts and extracts.
 #   scripts/vfs_timing.sh [out dir]        (default build/vfs_timing)
 # Cold = an empty cache folder (pack indexes and extracted files rebuilt); warm = the same folder again.
-# Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG), WCE_CONFIG (RelWithDebInfo), WCE_TIMING_CACHE (cache root, short path).
+# Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_TIMING_CACHE (cache root, short path).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/vfs_timing}"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 CACHE_ROOT="${WCE_TIMING_CACHE:-${LOCALAPPDATA:-/tmp}/awe_timing}"
 mkdir -p "$OUT"
 now() { date +%s.%N; }

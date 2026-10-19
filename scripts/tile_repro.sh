@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Runs the Phase 0 repro scripts (scripts/repro/*.txt) of the Tile tool parity plan on a kit tile, unattended (non-activating window, own settings folder),
 # and leaves the screenshots and logs in <out dir>/<script>/.   scripts/tile_repro.sh [out dir] [script names...]
-# Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG), WCE_GAME, WCE_TILE (default: the kit's assembly_kit/osgiliath_test/battlefield).
+# Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME, WCE_TILE (default: the kit's assembly_kit/osgiliath_test/battlefield).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/repro}"; shift || true; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"

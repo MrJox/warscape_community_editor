@@ -5,11 +5,11 @@
 #  - the mouse and key paths work (scripts/tile_mouse.txt: click select, G grab, brush drag, polygon drawing, handle drag);
 #  - everything undone and saved equals the originals byte for byte;
 #  - save in place keeps a .bak, and undo + save puts the original bytes back.
-#   scripts/tile_check.sh [out dir]        Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; RelWithDebInfo), WCE_GAME
+#   scripts/tile_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/tile_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"

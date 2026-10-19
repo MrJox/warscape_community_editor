@@ -3,12 +3,12 @@
 # identical, or within one level in under 0.05 % of the pixels (GPU float noise, and draw order: instancing draws a mesh's instances together, so surfaces at exactly the same
 # depth can resolve the other way in a few pixels).
 #   scripts/shots.sh [out dir] [reference dir]     (defaults build/shots, build/gates_base_perf)
-# Environment: WCE_BIN (default build/dev/bin/$WCE_CONFIG; WCE_CONFIG defaults to RelWithDebInfo).
+# Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/shots}"
 REF="${2:-$ROOT/build/gates_base_perf}"
-BIN="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"
+BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 mkdir -p "$OUT"
 bad=0

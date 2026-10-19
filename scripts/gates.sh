@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs every gate of both editors and writes one output file per gate to <out dir> (default build/gates).
+# Runs every gate and writes one output file per gate to <out dir> (default build/gates).
 # Compare two runs with: diff -r <run a> <run b>   (the summary lines must stay identical, see docs/baseline.md).
 #
 #   scripts/gates.sh [out dir] [--corpus] [--render]
@@ -9,7 +9,7 @@
 # Inputs are fixed so runs are comparable. Override with environment variables:
 #   WCE_GAME   game folder (contains the assembly_kit_* folders and data/)
 #   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
-#   WCE_BIN    folder with the built executables (default build/dev/bin/$WCE_CONFIG; WCE_CONFIG defaults to RelWithDebInfo)
+#   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,8 +20,7 @@ for a in "$@"; do case "$a" in --corpus) CORPUS=1;; --render) RENDER=1;; esac; d
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 CACHE="${WCE_CACHE:-$LOCALAPPDATA/awe/x}"
 CBS="${WCE_CBS:-$TEMP/claude/cbs.txt}"
-WB="${WCE_BIN:-$ROOT/build/dev/bin/${WCE_CONFIG:-RelWithDebInfo}}"   # one folder for every executable since Phase 1
-TB="$WB"
+WB="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
 TILE="$BKIT/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa"
@@ -40,34 +39,31 @@ run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit co
     [ "$rc" = 0 ] || FAILED+=("$name")
 }
 
+# ---- unit tests (the C++ foundation_check, editor_check, unit_tests and height_check are crate tests)
+run tests             cargo test --release -q --manifest-path "$ROOT/Cargo.toml" --workspace
+
 # ---- weather gates
-run xml_roundtrip     "$WB/xml_roundtrip.exe" "$CACHE"
-run foundation_check  "$WB/foundation_check.exe"
-run editor_check      "$WB/editor_check.exe"
-run vfs_compare       "$WB/vfs_probe.exe" --compare   # cold mount through rpfm_server against the cache of earlier runs: same pack order, winners and bytes (needs a running or startable rpfm_server 5.2+)
-run format_check      "$WB/format_check.exe" "$CACHE"
-run variation_check   "$WB/variation_check.exe"
-run rmv2_check        "$WB/rmv2_check.exe"
-run vfx_check_rain    "$WB/vfx_check.exe" "rain heavy"
-[ -f "$CBS" ] && run env_vs_dump_all "$WB/env_vs_dump.exe" --all "$CBS"
+run xml_roundtrip     ex wce_formats xml_roundtrip "$CACHE"
+run format_check      ex wce_formats format_check "$CACHE"
+run variation_check   ex wce_weather variation_check
+run rmv2_check        ex wce_formats rmv2_check "$CACHE"
+run vfx_check_rain    ex wce_assets vfx_check "rain heavy"
+[ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 
 # ---- tile gates
-# monte_rosa's tile.ted has no SCENE_GRAPH (it crashed unit_tests before the Phase 1 fix, docs/baseline.md): the second file checks that
-run perf_check        "$WB/perf_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE"
-run xml_splice_check  "$WB/xml_splice_check.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
-run unit_tests        "$TB/unit_tests.exe" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" "$TILE/tile.ted"
-run height_check      "$TB/height_check.exe" "$TILE/height_map_0.png"
+run perf_check        ex wce_tile_tool perf_check "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE"
+run xml_splice_check  ex wce_formats xml_splice_check "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
 # the tile database entry as the root of a tile: entry round trip (both kits), the index and its cache, open by entry = by folder = by tile.ted, a tile.ted outside the kit (plains/3x1/3x1_aa has a corrupt height map: it must fail the same way each time)
-run tile_entry_check  "$TB/tile_entry_check.exe" "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
-run weather_check     "$TB/weather_check.exe" "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
+run tile_entry_check  ex wce_tile tile_entry_check "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
+run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 # the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
-run terrain_check     "$TB/terrain_check.exe" "$GAME"
-run tdb_build         "$TB/tdb_build.exe" "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
+run terrain_check     ex wce_tile_editor terrain_check "$GAME"
+run tdb_build         ex wce_formats tdb_build "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
 if [ "$CORPUS" = 1 ]; then
-    run roundtrip     "$TB/roundtrip.exe" "$MANIFEST" "$GAME"
-    run scene_check   "$TB/scene_check.exe" "$MANIFEST" "$GAME"
-    run tile_entry_check_all "$TB/tile_entry_check.exe" "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
-    run placement_check "$TB/placement_check.exe" "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
+    run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
+    run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
+    run tile_entry_check_all ex wce_tile tile_entry_check "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
+    run placement_check ex wce_tile_editor placement_check "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
 fi
 
@@ -78,7 +74,7 @@ if [ "$RENDER" = 1 ]; then
     run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
     run tile_entry_script env WCE_BIN="$WB" bash "$ROOT/scripts/tile_entry_run.sh" "$OUT/tile_entry_script"   # the tile tool opens tiles by entry, name, folder and tile.ted; assert_entry; the tile browser's rows
     run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile and a weather file open at once, the weather previewed on the tile, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
-    run render_check  "$WB/render_check.exe"   # scene, picking, terrain, overlays and capture through a headless D3D11 device
+    run render_check  ex wce_render render_check   # scene, picking, terrain, overlays and capture through a headless D3D11 device
 fi
 
 echo "outputs in $OUT"

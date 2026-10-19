@@ -86,8 +86,8 @@ run_ui.sh), `~/.cache/wce_cli/` (corpus manifests, C++ harnesses), `/tmp/wce_rs/
 
 - On Linux, `cmake/linux_deps.cmake` builds DXVK-native and vkd3d-utils into `build/_deps/prefix`; `crates/wce_d3d11/build.rs` links them and
   the binary loads them at run time. A fresh Linux checkout runs the CMake configure step once before `cargo build`. Windows needs nothing.
-- Everything else (`libs/`, `tools/`, `app/`, `cli/`, `third_party/`) is the reference for the differential checks. Dropping it needs the
-  dependency build moved out of CMake, the tile corpus check done, and a Windows build of the Rust app.
+- Everything else (`libs/`, `tools/`, `app/`, `cli/`, the vendored Dear ImGui, ImGuizmo and zlib) was the reference for the differential
+  checks and was removed on 2026-10-19. The root `CMakeLists.txt` now only runs `cmake/linux_deps.cmake`.
 
 ## 7. Still open
 

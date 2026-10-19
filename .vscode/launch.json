@@ -2,34 +2,24 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Warscape Communnity Editor (Debug)",
+            "name": "Warscape Community Editor (Debug)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Debug/wce.exe",
+            "program": "${workspaceFolder}/target/debug/wce.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Build WCE (Debug)"
         },
         {
-            "name": "Warscape Communnity Editor (Release)",
+            "name": "Warscape Community Editor (Release)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Release/wce.exe",
+            "program": "${workspaceFolder}/target/release/wce.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Build WCE (Release)"
-        },
-        {
-            "name": "Debug test: unit_tests (no game data)",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Debug/unit_tests.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Build unit_tests (Debug)"
         }
     ]
 }
