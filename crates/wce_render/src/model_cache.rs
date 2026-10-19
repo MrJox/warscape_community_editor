@@ -5,7 +5,7 @@
 //! the model is) and gives nothing until it is ready; [`ModelCache::model`] blocks (fixed-step runs, tools that need the bounds now).
 //! D3D11 creates buffers and textures from any thread, so the whole job (read, decode, buffers, textures) runs in the worker.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
@@ -17,6 +17,7 @@ use rpfm_lib::files::rigidmodel::vertices::VertexFormat;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_d3d11::*;
 use wce_foundation::jobs::{Handle, JobPool, io_pool};
+use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, Payload, RenderScene, Terrain};
@@ -272,6 +273,9 @@ struct TextureInner {
     read: SharedReader,
     cache: Mutex<HashMap<String, Arc<OnceLock<Option<SharedTexture>>>>>,
     errors: Mutex<Vec<String>>,
+
+    /// What went to the log already: each problem is logged once.
+    logged: Mutex<HashSet<String>>,
     loaded: AtomicUsize,
     streaming: AtomicBool,
     upgrades: Mutex<Vec<(SharedTexture, Texture)>>,
@@ -284,7 +288,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl TextureInner {
-    fn error(&self, message: String) {
+    fn error(&self, level: LogLevel, message: String) {
+        if lock(&self.logged).insert(message.clone()) {
+            log::add(level, format!("texture {message}"));
+        }
+
         let mut errors = lock(&self.errors);
         if errors.len() < 50 {
             errors.push(message);
@@ -310,6 +318,7 @@ impl TextureCache {
                 read,
                 cache: Mutex::new(HashMap::new()),
                 errors: Mutex::new(vec![]),
+                logged: Mutex::new(HashSet::new()),
                 loaded: AtomicUsize::new(0),
                 streaming: AtomicBool::new(false),
                 upgrades: Mutex::new(vec![]),
@@ -329,18 +338,39 @@ impl TextureCache {
     /// While streaming is on, a large DDS file first loads its small mips only; the full texture follows in the background and replaces
     /// the view at the next [`Self::pump`].
     pub fn get(&self, path: &str, srgb: bool) -> Option<SharedTexture> {
-        let key = format!("{}|{}", wce_vfs::normalize(path), if srgb { "s" } else { "l" });
-        let slot = lock(&self.inner.cache).entry(key).or_default().clone();
-        slot.get_or_init(|| self.load(path, srgb)).clone()
+        self.get_or_load(path, srgb, false)
     }
 
-    fn load(&self, path: &str, srgb: bool) -> Option<SharedTexture> {
+    /// [`Self::get`] for a caller with somewhere else to look: a file that isn't there is not logged (the caller reports it with
+    /// [`Self::report_missing`] when nothing it tried was there). Files that are there and don't load still are.
+    pub fn get_quiet(&self, path: &str, srgb: bool) -> Option<SharedTexture> {
+        self.get_or_load(path, srgb, true)
+    }
+
+    /// Logs (once per texture) that a texture something needs is in no pack, and what is drawn instead.
+    pub fn report_missing(&self, path: &str, needed_by: &str, instead: &str) {
+        let path = wce_vfs::normalize(path);
+        if lock(&self.inner.logged).insert(path.clone()) {
+            log::warn(format!("texture {path}: in no pack (needed by {needed_by}, drawn with {instead})"));
+        }
+    }
+
+    fn get_or_load(&self, path: &str, srgb: bool, quiet: bool) -> Option<SharedTexture> {
+        let key = format!("{}|{}", wce_vfs::normalize(path), if srgb { "s" } else { "l" });
+        let slot = lock(&self.inner.cache).entry(key).or_default().clone();
+        slot.get_or_init(|| self.load(path, srgb, quiet)).clone()
+    }
+
+    fn load(&self, path: &str, srgb: bool, quiet: bool) -> Option<SharedTexture> {
         wce_prof!("texture.load");
         let inner = &self.inner;
         let bytes = match (inner.read)(path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                inner.error(format!("{path}: {error}"));
+                if !quiet {
+                    inner.error(LogLevel::Warning, format!("{path}: {error}"));
+                }
+
                 return None;
             }
         };
@@ -350,7 +380,7 @@ impl TextureCache {
         let plan = plan_dds_stream(header, bytes.len(), 256);
         let first = (inner.streaming.load(Ordering::Relaxed) && plan.ok)
             .then(|| load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb))
-            .and_then(|tail| tail.map_err(|error| inner.error(format!("{path}: streamed: {error}"))).ok());
+            .and_then(|tail| tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok());
         if let Some(first) = first {
             let first = Arc::new(RwLock::new(first));
             inner.loaded.fetch_add(1, Ordering::Relaxed);
@@ -362,7 +392,7 @@ impl TextureCache {
                 wce_prof!("texture.upgrade");
                 match load_dds(job_inner.dev.device(), &bytes, srgb) {
                     Ok(full) => lock(&job_inner.upgrades).push((target, full)),
-                    Err(error) => job_inner.error(format!("{path}: {error}")),
+                    Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
                 }
 
                 job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
@@ -380,7 +410,7 @@ impl TextureCache {
             }
 
             Err(error) => {
-                inner.error(format!("{path}: {error}"));
+                inner.error(LogLevel::Error, format!("{path}: {error}"));
                 None
             }
         }
@@ -416,6 +446,19 @@ impl TextureCache {
 
     pub fn flat_normal(&self) -> SharedTexture {
         self.flat_normal.clone()
+    }
+
+    /// What a fallback texture is, in words.
+    fn solid_name(&self, t: &SharedTexture) -> &'static str {
+        if Arc::ptr_eq(t, &self.white) {
+            "white"
+        } else if Arc::ptr_eq(t, &self.black) {
+            "black"
+        } else if Arc::ptr_eq(t, &self.flat_normal) {
+            "a flat normal"
+        } else {
+            "a fallback"
+        }
     }
 
     pub fn errors(&self) -> Vec<String> {
@@ -507,30 +550,33 @@ fn engine_default(path: &str, srgb: bool) -> Option<String> {
 /// A material texture's path, the engine's stand-in for a placeholder (when it loads) taking its place.
 fn material_path(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool) -> Option<String> {
     let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/"))?;
-    Some(engine_default(&path, srgb).filter(|d| textures.get(d, srgb).is_some()).unwrap_or(path))
+    Some(engine_default(&path, srgb).filter(|d| textures.get_quiet(d, srgb).is_some()).unwrap_or(path))
 }
 
 fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
     let path = material_path(textures, material, kind, true)?;
-    if textures.get(&path, true).is_some() {
+    if textures.get_quiet(&path, true).is_some() {
         return Some(path);
     }
 
     let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
     let local = format!("{dir}/{name}");
-    textures.get(&local, true).is_some().then_some(local)
+    textures.get_quiet(&local, true).is_some().then_some(local)
 }
 
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
 fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
     let Some(path) = material_path(textures, material, kind, srgb) else { return fallback };
-    textures.get(&path, srgb)
+    textures.get_quiet(&path, srgb)
         .or_else(|| {
             let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
-            textures.get(&format!("{dir}/{name}"), srgb)
+            textures.get_quiet(&format!("{dir}/{name}"), srgb)
         })
-        .unwrap_or(fallback)
+        .unwrap_or_else(|| {
+            textures.report_missing(&path, &format!("{model}, {kind:?}"), textures.solid_name(&fallback));
+            fallback
+        })
 }
 
 impl ModelInner {
@@ -638,7 +684,10 @@ impl ModelInner {
             let normal = if kind == MeshKind::TreeBillboard {
                 material.textures().iter().find(|t| *t.tex_type() == TextureType::Diffuse)
                     .and_then(|t| t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds")))
-                    .and_then(|path| textures.get(&path, false))
+                    .and_then(|normal| textures.get_quiet(&normal, false).or_else(|| {
+                        textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
+                        None
+                    }))
                     .unwrap_or_else(|| textures.flat_normal())
             } else {
                 material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
@@ -758,6 +807,7 @@ impl ModelInner {
         let model = match self.build(path) {
             Ok(model) => model,
             Err(error) => {
+                log::error(format!("model {path}: {error}"));
                 lock(&self.errors).push(format!("{path}: {error}"));
                 None
             }
@@ -962,6 +1012,7 @@ impl ModelCache {
         tg.layout = layout;
         tg.version = t.version;
         if failed {
+            log::error("terrain: a patch could not be created");
             lock(&self.inner.errors).push("terrain: a patch could not be created".to_owned());
         }
 

@@ -91,6 +91,10 @@ impl SampleMapDocument {
         let mut tmp = RenderScene::default();
         let l = tmp.add_layer(core.id(), "");
         let info = publish_sample_map(files, &mut tmp, l, core.id(), seed, count, BUILDINGS);
+        for error in &info.errors {
+            wce_foundation::log::warn(format!("sample map: {error}"));
+        }
+
         let mut pieces = BTreeMap::new();
         let base = tmp.entities().iter().map(|e| {
             *pieces.entry(e.source.item).or_default() += 1;
