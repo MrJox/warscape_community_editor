@@ -27,6 +27,230 @@ use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
 
 use crate::tool::{HINTS, MODE_NAMES, POLYGON_TYPES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
 
+/// An inspector that writes the rows it is given, with their values (for `tile_inspect`).
+#[derive(Default)]
+struct DumpInspector {
+    target: wce_editor_core::inspector::InspectTarget,
+    lines: Vec<String>,
+
+    /// One edit to apply to the row with this name (`tile_edit`): the value as text (a number, true / false, text, a choice's number or
+    /// name, `r,g,b,a`, `Name=true` for a row of check boxes).
+    edit: Option<(String, String)>,
+    applied: bool,
+
+    /// Text rows applied and not yet ended.
+    ended: bool,
+}
+
+impl DumpInspector {
+    fn wants(&mut self, field: &str, label: &str) -> Option<String> {
+        let (f, v) = self.edit.as_ref()?;
+        if f != field && f != label {
+            return None;
+        }
+
+        let v = v.clone();
+        self.applied = true;
+        Some(v)
+    }
+}
+
+impl wce_editor_core::inspector::Inspector for DumpInspector {
+    fn target(&self) -> wce_editor_core::inspector::InspectTarget {
+        self.target
+    }
+
+    fn set_target(&mut self, target: wce_editor_core::inspector::InspectTarget) {
+        self.target = target;
+    }
+
+    fn section(&mut self, title: &str) {
+        self.lines.push(format!("== {title}"));
+    }
+
+    fn text(&mut self, _: &str, label: &str, value: &str) {
+        self.lines.push(format!("  {label}: {value}  (read-only)"));
+    }
+
+    fn edit_float(&mut self, field: &str, label: &str, v: &mut f32, _: f32, lo: f32, hi: f32) -> bool {
+        self.lines.push(format!("  {label}: {v}  [{lo} .. {hi}]"));
+        match self.wants(field, label).and_then(|t| t.parse::<f32>().ok()) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_float3(&mut self, field: &str, label: &str, v: &mut [f32; 3], _: f32) -> bool {
+        self.lines.push(format!("  {label}: {v:?}"));
+        match self.wants(field, label).and_then(|t| parse_floats::<3>(&t)) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_float2(&mut self, field: &str, label: &str, v: &mut [f32; 2], _: f32) -> bool {
+        self.lines.push(format!("  {label}: {v:?}"));
+        match self.wants(field, label).and_then(|t| parse_floats::<2>(&t)) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_int(&mut self, field: &str, label: &str, v: &mut i64, _: f32) -> bool {
+        self.lines.push(format!("  {label}: {v}"));
+        match self.wants(field, label).and_then(|t| t.parse::<i64>().ok()) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_color3(&mut self, field: &str, label: &str, v: &mut [f32; 3]) -> bool {
+        self.lines.push(format!("  {label}: {v:?}"));
+        match self.wants(field, label).and_then(|t| parse_floats::<3>(&t)) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_color4(&mut self, field: &str, label: &str, v: &mut [f32; 4]) -> bool {
+        self.lines.push(format!("  {label}: {v:?}"));
+        match self.wants(field, label).and_then(|t| parse_floats::<4>(&t)) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_bool(&mut self, field: &str, label: &str, v: &mut bool) -> bool {
+        self.lines.push(format!("  {label}: {v}"));
+        match self.wants(field, label).as_deref() {
+            Some("true" | "1") => {
+                *v = true;
+                true
+            }
+
+            Some("false" | "0") => {
+                *v = false;
+                true
+            }
+
+            _ => false,
+        }
+    }
+
+    fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool {
+        self.lines.push(format!("  {label}: '{v}'"));
+        match self.wants(field, label) {
+            Some(x) => {
+                *v = x;
+                self.ended = true;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_choice(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String]) -> bool {
+        let shown = usize::try_from(*index).ok().and_then(|i| choices.get(i)).map_or("?", String::as_str);
+        self.lines.push(format!("  {label}: {shown}  ({} choices)", choices.len()));
+        let Some(t) = self.wants(field, label) else { return false };
+        match t.parse::<i32>().ok().or_else(|| choices.iter().position(|c| *c == t).map(|i| i as i32)) {
+            Some(i) => {
+                *index = i;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn gesture_ended(&mut self) -> bool {
+        std::mem::take(&mut self.ended)
+    }
+
+    fn edit_slider(&mut self, field: &str, label: &str, v: &mut f32, lo: f32, hi: f32) -> bool {
+        self.lines.push(format!("  {label}: {v}  slider [{lo} .. {hi}]"));
+        match self.wants(field, label).and_then(|t| t.parse::<f32>().ok()) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_int_slider(&mut self, field: &str, label: &str, v: &mut i64, lo: i64, hi: i64) -> bool {
+        self.lines.push(format!("  {label}: {v}  slider [{lo} .. {hi}]"));
+        match self.wants(field, label).and_then(|t| t.parse::<i64>().ok()) {
+            Some(x) => {
+                *v = x;
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_angle(&mut self, field: &str, label: &str, v: &mut f32, max: f32) -> bool {
+        self.lines.push(format!("  {label}: {:.2} deg  [0 .. {:.0}]", v.to_degrees(), max.to_degrees()));
+
+        // The value is in degrees, as typed in the box.
+        match self.wants(field, label).and_then(|t| t.parse::<f32>().ok()) {
+            Some(x) => {
+                *v = x.to_radians();
+                true
+            }
+
+            None => false,
+        }
+    }
+
+    fn edit_checks(&mut self, field: &str, label: &str, names: &[&str], on: &mut [bool]) -> bool {
+        let set = names.iter().zip(on.iter()).map(|(n, o)| format!("{n}={o}")).collect::<Vec<_>>().join(" ");
+        self.lines.push(format!("  {label}: {set}"));
+        let Some(t) = self.wants(field, label) else { return false };
+        let Some((name, value)) = t.split_once('=') else { return false };
+        match (names.iter().position(|n| *n == name), value) {
+            (Some(i), "true") => on[i] = true,
+            (Some(i), "false") => on[i] = false,
+            _ => return false,
+        }
+
+        true
+    }
+}
+
+/// `a,b,c` as numbers.
+fn parse_floats<const N: usize>(text: &str) -> Option<[f32; N]> {
+    let v = text.split(',').map(|x| x.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()?;
+    v.try_into().ok()
+}
+
 fn ok(m: impl Into<String>) -> CommandResult {
     CommandResult::success(m)
 }
@@ -895,6 +1119,49 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             ok("")
         },
     );
+
+    c.add("tile_inspect", "tile_inspect <element> [piece]", "log the Property Editor rows of an element (or of one of its building pieces) with their values", |e, a| {
+        let (Some(d), Some(el)) = (document(e), a.first().and_then(|x| x.parse::<usize>().ok())) else { return fail("usage: tile_inspect <element> [piece]") };
+        let item = match a.get(1).and_then(|x| x.parse::<usize>().ok()) {
+            Some(k) => wce_tile_editor::tile_document::piece_item(el, k),
+            None => wce_tile_editor::tile_document::item_of(el),
+        };
+
+        let mut rows = DumpInspector::default();
+        let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
+        d.inspect(src, &mut rows);
+        for l in &rows.lines {
+            wce_foundation::log::info(l.clone());
+        }
+
+        ok(format!("{} rows", rows.lines.len()))
+    });
+
+    c.add(
+        "tile_edit", "tile_edit <element> [piece <n>] <row> <value...>",
+        "edit one row of the Property Editor of an element (or of a building piece) as the panel would; the value is a number, true / false, text, `a,b,c`, a choice's number or name, or `Name=true` for check boxes", |e, a| {
+            let Some(el) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return fail("usage: tile_edit <element> [piece <n>] <row> <value...>") };
+            let (item, rest) = match (a.get(1).map(String::as_str), a.get(2).and_then(|x| x.parse::<usize>().ok())) {
+                (Some("piece"), Some(k)) => (wce_tile_editor::tile_document::piece_item(el, k), &a[3..]),
+                _ => (wce_tile_editor::tile_document::item_of(el), &a[1..]),
+            };
+
+            let (Some(row), true) = (rest.first(), rest.len() >= 2) else { return fail("usage: tile_edit <element> [piece <n>] <row> <value...>") };
+            let Some(d) = document(e) else { return fail("no tile is open") };
+            let mut rows = DumpInspector { edit: Some((row.clone(), rest[1..].join(" "))), ..Default::default() };
+            let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
+            d.inspect(src, &mut rows);
+            if rows.applied { ok(format!("{row} set")) } else { fail(format!("no row '{row}' to edit")) }
+        },
+    );
+
+    c.add("tile_model_bounds", "tile_model_bounds <building key>", "log the bounds of a building key's model pieces (after a few frames, when the models have loaded)", |e, a| {
+        let (Some(d), Some(key)) = (document(e), a.first()) else { return fail("usage: tile_model_bounds <building key>") };
+        match d.tile().building_model(key) {
+            Some(m) => ok(format!("{key}: ok {} resolved {} pieces {} bmin {:.3} {:.3} {:.3} bmax {:.3} {:.3} {:.3}", m.ok, m.resolved, m.pieces.len(), m.bmin.x, m.bmin.y, m.bmin.z, m.bmax.x, m.bmax.y, m.bmax.z)),
+            None => fail(format!("the tile has no building key '{key}'")),
+        }
+    });
 
     c.add(
         "tile_dump_placement", "tile_dump_placement <file.tsv>",

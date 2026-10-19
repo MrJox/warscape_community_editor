@@ -50,6 +50,7 @@ pub(crate) struct SceneDraws {
     /// their own (a brush stroke rebuilds only these, a few hundred items).
     pub draws: DrawSet,
     pub terrain_draws: DrawSet,
+
     pub terrain_bounds: HashMap<EntityId, EntityBounds>,
 
     /// What the sets hold: entities and LOD 0 meshes, and the entities whose models are still loading.

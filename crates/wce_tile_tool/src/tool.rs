@@ -20,7 +20,7 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
 use wce_vfs::normalize;
 
 pub const POLYGON_TYPES: [&str; 5] =
@@ -208,7 +208,8 @@ pub fn document(e: &mut Editor) -> Option<&mut TileDocument> {
 /// The selected elements of the tile (not the terrain).
 pub fn selected(e: &Editor) -> Vec<usize> {
     let Some(id) = document_id(e) else { return vec![] };
-    e.selection.items().iter().filter(|r| r.doc == id && r.item != TERRAIN).filter_map(|r| elem_of(r.item)).collect()
+    // A piece of a building stands for its building (the viewport shows the building's box).
+    e.selection.items().iter().filter(|r| r.doc == id && r.item != TERRAIN).filter_map(|r| elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e))).collect()
 }
 
 /// The first selected instance element.

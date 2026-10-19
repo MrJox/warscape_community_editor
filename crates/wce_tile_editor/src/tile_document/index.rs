@@ -8,10 +8,11 @@ use wce_formats::tile_climate::ClimateList;
 use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::overlay_colour;
+use wce_tile::building_db::BuildingDb;
 use wce_tile::ted_scene::{TedScene, parse_vec3};
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
-use super::{BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceState, PieceStatus, Placement, TileTypeStyle, Tile};
+use super::{BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceProps, PieceState, PieceStatus, Placement, TileTypeStyle, Tile};
 
 pub fn style_of(t: &str) -> TileTypeStyle {
     let s = |r: f32, g: f32, b: f32, size: f32, cross: bool| TileTypeStyle { color: overlay_colour(r, g, b, 1.0), size, cross };
@@ -78,6 +79,12 @@ pub(crate) fn matrix_of(w: &WorldTransform, unit: f64, scale: Option<Double3>) -
     m.m[1][3] = (w.position.y / unit) as f32;
     m.m[2][3] = (w.position.z / unit) as f32;
     m
+}
+
+/// The number NN of "destructNN" in a piece file name ("..._piece01_destruct02.rigid_model_v2" is 2); 0 for a file without one.
+fn destruct_number(file: &str) -> u32 {
+    let Some(at) = file.find("destruct") else { return 0 };
+    file[at + "destruct".len()..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)
 }
 
 fn text(raw: &[u8]) -> std::borrow::Cow<'_, str> {
@@ -207,6 +214,49 @@ impl Tile {
         vegetation_model(self.files.as_deref(), &converted).or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
     }
 
+    /// The category of a building key in the kit's `battlefield_buildings` (`fort_wall`, `gate`, `generic` ...); `None` without the kit.
+    pub fn building_category(&self, key: &str) -> Option<String> {
+        let db = self.building_db.get_or_init(|| BuildingDb::load_near(&self.project.dir));
+        db.category(key).map(str::to_owned)
+    }
+
+    /// TEd hands the properties of a building on to its pieces (`BUILDING_INSTANCE::set_property` loops over them): the pieces take the new value.
+    pub(crate) fn sync_pieces(&mut self, elem: usize, attr: &str, text: &str) {
+        use wce_tile::properties::{parse_bool, parse_colour, parse_float, parse_int};
+        if !matches!(attr, "opacity" | "dirt_level" | "burn_amount" | "glow_amount" | "burn" | "bounds_colour" | "destruction_level") {
+            return;
+        }
+
+        let Some(n) = self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.len().min(0xffff)) else { return };
+        for k in 0..n {
+            let mut p = self.piece_props.get(&(elem, k)).cloned().unwrap_or_default();
+            match attr {
+                "opacity" => p.opacity = parse_float(text).unwrap_or(p.opacity),
+                "dirt_level" => p.dirt_level = parse_float(text).unwrap_or(p.dirt_level),
+                "burn_amount" => p.burn_amount = parse_float(text).unwrap_or(p.burn_amount),
+                "glow_amount" => p.glow_amount = parse_float(text).unwrap_or(p.glow_amount),
+                "burn" => p.burn = parse_bool(text),
+                "bounds_colour" => p.bounds_colour = parse_colour(text).unwrap_or(p.bounds_colour),
+                _ => p.destruction_level = parse_int(text).unwrap_or(-1),
+            }
+
+            if self.piece_props.get(&(elem, k)) != Some(&p) {
+                self.piece_props.insert((elem, k), p);
+                self.piece_pending.push((elem, k));
+            }
+        }
+    }
+
+    /// What was edited of a piece of a building (`None`: it has its defaults).
+    pub fn piece_props(&self, elem: usize, piece: usize) -> Option<&PieceProps> {
+        self.piece_props.get(&(elem, piece))
+    }
+
+    /// How many destruction levels the building has (at least 1).
+    pub fn destruction_levels(&self, key: &str) -> u32 {
+        self.models.get(key).map_or(1, |m| m.levels.max(1))
+    }
+
     pub fn building_model(&self, key: &str) -> Option<&BuildingModel> {
         self.models.get(key)
     }
@@ -295,10 +345,10 @@ impl Tile {
         }
     }
 
-    /// A landscape instance stands on the terrain whatever y its file has: TEd re-snaps them against the tile's current height map and entry,
-    /// while the file's y comes from the height map of the day (5 m off in tiles whose entry min_height / scale changed later). The element
-    /// index holds the snapped height of leaf instances (buildings, vegetation, decals, ...; polygons and splines carry their own heights); the
-    /// file keeps the y it had until the instance is edited (TEd shows the same on opening it).
+    /// The trees and decals of a Landscape layer stand on the terrain whatever y their file has (BOB generates them onto the terrain from the
+    /// tile's seeds: the file's y is a leftover, 0 in every lothlorien tree). The element index holds the snapped height of those leaf
+    /// instances. Everything else keeps the y of the file: the game's building list has exactly that (checked on the shipped
+    /// dunedain_city_a: 29,680 of 29,680 buildings), TEd loads it as it is and only snaps an instance when the terrain under it is edited.
     pub(crate) fn snap_landscape_world(&self, elem: usize, w: &mut WorldTransform) {
         snap(self, &self.idx.mode, &self.idx.kind, elem, w);
     }
@@ -471,6 +521,15 @@ impl Tile {
         self.grid_dirty.set(true);
     }
 
+    /// An attribute of one element changed that the index keeps (its scale) or that changes how it is shown.
+    pub(crate) fn index_attr_edited(&mut self, elem: usize) {
+        if self.idx.valid && elem < self.idx.scale.len() {
+            let s = self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
+            self.idx.scale[elem] = s;
+            self.grid_dirty.set(true);
+        }
+    }
+
     /// The position / orientation of one element changed.
     pub(crate) fn index_edited(&mut self, elem: usize) {
         if !self.idx.valid || elem >= self.idx.slot.len() {
@@ -519,6 +578,7 @@ impl Tile {
         // Keys no one has looked at yet.
         let fresh = self.idx.keys.iter().filter(|k| !self.models.contains_key(*k)).cloned().collect::<BTreeSet<_>>();
         let mut folders = BTreeMap::<String, Vec<String>>::new();
+        let mut levels = BTreeMap::<String, u32>::new();
         if let Some(files) = self.files.as_ref().filter(|_| !fresh.is_empty()) {
             let prefix = "rigidmodels/buildings/";
             for p in files.list(prefix, ".rigid_model_v2") {
@@ -529,6 +589,12 @@ impl Tile {
                 }
 
                 let file = &p[slash + 1..];
+                let level = destruct_number(file);
+                if level > 0 {
+                    let n = levels.entry(folder.to_owned()).or_default();
+                    *n = (*n).max(level);
+                }
+
                 if file.contains("destruct") && !file.contains("destruct01") {
                     continue;
                 }
@@ -551,7 +617,8 @@ impl Tile {
                 self.fallbacks.push(key.clone());
             }
 
-            self.models.insert(key, BuildingModel { pieces, ok, resolved: !ok, ..Default::default() });
+            let levels = levels.get(&key).copied().unwrap_or(0);
+            self.models.insert(key, BuildingModel { pieces, ok, resolved: !ok, levels, ..Default::default() });
         }
 
         self.unresolved = (0..self.idx.keys.len()).filter(|&k| self.models.get(&self.idx.keys[k]).is_some_and(|m| m.ok && !m.resolved)).collect();
@@ -725,7 +792,14 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
     }
 
     let k = kind[elem];
-    if k & INSTANCE_BIT == 0 || k & (POLYGON_BIT | LAYER_BIT) != 0 || !t.tscene().doc().elements()[elem].children.is_empty() {
+    let el = &t.tscene().doc().elements()[elem];
+    if k & INSTANCE_BIT == 0 || k & (POLYGON_BIT | LAYER_BIT) != 0 || !el.children.is_empty() {
+        return;
+    }
+
+    // Only what the game generates onto the terrain: BOB makes the trees and decals from the tile's seeds and the height map, so their y in the
+    // file means nothing (lothlorien: every tree at y 0). A building stands where the file says, as in TEd and in the game's building list.
+    if !matches!(el.name.as_str(), "VEGETATION_INSTANCE" | "ProjectedDecalInstance") {
         return;
     }
 

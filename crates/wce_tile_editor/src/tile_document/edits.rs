@@ -14,11 +14,15 @@ use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Double3, Double3x3, Float3, Float4x4};
 use wce_scene::render_scene::SourceRef;
 use wce_tile::height_field::Brush;
+use wce_tile::properties::{
+    Access, Kind, Prop, RuleContext, format_bool, format_colour, format_float, format_seasons, format_vec2, format_vec3, parse_bool, parse_colour, parse_float,
+    parse_int, parse_seasons, parse_vec2, parse_vec3_text,
+};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, PlacementItem, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointCommand, TedSpliceCommand};
-use super::{BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of};
+use super::commands::{BrushStepCommand, PlacementItem, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointCommand, TedSpliceCommand};
+use super::{BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
     (r * 180.0 / std::f64::consts::PI) as f32
@@ -26,6 +30,11 @@ fn degrees(r: f64) -> f32 {
 
 fn radians(d: f32) -> f64 {
     f64::from(d) * std::f64::consts::PI / 180.0
+}
+
+/// A number from an attribute name, to tell the gestures of different properties apart.
+fn attr_hash(attr: &str) -> u64 {
+    attr.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)) & 0xff_ffff
 }
 
 fn parent_transform(sc: &TedScene, elem: usize) -> WorldTransform {
@@ -281,7 +290,10 @@ impl TileDocument {
     /// Scene units / radians, local to the parent.
     pub fn set_local(&mut self, elem: usize, position: Option<Double3>, euler: Option<Double3>, gesture: u64) -> bool {
         let t = self.tile();
-        if !t.is_instance(elem) {
+
+        // A layer or a group moves everything below it: TEd's grid has its position (and a group's orientation) too.
+        let whole = !t.is_instance(elem) && t.tscene().is_layer(elem) && t.tscene().type_of(elem) != "SCENE_GRAPH";
+        if !t.is_instance(elem) && !whole {
             return false;
         }
 
@@ -297,7 +309,7 @@ impl TileDocument {
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
         let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
         let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
-        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture }));
+        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, whole }));
         true
     }
 
@@ -940,6 +952,11 @@ impl TileDocument {
     // ---- inspector and gizmo
 
     pub(crate) fn inspect_item(&mut self, item: SourceRef, ins: &mut dyn Inspector) {
+        if let Some((e, k)) = piece_of(item.item) {
+            self.inspect_piece(e, k, ins);
+            return;
+        }
+
         let Some(e) = elem_of(item.item) else {
             self.inspect_terrain(ins);
             return;
@@ -952,52 +969,144 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         ins.section(sc.type_of(e));
-        ins.text("name", "name", &sc.name(e));
-        if let Some(k) = sc.doc().get(e, "key") {
-            let model = match t.building_model(&k) {
-                Some(m) if m.ok => format!("  ({} pieces)", m.pieces.len()),
-                Some(_) => "  (no model: box)".to_owned(),
-                None => String::new(),
-            };
-
-            ins.text("key", "key", &format!("{k}{model}"));
-        }
-
-        ins.text("layer", "layer", &sc.layer_path(e));
-
-        // TEd's eye and cursor arrow of the Scene tab.
-        if sc.doc().get(e, "flags").is_some() {
-            let (mut vis, mut act) = (t.own_flag(e, "OIF_VISIBLE"), t.own_flag(e, "OIF_ACTIVE"));
-            let (shown, selectable) = (t.shown(e), t.selectable(e));
-            if ins.edit_bool("flag_visible", "visible (eye)", &mut vis) {
-                self.set_flag(e, "OIF_VISIBLE", vis);
+        let before = sc.name(e);
+        if sc.doc().get(e, "name").is_some() {
+            // TEd renames in the Scene tab; the name is not one of the properties.
+            let drafts_key = (e, "name".to_owned());
+            let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| before.clone());
+            if ins.edit_string("name", "name", &mut shown) {
+                self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
 
-            if ins.edit_bool("flag_active", "selectable (cursor)", &mut act) {
-                self.set_flag(e, "OIF_ACTIVE", act);
+            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) && v != before {
+                self.rename(e, &v);
             }
-
-            if !shown {
-                ins.text("hidden", "", "hidden by a layer above");
-            } else if !selectable {
-                ins.text("locked", "", "locked by a layer above");
-            }
+        } else {
+            ins.text("name", "name", &before);
         }
 
         let t = self.tile();
         let sc = t.tscene();
-        if sc.is_layer(e) && sc.type_of(e) != "SCENE_GRAPH" && sc.doc().get(e, "export_type").is_some() {
-            let kinds = ["Normal", "Escalation1", "Escalation2", "Escalation3"].map(str::to_owned);
-            let cur = t.export_type(e);
-            let mut idx = kinds.iter().position(|k| *k == cur).unwrap_or(0) as i32;
-            if ins.edit_choice("export_type", "export type", &mut idx, &kinds) && kinds[idx as usize] != cur {
-                self.set_attribute(e, "export_type", &format!("LayerExportType_{}", kinds[idx as usize]));
+        if let Some(k) = sc.doc().get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
+            let model = match t.building_model(&k) {
+                Some(m) if m.ok => format!("{} pieces, {} destruction levels", m.pieces.len(), m.levels.max(1)),
+                Some(_) => "no model: box".to_owned(),
+                None => String::new(),
+            };
+
+            if let Some(c) = t.building_category(&k) {
+                ins.text("category", "category", &c);
+            }
+
+            ins.text("model", "model", &model);
+        }
+
+        ins.text("layer", "layer", &sc.layer_path(e));
+
+        let tag = sc.type_of(e).to_owned();
+        let Some(schema) = wce_tile::properties::schema(&tag) else {
+            self.inspect_unknown(e, ins);
+            return;
+        };
+
+        // The rows of TEd's Property Editor, in its order.
+        ins.section("Properties");
+        let mut shown = vec!["name"];
+        for prop in schema {
+            shown.push(prop.attr);
+            if let Some(twin) = prop.twin {
+                shown.push(twin);
+            }
+
+            self.property_row(e, prop, ins);
+        }
+
+        // What the file has and the grid does not show.
+        let sc = self.tile().tscene();
+        let rest = sc.doc().elements()[e].attrs.iter().enumerate().filter(|(_, a)| !shown.contains(&a.name.as_str())).collect::<Vec<_>>();
+        if !rest.is_empty() {
+            ins.section("Other attributes");
+            for (i, a) in rest {
+                ins.text(&format!("attr_{}", a.name), &a.name, &String::from_utf8_lossy(sc.doc().attr_raw(e, i)));
             }
         }
 
-        let base = (u64::from(self.id()) << 40) ^ ((e as u64) << 8) ^ 0x31;
+        // Polygons: the point count (their points are edited in the viewport).
+        if self.tile().is_polygon(e) {
+            let sc = self.tile().tscene();
+            ins.text("points", "points", &sc.polygon_points(e).len().to_string());
+        }
+    }
 
-        // TEd's X / Y / Z fields: the world position in metres.
+    /// The Property Editor of a building piece (TEd: `BUILDING_PIECE_INSTANCE`). TEd does not write the pieces to the tile, so these values live
+    /// for the session; the position, orientation, scale, visibility and destruction level are shown in the viewport.
+    fn inspect_piece(&mut self, e: usize, k: usize, ins: &mut dyn Inspector) {
+        let t = self.tile();
+        let Some(model) = t.model_of(e).filter(|m| k < m.pieces.len()) else { return };
+        let levels = i64::from(model.levels.max(1));
+        let file = model.pieces[k].rsplit('/').next().unwrap_or_default().to_owned();
+        let owner = t.tscene().name(e);
+        ins.section("building piece");
+        ins.text("owner", "building", &owner);
+        ins.text("mesh", "mesh", &file);
+
+        let mut p = self.tile().piece_props.get(&(e, k)).cloned().unwrap_or_default();
+        let before = p.clone();
+
+        let mut flags = [p.visible, p.active, p.draggable];
+        if ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut flags) {
+            (p.visible, p.active, p.draggable) = (flags[0], flags[1], flags[2]);
+        }
+
+        let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
+        let mut idx = i32::from(p.freeform);
+        if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) {
+            p.freeform = idx == 1;
+        }
+
+        ins.edit_float3("position", "position", &mut p.position, 0.05);
+        let mut deg = p.euler.map(f32::to_degrees);
+        if ins.edit_float3("orientation", "orientation", &mut deg, 0.5) {
+            p.euler = deg.map(f32::to_radians);
+        }
+
+        ins.edit_float3("scale", "scale", &mut p.scale, 0.01);
+        ins.edit_slider("opacity", "opacity", &mut p.opacity, 0.0, 1.0);
+        ins.edit_bool("burn", "burn", &mut p.burn);
+        ins.edit_slider("burn_amount", "burn_amount", &mut p.burn_amount, 0.0, 1.0);
+        ins.edit_slider("glow_amount", "glow_amount", &mut p.glow_amount, 0.0, 1.0);
+        ins.edit_slider("dirt_level", "dirt_level", &mut p.dirt_level, 0.0, 1.0);
+        ins.edit_color4("bounds_colour", "bounds_colour", &mut p.bounds_colour);
+        ins.edit_bool("show_collision", "show_collision", &mut p.show_collision);
+        ins.edit_checks("seasons", "seasons", &["Winter", "Spring", "Summer", "Autumn"], &mut p.seasons);
+        let mut level = if p.destruction_level < 0 { levels - 1 } else { p.destruction_level.clamp(0, levels - 1) };
+        if ins.edit_int_slider("destruction_level", "destruction_level", &mut level, 0, levels - 1) {
+            p.destruction_level = level;
+        }
+
+        if p != before {
+            let t = self.tile_mut();
+            t.piece_props.insert((e, k), p);
+            t.piece_pending.push((e, k));
+        }
+    }
+
+    /// An element the property schema does not know: its attributes, read-only.
+    fn inspect_unknown(&mut self, e: usize, ins: &mut dyn Inspector) {
+        let base = (u64::from(self.id()) << 40) ^ ((e as u64) << 8) ^ 0x31;
+        if self.tile().is_instance(e) {
+            self.position_rows(e, ins, base);
+        }
+
+        ins.section("Attributes");
+        let sc = self.tile().tscene();
+        for (i, a) in sc.doc().elements()[e].attrs.iter().enumerate() {
+            ins.text(&format!("attr_{}", a.name), &a.name, &String::from_utf8_lossy(sc.doc().attr_raw(e, i)));
+        }
+    }
+
+    /// TEd's X / Y / Z fields: the world position in metres (an extra row; the grid has the scene position) and the position as the file has it.
+    fn position_rows(&mut self, e: usize, ins: &mut dyn Inspector, base: u64) {
         if self.tile().is_instance(e) {
             let w = self.tile().world_position(e);
             let mut v = [w.x, w.y, w.z];
@@ -1010,27 +1119,9 @@ impl TileDocument {
             }
         }
 
-        // TEd's surface_mode combo ("Landscape: Above" / "Freeform").
-        if self.tile().is_instance(e) && self.tile().tscene().doc().get(e, "surface_mode").is_some() {
-            let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
-            let mut idx = i32::from(self.tile().placement(e) == Placement::Freeform);
-            if ins.edit_choice("surface_mode", "placement", &mut idx, &modes) {
-                self.set_placement(&[e], if idx == 0 { Placement::Landscape } else { Placement::Freeform });
-            }
-
-            let t = self.tile();
-            if t.placement(e) == Placement::Landscape {
-                let w = t.world_position(e);
-                let dy = w.y - t.landscape_y(e, w.x, w.z);
-                if dy.abs() > 0.005 {
-                    ins.text("off_terrain", "off the terrain", &format!("{dy:+.3} m from the terrain"));
-                }
-            }
-        }
-
         if let Some(p) = self.tile().tscene().position(e) {
             let mut v = p.to_array().map(|c| c as f32);
-            if ins.edit_float3("position", "position (scene)", &mut v, 0.5) {
+            if ins.edit_float3("position", "position", &mut v, 0.5) {
                 self.set_local(e, Some(v.map(f64::from).into()), None, base);
             }
 
@@ -1038,42 +1129,274 @@ impl TileDocument {
                 self.history.break_merge();
             }
         }
+    }
 
-        if let Some(eu) = self.tile().tscene().euler(e) {
-            let mut v = eu.to_array().map(degrees);
-            if ins.edit_float3("euler", "euler (deg)", &mut v, 0.5) {
-                self.set_local(e, None, Some(v.map(radians).into()), base + 1);
-            }
+    /// One row of the Property Editor.
+    fn property_row(&mut self, e: usize, prop: &Prop, ins: &mut dyn Inspector) {
+        let base = (u64::from(self.id()) << 40) ^ ((e as u64) << 8) ^ 0x31;
+        let t = self.tile();
+        let sc = t.tscene();
+        let tag = sc.type_of(e).to_owned();
+        let text = sc.doc().get(e, prop.attr);
 
-            if ins.gesture_ended() {
-                self.history.break_merge();
-            }
+        // The rules that need to know more than the property: a building's category, a polygon's shape.
+        let key = sc.doc().get(e, "key").unwrap_or_default();
+        let category = if tag == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
+        let shape = sc.doc().get(e, "polygon_shape");
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some() };
+        let access = wce_tile::properties::access(prop, &ctx);
+        if access == Access::Hidden {
+            return;
         }
 
-        if self.tile().is_polygon(e) {
-            let sc = self.tile().tscene();
-            ins.text("points", "points", &sc.polygon_points(e).len().to_string());
-            ins.text("area", "area", &format!("{:.1}", sc.polygon_area(e)));
-            if sc.type_of(e) == "AI_HINT_POLYGON_INSTANCE" {
-                let hints = [
-                    "AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
-                    "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_FIREBALL_LINE", "AIH_BEACH_LANDING",
-                    "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
-                ].map(str::to_owned);
+        // A property the instance lacks is not in the file (TEd writes only some of them when they have their default), but every instance
+        // has all of them in the grid.
+        let cur = text.clone().unwrap_or_default();
+        let editable = access == Access::Edit;
+        let label = prop.attr;
+        let field = prop.attr;
 
-                let cur = sc.doc().get(e, "hint_type").unwrap_or_default();
-                let mut idx = hints.iter().position(|h| *h == cur).unwrap_or(0) as i32;
-                if ins.edit_choice("hint_type", "hint type", &mut idx, &hints) && hints[idx as usize] != cur {
-                    self.set_attribute(e, "hint_type", &hints[idx as usize]);
+        // The ones that have their own handling.
+        match prop.kind {
+            Kind::Flags => {
+                let (mut vis, mut act, mut drag) = (self.tile().own_flag(e, "OIF_VISIBLE"), self.tile().own_flag(e, "OIF_ACTIVE"), self.tile().own_flag(e, "OIF_DRAGGABLE"));
+                if self.tile().tscene().doc().get(e, "flags").is_none() {
+                    return;
+                }
+
+                let (shown, selectable) = (self.tile().shown(e), self.tile().selectable(e));
+                let mut on = [vis, act, drag];
+                if editable && ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut on) {
+                    if on[0] != vis {
+                        vis = on[0];
+                        self.set_flag(e, "OIF_VISIBLE", vis);
+                    }
+
+                    if on[1] != act {
+                        act = on[1];
+                        self.set_flag(e, "OIF_ACTIVE", act);
+                    }
+
+                    if on[2] != drag {
+                        drag = on[2];
+                        self.set_flag(e, "OIF_DRAGGABLE", drag);
+                    }
+                }
+
+                let _ = (vis, act, drag);
+                if !shown {
+                    ins.text("hidden", "", "hidden by a layer above");
+                } else if !selectable {
+                    ins.text("locked", "", "locked by a layer above");
+                }
+
+                return;
+            }
+
+            Kind::Placement => {
+                if self.tile().is_instance(e) && self.tile().tscene().doc().get(e, "surface_mode").is_some() {
+                    let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
+                    let mut idx = i32::from(self.tile().placement(e) == Placement::Freeform);
+                    if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable {
+                        self.set_placement(&[e], if idx == 0 { Placement::Landscape } else { Placement::Freeform });
+                    }
+
+                    let t = self.tile();
+                    if t.placement(e) == Placement::Landscape {
+                        let w = t.world_position(e);
+                        let dy = w.y - t.landscape_y(e, w.x, w.z);
+                        if dy.abs() > 0.005 {
+                            ins.text("off_terrain", "off the terrain", &format!("{dy:+.3} m from the terrain"));
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            Kind::Position => {
+                self.position_rows(e, ins, base);
+                return;
+            }
+
+            Kind::Orientation => {
+                if let Some(eu) = self.tile().tscene().euler(e) {
+                    if !editable {
+                        let d = eu.to_array().map(degrees);
+                        ins.text("euler", "orientation", &format!("{:.1}°  {:.1}°  {:.1}°", d[0], d[1], d[2]));
+                        return;
+                    }
+
+                    let mut v = eu.to_array().map(degrees);
+                    if ins.edit_float3("euler", "orientation", &mut v, 0.5) {
+                        self.set_local(e, None, Some(v.map(radians).into()), base + 1);
+                    }
+
+                    if ins.gesture_ended() {
+                        self.history.break_merge();
+                    }
+                }
+
+                return;
+            }
+
+            _ => {}
+        }
+
+        if !editable {
+            ins.text(field, label, &cur);
+            return;
+        }
+
+        let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x7;
+        let mut new: Option<String> = None;
+        match prop.kind {
+            Kind::Bool => {
+                let mut v = parse_bool(&cur);
+                if ins.edit_bool(field, label, &mut v) {
+                    new = Some(format_bool(v).to_owned());
                 }
             }
+
+            Kind::Slider(lo, hi) => {
+                let mut v = parse_float(&cur).unwrap_or(lo).clamp(lo, hi);
+                if ins.edit_slider(field, label, &mut v, lo, hi) {
+                    new = Some(format_float(v.clamp(lo, hi)));
+                }
+            }
+
+            Kind::Float => {
+                let mut v = parse_float(&cur).unwrap_or(0.0);
+                if ins.edit_float(field, label, &mut v, 0.01, -1.0e9, 1.0e9) {
+                    new = Some(format_float(v));
+                }
+            }
+
+            Kind::Vec3 => {
+                let mut v = parse_vec3_text(&cur).unwrap_or([1.0; 3]);
+                if ins.edit_float3(field, label, &mut v, 0.05) {
+                    new = Some(format_vec3(v));
+                }
+            }
+
+            Kind::Vec2 => {
+                let mut v = parse_vec2(&cur).unwrap_or([0.0; 2]);
+                if ins.edit_float2(field, label, &mut v, 0.05) {
+                    new = Some(format_vec2(v));
+                }
+            }
+
+            Kind::Angle(max) => {
+                let mut v = parse_float(&cur).unwrap_or(0.0);
+                if ins.edit_angle(field, label, &mut v, max) {
+                    new = Some(format_float(v.clamp(0.0, max)));
+                }
+            }
+
+            Kind::Colour => {
+                let mut v = parse_colour(&cur).unwrap_or([1.0; 4]);
+                if ins.edit_color4(field, label, &mut v) {
+                    new = Some(format_colour(v));
+                }
+            }
+
+            Kind::Enum(table) => {
+                let mut choices = table.iter().map(|(_, d)| (*d).to_owned()).collect::<Vec<_>>();
+                let mut idx = table.iter().position(|(f, _)| *f == cur).map_or(-1, |i| i as i32);
+                if idx < 0 && !cur.is_empty() {
+                    // A value TEd's table does not have: shown as it is, until another is chosen.
+                    choices.push(cur.clone());
+                    idx = choices.len() as i32 - 1;
+                }
+
+                if ins.edit_choice(field, label, &mut idx, &choices) && let Some((f, _)) = usize::try_from(idx).ok().and_then(|i| table.get(i)) {
+                    new = Some((*f).to_owned());
+                }
+            }
+
+            Kind::Text => {
+                // Typed text is applied when the typing ends (a key edit loads a model).
+                let drafts_key = (e, prop.attr.to_owned());
+                let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| cur.clone());
+                if ins.edit_string(field, label, &mut shown) {
+                    self.tile_mut().drafts.insert(drafts_key.clone(), shown);
+                }
+
+                if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
+                    new = Some(v);
+                }
+            }
+
+            Kind::Int(lo, hi) => {
+                let mut v = parse_int(&cur).unwrap_or(i64::from(lo)).clamp(i64::from(lo), i64::from(hi));
+                if ins.edit_int_slider(field, label, &mut v, i64::from(lo), i64::from(hi)) {
+                    new = Some(v.clamp(i64::from(lo), i64::from(hi)).to_string());
+                }
+            }
+
+            Kind::DestructionLevel => {
+                let levels = i64::from(self.tile().destruction_levels(&key));
+                let mut v = parse_int(&cur).unwrap_or(0).clamp(0, levels - 1);
+                if ins.edit_int_slider(field, label, &mut v, 0, levels - 1) {
+                    new = Some(v.clamp(0, levels - 1).to_string());
+                }
+            }
+
+            Kind::ReadOnlyFloat => ins.text(field, label, &cur),
+            Kind::Flags | Kind::Seasons | Kind::Placement | Kind::Position | Kind::Orientation => {}
         }
 
-        ins.section("Attributes");
-        let sc = self.tile().tscene();
-        for (i, a) in sc.doc().elements()[e].attrs.iter().enumerate() {
-            ins.text(&format!("attr_{}", a.name), &a.name, &String::from_utf8_lossy(sc.doc().attr_raw(e, i)));
+        if prop.kind == Kind::Seasons {
+            let mut on = if text.is_some() { parse_seasons(&cur) } else { [true; 4] };
+            if ins.edit_checks(field, label, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
+                new = Some(format_seasons(on));
+            }
         }
+
+        if let Some(v) = new {
+            self.set_property(e, prop, &v, gesture);
+        }
+
+        if ins.gesture_ended() {
+            self.history.break_merge();
+        }
+    }
+
+    /// Sets a property's attribute (and its twin): one undo entry, the steps of a drag merge. An attribute the element lacks is added by a text
+    /// splice (that entry does not merge).
+    pub fn set_property(&mut self, elem: usize, prop: &Prop, value: &str, gesture: u64) -> bool {
+        let t = self.tile();
+        if elem >= t.tscene().doc().elements().len() {
+            return false;
+        }
+
+        let sc = t.tscene();
+        let tag = sc.type_of(elem).to_owned();
+        let mut steps = vec![];
+        let mut missing = vec![];
+        for attr in std::iter::once(prop.attr).chain(prop.twin) {
+            match sc.doc().get(elem, attr) {
+                Some(old) if old == value => {}
+                Some(old) => steps.push((attr.to_owned(), old, value.to_owned())),
+                None => missing.push(attr),
+            }
+        }
+
+        // An empty optional text that is not in the file stays out of it (TEd writes `capture_location` only when it has one).
+        missing.retain(|_| !(value.is_empty() && matches!(prop.kind, Kind::Text)));
+        for attr in missing {
+            self.set_attribute(elem, attr, value);
+        }
+
+        if steps.is_empty() {
+            return true;
+        }
+
+        let n = self.tile().tscene().name(elem);
+        let name = format!("Set {} of {}", prop.attr, if n.is_empty() { tag.clone() } else { n });
+        let rebuild = tag == "BUILDING_INSTANCE" && prop.attr == "key";
+        self.history.push(Box::new(TedAttrCommand { name, elem, steps, gesture, rebuild }));
+        true
     }
 
     fn inspect_terrain(&self, ins: &mut dyn Inspector) {

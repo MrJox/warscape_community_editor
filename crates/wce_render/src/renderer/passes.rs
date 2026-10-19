@@ -60,6 +60,9 @@ impl Renderer {
         }
 
         let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
+
+        // The terrain-blend meshes belong to the terrain pass when it draws the ground (below); without it they are ordinary meshes.
+        let blend_in_terrain = self.terrain.active && !self.env.active;
         for (k, v) in [&vis_terrain, &vis].into_iter().enumerate() {
             self.draw_stats.views += 1;
             self.draw_stats.instances += v.instances() as u64;
@@ -73,11 +76,10 @@ impl Renderer {
         wce_prof!("render.gbuffer.draw");
 
         // One sub-pass per shader pair (GBUFFER_PASSES). An alpha-tested mesh whose material has no alpha-test shader is drawn opaque; a mesh
-        // whose material has no shaders at all is not drawn. With the game's terrain pass, TerrainBlend meshes are drawn there instead: the
-        // terrain's material is projected onto them.
+        // whose material has no shaders at all is not drawn. With the game's terrain pass, TerrainBlend meshes leave the table: their geometry
+        // pass below marks them as terrain pixels, and the terrain pass projects the terrain's material onto them (blend_mesh.rs).
         self.draw_lists.gbuffer_firsts = firsts;
         let shaders = GBUFFER_PASSES.map(|(_, _, vs, ps, _)| self.shader(vs).zip(self.shader(ps)));
-        let blend_in_terrain = self.terrain.active;
         let pass_of = |m: &GpuMesh| {
             if m.kind == MeshKind::TerrainBlend && blend_in_terrain {
                 return None;
@@ -161,6 +163,17 @@ impl Renderer {
                 self.draw_stats.camera_triangles += triangles;
                 self.draw_stats.camera_instances += instances;
             }
+        }
+
+        // The terrain-blend meshes' geometry pass (`custom_geometry`): depth, the G-buffer depth channel and stencil 2, the mark of the terrain pixels (the blend boxes and
+        // the resolve only touch those), so that the terrain textures are projected onto the meshes.
+        if blend_in_terrain {
+            let d = blend_mesh::BlendDraw {
+                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.rtvs(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: 2,
+                blend: self.states.bs_opaque.clone(),
+            };
+
+            self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
         }
 
         self.draw_lists.terrain_draws = terrain_draws;

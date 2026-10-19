@@ -59,4 +59,37 @@ pub trait Inspector {
     fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool;
     fn edit_choice(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String]) -> bool;
     fn gesture_ended(&mut self) -> bool;
+
+    /// A float in `[lo, hi]`: a number box and a slider (TEd's `DoubleBoxSlider`, the widget of every ranged float property).
+    fn edit_slider(&mut self, field: &str, label: &str, v: &mut f32, lo: f32, hi: f32) -> bool {
+        self.edit_float(field, label, v, (hi - lo) * 0.005, lo, hi)
+    }
+
+    /// An int in `[lo, hi]` with a slider (`IntBoxSlider`).
+    fn edit_int_slider(&mut self, field: &str, label: &str, v: &mut i64, lo: i64, hi: i64) -> bool {
+        let _ = (lo, hi);
+        self.edit_int(field, label, v, 0.2)
+    }
+
+    /// An angle: the value is in radians, the box shows degrees; the range is `[0, max]` radians.
+    fn edit_angle(&mut self, field: &str, label: &str, radians: &mut f32, max: f32) -> bool {
+        let mut deg = radians.to_degrees();
+        let changed = self.edit_float(field, label, &mut deg, 0.5, 0.0, max.to_degrees());
+        if changed {
+            *radians = deg.to_radians();
+        }
+
+        changed
+    }
+
+    /// A row of check boxes (the seasons, the flags): `on[i]` is the state of `names[i]`.
+    fn edit_checks(&mut self, field: &str, label: &str, names: &[&str], on: &mut [bool]) -> bool {
+        let _ = label;
+        let mut changed = false;
+        for (i, name) in names.iter().enumerate() {
+            changed |= self.edit_bool(&format!("{field}.{name}"), name, &mut on[i]);
+        }
+
+        changed
+    }
 }
