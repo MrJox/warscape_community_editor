@@ -173,6 +173,10 @@ impl Renderer {
         wce_prof!("render.build_terrain_draws");
         self.draw_lists.terrain_revision = scene.terrain_revision();
         self.draw_lists.terrain_draws.clear();
+
+        // A visible list names batches of the set it was culled from: a pass that culls nothing this frame (the G-buffer pass with no
+        // items) must not leave the old one to the passes that read it after (the sea's model water).
+        self.draw_lists.vis_terrain = Visible::default();
         self.draw_lists.terrain_bounds.clear();
         self.draw_lists.terrain_entities = 0;
         self.draw_lists.terrain_meshes = 0;
@@ -235,6 +239,7 @@ impl Renderer {
         // Everything is rebuilt from the current state: forget what was logged.
         let _ = scene.moved_since(&mut self.draw_lists.moved_cursor);
         self.draw_lists.draws.clear();
+        self.draw_lists.vis = Visible::default();
         self.draw_lists.item_of_entity = vec![NO_ITEM; scene.entities().last().map_or(0, |e| e.id as usize + 1)];
         self.draw_lists.entities = 0;
         self.draw_lists.meshes = 0;
