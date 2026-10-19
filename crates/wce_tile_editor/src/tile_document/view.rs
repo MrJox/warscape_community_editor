@@ -16,19 +16,17 @@ use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
 use super::index::{matrix_of, style_of};
-use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, Placement, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
+use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, terrain_normal_image};
 
 #[derive(Clone, Copy)]
 struct RiverPoint {
-    /// World metres; y = the spline's own height for freeform, terrain offset for landscape (resolved by the caller).
+    /// World metres; y = the spline's own height.
     x: f64,
     z: f64,
     y: f64,
 
-    /// terrain_offset.
-    offset: f64,
     width: f64,
     foam: f64,
     fade: f64,
@@ -334,9 +332,11 @@ impl Tile {
     }
 
     /// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position,
-    /// all local to the instance in scene units); the ribbon follows it with the point's width. A landscape spline lies terrain_offset above the
-    /// terrain under each sample (measured on osgiliath: the bed is carved, the offset is the water's depth over it), a freeform one at the height
-    /// it stores. The sea plane: a tile of a sea tile set whose terrain goes below 0 gets a plane at y = 0 over the bordered tile; the depth test
+    /// all local to the instance in scene units); the ribbon follows it with the point's width, at the spline's own height, landscape or freeform:
+    /// the exported river_spline*.xml the game reads has the points' stored heights and no terrain_offset. terrain_offset is the point's height
+    /// over the ground under it when TEd placed it (osgiliath minor: 23 of 26 points to the millimetre; up to 0.8 m off where the ground changed
+    /// since). Adding it to the ground under every sample lifted the water of osgiliath minor's second river over the ford it starts on.
+    /// The sea plane: a tile of a sea tile set whose terrain goes below 0 gets a plane at y = 0 over the bordered tile; the depth test
     /// cuts it where the ground is higher.
     fn rebuild_water(&mut self, scene: &mut RenderScene, layer: LayerId) {
         for &e in &self.water_entities {
@@ -362,7 +362,6 @@ impl Tile {
             }
 
             let w = world_transform(sc, e);
-            let landscape = self.placement_of_attr(e) == Placement::Landscape;
             let mut pts = vec![];
             for &c in els[e].children.iter().filter(|&&c| els[c].name == "points") {
                 for &p in els[c].children.iter().filter(|&&p| els[p].name == "point") {
@@ -377,7 +376,7 @@ impl Tile {
                     let wp = world(pos);
                     pts.push(RiverPoint {
                         x: wp[0], y: wp[1], z: wp[2], cin: world(vec("controlIn").unwrap_or(pos)), cout: world(vec("controlOut").unwrap_or(pos)),
-                        offset: num("terrain_offset", 0.0), width: num("width", 1.0), foam: num("foam_amount", 0.1), fade: num("alpha_fade", 1.0), flow: num("flow_speed", 0.5),
+                        width: num("width", 1.0), foam: num("foam_amount", 0.1), fade: num("alpha_fade", 1.0), flow: num("flow_speed", 0.5),
                     });
                 }
             }
@@ -410,8 +409,7 @@ impl Tile {
                     let t = f64::from(k) / f64::from(n);
                     let x = bez(a.x, a.cout[0], b.cin[0], b.x, t);
                     let z = bez(a.z, a.cout[2], b.cin[2], b.z, t);
-                    let off = a.offset + (b.offset - a.offset) * t;
-                    let y = if landscape { f64::from(self.terrain_height(x as f32, z as f32)) + off / u } else { bez(a.y, a.cout[1], b.cin[1], b.y, t) };
+                    let y = bez(a.y, a.cout[1], b.cin[1], b.y, t);
                     samples.push(Sample {
                         x, z, y, width: a.width + (b.width - a.width) * t, flow: a.flow + (b.flow - a.flow) * t, foam: a.foam + (b.foam - a.foam) * t,
                     });
