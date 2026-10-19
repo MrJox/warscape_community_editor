@@ -62,3 +62,37 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
 - **Textures**: `battleterrain/river/river_normal.dds` (rivers), `sea/water_detail_normal.dds` (sea), the sky cube for `s_sky`, the environment cube for `s_environment`, the refraction copy, the depth channel. Samplers as in `docs/re/samplers.tsv` (normals and cubes linear wrap, refraction and depth point clamp).
 - **Assumptions / not verified against the game** (no in-game reference capture yet): `g_refraction_depth` = 0.75 (what both engine constructors store, fn 0x116d45c0 and 0x117037e0, and what the live game's cbuffer dump shows: `directional_light_PS.g_refraction_depth` 0.75; the dump has `g_refraction_light_scatter` 0.6 and `g_sea_bed_light_scatter` (0.97, 1, 1) for that battle); the **uv convention of the engine's river mesh** (the shader multiplies `P1.xy` by 0.01 / 0.001 and flips with `1 - ...`, which looks like normalised coordinates; the tool puts metres across / along and so the ripple density differs from a river of another width); the river width (full `width` in metres); the shadow variants (`sHardShadowBuffer`: water receiving shadows) are not used; the sea's normal texture (`water_detail_normal`) is the one the battle plane is believed to use; the `ultra` quality level is fixed; ice in winter (`ice_diffuse`), foam (`foam_amount` has no input in the battle shaders), the tile's `hf_water_map` and the ground-type water are not read; the river ends have no fade (the shader reads none).
 - **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`cli/fxc_dump <fxc dir> <out> <asm dir>`), not the GLSL.
+
+## The battle sea of a coastal battle (2026-10-19: decompiled empire.retail.dll + a memory dump)
+
+The editor's sea plane (waterplane `ps30_battle_*_water_quality`) has no foam input, but the game draws a band of breaking-wave foam
+along the shore (in-game capture of a coastal battle, 2026-10-19). What the game actually draws there:
+
+- **The Sea Display** (class name `SEA_DISPLAY`, ctor fn 0x116f0c20, vtable rva 0x1ca6404; created for battles by fn 0x11770ca0 with
+  its fourth argument 1, for the campaign map by fn 0x1190cd40). It loads `sea/combined_foam.dds` (slot 0x18) and
+  `sea/water_detail_normal.dds` (slot 0x19; `sea/campaign_water_detail_normal.dds` on the campaign map), creates a 512 x 512 texture of its
+  own (slot 0x17: formats 0x2b / 0x35, fn 0x11700e90; believed to be the **sea bed info** the vertex shader samples) and three float grids
+  (slots 0x1f-0x2f: 256 x 256, 128 x 128, 256 x 256, sized from its settings at +0x70 / +0x74). In battle it also builds a
+  **`RADIAL_MESH`** (fn 0x116e47e0, vtable rva 0x1ca62c4): 80 segments around, rings from its settings, the sea's surface mesh.
+- **The shader is `ocean.hlsl`** (sm_4_0; registered by fn 0x116e0cf0: `vs30_main` + `ps30_main_{ultra,high,medium,low}_water_quality`,
+  `main_prefill_40`), not waterplane. Proof from the dump: the only outside reference to the Sea Display's combined_foam texture is a
+  material texture table whose slots are `g_foam_anim_texture` (Sea Display slot 0x14), `g_sea_surface` (0x15), `g_swell_surface` (0x16),
+  `g_static_foam_texture` (combined_foam), `g_reflection_texture`, `g_refraction_texture`: ocean.hlsl's inputs. The vertex shader also reads
+  `sea_bed_info_texture` and `ocean_VS`; the pixel shader `OceanSharedConstants`, the detail normal, the colour overlays.
+- **No SeaV2 in a coastal battle**: the `ocean2.hlsl` coast ocean (component `SeaV2`, id 0x0bba1356, ctor fn 0x116f17d0, vtable rva
+  0x1ca2d38: `terrain/ocean/coast_foam_mips`, `land_1024_coast`, `coast_amplitude_mask_1`) has no instance in the dump; one Sea Display and
+  one radial mesh do.
+- **The surfaces are generated at runtime**: no sea surface file or table ships (`SeaSurfaces.pack`, `sea_surfaces_table` are named in
+  the DLL but not in the packs); the engine's strings name a Phillips-spectrum wave simulation (`swell_phillips_constant`,
+  `swell_num_divisions`, `swell_horz_scale`, `swell_wind_speed`, `swell_repeat_time`, `swell_fps`). Not traced yet.
+- **Live constants of the ocean material** (the dump, a coastal battle, ultra quality): `ocean_VS`: `g_sea_decay` 0.0006, `g_sea_uv_scale`
+  0.0142857 (1/70), `g_swell_uv_scale` 0.00125 (1/800), `g_vs_sea_info` (-20, 25, -0.117621, 0.239849). `OceanSharedConstants`:
+  `g_froth_distortion_speed` 0.35, `g_froth_distortion_amount` 0.05, `g_lowest_wave_trough_y_pos` 0, `g_ps_sea_info` (-20, 25, -0.117621,
+  0.239849), `g_detail_normal_uv_scale1/2` 15.8 / 5, `g_detail_normal_uv_speed1/2` 7.8 / 6.8, `g_transparency_exponential_scale` 4,
+  `g_foam_anim_data` (33, 34, 0.650017, 0) (two animation frames and the blend between them, it seems). The waterplane materials have their
+  own copies of `OceanSharedConstants` (other values: 1 / 1 / 0, all zero).
+- **Still to trace** before the ocean can be drawn: how the sea bed info texture is filled (from the terrain heights?), the radial mesh's
+  vertex layout and placement, the sea / swell / foam-animation simulation, and where the constants come from (environment, settings).
+- How this was found (reusable): string VAs scanned in .text, Ghidra headless decompiles (`C:\Users\frodo\ghidra_work`), and a minidump
+  read with a small reader (module list + Memory64 list): count heap objects by vtable, follow pointers from known objects, and read
+  variable objects (+0x08 name, +0x14 slot in the cbuffer's CPU copy).
