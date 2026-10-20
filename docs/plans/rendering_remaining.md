@@ -49,6 +49,12 @@ screenshots). In the capture, find the ocean draw (`ocean.hlsl` vs30_main / ps30
    `lf_sea_height_map.dds` and with the terrain heights;
 3. the constant buffers `ocean_VS` and `OceanSharedConstants`, to recheck the values the editor takes from the tables.
 
+## Buildings: to verify in game (later)
+
+Siege engines posed in their animations' first frame, walls' bridging columns and neighbour destruction, and the pieces' `.meta`
+effects (torch fires, burning buildings) are implemented from the files alone: the findings and every assumption, each with how to
+check it, are in docs/re/buildings.md.
+
 ## Mod assets to review (later)
 
 - **TDD's dead tree bark is near black (2026-10-20).** `tdd_pack6_weather_1.0.0.pack` overrides
