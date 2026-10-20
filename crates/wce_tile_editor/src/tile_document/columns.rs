@@ -16,6 +16,12 @@
 //! The same mechanism attaches other buildings too: the walls' `torch_sconce` torches (on their intact states), drawn the same way.
 //!
 //! The columns follow the walls live: their placement is recomputed when the walls' transforms, levels or visibility change.
+//!
+//! The effects of the pieces (wce_formats::anim_meta: `<piece file>.meta`), on the buildings' own pieces and on what they attach, are
+//! placed the same way: the torches' `action_vfx_torch_fire_small`, a lighthouse's fire. Shown: the untagged effects that loop (not the
+//! `destruction_vfx_*` bursts a piece plays once when it reaches its level), and the `ip_fire` ones while the building burns (its `burn`
+//! property). The capture smoke, the fire transitions and the timed fires belong to battle events and are not shown.
+//! ASSUMPTION: an effect's `scale` is applied like a placed VFXInstance's; its bone and its string flag are not used.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -23,9 +29,10 @@ use std::sync::Arc;
 
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
-use wce_foundation::math::{Float3, Float4x4};
+use wce_formats::anim_meta::{MetaEffect, meta_effects};
+use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_foundation::{log, wce_prof};
-use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene, VfxEmitter};
 
 use super::index::{destruct_number, static_piece};
 use super::view::{piece_local, piece_model};
@@ -55,6 +62,12 @@ pub(crate) struct ColumnState {
     /// Building key -> its columns (None: no logic file, or nothing attached).
     logic: HashMap<String, Option<Arc<Columns>>>,
     models: HashMap<String, Option<Arc<ColumnModel>>>,
+
+    /// Piece file -> the effects of its `.meta` (None: no file, or nothing shown in it).
+    metas: HashMap<String, Option<Arc<Vec<MetaEffect>>>>,
+
+    /// Building key -> whether it attaches or plays anything (a building without either is skipped every frame).
+    relevant: HashMap<String, bool>,
     entities: Vec<EntityId>,
 
     /// What the entities were built from.
@@ -106,6 +119,29 @@ fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
     Ok(out)
 }
 
+/// A placed piece whose effects play: its world matrix, its file, the element and whether it burns.
+type PlacedPiece = (Float4x4, String, usize, bool);
+
+/// Whether an effect of a `.meta` plays on a standing piece in the editor (see the module notes).
+fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
+    match e.tag.as_str() {
+        "" => !e.effect.starts_with("destruction_vfx"),
+        "ip_fire" => burning,
+        _ => false,
+    }
+}
+
+/// A rotation quaternion (x y z w) as a matrix.
+fn quat_matrix(q: [f32; 4]) -> Float4x4 {
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt().max(1e-6);
+    let [x, y, z, w] = q.map(|v| v / len);
+    let mut m = Float4x4::IDENTITY;
+    m.m[0] = [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w), 0.0];
+    m.m[1] = [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w), 0.0];
+    m.m[2] = [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y), 0.0];
+    m
+}
+
 /// The piece name (`piece01`) of a piece file.
 fn piece_name(path: &str) -> Option<String> {
     let file = path.rsplit('/').next()?;
@@ -133,6 +169,41 @@ impl Tile {
 
         self.columns.logic.insert(key.to_owned(), found.clone());
         found
+    }
+
+    /// The effects of a piece file's `.meta` that can show (cached).
+    fn piece_effects(&mut self, file: &str) -> Option<Arc<Vec<MetaEffect>>> {
+        if let Some(m) = self.columns.metas.get(file) {
+            return m.clone();
+        }
+
+        let path = format!("{}.meta", file.strip_suffix(".rigid_model_v2").unwrap_or(file));
+        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match meta_effects(&bytes) {
+            Some(e) => {
+                let e = e.into_iter().filter(|e| shown_effect(e, true)).collect::<Vec<_>>();
+                (!e.is_empty()).then(|| Arc::new(e))
+            }
+
+            None => {
+                log::warn(format!("{path}: an entry this does not read (its effects are not shown)"));
+                None
+            }
+        });
+
+        self.columns.metas.insert(file.to_owned(), found.clone());
+        found
+    }
+
+    /// Whether a building attaches columns or has pieces with effects.
+    fn relevant_building(&mut self, key: &str) -> bool {
+        if let Some(&r) = self.columns.relevant.get(key) {
+            return r;
+        }
+
+        let metas = self.files.as_deref().is_some_and(|f| f.list(&format!("rigidmodels/buildings/{key}/"), ".meta").iter().any(|p| !p.ends_with("_anim.meta")));
+        let r = metas || self.building_columns(key).is_some();
+        self.columns.relevant.insert(key.to_owned(), r);
+        r
     }
 
     fn column_model(&mut self, key: &str) -> Option<Arc<ColumnModel>> {
@@ -166,13 +237,14 @@ impl Tile {
         found
     }
 
-    /// Every column the shown walls attach at their current levels: (world matrix, column key, owning element).
-    fn placed_columns(&mut self) -> Vec<(Float4x4, String, usize)> {
+    /// Every column the shown walls attach at their current levels: (world matrix, column key, owning element); and every shown piece of the
+    /// buildings that have effects.
+    fn placed_columns(&mut self) -> (Vec<(Float4x4, String, usize)>, Vec<PlacedPiece>) {
         if self.display.hidden_types.contains("BUILDING_INSTANCE") {
-            return vec![];
+            return (vec![], vec![]);
         }
 
-        let mut out = vec![];
+        let (mut out, mut pieces) = (vec![], vec![]);
         for e in self.instances.clone() {
             if self.tscene().type_of(e) != "BUILDING_INSTANCE" || !self.shown(e) {
                 continue;
@@ -180,39 +252,47 @@ impl Tile {
 
             let Some(m) = self.model_of(e).filter(|m| m.ok).cloned() else { continue };
             let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { continue };
-            let Some(columns) = self.building_columns(&key) else { continue };
+            if !self.relevant_building(&key) {
+                continue;
+            }
+
+            let columns = self.building_columns(&key);
             let saved = self.saved_destruction_level(e, m.levels);
             let world = self.world_matrix(e);
+            let burns = self.tscene().doc().get(e, "burn").is_some_and(|v| v.trim() == "true");
             for (k, piece) in m.pieces.iter().enumerate() {
-                let Some(states) = piece_name(piece).and_then(|n| columns.get(&n)) else { continue };
                 let props = self.piece_props(e, k).cloned();
                 if props.as_ref().is_some_and(|p| !p.visible) {
                     continue;
                 }
 
                 let level = props.as_ref().map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level });
-                let top = i64::from(m.piece_levels.get(k).copied().unwrap_or(m.levels).max(1)) - 1;
-                let state = level.clamp(0, top) as usize;
+                let levels = m.piece_levels.get(k).copied().unwrap_or(m.levels).max(1);
+                let state = level.clamp(0, i64::from(levels) - 1) as usize;
                 let piece_world = props.as_ref().map_or(world, |p| world * piece_local(p));
+                pieces.push((piece_world, self.piece_file(piece, level, levels), e, props.as_ref().map_or(burns, |p| p.burn || burns)));
+                let Some(states) = piece_name(piece).and_then(|n| columns.as_ref()?.get(&n).cloned()) else { continue };
                 for c in states.get(state).into_iter().flatten() {
                     out.push((piece_world * c.local, c.key.clone(), e));
                 }
             }
         }
 
-        out
+        (out, pieces)
     }
 
     /// Per frame: places the bridging columns again when the walls changed.
     pub(crate) fn update_columns(&mut self, scene: &mut RenderScene, layer: LayerId) {
         wce_prof!("tile.update_columns");
-        let placed = self.placed_columns();
-        let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, e)| {
+        let (placed, pieces) = self.placed_columns();
+        let hash = |h: u64, w: &Float4x4, key: &str, e: usize| {
             let h = w.m.iter().flatten().fold(h, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(1_099_511_628_211));
-            key.bytes().fold(h ^ *e as u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211))
-        });
+            key.bytes().fold(h ^ e as u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211))
+        };
 
-        if signature == self.columns.signature && (placed.is_empty() || !self.columns.entities.is_empty()) {
+        let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, e)| hash(h, w, key, *e));
+        let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, e, burns)| hash(h ^ u64::from(*burns), w, file, *e));
+        if signature == self.columns.signature && (placed.is_empty() && pieces.is_empty() || !self.columns.entities.is_empty()) {
             return;
         }
 
@@ -234,12 +314,31 @@ impl Tile {
             })
         }).collect::<Vec<_>>();
 
+        let mut effect_pieces = pieces;
         for (i, (world, key, elem)) in placed.iter().enumerate() {
             let Some(model) = self.column_model(key) else { continue };
             let level = i64::from(shared[i]);
             for (base, levels) in &model.pieces {
-                let mi = MeshInstance { model: piece_model(base, level, *levels), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
+                let file = piece_model(base, level, *levels);
+                let mi = MeshInstance { model: file.clone(), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
                 let id = scene.add(layer, *world, Payload::MeshInstance(mi), self.source(item_of(*elem)));
+                if let Some(en) = scene.find_mut(id) {
+                    en.locked = true;
+                }
+
+                self.columns.entities.push(id);
+                effect_pieces.push((*world, file, *elem, false));
+            }
+        }
+
+        // The pieces' effects, in their model space.
+        let unit = self.unit() as f32;
+        for (world, file, elem, burns) in effect_pieces {
+            let Some(effects) = self.piece_effects(&file) else { continue };
+            for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
+                let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
+                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit };
+                let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
                 if let Some(en) = scene.find_mut(id) {
                     en.locked = true;
                 }
