@@ -2250,6 +2250,7 @@ version = "0.1.0"
 dependencies = [
  "rayon",
  "rpfm_lib",
+ "serde_json",
  "tempfile",
  "wce_editor_core",
  "wce_formats",
