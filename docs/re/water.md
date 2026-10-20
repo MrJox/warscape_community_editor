@@ -136,6 +136,11 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
     `g_lowest_wave_trough_y_pos`), and the four detail normal columns in another order than RPFM's names (RPFM scale1, speed1, scale2,
     speed2 = 7.8, 6.8, 15.8, 5 give scale1, scale2, speed1, speed2 = 15.8, 5, 7.8, 6.8 in the dump). `g_transparency_exponential_scale`
     (4) is not in the row.
+  - The sea bed info texture the ocean material binds (`g_sea_bed_info_texture`, sampler `sea_bed_info_texture_sampler` linear clamp)
+    is not the Sea Display's own 512 x 512 texture (slot 0x17: nothing binds it) but the handle in its slot 0x1a: a 1024 x 1024 texture
+    (2 m a texel over the shader's 2048 m) loaded from a memory-mapped file (its handle's release fn 0x116502a0 unmaps a view). Which file
+    is not settled: the likely one is a 2048 m cut of the battle map's `terrain/battles/<map>/lf_sea_height_map.dds` (16-bit, one
+    channel; 31 MB for main_attila_map), but its content is GPU-only, so neither the code nor a CPU memory dump shows it.
   - Not found: the code that fills the radial mesh (80 segments of a sin / cos table, 164 rings; `[0x24]`, `[0x25]` = 43.2, 2.72 at the
     dumped camera), so how the frames' heights (and the slope images) move the vertices is not known; and what the engine writes into the
     sea bed info texture.
