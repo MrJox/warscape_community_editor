@@ -356,3 +356,26 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
 - Top face is still 7.21 7.16 6.16 against 3.97 4.63 4.88 (cloud-free 1.55 2.99 4.75). A fit of the cloud lighting needs
   sun scale 0.46/0.58/0.75 per channel (ambient on), i.e. not a uniform factor, so the top-face cloud colour or the game's
   cloud-free sky differs. Open.
+
+## Scene units and game units (2026-10-20)
+
+- The game's battle world is in TEd units: a settlement tile is 2048 of them (the battle locations' `ECRectangle` 2048 x 2048), and the
+  data BOB writes in the half-size frame (bmd building lists with scale 1, tree and grass lists, the VFX markers' scale / unit_scale, the
+  point light markers) is scaled back by the tile placement (`RENDER_PARAMS` `unit_scale` 2). The game's shaders and their constants
+  (terrain `blend_pixel_scale` repeats, `g_mid_distance_details`, the grass' 100-unit sink, fog, SSAO, decal tiling, ocean depths) are in
+  those units. `g_blend_pixel_scale_array` is filled by fn 0x11821af0 as (blend_pixel_scale, outfield_blend_pixel_scale) times a float
+  of the map (fn 0x107c0b20, +0x7c; 1 in the dumped battle: the array held 9, 9, 0.3) and mid_distance_strength.
+- The editor's tile scene stays in scene units (half metres horizontally, models at 1 / unit_scale, docs/formats/tile_ted.md). The
+  renderer culls, picks and draws overlays in scene units and hands the game's shaders game units (`CameraState::units` =
+  `RenderScene::game_units`, 2 for a tile, 1 for the weather sample map): the camera constants (`game_view`, `game_proj`: near and far
+  times the factor, the same NDC and depth), the instance matrices (`DrawSet::gather`), the terrain patches, heights and blend boxes, the
+  decals, point lights, grass, rivers, the ocean grid and sea bed, the placed effects (simulated in game units), the shadow matrices
+  (`game_clip`) and split distances.
+- Why the half frame exists: the tile data (terrain grid of 128-unit cells, blend / height maps at about one texel per unit, BOB's
+  lists and markers) is authored in one tile frame, and `RENDER_PARAMS` `unit_scale` maps it into each world: 2 for battles, 0.2 for the
+  campaign map (`terrain/tiles/campaign/_tile_database/_settings.xml`). Game units are metres (a soldier's head is at 1.75,
+  `att_nordic_04_skin01_cut_1`), so a battle tile cell is 256 m; buildings are authored large for that (a nordic longhouse is 17.7 tall).
+  tile.ted positions are already in battle units (twice the tile frame); TEd, BOB and the editor draw the tile frame.
+- Before this the ground's textures repeated half as often as in the game (twice the texel size: blurry rock and sand up close), the
+  grass reached twice as far, and every distance constant was off by two.
+

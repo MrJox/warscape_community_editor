@@ -148,8 +148,9 @@ impl Renderer {
         let size = size_of::<RigidInstance>();
         let Some(Ok(dst)) = ms.get_mut(self.draw_lists.ring.cursor * size..(self.draw_lists.ring.cursor + n) * size).map(bytemuck::try_cast_slice_mut::<u8, RigidInstance>) else { return [0, 0] };
         let (first, second) = dst.split_at_mut(n0);
-        sets[0].gather(viss[0], first);
-        sets[1].gather(viss[1], second);
+        let units = self.camera.units;
+        sets[0].gather(viss[0], first, units);
+        sets[1].gather(viss[1], second, units);
         drop(ms);
 
         self.draw_lists.ring.fresh = false;

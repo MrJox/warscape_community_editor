@@ -144,6 +144,9 @@ impl Tile {
             scene.vegetation_season.clone_from(&self.look.season);
         }
 
+        // The game draws the tile in its units: the scene's times unit_scale.
+        scene.game_units = self.unit() as f32;
+
         let want = (self.display.show_grass, self.display.generate_grass);
         if !published && self.grass.shown.as_ref() == Some(&want) {
             return;

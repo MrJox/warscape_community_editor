@@ -57,6 +57,9 @@ pub(crate) struct OceanGpu {
     /// What the sea bed was built from: the scene's address and terrain revision.
     sea_bed_key: (usize, u64),
 
+    /// The game units per scene unit the grids and the sea bed were built with (both are in game units).
+    units: f32,
+
     /// Neutral sea / swell surfaces (0.5: no tilt) and an empty whitecap array.
     neutral: Option<ID3D11ShaderResourceView>,
     no_foam: Option<ID3D11ShaderResourceView>,
@@ -152,6 +155,8 @@ impl Renderer {
             return;
         }
 
+        // The texture covers game units; the terrains are in scene units.
+        let u = self.camera.units;
         wce_prof!("render.ocean_sea_bed");
         let terrains = scene.entities().iter()
             .filter(|e| scene.drawable(e))
@@ -169,7 +174,7 @@ impl Renderer {
             let z = -SEA_BED_HALF + (j as f32 + 0.5) * texel;
             for (i, out) in row.iter_mut().enumerate() {
                 let x = -SEA_BED_HALF + (i as f32 + 0.5) * texel;
-                let h = ground_at(&terrains, x, z).unwrap_or(lo);
+                let h = ground_at(&terrains, x / u, z / u).map_or(lo, |h| h * u);
                 *out = ((h - lo) / range).clamp(0.0, 1.0);
             }
         });
@@ -217,6 +222,13 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "ocean", &el) else { return false };
 
         wce_prof!("render.ocean");
+        let u = self.camera.units;
+        if self.water.ocean.units != u {
+            self.water.ocean.units = u;
+            self.water.ocean.meshes.clear();
+            self.water.ocean.sea_bed = None;
+        }
+
         self.ocean_sea_bed(scene);
         self.ocean_neutral();
 
@@ -234,7 +246,8 @@ impl Renderer {
                 (x0, z0, x1, z1, y) = (x0.min(v.x), z0.min(v.z), x1.max(v.x), z1.max(v.z), v.y);
             }
 
-            let (verts, indices) = sea_grid(x0, z0, x1, z1, y);
+            // In game units, as the ocean shaders' distances and the sea bed texture.
+            let (verts, indices) = sea_grid(x0 * u, z0 * u, x1 * u, z1 * u, y * u);
             let idx = indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
             let (Some(vb), Some(ib)) = (immutable_buffer(&self.dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER), immutable_buffer(&self.dev, &idx, D3D11_BIND_INDEX_BUFFER)) else {
                 continue;

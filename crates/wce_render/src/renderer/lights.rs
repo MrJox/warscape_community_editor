@@ -79,6 +79,9 @@ impl Renderer {
         // The visible lights, the smooth ones first.
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
         let time = self.clock.last_time.max(0.0);
+
+        // Culled in scene units, drawn in game units.
+        let u = self.camera.units;
         let (mut smooth, mut linear) = (vec![], vec![]);
         for e in KindIndex::entities(&self.kinds.lights, scene) {
             let Payload::PointLight(l) = &e.payload else { continue };
@@ -96,13 +99,13 @@ impl Renderer {
             };
 
             let k = |v: f32| v * level * SUN_HDR_SCALE;
-            out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, c[0], c[1], c[2], l.radius]);
+            out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, c[0] * u, c[1] * u, c[2] * u, l.radius * u]);
         }
 
-        // The placed effects' lights (fire VFX): their colour already carries its level.
-        for l in self.particles.effect_lights(self.camera.eye) {
+        // The placed effects' lights (fire VFX): their colour already carries its level. The particles are in game units: culled in scene units.
+        for l in self.particles.effect_lights(self.camera.eye * u) {
             let c = [l.pos.x, l.pos.y, l.pos.z];
-            if l.radius <= 0.0 || frustum.outside(&c, l.radius) {
+            if l.radius <= 0.0 || frustum.outside(&c.map(|v| v / u), l.radius / u) {
                 continue;
             }
 

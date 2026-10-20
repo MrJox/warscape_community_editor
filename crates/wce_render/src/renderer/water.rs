@@ -48,6 +48,9 @@ pub(crate) struct WaterGpu {
     refr_h: u32,
     river_inst_vb: Option<ID3D11Buffer>,
     sea_inst_vb: Option<ID3D11Buffer>,
+
+    /// The game units per scene unit the instance rows hold.
+    inst_units: f32,
     pub(crate) ds: Option<ID3D11DepthStencilState>,
 
     /// The sea planes' ocean pass (renderer/ocean.rs).
@@ -142,10 +145,14 @@ impl Renderer {
             self.water.ds = self.dev.create_depth_stencil_state(&dd).ok();
         }
 
-        // The instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, identity (the vertices are in world space).
-        if self.water.river_inst_vb.is_none() {
+        // The instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, the scene -> game units scale (the
+        // vertices are in world space).
+        let u = self.camera.units;
+        if self.water.river_inst_vb.is_none() || self.water.inst_units != u {
+            self.water.inst_units = u;
+
             // P2 .. P4 rows, P5 (x >= 1 flips the uv).
-            let river = [1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let river = [u, 0.0, 0.0, 0.0, 0.0, u, 0.0, 0.0, 0.0, 0.0, u, 0.0, 0.0, 0.0, 0.0, 0.0];
 
             // P1 .. P3 rows, P4 .. P6 unused.
             let mut sea = [0.0f32; 24];

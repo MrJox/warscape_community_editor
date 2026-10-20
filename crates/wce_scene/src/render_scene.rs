@@ -581,6 +581,12 @@ pub struct RenderScene {
     /// `sp`, `su`, `au` or `wi`: trees and grass draw their season's diffuse (`<name>_<season>_diffuse...`) where there is one; empty for
     /// the plain ones.
     pub vegetation_season: String,
+
+    /// Game units per scene unit. A tile's scene is the battle world at 1 / unit_scale (half metres horizontally, its models halved), but the
+    /// game draws in its own units, two per scene unit (a settlement tile is 2048 of them; `RENDER_PARAMS` `unit_scale` 2), and its shaders'
+    /// world-space values (terrain texture repeats, detail and fade distances, fog, decal tiling...) are in those. The renderer scales the
+    /// world it gives the shaders by this; the scene and the editor stay in scene units. 1: the scene is in game units.
+    pub game_units: f32,
 }
 
 impl Default for RenderScene {
@@ -598,6 +604,7 @@ impl Default for RenderScene {
             moved_base: 0,
             environment: EnvironmentSlot::default(),
             vegetation_season: String::new(),
+            game_units: 1.0,
         }
     }
 }

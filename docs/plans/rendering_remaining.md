@@ -16,9 +16,10 @@ From docs/re/terrain.md ("Assumptions / open"):
   depth-only shadow map and shadow depth bias for every caster.
 - Done 2026-10-18: the maps' sampler states (from the shaders' declarations) and `g_overlay_view_projection` (the declared identity).
 - Optional: the virtual texture path.
-- **To review (2026-10-19): terrain detail.** The terrain looks much more detailed in game than in the editor (a coastal battle's beach:
-  sand ripples, pebbles and wet-sand darkening that the editor's terrain doesn't show). Compare a capture of the same tile and camera
-  in game and in the editor, and check the near detail maps, the material layers' detail normals and the mip / LOD choices.
+- **Done (2026-10-20): terrain detail.** The ground was blurry against the game's (rock, beaches) because the editor drew the game's
+  shaders in its half-size world: the tile scene is the battle world / unit_scale (2), the game's shaders work in game units, so every
+  world-space value (texture repeats, detail and fade distances, fog, the grass reach, decal tiling) ran at half frequency. The renderer
+  now gives the shaders the world in game units (`RenderScene::game_units`, docs/re/renderer.md, "Scene units and game units").
 - **In progress (2026-10-19): shore foam on the battle sea.** The game draws a band of breaking-wave foam where the sea meets the
   shore; the battle `waterplane` shader has no foam input. The engine has a coast-foam ocean (`ocean2.hlsl`, the "SeaV2" component:
   `terrain/ocean/coast_foam_mips`, `land_1024_coast`, `coast_amplitude_mask_1`, `ocean_v2_coast` cbuffer), but a memory dump of a coastal
@@ -60,4 +61,6 @@ code (not yet isolated one by one in captures):
   - the cloud columns' spawn interval (no dump with a moving cloud field).
   Done 2026-10-18: the shadow cascades' light fit (the game's LiSPSM, verified against the dump).
 - **Placed VFX:** the game's use of the marker's season mask (+0x60) wasn't traced (every vanilla instance has all four seasons).
+- **Grass black pixels:** some grass pixels come out pure black (0, 0, 0) after lighting (~23k pixels in a 1600 x 900 forest view),
+  likely a zero normal (the grass normal is alpha-blended into the G-buffer) normalised to NaN. Not traced yet.
 - **Two-tile session:** opening a second tile keeps showing the first (predates the merge).

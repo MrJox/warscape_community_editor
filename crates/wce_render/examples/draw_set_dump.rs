@@ -125,7 +125,7 @@ fn main() {
         ds.cull(&view, &mut vis);
         show("visible", &vis);
         let mut inst = vec![RigidInstance::default(); vis.instances()];
-        ds.gather(&vis, &mut inst);
+        ds.gather(&vis, &mut inst, 1.0);
         println!("gather {:016x}", floats(inst.iter().flat_map(|r| r.world.iter().flatten().chain(&r.p4).chain(&r.p5).chain(&r.p6).chain(&r.p7))));
         println!("ids {:016x}", words(&ds.gather_ids(&vis)));
         ds.retain(&mut vis, |e| e % 3 != 0);

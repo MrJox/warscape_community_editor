@@ -430,7 +430,7 @@ impl Renderer {
 
             let (Some(inst_vb), Some(id_vb), Some(cb)) = (self.editor.pick_inst_vb.clone(), self.editor.pick_id_vb.clone(), self.editor.pick_cb.clone()) else { continue };
             let mut instances = vec![RigidInstance::default(); n];
-            set.gather(&vis, &mut instances);
+            set.gather(&vis, &mut instances, 1.0);
             if !write_dynamic(&self.ctx, &inst_vb, &instances) || !write_dynamic(&self.ctx, &id_vb, &set.gather_ids(&vis)) {
                 continue;
             }

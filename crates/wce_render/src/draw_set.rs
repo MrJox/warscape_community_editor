@@ -401,8 +401,9 @@ impl DrawSet {
 
     /// Fills one record per instance: the item's world matrix (with the mesh offset applied) and its pixel-shader parameters.
     ///
-    /// `dst` is usually a mapped GPU buffer (write-combined memory): each record is built locally and stored once, never read back.
-    pub fn gather(&self, vis: &Visible, dst: &mut [RigidInstance]) {
+    /// `dst` is usually a mapped GPU buffer (write-combined memory): each record is built locally and stored once, never read back. `units`
+    /// scales the world matrices (the game's units per scene unit; 1 for the scene's own).
+    pub fn gather(&self, vis: &Visible, dst: &mut [RigidInstance], units: f32) {
         wce_prof!("drawset.gather");
         dst[..vis.order.len()].par_iter_mut().enumerate().for_each(|(k, r)| {
             let item = vis.order[k] as usize;
@@ -415,6 +416,10 @@ impl DrawSet {
                 for (out, w) in world.iter_mut().zip(w) {
                     out[3] += w[0] * mesh.offset.x + w[1] * mesh.offset.y + w[2] * mesh.offset.z;
                 }
+            }
+
+            if units != 1.0 {
+                world = world.map(|row| row.map(|v| v * units));
             }
 
             let params = if self.flags[item] & PARAMS != 0 {

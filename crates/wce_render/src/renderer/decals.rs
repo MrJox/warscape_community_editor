@@ -64,6 +64,9 @@ pub(crate) struct DecalGpu {
 
     /// The model cache's revision when they were collected (a building's decal boxes come with its model).
     models_revision: u64,
+
+    /// The game units per scene unit the instances were made with.
+    units: f32,
     models: Vec<String>,
     items: Vec<DecalItem>,
 }
@@ -144,11 +147,13 @@ impl Renderer {
     fn collect_decals(&mut self, scene: &RenderScene) {
         let id = std::ptr::from_ref(scene) as usize;
         let models_revision = self.models.revision();
+        let units = self.camera.units;
         let d = &mut self.decals;
-        if d.scene_id == id && d.revision == scene.revision() && d.models_revision == models_revision && !d.items.is_empty() {
+        if d.scene_id == id && d.revision == scene.revision() && d.models_revision == models_revision && d.units == units && !d.items.is_empty() {
             return;
         }
 
+        d.units = units;
         d.scene_id = id;
         d.revision = scene.revision();
         d.models_revision = models_revision;
@@ -161,16 +166,18 @@ impl Renderer {
                 (models.len() - 1) as u32
             });
 
-            let size = axis_sizes(w);
+            // The shaders get the box in game units; culling keeps the scene's.
+            let g = game_world(w, units);
+            let size = axis_sizes(&g);
             let mut inst = [0.0f32; INSTANCE_FLOATS];
             for row in 0..3 {
-                inst[row * 4..row * 4 + 4].copy_from_slice(&w.m[row]);
+                inst[row * 4..row * 4 + 4].copy_from_slice(&g.m[row]);
             }
 
             inst[12..16].copy_from_slice(&[size[0], size[1], size[2], parallax]);
             // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings).
             inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 1.0]);
-            let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt();
+            let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() / units;
             d.items.push(DecalItem { model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
         };
 
