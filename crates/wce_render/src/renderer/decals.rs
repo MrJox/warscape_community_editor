@@ -10,8 +10,13 @@
 //! the surface faces the box's y axis (from the G-buffer normal, which it reads: a copy, since channel 1 is written). The blend is the source
 //! alpha over the G-buffer's colour channels; the alpha channels (gloss, mask, material id) are kept.
 //!
-//! The boxes are drawn where they are behind the scene (depth test greater or equal, no write), both sides (the camera may be inside one). The parallax variant (ps30_parallax, the `_parallax.dds` height in its normal map's alpha) is not used: its normal map is
-//! read as a plain one.
+//! The boxes are drawn where they are behind the scene (depth test greater or equal, no write), both sides (the camera may be inside one).
+//!
+//! Parallax (ps30_parallax): the same shader plus three steps of parallax mapping. The `_parallax.dds` maps hold the normal in .w / .y like the
+//! `_normal.dds` ones and a height in .z; the uv moves by (height - 0.5) / 2 along the view direction in the box's frame, times POSITION4.w,
+//! the instance's `parallax_scale`. POSITION6 (an offset and a turn about y inside the box, which only the parallax shader reads) is 0.
+//! ASSUMPTION: the engine draws a decal with ps30_parallax when its model has a `_parallax.dds` map (the models are all `ProjectedDecal`, with
+//! no texture list; the technique choice was not traced). Without it those decals read the height as nothing and lose their relief.
 
 use std::collections::BTreeMap;
 
@@ -25,8 +30,10 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const DECAL_VS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_vs_vs30_main";
 const DECAL_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_diffuse";
+const DECAL_PARALLAX_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_parallax";
 
-/// Floats of one instance: POSITION1..3 (world rows), POSITION4 (size), POSITION5 (tiled, opacity, snow), POSITION6 (unused by the shaders).
+/// Floats of one instance: POSITION1..3 (world rows), POSITION4 (size, parallax scale), POSITION5 (tiled, opacity, snow), POSITION6 (offset
+/// and turn inside the box, parallax shader only: 0).
 /// A decal is drawn while its radius covers at least this many pixels.
 const DECAL_MIN_PIXELS: f32 = 3.0;
 
@@ -48,8 +55,8 @@ pub(crate) struct DecalGpu {
     copy_w: u32,
     copy_h: u32,
 
-    /// Per decal model: its diffuse and normal map paths (the normal map may be missing).
-    textures: BTreeMap<String, (String, Option<String>)>,
+    /// Per decal model: its textures.
+    textures: BTreeMap<String, DecalTextures>,
 
     /// The drawable decals of the scene, sorted by model, rebuilt when the scene changes (its address and revision): a frame only culls them.
     scene_id: usize,
@@ -59,6 +66,18 @@ pub(crate) struct DecalGpu {
     models_revision: u64,
     models: Vec<String>,
     items: Vec<DecalItem>,
+}
+
+/// The textures of a decal model.
+#[derive(Clone)]
+struct DecalTextures {
+    diffuse: String,
+
+    /// `_normal.dds`, or else `_parallax.dds` (may be missing).
+    normal: Option<String>,
+
+    /// The normal map is a `_parallax.dds` one: drawn with ps30_parallax.
+    parallax: bool,
 }
 
 /// A decal as the pass draws it.
@@ -108,14 +127,15 @@ impl Renderer {
     }
 
     /// The diffuse and normal map of a decal model (`<model>_diffuse.dds`, `_normal.dds` or else `_parallax.dds`).
-    fn decal_textures(&mut self, model: &str) -> (String, Option<String>) {
+    fn decal_textures(&mut self, model: &str) -> DecalTextures {
         if let Some(t) = self.decals.textures.get(model) {
             return t.clone();
         }
 
         let base = model.strip_suffix(".rigid_model_v2").unwrap_or(model);
         let normal = [format!("{base}_normal.dds"), format!("{base}_parallax.dds")].into_iter().find(|p| self.files.exists(p));
-        let t = (format!("{base}_diffuse.dds"), normal);
+        let parallax = normal.as_deref().is_some_and(|n| n.ends_with("_parallax.dds"));
+        let t = DecalTextures { diffuse: format!("{base}_diffuse.dds"), normal, parallax };
         self.decals.textures.insert(model.to_owned(), t.clone());
         t
     }
@@ -135,7 +155,7 @@ impl Renderer {
         d.items.clear();
         let mut index = BTreeMap::<String, u32>::new();
         let mut models = vec![];
-        let mut push = |name: &str, w: &Float4x4, tiled: bool, opacity: f32| {
+        let mut push = |name: &str, w: &Float4x4, tiled: bool, opacity: f32, parallax: f32| {
             let model = *index.entry(name.to_owned()).or_insert_with(|| {
                 models.push(name.to_owned());
                 (models.len() - 1) as u32
@@ -147,7 +167,7 @@ impl Renderer {
                 inst[row * 4..row * 4 + 4].copy_from_slice(&w.m[row]);
             }
 
-            inst[12..15].copy_from_slice(&size);
+            inst[12..16].copy_from_slice(&[size[0], size[1], size[2], parallax]);
             // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings).
             inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 1.0]);
             let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt();
@@ -160,14 +180,14 @@ impl Renderer {
             }
 
             match &e.payload {
-                Payload::Decal(decal) => push(&decal.model, &e.world, decal.tiled, decal.opacity),
+                Payload::Decal(decal) => push(&decal.model, &e.world, decal.tiled, decal.opacity, decal.parallax),
 
                 // The decal meshes of a model (rubble around a ruin), once the model has loaded: its world matrix times the decal's box,
                 // stretched once over it, opaque.
                 Payload::MeshInstance(mi) => {
                     let (Some(gm), _) = self.models.peek(&mi.model) else { continue };
                     for decal in &gm.decals {
-                        push(&decal.texture, &(e.world * decal.matrix), false, 1.0);
+                        push(&decal.texture, &(e.world * decal.matrix), false, 1.0, 0.0);
                     }
                 }
 
@@ -214,7 +234,8 @@ impl Renderer {
             return;
         }
 
-        let (Some(vs), Some(ps)) = (self.shader(DECAL_VS), self.shader(DECAL_PS)) else { return };
+        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.shader(DECAL_PS)) else { return };
+        let parallax_ps = self.shader(DECAL_PARALLAX_PS);
         self.make_decal_resources();
         let el: Vec<InputElement> = std::iter::once(element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false))
             .chain((1..=6).map(|i| element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true)))
@@ -260,32 +281,38 @@ impl Renderer {
         self.ctx.set_vertex_buffers(0, &[self.decals.box_vb.clone(), Some(inst_vb)], &[12, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
         self.ctx.set_index_buffer(self.decals.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
         self.bind(&vs);
-        self.bind(&ps);
-        null_ps_srvs(&self.ctx, 16);
         let snow = self.snow_normals_srv();
-        {
-            let ctx = &self.ctx;
-            bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
-            bind_srv(ctx, &ps, "s_gbuffer_normal", self.decals.normal_copy.srv.as_ref());
-            bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
-            bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
-            ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
-            for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal"] {
-                bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
-            }
 
-            for n in ["s_diffuse_map_clamp", "s_normal", "s_shroud"] {
-                bind_sampler(ctx, &ps, n, self.states.s_clamp_linear.as_ref());
-            }
-        }
-
+        // The two pixel shaders declare the same inputs in other slots: the fixed ones are bound again when the shader changes.
+        let mut bound: Option<bool> = None;
         let mut first = 0u32;
         for (model, count) in runs {
             let model = self.decals.models[model as usize].clone();
-            let (diffuse, normal) = self.decal_textures(&model);
+            let tex = self.decal_textures(&model);
+            let parallax = tex.parallax && parallax_ps.is_some();
+            let ps = if parallax { parallax_ps.clone().unwrap_or_else(|| plain_ps.clone()) } else { plain_ps.clone() };
+            if bound != Some(parallax) {
+                bound = Some(parallax);
+                self.bind(&ps);
+                null_ps_srvs(&self.ctx, 16);
+                let ctx = &self.ctx;
+                bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+                bind_srv(ctx, &ps, "s_gbuffer_normal", self.decals.normal_copy.srv.as_ref());
+                bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+                bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
+                ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
+                for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal"] {
+                    bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
+                }
+
+                for n in ["s_diffuse_map_clamp", "s_normal", "s_shroud"] {
+                    bind_sampler(ctx, &ps, n, self.states.s_clamp_linear.as_ref());
+                }
+            }
+
             let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
-            let diffuse = srv(self.textures.get(&diffuse, true));
-            let normal = srv(normal.and_then(|n| self.textures.get(&n, false))).or_else(|| srv(Some(self.textures.flat_normal())));
+            let diffuse = srv(self.textures.get(&tex.diffuse, true));
+            let normal = srv(tex.normal.and_then(|n| self.textures.get(&n, false))).or_else(|| srv(Some(self.textures.flat_normal())));
             if diffuse.is_some() {
                 let ctx = &self.ctx;
                 bind_srv(ctx, &ps, "s_diffuse_map_clamp", diffuse.as_ref());

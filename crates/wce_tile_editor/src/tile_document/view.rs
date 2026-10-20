@@ -724,7 +724,8 @@ impl Tile {
             && let Some(model) = self.tscene().doc().get(elem, "key").filter(|k| !k.is_empty())
         {
             let tiled = self.tscene().doc().get(elem, "tiled").is_some_and(|v| v == "true");
-            let decal = Decal { model: model.replace('\\', "/"), tiled, opacity: 1.0 };
+            let parallax = self.tscene().doc().get(elem, "parallax_scale").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+            let decal = Decal { model: model.replace('\\', "/"), tiled, opacity: 1.0, parallax };
             let e = scene.add(layer, self.world_matrix(elem), Payload::Decal(decal), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
