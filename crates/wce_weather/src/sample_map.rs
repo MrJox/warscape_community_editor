@@ -99,7 +99,9 @@ pub fn publish_sample_map(files: &dyn Files, scene: &mut RenderScene, layer: Lay
     for p in files.list(prefix, ".rigid_model_v2") {
         let slash = p.rfind('/').unwrap_or(0);
         let file = &p[slash + 1..];
-        if file.contains("destruct") && !file.contains("destruct01") {
+        // The intact standing piece only: no other level, no animation mesh (`_destruct01_anim`), a two-state piece closed.
+        let stem = file.strip_suffix(".rigid_model_v2").unwrap_or(file);
+        if (file.contains("destruct") && !file.contains("destruct01")) || stem.ends_with("_anim") || stem.ends_with("_open") {
             continue;
         }
 

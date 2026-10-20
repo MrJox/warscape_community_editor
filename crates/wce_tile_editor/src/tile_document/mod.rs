@@ -130,6 +130,9 @@ pub struct BuildingModel {
     /// The number of destruction levels of the building (the highest `destructNN` of its piece files): `destruction_level` of an instance goes
     /// from 0 to this - 1 (TEd: `building->num_destruction_levels()`). 0 when it is not known.
     pub levels: u32,
+
+    /// Per piece, its own number of levels (a building's pieces don't all have the same: roman_fort_straight's have 2 or 3).
+    pub piece_levels: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
