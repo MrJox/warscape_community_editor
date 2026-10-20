@@ -9,7 +9,9 @@
 //! The rule (the user's description of the game): a damaged wall shows its columns, so a pillar stands between it and an intact
 //! neighbour; once both walls on either side of a joint are destroyed, the pillar between them is destroyed too.
 //! ASSUMPTION: the engine's pairing of neighbours was not traced; here two walls are neighbours at a joint when both attach a column there
-//! (their columns within 0.5 m of each other): such a joint draws one broken column, a column alone stands.
+//! (their columns within 0.5 m of each other): every column of such a joint is drawn broken, a column alone stands. The two broken
+//! columns of a joint are halves of one: barbarian_fort_bridgingcolumn_left's broken state is only a trench of disturbed soil (a terrain
+//! blend mesh), the _right one's holds the splintered posts and the rubble; drawing only one of them left a hole at the joint.
 //!
 //! The same mechanism attaches other buildings too: the walls' `torch_sconce` torches (on their intact states), drawn the same way.
 //!
@@ -224,22 +226,17 @@ impl Tile {
         // The joints: columns at one spot (scene units) come from the walls on both sides.
         let tol = JOINT_TOLERANCE_M / self.unit() as f32;
         let pos = |w: &Float4x4| Float3::new(w.m[0][3], w.m[1][3], w.m[2][3]);
-        let mut joints: Vec<(usize, u32)> = vec![];
-        for (i, (w, _, _)) in placed.iter().enumerate() {
-            let p = pos(w);
-            match joints.iter_mut().find(|(j, _)| {
-                let q = pos(&placed[*j].0);
-                (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
-            }) {
-                Some((_, n)) => *n += 1,
-                None => joints.push((i, 1)),
-            }
-        }
+        let shared = (0..placed.len()).map(|i| {
+            let p = pos(&placed[i].0);
+            placed.iter().enumerate().any(|(j, (w, _, e))| {
+                let q = pos(w);
+                j != i && *e != placed[i].2 && (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
+            })
+        }).collect::<Vec<_>>();
 
-        for (i, n) in joints {
-            let (world, key, elem) = &placed[i];
+        for (i, (world, key, elem)) in placed.iter().enumerate() {
             let Some(model) = self.column_model(key) else { continue };
-            let level = if n >= 2 { 1 } else { 0 };
+            let level = i64::from(shared[i]);
             for (base, levels) in &model.pieces {
                 let mi = MeshInstance { model: piece_model(base, level, *levels), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
                 let id = scene.add(layer, *world, Payload::MeshInstance(mi), self.source(item_of(*elem)));
