@@ -1,5 +1,6 @@
 //! The grass pass: the scene's grass entities (one per grass model, its patches as instances) drawn with the game's rigidgrass shaders
-//! (vs30_main_grass, ps30_gbuffer_grass) into the G-buffer, after the terrain and the decals. docs/re/vegetation.md has the RE.
+//! (vs30_main_grass, ps30_gbuffer_grass) into the G-buffer, after the terrain and before the decals (they paint over it, as in the game).
+//! docs/re/vegetation.md has the RE.
 //!
 //! What the shaders do (from their code): the vertex shader places the patch with the instance's 3x4 world rows (TEXCOORD1..3, with the
 //! mesh's pivot folded into the translation), sways the vertices whose colour alpha is set (the blade tips) with the wind, and sinks them

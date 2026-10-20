@@ -1,7 +1,7 @@
 //! The tile's grass: BOB's `default.grass_list.bin` (of the packed tile, or in the tile's folder), drawn by the renderer's grass pass near the
 //! camera. A raw tile without one (or when the display asks) has it generated as BOB would (`wce_tile::vegetation::grass`) from the tile as
 //! it is: its `<Grass generation_seed>`, the saved blend map and the kit's `max_grass.xml`. Each key (`grass/2`, `forest/0`...) is a model of the climate, `terrain/vegetation/battle/grass/<climate>/<key>.rigid_model_v2`
-//! (else the `default` folder's).
+//! (a key the climate has no model for is not drawn, as in the game).
 //!
 //! How the game places a patch (empire.retail.dll "Grass Display" FUN_105103e0 and its job FUN_10515960, docs/re/vegetation.md): at the stored
 //! x and z (the stored height is not used) on the terrain, tilted to the terrain normal measured half the patch model's size to each side,
@@ -110,15 +110,14 @@ impl Tile {
         self.grass.shown = None;
     }
 
-    /// The model of a grass key in the tile's climate, else in the default folder.
+    /// The model of a grass key in the tile's climate (`default` when the climate is not known). There is no fallback to the `default`
+    /// folder: the game builds `terrain/vegetation/battle/grass/<climate>/<key>` (fn 0x1111f8a0, fn 0x1111e430) and skips a key without a
+    /// model. No real climate has `rock/*`, `mud/*` or `sand/*` models (only `default` has), so BOB's patches on rock and mud are not drawn.
     fn grass_model(&self, key: &str) -> Option<String> {
         let files = self.files.as_deref()?;
-        let climate = self.climates().find(&self.look.climate).map(|c| c.name.to_lowercase());
-        climate
-            .into_iter()
-            .chain(std::iter::once("default".to_owned()))
-            .map(|c| format!("terrain/vegetation/battle/grass/{c}/{key}.rigid_model_v2"))
-            .find(|p| files.exists(p))
+        let climate = self.climates().find(&self.look.climate).map_or_else(|| "default".to_owned(), |c| c.name.to_lowercase());
+        let path = format!("terrain/vegetation/battle/grass/{climate}/{key}.rigid_model_v2");
+        files.exists(&path).then_some(path)
     }
 
     /// The larger of a grass model's x and z extents (LOD 0), in metres.
