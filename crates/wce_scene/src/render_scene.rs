@@ -111,9 +111,13 @@ pub struct Decal {
     pub parallax: f32,
 }
 
+/// Appended to an animation mesh's path with a bone index (`<file>#bone=K`): only the blocks bound to that bone (their material's
+/// `i_matrix_index`), as stored, in the bone's frame. A building's collapse is drawn with one instance per bone.
+pub const MODEL_BONE_SUFFIX: &str = "#bone=";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshInstance {
-    /// VFS path of the .rigid_model_v2.
+    /// VFS path of the .rigid_model_v2 (or one bone's blocks of it: [`MODEL_BONE_SUFFIX`]).
     pub model: String,
     pub casts_shadow: bool,
 
@@ -339,6 +343,10 @@ pub struct VfxEmitter {
 
     /// The effect's scale (the tile's scale / unit_scale, as BOB writes the markers).
     pub scale: f32,
+
+    /// A box (size in metres, centred on the entity, in its frame) its emitters that emit from a mesh (`AllowEmitFromMesh`) spawn over: a
+    /// building's `VOLUMETRIC_EFFECT`.
+    pub volume: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

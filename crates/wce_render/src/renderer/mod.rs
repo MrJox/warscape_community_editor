@@ -1023,7 +1023,7 @@ impl Renderer {
                         row[3] *= units;
                     }
 
-                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units })
+                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, volume: v.volume })
                 }
 
                 _ => None,

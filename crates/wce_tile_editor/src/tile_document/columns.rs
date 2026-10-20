@@ -57,8 +57,11 @@ struct ColumnModel {
     pieces: Vec<(String, u32)>,
 }
 
-#[derive(Default)]
 pub(crate) struct ColumnState {
+    /// Something they depend on changed (a building's transform, attributes, pieces or models, the shown types): placed again at the next
+    /// update. Walking every building each frame cost ~20 ms on a city.
+    pub(crate) dirty: bool,
+
     /// Building key -> its columns (None: no logic file, or nothing attached).
     logic: HashMap<String, Option<Arc<Columns>>>,
     models: HashMap<String, Option<Arc<ColumnModel>>>,
@@ -72,6 +75,12 @@ pub(crate) struct ColumnState {
 
     /// What the entities were built from.
     signature: u64,
+}
+
+impl Default for ColumnState {
+    fn default() -> Self {
+        Self { dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), entities: vec![], signature: 0 }
+    }
 }
 
 /// A row-vector transform of the logic file (translation in m30..m32) as the editor's column-vector matrix.
@@ -125,14 +134,14 @@ type PlacedPiece = (Float4x4, String, usize, bool);
 /// Whether an effect of a `.meta` plays on a standing piece in the editor (see the module notes).
 fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
     match e.tag.as_str() {
-        "" => !e.effect.starts_with("destruction_vfx"),
+        "" => e.volume.is_none() && !e.effect.starts_with("destruction_vfx"),
         "ip_fire" => burning,
         _ => false,
     }
 }
 
 /// A rotation quaternion (x y z w) as a matrix.
-fn quat_matrix(q: [f32; 4]) -> Float4x4 {
+pub(crate) fn quat_matrix(q: [f32; 4]) -> Float4x4 {
     let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt().max(1e-6);
     let [x, y, z, w] = q.map(|v| v / len);
     let mut m = Float4x4::IDENTITY;
@@ -284,6 +293,10 @@ impl Tile {
     /// Per frame: places the bridging columns again when the walls changed.
     pub(crate) fn update_columns(&mut self, scene: &mut RenderScene, layer: LayerId) {
         wce_prof!("tile.update_columns");
+        if !std::mem::take(&mut self.columns.dirty) {
+            return;
+        }
+
         let (placed, pieces) = self.placed_columns();
         let hash = |h: u64, w: &Float4x4, key: &str, e: usize| {
             let h = w.m.iter().flatten().fold(h, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(1_099_511_628_211));
@@ -297,8 +310,9 @@ impl Tile {
         }
 
         self.columns.signature = signature;
-        for &id in &self.columns.entities {
-            scene.remove(id);
+        // Added in a row by the last placement: one pass.
+        if let (Some(&lo), Some(&hi)) = (self.columns.entities.iter().min(), self.columns.entities.iter().max()) {
+            scene.remove_range(lo..hi + 1);
         }
 
         self.columns.entities.clear();
@@ -337,7 +351,7 @@ impl Tile {
             let Some(effects) = self.piece_effects(&file) else { continue };
             for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
                 let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit };
+                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, volume: None };
                 let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
                 if let Some(en) = scene.find_mut(id) {
                     en.locked = true;
@@ -354,6 +368,7 @@ impl Tile {
     pub(crate) fn reset_columns(&mut self) {
         self.columns.entities.clear();
         self.columns.signature = 0;
+        self.columns.dirty = true;
     }
 }
 

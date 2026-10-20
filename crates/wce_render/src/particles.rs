@@ -191,6 +191,34 @@ pub struct SpawnVertex {
     pub vel_life: [f32; 4],
 }
 
+/// A point on a box's surface (size `v`, centred on the origin) without its bottom face (the ground), faces chosen by their area, and the
+/// face's normal; `r` three randoms in [0, 1).
+fn box_surface_point(v: [f32; 3], r: [f32; 3]) -> (Float3, Float3) {
+    let h = v.map(|x| 0.5 * x.max(0.0));
+
+    // The top, then the four sides (+x, -x, +z, -z).
+    let areas = [v[0] * v[2], v[1] * v[2], v[1] * v[2], v[0] * v[1], v[0] * v[1]].map(|a| a.max(0.0));
+    let total = areas.iter().sum::<f32>();
+    if total <= 0.0 {
+        return (Float3::default(), Float3::new(0.0, 1.0, 0.0));
+    }
+
+    let mut pick = r[0] * total;
+    let face = areas.iter().position(|&a| {
+        pick -= a;
+        pick < 0.0
+    }).unwrap_or(0);
+
+    let (u, w) = (2.0 * r[1] - 1.0, 2.0 * r[2] - 1.0);
+    match face {
+        0 => (Float3::new(u * h[0], h[1], w * h[2]), Float3::new(0.0, 1.0, 0.0)),
+        1 => (Float3::new(h[0], u * h[1], w * h[2]), Float3::new(1.0, 0.0, 0.0)),
+        2 => (Float3::new(-h[0], u * h[1], w * h[2]), Float3::new(-1.0, 0.0, 0.0)),
+        3 => (Float3::new(u * h[0], w * h[1], h[2]), Float3::new(0.0, 0.0, 1.0)),
+        _ => (Float3::new(u * h[0], w * h[1], -h[2]), Float3::new(0.0, 0.0, -1.0)),
+    }
+}
+
 /// A placed effect (a tile's VFXInstance): `vfx/<effect>.xml` at a world transform (rotation and position; scale is `scale`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldEffect {
@@ -201,6 +229,9 @@ pub struct WorldEffect {
 
     /// The effect's scale: the tile's `scale` / unit_scale, as BOB writes it into particle_emitter_marker.markers.
     pub scale: f32,
+
+    /// The box (size, metres, centred on the effect) its mesh emitters spawn over (render_scene::VfxEmitter::volume).
+    pub volume: Option<[f32; 3]>,
 }
 
 /// One emitter of a placed effect: an emitter instance after the weather's.
@@ -219,6 +250,7 @@ struct WorldInstance {
 
     /// The total scale: the effect's times the reference's (drawn in its range).
     scale: f32,
+    volume: Option<[f32; 3]>,
     tint: [f32; 4],
 
     /// The instance's own generator (game: emitter instance +0xc0, 0x343fd / 0x269ec3).
@@ -841,6 +873,7 @@ impl ParticleSystem {
                         inst.pos = origin + rotate(&rot, reference * fx.scale);
                         inst.rot = rot;
                         inst.quat = quat;
+                        inst.volume = fx.volume;
                         inst
                     }
 
@@ -855,7 +888,7 @@ impl ParticleSystem {
                         let area_blend = game_rand(&mut rng);
                         let tint = std::array::from_fn(|c| lerp(em.tint_min[c], em.tint_max[c], t_tint));
                         WorldInstance {
-                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, tint, rng,
+                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, volume: fx.volume, tint, rng,
                             area_blend, lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
                             emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
                             start: clock, last_spawn: clock, st: EmitterState::default(),
@@ -1439,6 +1472,12 @@ impl ParticleSystem {
             let emitter_rot = rotation_z(er[2] * PI / 180.0) * rotation_y(er[1] * PI / 180.0) * rotation_x(er[0] * PI / 180.0);
             let scale = inst.scale;
 
+            // A spawn-mesh emitter of an effect placed with a volume (a building's VOLUMETRIC_EFFECT): over the box's surface, along its
+            // normal (UseSurfaceNormal). ASSUMPTION: the engine emits from a mesh it makes of the volume, or from the collapsing building's own
+            // meshes (not traced); without a volume these emitters spawn as their spawn area says (zero for the destruction dust: one point).
+            let volume = inst.volume.filter(|_| d.b("AllowEmitFromMesh", false));
+            let surface_normal = d.b("UseSurfaceNormal", false);
+
             let mut batch = 0u32;
             let mut latest_death = 0.0f32;
             for p in 0..count {
@@ -1456,10 +1495,19 @@ impl ParticleSystem {
                 let r = lerp(inner, outer, game_rand(&mut inst.rng));
                 let b = [game_rand(&mut self.global_rng), game_rand(&mut self.global_rng), game_rand(&mut self.global_rng)];
                 let local = Float3::new(angle.cos() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.sin() * r + size[2] * (b[0] - 0.5)) * scale;
-                let offset = rotate(&emitter_rot, local) + spawn_pos * scale;
-                let pos = inst.pos + rotate(&inst.rot, offset);
+                let (offset, normal) = match volume {
+                    Some(v) => {
+                        let (at, n) = box_surface_point(v, [game_rand(&mut inst.rng), game_rand(&mut inst.rng), game_rand(&mut inst.rng)]);
+                        (at + spawn_pos * scale, Some(n))
+                    }
 
-                let dir = if cone {
+                    None => (rotate(&emitter_rot, local) + spawn_pos * scale, None),
+                };
+
+                let pos = inst.pos + rotate(&inst.rot, offset);
+                let dir = if let Some(n) = normal.filter(|_| surface_normal) {
+                    n
+                } else if cone {
                     let az = game_rand(&mut inst.rng) * 2.0 * PI;
                     let el = lerp(spread_lo, spread_hi, game_rand(&mut inst.rng)) * PI / 180.0;
                     Float3::new(az.cos() * el.cos(), el.sin(), -(az.sin() * el.cos()))
@@ -1469,7 +1517,8 @@ impl ParticleSystem {
                 };
 
                 let speed = lerp(speed_lo, speed_hi, game_rand(&mut inst.rng)) * scale;
-                let vel = rotate(&inst.rot, rotate(&emitter_rot, dir)) * speed;
+                // The box's points and normals are in the effect's frame: the emitter's rotation does not turn them.
+                let vel = rotate(&inst.rot, if volume.is_some() { dir } else { rotate(&emitter_rot, dir) }) * speed;
                 let steps = if spawn_t < self.clock - SUB_STEP { ((self.clock - spawn_t) / SUB_STEP).floor() } else { 0.0 };
                 let seed = game_rand(&mut self.global_rng);
                 out.push(SpawnVertex {

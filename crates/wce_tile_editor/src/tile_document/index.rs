@@ -569,6 +569,7 @@ impl Tile {
 
     /// An attribute of one element changed that the index keeps (its scale) or that changes how it is shown.
     pub(crate) fn index_attr_edited(&mut self, elem: usize) {
+        self.columns.dirty = true;
         if self.idx.valid && elem < self.idx.scale.len() {
             let s = self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
             self.idx.scale[elem] = s;
@@ -578,6 +579,7 @@ impl Tile {
 
     /// The position / orientation of one element changed.
     pub(crate) fn index_edited(&mut self, elem: usize) {
+        self.columns.dirty = true;
         if !self.idx.valid || elem >= self.idx.slot.len() {
             return;
         }
@@ -770,6 +772,7 @@ impl Tile {
         self.unresolved = still;
         if any {
             self.grid_dirty.set(true);
+            self.columns.dirty = true;
         }
 
         if self.unresolved.is_empty() && any {
@@ -787,6 +790,7 @@ impl Tile {
     /// The instances, type counts and markers (from the scene and the index).
     pub(crate) fn rebuild_items(&mut self, reindex: bool) {
         wce_prof!("tile.rebuild_items");
+        self.columns.dirty = true;
         if reindex || !self.idx.valid {
             self.build_index();
 
