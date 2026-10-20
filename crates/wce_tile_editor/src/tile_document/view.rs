@@ -691,7 +691,7 @@ impl Tile {
             for (i, piece) in pieces.into_iter().enumerate() {
                 let props = self.piece_props.get(&(elem, i));
                 let world = props.map_or(w, |p| w * piece_local(p));
-                let model = piece_model(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), levels);
+                let model = piece_model(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), self.piece_levels(elem, i));
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 let p5 = [0.0, 0.0, 0.0, 1.0];
@@ -979,6 +979,11 @@ impl Tile {
         self.tscene().doc().get(elem, "destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0)
     }
 
+    /// How many destruction levels piece `k` of a building has (its own files; the building's when not known).
+    fn piece_levels(&self, elem: usize, k: usize) -> u32 {
+        self.model_of(elem).map_or(1, |m| m.piece_levels.get(k).copied().unwrap_or(m.levels))
+    }
+
     pub(crate) fn flush_pieces(&mut self, scene: &mut RenderScene) {
         if self.piece_pending.is_empty() || self.scene_key != scene_key(scene) {
             return;
@@ -996,7 +1001,7 @@ impl Tile {
             let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
             let levels = self.model_of(elem).map_or(1, |m| m.levels);
             let level = if p.destruction_level < 0 { self.saved_destruction_level(elem, levels) } else { p.destruction_level };
-            let model = piece_model(&base, level, levels);
+            let model = piece_model(&base, level, self.piece_levels(elem, k));
             if let Some(en) = scene.find_mut(id) {
                 en.visible = p.visible;
                 if let Payload::MeshInstance(mi) = &mut en.payload {

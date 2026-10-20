@@ -87,6 +87,15 @@ fn destruct_number(file: &str) -> u32 {
     file[at + "destruct".len()..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)
 }
 
+/// Whether a file of a building's folder is a piece the tile draws standing: not a mesh of an animation (`..._destruct01_anim`, the collapse
+/// between two levels, the gate swings, the siege engines' wheels), and of a piece with two states (`_gate_open` / `_gate_closed`,
+/// `_ramp_...`, `_lever_...`) only the closed one. Drawing them all put a level's collapse mesh, offset, over the standing piece.
+/// ASSUMPTION: a placed gate, ramp or lever stands closed (the engine's choice of state was not traced).
+fn static_piece(file: &str) -> bool {
+    let stem = file.strip_suffix(".rigid_model_v2").unwrap_or(file);
+    !stem.ends_with("_anim") && !stem.ends_with("_open")
+}
+
 fn text(raw: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(raw)
 }
@@ -583,6 +592,7 @@ impl Tile {
         let fresh = self.idx.keys.iter().filter(|k| !self.models.contains_key(*k)).cloned().collect::<BTreeSet<_>>();
         let mut folders = BTreeMap::<String, Vec<String>>::new();
         let mut levels = BTreeMap::<String, u32>::new();
+        let mut piece_levels = BTreeMap::<String, u32>::new();
         if let Some(files) = self.files.as_ref().filter(|_| !fresh.is_empty()) {
             let prefix = "rigidmodels/buildings/";
             for p in files.list(prefix, ".rigid_model_v2") {
@@ -593,9 +603,16 @@ impl Tile {
                 }
 
                 let file = &p[slash + 1..];
+                if !static_piece(file) {
+                    continue;
+                }
+
                 let level = destruct_number(file);
                 if level > 0 {
                     let n = levels.entry(folder.to_owned()).or_default();
+                    *n = (*n).max(level);
+                    let intact = p.replacen(&format!("destruct{level:02}"), "destruct01", 1);
+                    let n = piece_levels.entry(intact).or_default();
                     *n = (*n).max(level);
                 }
 
@@ -630,7 +647,8 @@ impl Tile {
             }
 
             let levels = levels.get(&key).copied().unwrap_or(0);
-            self.models.insert(key, BuildingModel { pieces, ok, resolved: !ok, levels, ..Default::default() });
+            let piece_levels = pieces.iter().map(|p| piece_levels.get(p).copied().unwrap_or(levels)).collect();
+            self.models.insert(key, BuildingModel { pieces, ok, resolved: !ok, levels, piece_levels, ..Default::default() });
         }
 
         self.unresolved = (0..self.idx.keys.len()).filter(|&k| self.models.get(&self.idx.keys[k]).is_some_and(|m| m.ok && !m.resolved)).collect();
@@ -818,4 +836,21 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
     }
 
     w.position.y = t.project.height_at(w.position.x / t.unit(), w.position.z / t.unit());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::static_piece;
+
+    #[test]
+    fn animation_meshes_and_open_states_are_not_pieces() {
+        let f = |s: &str| format!("roman_fort_gateway_e_{s}.rigid_model_v2");
+        assert!(static_piece(&f("piece01_destruct01")));
+        assert!(static_piece(&f("piece01_destruct02")));
+        assert!(!static_piece(&f("piece01_destruct01_anim")), "the collapse between two levels");
+        assert!(static_piece(&f("piece02_destruct01_gate_closed")));
+        assert!(!static_piece(&f("piece02_destruct01_gate_open")));
+        assert!(!static_piece(&f("piece02_destruct01_gate_closing_anim")));
+        assert!(!static_piece(&f("piece01_destruct01_left_wheel_looped_anim")));
+    }
 }
