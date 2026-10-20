@@ -14,6 +14,7 @@
 //! a pointer to the render scene it publishes into, the scene is passed in (`set_terrain_look`, `diagnostics`), and the document remembers
 //! which scene it published into by its address only.
 
+mod columns;
 mod commands;
 pub mod context;
 mod edits;
@@ -353,6 +354,9 @@ pub struct Tile {
 
     // Water entities of the scene (rivers, sea plane), rebuilt when the terrain or the display changed.
     pub(crate) water_entities: Vec<EntityId>,
+
+    /// The walls' bridging columns (columns.rs).
+    pub(crate) columns: columns::ColumnState,
     pub(crate) links_entity: EntityId,
     pub(crate) links_dirty: bool,
     pub(crate) water_dirty: bool,
@@ -499,7 +503,7 @@ impl TileDocument {
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
-            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], links_entity: 0,
+            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], columns: columns::ColumnState::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),

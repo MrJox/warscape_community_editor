@@ -38,7 +38,7 @@ struct RiverPoint {
 }
 
 /// A piece's own transform inside its building: the position (scene units), the euler angles (radians) and the scale.
-fn piece_local(p: &PieceProps) -> Float4x4 {
+pub(crate) fn piece_local(p: &PieceProps) -> Float4x4 {
     let w = WorldTransform { position: Double3::new(f64::from(p.position[0]), f64::from(p.position[1]), f64::from(p.position[2])), rotation: euler_matrix(Double3::new(f64::from(p.euler[0]), f64::from(p.euler[1]), f64::from(p.euler[2]))) };
     matrix_of(&w, 1.0, Some(Double3::new(f64::from(p.scale[0]), f64::from(p.scale[1]), f64::from(p.scale[2]))))
 }
@@ -47,7 +47,7 @@ fn piece_local(p: &PieceProps) -> Float4x4 {
 /// tile draws), each lower one the next more damaged file (`..._destruct02` ...), level 0 the last.
 /// The piece file of a destruction level: 0 is the intact `destruct01` (the vanilla tiles store 0 on almost every building), level `n` is
 /// `destruct{n + 1}`, up to the building's last level.
-fn piece_model(base: &str, level: i64, levels: u32) -> String {
+pub(crate) fn piece_model(base: &str, level: i64, levels: u32) -> String {
     let top = i64::from(levels.max(1)) - 1;
     if level <= 0 || !base.contains("destruct01") {
         return base.to_owned();
@@ -840,6 +840,7 @@ impl Tile {
 
         // Cleared with the layer; rebuilt by the next update_view.
         self.water_entities.clear();
+        self.reset_columns();
         self.water_dirty = true;
         self.links_entity = 0;
         self.links_dirty = true;
@@ -972,7 +973,7 @@ impl Tile {
 
     /// The pieces whose properties were edited: their entities follow (the position, the visibility, the destruction level).
     /// The `destruction_level` the tile stores for a building (0, intact, when it has one level or none is written).
-    fn saved_destruction_level(&self, elem: usize, levels: u32) -> i64 {
+    pub(crate) fn saved_destruction_level(&self, elem: usize, levels: u32) -> i64 {
         if levels <= 1 {
             return 0;
         }
@@ -1045,6 +1046,10 @@ impl Tile {
 
         if self.links_dirty && !self.stroke_open {
             self.rebuild_links(scene, layer);
+        }
+
+        if !self.stroke_open {
+            self.update_columns(scene, layer);
         }
 
         self.update_list_trees(scene, layer, false);

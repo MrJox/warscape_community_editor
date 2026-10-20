@@ -82,7 +82,7 @@ pub(crate) fn matrix_of(w: &WorldTransform, unit: f64, scale: Option<Double3>) -
 }
 
 /// The number NN of "destructNN" in a piece file name ("..._piece01_destruct02.rigid_model_v2" is 2); 0 for a file without one.
-fn destruct_number(file: &str) -> u32 {
+pub(crate) fn destruct_number(file: &str) -> u32 {
     let Some(at) = file.find("destruct") else { return 0 };
     file[at + "destruct".len()..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)
 }
@@ -91,7 +91,7 @@ fn destruct_number(file: &str) -> u32 {
 /// between two levels, the gate swings, the siege engines' wheels), and of a piece with two states (`_gate_open` / `_gate_closed`,
 /// `_ramp_...`, `_lever_...`) only the closed one. Drawing them all put a level's collapse mesh, offset, over the standing piece.
 /// ASSUMPTION: a placed gate, ramp or lever stands closed (the engine's choice of state was not traced).
-fn static_piece(file: &str) -> bool {
+pub(crate) fn static_piece(file: &str) -> bool {
     let stem = file.strip_suffix(".rigid_model_v2").unwrap_or(file);
     !stem.ends_with("_anim") && !stem.ends_with("_open")
 }
