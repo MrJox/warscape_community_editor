@@ -1418,6 +1418,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_vfx_boxes", "tile_vfx_boxes on|off", "show or hide the VFX boxes (the VFXInstance markers; the effects still play; kept in wce.ini)", |e, a| {
+        let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_vfx_boxes on|off") };
+        crate::tool::set_vfx_boxes(e, w == "on");
+        ok("")
+    });
+
     c.add("tile_sea_state", "tile_sea_state [wind]", "draw the sea with a battle wind's waves and whitecaps (a key of wind_levels_tables; kept in wce.ini); no wind: list them", |e, a| {
         let states = e.renderer().map(|r| r.sea_states()).unwrap_or_default();
         let Some(key) = a.first() else { return ok(format!("sea states: {}", states.join(", "))) };
