@@ -312,6 +312,9 @@ pub struct RenderSettings {
     pub vfx_revision: u64,
     pub cloud_seed: u32,
 
+    /// The battle's wind (a key of `wind_levels_tables`, `calm_westerly` .. `storm_westerly`): it picks the sea's surfaces and whitecaps.
+    pub sea_state: String,
+
     // Battle state the engine feeds the weather shaders (not part of the environment files).
 
     /// wind_dir_random: the battle's random direction comes from this seed.
@@ -347,6 +350,7 @@ impl Default for RenderSettings {
             selection: vec![],
             vfx_revision: 0,
             cloud_seed: 1,
+            sea_state: "calm_westerly".to_owned(),
             wind_dir_seed: 1,
             season: 0,
             snow_cover: false,

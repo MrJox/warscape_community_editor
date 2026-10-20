@@ -857,6 +857,19 @@ impl TileTool {
             self.set_show_sea(e, id, sea);
         }
 
+        // The battle's wind picks the sea's waves and whitecaps.
+        if let Some(r) = e.renderer() {
+            let states = r.sea_states();
+            if !states.is_empty() {
+                let mut k = states.iter().position(|s| *s == r.settings.sea_state).unwrap_or(0) as i32;
+                gui::set_next_item_width(170.0);
+                if gui::combo("sea state (battle wind)", &mut k, &states.iter().map(String::as_str).collect::<Vec<_>>()) {
+                    let key = states[k as usize].clone();
+                    set_sea_state(e, &key);
+                }
+            }
+        }
+
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
 
         gui::text_disabled(d.tile().water_note());
@@ -1442,6 +1455,19 @@ pub(crate) fn matches_words(en: &wce_formats::tile_index::TileIndexEntry, words:
 /// wce.ini: the sea at 0 m shown (1, the default) or hidden (0).
 const SHOW_SEA_KEY: &str = "tile_show_sea";
 
+/// wce.ini: the battle wind the sea is drawn with (a key of `wind_levels_tables`).
+const SEA_STATE_KEY: &str = "tile_sea_state";
+
+/// Draws the sea with a battle wind's waves and whitecaps, and keeps it in wce.ini.
+pub fn set_sea_state(e: &mut Editor, key: &str) {
+    if let Some(r) = e.renderer() {
+        r.settings.sea_state = key.to_owned();
+    }
+
+    e.settings().set(SEA_STATE_KEY, key);
+    let _ = e.settings().save();
+}
+
 fn show_sea_setting(e: &mut Editor) -> bool {
     e.settings().get(SHOW_SEA_KEY, None).is_none_or(|v| v != "0")
 }
@@ -1484,6 +1510,11 @@ impl Tool for TileTool {
         }
 
         e.viewport.orbit_mut().min_eye_height = -1e6;
+        if let Some(key) = e.settings().get(SEA_STATE_KEY, None)
+            && let Some(r) = e.renderer()
+        {
+            r.settings.sea_state = key;
+        }
     }
 
     fn update(&mut self, e: &mut Editor) {

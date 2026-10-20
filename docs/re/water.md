@@ -112,7 +112,34 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
     under 1.6 m (`1 - saturate(depth - 0.6)`); the whole foam fades out in the last 0.6 m (`min(depth * 1.667, 1)`). The foam colour is
     (0.4, 0.5, 0.6) lit by the sun and the ambient, mixed with the colour overlay.
   - Outputs as waterplane: the G-buffer channels 1 .. 3 (normal, w 0.12; (0, 0, 0, 0.02); (1, 1, 1, 0.0157)) and the lit colour, opaque.
-- **The editor (2026-10-19, interim)**: `renderer/ocean.rs` draws the sea planes with these shaders and the dump's constants, the sea bed
+- **The sea's surfaces and whitecaps (2026-10-20)**: no wave simulation at run time. The battle's wind (a key of `wind_levels_tables`:
+  calm / light / moderate / strong / storm_westerly, read from `BATTLE_ENV + 0x6410c` by fn 0x102d0d40) names a row of
+  `sea_surfaces_tables` (`wind_level_0` .. `_4`), and fn 0x106520a0 loads that row and two prebaked files from data.pack's root,
+  `<row>_sea` and `<row>_swell` (fn 0x116889f0 / 0x1167fcd0; fn 0x11688b00 can regenerate them from Phillips-spectrum settings, a
+  developer path). The file: magic 0x12345678, version 1, n, the patch size, the loop length, the frame count, two flag bytes, the height
+  range (min, max), the u16 range of the two angle channels (min x, min z, max x, max z), the range of two slope channels, then per frame
+  a height image (1 byte a texel), an angle image (2 bytes), a slope image (2 bytes; empty for the swell), each `w, h` first, and two record
+  lists: 16 bytes `(x, y: i32, foam now, foam at the next frame: f32)` (the whitecaps; none on the calm levels) and 8 bytes (always empty).
+  The sea is 256 x 256 over 70 m, 100 frames in 10 s; the swell 128 x 128 over 800 m, 60 frames in 30 s (so `g_sea_uv_scale` 1/70,
+  `g_swell_uv_scale` 1/800, and `g_vs_sea_info.zw` = the sea's height min and max - min).
+  - Per frame (fn 0x117693a0 and the jobs fn 0x11794880 sets up): the frame pair at the time (fn 0x1169a360: `t mod loop * frames /
+    loop`, its integer part, the next frame modulo the count, the fraction), and each surface's texture (R16G16) is the angle bytes of both
+    frames decoded `min + byte * (max - min) / 255` and blended. Checked against the dump: the sea grid is frame 33 -> 34 at 0.65, equal to
+    one u16 on every row the dump did not catch mid-update; the swell fits the same clock.
+  - `g_foam_anim_data` = the sea's frame, next frame and blend (the dumps: (33, 34, 0.65) and (89, 90, 0.59)): the whitecap array has a
+    slice per sea frame. It is baked when the sea is created (fn 0x11769000): 300 steps of loop / frames (three loops), each stamping the
+    frame's records `foam = max(foam, a + (b - a) * w)` into a float grid (fn 0x11723000, with spray flags at 0.75 / 0.2 for the VFX), then
+    every cell above 0.001 is multiplied by the row's `foam_decay_rate` and written as `round(foam * 255 + 0.5)` (fn 0x11719330); red is the
+    blended height bytes. Slice = the sea frame, so the third loop's (warmed up) foam remains. Only the levels with `foam_enabled` have
+    records (strong and storm).
+  - The rest of `OceanSharedConstants` / `ocean_VS` from the row: `froth_distortion_*`, `sea_decay`, `wave_trough_y_value` (=
+    `g_lowest_wave_trough_y_pos`), and the four detail normal columns in another order than RPFM's names (RPFM scale1, speed1, scale2,
+    speed2 = 7.8, 6.8, 15.8, 5 give scale1, scale2, speed1, speed2 = 15.8, 5, 7.8, 6.8 in the dump). `g_transparency_exponential_scale`
+    (4) is not in the row.
+  - Not found: the code that fills the radial mesh (80 segments of a sin / cos table, 164 rings; `[0x24]`, `[0x25]` = 43.2, 2.72 at the
+    dumped camera), so how the frames' heights (and the slope images) move the vertices is not known; and what the engine writes into the
+    sea bed info texture.
+- **The editor (2026-10-19, interim; 2026-10-20 the surfaces, whitecaps and wind)**: `renderer/ocean.rs` draws the sea planes with these shaders and the dump's constants, the sea bed
   texture built from the scene's terrains, `combined_foam.dds` and `water_detail_normal.dds`; still sea (neutral sea / swell surfaces),
   no whitecaps (empty foam array), a grid instead of the radial mesh. The shore foam already shows. To do: the surfaces' simulation,
   the foam animation, the radial mesh, the sea bed texture's real content and the constants' sources.

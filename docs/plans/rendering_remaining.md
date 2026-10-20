@@ -20,7 +20,8 @@ From docs/re/terrain.md ("Assumptions / open"):
   shaders in its half-size world: the tile scene is the battle world / unit_scale (2), the game's shaders work in game units, so every
   world-space value (texture repeats, detail and fade distances, fog, the grass reach, decal tiling) ran at half frequency. The renderer
   now gives the shaders the world in game units (`RenderScene::game_units`, docs/re/renderer.md, "Scene units and game units").
-- **In progress (2026-10-19): shore foam on the battle sea.** The game draws a band of breaking-wave foam where the sea meets the
+- **Done (2026-10-20): the battle sea (ocean.hlsl, its surfaces, whitecaps and wind); open: the radial mesh and its displacement, the
+  sea bed texture's real content** (docs/re/water.md). Was: **shore foam on the battle sea.** The game draws a band of breaking-wave foam where the sea meets the
   shore; the battle `waterplane` shader has no foam input. The engine has a coast-foam ocean (`ocean2.hlsl`, the "SeaV2" component:
   `terrain/ocean/coast_foam_mips`, `land_1024_coast`, `coast_amplitude_mask_1`, `ocean_v2_coast` cbuffer), but a memory dump of a coastal
   battle shows the sea there is drawn by the Sea Display with `ocean.hlsl` (foam, sea and swell surfaces, a sea bed info texture), not
