@@ -2,10 +2,7 @@
 //! `..._left_wheel_looped_anim`, and their weighted bodies, `..._weighted_anim`). A tile's siege engine stands still, so its first frame is
 //! what a battle shows before it moves.
 //!
-//! `.anim` (version 5; rpfm_lib reads the header only): version, an unknown u32, the frame rate, the skeleton name, the end time, the bone
-//! count, per bone its name and parent (-1 for a root), per bone the index of its translation and of its rotation track, the translation
-//! and rotation track counts, the frame count, then per frame the translations (3 floats each) and the rotations (4 x i16, x y z w over
-//! 32767). Checked on battering_ram_light: the data sizes match the files to the byte.
+//! `.anim`: wce_formats::anim.
 //!
 //! `.bone_inv_trans_mats` (next to a weighted mesh): a u32 (1), the bone count, per bone a 4 x 3 row-vector matrix (the last row the
 //! translation): the inverse of the bone's bind pose.
@@ -33,25 +30,8 @@ impl Reader<'_> {
         Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
 
-    fn i32(&mut self) -> Option<i32> {
-        self.u32().map(|v| v as i32)
-    }
-
     fn f32(&mut self) -> Option<f32> {
         self.u32().map(f32::from_bits)
-    }
-
-    fn i16(&mut self) -> Option<i16> {
-        let s = self.b.get(self.p..self.p + 2)?;
-        self.p += 2;
-        Some(i16::from_le_bytes([s[0], s[1]]))
-    }
-
-    fn string(&mut self) -> Option<()> {
-        let s = self.b.get(self.p..self.p + 2)?;
-        let n = u16::from_le_bytes([s[0], s[1]]) as usize;
-        self.p += 2 + n;
-        (self.p <= self.b.len()).then_some(())
     }
 }
 
@@ -68,37 +48,11 @@ fn bone_matrix(t: [f32; 3], q: [f32; 4]) -> Float4x4 {
 
 /// The first frame of a `.anim`; `None` when it isn't one this reads.
 pub fn first_frame(bytes: &[u8]) -> Option<Pose> {
-    let mut r = Reader { b: bytes, p: 0 };
-    if r.u32()? != 5 {
-        return None;
-    }
-
-    r.u32()?;
-    r.f32()?;
-    r.string()?;
-    r.f32()?;
-    let n = r.u32()? as usize;
-    let mut parents = Vec::with_capacity(n);
-    for _ in 0..n {
-        r.string()?;
-        parents.push(r.i32()?);
-    }
-
-    let tmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
-    let rmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
-    let (nt, nr, frames) = (r.u32()? as usize, r.u32()? as usize, r.u32()?);
-    if frames == 0 {
-        return None;
-    }
-
-    let ts = (0..nt).map(|_| Some([r.f32()?, r.f32()?, r.f32()?])).collect::<Option<Vec<_>>>()?;
-    let qs = (0..nr).map(|_| Some([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0))).collect::<Option<Vec<_>>>()?;
-    let mut bones: Vec<Float4x4> = Vec::with_capacity(n);
-    for i in 0..n {
-        let t = usize::try_from(tmap[i]).ok().and_then(|k| ts.get(k)).copied().unwrap_or([0.0; 3]);
-        let q = usize::try_from(rmap[i]).ok().and_then(|k| qs.get(k)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
-        let local = bone_matrix(t, q);
-        let world = match usize::try_from(parents[i]).ok().filter(|&p| p < i) {
+    let anim = wce_formats::anim::Animation::decode(bytes, 1)?;
+    let mut bones: Vec<Float4x4> = Vec::with_capacity(anim.parents.len());
+    for (i, (t, q)) in anim.frames[0].iter().enumerate() {
+        let local = bone_matrix(*t, *q);
+        let world = match usize::try_from(anim.parents[i]).ok().filter(|&p| p < i) {
             Some(p) => bones[p] * local,
             None => local,
         };

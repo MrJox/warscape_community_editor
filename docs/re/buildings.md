@@ -1,8 +1,8 @@
 # Buildings: pieces, animations, attachments and effects (2026-10-20)
 
 What a placed `BUILDING_INSTANCE` draws besides its standing piece meshes, as found in the packs' files (no engine trace unless said).
-Code: `crates/wce_tile_editor/src/tile_document/index.rs` (piece selection), `columns.rs` (attachments and effects),
-`crates/wce_render/src/anim_pose.rs` (posing), `crates/wce_formats/src/anim_meta.rs` (`.meta`). Each **ASSUMPTION** below says how to
+Code: `crates/wce_tile_editor/src/tile_document/index.rs` (piece selection), `columns.rs` (attachments and effects), `collapse.rs`
+(collapses), `crates/wce_render/src/anim_pose.rs` (posing), `crates/wce_formats/src/anim.rs` (`.anim`), `anim_meta.rs` (`.meta`). Each **ASSUMPTION** below says how to
 check it.
 
 ## The files of a building folder
@@ -34,7 +34,7 @@ check it.
 
 ## `.anim` (version 5)
 
-rpfm_lib reads only the header. Layout, checked to the byte on battering_ram_light's files:
+rpfm_lib reads only the header. Layout, checked to the byte on battering_ram_light's and roman_fort_straight's files:
 
 - u32 version (5), u32 (0), f32 frame rate (10), string skeleton name (`building` / `generic`), f32 end time, u32 bone count;
 - per bone: string name, i32 parent (-1 for a root);
@@ -76,7 +76,10 @@ pieces' files of the game and the TDD packs parse to the byte with this layout:
 - `EFFECT` (versions 1, 2, 3, 5): string effect (`vfx/<name>.xml`), string flag (`"true"` / `"false"`), position (3 f32) and rotation
   (quaternion x y z w) in the piece's model space (the space the mesh's pivot is in: the torch's flame at (0.72, 2.09, 0) is the top of
   the torch head), i32 bone, and from version 3 an f32 scale;
-- `VOLUMETRIC_EFFECT` (2): string effect, then 80 bytes (not decoded: a volume);
+- `VOLUMETRIC_EFFECT` (2): string effect, then 20 f32, read as a position (3) and rotation (4) (zero, and the identity or all zero, in
+  every file seen), the box's centre (3) and size (3) in the piece's model space, the box's rotation (4, the identity in every file seen),
+  3 more (zero in every file seen). **ASSUMPTION** (centre and size): the walls' boxes span their pieces (`roman_fort_straight` piece01:
+  20 x 18 x 12 m around (0, 6.5, 4.3)), the houses' theirs (`barbarian_ahouse_1`: 10.2 x 7 x 12.8 m around (0, 2.9, 0.2));
 - `SOUND_BUILDING` (2): 20 bytes (not decoded).
 
 Tags seen on standing pieces (counts over the game and TDD): `ip_fire` (fire and smoke loops, ~1400), `capture` (capture smoke, 507),
@@ -93,3 +96,42 @@ piece's own); nothing else. Placed at `piece world * translation(position) * rot
 - the effect's `scale` multiplies like a VFXInstance's scale;
 - the string flag and the bone (-1 on almost all; 0 on 21 entries) are not used: what they do is unknown (the flag may be "attached to
   a bone" or "looping").
+
+## Collapses between levels
+
+When a piece's level goes up (an edit, an undo or a redo), the editor plays its collapse instead of switching meshes; going down is
+instant. From level L to L + 1 the collapse is `..._destruct{L+1}_anim` (`.rigid_model_v2` + `.anim` + `.meta`):
+
+- The mesh ("building" skeleton) has one bone per fragment; each block follows the bone of its material's `i_matrix_index`, with its
+  vertices in that bone's frame (`roman_fort_straight_piece01_destruct01_anim`: 36 blocks, 16 bones, all roots; bone 0 holds the base
+  that stays, at the identity throughout). **ASSUMPTION**: its first frame is the standing piece and its last the next level's rubble (on that
+  wall the end meets the rubble by eye; the start was not compared closely).
+- The animation runs at its frame rate to its end time (that wall: 20 fps, 10 s; its battlements' pieces 9.9 and 5 s). The editor
+  interpolates between frames (translations linearly, rotations nlerp) and draws each bone's blocks as an entity (the model cache's
+  `<file>#bone=K`), the standing piece hidden meanwhile.
+- Skipped levels chain (0 -> 2: `destruct01_anim`, then `destruct02_anim`). A level without a collapse (most houses; the siege engines'
+  weighted collapses, not drawn) changes at once, with its bursts.
+- The collapse's `.meta`: a `VOLUMETRIC_EFFECT` of dust (`destruction_vfx_area_dust_light` from intact, `_heavy` from damaged) at about
+  0 s, and the `SOUND_BUILDING` entries (timed impacts; not played).
+- The standing `.meta` of the new level holds bursts: `VOLUMETRIC_EFFECT`s (`destruction_vfx_generic_rigid_stone` / `_wood`,
+  `_area_dust_*`, 399 in all) and some untagged `EFFECT` explosions (`destruction_vfx_medium_stone_explosion`, 31), plus
+  `fire_transition` ones (108).
+
+The editor plays, per step: the collapse's effects at their times, the new level's bursts at the step's start, and the `fire_transition`
+effects of both when the building burns. Each effect entity is removed 15 s after it started (its particles live up to 8 s after its
+short emitters).
+
+The destruction effects' emitters spawn on a mesh (`AllowEmitFromMesh`, `UseSurfaceNormal`, in
+`library_vfx_destruction_spawnmesh_heavy`) and have no spawn area of their own. The editor spawns them over the volume's box (its top and
+four sides, chosen by area), moving out along the face's normal.
+
+**ASSUMPTIONS**, to check in game:
+- the new level's bursts play when the collapse starts (not when it ends);
+- the dust's mesh is the volume's box (it may be the collapsing fragments' own meshes); its emission rate is not scaled by the mesh's size;
+- an effect's bone is not followed (a few `.meta` effects name bone 0);
+- the editor's playback matches the game's speed (the `.anim`'s rate and end time, real time);
+- `burst_rigid` emitters (the pebbles and wooden shards flying out) are not drawn: the particle system draws only `continuous_mesh` ones
+  (it logs that once per effect).
+
+Check: in a siege battle, watch a wall section collapse from intact to destroyed, and compare with the editor's
+(`tile_edit <elem> destruction_level 2` on an intact wall).

@@ -841,6 +841,7 @@ impl Tile {
         // Cleared with the layer; rebuilt by the next update_view.
         self.water_entities.clear();
         self.reset_columns();
+        self.reset_collapses();
         self.water_dirty = true;
         self.links_entity = 0;
         self.links_dirty = true;
@@ -913,7 +914,7 @@ impl Tile {
 
         let effect = doc.get(elem, "vfx").filter(|v| !v.is_empty())?;
         let scale = doc.get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
-        Some(VfxEmitter { effect, scale: scale as f32 })
+        Some(VfxEmitter { effect, scale: scale as f32, volume: None })
     }
 
     /// A light's or an effect's entity follows its edited attributes (an effect that stops or starts playing is removed or added).
@@ -1002,6 +1003,7 @@ impl Tile {
             return;
         }
 
+        self.columns.dirty = true;
         for (elem, k) in std::mem::take(&mut self.piece_pending) {
             let Some(first) = self.first_entity.get(elem).copied().filter(|&f| f != 0) else { continue };
             if k >= usize::from(self.entity_count[elem]) {
@@ -1014,9 +1016,21 @@ impl Tile {
             let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
             let levels = self.model_of(elem).map_or(1, |m| m.levels);
             let level = if p.destruction_level < 0 { self.saved_destruction_level(elem, levels) } else { p.destruction_level };
-            let model = self.piece_file(&base, level, self.piece_levels(elem, k));
+            let piece_levels = self.piece_levels(elem, k);
+            let model = self.piece_file(&base, level, piece_levels);
+
+            // A level going up plays the collapse (collapse.rs): the standing piece hides meanwhile. Going down is instant.
+            let shown = level.clamp(0, i64::from(piece_levels.max(1)) - 1);
+            let before = self.collapse_target(elem, k).or_else(|| Self::shown_level(scene, id));
+            let collapses = p.visible && before.is_some_and(|b| shown > b);
+            if collapses {
+                self.begin_collapse(elem, k, before.unwrap_or(0), shown);
+            } else {
+                self.cancel_collapse(scene, elem, k);
+            }
+
             if let Some(en) = scene.find_mut(id) {
-                en.visible = p.visible;
+                en.visible = p.visible && !collapses && self.collapse_target(elem, k).is_none();
                 if let Payload::MeshInstance(mi) = &mut en.payload {
                     mi.model = model;
                 }
@@ -1028,6 +1042,7 @@ impl Tile {
 
     /// The display settings changed: everything shown is rebuilt at the next update.
     pub fn display_changed(&mut self) {
+        self.columns.dirty = true;
         self.markers_dirty = true;
         self.polygons_dirty = true;
         self.water_dirty = true;
@@ -1062,6 +1077,8 @@ impl Tile {
         if !self.stroke_open {
             self.update_columns(scene, layer);
         }
+
+        self.update_collapses(scene, layer);
 
         self.update_list_trees(scene, layer, false);
         self.update_grass(scene, layer, false);
@@ -1101,6 +1118,7 @@ impl Tile {
             let sig = self.display.hidden_types.iter().fold(0u64, |sig, h| sig.wrapping_mul(1_000_003).wrapping_add(h.bytes().fold(14_695_981_039_346_656_037u64, |a, c| (a ^ u64::from(c)).wrapping_mul(1_099_511_628_211))));
             if sig != self.hidden_signature {
                 self.hidden_signature = sig;
+                self.columns.dirty = true;
                 let building = self.idx.type_names.iter().position(|t| t == "BUILDING_INSTANCE");
                 let hidden = self.display.hidden_types.contains("BUILDING_INSTANCE");
                 for &e in &self.instances {

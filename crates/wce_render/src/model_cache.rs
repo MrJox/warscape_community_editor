@@ -20,7 +20,7 @@ use wce_foundation::jobs::{Handle, JobPool, io_pool};
 use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene, Terrain};
+use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, Payload, RenderScene, Terrain};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -655,9 +655,16 @@ impl ModelInner {
     /// Builds a model on any thread; `None` when it has no drawable standard meshes at LOD 0.
     fn build(&self, path: &str) -> Result<Option<GpuModel>, String> {
         wce_prof!("model.build");
+
+        // `<file>#bone=K`: the blocks of one bone of an animation's mesh, unposed (a building's collapse, MODEL_BONE_SUFFIX).
+        let (file, bone) = match path.split_once(MODEL_BONE_SUFFIX) {
+            Some((file, k)) => (file, Some(k.parse::<i32>().map_err(|_| format!("bad bone '{k}'"))?)),
+            None => (path, None),
+        };
+
         let bytes = {
             wce_prof!("model.read");
-            (self.read)(path)?
+            (self.read)(file)?
         };
 
         let mut model = {
@@ -666,8 +673,13 @@ impl ModelInner {
             RigidModel::decode(&mut Cursor::new(&bytes), &Some(extra)).map_err(|error| format!("rmv2: {error}"))?
         };
 
-        // A mesh that only exists as an animation (anim_pose.rs) is drawn in its first frame.
-        if let Some(stem) = path.strip_suffix(".rigid_model_v2").filter(|s| s.ends_with("_anim")) {
+        // A mesh that only exists as an animation (anim_pose.rs) is drawn in its first frame; one bone's blocks are drawn as stored, in the
+        // bone's frame.
+        if let Some(bone) = bone {
+            for lod in model.lods_mut() {
+                lod.mesh_blocks_mut().retain(|b| *b.material().i_matrix_index() == bone);
+            }
+        } else if let Some(stem) = path.strip_suffix(".rigid_model_v2").filter(|s| s.ends_with("_anim")) {
             pose_first_frame(&mut model, stem, &self.read);
         }
 

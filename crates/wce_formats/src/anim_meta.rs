@@ -5,10 +5,14 @@
 //!   for entry versions >= 2 a tag (string: `ip_fire`, `capture`, `fire_transition`, `fire`, empty), then by type:
 //! - `EFFECT` (versions 1, 2, 3, 5): the effect (`vfx/<name>.xml`), a string ("true" / "false", not known), the position (3 floats) and
 //!   rotation (quaternion x y z w) in the piece's model space, an i32 bone (-1: none), and from version 3 an f32 scale.
-//! - `VOLUMETRIC_EFFECT` (2): the effect, then 80 bytes (a volume; not read).
+//! - `VOLUMETRIC_EFFECT` (2): the effect, then 20 floats, read as: a position (3) and a rotation (4) (seen: zero, and the identity or all
+//!   zero), the box's centre (3) and size (3) in the piece's model space, the box's rotation (4, the identity in every file seen) and 3
+//!   floats (zero in every file seen). ASSUMPTION: centre and size (the walls' boxes span their pieces: 20 x 18 x 12 m around
+//!   (0, 6.5, 4.3) for a 20 m wall); the engine was not traced.
 //! - `SOUND_BUILDING` (2): 20 bytes (not read).
 
-/// An effect a piece plays.
+/// An effect a piece plays (an `EFFECT`, or a `VOLUMETRIC_EFFECT`: then `volume` is its box's size and `position` / `rotation` its centre
+/// and rotation).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetaEffect {
     /// Empty: always; otherwise the event it belongs to (`ip_fire` while the building burns, `capture`, `fire_transition`, `fire`).
@@ -20,6 +24,7 @@ pub struct MetaEffect {
     pub rotation: [f32; 4],
     pub bone: i32,
     pub scale: f32,
+    pub volume: Option<[f32; 3]>,
 }
 
 struct Reader<'a> {
@@ -71,12 +76,15 @@ pub fn meta_effects(bytes: &[u8]) -> Option<Vec<MetaEffect>> {
                 let rotation = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
                 let bone = r.u32()? as i32;
                 let scale = if version >= 3 { r.f32()? } else { 1.0 };
-                out.push(MetaEffect { tag, effect, start, end, position, rotation, bone, scale });
+                out.push(MetaEffect { tag, effect, start, end, position, rotation, bone, scale, volume: None });
             }
 
             "VOLUMETRIC_EFFECT" => {
-                r.string()?;
-                r.take(80)?;
+                let effect = r.string()?;
+                let f = (0..20).map(|_| r.f32()).collect::<Option<Vec<_>>>()?;
+                let position = [f[0] + f[7], f[1] + f[8], f[2] + f[9]];
+                let rotation = [f[13], f[14], f[15], f[16]];
+                out.push(MetaEffect { tag, effect, start, end, position, rotation, bone: -1, scale: 1.0, volume: Some([f[10], f[11], f[12]]) });
             }
 
             "SOUND_BUILDING" => {
@@ -107,5 +115,32 @@ mod tests {
         assert!((e[0].position[0] - 0.7220).abs() < 1e-3 && (e[0].position[1] - 2.0913).abs() < 1e-3);
         assert_eq!(e[0].bone, -1);
         assert!((e[0].scale - 1.0).abs() < 1e-6);
+    }
+
+    /// The dust of roman_fort_straight_piece01_destruct01_anim.meta (its first entry).
+    #[test]
+    fn volume() {
+        let mut b = vec![];
+        b.extend(2u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        let string = |b: &mut Vec<u8>, s: &str| {
+            b.extend((s.len() as u16).to_le_bytes());
+            b.extend(s.bytes());
+        };
+
+        string(&mut b, "VOLUMETRIC_EFFECT");
+        b.extend(2u32.to_le_bytes());
+        b.extend(0.011f32.to_le_bytes());
+        b.extend(0.011f32.to_le_bytes());
+        string(&mut b, "");
+        string(&mut b, "destruction_vfx_area_dust_light");
+        for v in [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 6.487, 4.32, 20.0, 18.0, 12.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0] {
+            b.extend(v.to_le_bytes());
+        }
+
+        let e = meta_effects(&b).expect("parses");
+        assert_eq!(e.len(), 1);
+        assert_eq!((e[0].effect.as_str(), e[0].volume), ("destruction_vfx_area_dust_light", Some([20.0, 18.0, 12.0])));
+        assert_eq!((e[0].position, e[0].rotation), ([0.0, 6.487, 4.32], [0.0, 0.0, 0.0, 1.0]));
     }
 }

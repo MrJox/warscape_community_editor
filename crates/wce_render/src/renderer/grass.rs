@@ -48,7 +48,8 @@ pub(crate) struct GrassGpu {
     inst_capacity: usize,
     bs: Option<ID3D11BlendState>,
 
-    /// The scene's grass, rebuilt when the scene changes (its address and revision).
+    /// The scene's grass, rebuilt when the scene changes (its address and structure revision: the patches are in the payload, an entity
+    /// moving does not move them).
     scene_id: usize,
     revision: u64,
     sets: Vec<GrassSet>,
@@ -74,12 +75,12 @@ impl Renderer {
     fn collect_grass(&mut self, scene: &RenderScene) {
         let id = std::ptr::from_ref(scene) as usize;
         let g = &mut self.grass;
-        if g.scene_id == id && g.revision == scene.revision() {
+        if g.scene_id == id && g.revision == scene.structure_revision() {
             return;
         }
 
         g.scene_id = id;
-        g.revision = scene.revision();
+        g.revision = scene.structure_revision();
         g.sets.clear();
         for e in scene.entities() {
             let Payload::Grass(grass) = &e.payload else { continue };

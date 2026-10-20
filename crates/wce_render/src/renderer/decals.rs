@@ -59,8 +59,12 @@ pub(crate) struct DecalGpu {
     textures: BTreeMap<String, DecalTextures>,
 
     /// The drawable decals of the scene, sorted by model, rebuilt when the scene changes (its address and revision): a frame only culls them.
+    /// Entities that moved without carrying decals (a building's collapsing fragments) don't rebuild them: the move log is followed from
+    /// `moved_cursor`, between two structure revisions.
     scene_id: usize,
     revision: u64,
+    structure: u64,
+    moved_cursor: u64,
 
     /// The model cache's revision when they were collected (a building's decal boxes come with its model).
     models_revision: u64,
@@ -149,13 +153,30 @@ impl Renderer {
         let models_revision = self.models.revision();
         let units = self.camera.units;
         let d = &mut self.decals;
-        if d.scene_id == id && d.revision == scene.revision() && d.models_revision == models_revision && d.units == units && !d.items.is_empty() {
+        let same = d.scene_id == id && d.models_revision == models_revision && d.units == units && !d.items.is_empty() && d.structure == scene.structure_revision();
+        if same && d.revision == scene.revision() {
             return;
+        }
+
+        if same {
+            let models = &self.models;
+            let carries = |id: EntityId| scene.find(id).is_some_and(|e| match &e.payload {
+                Payload::Decal(_) => true,
+                Payload::MeshInstance(mi) => models.peek(&mi.model).0.is_some_and(|m| !m.decals.is_empty()),
+                _ => false,
+            });
+
+            if scene.moved_since(&mut d.moved_cursor).is_some_and(|moved| !moved.into_iter().any(carries)) {
+                d.revision = scene.revision();
+                return;
+            }
         }
 
         d.units = units;
         d.scene_id = id;
         d.revision = scene.revision();
+        d.structure = scene.structure_revision();
+        let _ = scene.moved_since(&mut d.moved_cursor);
         d.models_revision = models_revision;
         d.items.clear();
         let mut index = BTreeMap::<String, u32>::new();
