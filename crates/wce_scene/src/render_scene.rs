@@ -105,6 +105,10 @@ pub struct Decal {
     /// The textures repeat over the decal (by its size) instead of stretching once over it.
     pub tiled: bool,
     pub opacity: f32,
+
+    /// The instance's `parallax_scale` (the vanilla tiles use 0.1 .. 0.15 mostly): how far a decal with a `_parallax.dds` map shifts its
+    /// textures by the map's height, as the view tilts.
+    pub parallax: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
