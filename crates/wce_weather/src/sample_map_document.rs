@@ -168,6 +168,8 @@ impl Document for SampleMapDocument {
 
     fn publish(&mut self, scene: &mut RenderScene, layer: LayerId) {
         scene.clear_layer(layer);
+        // The sample map's buildings are at their own size: the scene is in game units.
+        scene.game_units = 1.0;
         for b in &self.base {
             scene.add(layer, self.placement_matrix(b.item) * b.world, b.payload.clone(), SourceRef { doc: self.id(), item: b.item });
         }

@@ -377,12 +377,62 @@ pub(crate) struct CameraState {
 
     /// The angular size of one pixel (tangent).
     pub px_ratio: f32,
+
+    /// Game units per scene unit (`RenderScene::game_units`). Culling, LODs and the overlay work in scene units; what the game's shaders
+    /// see (the camera constants, instance matrices, terrain, decals, lights, particles) is scaled by this ([`game_view`] and the others).
+    pub units: f32,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
-        Self { main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001 }
+        Self { main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0 }
     }
+}
+
+/// A world -> view matrix of the scene as the shaders get it (world and view space in game units): the translation times `s`.
+pub(crate) fn game_view(v: &Float4x4, s: f32) -> Float4x4 {
+    let mut g = *v;
+    for row in g.m.iter_mut().take(3) {
+        row[3] *= s;
+    }
+
+    g
+}
+
+/// A perspective projection for a view space in game units: near and far times `s` (the fourth column), the same depth and NDC as `p` gives
+/// the scene's view space, w the game units' view depth.
+pub(crate) fn game_proj(p: &Float4x4, s: f32) -> Float4x4 {
+    let mut g = *p;
+    for row in &mut g.m {
+        row[3] *= s;
+    }
+
+    g
+}
+
+/// A world -> clip (or shadow texture) matrix of the scene for world positions in game units: `m * scaling(1 / s)`.
+pub(crate) fn game_clip(m: &Float4x4, s: f32) -> Float4x4 {
+    let mut g = *m;
+    for row in &mut g.m {
+        for v in row.iter_mut().take(3) {
+            *v /= s;
+        }
+    }
+
+    g
+}
+
+/// A scene world matrix (an instance's, an effect's) in game units: the whole matrix times `s` (models drawn `s` times larger, positions `s`
+/// times farther).
+pub(crate) fn game_world(m: &Float4x4, s: f32) -> Float4x4 {
+    let mut g = *m;
+    for row in g.m.iter_mut().take(3) {
+        for v in row.iter_mut() {
+            *v *= s;
+        }
+    }
+
+    g
 }
 
 /// The frame counter and the frame time, from the times the frames were drawn at.
@@ -477,7 +527,7 @@ pub struct Renderer {
     pub(crate) particles: ParticleSystem,
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
-    pub(crate) vfx_scene: (usize, u64),
+    pub(crate) vfx_scene: (usize, u64, u32),
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
@@ -591,7 +641,7 @@ impl Renderer {
             tonemap: ToneMap::new(dev),
             depth_range: DepthRange::default(),
             particles,
-            vfx_scene: (0, u64::MAX),
+            vfx_scene: (0, u64::MAX, 0),
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
@@ -745,11 +795,14 @@ impl Renderer {
         self.post.resize(&self.dev, w, h);
     }
 
+    /// The view in scene units (what culling uses); the shaders get it in game units ([`CameraState::units`]).
     pub(crate) fn set_camera(&mut self, view_m: &Float4x4, proj: &Float4x4, eye: Float3, w: u32, h: u32, time_s: f32) {
-        let vp = *proj * *view_m;
-        self.camera.view_proj = vp;
+        self.camera.view_proj = *proj * *view_m;
         self.camera.eye = eye;
         self.camera.px_ratio = 1.0 / (0.5 * h as f32 * proj.m[1][1]);
+        let s = self.camera.units;
+        let (view_m, proj, eye) = (&game_view(view_m, s), &game_proj(proj, s), eye * s);
+        let vp = *proj * *view_m;
         let cbs = &mut self.cbs;
         cbs.set_f("camera_VS_PS", "camera_position", &[eye.x, eye.y, eye.z]);
         cbs.set_m("camera_VS_PS", "view", view_m.data());
@@ -826,6 +879,7 @@ impl Renderer {
     /// Draws a scene (lit by its environment slot) as a view sees it into a target, at the target's size.
     pub fn render(&mut self, scene: &RenderScene, view_params: &ViewParams, target: &mut RenderTarget) {
         self.grass.season.clone_from(&scene.vegetation_season);
+        self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
         wce_prof!("render.total");
         let cam = view_params.camera;
         let time_s = view_params.time_s;
@@ -934,10 +988,12 @@ impl Renderer {
         self.pass_fog();
         self.gpu_timer.mark("rivers");
         self.pass_water(scene, true);
+        self.gpu_timer.mark("particles");
 
         // The weather precipitation (vfx1 of the WEATHER definition).
+        // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
         let frame = Frame {
-            eye: cam.eye,
+            eye: cam.eye * self.camera.units,
             view: view_m,
             time: time_s,
             dt: self.clock.dt,
@@ -952,11 +1008,20 @@ impl Renderer {
         };
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
-        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision());
+        let units = self.camera.units;
+        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits());
         if self.vfx_scene != scene_key {
             self.vfx_scene = scene_key;
             let effects = scene.entities().iter().filter(|e| scene.drawable(e)).filter_map(|e| match &e.payload {
-                wce_scene::render_scene::Payload::VfxEmitter(v) => Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world: e.world, scale: v.scale }),
+                wce_scene::render_scene::Payload::VfxEmitter(v) => {
+                    let mut world = e.world;
+                    for row in world.m.iter_mut().take(3) {
+                        row[3] *= units;
+                    }
+
+                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units })
+                }
+
                 _ => None,
             }).collect::<Vec<_>>();
             self.particles.set_world_effects(&effects);
@@ -974,7 +1039,7 @@ impl Renderer {
         if self.settings.view == View::Final {
             self.pass_to_screen(&env);
             if self.settings.lens_flare {
-                self.pass_lens_flare(&env, cam.eye, time_s);
+                self.pass_lens_flare(&env, cam.eye * self.camera.units, time_s);
             }
         }
 

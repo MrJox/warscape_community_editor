@@ -142,10 +142,11 @@ impl Renderer {
         self.layout(vs, "grass", &el)
     }
 
-    /// The patches within [`GRASS_DISTANCE`] of `eye` (and in the frustum, if any): their instances per model mesh (the pivot goes into the
-    /// translation), in runs of (model, mesh, count).
+    /// The patches within [`GRASS_DISTANCE`] (game units) of `eye` (and in the frustum, if any): their instances per model mesh (the pivot
+    /// goes into the translation) in game units, in runs of (model, mesh, count).
     fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
-        let reach = GRASS_DISTANCE + PATCH_RADIUS;
+        let units = self.camera.units;
+        let reach = GRASS_DISTANCE / units + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
         let mut all: Vec<f32> = vec![];
         let mut runs = vec![];
@@ -179,7 +180,7 @@ impl Renderer {
                     let m = &set.instances[k as usize];
                     for r in 0..3 {
                         let t = m[r * 4 + 3] + m[r * 4] * o.x + m[r * 4 + 1] * o.y + m[r * 4 + 2] * o.z;
-                        all.extend_from_slice(&[m[r * 4], m[r * 4 + 1], m[r * 4 + 2], t]);
+                        all.extend_from_slice(&[m[r * 4] * units, m[r * 4 + 1] * units, m[r * 4 + 2] * units, t * units]);
                     }
 
                     all.extend_from_slice(&[0.0; 4]);
@@ -230,7 +231,7 @@ impl Renderer {
         for (c, vp) in light_vp.iter().enumerate() {
             let half = SHADOW_SIZE as f32 / 2.0;
             self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, super::passes::SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
-            self.cbs.set_m("camera_VS_PS", "view_projection", vp.data());
+            self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
             self.upload();
             let mut first = 0u32;
             for (model, mi, count) in &runs {

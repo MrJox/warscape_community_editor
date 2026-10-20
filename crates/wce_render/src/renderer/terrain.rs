@@ -684,8 +684,9 @@ impl Renderer {
             let Payload::Terrain(t) = &e.payload else { continue };
             let Some(m) = t.material.clone() else { continue };
 
-            // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max), rotation index 0 and the layer base 0 (T3).
-            let inst = [0.0, 1.0, 2.0, 3.0, m.x0 as f32, m.y0 as f32, m.z0 as f32, 0.0, m.x1 as f32, m.y1 as f32, m.z1 as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
+            // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max, game units), rotation index 0 and the layer base 0 (T3).
+            let u = f64::from(self.camera.units);
+            let inst = [0.0, 1.0, 2.0, 3.0, (m.x0 * u) as f32, (m.y0 * u) as f32, (m.z0 * u) as f32, 0.0, (m.x1 * u) as f32, (m.y1 * u) as f32, (m.z1 * u) as f32, 0.0, 0.0, 0.0, 0.0, 0.0];
             match by_material.iter_mut().find(|(have, _)| have.id == m.id) {
                 Some((_, v)) => v.extend(inst),
                 None => by_material.push((m, inst.to_vec())),
@@ -926,15 +927,17 @@ impl Renderer {
         for (_, geos) in groups {
             let g0 = &geos[0];
 
-            // vs_height_map_cb: the height texture (scale 1, no offset), its addressing, the world dimensions; river_CB has nothing to do with it.
+            // vs_height_map_cb: the height texture (scene heights: scaled to game units, no offset), its addressing, the world dimensions (game
+            // units); river_CB has nothing to do with it.
+            let units = self.camera.units;
             let world_x = g0.tex as f32 * g0.tex_step;
             let world_z = world_x * g0.kz;
             let cbs = &mut self.cbs;
-            cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[1.0]);
-            cbs.set_f("vs_height_map_cb", "g_height_map_hf_scale", &[1.0]);
+            cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[units]);
+            cbs.set_f("vs_height_map_cb", "g_height_map_hf_scale", &[units]);
             cbs.set_f("vs_height_map_cb", "g_height_map_vertical_offset", &[0.0]);
             cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[g0.tex as f32, g0.tex as f32, 1.0 / g0.tex as f32, 1.0 / g0.tex as f32]);
-            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[world_x, world_z]);
+            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[world_x * units, world_z * units]);
             cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[-(g0.uv0 + g0.tx) / world_x]);
             self.upload();
             self.bind(vs);
@@ -978,8 +981,8 @@ impl Renderer {
                     let tx = g.ox + g.tx + (p.pi * PATCH_CELLS) as f32 * g.step;
                     let tz = g.kz * (g.oz + (p.pj * PATCH_CELLS) as f32 * g.step) + g.tz;
 
-                    // World x = gx * step + tx, the height texture's y (+ ty), world z = gz * step * kz + tz.
-                    batches[at].2.extend([g.step, 0.0, 0.0, tx, 0.0, 0.0, 0.0, g.ty, 0.0, 0.0, g.step * g.kz, tz]);
+                    // World x = gx * step + tx, the height texture's y (+ ty), world z = gz * step * kz + tz; in game units.
+                    batches[at].2.extend([g.step, 0.0, 0.0, tx, 0.0, 0.0, 0.0, g.ty, 0.0, 0.0, g.step * g.kz, tz].map(|v| v * units));
                     batches[at].3 += 1;
                 }
             }

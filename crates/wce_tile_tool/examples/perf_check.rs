@@ -149,7 +149,7 @@ fn draw_set_checks(g: &mut Gate) {
 
     // Gather writes the world matrix of every instance.
     let mut inst = vec![RigidInstance::default(); vis.instances()];
-    set.gather(&vis, &mut inst);
+    set.gather(&vis, &mut inst, 1.0);
     g.check(inst.len() == 4 && (inst[0].world[2][3] - (-40.0)).abs() < 1e-4, "gather writes the world matrix of the first instance");
 }
 
