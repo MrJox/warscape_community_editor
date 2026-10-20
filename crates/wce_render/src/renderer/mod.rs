@@ -908,10 +908,12 @@ impl Renderer {
             self.pass_terrain_material(scene);
         }
 
-        self.gpu_timer.mark("decals");
-        self.pass_decals(scene);
+        // The grass is G-buffer content like the rest; the decals are the first step of the game's "DEFERRED LIGHTING" stage (fn 0x118c2750:
+        // DEFERRED DECAL, then POINTLIGHT, REFRACTION, FOG, the water views), so they paint over the grass inside their boxes too.
         self.gpu_timer.mark("grass");
         self.pass_grass(scene);
+        self.gpu_timer.mark("decals");
+        self.pass_decals(scene);
 
         self.gpu_timer.mark("depth + ssao");
         self.analyse_depth(&cam);

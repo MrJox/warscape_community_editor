@@ -66,9 +66,10 @@ Items are three halfs: x, the height, z (list frame as the trees': z from the fa
 (`grass/2`, `forest/0`, `settlement_1/3`...). 189 packed tiles have one (farms, encampments, settlements, custom tiles).
 
 **Game placement** ("Grass Display" FUN_105103e0, its job FUN_10515960 through the splitter FUN_10507520). Per key, the model is
-`<key>.rigid_model_v2` resolved by the model lookup (in the climate's `terrain/vegetation/battle/grass/<climate>/` folder; climates lack some
-groups, which the `default` folder has). Per patch: x at +0, z at +4 (the height at +2 is read but unused). It takes the terrain height there
-and the terrain normal from the heights h = max(the model's x / z extent, 0.4) · 0.5 metres to each side (a central difference over the
+`<key>.rigid_model_v2` in the climate's `terrain/vegetation/battle/grass/<climate>/` folder (the path builders FUN_1111f8a0 / FUN_1111e430;
+no fallback to the `default` folder, checked 2026-10-19). Only `default` has `rock/*`, `mud/*` and `sand/*` models, so in a real climate
+BOB's patches on rock and mud draw nothing (the editor drew them from `default` before: grass on rocky ground). Per patch: x at +0, z at
++4 (the height at +2 is read but unused). It takes the terrain height there and the terrain normal from the heights h = max(the model's x / z extent, 0.4) · 0.5 metres to each side (a central difference over the
 patch). It drops a patch whose model box is not inside a square of half-size s around the battle's
 origin (s from the grass system's virtual +0x78), and one whose normal.y is not above
 cos(`GRASS_ANGLE_CULL_AMOUNT`, a tweaker at 0x122c95a8, default 0.7 rad). For a kept patch the LCG steps: a 32-byte record (model, position,
