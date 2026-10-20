@@ -49,6 +49,19 @@ screenshots). In the capture, find the ocean draw (`ocean.hlsl` vs30_main / ps30
    `lf_sea_height_map.dds` and with the terrain heights;
 3. the constant buffers `ocean_VS` and `OceanSharedConstants`, to recheck the values the editor takes from the tables.
 
+## Mod assets to review (later)
+
+- **TDD's dead tree bark is near black (2026-10-20).** `tdd_pack6_weather_1.0.0.pack` overrides
+  `battleterrain/vegetation/trees/textures/dead_tree/dead_tree_{dry,wet}_diffuse.dds` and their `_ab` variants with 512 x 2048 textures
+  of dark mossy bark (mean colour about 40, 39, 32) where vanilla's are 256 x 1024 light grey (dry about 133, 128, 119; wet 86, 84, 71).
+  The dead tree stumps of the TDD tiles (710 `dead_tree.dry_dead_treek` on gen_dun_medium_final_2) render near black in the editor;
+  with vanilla packs only, the same camera shows light grey bark, as TEd does. The editor draws what the pack holds (checked: the model,
+  normal map, seasonal lookup, burn map, shadows and SSAO play no part). To do: check the stumps in game with the same packs, and tweak
+  (brighten) the mod's texture if they are dark there too.
+- Side finding, not acted on: the dead tree models are wound the other way round from the pines (normals along the triangle winding,
+  the pines' against it). Drawing trees two-sided (most of the tree material's rasterizer descriptions, fn 0x116e5130, are CULL_NONE)
+  changed nothing visible; which description the G-buffer pass uses is not traced.
+
 ## Nice to have (future update, not done)
 
 - **VFX debris and decal particles:** rigid emitters whose model isn't a point light, i.e. pebbles, splinters, mud, ship debris, the
