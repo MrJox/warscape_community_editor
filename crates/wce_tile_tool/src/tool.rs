@@ -1455,6 +1455,32 @@ pub(crate) fn matches_words(en: &wce_formats::tile_index::TileIndexEntry, words:
 /// wce.ini: the sea at 0 m shown (1, the default) or hidden (0).
 const SHOW_SEA_KEY: &str = "tile_show_sea";
 
+/// The instance type whose markers are the VFX boxes, and wce.ini's key for them: shown (1, the default) or hidden (0).
+const VFX_TYPE: &str = "VFXInstance";
+const VFX_BOXES_KEY: &str = "tile_show_vfx_boxes";
+
+fn vfx_boxes_setting(e: &mut Editor) -> bool {
+    e.settings().get(VFX_BOXES_KEY, None).is_none_or(|v| v != "0")
+}
+
+/// Shows or hides the VFX boxes (the VFXInstance markers; the effects still play) of the open tile, and keeps it in wce.ini for the next
+/// tiles. The same switch as the type's eye in the Scene panel.
+pub fn set_vfx_boxes(e: &mut Editor, on: bool) {
+    if let Some(d) = document(e) {
+        let t = d.tile_mut();
+        if on {
+            t.display_mut().hidden_types.remove(VFX_TYPE);
+        } else {
+            t.display_mut().hidden_types.insert(VFX_TYPE.to_owned());
+        }
+
+        t.display_changed();
+    }
+
+    e.settings().set(VFX_BOXES_KEY, if on { "1" } else { "0" });
+    let _ = e.settings().save();
+}
+
 /// wce.ini: the battle wind the sea is drawn with (a key of `wind_levels_tables`).
 const SEA_STATE_KEY: &str = "tile_sea_state";
 
@@ -1608,6 +1634,14 @@ impl Tool for TileTool {
             changed |= gui::menu_item_toggle("Polygon outlines", &mut v.show_polygons);
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
             gui::menu_item_toggle("Tile border", &mut v.show_border);
+            let mut vfx = !v.hidden_types.contains(VFX_TYPE);
+            if gui::menu_item_toggle("VFX boxes", &mut vfx) {
+                set_vfx_boxes(e, vfx);
+            }
+
+            let Some(d) = document(e) else { return gui::end_menu() };
+            let t = d.tile_mut();
+            let v = t.display_mut();
             gui::separator();
             gui::text("Draw distances (m)");
             gui::set_next_item_width(160.0);
@@ -1822,6 +1856,9 @@ impl Tool for TileTool {
 
         let mut doc = TileDocument::new(project, e.files());
         doc.tile_mut().display_mut().show_sea = show_sea_setting(e);
+        if !vfx_boxes_setting(e) {
+            doc.tile_mut().display_mut().hidden_types.insert(VFX_TYPE.to_owned());
+        }
         Ok(Box::new(doc))
     }
 
