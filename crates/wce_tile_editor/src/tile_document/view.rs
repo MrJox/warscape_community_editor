@@ -691,7 +691,7 @@ impl Tile {
             for (i, piece) in pieces.into_iter().enumerate() {
                 let props = self.piece_props.get(&(elem, i));
                 let world = props.map_or(w, |p| w * piece_local(p));
-                let model = piece_model(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), self.piece_levels(elem, i));
+                let model = self.piece_file(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), self.piece_levels(elem, i));
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 let p5 = [0.0, 0.0, 0.0, 1.0];
@@ -973,6 +973,17 @@ impl Tile {
 
     /// The pieces whose properties were edited: their entities follow (the position, the visibility, the destruction level).
     /// The `destruction_level` the tile stores for a building (0, intact, when it has one level or none is written).
+    /// The file of a piece at a level: `piece_model`'s, or, for a working animation's piece whose level has no animated file (the ram's
+    /// broken body), the plain file of that level.
+    pub(crate) fn piece_file(&self, base: &str, level: i64, levels: u32) -> String {
+        let model = piece_model(base, level, levels);
+        if model == base || self.files.as_deref().is_none_or(|f| f.exists(&model)) {
+            return model;
+        }
+
+        super::index::plain_piece(&model)
+    }
+
     pub(crate) fn saved_destruction_level(&self, elem: usize, levels: u32) -> i64 {
         if levels <= 1 {
             return 0;
@@ -1003,7 +1014,7 @@ impl Tile {
             let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
             let levels = self.model_of(elem).map_or(1, |m| m.levels);
             let level = if p.destruction_level < 0 { self.saved_destruction_level(elem, levels) } else { p.destruction_level };
-            let model = piece_model(&base, level, self.piece_levels(elem, k));
+            let model = self.piece_file(&base, level, self.piece_levels(elem, k));
             if let Some(en) = scene.find_mut(id) {
                 en.visible = p.visible;
                 if let Payload::MeshInstance(mi) = &mut en.payload {

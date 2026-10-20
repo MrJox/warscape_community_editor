@@ -96,6 +96,39 @@ pub(crate) fn static_piece(file: &str) -> bool {
     !stem.ends_with("_anim") && !stem.ends_with("_open")
 }
 
+/// The part of a piece file after `destructNN` (`_left_wheel_looped_anim`, `_weighted_anim`, `_anim`; empty for a plain state).
+fn piece_tail(file: &str) -> &str {
+    let stem = file.strip_suffix(".rigid_model_v2").unwrap_or(file);
+    stem.find("destruct").and_then(|at| stem.get(at + "destruct".len() + 2..)).unwrap_or("")
+}
+
+/// Whether a piece file is a mesh that only exists as an animation and is what the piece shows standing (anim_pose.rs in wce_render poses it
+/// in its first frame): the siege engines' wheels (`_left_wheel_looped_anim`) and weighted bodies (`_weighted_anim`). Not the collapse
+/// between two levels (`_destructNN_anim`, `_destruction_weighted_anim`) nor a gate's swing.
+pub(crate) fn working_anim(file: &str) -> bool {
+    let tail = piece_tail(file);
+    tail.ends_with("_anim") && tail != "_anim" && !tail.starts_with("_destruction") && !tail.contains("gate") && !tail.contains("opening") && !tail.contains("closing")
+}
+
+/// The piece of a piece file (`piece02`).
+fn piece_tag(file: &str) -> Option<&str> {
+    let at = file.find("_piece")? + 1;
+    let rest = &file[at..];
+    Some(&rest[..rest.find('_').unwrap_or(rest.len())])
+}
+
+/// A working animation's piece file without its animation: the plain state file of the same piece and level.
+pub(crate) fn plain_piece(path: &str) -> String {
+    let file_at = path.rfind('/').map_or(0, |s| s + 1);
+    let tail = piece_tail(&path[file_at..]);
+    if tail.is_empty() {
+        return path.to_owned();
+    }
+
+    let stem = path.strip_suffix(".rigid_model_v2").unwrap_or(path);
+    format!("{}.rigid_model_v2", &stem[..stem.len() - tail.len()])
+}
+
 fn text(raw: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(raw)
 }
@@ -593,6 +626,7 @@ impl Tile {
         let mut folders = BTreeMap::<String, Vec<String>>::new();
         let mut levels = BTreeMap::<String, u32>::new();
         let mut piece_levels = BTreeMap::<String, u32>::new();
+        let mut anims = BTreeMap::<String, Vec<String>>::new();
         if let Some(files) = self.files.as_ref().filter(|_| !fresh.is_empty()) {
             let prefix = "rigidmodels/buildings/";
             for p in files.list(prefix, ".rigid_model_v2") {
@@ -603,6 +637,18 @@ impl Tile {
                 }
 
                 let file = &p[slash + 1..];
+                if working_anim(file) {
+                    let level = destruct_number(file);
+                    let intact = p.replacen(&format!("destruct{level:02}"), "destruct01", 1);
+                    let n = piece_levels.entry(intact).or_default();
+                    *n = (*n).max(level);
+                    let n = levels.entry(folder.to_owned()).or_default();
+                    *n = (*n).max(level);
+                    if level == 1 {
+                        anims.entry(folder.to_owned()).or_default().push(p.clone());
+                    }
+                }
+
                 if !static_piece(file) {
                     continue;
                 }
@@ -621,6 +667,24 @@ impl Tile {
                 }
 
                 folders.entry(folder.to_owned()).or_default().push(p.clone());
+            }
+        }
+
+        // A piece with no standing file of its own (the siege engines' wheels and bodies) shows its working animation's mesh; its levels are
+        // those of its animation and of the plain files of the same piece (the ram's broken body is a plain `destruct02`).
+        for (folder, files) in anims {
+            let pieces = folders.entry(folder).or_default();
+            let mut have = pieces.iter().filter_map(|p| piece_tag(&p[p.rfind('/').map_or(0, |s| s + 1)..]).map(str::to_owned)).collect::<BTreeSet<_>>();
+            for p in files {
+                let Some(tag) = piece_tag(&p[p.rfind('/').map_or(0, |s| s + 1)..]).map(str::to_owned) else { continue };
+                if !have.insert(tag) {
+                    continue;
+                }
+
+                let plain = piece_levels.get(&plain_piece(&p)).copied().unwrap_or(0);
+                let n = piece_levels.entry(p.clone()).or_default();
+                *n = (*n).max(plain).max(1);
+                pieces.push(p);
             }
         }
 
@@ -852,5 +916,11 @@ mod tests {
         assert!(!static_piece(&f("piece02_destruct01_gate_open")));
         assert!(!static_piece(&f("piece02_destruct01_gate_closing_anim")));
         assert!(!static_piece(&f("piece01_destruct01_left_wheel_looped_anim")));
+        assert!(super::working_anim(&f("piece02_destruct01_left_wheel_looped_anim")), "a wheel stands as its animation");
+        assert!(super::working_anim(&f("piece01_destruct01_weighted_anim")));
+        assert!(!super::working_anim(&f("piece01_destruct01_anim")), "a collapse");
+        assert!(!super::working_anim(&f("piece01_destruct01_destruction_weighted_anim")), "a collapse");
+        assert!(!super::working_anim(&f("piece02_destruct01_gate_closing_anim")));
+        assert_eq!(super::plain_piece("a/x_piece01_destruct02_weighted_anim.rigid_model_v2"), "a/x_piece01_destruct02.rigid_model_v2");
     }
 }

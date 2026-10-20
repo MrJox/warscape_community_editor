@@ -590,6 +590,66 @@ fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::f
         })
 }
 
+/// Poses an animation's mesh in its first frame (anim_pose.rs): a weighted mesh by its bones' skinning matrices, a rigid one by its bone
+/// (the material's matrix index, else the first bone). Without the animation file the mesh stays as stored.
+fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
+    let Ok(anim) = read(&format!("{stem}.anim")) else { return };
+    let Some(pose) = crate::anim_pose::first_frame(&anim) else {
+        log::warn(format!("{stem}.anim: not an animation this reads (drawn unposed)"));
+        return;
+    };
+
+    let binds = read(&format!("{stem}.bone_inv_trans_mats")).ok().and_then(|b| crate::anim_pose::inverse_binds(&b));
+    let skin = crate::anim_pose::skin_matrices(&pose, binds.as_deref());
+    if skin.is_empty() {
+        return;
+    }
+
+    let dir = |m: &Float4x4, v: [f32; 3]| [0, 1, 2].map(|r| m.m[r][0] * v[0] + m.m[r][1] * v[1] + m.m[r][2] * v[2]);
+    for lod in model.lods_mut() {
+        for block in lod.mesh_blocks_mut() {
+            let weighted = *block.material().vertex_format() == VertexFormat::Weighted;
+            let bone = usize::try_from(*block.material().i_matrix_index()).ok().filter(|&b| b < skin.len()).unwrap_or(0);
+            for v in block.mesh_mut().vertices_mut() {
+                let m = if weighted {
+                    let (idx, w) = (*v.bone_indices(), *v.weights());
+                    let mut m = Float4x4 { m: [[0.0; 4]; 4] };
+                    let mut total = 0.0;
+                    for k in 0..4 {
+                        let Some(b) = skin.get(usize::from(idx[k])).filter(|_| w[k] > 0.0) else { continue };
+                        for r in 0..4 {
+                            for c in 0..4 {
+                                m.m[r][c] += w[k] * b.m[r][c];
+                            }
+                        }
+
+                        total += w[k];
+                    }
+
+                    if total <= 0.0 { skin[0] } else { m }
+                } else {
+                    skin[bone]
+                };
+
+                let p = v.position_mut();
+                let q = m.transform_point(Float3::new(p.x, p.y, p.z));
+                (p.x, p.y, p.z) = (q.x, q.y, q.z);
+                for which in 0..3 {
+                    let n = match which {
+                        0 => v.normal_mut(),
+                        1 => v.tangent_mut(),
+                        _ => v.bitangent_mut(),
+                    };
+
+                    let d = dir(&m, [n.x, n.y, n.z]);
+                    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+                    (n.x, n.y, n.z) = (d[0] / len, d[1] / len, d[2] / len);
+                }
+            }
+        }
+    }
+}
+
 impl ModelInner {
 
     /// Builds a model on any thread; `None` when it has no drawable standard meshes at LOD 0.
@@ -600,11 +660,16 @@ impl ModelInner {
             (self.read)(path)?
         };
 
-        let model = {
+        let mut model = {
             wce_prof!("model.parse");
             let extra = DecodeableExtraData::default();
             RigidModel::decode(&mut Cursor::new(&bytes), &Some(extra)).map_err(|error| format!("rmv2: {error}"))?
         };
+
+        // A mesh that only exists as an animation (anim_pose.rs) is drawn in its first frame.
+        if let Some(stem) = path.strip_suffix(".rigid_model_v2").filter(|s| s.ends_with("_anim")) {
+            pose_first_frame(&mut model, stem, &self.read);
+        }
 
         // Version 5 (some grass) is read into the same vertices, written back as 6.
         if !matches!(*model.version(), 5 | 6) {
@@ -624,6 +689,9 @@ impl ModelInner {
                 (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
                 (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
                 (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
+
+                // Posed on the CPU (pose_first_frame): drawn as a static mesh.
+                (MaterialType::Weighted, VertexFormat::Weighted) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
                 (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
                 (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
