@@ -27,6 +27,28 @@ From docs/re/terrain.md ("Assumptions / open"):
   battle shows the sea there is drawn by the Sea Display with `ocean.hlsl` (foam, sea and swell surfaces, a sea bed info texture), not
   waterplane and not ocean2: docs/re/water.md, "The battle sea of a coastal battle".
 
+## Battle sea: needs a GPU capture of the game (later)
+
+The battle sea draws with the game's shaders and data (docs/re/water.md, "The battle sea of a coastal battle"; crates/wce_render/src/
+renderer/ocean.rs and sea_surface.rs). Two inputs are still stand-ins, because their content only exists on the GPU: neither the
+decompiled code (the fill wasn't found) nor a CPU memory dump shows it.
+
+- **The radial mesh and its displacement.** The game draws the sea as an 80 x 164 radial mesh around the camera (fn 0x116e47e0's
+  class: a sin / cos table of 80 segments, 164 rings, `[0x24]`, `[0x25]` = 43.2, 2.72 at the dumped camera). The editor uses a grid
+  (4 m near, 64 m beyond the sea bed square), displaced by the blended sea and swell heights. Unknown: the rings' radii, and how the
+  vertices are displaced (heights only, or the slope images too; scaling).
+- **The sea bed info texture.** The ocean material binds a 1024 x 1024 texture loaded from a file (Sea Display slot 0x1a), most likely
+  a 2048 m cut of `terrain/battles/<map>/lf_sea_height_map.dds`. The editor builds it from the scene's terrain heights (512 x 512),
+  decoded the same way by the shader (`r * 25 - 20`). It only changes how the waves flatten near the shore.
+
+**How to settle both:** a RenderDoc (or PIX) capture of Attila (DX11) in a coastal battle, the shore in view (as the 2026-10-19
+screenshots). In the capture, find the ocean draw (`ocean.hlsl` vs30_main / ps30_main_*_water_quality) and save:
+1. its vertex buffer (POSITION0 displaced, POSITION1 rest, TEXCOORD0) with the camera at that draw: gives the rings' radii and, against
+   the sea / swell frames of the same time (`g_foam_anim_data` gives the sea frame), the displacement formula;
+2. the texture bound to `g_sea_bed_info_texture` (VS t0): its format and pixels, to compare with the battle map's
+   `lf_sea_height_map.dds` and with the terrain heights;
+3. the constant buffers `ocean_VS` and `OceanSharedConstants`, to recheck the values the editor takes from the tables.
+
 ## Nice to have (future update, not done)
 
 - **VFX debris and decal particles:** rigid emitters whose model isn't a point light, i.e. pebbles, splinters, mud, ship debris, the
