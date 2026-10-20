@@ -1418,6 +1418,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_sea_state", "tile_sea_state [wind]", "draw the sea with a battle wind's waves and whitecaps (a key of wind_levels_tables; kept in wce.ini); no wind: list them", |e, a| {
+        let states = e.renderer().map(|r| r.sea_states()).unwrap_or_default();
+        let Some(key) = a.first() else { return ok(format!("sea states: {}", states.join(", "))) };
+        if !states.contains(key) {
+            return fail(format!("no wind '{key}'; winds: {}", states.join(", ")));
+        }
+
+        crate::tool::set_sea_state(e, key);
+        ok("")
+    });
+
     c.add("tree_list", "tree_list [name | gen:name | none]", "draw one of the tile's procedural tree lists (BOB's <name>.tree_list.bin: default, a climate key; gen:<name> generates it from the seeds, again on every call); no name: log the lists", |e, a| {
         let Some(d) = document(e) else { return fail("no tile open") };
         let lists = d.tile().tree_lists().to_vec();

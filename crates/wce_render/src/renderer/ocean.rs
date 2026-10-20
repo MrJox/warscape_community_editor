@@ -1,18 +1,25 @@
 //! The battle sea as the game draws it: the Sea Display's surface with the game's ocean shaders (`ocean.hlsl`, sm_4_0: vs30_main,
 //! ps30_main_ultra_water_quality), not waterplane (docs/re/water.md, "The battle sea of a coastal battle": decompiled empire.retail.dll
-//! and a memory dump of a coastal battle). The pixel shader puts foam where the water over the ground (from the depth channel) is less
-//! than 1.6 m deep: the static foam texture `sea/combined_foam.dds`, two layers scrolling against each other; deeper whitecaps come from
-//! an animated foam array.
+//! and memory dumps of a coastal battle). The pixel shader puts foam where the water over the ground (from the depth channel) is less
+//! than 1.6 m deep (the static foam texture `sea/combined_foam.dds`, two layers scrolling against each other) and whitecaps from the
+//! animated foam array.
 //!
-//! What this draws so far (interim, not yet the game's look): the sea surface is still. The game's sea and swell surfaces (a wave
-//! simulation, 256 x 256 and 128 x 128) and the animated foam frames are not traced yet: the surfaces are neutral (a flat normal: the
-//! detail normal maps still ripple it) and the whitecap array is empty. The surface mesh is a grid (the game's is a radial mesh around
-//! the camera, fn 0x116e47e0, not traced): 4 m apart where the sea bed texture reaches, coarser beyond.
+//! The battle's wind (`RenderSettings::sea_state`, a key of `wind_levels_tables`) picks a row of `sea_surfaces_tables` and its two
+//! prebaked surfaces (crate::sea_surface): every frame the sea (256 x 256, a 70 m patch) and swell (128 x 128, 800 m) textures are their
+//! frame pair's angles, blended; the whitecap array (a slice per sea frame) is baked once per wind, and `g_foam_anim_data` is the sea's
+//! frame pair and blend. Without the files (another game, a broken pack) the surfaces stay flat and there are no whitecaps (logged).
 //!
-//! The sea bed info texture (`sea_bed_info_texture`, 512 x 512 over x, z in [-1024, 1024]: the vertex shader reads red as the ground
-//! height, `r * g_vs_sea_info.y + g_vs_sea_info.x`, -20 .. 5 m) is built here from the scene's terrains (ASSUMPTION: what the engine writes
-//! into it, the Sea Display's own 512 x 512 texture, has not been traced; the shader decodes a height). Near the shore the vertex shader
-//! flattens the waves into a small ripple, and pushes the sea 4 m down where the ground is above it.
+//! ASSUMPTIONS (not traced: the code that fills the engine's radial mesh, fn 0x116e47e0's class, was not found):
+//! - The mesh is a grid (4 m apart where the sea bed texture reaches, 64 m beyond) instead of the game's 80 x 164 radial mesh around the
+//!   camera, and its vertices are displaced by the sea and swell heights (the frames' height images, blended like the angles) on the CPU.
+//!   The game's vertex shader takes a displaced and a rest position, and the surfaces carry heights whose range is in the shader's
+//!   constants (`g_vs_sea_info.zw`), but how the engine combines them (and whether it uses the frames' slope images, unused here) is
+//!   not known.
+//! - The sea bed info texture (`sea_bed_info_texture`, 512 x 512 over x, z in [-1024, 1024]: the vertex shader reads red as the ground
+//!   height, `r * g_vs_sea_info.y + g_vs_sea_info.x`, -20 .. 5 m) is built from the scene's terrains; what the engine writes into its own
+//!   512 x 512 texture has not been traced. Near the shore the vertex shader flattens the waves into a small ripple, and pushes the sea
+//!   4 m down where the ground is above it.
+//! - `g_transparency_exponential_scale` (4) and the sea bed range (-20, 25) are the dumps' values; they are not in the tables.
 
 use std::collections::BTreeMap;
 
@@ -21,6 +28,7 @@ use wce_foundation::wce_prof;
 use wce_scene::render_scene::{Entity, EntityId, Payload, RenderScene};
 
 use super::*;
+use crate::sea_surface::{SeaRow, SeaSurface, parse_sea_surfaces, parse_wind_levels};
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 const OCEAN_VS: &str = "dx11_sm_4_0_ocean.hlsl_vs_vs30_main";
@@ -32,14 +40,8 @@ const OCEAN_PS: &str = "dx11_sm_4_0_ocean.hlsl_ps_ps30_main_ultra_water_quality"
 const SEA_BED_SIZE: u32 = 512;
 const SEA_BED_HALF: f32 = 1024.0;
 
-/// The live constants of the ocean material in a coastal battle (two memory dumps of 2026-10-19, at deployment and mid-battle: the
-/// same values). Where the engine takes them from (environment, battle settings) is not traced.
-const SEA_DECAY: f32 = 0.0006;
-const SEA_UV_SCALE: f32 = 1.0 / 70.0;
-const SWELL_UV_SCALE: f32 = 0.00125;
-const SEA_INFO: [f32; 4] = [-20.0, 25.0, -0.117_621, 0.239_849];
-const FROTH_DISTORTION: [f32; 2] = [0.35, 0.05];
-const DETAIL_NORMAL_UV: [f32; 4] = [15.8, 5.0, 7.8, 6.8];
+/// The sea bed's height range (`g_vs_sea_info.xy`) and `g_transparency_exponential_scale`: the dumps' values, not in the tables.
+const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
 /// Sea grid spacing: where the sea bed texture reaches (its texel size), and beyond.
@@ -49,9 +51,35 @@ const COARSE_STEP: f32 = 64.0;
 /// P0 (displaced position, w 1), P1 (rest position, w 1), TEXCOORD0.x.
 const OCEAN_VERTEX: u32 = 36;
 
+/// A sea plane's grid: its rest vertices (game units) and the buffers.
+struct OceanMesh {
+    version: u64,
+    rest: Vec<f32>,
+    vb: ID3D11Buffer,
+    ib: ID3D11Buffer,
+    count: u32,
+}
+
+/// A wind's sea: the table row, the surfaces, their textures and the whitecaps.
+struct SeaAssets {
+    row: SeaRow,
+    sea: SeaSurface,
+    swell: SeaSurface,
+    sea_tex: (ID3D11Texture2D, ID3D11ShaderResourceView),
+    swell_tex: (ID3D11Texture2D, ID3D11ShaderResourceView),
+    whitecaps: Option<ID3D11ShaderResourceView>,
+}
+
 #[derive(Default)]
 pub(crate) struct OceanGpu {
-    meshes: BTreeMap<EntityId, (u64, ID3D11Buffer, ID3D11Buffer, u32)>,
+    meshes: BTreeMap<EntityId, OceanMesh>,
+
+    /// The sea of `sea_state` (None when it could not be loaded: flat surfaces), and the key it was loaded for.
+    sea: Option<SeaAssets>,
+    sea_state: Option<String>,
+
+    /// The keys of `wind_levels_tables`, in their sort order (read once).
+    winds: Option<Vec<String>>,
     sea_bed: Option<ID3D11ShaderResourceView>,
 
     /// What the sea bed was built from: the scene's address and terrain revision.
@@ -146,7 +174,89 @@ fn sea_grid(x0: f32, z0: f32, x1: f32, z1: f32, y: f32) -> (Vec<f32>, Vec<u32>) 
     (verts, indices)
 }
 
+/// A dynamic R16G16 texture the CPU writes every frame.
+fn dynamic_rg16(dev: &ID3D11Device, n: u32) -> Option<(ID3D11Texture2D, ID3D11ShaderResourceView)> {
+    let td = D3D11_TEXTURE2D_DESC {
+        Width: n, Height: n, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16G16_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0,
+    };
+
+    let tex = dev.create_texture_2d(&td, None).ok()?;
+    let srv = dev.create_shader_resource_view(&tex, None).ok()?;
+    Some((tex, srv))
+}
+
+/// The whitecap array: a slice per frame, RG8.
+fn whitecap_array(dev: &ID3D11Device, n: u32, slices: &[u8]) -> Option<ID3D11ShaderResourceView> {
+    let size = (n * n * 2) as usize;
+    let count = slices.len() / size;
+    let td = D3D11_TEXTURE2D_DESC {
+        Width: n, Height: n, MipLevels: 1, ArraySize: count as u32, Format: DXGI_FORMAT_R8G8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+    };
+
+    let init = slices.chunks_exact(size).map(|s| InitData::new(s, n * 2)).collect::<Vec<_>>();
+    let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R8G8_UNORM, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+    sd.Anonymous.Texture2DArray.MipLevels = 1;
+    sd.Anonymous.Texture2DArray.ArraySize = count as u32;
+    dev.create_texture_2d(&td, Some(&init)).and_then(|tex| dev.create_shader_resource_view(&tex, Some(&sd))).ok()
+}
+
+/// Writes rows of texels into a dynamic texture.
+fn write_rows(ctx: &ID3D11DeviceContext, tex: &ID3D11Texture2D, texels: &[u16], row_texels: usize) {
+    let Ok(mut m) = ctx.map(tex, 0, D3D11_MAP_WRITE_DISCARD, 0) else { return };
+    let pitch = m.row_pitch();
+    for (y, row) in texels.chunks_exact(row_texels).enumerate() {
+        m.write(y * pitch, row);
+    }
+}
+
 impl Renderer {
+
+    /// The battle winds a sea can be drawn with (`wind_levels_tables`, in its order; empty without the table).
+    pub fn sea_states(&mut self) -> Vec<String> {
+        if self.water.ocean.winds.is_none() {
+            let winds = self.files.read("db/wind_levels_tables/wind_levels").ok().and_then(|b| parse_wind_levels(&b)).unwrap_or_default();
+            self.water.ocean.winds = Some(winds.into_iter().map(|w| w.key).collect());
+        }
+
+        self.water.ocean.winds.clone().unwrap_or_default()
+    }
+
+    /// The sea of the settings' wind: the table rows, the two surfaces, their textures and the whitecaps (once per wind).
+    fn ocean_sea_state(&mut self) {
+        let key = self.settings.sea_state.clone();
+        if self.water.ocean.sea_state.as_deref() == Some(key.as_str()) {
+            return;
+        }
+
+        wce_prof!("render.ocean_sea_state");
+        self.water.ocean.sea_state = Some(key.clone());
+        self.water.ocean.sea = None;
+        let files = self.files.clone();
+        let read = |path: &str| files.read(path).map_err(|e| format!("{path}: {e}"));
+        let load = || -> Result<(SeaRow, SeaSurface, SeaSurface), String> {
+            let winds = parse_wind_levels(&read("db/wind_levels_tables/wind_levels")?).ok_or("wind_levels_tables: not read")?;
+            let wind = winds.iter().find(|w| w.key == key).ok_or_else(|| format!("no wind level '{key}'"))?;
+            let rows = parse_sea_surfaces(&read("db/sea_surfaces_tables/sea_surfaces")?).ok_or("sea_surfaces_tables: not read")?;
+            let row = rows.into_iter().find(|r| r.key == wind.sea_surface).ok_or_else(|| format!("no sea surface '{}'", wind.sea_surface))?;
+            let sea = SeaSurface::parse(&read(&format!("{}_sea", row.key))?).ok_or_else(|| format!("{}_sea: not a sea surface", row.key))?;
+            let swell = SeaSurface::parse(&read(&format!("{}_swell", row.key))?).ok_or_else(|| format!("{}_swell: not a sea surface", row.key))?;
+            Ok((row, sea, swell))
+        };
+
+        let (row, sea, swell) = match load() {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                self.error(format!("sea '{key}': {error} (the sea is drawn flat)"));
+                return;
+            }
+        };
+
+        let (Some(sea_tex), Some(swell_tex)) = (dynamic_rg16(&self.dev, sea.n as u32), dynamic_rg16(&self.dev, swell.n as u32)) else { return };
+        let whitecaps = if row.foam_enabled { whitecap_array(&self.dev, sea.n as u32, &sea.foam_slices(row.foam_decay_rate)) } else { None };
+        self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps });
+    }
 
     /// The sea bed info texture of the scene's terrains (rebuilt when they change).
     fn ocean_sea_bed(&mut self, scene: &RenderScene) {
@@ -168,7 +278,7 @@ impl Renderer {
 
         let n = SEA_BED_SIZE as usize;
         let texel = 2.0 * SEA_BED_HALF / SEA_BED_SIZE as f32;
-        let (lo, range) = (SEA_INFO[0], SEA_INFO[1]);
+        let [lo, range] = SEA_BED_RANGE;
         let mut data = vec![0.0f32; n * n];
         data.par_chunks_mut(n).enumerate().for_each(|(j, row)| {
             let z = -SEA_BED_HALF + (j as f32 + 0.5) * texel;
@@ -231,13 +341,14 @@ impl Renderer {
 
         self.ocean_sea_bed(scene);
         self.ocean_neutral();
+        self.ocean_sea_state();
 
         // The grids, rebuilt when a plane's version moves on.
         let mut keep = BTreeMap::new();
         for e in &seas {
             let Payload::Water(w) = &e.payload else { continue };
-            if let Some(m) = self.water.ocean.meshes.get(&e.id).filter(|m| m.0 == w.version) {
-                keep.insert(e.id, m.clone());
+            if let Some(m) = self.water.ocean.meshes.remove(&e.id).filter(|m| m.version == w.version) {
+                keep.insert(e.id, m);
                 continue;
             }
 
@@ -247,34 +358,68 @@ impl Renderer {
             }
 
             // In game units, as the ocean shaders' distances and the sea bed texture.
-            let (verts, indices) = sea_grid(x0 * u, z0 * u, x1 * u, z1 * u, y * u);
+            let (rest, indices) = sea_grid(x0 * u, z0 * u, x1 * u, z1 * u, y * u);
             let idx = indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
-            let (Some(vb), Some(ib)) = (immutable_buffer(&self.dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER), immutable_buffer(&self.dev, &idx, D3D11_BIND_INDEX_BUFFER)) else {
+            let (Some(vb), Some(ib)) = (dynamic_buffer(&self.dev, rest.len() * 4, D3D11_BIND_VERTEX_BUFFER), immutable_buffer(&self.dev, &idx, D3D11_BIND_INDEX_BUFFER)) else {
                 continue;
             };
 
-            keep.insert(e.id, (w.version, vb, ib, indices.len() as u32));
+            keep.insert(e.id, OceanMesh { version: w.version, rest, vb, ib, count: indices.len() as u32 });
         }
 
         self.water.ocean.meshes = keep;
 
-        let cbs = &mut self.cbs;
-        cbs.set_f("ocean_VS", "g_sea_decay", &[SEA_DECAY]);
-        cbs.set_f("ocean_VS", "g_sea_uv_scale", &[SEA_UV_SCALE]);
-        cbs.set_f("ocean_VS", "g_swell_uv_scale", &[SWELL_UV_SCALE]);
-        cbs.set_f("ocean_VS", "g_vs_sea_info", &SEA_INFO);
-        cbs.set_f("OceanSharedConstants", "g_froth_distortion_speed", &[FROTH_DISTORTION[0]]);
-        cbs.set_f("OceanSharedConstants", "g_froth_distortion_amount", &[FROTH_DISTORTION[1]]);
-        cbs.set_f("OceanSharedConstants", "g_lowest_wave_trough_y_pos", &[0.0]);
-        cbs.set_f("OceanSharedConstants", "g_ps_sea_info", &SEA_INFO);
-        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_scale1", &[DETAIL_NORMAL_UV[0]]);
-        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_scale2", &[DETAIL_NORMAL_UV[1]]);
-        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_speed1", &[DETAIL_NORMAL_UV[2]]);
-        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_speed2", &[DETAIL_NORMAL_UV[3]]);
-        cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[TRANSPARENCY_EXPONENTIAL_SCALE]);
+        // The surfaces at this frame's time: their textures, and the grids displaced by their heights.
+        let t = self.clock.last_time.max(0.0);
+        let at = self.water.ocean.sea.as_ref().map(|s| (s.sea.frame_at(t), s.swell.frame_at(t)));
+        if let (Some(s), Some((sea_at, swell_at))) = (&self.water.ocean.sea, at) {
+            write_rows(&self.ctx, &s.sea_tex.0, &s.sea.angle_texels(sea_at), s.sea.n * 2);
+            write_rows(&self.ctx, &s.swell_tex.0, &s.swell.angle_texels(swell_at), s.swell.n * 2);
+        }
 
-        // No whitecap frames yet: slice 0 of the empty array.
-        cbs.set_f("OceanSharedConstants", "g_foam_anim_data", &[0.0, 0.0, 0.0, 0.0]);
+        for m in self.water.ocean.meshes.values() {
+            let mut verts = m.rest.clone();
+            if let (Some(s), Some((sea_at, swell_at))) = (&self.water.ocean.sea, at) {
+                let (sea, swell) = (&s.sea, &s.swell);
+                verts.par_chunks_mut(9).for_each(|v| v[1] += sea.height_at(sea_at, v[0], v[2]) + swell.height_at(swell_at, v[0], v[2]));
+            }
+
+            if let Ok(mut map) = self.ctx.map(&m.vb, 0, D3D11_MAP_WRITE_DISCARD, 0) {
+                map.write(0, &verts);
+            }
+        }
+
+        // Without the sea's files: the calm row's values (the dumps').
+        let row = self.water.ocean.sea.as_ref().map(|s| s.row.clone()).unwrap_or_else(|| SeaRow {
+            froth_distortion_speed: 0.35, froth_distortion_amount: 0.05, sea_decay: 0.0006, detail_normal: [7.8, 6.8, 15.8, 5.0], ..Default::default()
+        });
+
+        let (sea_uv, swell_uv, heights) = self.water.ocean.sea.as_ref().map_or((1.0 / 70.0, 1.0 / 800.0, [0.0, 0.0]), |s| {
+            (1.0 / s.sea.patch, 1.0 / s.swell.patch, [s.sea.height_min, s.sea.height_max - s.sea.height_min])
+        });
+
+        let info = [SEA_BED_RANGE[0], SEA_BED_RANGE[1], heights[0], heights[1]];
+        let foam_anim = match (&self.water.ocean.sea, at) {
+            (Some(s), Some((sea_at, _))) if s.whitecaps.is_some() => [sea_at.frame as f32, sea_at.next as f32, sea_at.blend, 0.0],
+            _ => [0.0; 4],
+        };
+
+        let detail = row.detail_normal_constants();
+        let cbs = &mut self.cbs;
+        cbs.set_f("ocean_VS", "g_sea_decay", &[row.sea_decay]);
+        cbs.set_f("ocean_VS", "g_sea_uv_scale", &[sea_uv]);
+        cbs.set_f("ocean_VS", "g_swell_uv_scale", &[swell_uv]);
+        cbs.set_f("ocean_VS", "g_vs_sea_info", &info);
+        cbs.set_f("OceanSharedConstants", "g_froth_distortion_speed", &[row.froth_distortion_speed]);
+        cbs.set_f("OceanSharedConstants", "g_froth_distortion_amount", &[row.froth_distortion_amount]);
+        cbs.set_f("OceanSharedConstants", "g_lowest_wave_trough_y_pos", &[row.wave_trough_y_value]);
+        cbs.set_f("OceanSharedConstants", "g_ps_sea_info", &info);
+        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_scale1", &[detail[0]]);
+        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_scale2", &[detail[1]]);
+        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_speed1", &[detail[2]]);
+        cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_speed2", &[detail[3]]);
+        cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[TRANSPARENCY_EXPONENTIAL_SCALE]);
+        cbs.set_f("OceanSharedConstants", "g_foam_anim_data", &foam_anim);
         self.upload();
 
         let rtvs = [self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()];
@@ -305,21 +450,23 @@ impl Renderer {
 
         bind_sampler(ctx, &ps, "gbuffer_channel_4_sampler", self.states.s_clamp_point.as_ref());
         bind_srv(ctx, &ps, "detail_normal_sampler", detail.as_ref());
-        bind_srv(ctx, &ps, "sea_surface_sampler", o.neutral.as_ref());
-        bind_srv(ctx, &ps, "swell_surface_sampler", o.neutral.as_ref());
+        let (sea_srv, swell_srv) = o.sea.as_ref().map_or((o.neutral.clone(), o.neutral.clone()), |s| (Some(s.sea_tex.1.clone()), Some(s.swell_tex.1.clone())));
+        let whitecaps = o.sea.as_ref().and_then(|s| s.whitecaps.clone()).or_else(|| o.no_foam.clone());
+        bind_srv(ctx, &ps, "sea_surface_sampler", sea_srv.as_ref());
+        bind_srv(ctx, &ps, "swell_surface_sampler", swell_srv.as_ref());
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
         bind_srv(ctx, &ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "colour_overlay_texture_sampler", o.clear.as_ref());
         bind_srv(ctx, &ps, "ui_colour_overlay_texture_sampler", o.clear.as_ref());
-        bind_srv(ctx, &ps, "g_foam_anim_texture", o.no_foam.as_ref());
+        bind_srv(ctx, &ps, "g_foam_anim_texture", whitecaps.as_ref());
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());
 
         for e in &seas {
-            let Some((_, vb, ib, count)) = self.water.ocean.meshes.get(&e.id) else { continue };
-            ctx.set_vertex_buffers(0, &[Some(vb.clone())], &[OCEAN_VERTEX], &[0]);
-            ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
-            ctx.draw_indexed(*count, 0, 0);
+            let Some(m) = self.water.ocean.meshes.get(&e.id) else { continue };
+            ctx.set_vertex_buffers(0, &[Some(m.vb.clone())], &[OCEAN_VERTEX], &[0]);
+            ctx.set_index_buffer(Some(&m.ib), DXGI_FORMAT_R32_UINT, 0);
+            ctx.draw_indexed(m.count, 0, 0);
             self.draw_stats.draw_calls += 1;
         }
 
