@@ -1029,8 +1029,14 @@ impl Tile {
                 self.cancel_collapse(scene, elem, k);
             }
 
+            // A collapsing piece's entity shows what the collapse says (collapse.rs).
+            if self.collapse_target(elem, k).is_some() {
+                scene.touch();
+                continue;
+            }
+
             if let Some(en) = scene.find_mut(id) {
-                en.visible = p.visible && !collapses && self.collapse_target(elem, k).is_none();
+                en.visible = p.visible;
                 if let Payload::MeshInstance(mi) = &mut en.payload {
                     mi.model = model;
                 }
