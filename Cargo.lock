@@ -2262,6 +2262,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_tile_io"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "thiserror",
+ "wce_formats",
+ "wce_foundation",
+ "wce_tile",
+ "wce_tile_model",
+]
+
+[[package]]
+name = "wce_tile_model"
+version = "0.1.0"
+
+[[package]]
 name = "wce_tile_tool"
 version = "0.1.0"
 dependencies = [

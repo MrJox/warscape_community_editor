@@ -1,0 +1,35 @@
+tile.ted files 1380 (parse failures 0, parse/save differs 0)
+instances with a position: 7924370
+no-op set_position changed bytes: 0 files; revert_all did not restore: 0 files
+number formatting reproduced: 17770581 of 17770581 (100.000%)
+        108 AISeparatorInstance
+       6166 AI_HINT_POLYGON_INSTANCE
+    1896156 BUILDING_INSTANCE
+       1006 CaptureLocationInstance
+       1006 CaptureLocationPolygonInstance
+        941 CivilianDeploymentZone
+       9095 CivilianShelter
+        800 DEPLOYMENT_ZONE_POLYGON_INSTANCE
+        403 DeploymentZonePolygonInstanceGroup
+        222 GO_REGION_POLYGON_INSTANCE
+        575 INSTANCE_GROUP
+          1 LAYER_INSTANCE_GROUP
+       2841 LayerInstance
+        140 LiteBuildingZone
+       3981 NOGO_REGION_POLYGON_INSTANCE
+     166054 POINT_LIGHT_INSTANCE
+    1921915 ProjectedDecalInstance
+        949 SCENE_GRAPH
+          4 SEGMENTED_SPLINE_INSTANCE
+       9085 SIEGE_AI_POLYGON_INSTANCE
+       1233 SIMPLE_MESH_INSTANCE
+       2419 SiegeAIEdgeInstance
+       1632 SiegeAINodeInstance
+        254 SplineRiverInstance
+    2444458 UserInstanceGroup
+    1404435 VEGETATION_INSTANCE
+      33956 VFXInstance
+      12653 VegetationExclusionPolygonInstance
+        575 ZONE_POLYGON_INSTANCE
+       1307 camera
+

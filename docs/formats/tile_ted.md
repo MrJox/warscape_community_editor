@@ -11,6 +11,14 @@ BUILDING_INSTANCE attributes: key (battlefield_buildings key), building_tech_lev
 ## Number formatting (reproduced for 100% of 3,244,021 values)
 `vector(x,y,z)`, `euler(x,y,z)` (radians), uniform or vector `scale`, `area`, `radius`, `opacity`, `flag_position/flag_facing`: float32, `%.6f` rounded **half away from zero**, trailing zeros and a trailing `.` removed (`-0.000000` stays `-0`). `<point position="x,y,z">`: `%g` (6 significant digits, e.g. `-6.86646e-05`). Colours `argb(a,r,g,b)` use the same rule.
 
+## Attribute kinds (survey of the Attila Assembly Kit, 2026-10-22; `wce_tile_io::attila::schema`)
+1,380 `tile.ted` (versions 1 (1 file), 6 (9), 8 (102), 9 (89), 11 (10), 12 (15), 14 (46), 15 (168), 16 (940)), 404 (class, attribute) pairs, 10.8 M elements, 83.6 M values. All CRLF, no BOM or declaration, 4 spaces per level, double quotes, one element per line, leaves self-closed, the file ends with CRLF; wrappers (`modules`, `scene`, `children`, `points`) are never empty.
+- An attribute has one kind whatever its class, except `position` (`vector(x,y,z)` on instances, `x,y,z` on `point`) and `scale` (`vector(...)` on decals and simple meshes, a number on `VEGETATION_INSTANCE` / `VFXInstance`).
+- Vectors (`position`, `scale`, `target`, `flag_position`), `euler(...)`, `vector(x,y)` (`animation_speed_scale`) and plain floats (area, radius, opacity, the camera's ...): TEd's `%.6f` rule above. **`%g`**: `lf_offset`, the points' `position`, `controlIn` / `controlOut`, and every number of `river_spline*.xml`. Colours `argb(r,g,b,a)`: at least one decimal.
+- Flags (`flags`, `seasons`): a leading space, names joined by `|`. Five root nodes of old files (`SCENE_GRAPH`, `LAYER_INSTANCE_GROUP`) have no leading space, and `season_mask` (v1) never has one (read as text).
+- Integers: seeds, counts, ids, `destruction_level`, `polygon_closed`, `closed` and the command placeholders (`recenter_polygon`, `add_boundary`, `add_polygon`, `flatten`, `select_all_points`). Booleans are `true` / `false`.
+- Oddities: `lf_offset="nan"` in 45 elements, two denormal `lf_offset`s (`2.3581e-41`) that `%g` of the float32 does not give back (garbage values; kept as text by the round trip), `name` and `key` that look like numbers (`30_30_10`, read as text by name).
+
 ## Editing
 Attribute edits only (the text outside the edited value is untouched); setting a value equal to the current one (as float32) is a no-op; `revert_all` restores the original bytes. Structural edits (add / remove / duplicate instances) go through `XmlDoc::{with_child, removed_element, duplicated_element}`.
 

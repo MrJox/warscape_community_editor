@@ -131,7 +131,12 @@ fn main() {
         }
     }
 
-    let roots = [game.join("assembly_kit_battle_tilemap").join("raw_data"), game.join("assembly_kit_campaign_tilemap").join("raw_data")];
+    // The two tilemap kits (Windows install), or the one Assembly Kit that holds both (Steam on Linux).
+    let roots = ["assembly_kit_battle_tilemap", "assembly_kit_campaign_tilemap", "assembly_kit"]
+        .map(|kit| game.join(kit).join("raw_data"))
+        .into_iter()
+        .filter(|root| root.join("terrain").join("tiles").is_dir())
+        .collect::<Vec<_>>();
     let mut g = Gate::default();
 
     // ---- 1. entry round trip

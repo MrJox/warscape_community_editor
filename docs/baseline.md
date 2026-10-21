@@ -231,3 +231,19 @@ Phase 2 baseline above. Checked on Linux (Proton install, 20 packs, 1 mod pack; 
 
 `terrain_check` fails the same way with both caches on that machine (no `assembly_kit_battle_tilemap` in the Linux install). The Windows path (WinHTTP WebSocket) was not
 built or run yet.
+
+## Tile round trip (2026-10-22, `docs/plans/tile_roundtrip.md`)
+
+New gates: `tile_roundtrip` (one tile) and, with `--corpus`, `tile_roundtrip_all` (`wce_tile_io --example tile_roundtrip_check`). On the vanilla Attila
+Assembly Kit (Steam on Linux, battle and campaign tiles in one `assembly_kit`), `docs/baseline/tile_roundtrip_check.txt`, about 110 s with 8 threads:
+
+| Check | Result (the lines a later run must reproduce) |
+|---|---|
+| files the model holds | 1,380 tiles: `tile.ted` 1,380, `blend_map.tif` 1,380, `height_map_N.png` 1,379, `lf_influence_map.png` 1,177, `nogo.png` 1,177, `ground_type_map.png` 782, river splines 16 + 255, entries 1,322: **all identical**; 222 PNGs kept (189 height, 21 ground type, 12 LF influence: ancillary chunks); 3 did not read (`plains/3x1/3x1_aa`, LF converted to CRLF), carried along |
+| values | 10,772,117 elements, 83,637,088 values, 7 kept as text (5 flags without the leading space, 2 denormal `lf_offset`s), 0 unknown attributes, 0 nodes with layout trivia |
+| model | read back from the written files: 0 differ; 135,564 edited values: edit then revert 0 failures, edit then re-read 0 failures |
+| cross check | 10,745,693 elements against `TedScene`: 0 tiles disagree |
+
+`scene_check` on the same kit: `docs/baseline/scene_check_attila_kit.txt` (1,380 files, 17,770,581 of 17,770,581 numbers). The crate tests read the
+kit when `WCE_ATTILA_KIT` is set (`gates.sh` sets it from `WCE_GAME`): `kit_samples` round-trips 25 chosen tiles (every version, both kinds, the cases
+above). `gates.sh` gained the `ex` helper its gate lines call (it was not defined).

@@ -118,6 +118,10 @@ only the tile database; the 1,583-file corpus is on the Windows side), so `wce_t
 With the corpus available: `cargo run --release -p wce_tile --example scene_check -- <kit tiles folder>` must give the baseline of `docs/baseline.md`
 (1,583 `tile.ted`, 0 parse failures, 0 parse/save differences, every number reproduced), and the C++ / Rust differential dumps (`tile_dump` and the
 tile editor's) must be re-run on kit tiles (khazad_wall_test, custom_monte_rosa/aa, plains/3x1/3x1_aa and a settlement tile) and give identical output.
+**Status (2026-10-22, branch `tile-roundtrip`):** the vanilla Attila Assembly Kit is now on this machine (Steam, one `assembly_kit` holding battle
+and campaign tiles: 1,380 `tile.ted`, no TDD tiles). On it `scene_check` gives 1,380 files, 0 parse failures, 0 parse/save differences, 17,770,581 of
+17,770,581 numbers reproduced (`docs/baseline/scene_check_attila_kit.txt`), and `tile_entry_check --all` passes (1,107 entries, 1,317 tiles open the same
+three ways). Still owed: the 1,583-file corpus with the TDD tiles (v17) on the Windows side, and the differential dumps on kit tiles.
 
 ## Agreed scope (2026-10-09, 10 questions + follow-ups)
 

@@ -79,6 +79,51 @@ pub fn strtod_prefix(s: &str) -> Option<(f64, usize)> {
     Some((s[start..end].parse().ok()?, end))
 }
 
+/// `printf("%.<decimals>f", v)` as MSVC's C runtime writes it: the exact decimal expansion of `v` rounded half away from zero (glibc
+/// and Rust round an exact tie to even). The tools of the Assembly Kit write their numbers like this.
+pub fn printf_f_msvc(v: f64, decimals: usize) -> String {
+    if !v.is_finite() {
+        return printf_g(v);
+    }
+
+    let s = format!("{:.*}", decimals + 40, v.abs());
+    let (int_part, frac) = s.split_once('.').expect("a fraction");
+    let mut digits = format!("{int_part}{}", &frac[..decimals]).into_bytes();
+    if frac.as_bytes()[decimals] >= b'5' {
+        let mut i = digits.len();
+        loop {
+            if i == 0 {
+                digits.insert(0, b'1');
+                break;
+            }
+
+            i -= 1;
+            if digits[i] == b'9' {
+                digits[i] = b'0';
+            } else {
+                digits[i] += 1;
+                break;
+            }
+        }
+    }
+
+    let (ip, fp) = digits.split_at(digits.len() - decimals);
+    let mut out = if v.is_sign_negative() { "-".to_owned() } else { String::new() };
+    out += &String::from_utf8_lossy(ip);
+    if decimals > 0 {
+        out += ".";
+        out += &String::from_utf8_lossy(fp);
+    }
+
+    out
+}
+
+/// The text without the trailing zeros of its fraction, and without the `.` when nothing is left of it (`"1.500000"` -> `"1.5"`,
+/// `"-0.000000"` -> `"-0"`).
+pub fn trim_fraction(text: &str) -> &str {
+    if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.') } else { text }
+}
+
 /// `printf("%g", v)`: 6 significant digits, fixed or exponent notation by the exponent, trailing zeros removed.
 pub fn printf_g(v: f64) -> String {
     printf_g_prec(v, 6)

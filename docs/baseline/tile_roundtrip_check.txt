@@ -1,0 +1,27 @@
+tiles: 1380 of 1380 folders with a tile.ted (112 s)
+files the model holds (identical / differ / kept as original bytes / did not read, carried along):
+  blend_map.tif              1380 files:   1380 identical, 0 differ, 0 kept, 0 did not read
+  entry.xml                  1322 files:   1322 identical, 0 differ, 0 kept, 0 did not read
+  ground_type_map.png         782 files:    782 identical, 0 differ, 21 kept, 0 did not read
+  height_map_N.png           1380 files:   1379 identical, 0 differ, 189 kept, 1 did not read
+  lf_influence_map.png       1178 files:   1177 identical, 0 differ, 12 kept, 1 did not read
+  nogo.png                   1178 files:   1177 identical, 0 differ, 0 kept, 1 did not read
+  river_spline.xml             16 files:     16 identical, 0 differ, 0 kept, 0 did not read
+  river_splineN.xml           255 files:    255 identical, 0 differ, 0 kept, 0 did not read
+  tile.ted                   1380 files:   1380 identical, 0 differ, 0 kept, 0 did not read
+xml: 10772117 elements, 83637088 values, 0 nodes with layout trivia
+values kept as their text: 7
+  LAYER_INSTANCE_GROUP.flags 1
+  ProjectedDecalInstance.lf_offset 1
+  SCENE_GRAPH.flags 4
+  UserInstanceGroup.lf_offset 1
+attributes the schema does not know: 0
+model read back from the written files differs: 0
+edits: 135564 values; edit then revert changed bytes: 0 tiles; edit then re-read lost a value: 0 tiles
+cross check against TedScene: 10745693 elements, 0 tiles disagree
+tiles that did not read: 0
+problems (3; first 40):
+  <kit tiles>/battle/plains/3x1/3x1_aa/height_map_0.png: did not read (not a PNG), carried along
+  <kit tiles>/battle/plains/3x1/3x1_aa/lf_influence_map.png: did not read (not a PNG), carried along
+  <kit tiles>/battle/plains/3x1/3x1_aa/nogo.png: did not read (not a PNG), carried along
+all passed
