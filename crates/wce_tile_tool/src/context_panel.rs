@@ -1,22 +1,25 @@
 //! The Map context section of the Tile panel: the open tile among its neighbours in a battle map (wce_tile_editor's `context`). The maps are
 //! the game's campaign battle map (terrain.pack's `terrain/battles/main_attila_map`, as the game ships it) and the kit's battle maps (filled
 //! as BOB does). Where the tile is placed more than once (the settlement tiles are reused across settlements), the user picks the placement;
-//! where it is placed nowhere, a cell and a rotation. Loading and building run on a worker thread.
+//! where it is placed nowhere, a cell and a rotation. The context streams in chunks around the camera (or the tile): reading the map and its
+//! frame runs on a thread, the chunks on the streamer's workers; every frame puts what they finished on the scene.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
 use wce_editor::editor::Editor;
 use wce_editor::gui;
-use wce_foundation::log;
-use wce_scene::render_scene::{DocumentId, LayerId, Payload};
-use wce_tile::battle_map::context::{PlacedMap, Spot};
+use wce_foundation::{log, wce_prof};
+use wce_foundation::math::Float4x4;
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, RenderScene, SourceRef};
+use wce_tile::battle_map::context::{CELL, PlacedMap, Spot};
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile::battle_map::{kit_maps, load_game_map, load_kit_map};
 use wce_tile_editor::tile_document::TileDocument;
-use wce_tile_editor::tile_document::context::{ContextRequest, ContextScene, build_context, publish_context};
+use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, ContextRequest, Streamer, cache};
 use wce_vfs::files::Files;
 
 /// The campaign battle map of the game's files.
@@ -25,7 +28,7 @@ const GAME_DIR: &str = "terrain/battles/main_attila_map";
 
 pub enum Job {
     Map(String, Result<(Arc<PlacedMap>, Option<BattleLocations>), String>),
-    Built(u64, Box<ContextScene>),
+    Built(u64, Box<Streamer>),
 }
 
 pub struct ContextUi {
@@ -40,17 +43,29 @@ pub struct ContextUi {
     pub placements: Vec<usize>,
     pub choice: usize,
     pub manual: [i32; 3],
-    pub radius: i32,
+
+    /// The rings around the focus (cells): everything, the tiles' coarse ground and buildings, the LF ground.
+    pub near: i32,
+    pub mid: i32,
     pub far: i32,
     pub trees: bool,
+
+    /// The rings follow the camera (else they stay around the tile).
+    pub follow: bool,
     pub status: String,
     pub busy: String,
     rx: Option<Receiver<Job>>,
 
-    /// The scene layer of the context, the tile it was built for and the build's number (a newer request wins).
+    /// The streamer, the scene layer of the context and the tile it was built for, the build's number (a newer request wins).
+    pub streamer: Option<Box<Streamer>>,
     layer: LayerId,
     doc: DocumentId,
     pub build: u64,
+
+    /// Each chunk's entities on the layer (added in a row: a range of ids), and the sea's (with the focus it is around).
+    chunks: HashMap<ChunkKey, std::ops::Range<EntityId>>,
+    sea: Option<EntityId>,
+    sea_at: (f64, f64),
     db: Option<(PathBuf, Arc<TileDatabase>)>,
     maps_for: PathBuf,
 }
@@ -58,8 +73,9 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], radius: 8, far: 48, trees: true,
-            status: String::new(), busy: String::new(), rx: None, layer: 0, doc: 0, build: 0, db: None, maps_for: PathBuf::new(),
+            shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, trees: true,
+            follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), sea: None,
+            sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(),
         }
     }
 }
@@ -98,6 +114,19 @@ pub fn location_names(loc: Option<&BattleLocations>, x: i32, y: i32) -> String {
     let mut names: Vec<&str> = loc.types.iter().filter(|(_, l)| l.iter().any(|l| l.rect[0] == x && l.rect[1] == y)).map(|(t, _)| t.as_str()).collect();
     names.dedup();
     names.join(", ")
+}
+
+/// Adds entities to a layer in a row (they can't be picked): their ids.
+fn add_range(scene: &mut RenderScene, layer: LayerId, doc: DocumentId, entities: Vec<(Float4x4, Payload)>) -> std::ops::Range<EntityId> {
+    let first = scene.next_id();
+    for (world, payload) in entities {
+        let id = scene.add(layer, world, payload, SourceRef { doc, item: u64::MAX });
+        if let Some(en) = scene.find_mut(id) {
+            en.locked = true;
+        }
+    }
+
+    first..scene.next_id()
 }
 
 impl ContextUi {
@@ -158,21 +187,22 @@ impl ContextUi {
         let p = d.project();
         let raw = p.raw_root.clone()?;
         Some(ContextRequest {
-            map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, radius: self.radius,
-            far: self.far, raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees,
+            map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
+            mid: self.mid, far: self.far, raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            cache: Some(cache::cache_dir()),
         })
     }
 
-    /// Starts building the context of the open tile.
+    /// Starts streaming the context of the open tile (its frame is made on a thread first).
     pub fn start_build(&mut self, rq: ContextRequest, files: Option<Arc<dyn Files>>) {
         self.build += 1;
         let n = self.build;
         let (tx, rx) = channel();
-        self.busy = "building the context...".to_owned();
+        self.busy = "reading the map's ground...".to_owned();
         self.rx = Some(rx);
         std::thread::spawn(move || {
-            let built = build_context(&rq, files);
-            let _ = tx.send(Job::Built(n, Box::new(built)));
+            let s = Streamer::new(rq, files);
+            let _ = tx.send(Job::Built(n, Box::new(s)));
         });
     }
 
@@ -191,35 +221,44 @@ impl ContextUi {
         }
     }
 
-    /// Puts a finished job's result in place.
+    /// Puts a finished job's result in place, and what the streamer finished on the scene.
     pub fn poll(&mut self, e: &mut Editor, id: DocumentId) -> bool {
-        let Some(rx) = &self.rx else { return false };
-        let Ok(job) = rx.try_recv() else { return false };
-        self.rx = None;
-        self.busy.clear();
-        match job {
-            Job::Map(name, Ok((map, locations))) => {
-                self.status = format!("{name}: {} x {} cells, {} placements", map.width, map.height, map.placements.len());
-                self.loaded = Some((name, map, locations));
-                if let Some(d) = e.docs.find_as::<TileDocument>(id) {
-                    self.find_placements(d);
+        let mut changed = false;
+        if let Some(rx) = &self.rx
+            && let Ok(job) = rx.try_recv()
+        {
+            self.rx = None;
+            self.busy.clear();
+            changed = true;
+            match job {
+                Job::Map(name, Ok((map, locations))) => {
+                    self.status = format!("{name}: {} x {} cells, {} placements", map.width, map.height, map.placements.len());
+                    self.loaded = Some((name, map, locations));
+                    if let Some(d) = e.docs.find_as::<TileDocument>(id) {
+                        self.find_placements(d);
+                    }
+
+                    self.rebuild(e, id);
                 }
 
-                self.rebuild(e, id);
-            }
-
-            Job::Map(name, Err(err)) => self.status = format!("{name}: {err}"),
-            Job::Built(n, mut built) => {
-                if n == self.build && self.shown {
-                    self.publish(e, id, &mut built);
+                Job::Map(name, Err(err)) => self.status = format!("{name}: {err}"),
+                Job::Built(n, s) => {
+                    if n == self.build && self.shown {
+                        self.begin(e, id, s);
+                    }
                 }
             }
         }
 
-        true
+        if self.streamer.is_some() && self.doc == id {
+            changed |= self.stream(e);
+        }
+
+        changed
     }
 
-    pub fn publish(&mut self, e: &mut Editor, id: DocumentId, built: &mut ContextScene) {
+    /// A new streamer on the scene: the layer (emptied), the sea, the open tile clipped to its cells and drawn on the map's LF.
+    pub fn begin(&mut self, e: &mut Editor, id: DocumentId, s: Box<Streamer>) {
         if self.layer == 0 || self.doc != id || e.scene.layer(self.layer).is_none() {
             if self.layer != 0 {
                 e.scene.remove_layer(self.layer);
@@ -227,41 +266,115 @@ impl ContextUi {
 
             self.layer = e.scene.add_layer(id, "map context");
             self.doc = id;
+        } else {
+            e.scene.clear_layer(self.layer);
         }
 
-        publish_context(&mut e.scene, self.layer, built, id);
+        if let Some(l) = e.scene.layer_mut(self.layer) {
+            l.locked = true;
+        }
 
-        // The open tile's height map border would lie over the neighbours.
+        self.chunks.clear();
+        let lf = s.frame().lf.clone();
+        log::info(format!("map context: {}", s.frame().lf_note()));
+        self.streamer = Some(s);
+        let at = self.focus(e).unwrap_or_default();
+        let sea = add_range(&mut e.scene, self.layer, id, vec![self.streamer.as_ref().expect("set").frame().sea(at, self.sea_reach())]);
+        (self.sea, self.sea_at) = (Some(sea.start), at);
+
+        // The open tile's height map border would lie over the neighbours; its ground goes on the LF like theirs.
         if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
             d.tile_mut().set_clip_to_tile(&mut e.scene, true);
+            d.tile_mut().set_context_lf(&mut e.scene, lf);
             let sea = d.tile().display().show_sea;
             self.show_sea(e, sea);
         }
 
-        self.status = built.report.clone();
-        log::info(format!("map context: {}", built.report));
-        for m in built.missing.iter().take(10) {
-            log::info(format!("map context: not opened: {m}"));
+        self.stream(e);
+    }
+
+    /// The focus of the rings: what the camera looks at (the orbit's target, the fly camera's eye), or the tile.
+    fn focus(&self, e: &Editor) -> Option<(f64, f64)> {
+        let s = self.streamer.as_ref()?;
+        if !self.follow {
+            return Some(s.open_centre());
+        }
+
+        let cam = e.viewport.camera();
+        let p = if e.viewport.is_fly() { cam.eye } else { cam.target };
+        Some((f64::from(p.x), f64::from(p.z)))
+    }
+
+    /// The cells around the focus the sea covers: the far ring and some.
+    fn sea_reach(&self) -> i32 {
+        self.far.max(self.mid).max(self.near) + 4 * CHUNK
+    }
+
+    /// One update of the streamer: the chunks it finished replace theirs on the layer, the ones it dropped go (one pass over the scene); the
+    /// sea follows the focus.
+    pub fn stream(&mut self, e: &mut Editor) -> bool {
+        wce_prof!("context.stream");
+        let Some(focus) = self.focus(e) else { return false };
+        let reach = self.sea_reach();
+        let Some(s) = self.streamer.as_mut() else { return false };
+        let changes = s.update(focus);
+        self.status = s.report();
+        let (dx, dz) = (focus.0 - self.sea_at.0, focus.1 - self.sea_at.1);
+        let moved = (dx * dx + dz * dz).sqrt() > f64::from(2 * CHUNK) * CELL;
+        if let (Some(id), true) = (self.sea, moved) {
+            let (_, sea) = s.frame().sea(focus, reach);
+            e.scene.update_payload(id, sea);
+            self.sea_at = focus;
+        }
+
+        if changes.is_empty() {
+            return moved;
+        }
+
+        self.apply(&mut e.scene, changes);
+        true
+    }
+
+    /// Waits for every chunk around the focus and puts them on the scene (scripts).
+    pub fn settle(&mut self, e: &mut Editor) {
+        let Some(focus) = self.focus(e) else { return };
+        let Some(s) = self.streamer.as_mut() else { return };
+        let changes = s.run_to_idle(focus);
+        self.status = s.report();
+        self.apply(&mut e.scene, changes);
+    }
+
+    /// Puts streamed chunks on the layer.
+    pub fn apply(&mut self, scene: &mut RenderScene, changes: Vec<ChunkChange>) {
+        wce_prof!("context.apply");
+        let mut gone = vec![];
+        let mut sets = vec![];
+        for c in changes {
+            match c {
+                ChunkChange::Set(k, _, entities) => {
+                    gone.extend(self.chunks.remove(&k));
+                    sets.push((k, entities));
+                }
+
+                ChunkChange::Remove(k) => gone.extend(self.chunks.remove(&k)),
+            }
+        }
+
+        scene.remove_ranges(&gone);
+        scene.reserve(sets.iter().map(|(_, v)| v.len()).sum());
+        for (k, entities) in sets {
+            let ids = add_range(scene, self.layer, self.doc, entities);
+            self.chunks.insert(k, ids);
         }
     }
 
     /// Shows or hides the context's sea (the tile's sea toggle).
     pub fn show_sea(&self, e: &mut Editor, on: bool) {
-        if self.layer == 0 {
-            return;
-        }
-
-        let seas = e.scene.entities().iter()
-            .filter(|en| en.layer == self.layer && matches!(&en.payload, Payload::Water(w) if !w.river) && en.visible != on)
-            .map(|en| en.id)
-            .collect::<Vec<_>>();
-        for id in &seas {
-            if let Some(en) = e.scene.find_mut(*id) {
-                en.visible = on;
-            }
-        }
-
-        if !seas.is_empty() {
+        let Some(id) = self.sea else { return };
+        if let Some(en) = e.scene.find_mut(id)
+            && en.visible != on
+        {
+            en.visible = on;
             e.scene.touch();
         }
     }
@@ -278,7 +391,7 @@ impl ContextUi {
         }
     }
 
-    /// Takes the context off the scene.
+    /// Takes the context off the scene (and stops its streamer).
     pub fn clear(&mut self, e: &mut Editor) {
         if self.layer != 0 {
             e.scene.remove_layer(self.layer);
@@ -287,8 +400,12 @@ impl ContextUi {
 
         if let Some(d) = e.docs.find_as_mut::<TileDocument>(self.doc) {
             d.tile_mut().set_clip_to_tile(&mut e.scene, false);
+            d.tile_mut().set_context_lf(&mut e.scene, None);
         }
 
+        self.streamer = None;
+        self.chunks.clear();
+        self.sea = None;
         self.build += 1;
     }
 
@@ -364,9 +481,16 @@ impl ContextUi {
             }
         }
 
-        changed |= gui::slider_int("neighbour cells", &mut self.radius, 1, 64);
-        changed |= gui::slider_int("ground beyond (cells)", &mut self.far, 0, 256);
+        // The rings change the streamer's levels; the rest builds a new one.
+        let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
+        rings |= gui::slider_int("ground and buildings (cells)", &mut self.mid, 1, 128);
+        rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 512);
+        if let Some(s) = self.streamer.as_mut().filter(|_| rings) {
+            s.set_rings(self.near, self.mid, self.far);
+        }
+
         changed |= gui::checkbox("their trees", &mut self.trees);
+        gui::checkbox("follow the camera", &mut self.follow);
         if changed && self.loaded.is_some() {
             self.rebuild(e, id);
         }

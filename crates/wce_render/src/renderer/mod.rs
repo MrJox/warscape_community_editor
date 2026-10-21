@@ -385,11 +385,20 @@ pub(crate) struct CameraState {
     /// Game units per scene unit (`RenderScene::game_units`). Culling, LODs and the overlay work in scene units; what the game's shaders
     /// see (the camera constants, instance matrices, terrain, decals, lights, particles) is scaled by this ([`game_view`] and the others).
     pub units: f32,
+
+    /// What `camera_VS_PS` was last given (game units): the view, the view-projection and the eye (the terrain moves them with its LF
+    /// frame for its draws, then puts them back).
+    pub cb_view: Float4x4,
+    pub cb_view_proj: Float4x4,
+    pub cb_eye: Float3,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
-        Self { main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0 }
+        Self {
+            main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0, cb_view: Float4x4::IDENTITY,
+            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(),
+        }
     }
 }
 
@@ -807,6 +816,7 @@ impl Renderer {
         let s = self.camera.units;
         let (view_m, proj, eye) = (&game_view(view_m, s), &game_proj(proj, s), eye * s);
         let vp = *proj * *view_m;
+        (self.camera.cb_view, self.camera.cb_view_proj, self.camera.cb_eye) = (*view_m, vp, eye);
         let cbs = &mut self.cbs;
         cbs.set_f("camera_VS_PS", "camera_position", &[eye.x, eye.y, eye.z]);
         cbs.set_m("camera_VS_PS", "view", view_m.data());

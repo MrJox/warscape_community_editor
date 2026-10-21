@@ -105,42 +105,72 @@ plains (aa .. ad) elsewhere.
 - Not traced: whether the game lifts a tile's buildings by the LF too (the building list's y is used as it is; on the kit maps the LF
   under the settlements is flat, so it doesn't show there).
 
-## The map context in the editor (Tile panel > Map context; command `map_context`)
+## The map context in the editor (Tile panel > Map context; commands `map_context`, `map_context_settle`, `map_context_cache`)
 
 - Maps: the game's campaign battle map (terrain.pack `terrain/battles/main_attila_map`: `tile_map.*`, `lf_height_map.dds`, `locations.blm`)
   and the kit's battle maps (filled by the port, `lf_heights.tif`). `wce_tile::battle_map::context`: the placements, where a tile is
-  placed, the neighbours within a radius, each placement's frame transform (unit tests against `rotate_in_tile_space`); the cells no
-  neighbour covers get LF ground (`Context::uncovered`).
-- `wce_tile_editor::tile_document::context`: each distinct neighbour tile is opened (4 at a time) and published once into a scratch
-  scene, then copied per placement through its transform; terrain is resampled into the open frame (the renderer's height lookup is by
-  world position, so a terrain entity can't be rotated) with one material per tile and rotation (blend / index resampled over the tile
-  without its border, normal map from the tile's own heights).
-- While the context is shown the open tile is drawn over its own cells only (`Tile::set_clip_to_tile`: terrain and material maps without
-  the height map's border); its border lay over the neighbours (it hid the river tiles around Rome and z-fought with them).
-- Terrain: the game's terrain vertex shader (`vs30_geom_new`) samples its height texture at `world.xz / g_world_dimensions +
-  g_lf_uv_offset` with ONE offset for both axes, so a height texture must start at the same world x and z. A lone tile does; neighbours
-  around it don't, and the renderer then dropped the game's terrain pass for the whole scene (plain ground everywhere, the open tile too).
-  As the game does with its map-wide LF texture, the neighbours read one shared height map (`SharedHeights`, square, on the diagonal, 2 m,
-  over all of them) and the ground beyond another (LF pixels); each terrain keeps its own grid for the patches. Every context terrain has a
-  material (the cells no tile covers: a neighbour's material averaged to one colour). The renderer also kept at most 4 terrain materials
-  (cleared when more were built in one frame, so most drew without textures): it now keeps the ones the frame uses and shares the climates'
-  texture arrays between materials.
-- Water: the renderer draws water vertices as they are (no entity world matrix), so the neighbours' river ribbons are moved into the frame
-  and lifted per vertex when the context is built. The tiles' sea planes are dropped for one sea plane at 0 m over the whole context
-  (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is -vertical_offset, -20 m, under the open sea); with it the coast around
-  Rome falls where the coast tiles are.
-- The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`):
-  that tile can't be opened, its cells show the LF ground.
-- ASSUMPTIONS: the open tile is shown at its own heights, so the context is relative to it: a neighbour point at its height + (LF - the
-  mean LF under the open tile) / unit_scale, objects lifted by that at their position; seams can be off by up to half the LF range under
-  the open tile (the report gives it). The LF slope is not in a neighbour's shading normals. The neighbours' borders (overlap cells) and
-  final_alpha feathering are not drawn (hard edges between tiles). Where the near (2 m) and far (LF pixel) maps meet, a thin crack can show.
-- Checked on western_city_b small: in its kit map (18 neighbours) and at the campaign's (480, 461), rotated 270 degrees (130 neighbours from
-  45 tiles, 1.2 s, about 1 GB peak): roads and fields run on across the seams, rotated tiles included. western_city_rome small at the
-  campaign's (619, 676): the Tiber goes on through the river tiles north and south of the city (its links: river at cells (3, -1) and
-  (3, 8), the map's river tiles at x 622) down to the coast.
-- Earlier version that grew the window until no neighbour stuck out: on the campaign it ran through the 12 x 12 sea and mountain tiles to
-  200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).
+  placed, each placement's frame transform (unit tests against `rotate_in_tile_space`).
+- **Streamed** (2026-10-21; `wce_tile_editor::tile_document::context`): the map is cut into chunks of 8 x 8 cells, each drawn at a level by
+  its distance from the focus (the orbit camera's target, the fly camera's eye, or the open tile with "follow the camera" off): **near**
+  (everything of its tiles), **mid** (the tiles' coarse heights, quarter-resolution material, buildings and rivers: no vegetation, decals,
+  lights, effects), **far** (the LF ground alone). The rings are the panel's sliders (defaults 8 / 24 / 64 cells); a chunk keeps its level
+  within 2 cells past its ring's edge. Four worker threads build the chunks nearest first (a queued chunk no longer wanted is dropped); each
+  frame the panel puts what they finished on one scene layer (a chunk's entities are a range of ids, removed in one pass).
+- **Ownership**: a chunk owns the placements whose origin cell it holds; every cell has one owner (the open tile, the first placement over
+  it, or nobody), so the levels never overlap: a far chunk draws LF ground over the cells it owns (its own placements' too, which reach out
+  of it by up to the largest tile), merged into a few rectangles. The placements over the open tile's cells are not drawn.
+- **Templates** (`context/template.rs`): a distinct tile is opened once (a whole `TileDocument`, published into a scratch scene) for all its
+  placements: its own heights every 2 units over the tile and 4 grid steps of its border (neighbours overlap instead of meeting at an edge
+  whose two sides differ), a skirt ring 20 units down, a coarse grid of one 64-cell patch (the mid ring), its material with its border and an
+  alpha map (1 over the tile, 0 over the border, 4-unit texels whose edges fall on the tile's: bilinear, it fades out over a texel past the
+  edge as the neighbour's fades in; the resolve divides by the weights' sum), the same material at a quarter, and its other entities.
+  Placements share the heights buffers and materials (`Arc`): the renderer keeps one copy of their geometry and maps on the GPU.
+- **Disk cache** (`context/cache.rs`, `<settings>/map_context/<key>.bin`, lz4): the template's heights, material and entities; the key hashes
+  the tile folder's files (path, size, time), the terrain look, the trees switch and the format version. Rome small at the campaign's
+  (619, 676) with the default rings: 89 tiles, 76 MB; 23 s to open them (four at a time), 0.5 s from the cache. The game files the tiles
+  name are not in the key: `map_context_cache clear` empties it.
+- **Heights as the game draws them**: the map's LF laid into the open frame (`LfMap`: the frame's axes are the map's turned by quarter
+  turns, so its samples are the map's pixels, 8128 x 5748 on the campaign map) under every terrain, through the game's vertex shader
+  (`t_low_res_height_map`, `g_height_map_lf_scale`, `g_height_map_vertical_offset`: `LF * 3000 - 20 - mean LF under the open tile`, scene
+  units), each tile's own heights in the vertices (`dot(P0, P2) * g_height_map_hf_scale`). The open tile's ground is drawn on it too (its
+  objects and picking keep its own heights: where the LF varies under it, they are off by that much; the report gives the range). The
+  neighbours' objects are lifted by the LF at their position.
+- **Placements as world matrices**: a terrain entity may be turned about y (the renderer's patch rows take the rotation; the LF is looked up
+  by world position, so it stays right), its blend box is the material's rectangle turned with it, and the rotation index the blend shader
+  takes (`T2.x`, its `icb` table) turns the maps back: no resampling per placement or rotation (the first version resampled every
+  neighbour's heights and maps).
+- **The LF texture's addressing** (`vs30_geom_new`): `uv = world xz / g_world_dimensions + g_lf_uv_offset`, one offset for both axes, so a
+  texture's column 0 and its rows must start at the same x and z. The renderer draws each LF group's terrain in a frame moved by a shift
+  (the camera constants moved with it, put back after) where they do; moving it to the map's corner (80 km away on the campaign map) lost the
+  depth's precision (the sea, 30 units below, showed through the ground in stripes). The GPU gets a square window of the LF (2048 samples a
+  side at most, the whole map when it is smaller) around the camera, made again when the camera leaves its middle, and the uv offset slides
+  the shifted origin along the window's diagonal to the camera: the coordinates stay small where the terrain is seen.
+- **LF normals**: `s_lf_normal_map` (ps30_blend) is read at `uv = (x, -z) / g_world_dimensions`, wrapping, .w = x and .y = -z of the normal;
+  the context gives the map's LF normals laid out on that torus (4096 texels a side at most), so the far ground and the tiles get the LF's
+  slope (it was flat).
+- **Plain ground**: the far ring, the cells nobody covers and the tiles that could not be opened: zero heights on the LF's lattice (one
+  buffer per rectangle size), a neighbour's material averaged to one colour (one id and one normal id for all of them), its blend box a
+  little past its rectangle (2 units; 16 in the far ring) so that two of them side by side leave no pixel to neither (the resolve draws such
+  a pixel black). The sea: one plane at 0 m over the cells within the far ring of the focus and 4 chunks more, moved with the focus.
+- **The renderer**: the scene logs its structural changes (`StructureChange`: removed id ranges, payloads replaced, anything else), so the
+  draw set and the decals follow a chunk coming or going instead of rebuilding 150 000 items (45 ms a change, 170 ms at worst); the
+  entities whose models are still loading are added when they come; the context's terrains skip the legacy patches (`Terrain::legacy`);
+  the sea bed follows only the terrains over it; terrain materials stay on the GPU for 32 updates after their last use.
+- Checked (2026-10-21, RX 7900 XTX): a lone tile against master: the same pixels (PSNR 65 - 75 dB, a few pixels of float rounding; 128-cell
+  patches changed the distant level of detail and were dropped); a brush stroke and its undo the same. Rome small with master's rings
+  (8 near, ground to 56): 10.3 / 13.4 ms a frame against master's 9.9 / 13.3 ms; the first ring 0.7 s against 2.8 s. Walking the focus east
+  12 chunks while 9 new tiles open on the workers: 15.6 ms a frame on average, p95 40 ms, the worst 140 ms (new tiles' maps uploaded on the
+  render thread).
+- The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`),
+  and the `cliff_custom` tiles have no `tile.ted` in the kit: their cells show the LF ground.
+- ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
+  lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
+  one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
+  (several arriving in one frame hitch it); far from the open tile the scene's own coordinates grow (a whole-campaign viewer will need
+  camera-relative rendering for the other passes too).
+- Earlier versions: a radius around the open tile built at once, every neighbour resampled into the open frame and one shared 2 m height map
+  over all of them (130 neighbours from 45 tiles, 1.2 s, about 1 GB); growing the window until no neighbour stuck out ran through the
+  12 x 12 sea and mountain tiles to 200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).
 
 ## Open
 

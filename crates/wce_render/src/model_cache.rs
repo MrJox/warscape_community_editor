@@ -1054,6 +1054,12 @@ impl ModelCache {
             return None;
         }
 
+        // Another entity with the same heights buffer (the placements of one tile in a map context): its patches.
+        if let Some(same) = self.terrain.values().find(|slot| Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version).cloned() {
+            self.terrain.insert(id, same);
+            return self.terrain.get(&id);
+        }
+
         let (px, pz) = ((t.nx - 1 + CELLS - 1) / CELLS, (t.nz - 1 + CELLS - 1) / CELLS);
         let same_layout = self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.patches_x == px && slot.patches_z == pz);
         if !same_layout {
@@ -1148,8 +1154,8 @@ pub struct TerrainGpu {
     pub patches_x: i32,
     pub patches_z: i32,
 
-    /// A copy of the payload's heights, to find the patches a new payload changed.
-    pub heights: Vec<f32>,
+    /// The payload's heights, to find the patches a new payload changed (and the entities that share them).
+    pub heights: Arc<Vec<f32>>,
 }
 
 fn mix64(h: u64, v: u64) -> u64 {

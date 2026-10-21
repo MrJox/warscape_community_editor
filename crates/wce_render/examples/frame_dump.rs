@@ -38,7 +38,7 @@ fn hill() -> Terrain {
     for j in 0..t.nz {
         for i in 0..t.nx {
             let (x, z) = (t.origin_x + i as f32 * t.step, t.origin_z + j as f32 * t.step);
-            t.heights.push(hill_y(x, z));
+            std::sync::Arc::make_mut(&mut t.heights).push(hill_y(x, z));
         }
     }
 
