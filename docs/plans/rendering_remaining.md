@@ -55,6 +55,17 @@ Siege engines posed in their animations' first frame, walls' bridging columns an
 effects (torch fires, burning buildings) are implemented from the files alone: the findings and every assumption, each with how to
 check it, are in docs/re/buildings.md.
 
+The destruction collapses (docs/re/buildings.md, "Collapses between levels") have these left to check against a siege battle, watching
+a wall go from intact to destroyed:
+- the dust's emission mesh: the piece's own standing triangles inside the `VOLUMETRIC_EFFECT` box (the engine's mesh emission is
+  traced, not which mesh it is given), and the box read as the entry's centre / size / rotation floats;
+- the size of the effect group: one instance per 64 m^2 of the box's surface, 1 to 32 (25 for a wall section);
+- the debris (pebbles, wooden shards): ballistic, no drag or bounce, spinning from a random orientation;
+- the new level's bursts at the start of the collapse, not its end;
+- `.meta` effects naming a bone not following it;
+- the playback speed (the `.anim`'s rate and end time, in real time).
+Not done: the collapses' `SOUND_BUILDING` sounds (the editor has no audio).
+
 ## Mod assets to review (later)
 
 - **TDD's dead tree bark is near black (2026-10-20).** `tdd_pack6_weather_1.0.0.pack` overrides
