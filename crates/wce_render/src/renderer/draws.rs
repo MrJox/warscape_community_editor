@@ -361,19 +361,35 @@ impl Renderer {
                 at > 0 && gone[at - 1].contains(&id)
             };
 
-            let remap = self.draw_lists.draws.remove_items(inside);
+            // The removed entities' items die (each through its entity: the cost of the chunk, not of the set).
             self.draw_lists.waiting_ids.retain(|&id| !inside(id));
-
-            let at = |i: u32| if i == NO_ITEM { NO_ITEM } else { remap.get(i as usize).copied().unwrap_or(NO_ITEM) };
-            for slot in &mut self.draw_lists.item_of_entity {
-                *slot = at(*slot);
+            for r in &gone {
+                let (lo, hi) = (r.start as usize, (r.end as usize).min(self.draw_lists.item_of_entity.len()));
+                for id in lo..hi.max(lo) {
+                    let slot = &mut self.draw_lists.item_of_entity[id];
+                    if *slot != NO_ITEM {
+                        self.draw_lists.draws.kill(*slot);
+                        *slot = NO_ITEM;
+                    }
+                }
             }
 
-            for pool in self.draw_lists.rigid_pool.values_mut() {
-                pool.retain_mut(|i| {
-                    *i = at(*i);
-                    *i != NO_ITEM
-                });
+            // Packed again once a quarter of the slots is dead.
+            let draws = &mut self.draw_lists.draws;
+            if draws.dead() > (draws.items() / 3).max(4096) {
+                wce_prof!("render.compact_draws");
+                let remap = draws.compact();
+                let at = |i: u32| if i == NO_ITEM { NO_ITEM } else { remap.get(i as usize).copied().unwrap_or(NO_ITEM) };
+                for slot in &mut self.draw_lists.item_of_entity {
+                    *slot = at(*slot);
+                }
+
+                for pool in self.draw_lists.rigid_pool.values_mut() {
+                    pool.retain_mut(|i| {
+                        *i = at(*i);
+                        *i != NO_ITEM
+                    });
+                }
             }
 
             self.draw_lists.vis = Visible::default();

@@ -175,3 +175,33 @@ pub fn io_pool() -> &'static JobPool {
 
     &POOL
 }
+
+/// Lowers the calling thread's scheduling priority below normal (background work that must not take the cores from the render thread:
+/// a map context's tile loading). Windows: THREAD_PRIORITY_BELOW_NORMAL; Linux: a nice value of 10 for the thread; elsewhere nothing.
+pub fn lower_thread_priority() {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+            fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
+        }
+
+        const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+        // SAFETY: the pseudo handle of the calling thread, always valid.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+        }
+
+        // SAFETY: PRIO_PROCESS with who 0 is the calling thread on Linux (threads are scheduled entities); no memory is passed.
+        unsafe {
+            setpriority(0, 0, 10);
+        }
+    }
+}
