@@ -195,7 +195,11 @@ plains (aa .. ad) elsewhere.
   an absolute copy. Its height is the sea's (`RenderScene::sea_level`, the map context's `-mean LF / unit`): the shaders get heights
   relative to the sea, as the game's are to its sea at 0, so the terrain vertex shader's 9 cm lift of land and drop of sea bed (by the
   height's sign) separates the shore from the water as the game means it (relative to the open tile, it pushed all ground near a coast
-  down).
+  down). DEVIATION (2026-10-21): the height is measured from 1.5 steps of the 16-bit LF (6.9 cm) above the sea (`Frame::bias_y`). The
+  map's coasts sit a step above 0 m (the LF holds 0 m to 4.6 cm: 437 / 65535 * 3000 - 20 = +0.5 cm, the coast at `western_port_a`
+  is 438, +5.0 cm), and the tiles, built against their own sea at 0, lay their quays on ground just below it: measured from the sea, that
+  ground was land, rose 18 cm against the quay's deck and fought with it as the camera moved (the tile alone draws it sunk). Ground
+  less than 6.9 cm above the sea counts as sea bed now.
 - Earlier versions: a radius around the open tile built at once, every neighbour resampled into the open frame and one shared 2 m height map
   over all of them (130 neighbours from 45 tiles, 1.2 s, about 1 GB); growing the window until no neighbour stuck out ran through the
   12 x 12 sea and mountain tiles to 200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).

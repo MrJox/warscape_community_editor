@@ -2,7 +2,9 @@
 //! open tile, then (`--walk <cells>`) around a focus moved that far east, step by step.
 //!
 //!   cargo run --release -p wce_tile_editor --example context_check -- <game dir> <tile folder> <map name | campaign> [placement] [near] [mid]
-//!       [far] [--no-cache | --clear-cache] [--walk <cells>] [--model <pattern>] [--water]
+//!       [far] [--no-cache | --clear-cache] [--walk <cells>] [--model <pattern>] [--water] [--coasts] [--settlements <cells>]
+//!       [--lf-grid <cell x> <cell y> <steps>]
+//!   context_check - <tile folder> - --heights x z [x z ...]   (the tile's own heights at points of its frame)
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -45,6 +47,17 @@ fn main() {
         eprintln!("context_check <game dir> <tile folder> <map | campaign> [placement] [near] [mid] [far] [--no-cache | --clear-cache] [--walk <cells>]");
         std::process::exit(2);
     };
+
+    // A tile's own height at points of its frame (`--heights x z [x z ...]`, metres), for pointing a camera at it.
+    if let Some(i) = a.iter().position(|v| v == "--heights") {
+        let project = TileProject::open(&PathBuf::from(tile)).expect("tile");
+        for p in a[i + 1..].chunks(2) {
+            let (x, z) = (p[0].parse::<f64>().unwrap_or(0.0), p.get(1).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0));
+            println!("  height at ({x}, {z}): {:.2}", project.height_at(x, z) / project.unit_scale);
+        }
+
+        return;
+    }
 
     let n = |i: usize, d: i32| a.get(i).filter(|v| !v.starts_with("--")).and_then(|v| v.parse().ok()).unwrap_or(d);
     let flag = |f: &str| a.iter().position(|v| v == f).and_then(|i| a.get(i + 1)).cloned();
@@ -153,6 +166,47 @@ fn main() {
             if mi.model.contains(pat.as_str()) {
                 let sc = |r: usize| (w.m[r][0].powi(2) + w.m[r][1].powi(2) + w.m[r][2].powi(2)).sqrt();
                 println!("  {} at ({:.0}, {:.1}, {:.0}) scale ~({:.1}, {:.1}, {:.1})", mi.model, w.m[0][3], w.m[1][3], w.m[2][3], sc(0), sc(1), sc(2));
+            }
+        }
+    }
+
+    // The LF lift over a placement's rectangle (`--lf-grid <cell x> <cell y> <steps>`): its range and a grid of values (scene units).
+    if let Some(i) = a.iter().position(|v| v == "--lf-grid") {
+        let g = |k: usize| a.get(i + k).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+        let f = s.frame();
+        if let Some(p) = f.map.placements.iter().find(|p| p.x == g(1) && p.y == g(2)) {
+            let n = g(3).max(2);
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for j in 0..=n {
+                let mut row = String::new();
+                for i in 0..=n {
+                    let (cx, cy) = (f64::from(p.x) + f64::from(p.w) * f64::from(i) / f64::from(n), f64::from(p.y) + f64::from(p.h) * f64::from(j) / f64::from(n));
+                    let (x, z) = f.from_map.apply(cx, cy);
+                    let h = f.lift(x, z);
+                    (lo, hi) = (lo.min(h), hi.max(h));
+                    row += &format!(" {h:7.2}");
+                }
+
+                println!("  {row}");
+            }
+
+            println!("  LF over {} {}: {lo:.2} .. {hi:.2} (sea at {:.2})", p.location, p.variation, f.sea_y());
+        }
+    }
+
+    // Settlements around the tile (`--settlements <cells>`): the placements of `settlement` tiles within that many cells, at their centres
+    // in the frame (to point the camera at them).
+    if let Some(r) = flag("--settlements").and_then(|v| v.parse::<i32>().ok()) {
+        let f = s.frame();
+        let (sx, sy) = (f.open[0], f.open[1]);
+        for p in &f.map.placements {
+            let (cx, cy) = (p.x + p.w / 2, p.y + p.h / 2);
+            if p.location.contains("settlement") && (cx - sx).abs() <= r && (cy - sy).abs() <= r {
+                let (x, z) = f.from_map.apply(f64::from(cx), f64::from(cy));
+                let a = f.from_map.then_after(&p.to_map());
+                let (o, ex, ez) = (a.apply(0.0, 0.0), a.apply(1.0, 0.0), a.apply(0.0, 1.0));
+                println!("  {} {} at cell ({}, {}): frame ({x:.0}, {z:.0}); tile origin ({:.1}, {:.1}), tile x -> ({:.3}, {:.3}), tile z -> ({:.3}, {:.3}), lift there {:.2}",
+                    p.location, p.variation, p.x, p.y, o.0, o.1, ex.0 - o.0, ex.1 - o.1, ez.0 - o.0, ez.1 - o.1, f.lift(x, z));
             }
         }
     }

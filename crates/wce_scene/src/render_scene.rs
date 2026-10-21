@@ -698,8 +698,8 @@ pub struct RenderScene {
     pub game_units: f32,
 
     /// The height of the sea (scene units): 0 unless the scene is drawn relative to something else (a map context draws the map relative to
-    /// the open tile). The shaders get heights relative to it, as the game's are to its sea at 0 (the terrain lifts land and lowers sea bed by
-    /// the sign of that height).
+    /// the open tile, and puts this a little above its sea: Frame::bias_y). The shaders get heights relative to it, as the game's are to its
+    /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
     pub sea_level: f32,
 }
 

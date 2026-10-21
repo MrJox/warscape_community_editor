@@ -400,6 +400,15 @@ impl Frame {
         (-self.lf_mean / self.unit) as f32
     }
 
+    /// The height the shaders measure from (the scene's `sea_level`): the sea, plus a step and a half of the 16-bit LF (6.9 cm). The terrain
+    /// shader lifts land and sinks sea bed by 9 cm by the sign of that height; the map's coasts sit a step above 0 m (the LF holds 0 m to
+    /// 4.6 cm), and the tiles, built against their own sea at 0, lay their quays on ground just below it: measured from the sea itself, that
+    /// ground was land, rose 18 cm against the quays and fought with them as the camera moved. A deviation from the game's arithmetic: ground
+    /// less than 6.9 cm above the sea counts as sea bed.
+    pub fn bias_y(&self) -> f32 {
+        ((LF_HEIGHT / 65535.0 * 1.5 - self.lf_mean) / self.unit) as f32
+    }
+
     /// The sea: one plane at 0 m over the cells within `reach` of a frame point (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is
     /// -vertical_offset, -20 m, under the open sea), drawn relative to the open tile like the rest. Where the ground is higher it hides it.
     pub fn sea(&self, at: (f64, f64), reach: i32) -> (Float4x4, Payload) {

@@ -291,8 +291,8 @@ impl ContextUi {
         self.gone.clear();
         let lf = s.frame().lf.clone();
 
-        // The sea is at 0 m: in the open tile's frame, below it by the mean LF under it.
-        e.scene.sea_level = s.frame().sea_y();
+        // The sea is at 0 m: in the open tile's frame, below it by the mean LF under it (the shaders measure from a little above it).
+        e.scene.sea_level = s.frame().bias_y();
         log::info(format!("map context: {}", s.frame().lf_note()));
         self.streamer = Some(s);
         let at = self.focus(e).unwrap_or_default();
