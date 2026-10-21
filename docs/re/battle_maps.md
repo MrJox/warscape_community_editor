@@ -189,8 +189,13 @@ plains (aa .. ad) elsewhere.
   repeat`, so the ground swam in moire rings as the camera moved (a 0.1-unit move changed 35 % of the pixels, now 0.3 %, as next to the
   tile). The renderer gives the shaders positions relative to a render origin (the camera, instances, terrain rows and blend boxes, the LF
   normal map rolled by it, decals, lights, grass, shadows, the sea, rivers, effects); the scene, culling and picking stay absolute. The
-  origin stays at 0 within 16 384 scene units (128 cells) of it and moves on that grid: then the world-space texture patterns shift once
-  and the particles alive keep their old places. The shadow cascades are fitted around the camera relative to it too (fitted absolute and
+  origin stays within 1216 scene units of the camera and moves on that grid (2026-10-21; it was 16 384: 4 km from the origin, at the
+  harbour of western_port_a, the blend pass's positions from depth were off enough that the ground slid a few pixels against the quay's
+  stone as the camera moved; within about 1.2 km, as a game battle is of its own origin, it does not). DEVIATION: the terrain layers'
+  tilings are rounded to whole divisions of the grid (`tiling`: 9, 40.1, 620, 1200.1 m become 9.007, 40.53, 608, 1216, at most 1.9 %
+  off), so the ground's patterns do not move when the origin does; the grid is a multiple of the LF samples (32), its normal texels (64)
+  and the alpha texels (4). A move rolls the LF normal map on the GPU (one level, from an unrolled copy: up to four region copies),
+  shifts the decals' instances, makes the sea bed again (5 to 8 ms) and the particles alive keep their old places. The shadow cascades are fitted around the camera relative to it too (fitted absolute and
   moved to the origin after, their matrices lost the precision: the shadows, the trees' most, flickered as the camera moved); culling keeps
   an absolute copy. Its height is the sea's (`RenderScene::sea_level`, the map context's `-mean LF / unit`): the shaders get heights
   relative to the sea, as the game's are to its sea at 0, so the terrain vertex shader's 9 cm lift of land and drop of sea bed (by the

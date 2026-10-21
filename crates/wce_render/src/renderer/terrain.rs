@@ -128,9 +128,12 @@ pub(crate) struct LfGpu {
     j0: i32,
     n: i32,
 
-    /// The normals rolled for a render origin (the shader reads them at the relative position, wrapping).
+    /// The normals rolled for a render origin (the shader reads them at the relative position, wrapping), copied on the GPU from the
+    /// unrolled ones (`normal_src`) when the origin moves.
     normal: Texture,
     normal_origin: Float3,
+    normal_src: Option<ID3D11Texture2D>,
+    normal_dst: Option<ID3D11Texture2D>,
 }
 
 /// The most samples a side of an LF window (8 MB; 64 km of the campaign map's 32-unit samples).
@@ -608,32 +611,44 @@ impl Renderer {
             return;
         }
 
-        // The shader reads it at uv = (x, -z) / normal_world of the position relative to the origin: rolled by the origin's texels (it is
-        // on their grid), column c holds the old c + ox / texel, row r the old r - oz / texel.
-        let normal = lf.normal.rgba.as_ref().map(|rgba| {
-            let (w, h) = (lf.normal.w as i64, lf.normal.h as i64);
-            let (tx, tz) = (f64::from(lf.normal_world[0]) / w as f64, f64::from(lf.normal_world[1]) / h as f64);
-            let (dx, dz) = ((f64::from(o.x) / tx).round() as i64, (f64::from(o.z) / tz).round() as i64);
-            let rolled: Vec<u8> = if dx == 0 && dz == 0 {
-                rgba.to_vec()
-            } else {
-                let mut out = vec![0u8; rgba.len()];
-                for r in 0..h {
-                    let src_r = (r - dz).rem_euclid(h);
-                    for c in 0..w {
-                        let (d, s) = (((r * w + c) * 4) as usize, ((src_r * w + (c + dx).rem_euclid(w)) * 4) as usize);
-                        out[d..d + 4].copy_from_slice(&rgba[s..s + 4]);
-                    }
-                }
-
-                out
+        let mut g = self.terrain.lf.remove(&lf.id).unwrap_or_default();
+        let (w, h) = (lf.normal.w, lf.normal.h);
+        if g.normal_src.is_none()
+            && let Some(rgba) = lf.normal.rgba.as_ref().filter(|p| w > 0 && h > 0 && p.len() >= (w * h * 4) as usize)
+        {
+            // One level: its texel is 64 units or so, more than a pixel covers within the far plane (the smaller levels are never read),
+            // and a level can be rolled exactly by any whole number of texels.
+            let mut td = D3D11_TEXTURE2D_DESC {
+                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
             };
 
-            make_rgba_texture(&self.dev, lf.normal.w, lf.normal.h, &rolled, false)
-        }).unwrap_or_default();
+            g.normal_src = self.dev.create_texture_2d(&td, Some(&[InitData::new(&rgba[..(w * h * 4) as usize], w * 4)])).ok();
+            td.Usage = D3D11_USAGE_DEFAULT;
+            g.normal_dst = self.dev.create_texture_2d(&td, None).ok();
+            let srv = g.normal_dst.as_ref().and_then(|t| self.dev.create_shader_resource_view(t, None).ok());
+            g.normal = Texture { srv, width: w, height: h, mips: 1, depth: 1, format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() };
+        }
 
-        let g = self.terrain.lf.remove(&lf.id).unwrap_or_default();
-        self.terrain.lf.insert(lf.id, LfGpu { normal, normal_origin: o, ..g });
+        // The shader reads it at uv = (x, -z) / normal_world of the position relative to the origin: rolled by the origin's texels (it is
+        // on their grid), column c holds the source's c + ox / texel, row r its r - oz / texel. Four copies at most (the wrap splits both
+        // axes).
+        if let (Some(src), Some(dst)) = (&g.normal_src, &g.normal_dst) {
+            let (tx, tz) = (f64::from(lf.normal_world[0]) / f64::from(w), f64::from(lf.normal_world[1]) / f64::from(h));
+            let sx = ((f64::from(o.x) / tx).round() as i64).rem_euclid(i64::from(w)) as u32;
+            let sy = (-(f64::from(o.z) / tz).round() as i64).rem_euclid(i64::from(h)) as u32;
+            for (dx0, cx0, cx1) in [(0, sx, w), (w - sx, 0, sx)] {
+                for (dy0, cy0, cy1) in [(0, sy, h), (h - sy, 0, sy)] {
+                    if cx1 > cx0 && cy1 > cy0 {
+                        let b = D3D11_BOX { left: cx0, top: cy0, front: 0, right: cx1, bottom: cy1, back: 1 };
+                        self.ctx.copy_subresource_region(dst, 0, [dx0, dy0, 0], src, 0, Some(&b));
+                    }
+                }
+            }
+        }
+
+        g.normal_origin = o;
+        self.terrain.lf.insert(lf.id, g);
     }
 
     /// An LF group's height texture and addressing for the camera at `eye`. The game's vertex shader reads it at `world xz /
@@ -1144,7 +1159,7 @@ impl Renderer {
             self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
             let mut arr = [0.0f32; 16];
             for l in 0..4 {
-                arr[l * 4] = m.pixel_scale[l];
+                arr[l * 4] = super::tiling(m.pixel_scale[l], super::ORIGIN_REACH * u);
                 arr[l * 4 + 1] = m.outfield_scale[l];
                 arr[l * 4 + 2] = m.mid_strength[l];
             }

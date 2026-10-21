@@ -274,8 +274,20 @@ impl Renderer {
         let id = std::ptr::from_ref(scene) as usize;
         let models_revision = self.models.revision();
         let units = self.camera.units;
+        // A new render origin moves the instances only (their translations from the absolute positions, as rel_world makes them).
+        let o = self.camera.origin;
+        let d = &mut self.decals;
+        if d.scene_id == id && d.units == units && d.built && d.origin != o {
+            wce_prof!("render.decals_origin");
+            for item in &mut d.items {
+                (item.inst[3], item.inst[7], item.inst[11]) = ((item.sphere[0] - o.x) * units, (item.sphere[1] - o.y) * units, (item.sphere[2] - o.z) * units);
+            }
+
+            d.origin = o;
+        }
+
         let d = &self.decals;
-        let same = d.scene_id == id && d.units == units && d.origin == self.camera.origin && d.built;
+        let same = d.scene_id == id && d.units == units && d.origin == o && d.built;
         if same && d.revision == scene.revision() && d.models_revision == models_revision {
             return;
         }

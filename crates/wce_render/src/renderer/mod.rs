@@ -395,7 +395,7 @@ pub(crate) struct CameraState {
     /// The render origin (scene units, y 0): what the shaders get (the camera, instances, terrain, decals, lights, the sea, the effects) is
     /// relative to it, the scene and culling stay absolute. Far from the scene's own origin (a map context, a whole campaign map away from
     /// the open tile) float32 positions of 10^5 lost the depth's and the ground textures' precision: the terrain swam as the camera moved.
-    /// It stays at 0 within ORIGIN_REACH of it and moves in steps of that much (the world-space texture patterns shift once then).
+    /// It stays within ORIGIN_REACH of the camera, on that grid.
     pub origin: Float3,
 }
 
@@ -407,9 +407,18 @@ const NEAR_FRACTION: f32 = 0.25;
 const NEAR_MARGIN: f32 = 60.0;
 const NEAR_MAX: f32 = 100.0;
 
-/// How far the camera goes from the render origin before it moves, and the grid it moves on (scene units: 128 cells of a map, a multiple
-/// of the LF's samples and normal texels).
-pub const ORIGIN_REACH: f32 = 16384.0;
+/// How far the camera goes from the render origin before it moves, and the grid it moves on (scene units). Within about this much of
+/// the origin, as a game battle is of its own, the terrain blend pass takes its positions back from the depth precisely enough: 4 km
+/// away (the 16 km grid this was) the ground slid a few pixels against the buildings' stone floors as the camera moved. A multiple of the
+/// LF's samples and normal texels (32, 64), the alpha maps' texels (4), and with the terrain layers' tilings rounded to whole divisions
+/// of it (tiling: the climates' 9, 40.1, 620 and 1200.1 m become 9.007, 40.53, 608 and 1216, at most 1.9 % off) the ground's patterns do
+/// not move when the origin does.
+pub const ORIGIN_REACH: f32 = 1216.0;
+
+/// A terrain layer's tiling (`blend_pixel_scale`, game units) rounded to a whole division of the origin grid (`grid`, game units).
+pub(crate) fn tiling(scale: f32, grid: f32) -> f32 {
+    if scale <= 0.0 { scale } else { grid / (grid / scale).round().max(1.0) }
+}
 
 impl Default for CameraState {
     fn default() -> Self {
@@ -980,7 +989,7 @@ impl Renderer {
         self.pass_sky_cube(&env, time_s);
         self.gpu_timer.mark("env cube");
 
-        // The render origin follows the camera far from it, on a coarse grid; its height is the sea's (the shaders' heights are relative to
+        // The render origin follows the camera, on a grid; its height is the sea's (the shaders' heights are relative to
         // the sea, as the game's: its terrain lifts land and lowers sea bed by their sign, so that the shore and the water do not fight).
         let o = self.camera.origin;
         if (cam.eye.x - o.x).abs() > ORIGIN_REACH || (cam.eye.z - o.z).abs() > ORIGIN_REACH {
