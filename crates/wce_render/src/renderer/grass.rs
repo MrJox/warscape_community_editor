@@ -213,6 +213,7 @@ impl Renderer {
     /// The grass casters (vs30_shadow_grass / ps30_shadow_grass: the same sway and sinking, alpha-tested on the diffuse times how much the
     /// blade faces the light, against the dissolve map) into the shadow cascades: the patches near the camera, every cascade. The game draws
     /// them there (FUN_118900c0: the shadow pass picks the grass shader's `shadowmap` technique, as the leaves').
+    /// `light_vp`: the cascades of positions relative to the render origin.
     pub(crate) fn draw_grass_shadows(&mut self, scene: &RenderScene, light_vp: &[Float4x4; 4], eye: Float3) {
         self.collect_grass(scene);
         if self.grass.sets.is_empty() {
@@ -233,7 +234,7 @@ impl Renderer {
         for (c, vp) in light_vp.iter().enumerate() {
             let half = SHADOW_SIZE as f32 / 2.0;
             self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, super::passes::SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
-            self.cbs.set_m("camera_VS_PS", "view_projection", rel_clip(vp, self.camera.origin, self.camera.units).data());
+            self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
             self.upload();
             let mut first = 0u32;
             for (model, mi, count) in &runs {

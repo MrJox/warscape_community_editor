@@ -1045,7 +1045,7 @@ impl Renderer {
             // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max, game units), the rotation index of the material's
             // maps and the layer base 0 (T3).
             let o = self.camera.origin;
-            let inst = [0.0, 1.0, 2.0, 3.0, (b[0] - o.x) * u, b[1] * u, (b[2] - o.z) * u, 0.0, (b[3] - o.x) * u, b[4] * u, (b[5] - o.z) * u, 0.0, rot, 0.0, 0.0, 0.0];
+            let inst = [0.0, 1.0, 2.0, 3.0, (b[0] - o.x) * u, (b[1] - o.y) * u, (b[2] - o.z) * u, 0.0, (b[3] - o.x) * u, (b[4] - o.y) * u, (b[5] - o.z) * u, 0.0, rot, 0.0, 0.0, 0.0];
             let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id));
             match slot.get(&key) {
                 Some(&k) => by_material[k].2.extend(inst),
@@ -1287,8 +1287,8 @@ impl Renderer {
 
     /// The terrain into the bound shadow cascade, as the game casts it: the patches with rigidterrain's `vs30_shadow_new` (geom_new's
     /// placement plus a 9 cm lift past 20 m from the camera) and `ps30_shadow` (clip z / w). `view_proj` (the cascade's, scene units) culls the
-    /// patches. Returns the triangles drawn.
-    pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4) -> u64 {
+    /// patches, `relative` (the same of positions relative to the render origin) draws them. Returns the triangles drawn.
+    pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4, relative: &Float4x4) -> u64 {
         let (Some(vs), Some(ps)) = (self.shader(SHADOW_NEW_VS), self.shader(SHADOW_TERRAIN_PS)) else {
             return 0;
         };
@@ -1300,7 +1300,7 @@ impl Renderer {
         }
 
         self.ctx.set_input_layout(Some(&il));
-        let clip = rel_clip(view_proj, self.camera.origin, self.camera.units);
+        let clip = game_clip(relative, self.camera.units);
         let triangles = self.draw_terrain_patches(&ents, &vs, &ps, view_proj, &clip);
 
         // The cascade's matrix back for the objects after.
@@ -1390,7 +1390,7 @@ impl Renderer {
 
                     // Into the group's frame.
                     let mut row = pp.row;
-                    (row[3], row[11]) = (row[3] - sx * units, row[11] - sz * units);
+                    (row[3], row[7], row[11]) = (row[3] - sx * units, row[7] - origin.y * units, row[11] - sz * units);
                     batches[slot].5.extend(row);
                 }
             }

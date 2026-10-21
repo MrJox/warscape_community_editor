@@ -445,11 +445,6 @@ pub(crate) fn game_clip(m: &Float4x4, s: f32) -> Float4x4 {
     g
 }
 
-/// A scene world -> clip matrix (a shadow cascade's) for the shaders: for positions relative to the render origin `o`, in game units.
-pub(crate) fn rel_clip(m: &Float4x4, o: Float3, s: f32) -> Float4x4 {
-    game_clip(&(*m * translation(o)), s)
-}
-
 /// A scene world matrix for the shaders: relative to the render origin `o`, in game units.
 pub(crate) fn rel_world(m: &Float4x4, o: Float3, s: f32) -> Float4x4 {
     let mut w = *m;
@@ -562,7 +557,7 @@ pub struct Renderer {
     pub(crate) particles: ParticleSystem,
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
-    pub(crate) vfx_scene: (usize, u64, u32, u32, u32),
+    pub(crate) vfx_scene: (usize, u64, u32, u32, u32, u32),
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
@@ -676,7 +671,7 @@ impl Renderer {
             tonemap: ToneMap::new(dev),
             depth_range: DepthRange::default(),
             particles,
-            vfx_scene: (0, u64::MAX, 0, 0, 0),
+            vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
@@ -963,12 +958,15 @@ impl Renderer {
         self.pass_sky_cube(&env, time_s);
         self.gpu_timer.mark("env cube");
 
-        // The render origin follows the camera far from it, on a coarse grid.
+        // The render origin follows the camera far from it, on a coarse grid; its height is the sea's (the shaders' heights are relative to
+        // the sea, as the game's: its terrain lifts land and lowers sea bed by their sign, so that the shore and the water do not fight).
         let o = self.camera.origin;
         if (cam.eye.x - o.x).abs() > ORIGIN_REACH || (cam.eye.z - o.z).abs() > ORIGIN_REACH {
             let snap = |v: f32| (v / ORIGIN_REACH).round() * ORIGIN_REACH;
             self.camera.origin = Float3::new(snap(cam.eye.x), 0.0, snap(cam.eye.z));
         }
+
+        self.camera.origin.y = scene.sea_level;
 
         // The XML ambient while it renders.
         if self.clock.frame.is_multiple_of(4) || !self.env.valid {
@@ -1057,7 +1055,7 @@ impl Renderer {
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
-        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.z.to_bits());
+        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
         if self.vfx_scene != scene_key {
             // A new origin moves the effects (the particles alive keep where they were).
             self.vfx_scene = scene_key;

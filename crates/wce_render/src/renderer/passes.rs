@@ -1,6 +1,6 @@
 //! The geometry, shadow and lighting passes.
 
-use wce_foundation::math::{Float3, Float4x4, cross, inverse, look_at_lh, normalize};
+use wce_foundation::math::{Float3, Float4x4, cross, inverse, look_at_lh, normalize, translation};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 
@@ -261,7 +261,10 @@ impl Renderer {
 
         let fade_w = (splits[4] - splits[3]) * 0.2;
         let fade_y = (splits[4] - (far_q - fade_w)).max(1e-4) / fade_w * 0.2;
-        let cam_view = look_at_lh(cam.eye, cam.target, Float3::new(0.0, 1.0, 0.0));
+        // The slices are fitted around the camera relative to the render origin: fitted absolute, 10^5 units from the scene's origin, the
+        // light's matrices lost their precision once moved back to the origin and the shadows (the trees' most) flickered as the camera moved.
+        let o = self.camera.origin;
+        let cam_view = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
         let inv_view = inverse(&cam_view);
         let tan_y = (cam.fov_y * 0.5).tan();
         let tan_x = tan_y * aspect;
@@ -269,6 +272,8 @@ impl Renderer {
         let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view_dir));
 
         let mut matrices = [0.0f32; 64];
+        // The cascades for the shaders (relative positions) and for culling (absolute).
+        let mut light_rel = [Float4x4::IDENTITY; 4];
         let mut light_vp = [Float4x4::IDENTITY; 4];
         let mut texel_c = [0.0f32; 4];
         for c in 0..4 {
@@ -280,7 +285,8 @@ impl Renderer {
             });
 
             let fit = shadow_fit::fit(&pts, light_dir, view_dir, side, slice_near[c]);
-            light_vp[c] = fit.view_proj;
+            light_rel[c] = fit.view_proj;
+            light_vp[c] = fit.view_proj * translation(-o);
             texel_c[c] = fit.width / (SHADOW_SIZE / 2) as f32;
 
             // World -> atlas uv (y down) + depth: the lighting shader's lookup.
@@ -290,7 +296,7 @@ impl Renderer {
             to_uv.m[0][3] = bx + 0.25;
             to_uv.m[1][1] = -0.25;
             to_uv.m[1][3] = by + 0.25;
-            matrices[c * 16..c * 16 + 16].copy_from_slice(rel_clip(&(to_uv * light_vp[c]), self.camera.origin, self.camera.units).data());
+            matrices[c * 16..c * 16 + 16].copy_from_slice(game_clip(&(to_uv * light_rel[c]), self.camera.units).data());
         }
 
         // Render the casters into the four quadrants.
@@ -323,7 +329,7 @@ impl Renderer {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = SHADOW_SIZE as f32 / 2.0;
                 self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
-                self.cbs.set_m("camera_VS_PS", "view_projection", rel_clip(&light_vp[c], self.camera.origin, self.camera.units).data());
+                self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(&light_rel[c], self.camera.units).data());
                 self.upload();
                 self.bind(&vs);
                 self.bind(&ps);
@@ -363,7 +369,7 @@ impl Renderer {
                 self.draw_stats.shadow_triangles += triangles;
                 if terrain_material {
                     self.ctx.set_rasterizer_state(self.states.rs_shadow_terrain.as_ref());
-                    self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c]);
+                    self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c]);
                     self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
                     self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
                 }
@@ -404,7 +410,7 @@ impl Renderer {
             self.ctx.set_render_targets(&[], self.shadow_map.dsv.as_ref());
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
             self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.draw_grass_shadows(scene, &light_vp, cam.eye);
+            self.draw_grass_shadows(scene, &light_rel, cam.eye);
         }
 
         self.ctx.set_render_targets(&[], None);

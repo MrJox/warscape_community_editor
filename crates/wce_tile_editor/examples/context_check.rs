@@ -104,6 +104,32 @@ fn main() {
 
     println!("{kinds:?}");
 
+    // Coasts far from the tile (`--coasts`): cells where the LF crosses the sea level, 500 cells or more away, as frame points (for checks
+    // of the rendering far from the scene's origin).
+    if a.iter().any(|v| v == "--coasts") {
+        let f = s.frame();
+        let (ox, oy) = (f64::from(f.open[0]), f64::from(f.open[1]));
+        let mut found = 0;
+        'scan: for y in (0..f.map.height as i32).step_by(37) {
+            for x in (0..f.map.width as i32).step_by(37) {
+                let (cx, cy) = (f64::from(x), f64::from(y));
+                if ((cx - ox).powi(2) + (cy - oy).powi(2)).sqrt() < 500.0 {
+                    continue;
+                }
+
+                let (h, e) = (f.map.lf_metres(cx, cy), f.map.lf_metres(cx + 4.0, cy));
+                if (h - 1.0) * (e - 1.0) < 0.0 {
+                    let (px, pz) = f.from_map.apply(cx + 2.0, cy);
+                    println!("  coast at cell ({x}, {y}): frame ({px:.0}, {pz:.0})");
+                    found += 1;
+                    if found >= 8 {
+                        break 'scan;
+                    }
+                }
+            }
+        }
+    }
+
     // Walking east a chunk at a time: what each step builds.
     if let Some(cells) = flag("--walk").and_then(|v| v.parse::<i32>().ok()) {
         let f = s.frame().clone();

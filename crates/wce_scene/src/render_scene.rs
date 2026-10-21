@@ -696,6 +696,11 @@ pub struct RenderScene {
     /// world-space values (terrain texture repeats, detail and fade distances, fog, decal tiling...) are in those. The renderer scales the
     /// world it gives the shaders by this; the scene and the editor stay in scene units. 1: the scene is in game units.
     pub game_units: f32,
+
+    /// The height of the sea (scene units): 0 unless the scene is drawn relative to something else (a map context draws the map relative to
+    /// the open tile). The shaders get heights relative to it, as the game's are to its sea at 0 (the terrain lifts land and lowers sea bed by
+    /// the sign of that height).
+    pub sea_level: f32,
 }
 
 impl Default for RenderScene {
@@ -716,6 +721,7 @@ impl Default for RenderScene {
             environment: EnvironmentSlot::default(),
             vegetation_season: String::new(),
             game_units: 1.0,
+            sea_level: 0.0,
         }
     }
 }
