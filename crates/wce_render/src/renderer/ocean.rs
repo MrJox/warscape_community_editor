@@ -10,11 +10,12 @@
 //! frame pair and blend. Without the files (another game, a broken pack) the surfaces stay flat and there are no whitecaps (logged).
 //!
 //! ASSUMPTIONS (not traced: the code that fills the engine's radial mesh, fn 0x116e47e0's class, was not found):
-//! - The mesh is a grid instead of the game's 80 x 164 radial mesh around the camera: each sea plane in chunks of up to 128 m, the
-//!   chunks outside the view skipped and the others 4 m apart near the camera, coarser with distance (8 m from 400 m, 16 m from 800 m
-//!   ... one cell from 6400 m); a finer chunk's edge follows its coarser neighbour's (no cracks). Its vertices are displaced by the sea
-//!   and swell heights (the frames' height images, blended like the angles) on the CPU every frame. (A fixed 4 m grid over the sea bed
-//!   square was 260 000 vertices a frame: ~2 ms, and 9 MB uploaded.)
+//! - The mesh is a grid instead of the game's 80 x 164 radial mesh around the camera: each sea plane is a quadtree whose leaves are
+//!   chunks of 32 x 32 cells, split while the camera is nearer than 1.5 times a node's size down to 128 m (4 m cells near the camera,
+//!   coarser with distance), nodes outside the view skipped; a finer chunk's edge follows its coarser neighbour's (no cracks). Its
+//!   vertices are displaced by the sea and swell heights (the frames' height images, blended like the angles) on the CPU every frame.
+//!   (A fixed 4 m grid over the sea bed square was 260 000 vertices a frame; fixed 128 m chunks were 40 000 draws for a map context's
+//!   sea: the quadtree keeps a few hundred.)
 //!   The game's vertex shader takes a displaced and a rest position, and the surfaces carry heights whose range is in the shader's
 //!   constants (`g_vs_sea_info.zw`), but how the engine combines them (and whether it uses the frames' slope images, unused here) is
 //!   not known.
@@ -47,12 +48,11 @@ const SEA_BED_HALF: f32 = 1024.0;
 const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
-/// The sea grid's chunks: at most this wide (game units), in at most `CHUNK_CELLS` cells a side (4 m, the sea bed's texel), halved
-/// per level of distance: level k from `LOD_DISTANCE * 2^k`.
+/// The sea quadtree: its leaves are `CHUNK_CELLS` cells a side; a node is split while the camera is nearer than `SPLIT_DISTANCE`
+/// times its size (game units), down to `CHUNK_SIZE` (4 m cells, the sea bed's texel).
 const CHUNK_SIZE: f32 = 128.0;
 const CHUNK_CELLS: u32 = 32;
-const CHUNK_LEVELS: u32 = 6;
-const LOD_DISTANCE: f32 = 200.0;
+const SPLIT_DISTANCE: f32 = 1.5;
 
 /// How far the waves move the surface up or down at most (game units): the chunks' culling margin.
 const WAVE_MARGIN: f32 = 8.0;
@@ -72,10 +72,50 @@ struct OceanPlane {
     ch: f32,
 }
 
-/// A chunk to draw this frame: its vertices' first index in the frame's buffer and its level.
+/// A chunk to draw this frame: its vertices' first index in the frame's buffer.
 struct OceanChunk {
     base: u32,
-    level: u32,
+}
+
+/// A node of a sea plane's quadtree: its rectangle (game units).
+#[derive(Clone, Copy)]
+struct SeaNode {
+    x0: f32,
+    z0: f32,
+    w: f32,
+    h: f32,
+}
+
+impl SeaNode {
+    fn children(&self) -> [SeaNode; 4] {
+        let (w, h) = (self.w * 0.5, self.h * 0.5);
+        [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].map(|(dx, dz)| SeaNode { x0: self.x0 + dx, z0: self.z0 + dz, w, h })
+    }
+
+    /// Whether it is split: the camera nearer than SPLIT_DISTANCE times its size (to its rectangle at the sea's height).
+    fn splits(&self, eye: Float3, y: f32) -> bool {
+        let size = self.w.max(self.h);
+        let (dx, dz) = ((self.x0 - eye.x).max(eye.x - self.x0 - self.w).max(0.0), (self.z0 - eye.z).max(eye.z - self.z0 - self.h).max(0.0));
+        size > CHUNK_SIZE && (dx * dx + dz * dz + (eye.y - y) * (eye.y - y)).sqrt() < SPLIT_DISTANCE * size
+    }
+
+    fn contains(&self, x: f32, z: f32) -> bool {
+        x >= self.x0 && x < self.x0 + self.w && z >= self.z0 && z < self.z0 + self.h
+    }
+}
+
+/// The width of the leaf of a quadtree (`root`) holding a point, if the point is in it.
+fn leaf_width_at(root: SeaNode, x: f32, z: f32, eye: Float3, y: f32) -> Option<f32> {
+    let mut n = root;
+    if !n.contains(x, z) {
+        return None;
+    }
+
+    while n.splits(eye, y) {
+        n = n.children().into_iter().find(|c| c.contains(x, z))?;
+    }
+
+    Some(n.w)
 }
 
 /// A chunk's vertices to make: its corner, cell size, cells a side, height and per edge (west, east,
@@ -146,10 +186,10 @@ struct SeaAssets {
 pub(crate) struct OceanGpu {
     planes: BTreeMap<EntityId, OceanPlane>,
 
-    /// The frame's chunk vertices (dynamic, grown when needed), and per level its index buffer and index count.
+    /// The frame's chunk vertices (dynamic, grown when needed), and a chunk's index buffer and index count.
     vb: Option<ID3D11Buffer>,
     vb_floats: usize,
-    ibs: Vec<(ID3D11Buffer, u32)>,
+    ib: Option<(ID3D11Buffer, u32)>,
 
     /// The sea of `sea_state` (None when it could not be loaded: flat surfaces), and the key it was loaded for.
     sea: Option<SeaAssets>,
@@ -403,14 +443,10 @@ impl Renderer {
         }
 
         self.water.ocean.planes = keep;
-        if self.water.ocean.ibs.is_empty() {
-            for level in 0..CHUNK_LEVELS {
-                let idx = chunk_indices(CHUNK_CELLS >> level);
-                let bytes = idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
-                if let Some(ib) = immutable_buffer(&self.dev, &bytes, D3D11_BIND_INDEX_BUFFER) {
-                    self.water.ocean.ibs.push((ib, idx.len() as u32));
-                }
-            }
+        if self.water.ocean.ib.is_none() {
+            let idx = chunk_indices(CHUNK_CELLS);
+            let bytes = idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
+            self.water.ocean.ib = immutable_buffer(&self.dev, &bytes, D3D11_BIND_INDEX_BUFFER).map(|ib| (ib, idx.len() as u32));
         }
 
         // The surfaces at this frame's time: their textures.
@@ -429,35 +465,32 @@ impl Renderer {
         let mut chunks = vec![];
         let mut floats = 0usize;
         for p in self.water.ocean.planes.values() {
-            let centre = |ci: i64, cj: i64| (p.x0 + (ci as f32 + 0.5) * p.cw, p.z0 + (cj as f32 + 0.5) * p.ch);
-            let level = |ci: i64, cj: i64| {
-                (ci >= 0 && cj >= 0 && ci < i64::from(p.nx) && cj < i64::from(p.nz)).then(|| {
-                    let (cx, cz) = centre(ci, cj);
-                    let d = wce_foundation::math::length(Float3::new(cx, p.y, cz) - eye);
-                    ((d / LOD_DISTANCE).max(1.0).log2().floor() as u32).min(CHUNK_LEVELS - 1)
-                })
-            };
-
-            let r = 0.5 * (p.cw * p.cw + p.ch * p.ch + 4.0 * WAVE_MARGIN * WAVE_MARGIN).sqrt();
-            for cj in 0..i64::from(p.nz) {
-                for ci in 0..i64::from(p.nx) {
-                    let (cx, cz) = centre(ci, cj);
-                    if frustum.outside(&[cx / u, p.y / u, cz / u], r / u) {
-                        continue;
-                    }
-
-                    let l = level(ci, cj).unwrap_or(0);
-                    let cells = CHUNK_CELLS >> l;
-                    let ratio = |n: Option<u32>| n.filter(|&n| n > l).map_or(1, |n| 1u32 << (n - l));
-                    let edges = [ratio(level(ci - 1, cj)), ratio(level(ci + 1, cj)), ratio(level(ci, cj - 1)), ratio(level(ci, cj + 1))];
-                    chunks.push(OceanChunk { base: (floats / 9) as u32, level: l });
-                    jobs.push(ChunkJob {
-                        x0: p.x0 + ci as f32 * p.cw, z0: p.z0 + cj as f32 * p.ch, sx: p.cw / cells as f32, sz: p.ch / cells as f32, cells,
-                        y: p.y, edges,
-                    });
-
-                    floats += ((cells + 1) * (cells + 1) * 9) as usize;
+            let root = SeaNode { x0: p.x0, z0: p.z0, w: p.cw * p.nx as f32, h: p.ch * p.nz as f32 };
+            let mut stack = vec![root];
+            while let Some(n) = stack.pop() {
+                let r = 0.5 * (n.w * n.w + n.h * n.h + 4.0 * WAVE_MARGIN * WAVE_MARGIN).sqrt();
+                if frustum.outside(&[(n.x0 + 0.5 * n.w) / u, p.y / u, (n.z0 + 0.5 * n.h) / u], r / u) {
+                    continue;
                 }
+
+                if n.splits(eye, p.y) {
+                    stack.extend(n.children());
+                    continue;
+                }
+
+                // Per edge (west, east, south, north): how many of this chunk's cells one of the neighbour's spans (the neighbour leaf at
+                // the edge's middle; a larger one spans the whole edge).
+                let (step, half) = (0.25 * CHUNK_SIZE / CHUNK_CELLS as f32, (0.5 * n.w, 0.5 * n.h));
+                let ratio = |x: f32, z: f32| leaf_width_at(root, x, z, eye, p.y).filter(|&w| w > n.w * 1.001).map_or(1, |w| (w / n.w).round() as u32);
+                let edges = [
+                    ratio(n.x0 - step, n.z0 + half.1), ratio(n.x0 + n.w + step, n.z0 + half.1),
+                    ratio(n.x0 + half.0, n.z0 - step), ratio(n.x0 + half.0, n.z0 + n.h + step),
+                ];
+
+                let cells = CHUNK_CELLS;
+                chunks.push(OceanChunk { base: (floats / 9) as u32 });
+                jobs.push(ChunkJob { x0: n.x0, z0: n.z0, sx: n.w / cells as f32, sz: n.h / cells as f32, cells, y: p.y, edges });
+                floats += ((cells + 1) * (cells + 1) * 9) as usize;
             }
         }
 
@@ -564,16 +597,12 @@ impl Renderer {
         bind_srv(ctx, &ps, "g_foam_anim_texture", whitecaps.as_ref());
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());
 
-        if o.vb.is_some() {
+        if o.vb.is_some()
+            && let Some((ib, count)) = &o.ib
+        {
             ctx.set_vertex_buffers(0, &[o.vb.clone()], &[OCEAN_VERTEX], &[0]);
-            let mut bound = None;
+            ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
             for c in &chunks {
-                let Some((ib, count)) = o.ibs.get(c.level as usize) else { continue };
-                if bound != Some(c.level) {
-                    ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
-                    bound = Some(c.level);
-                }
-
                 ctx.draw_indexed(*count, 0, c.base as i32);
                 self.draw_stats.draw_calls += 1;
             }

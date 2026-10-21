@@ -106,6 +106,18 @@ code (not yet isolated one by one in captures):
   (sphere fit snapped to texels, as before the LiSPSM port). In the game: the `warp_shadows` / `split_d0..3` tweakables (if a release
   build can set them), or a DLL patch of the split setup (fn 0x11784c00).
 
+## Large map contexts: performance (later)
+
+Measured (2026-10-21) on western_city_rome/medium, sea on, map context on the campaign map with 64 neighbour cells (2013
+neighbours, 192 tiles, 1.38 M draw items): 23 fps, CPU-bound. Fixed then: the terrain blend's shared constants set once and its boxes
+uploaded once (15.5 -> 3.6 ms), its material bookkeeping only when the terrains change, the sea as a quadtree (7.3 -> 1.9 ms, 40 000
+-> a few hundred draws): 42 fps. Left:
+- Culling walks every draw item per view (13 views a frame: ~6.5 ms, 4 of them in the shadow cascades): group the items by area (a grid
+  or per context tile) so a whole far tile is skipped at once.
+- The shadow cascades' instance upload (2.2 ms) and the terrain shadow draws (one per terrain entity per cascade, 3 ms).
+- The environment cube is redrawn every 4th frame at ~9 ms (a stutter): spread its faces over frames, or skip far items in it.
+- The GPU side was not measured: the GPU timer reported nothing in these runs (`perf` shows "no GPU timing yet"); look at why.
+
 ## Smaller open rendering items
 
 - **Engine items** (docs/re/renderer.md, "Remaining engine items"), not done yet:
