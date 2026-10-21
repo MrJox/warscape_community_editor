@@ -448,7 +448,8 @@ impl DrawSet {
     ///
     /// `dst` is usually a mapped GPU buffer (write-combined memory): each record is built locally and stored once, never read back. `units`
     /// scales the world matrices (the game's units per scene unit; 1 for the scene's own).
-    pub fn gather(&self, vis: &Visible, dst: &mut [RigidInstance], units: f32) {
+    /// `origin` is subtracted from the translations (the render origin in the shaders' units, after the scale).
+    pub fn gather(&self, vis: &Visible, dst: &mut [RigidInstance], units: f32, origin: [f32; 3]) {
         wce_prof!("drawset.gather");
         dst[..vis.order.len()].par_iter_mut().enumerate().for_each(|(k, r)| {
             let item = vis.order[k] as usize;
@@ -465,6 +466,10 @@ impl DrawSet {
 
             if units != 1.0 {
                 world = world.map(|row| row.map(|v| v * units));
+            }
+
+            for (row, o) in world.iter_mut().zip(origin) {
+                row[3] -= o;
             }
 
             let params = if self.flags[item] & PARAMS != 0 {

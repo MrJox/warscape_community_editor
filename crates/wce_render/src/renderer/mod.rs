@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use wce_d3d11::*;
-use wce_foundation::math::{Float3, Float4x4, inverse, look_at_lh, perspective_lh};
+use wce_foundation::math::{Float3, Float4x4, inverse, look_at_lh, perspective_lh, translation};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, GraphicsOptions};
@@ -391,13 +391,23 @@ pub(crate) struct CameraState {
     pub cb_view: Float4x4,
     pub cb_view_proj: Float4x4,
     pub cb_eye: Float3,
+
+    /// The render origin (scene units, y 0): what the shaders get (the camera, instances, terrain, decals, lights, the sea, the effects) is
+    /// relative to it, the scene and culling stay absolute. Far from the scene's own origin (a map context, a whole campaign map away from
+    /// the open tile) float32 positions of 10^5 lost the depth's and the ground textures' precision: the terrain swam as the camera moved.
+    /// It stays at 0 within ORIGIN_REACH of it and moves in steps of that much (the world-space texture patterns shift once then).
+    pub origin: Float3,
 }
+
+/// How far the camera goes from the render origin before it moves, and the grid it moves on (scene units: 128 cells of a map, a multiple
+/// of the LF's samples and normal texels).
+pub const ORIGIN_REACH: f32 = 16384.0;
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
             main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0, cb_view: Float4x4::IDENTITY,
-            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(),
+            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(), origin: Float3::default(),
         }
     }
 }
@@ -433,6 +443,18 @@ pub(crate) fn game_clip(m: &Float4x4, s: f32) -> Float4x4 {
     }
 
     g
+}
+
+/// A scene world -> clip matrix (a shadow cascade's) for the shaders: for positions relative to the render origin `o`, in game units.
+pub(crate) fn rel_clip(m: &Float4x4, o: Float3, s: f32) -> Float4x4 {
+    game_clip(&(*m * translation(o)), s)
+}
+
+/// A scene world matrix for the shaders: relative to the render origin `o`, in game units.
+pub(crate) fn rel_world(m: &Float4x4, o: Float3, s: f32) -> Float4x4 {
+    let mut w = *m;
+    (w.m[0][3], w.m[1][3], w.m[2][3]) = (w.m[0][3] - o.x, w.m[1][3] - o.y, w.m[2][3] - o.z);
+    game_world(&w, s)
 }
 
 /// A scene world matrix (an instance's, an effect's) in game units: the whole matrix times `s` (models drawn `s` times larger, positions `s`
@@ -540,7 +562,7 @@ pub struct Renderer {
     pub(crate) particles: ParticleSystem,
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
-    pub(crate) vfx_scene: (usize, u64, u32),
+    pub(crate) vfx_scene: (usize, u64, u32, u32, u32),
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
@@ -654,7 +676,7 @@ impl Renderer {
             tonemap: ToneMap::new(dev),
             depth_range: DepthRange::default(),
             particles,
-            vfx_scene: (0, u64::MAX, 0),
+            vfx_scene: (0, u64::MAX, 0, 0, 0),
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
@@ -808,13 +830,15 @@ impl Renderer {
         self.post.resize(&self.dev, w, h);
     }
 
-    /// The view in scene units (what culling uses); the shaders get it in game units ([`CameraState::units`]).
+    /// `view_m` is the view of positions relative to the render origin (scene units), `eye` the absolute one: culling gets the absolute view,
+    /// the shaders the relative one in game units ([`CameraState::units`]).
     pub(crate) fn set_camera(&mut self, view_m: &Float4x4, proj: &Float4x4, eye: Float3, w: u32, h: u32, time_s: f32) {
-        self.camera.view_proj = *proj * *view_m;
+        let o = self.camera.origin;
+        self.camera.view_proj = *proj * *view_m * translation(-o);
         self.camera.eye = eye;
         self.camera.px_ratio = 1.0 / (0.5 * h as f32 * proj.m[1][1]);
         let s = self.camera.units;
-        let (view_m, proj, eye) = (&game_view(view_m, s), &game_proj(proj, s), eye * s);
+        let (view_m, proj, eye) = (&game_view(view_m, s), &game_proj(proj, s), (eye - o) * s);
         let vp = *proj * *view_m;
         (self.camera.cb_view, self.camera.cb_view_proj, self.camera.cb_eye) = (*view_m, vp, eye);
         let cbs = &mut self.cbs;
@@ -939,6 +963,13 @@ impl Renderer {
         self.pass_sky_cube(&env, time_s);
         self.gpu_timer.mark("env cube");
 
+        // The render origin follows the camera far from it, on a coarse grid.
+        let o = self.camera.origin;
+        if (cam.eye.x - o.x).abs() > ORIGIN_REACH || (cam.eye.z - o.z).abs() > ORIGIN_REACH {
+            let snap = |v: f32| (v / ORIGIN_REACH).round() * ORIGIN_REACH;
+            self.camera.origin = Float3::new(snap(cam.eye.x), 0.0, snap(cam.eye.z));
+        }
+
         // The XML ambient while it renders.
         if self.clock.frame.is_multiple_of(4) || !self.env.valid {
             wce_prof!("render.env_cube");
@@ -957,10 +988,12 @@ impl Renderer {
             self.pass_shadows(scene, &cam, aspect, -env.to_sun(), time_s);
         }
 
-        let view_m = look_at_lh(cam.eye, cam.target, Float3::new(0.0, 1.0, 0.0));
+        // The camera relative to the render origin (built from the relative eye: the absolute view's translation alone lost the precision).
+        let o = self.camera.origin;
+        let view_m = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
         let proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
         self.set_camera(&view_m, &proj, cam.eye, width, height, time_s);
-        self.camera.main_view_proj = proj * view_m;
+        self.camera.main_view_proj = self.camera.view_proj;
         self.upload();
         let main_vp = viewport(0.0, 0.0, width as f32, height as f32);
         self.ctx.set_viewports(&[main_vp]);
@@ -1008,7 +1041,7 @@ impl Renderer {
         // The weather precipitation (vfx1 of the WEATHER definition).
         // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
         let frame = Frame {
-            eye: cam.eye * self.camera.units,
+            eye: (cam.eye - o) * self.camera.units,
             view: view_m,
             time: time_s,
             dt: self.clock.dt,
@@ -1024,14 +1057,15 @@ impl Renderer {
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
-        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits());
+        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.z.to_bits());
         if self.vfx_scene != scene_key {
+            // A new origin moves the effects (the particles alive keep where they were).
             self.vfx_scene = scene_key;
             let effects = scene.entities().iter().filter(|e| scene.drawable(e)).filter_map(|e| match &e.payload {
                 wce_scene::render_scene::Payload::VfxEmitter(v) => {
                     let mut world = e.world;
-                    for row in world.m.iter_mut().take(3) {
-                        row[3] *= units;
+                    for (row, o) in world.m.iter_mut().zip([o.x, o.y, o.z]) {
+                        row[3] = (row[3] - o) * units;
                     }
 
                     Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone() })
@@ -1057,7 +1091,7 @@ impl Renderer {
         if self.settings.view == View::Final {
             self.pass_to_screen(&env);
             if self.settings.lens_flare {
-                self.pass_lens_flare(&env, cam.eye * self.camera.units, time_s);
+                self.pass_lens_flare(&env, (cam.eye - o) * self.camera.units, time_s);
             }
         }
 

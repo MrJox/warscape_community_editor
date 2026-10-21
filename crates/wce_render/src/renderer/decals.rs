@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use wce_foundation::math::Float4x4;
+use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, Payload, RenderScene, StructureChange};
 
@@ -71,8 +71,9 @@ pub(crate) struct DecalGpu {
     /// The model cache's revision when they were collected (a building's decal boxes come with its model).
     models_revision: u64,
 
-    /// The game units per scene unit the instances were made with.
+    /// The game units per scene unit and the render origin the instances were made with.
     units: f32,
+    origin: Float3,
     models: Vec<String>,
     items: Vec<DecalItem>,
 
@@ -161,7 +162,7 @@ impl Renderer {
     /// The decal items of entities (decals, and the decal boxes of loaded models; the meshes whose models have not loaded go to
     /// `pending`).
     fn decal_items<'a>(&mut self, scene: &RenderScene, entities: impl Iterator<Item = &'a wce_scene::render_scene::Entity>) {
-        let units = self.camera.units;
+        let (units, origin) = (self.camera.units, self.camera.origin);
         let d = &mut self.decals;
         let mut index: BTreeMap<String, u32> = d.models.iter().enumerate().map(|(i, m)| (m.clone(), i as u32)).collect();
         let mut push = |d: &mut DecalGpu, entity: EntityId, name: &str, w: &Float4x4, tiled: bool, opacity: f32, parallax: f32| {
@@ -171,7 +172,7 @@ impl Renderer {
             });
 
             // The shaders get the box in game units; culling keeps the scene's.
-            let g = game_world(w, units);
+            let g = rel_world(w, origin, units);
             let size = axis_sizes(&g);
             let mut inst = [0.0f32; INSTANCE_FLOATS];
             for row in 0..3 {
@@ -274,7 +275,7 @@ impl Renderer {
         let models_revision = self.models.revision();
         let units = self.camera.units;
         let d = &self.decals;
-        let same = d.scene_id == id && d.units == units && d.built;
+        let same = d.scene_id == id && d.units == units && d.origin == self.camera.origin && d.built;
         if same && d.revision == scene.revision() && d.models_revision == models_revision {
             return;
         }
@@ -288,6 +289,7 @@ impl Renderer {
         wce_prof!("render.collect_decals");
         let d = &mut self.decals;
         d.units = units;
+        d.origin = self.camera.origin;
         d.scene_id = id;
         d.revision = scene.revision();
         d.structure = scene.structure_revision();
