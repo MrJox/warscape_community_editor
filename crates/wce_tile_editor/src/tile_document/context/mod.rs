@@ -395,6 +395,11 @@ impl Frame {
         (world, Payload::Terrain(t))
     }
 
+    /// The height of the sea (0 m) in the frame.
+    pub fn sea_y(&self) -> f32 {
+        (-self.lf_mean / self.unit) as f32
+    }
+
     /// The sea: one plane at 0 m over the cells within `reach` of a frame point (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is
     /// -vertical_offset, -20 m, under the open sea), drawn relative to the open tile like the rest. Where the ground is higher it hides it.
     pub fn sea(&self, at: (f64, f64), reach: i32) -> (Float4x4, Payload) {
@@ -402,7 +407,7 @@ impl Frame {
         let r = f64::from(reach);
         let c = |v: f64, n: u32| v.clamp(0.0, f64::from(n));
         let b = bounds(&self.from_map, c(cx - r, self.map.width), c(cy - r, self.map.height), c(cx + r, self.map.width), c(cy + r, self.map.height));
-        let y = (-self.lf_mean / self.unit) as f32;
+        let y = self.sea_y();
         let v = |x: f64, z: f64| WaterVertex { x: x as f32, y, z: z as f32, u: x as f32, v: z as f32, fade: 1.0, ..Default::default() };
         // Its version follows its rectangle (the renderer lays a plane's chunks out again when it changes).
         let version = b.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, v| (h ^ v.to_bits()).wrapping_mul(0x0100_0000_01B3));

@@ -189,7 +189,12 @@ plains (aa .. ad) elsewhere.
   tile). The renderer gives the shaders positions relative to a render origin (the camera, instances, terrain rows and blend boxes, the LF
   normal map rolled by it, decals, lights, grass, shadows, the sea, rivers, effects); the scene, culling and picking stay absolute. The
   origin stays at 0 within 16 384 scene units (128 cells) of it and moves on that grid: then the world-space texture patterns shift once
-  and the particles alive keep their old places.
+  and the particles alive keep their old places. The shadow cascades are fitted around the camera relative to it too (fitted absolute and
+  moved to the origin after, their matrices lost the precision: the shadows, the trees' most, flickered as the camera moved); culling keeps
+  an absolute copy. Its height is the sea's (`RenderScene::sea_level`, the map context's `-mean LF / unit`): the shaders get heights
+  relative to the sea, as the game's are to its sea at 0, so the terrain vertex shader's 9 cm lift of land and drop of sea bed (by the
+  height's sign) separates the shore from the water as the game means it (relative to the open tile, it pushed all ground near a coast
+  down).
 - Earlier versions: a radius around the open tile built at once, every neighbour resampled into the open frame and one shared 2 m height map
   over all of them (130 neighbours from 45 tiles, 1.2 s, about 1 GB); growing the window until no neighbour stuck out ran through the
   12 x 12 sea and mountain tiles to 200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).
