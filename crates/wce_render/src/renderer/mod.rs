@@ -1034,7 +1034,10 @@ impl Renderer {
 
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);
-        self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);
+        {
+            wce_prof!("render.particles");
+            self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);
+        }
         self.ctx.set_viewports(&[main_vp]);
 
         null_ps_srvs(&self.ctx, 16);

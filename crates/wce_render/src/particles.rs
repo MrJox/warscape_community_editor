@@ -1579,8 +1579,9 @@ impl ParticleSystem {
             }
 
             let (e, k) = (self.world[j].effect, self.world[j].emitter);
+            // Borrowed, not cloned: thousands of placed emitters (a city's torches) run this every frame.
             let a = &self.world_effects[e].emitters[k];
-            let d = a.def.clone();
+            let d = &a.def;
             let infinite = a.infinite_life;
             let inst = &mut self.world[j];
 
