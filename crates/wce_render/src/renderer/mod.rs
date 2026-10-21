@@ -399,6 +399,14 @@ pub(crate) struct CameraState {
     pub origin: Float3,
 }
 
+/// The near plane follows the camera's clearance over the ground: a quarter of it, less what the tallest buildings take, between the
+/// camera's own near plane and NEAR_MAX (scene units). A 24-bit depth's precision goes with near / distance^2: at 1 unit, the terrain 8 km
+/// away was placed to several units, and the terrain blend pass, which takes its positions back from the depth, and the sea, which compares
+/// depths at the shore, flickered as the camera moved.
+const NEAR_FRACTION: f32 = 0.25;
+const NEAR_MARGIN: f32 = 60.0;
+const NEAR_MAX: f32 = 100.0;
+
 /// How far the camera goes from the render origin before it moves, and the grid it moves on (scene units: 128 cells of a map, a multiple
 /// of the LF's samples and normal texels).
 pub const ORIGIN_REACH: f32 = 16384.0;
@@ -825,6 +833,19 @@ impl Renderer {
         self.post.resize(&self.dev, w, h);
     }
 
+    /// The near plane for a camera (see NEAR_FRACTION): from its clearance over the scene's terrains (their highest ground under the eye).
+    fn near_plane(&self, scene: &RenderScene, cam: &Camera) -> f32 {
+        let ground = KindIndex::entities(&self.kinds.terrain, scene).into_iter()
+            .filter(|e| scene.drawable(e))
+            .filter_map(|e| match &e.payload {
+                wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cam.eye.x, cam.eye.z),
+                _ => None,
+            })
+            .fold(None, |m: Option<f32>, h| Some(m.map_or(h, |m| m.max(h))));
+        let Some(ground) = ground else { return cam.znear };
+        ((cam.eye.y - ground - NEAR_MARGIN) * NEAR_FRACTION).clamp(cam.znear, NEAR_MAX.max(cam.znear))
+    }
+
     /// `view_m` is the view of positions relative to the render origin (scene units), `eye` the absolute one: culling gets the absolute view,
     /// the shaders the relative one in game units ([`CameraState::units`]).
     pub(crate) fn set_camera(&mut self, view_m: &Float4x4, proj: &Float4x4, eye: Float3, w: u32, h: u32, time_s: f32) {
@@ -914,7 +935,7 @@ impl Renderer {
         self.grass.season.clone_from(&scene.vegetation_season);
         self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
         wce_prof!("render.total");
-        let cam = view_params.camera;
+        let mut cam = view_params.camera;
         let time_s = view_params.time_s;
         let (width, height) = (target.width(), target.height());
         if width < 8 || height < 8 {
@@ -923,6 +944,7 @@ impl Renderer {
 
         let env = scene.environment.resolved();
         self.kinds.refresh(scene);
+        cam.znear = self.near_plane(scene, &cam);
 
         // Fixed-step runs load every texture whole: frame N must be the same every run.
         self.textures.set_streaming(!self.settings.deterministic);
