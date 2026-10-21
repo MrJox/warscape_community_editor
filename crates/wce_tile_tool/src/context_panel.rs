@@ -22,6 +22,9 @@ use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, ContextRequest, Streamer, cache};
 use wce_vfs::files::Files;
 
+/// How long a frame spends putting finished chunks on the scene (one at least; the rest wait for the next frames).
+const APPLY_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
+
 /// The campaign battle map of the game's files.
 pub const GAME_MAP: &str = "campaign (game files)";
 const GAME_DIR: &str = "terrain/battles/main_attila_map";
@@ -64,6 +67,10 @@ pub struct ContextUi {
 
     /// Each chunk's entities on the layer (added in a row: a range of ids), and the sea's (with the focus it is around).
     chunks: HashMap<ChunkKey, std::ops::Range<EntityId>>,
+
+    /// The streamer's chunks waiting for the renderer to have their terrains' GPU side, and the ones to take off.
+    waiting: Vec<(ChunkKey, Vec<(Float4x4, Payload)>)>,
+    gone: Vec<ChunkKey>,
     sea: Option<EntityId>,
     sea_at: (f64, f64),
     db: Option<(PathBuf, Arc<TileDatabase>)>,
@@ -74,7 +81,8 @@ impl Default for ContextUi {
     fn default() -> Self {
         Self {
             shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, trees: true,
-            follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), sea: None,
+            follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
+            gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(),
         }
     }
@@ -275,6 +283,8 @@ impl ContextUi {
         }
 
         self.chunks.clear();
+        self.waiting.clear();
+        self.gone.clear();
         let lf = s.frame().lf.clone();
         log::info(format!("map context: {}", s.frame().lf_note()));
         self.streamer = Some(s);
@@ -327,12 +337,8 @@ impl ContextUi {
             self.sea_at = focus;
         }
 
-        if changes.is_empty() {
-            return moved;
-        }
-
-        self.apply(&mut e.scene, changes);
-        true
+        self.take(changes);
+        self.apply(e, Some(APPLY_BUDGET)) || moved
     }
 
     /// Waits for every chunk around the focus and puts them on the scene (scripts).
@@ -341,31 +347,73 @@ impl ContextUi {
         let Some(s) = self.streamer.as_mut() else { return };
         let changes = s.run_to_idle(focus);
         self.status = s.report();
-        self.apply(&mut e.scene, changes);
+        self.take(changes);
+
+        // The renderer makes their terrains' GPU side on its loading threads.
+        let t0 = std::time::Instant::now();
+        while !self.waiting.is_empty() && t0.elapsed().as_secs() < 60 {
+            if !self.apply(e, None) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
     }
 
-    /// Puts streamed chunks on the layer.
-    pub fn apply(&mut self, scene: &mut RenderScene, changes: Vec<ChunkChange>) {
-        wce_prof!("context.apply");
-        let mut gone = vec![];
-        let mut sets = vec![];
+    /// The streamer's changes: the chunks it removed go now (with what was waiting of them), the ones it built wait for their terrains.
+    fn take(&mut self, changes: Vec<ChunkChange>) {
         for c in changes {
             match c {
                 ChunkChange::Set(k, _, entities) => {
-                    gone.extend(self.chunks.remove(&k));
-                    sets.push((k, entities));
+                    self.waiting.retain(|(w, _)| *w != k);
+                    self.waiting.push((k, entities));
                 }
 
-                ChunkChange::Remove(k) => gone.extend(self.chunks.remove(&k)),
+                ChunkChange::Remove(k) => {
+                    self.waiting.retain(|(w, _)| *w != k);
+                    self.gone.push(k);
+                }
+            }
+        }
+    }
+
+    /// Puts on the layer the waiting chunks whose terrains the renderer has ready (the version each replaces stays until then), in the
+    /// order they came, until `budget` is spent (one at least), and takes off the removed ones. Whether anything changed.
+    fn apply(&mut self, e: &mut Editor, budget: Option<std::time::Duration>) -> bool {
+        wce_prof!("context.apply");
+        let t0 = std::time::Instant::now();
+        let mut gone: Vec<std::ops::Range<EntityId>> = std::mem::take(&mut self.gone).into_iter().filter_map(|k| self.chunks.remove(&k)).collect();
+        let mut ready = vec![];
+        let mut k = 0;
+        while k < self.waiting.len() {
+            let terrains_ready = e.renderer.as_mut().is_none_or(|r| self.waiting[k].1.iter().all(|(_, p)| match p {
+                Payload::Terrain(t) => r.terrain_ready(t),
+                _ => true,
+            }));
+
+            if terrains_ready {
+                let (key, entities) = self.waiting.remove(k);
+                gone.extend(self.chunks.remove(&key));
+                ready.push((key, entities));
+                if budget.is_some_and(|b| t0.elapsed() > b) {
+                    break;
+                }
+            } else {
+                k += 1;
             }
         }
 
-        scene.remove_ranges(&gone);
-        scene.reserve(sets.iter().map(|(_, v)| v.len()).sum());
-        for (k, entities) in sets {
-            let ids = add_range(scene, self.layer, self.doc, entities);
-            self.chunks.insert(k, ids);
+        if gone.is_empty() && ready.is_empty() {
+            return false;
         }
+
+        let scene = &mut e.scene;
+        scene.remove_ranges(&gone);
+        scene.reserve(ready.iter().map(|(_, v)| v.len()).sum());
+        for (key, entities) in ready {
+            let ids = add_range(scene, self.layer, self.doc, entities);
+            self.chunks.insert(key, ids);
+        }
+
+        true
     }
 
     /// Where north is in the world for the compass: the map's while a context is shown, else the tile's own +z (its rows' top edge).
@@ -410,6 +458,8 @@ impl ContextUi {
 
         self.streamer = None;
         self.chunks.clear();
+        self.waiting.clear();
+        self.gone.clear();
         self.sea = None;
         self.build += 1;
     }

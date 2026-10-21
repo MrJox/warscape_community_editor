@@ -22,6 +22,7 @@ use wce_scene::render_scene::{EntityId, LfMap, Payload, RenderScene, Terrain, Te
 
 use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
+use wce_foundation::jobs::io_pool;
 use crate::texture::{Texture, load_dds_array, make_rgba_texture, make_solid_texture};
 
 const GEOM_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_geom_new";
@@ -150,6 +151,164 @@ struct LfDraw {
 /// A material's blend boxes this frame (with the LF map their terrains read): the instance rows.
 type MaterialBoxes = (Arc<TerrainMaterial>, Option<Arc<LfMap>>, Vec<f32>);
 
+/// One patch's vertex buffer: the 65 x 65 grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the vertices
+/// repeat its edge (the index buffers of a smaller patch never reach them).
+fn hf_patch_vb(dev: &ID3D11Device, t: &Terrain, pi: i32, pj: i32) -> Option<ID3D11Buffer> {
+    let mut v = Vec::with_capacity(((PATCH_CELLS + 1) * (PATCH_CELLS + 1) * 3) as usize);
+    for z in 0..=PATCH_CELLS {
+        let j = (pj * PATCH_CELLS + z).min(t.nz - 1);
+        for x in 0..=PATCH_CELLS {
+            let i = (pi * PATCH_CELLS + x).min(t.nx - 1);
+            v.extend([x as f32, t.height_at(i, j), z as f32]);
+        }
+    }
+
+    immutable_buffer(dev, &f32_bytes(&v), D3D11_BIND_VERTEX_BUFFER)
+}
+
+/// A heights buffer's patches from `g` (empty, or the same grid's from an older buffer: only the patches whose heights differ are made
+/// again). The device is free-threaded: a loading thread may run it.
+fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
+    let (cx, cz) = (t.nx - 1, t.nz - 1);
+    let (px, pz) = ((cx + PATCH_CELLS - 1) / PATCH_CELLS, (cz + PATCH_CELLS - 1) / PATCH_CELLS);
+    let reuse = g.patches.len() == (px * pz) as usize;
+    if !reuse {
+        g.patches = (0..px * pz).map(|k| HfPatch { pi: k % px, pj: k / px, ..Default::default() }).collect();
+    }
+
+    for p in &mut g.patches {
+        (p.cx, p.cz) = (PATCH_CELLS.min(cx - p.pi * PATCH_CELLS), PATCH_CELLS.min(cz - p.pj * PATCH_CELLS));
+    }
+
+    let (old_h, nx) = (g.heights.clone(), t.nx as usize);
+    let patches = std::mem::take(&mut g.patches);
+    g.patches = patches.into_iter().map(|mut p| {
+        let (i0, i1) = ((p.pi * PATCH_CELLS) as usize, (p.pi * PATCH_CELLS + p.cx) as usize);
+        let (j0, j1) = ((p.pj * PATCH_CELLS) as usize, (p.pj * PATCH_CELLS + p.cz) as usize);
+        let dirty = !reuse || p.vb.is_none() || t.heights.is_empty() || old_h.len() != t.heights.len()
+            || (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&old_h[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()));
+        if dirty {
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let h = t.height_at(i as i32, j as i32);
+                    (lo, hi) = (lo.min(h), hi.max(h));
+                }
+            }
+
+            (p.lo, p.hi) = (lo, hi);
+            p.vb = hf_patch_vb(dev, t, p.pi, p.pj);
+        }
+
+        p
+    }).collect();
+
+    g.heights = t.heights.clone();
+    g
+}
+
+/// What a loading thread made of a material: its GPU side, the texture arrays it read (for the cache) and what went wrong.
+struct MaterialBuilt {
+    id: u64,
+    gpu: TerrainMatGpu,
+    arrays: Vec<((String, bool), Texture)>,
+    errors: Vec<String>,
+}
+
+/// The GPU side of a terrain material: the tile's maps (mipmapped), the climate's texture arrays (`have` gives the ones already made), the
+/// light parameter texture. The device is free-threaded: a loading thread may run it.
+fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &TerrainMaterial, have: &dyn Fn(&(String, bool)) -> Option<Texture>) -> MaterialBuilt {
+    let mut errors = vec![];
+    let mut img = |im: &TerrainImage, what: &str| {
+        let t = im.rgba.as_ref().map(|rgba| make_rgba_texture(dev, im.w, im.h, rgba, false)).unwrap_or_default();
+        if t.srv.is_none() {
+            errors.push(format!("terrain material: {what} map did not upload"));
+        }
+
+        t
+    };
+
+    let mut g = TerrainMatGpu {
+        normal_id: m.normal_id,
+        blend: img(&m.blend, "blend"),
+        index: img(&m.index, "index"),
+        normal: img(&m.normal, "normal"),
+
+        // The tile's weight where it overlaps its neighbours (a map context's); alone, 1 over the whole rectangle.
+        alpha: m.alpha.rgba.as_ref().map_or_else(|| make_solid_texture(dev, 0xFFFF_FFFF), |rgba| make_rgba_texture(dev, m.alpha.w, m.alpha.h, rgba, false)),
+
+        // A flat normal (the far-distance normal map is switched off with g_far_tile_distance).
+        lf_normal: make_solid_texture(dev, 0x7F00_7FFF),
+        black: make_solid_texture(dev, 0),
+        ..Default::default()
+    };
+
+    // The diffuse / normal texture arrays: slot = 4 * group + variation.
+    let mut arrays = vec![];
+    let mut array = |paths: &[String; 16], srgb: bool| {
+        let key = (paths.join("|"), srgb);
+        if let Some(t) = have(&key) {
+            return t;
+        }
+
+        let mut bytes = vec![None; 16];
+        for (i, path) in paths.iter().enumerate() {
+            if path.is_empty() || !files.exists(path) {
+                continue;
+            }
+
+            match files.read(path) {
+                Ok(data) => bytes[i] = Some(data),
+                Err(error) => errors.push(format!("terrain material: {path}: {error}")),
+            }
+        }
+
+        let slices = bytes.iter().map(|b| b.as_deref()).collect::<Vec<_>>();
+        let (t, bad) = load_dds_array(dev, &slices, srgb, !srgb);
+        if bad > 0 {
+            errors.push(format!("terrain material: {bad} texture(s) of the climate differ in size / format from the others and are drawn neutral"));
+        }
+
+        arrays.push((key, t.clone()));
+        t
+    };
+
+    g.diffuse = array(&m.diffuse, true);
+    g.normals = array(&m.normal_tex, false);
+    if g.diffuse.srv.is_none() || g.normals.srv.is_none() {
+        errors.push("terrain material: the texture arrays did not build".to_owned());
+    }
+
+    // s_light_params: 16 texels (smoothness, reflectivity) per slot.
+    let lp: Vec<f32> = (0..16).flat_map(|i| [m.smoothness[i], m.reflectivity[i]]).collect();
+    let td = D3D11_TEXTURE2D_DESC {
+        Width: 16, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+    };
+
+    let sd = [InitData::new(bytemuck::cast_slice(&lp), 16 * 8)];
+    if let Ok(tx) = dev.create_texture_2d(&td, Some(&sd)) {
+        g.light_params = dev.create_shader_resource_view(&tx, None).ok();
+    }
+
+    MaterialBuilt { id: m.id, gpu: g, arrays, errors }
+}
+
+/// What the loading threads finished for the terrain pass (taken in at the next frame).
+#[derive(Default)]
+pub(crate) struct TerrainJobs {
+    materials: Vec<MaterialBuilt>,
+    hf: Vec<(usize, HfGeo)>,
+}
+
+// SAFETY: D3D11 device children (buffers, textures, views) are free-threaded and reference counted atomically (see SharedDevice); the
+// immediate context never goes through these.
+unsafe impl Send for TerrainMatGpu {}
+// SAFETY: as above.
+unsafe impl Send for HfGeo {}
+// SAFETY: as above.
+unsafe impl Send for MaterialBuilt {}
+
 /// The key of a heights buffer (its address: held by the geometry while it is kept, so it is not reused).
 fn hf_key(t: &Terrain) -> usize {
     Arc::as_ptr(&t.heights) as usize
@@ -194,6 +353,13 @@ pub(crate) struct TerrainGpuState {
 
     /// The patches of the heights buffers by key, and each terrain entity's placement of its buffer.
     hf: HashMap<usize, HfGeo>,
+
+    /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
+    /// while for its chunk, which goes on the scene after).
+    jobs: Arc<std::sync::Mutex<TerrainJobs>>,
+    hf_pending: std::collections::HashSet<usize>,
+    hf_made: HashMap<usize, u64>,
+    mat_pending: std::collections::HashSet<u64>,
     placed: BTreeMap<EntityId, Placed>,
     mat: BTreeMap<u64, TerrainMatGpu>,
 
@@ -343,74 +509,24 @@ impl Renderer {
         t.inst_vb = dynamic_buffer(&dev, INSTANCE_BYTES, D3D11_BIND_VERTEX_BUFFER);
     }
 
-    /// One patch's vertex buffer: the 65 x 65 grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the
-    /// vertices repeat its edge (the index buffers of a smaller patch never reach them).
-    fn hf_patch_vb(&self, t: &Terrain, pi: i32, pj: i32) -> Option<ID3D11Buffer> {
-        let mut v = Vec::with_capacity(((PATCH_CELLS + 1) * (PATCH_CELLS + 1) * 3) as usize);
-        for z in 0..=PATCH_CELLS {
-            let j = (pj * PATCH_CELLS + z).min(t.nz - 1);
-            for x in 0..=PATCH_CELLS {
-                let i = (pi * PATCH_CELLS + x).min(t.nx - 1);
-                v.extend([x as f32, t.height_at(i, j), z as f32]);
-            }
-        }
-
-        immutable_buffer(&self.dev, &f32_bytes(&v), D3D11_BIND_VERTEX_BUFFER)
-    }
-
     /// The patches of a terrain's heights buffer, shared by the entities that hold the same buffer. A new buffer for an entity whose old one
-    /// nobody else draws (a brush stroke on the open tile) rebuilds only the patches whose heights changed.
+    /// nobody else draws (a brush stroke on the open tile) rebuilds only the patches whose heights changed. One a loading thread is making
+    /// (`terrain_ready`) is left to it.
     fn build_hf(&mut self, id: EntityId, t: &Terrain) {
         let key = hf_key(t);
-        if self.terrain.hf.contains_key(&key) {
+        if self.terrain.hf.contains_key(&key) || self.terrain.hf_pending.contains(&key) {
             return;
         }
 
         wce_prof!("terrain.build_hf");
-
         let old = self.terrain.placed.get(&id).map(|p| p.key).filter(|&k| k != key);
         let exclusive = old.is_some_and(|k| !self.terrain.placed.iter().any(|(&other, p)| other != id && p.key == k));
-        let mut g = match old.filter(|_| exclusive).and_then(|k| self.terrain.hf.remove(&k)) {
+        let g = match old.filter(|_| exclusive).and_then(|k| self.terrain.hf.remove(&k)) {
             Some(g) if g.same_grid(t) => g,
             _ => HfGeo { nx: t.nx, nz: t.nz, step: t.step, ox: t.origin_x, oz: t.origin_z, ..Default::default() },
         };
 
-        let (cx, cz) = (t.nx - 1, t.nz - 1);
-        let (px, pz) = ((cx + PATCH_CELLS - 1) / PATCH_CELLS, (cz + PATCH_CELLS - 1) / PATCH_CELLS);
-        let reuse = g.patches.len() == (px * pz) as usize;
-        if !reuse {
-            g.patches = (0..px * pz).map(|k| HfPatch { pi: k % px, pj: k / px, ..Default::default() }).collect();
-        }
-
-        for p in &mut g.patches {
-            (p.cx, p.cz) = (PATCH_CELLS.min(cx - p.pi * PATCH_CELLS), PATCH_CELLS.min(cz - p.pj * PATCH_CELLS));
-        }
-
-        let (old_h, nx) = (g.heights.clone(), t.nx as usize);
-        let patches = std::mem::take(&mut g.patches);
-        g.patches = patches.into_iter().map(|mut p| {
-            let (i0, i1) = ((p.pi * PATCH_CELLS) as usize, (p.pi * PATCH_CELLS + p.cx) as usize);
-            let (j0, j1) = ((p.pj * PATCH_CELLS) as usize, (p.pj * PATCH_CELLS + p.cz) as usize);
-            let dirty = !reuse || p.vb.is_none() || t.heights.is_empty() || old_h.len() != t.heights.len()
-                || (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&old_h[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()));
-            if dirty {
-                let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-                for j in j0..=j1 {
-                    for i in i0..=i1 {
-                        let h = t.height_at(i as i32, j as i32);
-                        (lo, hi) = (lo.min(h), hi.max(h));
-                    }
-                }
-
-                (p.lo, p.hi) = (lo, hi);
-                p.vb = self.hf_patch_vb(t, p.pi, p.pj);
-            }
-
-            p
-        }).collect();
-
-        g.heights = t.heights.clone();
-        self.terrain.hf.insert(key, g);
+        self.terrain.hf.insert(key, fill_hf(&self.dev, g, t));
 
         // Whoever placed the old buffer places the new one again.
         if let Some(p) = self.terrain.placed.get_mut(&id) {
@@ -430,6 +546,7 @@ impl Renderer {
         }
 
         let Some(g) = self.terrain.hf.get(&key) else { return };
+        wce_prof!("terrain.place");
         let w = &world.m;
         let mut placed = Placed { key, world: *world, lf, units, lod: t.lod, step: g.step, patches: Vec::with_capacity(g.patches.len()), blend_box: None };
         for (k, p) in g.patches.iter().enumerate() {
@@ -642,7 +759,7 @@ impl Renderer {
         out
     }
 
-    /// The GPU side of a terrain material: the tile's maps (mipmapped), the climate's texture arrays, the light parameter texture.
+    /// The GPU side of a terrain material, made now (the open tile's; a map context's are made on the loading threads, see `terrain_ready`).
     fn build_terrain_material(&mut self, m: &TerrainMaterial) {
         if let Some(have) = self.terrain.mat.get_mut(&m.id) {
             // A height stroke only changes the normal map.
@@ -659,95 +776,81 @@ impl Renderer {
             return;
         }
 
+        if self.terrain.mat_pending.contains(&m.id) {
+            return;
+        }
+
         wce_prof!("terrain.build_material");
-        let dev = self.dev.clone();
-        let mut errors = vec![];
-        let mut img = |im: &TerrainImage, what: &str| {
-            let t = im.rgba.as_ref().map(|rgba| make_rgba_texture(&dev, im.w, im.h, rgba, false)).unwrap_or_default();
-            if t.srv.is_none() {
-                errors.push(format!("terrain material: {what} map did not upload"));
-            }
+        let arrays = &self.terrain.arrays;
+        let built = material_gpu(&self.dev, self.files.as_ref(), m, &|k| arrays.get(k).cloned());
+        self.take_material(built);
+    }
 
-            t
-        };
-
-        let mut g = TerrainMatGpu {
-            normal_id: m.normal_id,
-            blend: img(&m.blend, "blend"),
-            index: img(&m.index, "index"),
-            normal: img(&m.normal, "normal"),
-
-            // The tile's weight where it overlaps its neighbours (a map context's); alone, 1 over the whole rectangle.
-            alpha: m.alpha.rgba.as_ref().map_or_else(|| make_solid_texture(&dev, 0xFFFF_FFFF), |rgba| make_rgba_texture(&dev, m.alpha.w, m.alpha.h, rgba, false)),
-
-            // A flat normal (the far-distance normal map is switched off with g_far_tile_distance).
-            lf_normal: make_solid_texture(&dev, 0x7F00_7FFF),
-            black: make_solid_texture(&dev, 0),
-            ..Default::default()
-        };
-
-        for e in errors {
+    /// A material made (here or on a loading thread) into the pass's maps.
+    fn take_material(&mut self, built: MaterialBuilt) {
+        for e in built.errors {
             self.error(e);
         }
 
-        // The diffuse / normal texture arrays: slot = 4 * group + variation.
-        let load_array = |r: &mut Self, paths: &[String; 16], srgb: bool| {
-            let mut bytes = vec![None; 16];
-            for (i, path) in paths.iter().enumerate() {
-                if path.is_empty() || !r.files.exists(path) {
-                    continue;
-                }
-
-                match r.files.read(path) {
-                    Ok(data) => bytes[i] = Some(data),
-                    Err(error) => r.error(format!("terrain material: {path}: {error}")),
-                }
-            }
-
-            let slices = bytes.iter().map(|b| b.as_deref()).collect::<Vec<_>>();
-            let (t, bad) = load_dds_array(&r.dev, &slices, srgb, !srgb);
-            if bad > 0 {
-                r.error(format!("terrain material: {bad} texture(s) of the climate differ in size / format from the others and are drawn neutral"));
-            }
-
-            t
-        };
-
-        let array = |r: &mut Self, paths: &[String; 16], srgb: bool| {
-            let key = (paths.join("|"), srgb);
-            if let Some(t) = r.terrain.arrays.get(&key) {
-                return t.clone();
-            }
-
-            let t = load_array(r, paths, srgb);
-            r.terrain.arrays.insert(key, t.clone());
-            t
-        };
-
-        g.diffuse = array(self, &m.diffuse, true);
-        g.normals = array(self, &m.normal_tex, false);
-        if g.diffuse.srv.is_none() || g.normals.srv.is_none() {
-            self.error("terrain material: the texture arrays did not build".to_owned());
+        for (k, t) in built.arrays {
+            self.terrain.arrays.entry(k).or_insert(t);
         }
 
-        // s_light_params: 16 texels (smoothness, reflectivity) per slot.
-        let lp: Vec<f32> = (0..16).flat_map(|i| [m.smoothness[i], m.reflectivity[i]]).collect();
-        let td = D3D11_TEXTURE2D_DESC {
-            Width: 16, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
-        };
+        let mut gpu = built.gpu;
+        gpu.used = self.terrain.material_epoch;
+        self.terrain.mat_pending.remove(&built.id);
+        self.terrain.mat.insert(built.id, gpu);
+    }
 
-        let sd = [InitData::new(bytemuck::cast_slice(&lp), 16 * 8)];
-        if let Ok(tx) = self.dev.create_texture_2d(&td, Some(&sd)) {
-            g.light_params = self.dev.create_shader_resource_view(&tx, None).ok();
+    /// Takes in what the loading threads finished.
+    fn poll_terrain_jobs(&mut self) {
+        let done = std::mem::take(&mut *self.terrain.jobs.lock().unwrap_or_else(|p| p.into_inner()));
+        for m in done.materials {
+            self.take_material(m);
         }
 
-        self.terrain.mat.insert(m.id, g);
+        let frame = self.clock.frame;
+        for (key, g) in done.hf {
+            self.terrain.hf_pending.remove(&key);
+            self.terrain.hf_made.insert(key, frame);
+            self.terrain.hf.insert(key, g);
+        }
+    }
+
+    /// Whether a terrain's GPU side (its patches, its material's maps) is ready; what is not is made on the loading threads, and the
+    /// renderer takes it in at a later frame. A map context puts a streamed chunk on the scene once its terrains are, so making them never
+    /// stalls a frame and the chunk it replaces stays drawn meanwhile.
+    pub fn terrain_ready(&mut self, t: &Terrain) -> bool {
+        self.poll_terrain_jobs();
+        let key = hf_key(t);
+        let hf = self.terrain.hf.contains_key(&key);
+        if !hf && t.nx >= 2 && t.nz >= 2 && self.terrain.hf_pending.insert(key) {
+            let (dev, t, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), t.clone(), self.terrain.jobs.clone());
+            io_pool().post(move || {
+                let g = fill_hf(dev.device(), HfGeo { nx: t.nx, nz: t.nz, step: t.step, ox: t.origin_x, oz: t.origin_z, ..Default::default() }, &t);
+                jobs.lock().unwrap_or_else(|p| p.into_inner()).hf.push((key, g));
+            }, 0.0);
+        }
+
+        let Some(m) = &t.material else { return hf };
+        let ready = self.terrain.mat.contains_key(&m.id);
+        if !ready && self.terrain.mat_pending.insert(m.id) {
+            let have: Vec<((String, bool), Texture)> = [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)].into_iter()
+                .filter_map(|k| self.terrain.arrays.get(&k).cloned().map(|t| (k, t))).collect();
+            let (dev, files, m, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), self.files.clone(), m.clone(), self.terrain.jobs.clone());
+            io_pool().post(move || {
+                let built = material_gpu(dev.device(), files.as_ref(), &m, &|k| have.iter().find(|(h, _)| h == k).map(|(_, t)| t.clone()));
+                jobs.lock().unwrap_or_else(|p| p.into_inner()).materials.push(built);
+            }, 0.0);
+        }
+
+        hf && ready
     }
 
     /// Which terrains the pass takes over this frame: every visible terrain has a material (a mixed scene keeps the legacy ground), not the
     /// environment cube.
     pub(crate) fn prepare_terrain_materials(&mut self, scene: &RenderScene) -> bool {
+        self.poll_terrain_jobs();
         self.terrain.entities.clear();
 
         // A shader that didn't load: the legacy ground stays.
@@ -792,6 +895,11 @@ impl Renderer {
             }).collect();
 
             keys.extend(self.terrain.placed.values().map(|p| p.key));
+
+            // And the ones the loading threads made lately (their chunks wait for the rest of their terrains).
+            let frame = self.clock.frame;
+            self.terrain.hf_made.retain(|_, at| *at + 600 > frame);
+            keys.extend(self.terrain.hf_made.keys());
 
             self.terrain.hf.retain(|k, _| keys.contains(k));
             self.terrain.lf.retain(|id, _| lfs.contains(id));
@@ -1158,6 +1266,7 @@ impl Renderer {
 
     /// The terrain entities the material pass draws, with their geometry built and placed.
     fn terrain_surface_entities<'s>(&mut self, scene: &'s RenderScene) -> Vec<&'s wce_scene::render_scene::Entity> {
+        wce_prof!("terrain.surface_entities");
         let mut ents = vec![];
         for id in self.terrain.entities.clone() {
             let Some(e) = scene.find(id) else { continue };
