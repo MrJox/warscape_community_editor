@@ -57,6 +57,11 @@ pub struct Viewport {
     pub show_grid: bool,
     pub hovered: bool,
     pub frames_rendered: u64,
+
+    /// The compass at the top of the viewport, and where north is in the world (x, z): +z unless a tool says otherwise (the map context
+    /// gives the map's north in the open tile's frame).
+    pub show_compass: bool,
+    pub north: [f32; 2],
     trace: String,
     trace_w: u32,
     trace_h: u32,
@@ -78,7 +83,8 @@ impl Default for Viewport {
     fn default() -> Self {
         Self {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, trace: String::new(),
+            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true,
+            north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
@@ -340,6 +346,68 @@ pub fn focus_selection(e: &mut Editor) {
     e.viewport.controller().focus((lo + hi) * 0.5, (length(hi - lo) * 0.5).max(2.0));
 }
 
+/// The camera's heading in degrees from north (clockwise seen from above: east is 90), `None` looking straight down or up.
+pub fn heading(cam: &Camera, north: [f32; 2]) -> Option<f32> {
+    let (fx, fz) = (cam.target.x - cam.eye.x, cam.target.z - cam.eye.z);
+    let nl = (north[0] * north[0] + north[1] * north[1]).sqrt();
+    if fx * fx + fz * fz < 1e-12 || nl < 1e-12 {
+        return None;
+    }
+
+    // Left-handed, y up: east is north turned a quarter clockwise seen from above.
+    let (nx, nz) = (north[0] / nl, north[1] / nl);
+    let (ex, ez) = (nz, -nx);
+    Some((fx * ex + fz * ez).atan2(fx * nx + fz * nz).to_degrees().rem_euclid(360.0))
+}
+
+/// A compass strip at the top of the viewport image: the directions around the camera's heading, which is marked in the middle.
+fn draw_compass(origin: gui::Vec2, size: gui::Vec2, cam: &Camera, north: [f32; 2]) {
+    const SPAN: f32 = 75.0;
+    let Some(h) = heading(cam, north) else { return };
+    let width = (size.x - 16.0).min(360.0);
+    if width < 120.0 || size.y < 60.0 {
+        return;
+    }
+
+    let dl = gui::window_draw_list();
+    let (cx, top, bar) = (origin.x + size.x * 0.5, origin.y + 6.0, 24.0);
+    let (x0, x1) = (cx - width * 0.5, cx + width * 0.5);
+    let per_degree = width * 0.5 / SPAN;
+    dl.push_clip_rect(gui::v2(x0, top), gui::v2(x1, top + bar + 18.0));
+    dl.rect_filled(gui::v2(x0, top), gui::v2(x1, top + bar), gui::col32(0, 0, 0, 140), 4.0);
+    let white = gui::col32(235, 235, 235, 255);
+    let first = ((h - SPAN) / 5.0).floor() as i32 * 5;
+    for d in (first..=(h + SPAN) as i32 + 5).step_by(5) {
+        let x = cx + (d as f32 - h) * per_degree;
+        let deg = d.rem_euclid(360);
+        let (len, label) = match deg {
+            0 => (10.0, "N"),
+            45 => (8.0, "NE"),
+            90 => (10.0, "E"),
+            135 => (8.0, "SE"),
+            180 => (10.0, "S"),
+            225 => (8.0, "SW"),
+            270 => (10.0, "W"),
+            315 => (8.0, "NW"),
+            _ if deg % 15 == 0 => (6.0, ""),
+            _ => (3.0, ""),
+        };
+
+        dl.line(gui::v2(x, top + bar - len), gui::v2(x, top + bar), white, 1.0);
+        if !label.is_empty() {
+            let colour = if deg == 0 { gui::col32(255, 90, 70, 255) } else { white };
+            dl.text(gui::v2(x - gui::calc_text_width(label) * 0.5, top + 1.0), colour, label);
+        }
+    }
+
+    // The heading: a mark in the middle and its value under the strip.
+    let mark = gui::col32(255, 210, 60, 255);
+    dl.triangle_filled(gui::v2(cx - 5.0, top + bar + 6.0), gui::v2(cx + 5.0, top + bar + 6.0), gui::v2(cx, top + bar - 1.0), mark);
+    let value = format!("{:.0}", h.round().rem_euclid(360.0));
+    dl.text(gui::v2(cx + 8.0, top + bar + 1.0), mark, &value);
+    dl.pop_clip_rect();
+}
+
 /// The "Viewport" window.
 pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     e.viewport.hovered = false;
@@ -389,6 +457,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let origin = gui::cursor_screen_pos();
     e.viewport.image_origin = origin;
     gui::image(tex.id(), size);
+    if e.viewport.show_compass {
+        draw_compass(origin, size, &e.viewport.camera(), e.viewport.north);
+    }
+
     gui::set_cursor_screen_pos(origin);
     gui::invisible_button("##viewport", size, gui::BUTTON_LEFT | gui::BUTTON_RIGHT | gui::BUTTON_MIDDLE);
     let hovered = gui::is_item_hovered();

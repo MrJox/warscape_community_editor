@@ -368,6 +368,11 @@ impl ContextUi {
         }
     }
 
+    /// Where north is in the world for the compass: the map's while a context is shown, else the tile's own +z (its rows' top edge).
+    pub fn north(&self) -> [f32; 2] {
+        self.streamer.as_ref().map_or([0.0, 1.0], |s| s.frame().north())
+    }
+
     /// Shows or hides the context's sea (the tile's sea toggle).
     pub fn show_sea(&self, e: &mut Editor, on: bool) {
         let Some(id) = self.sea else { return };
@@ -424,6 +429,13 @@ impl ContextUi {
             return;
         }
 
+        // Its own id scope: the Tile panel's weather section has a "map" combo too (ImGui reported the id twice).
+        gui::push_id("map context");
+        self.draw_section(e, id);
+        gui::pop_id();
+    }
+
+    fn draw_section(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         let Some(raw) = d.project().raw_root.clone() else {
             gui::text_disabled("the tile is not in an assembly kit (no neighbours to open)");

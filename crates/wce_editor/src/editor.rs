@@ -1271,6 +1271,7 @@ impl Editor {
             }
 
             gui::menu_item_toggle("Grid", &mut self.viewport.show_grid);
+            gui::menu_item_toggle("Compass", &mut self.viewport.show_compass);
             gui::menu_item_toggle("Snap", &mut self.viewport.snap);
             gui::separator();
             if gui::begin_menu("Frame rate cap") {

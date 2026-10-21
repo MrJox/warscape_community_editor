@@ -627,6 +627,18 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("compass", "compass [on|off]", "the compass at the top of the viewport; no argument: log the camera's heading (degrees from north, east 90)", |e, a| {
+        match a.first().map(String::as_str) {
+            Some("on") | Some("off") => {
+                e.viewport.show_compass = a[0] == "on";
+                ok("")
+            }
+
+            Some(_) => fail("usage: compass [on|off]"),
+            None => ok(crate::viewport::heading(&e.viewport.camera(), e.viewport.north).map_or("looking straight down".to_owned(), |h| format!("heading {h:.1}"))),
+        }
+    });
+
     c.add("panel", "panel <name> on|off", "show or hide a panel (viewport outliner inspector assets log history commands)", |e, a| {
         if a.len() < 2 {
             return fail("usage: panel <name> on|off");
