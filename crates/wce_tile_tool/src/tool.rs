@@ -1588,6 +1588,13 @@ impl Tool for TileTool {
                     None => PieceState::default(),
                 }
             });
+
+            // The collapsing buildings' fragments (queued now: they play once loaded).
+            d.tile_mut().poll_collapses(&|model: &str| match models.try_get(model, 0.0) {
+                Some(_) => PieceStatus::Ready,
+                None if models.state(model) == ModelState::Failed => PieceStatus::Failed,
+                None => PieceStatus::Loading,
+            });
         }
 
         let eye = e.viewport.camera().eye;

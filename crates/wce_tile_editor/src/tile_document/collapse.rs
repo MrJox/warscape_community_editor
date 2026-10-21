@@ -29,7 +29,7 @@ use wce_scene::render_scene::{EntityId, LayerId, MODEL_BONE_SUFFIX, MeshInstance
 use super::columns::quat_matrix;
 use super::index::{destruct_number, plain_piece, working_anim};
 use super::view::piece_local;
-use super::{Tile, item_of};
+use super::{PieceStatus, Tile, item_of};
 
 /// How long an effect of a collapse stays after it started (seconds): the dust's particles live up to 8 s after their short emitters.
 const EFFECT_LINGER_S: f32 = 15.0;
@@ -40,10 +40,21 @@ pub(crate) struct CollapseAnim {
     anim: Animation,
 }
 
+/// How long a step waits for its bones' models before it plays anyway (seconds).
+const LOAD_WAIT_S: f32 = 3.0;
+
 /// The step being played (from a level to the next).
 struct Step {
     anim: Option<Arc<CollapseAnim>>,
-    start: Instant,
+
+    /// When it was made, and when it started playing: once its bones' models are loaded (poll_collapses), so that the standing piece
+    /// is not hidden before the fragments can be drawn.
+    made: Instant,
+    start: Option<Instant>,
+    loaded: bool,
+
+    /// The standing piece shows the step's level until the frame after the step starts (both drawn in that frame: no gap).
+    hide_standing: bool,
 
     /// The bone entities (consecutive ids from the first).
     bones: std::ops::Range<EntityId>,
@@ -211,10 +222,9 @@ impl Tile {
         self.tscene().doc().get(elem, "burn").is_some_and(|v| v.trim() == "true") || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
     }
 
-    /// Starts the step from `level`: its bones, and its effects queued.
-    fn start_step(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, piece: usize, level: i64, now: Instant) -> Step {
+    /// The step from `level`: its animation and its effects (it starts playing once its bones' models are loaded).
+    fn make_step(&mut self, elem: usize, piece: usize, level: i64, now: Instant) -> Step {
         let burning = self.burning(elem, piece);
-        let world = self.piece_world(elem, piece);
         let standing = self.standing_file(elem, piece, level);
         let anim = standing.as_deref().and_then(|s| self.collapse_anim(s));
         let mut effects = vec![];
@@ -231,31 +241,92 @@ impl Tile {
         }
 
         // The collapse's own, at their times.
-        let mut first = scene.next_id();
-        let mut count = 0;
         if let Some(a) = &anim {
             let meta = format!("{}.meta", a.mesh.strip_suffix(".rigid_model_v2").unwrap_or(&a.mesh));
             if let Some(m) = self.meta_entries(&meta) {
                 effects.extend(m.iter().filter(|e| step_effect(e, burning)).cloned());
             }
-
-            let pose = self.bone_worlds(a, 0.0);
-            let hidden = self.display.hidden_types.contains("BUILDING_INSTANCE");
-            first = scene.next_id();
-            for (k, bone) in pose.iter().enumerate() {
-                let mi = MeshInstance { model: format!("{}{MODEL_BONE_SUFFIX}{k}", a.mesh), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
-                let id = scene.add(layer, world * *bone, Payload::MeshInstance(mi), self.source(item_of(elem)));
-                if let Some(en) = scene.find_mut(id) {
-                    en.locked = true;
-                    en.visible = !hidden;
-                }
-
-                count += 1;
-            }
         }
 
         effects.sort_by(|a, b| a.start.total_cmp(&b.start));
-        Step { anim, start: now, bones: first..first + count, effects: effects.into() }
+        let loaded = anim.is_none();
+        Step { anim, made: now, start: None, loaded, hide_standing: false, bones: 0..0, effects: effects.into() }
+    }
+
+    /// The models of a collapse's bones.
+    fn bone_models(a: &CollapseAnim) -> impl Iterator<Item = String> + '_ {
+        (0..a.anim.parents.len()).map(|k| format!("{}{MODEL_BONE_SUFFIX}{k}", a.mesh))
+    }
+
+    /// Per frame, from the tool (the document does not know the renderer): asks for the bones' models of the collapses waiting to play
+    /// and of their next steps, and marks the steps whose models are all in (loaded or failed). `load` queues a model and tells its state.
+    pub fn poll_collapses(&mut self, load: &dyn Fn(&str) -> PieceStatus) {
+        if self.collapses.active.is_empty() {
+            return;
+        }
+
+        let mut active = std::mem::take(&mut self.collapses.active);
+        for c in &mut active {
+            if let Some(step) = c.step.as_mut().filter(|s| !s.loaded)
+                && let Some(a) = &step.anim
+            {
+                let mut all = true;
+                for m in Self::bone_models(a) {
+                    all &= load(&m) != PieceStatus::Loading;
+                }
+
+                step.loaded = all;
+            }
+
+            // The next steps' models load meanwhile.
+            for &level in &c.next {
+                let standing = self.standing_file(c.elem, c.piece, level);
+                if let Some(a) = standing.as_deref().and_then(|s| self.collapse_anim(s)) {
+                    for m in Self::bone_models(&a) {
+                        load(&m);
+                    }
+                }
+            }
+        }
+
+        active.append(&mut self.collapses.active);
+        self.collapses.active = active;
+    }
+
+    /// Starts playing a step: its bones in their first frame.
+    fn start_step(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, step: &mut Step, now: Instant) {
+        step.start = Some(now);
+        step.hide_standing = true;
+        let Some(a) = step.anim.clone() else { return };
+        let hidden = self.display.hidden_types.contains("BUILDING_INSTANCE");
+        let first = scene.next_id();
+        for (m, bone) in Self::bone_models(&a).zip(self.bone_worlds(&a, 0.0)) {
+            let mi = MeshInstance { model: m, lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
+            let id = scene.add(layer, world * bone, Payload::MeshInstance(mi), self.source(item_of(elem)));
+            if let Some(en) = scene.find_mut(id) {
+                en.locked = true;
+                en.visible = !hidden;
+            }
+        }
+
+        step.bones = first..scene.next_id();
+    }
+
+    /// The standing piece entity of a collapse: shows `level` (or hides).
+    fn show_standing(&self, scene: &mut RenderScene, elem: usize, piece: usize, level: Option<i64>) {
+        let Some(id) = self.first_entity.get(elem).copied().filter(|&f| f != 0).map(|f| f + piece as EntityId) else { return };
+        let file = level.and_then(|l| self.standing_file(elem, piece, l));
+        let visible = level.is_some()
+            && self.piece_props.get(&(elem, piece)).is_none_or(|p| p.visible)
+            && !self.display.hidden_types.contains("BUILDING_INSTANCE");
+        if let Some(en) = scene.find_mut(id) {
+            en.visible = visible;
+            if let (Some(file), Payload::MeshInstance(mi)) = (file, &mut en.payload) {
+                mi.model = file;
+            }
+        }
+
+        scene.touch();
     }
 
     /// The bones' matrices (piece space) of a collapse at `t` seconds.
@@ -314,11 +385,24 @@ impl Tile {
             loop {
                 if c.step.is_none() {
                     let Some(level) = c.next.pop_front() else { break };
-                    c.step = Some(self.start_step(scene, layer, c.elem, c.piece, level, now));
+
+                    // The standing piece shows the step's level while its bones load.
+                    c.step = Some(self.make_step(c.elem, c.piece, level, now));
+                    self.show_standing(scene, c.elem, c.piece, Some(level));
                 }
 
                 let Some(step) = c.step.as_mut() else { break };
-                let t = now.duration_since(step.start).as_secs_f32();
+                if step.start.is_none() {
+                    if !step.loaded && now.duration_since(step.made).as_secs_f32() < LOAD_WAIT_S {
+                        return true;
+                    }
+
+                    self.start_step(scene, layer, c.elem, world, step, now);
+                } else if std::mem::take(&mut step.hide_standing) && step.anim.is_some() {
+                    self.show_standing(scene, c.elem, c.piece, None);
+                }
+
+                let t = step.start.map_or(0.0, |s| now.duration_since(s).as_secs_f32());
                 while step.effects.front().is_some_and(|e| e.start <= t) {
                     let fx = step.effects.pop_front().expect("a front");
                     self.spawn_effect(scene, layer, c.elem, world, &fx, now);
@@ -345,13 +429,7 @@ impl Tile {
             }
 
             // Done: the standing piece shows its level.
-            let id = self.first_entity.get(c.elem).copied().filter(|&f| f != 0).map(|f| f + c.piece as EntityId);
-            let visible = self.piece_props.get(&(c.elem, c.piece)).is_none_or(|p| p.visible) && !self.display.hidden_types.contains("BUILDING_INSTANCE");
-            if let Some(en) = id.and_then(|id| scene.find_mut(id)) {
-                en.visible = visible;
-                scene.touch();
-            }
-
+            self.show_standing(scene, c.elem, c.piece, Some(c.target));
             false
         });
 
