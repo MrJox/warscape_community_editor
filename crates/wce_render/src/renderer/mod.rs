@@ -899,6 +899,7 @@ impl Renderer {
         self.textures.set_streaming(!self.settings.deterministic);
         self.textures.pump();
         self.build_draws(scene, cam.eye);
+        self.place_effect_rigids();
         let waiting = self.draw_lists.waiting;
         self.draw_stats = DrawStats { items: self.draw_stats.items, batches: self.draw_stats.batches, models: self.draw_stats.models, waiting_models: waiting, ..Default::default() };
         self.resize(width, height);
@@ -1023,7 +1024,7 @@ impl Renderer {
                         row[3] *= units;
                     }
 
-                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, volume: v.volume })
+                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone() })
                 }
 
                 _ => None,

@@ -93,7 +93,7 @@ fn weather_effects() {
     assert_eq!((drops.instance.as_str(), drops.tint_min[0], drops.particle_lifetime_bias, drops.scale, drops.pos), ("rain", 0.5, [0.0, 0.25], 1.5, [0.0, 5.0, 0.0]));
     assert!(drops.camera_following);
     assert_eq!(drops.k.behaviour_mask[3], VFX_DISTORTION_VIEW_ID);
-    assert_eq!(w.notes, ["rain/burst: emitter type burst_rigid not supported (rigid model '')", "vfx/missing_library.xml: missing vfx/missing_library.xml"]);
+    assert_eq!(w.notes, ["rain/burst: rigid model 'rigidmodels/' not drawn in weather", "vfx/missing_library.xml: missing vfx/missing_library.xml"]);
 
     assert!(load_weather_vfx(&read, "").unwrap().emitters.is_empty());
     assert_eq!(load_weather_vfx(&read, "nope").unwrap().notes.len(), 1);

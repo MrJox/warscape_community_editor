@@ -75,8 +75,8 @@ pieces' files of the game and the TDD packs parse to the byte with this layout:
 - u32 version (2), u32 entry count; per entry: string type, u32 entry version, f32 start, f32 end, and from entry version 2 a string tag;
 - `EFFECT` (versions 1, 2, 3, 5): string effect (`vfx/<name>.xml`), string flag (`"true"` / `"false"`), position (3 f32) and rotation
   (quaternion x y z w) in the piece's model space (the space the mesh's pivot is in: the torch's flame at (0.72, 2.09, 0) is the top of
-  the torch head), i32 bone, and from version 3 an f32 scale;
-- `VOLUMETRIC_EFFECT` (2): string effect, then 20 f32, read as a position (3) and rotation (4) (zero, and the identity or all zero, in
+  the torch head), i32 bone, and for version 3 and from 5 an f32 scale (fn 0x116a8680);
+- `VOLUMETRIC_EFFECT` (2): string effect, then 20 f32 (fn 0x116a9c00), read as a position (3) and rotation (4) (zero, and the identity or all zero, in
   every file seen), the box's centre (3) and size (3) in the piece's model space, the box's rotation (4, the identity in every file seen),
   3 more (zero in every file seen). **ASSUMPTION** (centre and size): the walls' boxes span their pieces (`roman_fort_straight` piece01:
   20 x 18 x 12 m around (0, 6.5, 4.3)), the houses' theirs (`barbarian_ahouse_1`: 10.2 x 7 x 12.8 m around (0, 2.9, 0.2));
@@ -108,11 +108,12 @@ instant. From level L to L + 1 the collapse is `..._destruct{L+1}_anim` (`.rigid
   wall the end meets the rubble by eye; the start was not compared closely).
 - The animation runs at its frame rate to its end time (that wall: 20 fps, 10 s; its battlements' pieces 9.9 and 5 s). The editor
   interpolates between frames (translations linearly, rotations nlerp) and draws each bone's blocks as an entity (the model cache's
-  `<file>#bone=K`), the standing piece hidden meanwhile.
+  `<file>#bone=K`). A step starts once its fragments' models are loaded (the tool queues them), and the standing piece hides the frame
+  after the fragments first draw, so there is no frame without either.
 - Skipped levels chain (0 -> 2: `destruct01_anim`, then `destruct02_anim`). A level without a collapse (most houses; the siege engines'
   weighted collapses, not drawn) changes at once, with its bursts.
 - The collapse's `.meta`: a `VOLUMETRIC_EFFECT` of dust (`destruction_vfx_area_dust_light` from intact, `_heavy` from damaged) at about
-  0 s, and the `SOUND_BUILDING` entries (timed impacts; not played).
+  0 s, and the `SOUND_BUILDING` entries (timed impacts; not played: the editor has no audio).
 - The standing `.meta` of the new level holds bursts: `VOLUMETRIC_EFFECT`s (`destruction_vfx_generic_rigid_stone` / `_wood`,
   `_area_dust_*`, 399 in all) and some untagged `EFFECT` explosions (`destruction_vfx_medium_stone_explosion`, 31), plus
   `fire_transition` ones (108).
@@ -121,17 +122,36 @@ The editor plays, per step: the collapse's effects at their times, the new level
 effects of both when the building burns. Each effect entity is removed 15 s after it started (its particles live up to 8 s after its
 short emitters).
 
-The destruction effects' emitters spawn on a mesh (`AllowEmitFromMesh`, `UseSurfaceNormal`, in
-`library_vfx_destruction_spawnmesh_heavy`) and have no spawn area of their own. The editor spawns them over the volume's box (its top and
-four sides, chosen by area), moving out along the face's normal.
+### What the engine was found to do (empire.retail.dll)
+
+- `.meta` entry readers: the classes and their descriptions are a table (fn 0x116a3280); `VOLUMETRIC_EFFECT` is "Trigger a volumetric
+  particle effect group". Its reader (fn 0x116a9c00) reads the common header, the effect name, then 20 dwords; `EFFECT`'s (fn 0x116a8680)
+  reads name, a flag string compared with "true", 8 dwords (position, quaternion, bone) and the scale for versions 3 and from 5 (the
+  editor read it from 3 on; fixed). Buildings copy the volumetric entries into their own array (0x84 bytes each, fn 0x10d511f0).
+- Mesh emission (fn 0x1183fa30, a particle's birth): when the effect's owner has a mesh (owner +0x94 / +0x98) and the emitter
+  AllowEmitFromMesh, the point is on a triangle of that mesh, the triangle drawn uniformly by index from the instance's generator and
+  masked by a per-triangle bit set (owner +0xa8), the point from two draws of the shared generator (folded back when they sum past 1),
+  scaled by the effect's scale and turned by the instance's rotation; UseSurfaceNormal takes the triangle's normal as the direction. The
+  editor does exactly this (particles.rs `mesh_point`).
+- The destruction effects' emitters have no spawn area at all and short lives: the dust plumes live 0.07 - 0.1 s at 40 - 100 particles
+  a second, size 25, rising 5 m/s along the normal; `burst_rigid` emitters throw 1 - 2 pebbles (`vfx/pebbles/pebble_01`) or wooden
+  shards each, at 4 - 15 m/s, falling (GravityAmount 60 - 80), spinning (Spin 2 - 4), living 2 - 3 s. One instance alone is a few puffs
+  and a pebble: the "group" must be many instances.
+
+The editor now: builds the effect's mesh from the triangles of the piece's standing mesh at the level the collapse starts from whose
+centre lies inside the volume's box (in the volume's frame), spawns the volumetric effect as a group of instances on it, and draws the
+`burst_rigid` debris (non-light rigid models) as ballistic models (particles.rs `effect_rigids`, drawn through the scene's draw set).
 
 **ASSUMPTIONS**, to check in game:
+- the mesh a `VOLUMETRIC_EFFECT` emits from is the piece's own standing mesh inside the box (the engine's owner mesh and its triangle mask
+  were found, not what fills them); the box is the volume's centre and size floats (7 - 12, rotation 13 - 16);
+- the group is one instance per 64 m^2 of the box's surface, 1 to 32 (the wall: 25 instances);
+- debris rigids fly ballistically (gravity 0.1962 x GravityAmount, no drag, no collisions: the destruction debris has EnableCollisions
+  false), spin about ParticleSpinAxis from a random orientation, scale lerp(ParticleScaleStart.x, .y); the engine's rigid particle
+  update was not traced;
 - the new level's bursts play when the collapse starts (not when it ends);
-- the dust's mesh is the volume's box (it may be the collapsing fragments' own meshes); its emission rate is not scaled by the mesh's size;
 - an effect's bone is not followed (a few `.meta` effects name bone 0);
-- the editor's playback matches the game's speed (the `.anim`'s rate and end time, real time);
-- `burst_rigid` emitters (the pebbles and wooden shards flying out) are not drawn: the particle system draws only `continuous_mesh` ones
-  (it logs that once per effect).
+- the editor's playback matches the game's speed (the `.anim`'s rate and end time, real time).
 
 Check: in a siege battle, watch a wall section collapse from intact to destroyed, and compare with the editor's
 (`tile_edit <elem> destruction_level 2` on an intact wall).

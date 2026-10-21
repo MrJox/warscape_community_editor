@@ -914,7 +914,7 @@ impl Tile {
 
         let effect = doc.get(elem, "vfx").filter(|v| !v.is_empty())?;
         let scale = doc.get(elem, "scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / self.unit();
-        Some(VfxEmitter { effect, scale: scale as f32, volume: None })
+        Some(VfxEmitter { effect, scale: scale as f32, mesh: None })
     }
 
     /// A light's or an effect's entity follows its edited attributes (an effect that stops or starts playing is removed or added).
