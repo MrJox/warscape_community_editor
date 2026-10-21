@@ -553,6 +553,9 @@ pub struct ParticleSystem {
 
     /// The placed effects' definitions (loaded once per name; their emitters' constants rows follow the weather's) and emitter instances.
     world_effects: Vec<Effect>,
+
+    /// Per placed effect definition, its first constants row after the weather's (the sum of the earlier definitions' emitters).
+    world_first_row: Vec<usize>,
     world_names: BTreeMap<String, usize>,
     world_libs: BTreeMap<String, VfxFile>,
     world: Vec<WorldInstance>,
@@ -654,6 +657,7 @@ impl ParticleSystem {
             effect: WeatherVfx::default(),
             state: vec![],
             world_effects: vec![],
+            world_first_row: vec![],
             world_names: BTreeMap::new(),
             world_libs: BTreeMap::new(),
             world: vec![],
@@ -891,7 +895,41 @@ impl ParticleSystem {
     /// The placed effects of this frame. Effects are loaded on first use (their emitters become constants rows after the weather's);
     /// an effect that stays (same key and name) keeps its emitter state, so its particles carry on.
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
+        // Definitions no placed effect uses any more are unloaded (a map context's tiles, taken off): every frame's work and the
+        // constants rows scale with the loaded ones. The instances, lights and debris of the kept ones follow their new indices.
+        let used = effects.iter().map(|fx| fx.effect.as_str()).collect::<std::collections::BTreeSet<_>>();
         let mut loaded_new = false;
+        if self.world_names.keys().any(|name| !used.contains(name.as_str())) {
+            let mut remap = vec![usize::MAX; self.world_effects.len()];
+            let mut kept = vec![];
+            let mut names = BTreeMap::new();
+            for (name, &old) in &self.world_names {
+                if used.contains(name.as_str()) {
+                    remap[old] = kept.len();
+                    names.insert(name.clone(), kept.len());
+                    kept.push(old);
+                }
+            }
+
+            let mut effects_old = std::mem::take(&mut self.world_effects).into_iter().map(Some).collect::<Vec<_>>();
+            self.world_effects = kept.iter().map(|&old| effects_old[old].take().expect("each kept once")).collect();
+            self.world_names = names;
+            self.world.retain_mut(|i| {
+                i.effect = remap[i.effect];
+                i.effect != usize::MAX
+            });
+            self.world_lights.retain_mut(|l| {
+                l.effect = remap[l.effect];
+                l.effect != usize::MAX
+            });
+            self.world_rigids.retain_mut(|r| {
+                r.effect = remap[r.effect];
+                r.effect != usize::MAX
+            });
+
+            loaded_new = true;
+        }
+
         for fx in effects {
             if !self.world_names.contains_key(&fx.effect) {
                 let effect = load_effect_with(&*self.reader, &fx.effect, &mut self.world_libs);
@@ -906,6 +944,12 @@ impl ParticleSystem {
         }
 
         if loaded_new {
+            self.world_first_row = self.world_effects.iter().scan(0, |row, e| {
+                let first = *row;
+                *row += e.emitters.len();
+                Some(first)
+            }).collect();
+
             let rows = self.effect.emitters.len() + self.world_effects.iter().map(|e| e.emitters.len()).sum::<usize>();
             if rows > MAX_EMITTERS {
                 self.error(format!("{rows} emitter definitions, more than the {MAX_EMITTERS} the shaders' constant arrays hold: the rest are not drawn"));
@@ -1006,8 +1050,10 @@ impl ParticleSystem {
             }
         }
 
+        // The instance texture is written whole every frame: it grows to what the instances need, and shrinks back when they are far
+        // fewer (a map context's thousands of torches, taken off, left it four times too large).
         let rows = (self.effect.emitters.len() + self.world.len()).div_ceil(EMITTER_WIDTH).max(1);
-        if rows > self.emitter_rows {
+        if rows > self.emitter_rows || rows.next_power_of_two() * 2 < self.emitter_rows {
             self.create_emitter_texture(rows.next_power_of_two());
         }
     }
@@ -1224,7 +1270,7 @@ impl ParticleSystem {
 
     /// The constants row of a world instance.
     fn world_row(&self, inst: &WorldInstance) -> usize {
-        self.effect.emitters.len() + self.world_effects[..inst.effect].iter().map(|e| e.emitters.len()).sum::<usize>() + inst.emitter
+        self.effect.emitters.len() + self.world_first_row[inst.effect] + inst.emitter
     }
 
     /// Loads the effect of a weather definition, restarting the simulation. It reloads when the name or `revision` (the editor's edit
