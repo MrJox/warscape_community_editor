@@ -113,8 +113,9 @@ plains (aa .. ad) elsewhere.
 - **Streamed** (2026-10-21; `wce_tile_editor::tile_document::context`): the map is cut into chunks of 8 x 8 cells, each drawn at a level by
   its distance from the focus (the orbit camera's target, the fly camera's eye, or the open tile with "follow the camera" off): **near**
   (everything of its tiles), **mid** (the tiles' coarse heights, quarter-resolution material, buildings and rivers: no vegetation, decals,
-  lights, effects), **far** (the LF ground alone). The rings are the panel's sliders (defaults 8 / 24 / 64 cells); a chunk keeps its level
-  within 2 cells past its ring's edge. Four worker threads build the chunks nearest first (a queued chunk no longer wanted is dropped); each
+  lights, effects), **far** (the LF ground alone). The rings are the panel's sliders (defaults 8 / 24 / 64 cells); the far ring is at least what
+  the camera sees (its far plane from its eye, whatever the focus, in whole chunks), so that no chunk comes and goes at the horizon; a
+  chunk keeps its level within 2 cells past its ring's edge. Four worker threads build the chunks nearest first (a queued chunk no longer wanted is dropped); each
   frame the panel puts what they finished on one scene layer (a chunk's entities are a range of ids, removed in one pass).
 - **Ownership**: a chunk owns the placements whose origin cell it holds; every cell has one owner (the open tile, the first placement over
   it, or nobody), so the levels never overlap: a far chunk draws LF ground over the cells it owns (its own placements' too, which reach out

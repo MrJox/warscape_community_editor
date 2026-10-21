@@ -67,6 +67,7 @@ pub struct Viewport {
     trace_h: u32,
     trace_n: u32,
     gizmo_was_using: bool,
+    wheel_owned: bool,
     gesture: u64,
     press: (f32, f32),
     pressed: bool,
@@ -85,7 +86,7 @@ impl Default for Viewport {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true,
             north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
+            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -411,6 +412,11 @@ fn draw_compass(origin: gui::Vec2, size: gui::Vec2, cam: &Camera, north: [f32; 2
 /// The "Viewport" window.
 pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     e.viewport.hovered = false;
+    if e.viewport.wheel_owned {
+        gui::own_mouse_wheel(None);
+        e.viewport.wheel_owned = false;
+    }
+
     gui::push_style_var_v(gui::VAR_WINDOW_PADDING, gui::v2(0.0, 0.0));
     let open = gui::begin("Viewport", Some(&mut e.panels.viewport), gui::WINDOW_NO_SCROLLBAR | gui::WINDOW_NO_SCROLL_WITH_MOUSE);
     gui::pop_style_var(1);
@@ -465,6 +471,12 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     gui::invisible_button("##viewport", size, gui::BUTTON_LEFT | gui::BUTTON_RIGHT | gui::BUTTON_MIDDLE);
     let hovered = gui::is_item_hovered();
     e.viewport.hovered = hovered;
+
+    // The wheel over the image is the camera's: no window behind it scrolls (Shift+wheel scrolled the host window sideways).
+    if hovered {
+        gui::own_mouse_wheel(Some(gui::get_id("viewport wheel")));
+        e.viewport.wheel_owned = true;
+    }
     let active = gui::is_item_active();
     let button_id = gui::item_id();
     let io = gui::io();

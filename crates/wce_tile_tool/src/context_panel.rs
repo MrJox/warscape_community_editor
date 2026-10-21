@@ -51,6 +51,10 @@ pub struct ContextUi {
     pub near: i32,
     pub mid: i32,
     pub far: i32,
+
+    /// The LF ground the camera sees (cells around the focus, whole chunks): the far ring is at least that, so that no chunk comes and
+    /// goes at the horizon.
+    far_view: i32,
     pub trees: bool,
 
     /// The rings follow the camera (else they stay around the tile).
@@ -80,7 +84,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, trees: true,
+            shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(),
@@ -196,7 +200,7 @@ impl ContextUi {
         let raw = p.raw_root.clone()?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, far: self.far, raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            mid: self.mid, far: self.far_ring(), raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
             cache: Some(cache::cache_dir()),
         })
     }
@@ -318,9 +322,39 @@ impl ContextUi {
         Some((f64::from(p.x), f64::from(p.z)))
     }
 
+    /// The far ring: the slider's, or what the camera sees.
+    fn far_ring(&self) -> i32 {
+        self.far.max(self.far_view)
+    }
+
     /// The cells around the focus the sea covers: the far ring and some.
     fn sea_reach(&self) -> i32 {
-        self.far.max(self.mid).max(self.near) + 4 * CHUNK
+        self.far_ring().max(self.mid).max(self.near) + 4 * CHUNK
+    }
+
+    /// The cells around the focus the camera sees to: its far plane from its eye, which is off the focus (the orbit's target) by its
+    /// distance, in whole chunks.
+    fn view_cells(e: &Editor, focus: (f64, f64)) -> i32 {
+        let cam = e.viewport.camera();
+        let off = (f64::from(cam.eye.x) - focus.0).hypot(f64::from(cam.eye.z) - focus.1);
+        let cells = ((f64::from(cam.zfar) + off) / CELL).ceil() as i32;
+        (cells + CHUNK - 1) / CHUNK * CHUNK
+    }
+
+    /// The far ring follows what the camera sees from the focus; whether it changed.
+    fn follow_view(&mut self, e: &Editor, focus: (f64, f64)) -> bool {
+        let view = Self::view_cells(e, focus);
+        if view == self.far_view {
+            return false;
+        }
+
+        self.far_view = view;
+        let (near, mid, far) = (self.near, self.mid, self.far_ring());
+        if let Some(s) = self.streamer.as_mut() {
+            s.set_rings(near, mid, far);
+        }
+
+        true
     }
 
     /// One update of the streamer: the chunks it finished replace theirs on the layer, the ones it dropped go (one pass over the scene); the
@@ -328,12 +362,13 @@ impl ContextUi {
     pub fn stream(&mut self, e: &mut Editor) -> bool {
         wce_prof!("context.stream");
         let Some(focus) = self.focus(e) else { return false };
+        let widened = self.follow_view(e, focus);
         let reach = self.sea_reach();
         let Some(s) = self.streamer.as_mut() else { return false };
         let changes = s.update(focus);
         self.status = s.report();
         let (dx, dz) = (focus.0 - self.sea_at.0, focus.1 - self.sea_at.1);
-        let moved = (dx * dx + dz * dz).sqrt() > f64::from(2 * CHUNK) * CELL;
+        let moved = (dx * dx + dz * dz).sqrt() > f64::from(2 * CHUNK) * CELL || widened;
         if let (Some(id), true) = (self.sea, moved) {
             let (_, sea) = s.frame().sea(focus, reach);
             e.scene.update_payload(id, sea);
@@ -347,6 +382,7 @@ impl ContextUi {
     /// Waits for every chunk around the focus and puts them on the scene (scripts).
     pub fn settle(&mut self, e: &mut Editor) {
         let Some(focus) = self.focus(e) else { return };
+        self.follow_view(e, focus);
         let Some(s) = self.streamer.as_mut() else { return };
         let changes = s.run_to_idle(focus);
         self.status = s.report();
@@ -552,7 +588,11 @@ impl ContextUi {
         rings |= gui::slider_int("ground and buildings (cells)", &mut self.mid, 1, 128);
         rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 512);
         if let Some(s) = self.streamer.as_mut().filter(|_| rings) {
-            s.set_rings(self.near, self.mid, self.far);
+            s.set_rings(self.near, self.mid, self.far.max(self.far_view));
+        }
+
+        if self.far_view > self.far {
+            gui::text_disabled(&format!("LF ground to the camera's view: {} cells", self.far_view));
         }
 
         changed |= gui::checkbox("their trees", &mut self.trees);

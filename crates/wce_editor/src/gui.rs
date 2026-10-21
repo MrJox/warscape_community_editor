@@ -780,6 +780,16 @@ pub fn add_mouse_wheel_event(x: f32, y: f32) {
     call!(sys::ImGuiIO_AddMouseWheelEvent(sys::igGetIO_Nil(), x, y))
 }
 
+/// Gives the mouse wheel (both axes) to `owner`, or back to everyone (None): while a window's item owns it, Dear ImGui scrolls no window
+/// with it (it would otherwise bubble a wheel over a window that does not scroll up to a parent that does; Shift makes it horizontal).
+pub fn own_mouse_wheel(owner: Option<ImGuiID>) {
+    let id = owner.unwrap_or(ImGuiID::MAX);
+    call!({
+        sys::igSetKeyOwner(sys::ImGuiKey_MouseWheelX, id, 0);
+        sys::igSetKeyOwner(sys::ImGuiKey_MouseWheelY, id, 0);
+    })
+}
+
 // ---- docking and settings
 
 pub fn dock_space(id: ImGuiID, size: Vec2) {
