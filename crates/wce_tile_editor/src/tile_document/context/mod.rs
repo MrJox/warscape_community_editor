@@ -283,6 +283,12 @@ impl Frame {
         self.lf.as_ref().map_or(0.0, |lf| lf.height_at(x as f32, z as f32))
     }
 
+    /// Where the map's north (smaller rows) is in the frame (x, z): +z unless the open tile is placed turned.
+    pub fn north(&self) -> [f32; 2] {
+        let (a, b) = (self.from_map.apply(0.0, 1.0), self.from_map.apply(0.0, 0.0));
+        [(b.0 - a.0) as f32, (b.1 - a.1) as f32]
+    }
+
     /// The map cell under a frame point.
     pub fn cell_of(&self, x: f64, z: f64) -> (f64, f64) {
         self.to_map.apply(x, z)
