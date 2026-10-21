@@ -1,6 +1,19 @@
 # Tile round trip: a game-neutral tile model with per-game readers and writers
 
-Branch `tile-roundtrip`. Status: **plan, waiting for review**.
+Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 not started.
+
+## Phase 1 result
+
+- Crates `wce_tile_model` (the model) and `wce_tile_io` (the `TileFormat` trait, the registry, the XML codec of TEd's file family,
+  `attila.ted_project`); TEd's `%.6f` formatter moved to `wce_formats::c_num` (`printf_f_msvc`, `trim_fraction`). Model and rules:
+  `docs/formats/tile_model.md`; attribute kinds: `docs/formats/tile_ted.md`.
+- The whole kit round-trips (`docs/baseline.md`, "Tile round trip"): every modelled file byte-identical, 222 Photoshop-style PNGs kept,
+  3 broken PNGs carried along, 7 of 83.6 M values kept as text, 0 unknown attributes; edits, re-reads and the cross check against
+  `TedScene` pass.
+- Tests: `wce_tile_io` unit tests and `tests/ted_project.rs` (synthetic, always run), `tests/kit_samples.rs` (25 kit tiles with
+  `WCE_ATTILA_KIT`), gates `tile_roundtrip` and `tile_roundtrip_all` (`--corpus`).
+- Deviations from the plan: legacy `.markers` exports (19 folders) and `custom_normal.*` are carried along as files rather than modelled
+  (their payload is not decoded; they are not TEd sources); "files per folder" is in the survey, not a separate doc.
 
 ## Goal
 

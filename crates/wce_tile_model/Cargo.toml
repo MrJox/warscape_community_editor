@@ -1,0 +1,8 @@
+[package]
+name = "wce_tile_model"
+description = "A tile as data, independent of any game's files: typed element trees (the scene, rivers, the tile database entry), rasters (height, blend and the other maps) and the files carried along. Formats read into it and write out of it (wce_tile_io)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,16 @@
+[package]
+name = "wce_tile_io"
+description = "Reads tiles into the game-neutral model (wce_tile_model) and writes them out of it, one module per game format: Attila's TEd project (tile.ted, maps, river splines, the tile database entry), byte for byte."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2"
+wce_formats = { path = "../wce_formats" }
+wce_tile_model = { path = "../wce_tile_model" }
+
+[dev-dependencies]
+rayon = "1"
+wce_foundation = { path = "../wce_foundation" }
+wce_tile = { path = "../wce_tile" }

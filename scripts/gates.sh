@@ -7,7 +7,7 @@
 #     --render  also renders the reference screenshots (opens editor windows for a few seconds)
 #
 # Inputs are fixed so runs are comparable. Override with environment variables:
-#   WCE_GAME   game folder (contains the assembly_kit_* folders and data/)
+#   WCE_GAME   game folder (contains data/ and the kit: assembly_kit_battle_tilemap + assembly_kit_campaign_tilemap, or one assembly_kit)
 #   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
@@ -25,6 +25,14 @@ MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
 TILE="$BKIT/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa"
 
+# The kit(s) for the crate tests that read kit tiles (wce_tile_io's kit_samples).
+case "${OSTYPE:-}" in msys*|cygwin*|win*) SEP=';';; *) SEP=':';; esac
+if [ -d "$GAME/assembly_kit/raw_data/terrain/tiles" ]; then
+    export WCE_ATTILA_KIT="${WCE_ATTILA_KIT:-$GAME/assembly_kit}"
+else
+    export WCE_ATTILA_KIT="${WCE_ATTILA_KIT:-$BKIT$SEP$GAME/assembly_kit_campaign_tilemap}"
+fi
+
 # The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 mkdir -p "$OUT"
@@ -37,6 +45,11 @@ run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit co
     echo "exit $rc" >> "$OUT/$name.txt"
     printf '%-20s exit %-3s %4ss\n' "$name" "$rc" "$((SECONDS - t0))"
     [ "$rc" = 0 ] || FAILED+=("$name")
+}
+
+ex() { # ex <crate> <example> [args...]: a Cargo example of the workspace, release build
+    local crate="$1" example="$2"; shift 2
+    cargo run --release -q --manifest-path "$ROOT/Cargo.toml" -p "$crate" --example "$example" -- "$@"
 }
 
 # ---- unit tests (the C++ foundation_check, editor_check, unit_tests and height_check are crate tests)
@@ -55,6 +68,8 @@ run perf_check        ex wce_tile_tool perf_check "$BKIT/raw_data/terrain/tiles/
 run xml_splice_check  ex wce_formats xml_splice_check "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield/tile.ted" 60
 # the tile database entry as the root of a tile: entry round trip (both kits), the index and its cache, open by entry = by folder = by tile.ted, a tile.ted outside the kit (plains/3x1/3x1_aa has a corrupt height map: it must fail the same way each time)
 run tile_entry_check  ex wce_tile tile_entry_check "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
+# the tile round trip (docs/plans/tile_roundtrip.md): one tile through the game-neutral model and back, byte for byte, with edits and the cross check against TedScene
+run tile_roundtrip    ex wce_tile_io tile_roundtrip_check "$TILE"
 run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 # the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
 run terrain_check     ex wce_tile_editor terrain_check "$GAME"
@@ -62,6 +77,7 @@ run tdb_build         ex wce_formats tdb_build "$BKIT/raw_data/terrain/tiles/bat
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
+    run tile_roundtrip_all ex wce_tile_io tile_roundtrip_check "$GAME"   # every TEd project of the kit(s) through the model and back (about 2 min)
     run tile_entry_check_all ex wce_tile tile_entry_check "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
     run placement_check ex wce_tile_editor placement_check "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame

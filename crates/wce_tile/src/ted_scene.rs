@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use wce_formats::c_num::{printf_g, strtod_prefix};
+use wce_formats::c_num::{printf_f_msvc, printf_g, strtod_prefix, trim_fraction};
 use wce_formats::xml_doc::{XmlDoc, XmlSplice, encode_entities};
 use wce_foundation::math::Double3;
 
@@ -30,38 +30,7 @@ pub fn format_ted_number(v: f64) -> String {
         return printf_g(d);
     }
 
-    // The exact decimal expansion of the float, then round half away from zero at the 6th decimal.
-    let s = format!("{:.40}", d.abs());
-    let (int_part, frac) = s.split_once('.').expect("a fraction");
-    let mut digits = format!("{int_part}{}", &frac[..6]).into_bytes();
-    if frac.as_bytes()[6] >= b'5' {
-        let mut i = digits.len();
-        loop {
-            if i == 0 {
-                digits.insert(0, b'1');
-                break;
-            }
-
-            i -= 1;
-            if digits[i] == b'9' {
-                digits[i] = b'0';
-            } else {
-                digits[i] += 1;
-                break;
-            }
-        }
-    }
-
-    let (ip, fp) = digits.split_at(digits.len() - 6);
-    let fp = String::from_utf8_lossy(fp).trim_end_matches('0').to_owned();
-    let mut out = if d.is_sign_negative() { "-".to_owned() } else { String::new() };
-    out += &String::from_utf8_lossy(ip);
-    if !fp.is_empty() {
-        out += ".";
-        out += &fp;
-    }
-
-    out
+    trim_fraction(&printf_f_msvc(d, 6)).to_owned()
 }
 
 /// `%g` (6 significant digits) of the value as float32, used for `<point position="x,y,z">`.
