@@ -10,7 +10,7 @@ use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{TerrainImage, Decal, 
-    EntityId, LayerId, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
+    EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
@@ -75,7 +75,7 @@ fn link_colour(set: &str, alpha: f32) -> u32 {
 }
 
 /// Cuts a material's blend / index maps down to a rectangle inside the one they cover (whole pixels; the rectangle follows them).
-fn crop_material(m: &mut TerrainMaterial, x0: f64, z0: f64, x1: f64, z1: f64) {
+pub(crate) fn crop_material(m: &mut TerrainMaterial, x0: f64, z0: f64, x1: f64, z1: f64) {
     let (w, h) = (m.blend.w, m.blend.h);
     if w == 0 || h == 0 || m.x1 <= m.x0 || m.z1 <= m.z0 {
         return;
@@ -129,6 +129,23 @@ impl Tile {
 
         // The tile's own sea gives way to the map context's.
         self.water_dirty = true;
+        if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
+            self.update_terrain(scene, false);
+        }
+    }
+
+    /// The tile's ground material (its whole blend map), if it has one: the map context makes its plain ground from it.
+    pub fn ground_material_base(&self) -> Option<Arc<TerrainMaterial>> {
+        self.material_base.clone()
+    }
+
+    /// The map context's LF map under the tile (its ground is drawn on it as the game does, relative to the mean LF under it), or none.
+    pub fn set_context_lf(&mut self, scene: &mut RenderScene, lf: Option<Arc<LfMap>>) {
+        if self.context_lf.as_ref().map(|l| l.id) == lf.as_ref().map(|l| l.id) {
+            return;
+        }
+
+        self.context_lf = lf;
         if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
             self.update_terrain(scene, false);
         }
@@ -628,8 +645,8 @@ impl Tile {
             t.origin_x = (f64::from(px0) * p.mpp_x() - p.border_m()) as f32;
             t.origin_z = (f64::from(pz0) * p.mpp_z() - p.border_m()) as f32 / k;
             let (nx, unit) = (t.nx, p.unit_scale);
-            t.heights = vec![0.0; t.nx as usize * t.nz as usize];
-            t.heights.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
+            let mut heights = vec![0.0; t.nx as usize * t.nz as usize];
+            heights.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
                 for (i, h) in row.iter_mut().enumerate() {
                     let x = (px0 + i as i32 * stride).min(px1) as u32;
                     let y = (pz0 + j as i32 * stride).min(pz1) as u32;
@@ -637,7 +654,9 @@ impl Tile {
                 }
             });
 
+            t.heights = Arc::new(heights);
             t.lod = true;
+            t.lf = self.context_lf.clone();
             t.material = self.ground_material(&t);
             if t.material.is_none() {
                 t.skin = self.ground_skin();

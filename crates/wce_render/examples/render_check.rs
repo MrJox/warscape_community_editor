@@ -203,14 +203,16 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         let mut scene = RenderScene::default();
         let ground = scene.add_layer(1, "Hill");
         let mut hill = Terrain { nx: 129, nz: 129, step: 4.0, origin_x: -256.0, origin_z: -256.0, ..Default::default() };
-        hill.heights = vec![0.0; (hill.nx * hill.nz) as usize];
+        let mut heights = vec![0.0; (hill.nx * hill.nz) as usize];
         for j in 0..hill.nz {
             for i in 0..hill.nx {
                 let x = hill.origin_x + i as f32 * hill.step;
                 let z = hill.origin_z + j as f32 * hill.step;
-                hill.heights[(j * hill.nx + i) as usize] = 40.0 * (-(x * x + z * z) / (2.0 * 80.0 * 80.0)).exp();
+                heights[(j * hill.nx + i) as usize] = 40.0 * (-(x * x + z * z) / (2.0 * 80.0 * 80.0)).exp();
             }
         }
+
+        hill.heights = std::sync::Arc::new(heights);
 
         let peak_side = hill.heights[(64 * hill.nx + (64 - 15)) as usize];
         let hill_id = scene.add(ground, Float4x4::IDENTITY, Payload::Terrain(hill), SourceRef { doc: 1, item: 0 });

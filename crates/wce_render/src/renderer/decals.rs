@@ -22,7 +22,9 @@ use std::collections::BTreeMap;
 
 use wce_foundation::math::Float4x4;
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene, StructureChange};
+
+use crate::model_cache::State;
 
 use super::*;
 use crate::draw_set::Frustum;
@@ -73,6 +75,14 @@ pub(crate) struct DecalGpu {
     units: f32,
     models: Vec<String>,
     items: Vec<DecalItem>,
+
+    /// Collected at all (a scene may have none); the structure log as far as they follow it and the first entity id not seen (a map
+    /// context's chunks come and go without collecting 100 000 entities again); the mesh entities whose models had not loaded (their
+    /// decal boxes come with the model).
+    built: bool,
+    structure_cursor: u64,
+    next_entity: EntityId,
+    pending: Vec<EntityId>,
 }
 
 /// The textures of a decal model.
@@ -89,6 +99,7 @@ struct DecalTextures {
 
 /// A decal as the pass draws it.
 struct DecalItem {
+    entity: EntityId,
     model: u32,
     inst: [f32; INSTANCE_FLOATS],
 
@@ -147,44 +158,16 @@ impl Renderer {
         t
     }
 
-    /// The scene's drawable decals, sorted by model (see [`DecalGpu::items`]).
-    fn collect_decals(&mut self, scene: &RenderScene) {
-        let id = std::ptr::from_ref(scene) as usize;
-        let models_revision = self.models.revision();
+    /// The decal items of entities (decals, and the decal boxes of loaded models; the meshes whose models have not loaded go to
+    /// `pending`).
+    fn decal_items<'a>(&mut self, scene: &RenderScene, entities: impl Iterator<Item = &'a wce_scene::render_scene::Entity>) {
         let units = self.camera.units;
         let d = &mut self.decals;
-        let same = d.scene_id == id && d.models_revision == models_revision && d.units == units && !d.items.is_empty() && d.structure == scene.structure_revision();
-        if same && d.revision == scene.revision() {
-            return;
-        }
-
-        if same {
-            let models = &self.models;
-            let carries = |id: EntityId| scene.find(id).is_some_and(|e| match &e.payload {
-                Payload::Decal(_) => true,
-                Payload::MeshInstance(mi) => models.peek(&mi.model).0.is_some_and(|m| !m.decals.is_empty()),
-                _ => false,
-            });
-
-            if scene.moved_since(&mut d.moved_cursor).is_some_and(|moved| !moved.into_iter().any(carries)) {
-                d.revision = scene.revision();
-                return;
-            }
-        }
-
-        d.units = units;
-        d.scene_id = id;
-        d.revision = scene.revision();
-        d.structure = scene.structure_revision();
-        let _ = scene.moved_since(&mut d.moved_cursor);
-        d.models_revision = models_revision;
-        d.items.clear();
-        let mut index = BTreeMap::<String, u32>::new();
-        let mut models = vec![];
-        let mut push = |name: &str, w: &Float4x4, tiled: bool, opacity: f32, parallax: f32| {
+        let mut index: BTreeMap<String, u32> = d.models.iter().enumerate().map(|(i, m)| (m.clone(), i as u32)).collect();
+        let mut push = |d: &mut DecalGpu, entity: EntityId, name: &str, w: &Float4x4, tiled: bool, opacity: f32, parallax: f32| {
             let model = *index.entry(name.to_owned()).or_insert_with(|| {
-                models.push(name.to_owned());
-                (models.len() - 1) as u32
+                d.models.push(name.to_owned());
+                (d.models.len() - 1) as u32
             });
 
             // The shaders get the box in game units; culling keeps the scene's.
@@ -199,32 +182,125 @@ impl Renderer {
             // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings).
             inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 1.0]);
             let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() / units;
-            d.items.push(DecalItem { model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
+            d.items.push(DecalItem { entity, model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
         };
 
-        for e in scene.entities() {
+        for e in entities {
             if !scene.drawable(e) {
                 continue;
             }
 
             match &e.payload {
-                Payload::Decal(decal) => push(&decal.model, &e.world, decal.tiled, decal.opacity, decal.parallax),
+                Payload::Decal(decal) => push(d, e.id, &decal.model, &e.world, decal.tiled, decal.opacity, decal.parallax),
 
                 // The decal meshes of a model (rubble around a ruin), once the model has loaded: its world matrix times the decal's box,
                 // stretched once over it, opaque.
-                Payload::MeshInstance(mi) => {
-                    let (Some(gm), _) = self.models.peek(&mi.model) else { continue };
-                    for decal in &gm.decals {
-                        push(&decal.texture, &(e.world * decal.matrix), false, 1.0, 0.0);
+                Payload::MeshInstance(mi) => match self.models.peek(&mi.model) {
+                    (Some(gm), _) => {
+                        for decal in &gm.decals {
+                            push(d, e.id, &decal.texture, &(e.world * decal.matrix), false, 1.0, 0.0);
+                        }
                     }
-                }
+
+                    (None, State::Failed) => {}
+                    (None, _) => d.pending.push(e.id),
+                },
 
                 _ => {}
             }
         }
+    }
 
-        d.items.sort_by_key(|i| i.model);
-        d.models = models;
+    /// Follows the scene since the last collection: removed entities' decals go, added ones' come, meshes whose models loaded since bring
+    /// theirs. False when it has to start over (anything structural but removals and payloads of other kinds, a decal carrier moved).
+    fn update_decals(&mut self, scene: &RenderScene) -> bool {
+        let d = &mut self.decals;
+        let models = &self.models;
+        let carries = |id: EntityId| scene.find(id).is_some_and(|e| match &e.payload {
+            Payload::Decal(_) => true,
+            Payload::MeshInstance(mi) => models.peek(&mi.model).0.is_some_and(|m| !m.decals.is_empty()),
+            _ => false,
+        });
+
+        let mut cursor = d.structure_cursor;
+        let Some(log) = scene.structure_since(&mut cursor) else { return false };
+        let mut gone: Vec<std::ops::Range<EntityId>> = vec![];
+        for c in &log {
+            match c {
+                StructureChange::Removed(r) => gone.push(r.clone()),
+                StructureChange::Payload(id) if !d.items.iter().any(|i| i.entity == *id) && !carries(*id) && !d.pending.contains(id) => {}
+                _ => return false,
+            }
+        }
+
+        if scene.moved_since(&mut d.moved_cursor).is_none_or(|moved| moved.into_iter().any(carries)) {
+            return false;
+        }
+
+        d.structure_cursor = cursor;
+        if !gone.is_empty() {
+            gone.sort_by_key(|r| r.start);
+            let inside = |id: EntityId| {
+                let at = gone.partition_point(|r| r.start <= id);
+                at > 0 && gone[at - 1].contains(&id)
+            };
+
+            d.items.retain(|i| !inside(i.entity));
+            d.pending.retain(|&id| !inside(id));
+        }
+
+        // The pending meshes whose models have come, then the entities added since.
+        let ready: Vec<EntityId> = d.pending.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| match &e.payload {
+            Payload::MeshInstance(mi) => matches!(models.peek(&mi.model).1, State::Ready | State::Failed),
+            _ => true,
+        })).collect();
+
+        d.pending.retain(|id| !ready.contains(id));
+        let all = scene.entities();
+        let first = all.partition_point(|e| e.id < d.next_entity);
+        d.next_entity = scene.next_id();
+        let before = self.decals.items.len();
+        self.decal_items(scene, ready.iter().filter_map(|&id| scene.find(id)).chain(all[first..].iter()));
+        if self.decals.items.len() != before {
+            self.decals.items.sort_by_key(|i| i.model);
+        }
+
+        true
+    }
+
+    /// The scene's drawable decals, sorted by model (see [`DecalGpu::items`]).
+    fn collect_decals(&mut self, scene: &RenderScene) {
+        let id = std::ptr::from_ref(scene) as usize;
+        let models_revision = self.models.revision();
+        let units = self.camera.units;
+        let d = &self.decals;
+        let same = d.scene_id == id && d.units == units && d.built;
+        if same && d.revision == scene.revision() && d.models_revision == models_revision {
+            return;
+        }
+
+        if same && self.update_decals(scene) {
+            let d = &mut self.decals;
+            (d.revision, d.structure, d.models_revision) = (scene.revision(), scene.structure_revision(), models_revision);
+            return;
+        }
+
+        wce_prof!("render.collect_decals");
+        let d = &mut self.decals;
+        d.units = units;
+        d.scene_id = id;
+        d.revision = scene.revision();
+        d.structure = scene.structure_revision();
+        let _ = scene.moved_since(&mut d.moved_cursor);
+        let _ = scene.structure_since(&mut d.structure_cursor);
+        d.next_entity = scene.next_id();
+        d.models_revision = models_revision;
+        d.items.clear();
+        d.models.clear();
+        d.pending.clear();
+        d.built = true;
+        self.decal_items(scene, scene.entities().iter());
+        self.decals.items.sort_by_key(|i| i.model);
     }
 
     pub(crate) fn pass_decals(&mut self, scene: &RenderScene) {

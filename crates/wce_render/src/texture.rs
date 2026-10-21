@@ -1,6 +1,7 @@
 //! DDS loading straight into D3D11 (BCn uploaded as it is, no conversion). Game textures: DXT1 / DXT5 (buildings), cube maps
 //! (campaign skybox), volumes, arrays and uncompressed layouts.
 
+use rayon::prelude::*;
 use wce_d3d11::*;
 
 use crate::RenderError;
@@ -467,15 +468,17 @@ pub fn rgba_mip_chain(w: u32, h: u32, rgba: &[u8]) -> (Vec<Vec<u8>>, Vec<u32>, V
         let (nw, nh) = ((pw / 2).max(1), (ph / 2).max(1));
         let src = &levels[levels.len() - 1];
         let mut next = vec![0u8; nw * nh * 4];
-        for y in 0..nh {
+
+        // Rows in parallel (a map context brings in several 1280 x 1280 terrain maps at once).
+        next.par_chunks_mut(nw * 4).enumerate().for_each(|(y, row)| {
             for x in 0..nw {
                 let (x0, x1, y0, y1) = ((2 * x).min(pw - 1), (2 * x + 1).min(pw - 1), (2 * y).min(ph - 1), (2 * y + 1).min(ph - 1));
                 for k in 0..4 {
                     let s = [(y0, x0), (y0, x1), (y1, x0), (y1, x1)].iter().map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k])).sum::<u32>();
-                    next[(y * nw + x) * 4 + k] = ((s + 2) / 4) as u8;
+                    row[x * 4 + k] = ((s + 2) / 4) as u8;
                 }
             }
-        }
+        });
 
         levels.push(next);
         lw.push(nw as u32);

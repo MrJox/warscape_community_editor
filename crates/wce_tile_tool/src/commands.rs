@@ -312,10 +312,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [neighbour cells] [ground cells]",
-        "show the open tile among its neighbours in a battle map (waits for the build); 'campaign' is the game's campaign battle map",
+        "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [near cells] [mid cells] [far cells]",
+        "show the open tile among its neighbours in a battle map, streamed around the camera (waits for the chunks around it); 'campaign' is the game's campaign battle map",
         |e, a| {
-            let Some(name) = a.first() else { return fail("usage: map_context <map | campaign> [placement | x y rotation] [radius] [far]") };
+            let Some(name) = a.first() else { return fail("usage: map_context <map | campaign> [placement | x y rotation] [near] [mid] [far]") };
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             with_tile(e, |t, e| {
                 use crate::context_panel::{GAME_MAP, load_map, location_names};
@@ -345,7 +345,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let nums: Vec<i32> = rest.iter().map(|v| atoi(v) as i32).collect();
                 let used = if cell || ui.placements.is_empty() {
                     if nums.len() < 3 && cell {
-                        return fail("usage: map_context <map> cell <x> <y> <rotation degrees> [radius] [far]");
+                        return fail("usage: map_context <map> cell <x> <y> <rotation degrees> [near] [mid] [far]");
                     }
 
                     ui.choice = ui.placements.len();
@@ -363,25 +363,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     0
                 };
 
-                if let Some(&r) = nums.get(used) {
-                    ui.radius = r.max(1);
-                }
-
-                if let Some(&f) = nums.get(used + 1) {
-                    ui.far = f.max(0);
+                for (k, ring) in [&mut ui.near, &mut ui.mid, &mut ui.far].into_iter().enumerate() {
+                    if let Some(&r) = nums.get(used + k) {
+                        *ring = r.max(1);
+                    }
                 }
 
                 ui.shown = true;
                 let Some(rq) = ui.request(d) else { return fail("no request (no map or no kit)") };
-                let mut built = wce_tile_editor::tile_document::context::build_context(&rq, files);
+                let s = wce_tile_editor::tile_document::context::Streamer::new(rq, files);
                 ui.build += 1;
-                ui.publish(e, id, &mut built);
+                ui.begin(e, id, Box::new(s));
+                ui.settle(e);
+                let ui = &t.context;
                 let (_, map, loc) = ui.loaded.as_ref().expect("a map");
                 let places: Vec<String> = ui.placements.iter().map(|&i| {
                     let p = &map.placements[i];
                     format!("({}, {}) {:#x} {}", p.x, p.y, p.rotation, location_names(loc.as_ref(), p.x, p.y))
                 }).collect();
-                ok(format!("{}; placements: [{}]", built.report, places.join("; ")))
+                ok(format!("{}; placements: [{}]", ui.status, places.join("; ")))
             })
         },
     );
@@ -401,6 +401,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             ui.start_map(&raw, files);
             ok("started")
         })
+    });
+
+    c.add("map_context_settle", "map_context_settle", "wait until the map context's chunks around the camera are on the scene; says what it has", |e, _| {
+        with_tile(e, |t, e| {
+            if t.context.streamer.is_none() {
+                return fail("no map context");
+            }
+
+            t.context.settle(e);
+            ok(t.context.status.clone())
+        })
+    });
+
+    c.add("map_context_cache", "map_context_cache clear", "empty the map context's cache of opened tiles", |_, a| {
+        if a.first().is_none_or(|v| v != "clear") {
+            return fail("usage: map_context_cache clear");
+        }
+
+        let dir = wce_tile_editor::tile_document::context::cache::cache_dir();
+        ok(format!("{} cached tiles removed from {}", wce_tile_editor::tile_document::context::cache::clear(&dir), dir.display()))
     });
 
     c.add("map_context_off", "map_context_off", "take the map context off the scene", |e, _| {

@@ -37,7 +37,7 @@ use wce_editor_core::inspector::Inspector;
 use wce_formats::tile_climate::ClimateList;
 use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, LfMap, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
 use wce_tile::building_db::BuildingDb;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::WorldTransform;
@@ -408,6 +408,9 @@ pub struct Tile {
 
     /// The material id of the clipped maps (0: none yet).
     pub(crate) material_clip_id: u64,
+
+    /// The map context's LF map: the terrain is drawn on it.
+    pub(crate) context_lf: Option<Arc<LfMap>>,
 }
 
 pub(crate) fn scene_key(scene: &RenderScene) -> usize {
@@ -512,7 +515,7 @@ impl TileDocument {
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
-            clip_to_tile: false, material_clip_id: 0,
+            clip_to_tile: false, material_clip_id: 0, context_lf: None,
         };
 
         tile.build_index();

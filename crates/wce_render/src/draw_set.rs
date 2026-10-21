@@ -280,6 +280,51 @@ impl DrawSet {
         item
     }
 
+    /// Drops the items of the entities `gone` names (the others keep their order); returns each old item's new index, `u32::MAX` for the
+    /// dropped ones. The models and batches stay.
+    pub fn remove_items(&mut self, gone: impl Fn(EntityId) -> bool) -> Vec<u32> {
+        let n = self.items();
+        let mut remap = vec![u32::MAX; n];
+        let mut to = 0usize;
+        for (from, slot) in remap.iter_mut().enumerate() {
+            if gone(self.entity[from]) {
+                continue;
+            }
+
+            if to != from {
+                self.sphere.copy_within(from * 4..from * 4 + 4, to * 4);
+                self.model[to] = self.model[from];
+                self.flags[to] = self.flags[from];
+                self.world[to] = self.world[from];
+                self.params_index[to] = self.params_index[from];
+                self.entity[to] = self.entity[from];
+            }
+
+            *slot = to as u32;
+            to += 1;
+        }
+
+        self.sphere.truncate(to * 4);
+        self.model.truncate(to);
+        self.flags.truncate(to);
+        self.world.truncate(to);
+        self.params_index.truncate(to);
+        self.entity.truncate(to);
+
+        // The parameters of the items that stay, packed again.
+        let mut params = Vec::with_capacity(self.params.len());
+        for i in 0..to {
+            if self.flags[i] & PARAMS != 0 {
+                let at = self.params_index[i] as usize * 16;
+                self.params_index[i] = (params.len() / 16) as u32;
+                params.extend_from_slice(&self.params[at..at + 16]);
+            }
+        }
+
+        self.params = params;
+        remap
+    }
+
     pub fn set_world(&mut self, item: u32, world: &Float4x4) {
         let me = &self.models[self.model[item as usize] as usize];
         let c = world.transform_point(me.centre);
@@ -475,3 +520,33 @@ impl DrawSet {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removing_items_keeps_the_others_and_their_parameters() {
+        let mut set = DrawSet::default();
+        let model = Arc::new(GpuModel::default());
+        let at = |x: f32| {
+            let mut w = Float4x4::IDENTITY;
+            w.m[0][3] = x;
+            w
+        };
+
+        let params = |v: f32| std::array::from_fn::<f32, 16, _>(|i| if i == 0 { v } else { DEFAULT_INSTANCE_PARAMS[i] });
+        for (k, entity) in [10u32, 11, 12, 13].into_iter().enumerate() {
+            set.add(&model, &at(k as f32), (k % 2 == 1).then(|| params(k as f32)).as_ref(), true, false, entity);
+        }
+
+        let remap = set.remove_items(|e| e == 10 || e == 12);
+        assert_eq!(remap, [u32::MAX, 0, u32::MAX, 1]);
+        assert_eq!((set.items(), set.entity(0), set.entity(1)), (2, 11, 13));
+        assert_eq!((set.world[0][0][3], set.world[1][0][3]), (1.0, 3.0));
+
+        // Both kept items had parameters: packed again in order.
+        assert_eq!(set.params.len(), 32);
+        assert_eq!((set.params[set.params_index[0] as usize * 16], set.params[set.params_index[1] as usize * 16]), (1.0, 3.0));
+    }
+}

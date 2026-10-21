@@ -42,14 +42,19 @@ every normal-less mesh are lit differently since (max 29 levels on the dry captu
    flat outputs carry the tile rectangle (`T1.xy` = min xz, `T1.zw` = max xz), the tile's rotation index (`T2.x`, 0..3) and the layer/mapping data (`T2.y`, `T3` =
    four indices into `ps_mapping_array`). `ps30_blend` then, for every pixel the box covers:
    - reconstructs the world position from `s_depth_map` and `inv_view_projection` (rows 21..24 of `camera_VS_PS`), and discards outside the tile rectangle;
-   - derives the tile-local uv from the rectangle and the rotation index (`c[4]` table of 90 degree rotations);
+   - derives the tile-local uv from the rectangle and the rotation index (`icb[4]` table of 90 degree rotations, read from the DXBC 2026-10-21): with
+     (u, v) the pixel's place in the rectangle, centred (-0.5 .. 0.5, v along +z), index 0 keeps (u, v), 1 gives (-v, u), 2 (-u, -v), 3 (v, -u), plus 0.5.
+     The same table turns the tile's own normal (`s_normal_map` .w = x, .y = z) back into the world: a tile placed turned by quarter turns draws its own,
+     unturned maps (the map context relies on it);
    - `s_alpha_map`: tile alpha, `alpha * 1.1 - 0.1 < 0` discards (feathered tile edge);
    - `s_blend_map` (RGBA, normalised to unit length): weights of four terrain layers; `s_index_map` (RGBA): per-layer selector in [0, 1] times 3, whose integer part
      picks a slice of the layer's four variations in the texture array and whose fraction blends with the next slice;
    - for each of the four layers: `slot = mapping[T3.i] * 4 + selector`, uv = `world_xz / g_blend_pixel_scale_array[slot].x` times the layer weight, samples
      `s_diffuse_array` and `s_normal_array` (2D texture arrays, mip bias -0.66) at slice `slot` and `slot + 1` and blends;
    - normals are two-channel (`.wy`, +0.00196 bias, `*2-1`, z rebuilt from `sqrt(1 - x² - y²)`), blended per layer, combined with the tile's own `s_normal_map` and the
-     map-wide `s_lf_normal_map` (weights `g_normal_scales`, `g_mid_distance_normal_strength`, distance falloff `g_mid_distance_*`);
+     map-wide `s_lf_normal_map` (weights `g_normal_scales`, `g_mid_distance_normal_strength`, distance falloff `g_mid_distance_*`). `s_lf_normal_map` is read at
+     `uv = (x, -z) / g_world_dimensions` (vs_height_map_cb, no offset; the sampler wraps), .w = x and .y = -z of the normal (scaled by `g_normal_scales.x`): the base the
+     tile's normal is added to;
    - outputs: `color0 = (diffuse, alpha)`, `color1 = (normal.xyz, alpha)`, `color2 = (light params x, y: from `s_light_params` rows chosen by the same layer indices,
      z: the layer-exempt-group mask result, w: the weighted per-layer value `g_blend_pixel_scale_array[...].z`)`. The alpha channel blends the pass into the G-buffer.
 3. **Far blend** replaces pass 2 beyond `g_far_tile_distance` with the coarse map-wide material (`g_far_world_*_uv_offset`, `g_far_blend_range`).
@@ -180,11 +185,16 @@ GLSL is the GL path and differs in orientation (the screen-to-NDC y flip is miss
 
 ### Frame order
 After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground when every visible terrain has a material), `pass_terrain_material`:
-1. **Surface**: `vs30_geom_new` (grid vertices, `POSITION1..3` = the rows of a 3x4 world matrix per 64 x 64 cell patch; the height comes from the texture) with `ps30_geom` (clip z/w into
+1. **Surface**: `vs30_geom_new` (`POSITION0` = (x, height, z) of a patch's 65 x 65 grid, one vertex buffer per 64 x 64 cell patch of a heights buffer, shared by the terrains that
+   hold it; `POSITION1..3` = the rows of the terrain's 3x4 world matrix moved to the patch, which may turn it about y; since 2026-10-21 the height comes from the vertex,
+   `dot(P0, P2) * g_height_map_hf_scale`, as the game's tile meshes carry theirs) with `ps30_geom` (clip z/w into
    `terrain_zw_`, also the hardware depth, stencil 2 where the surface is nearest) and again with `ps_depth` (view-space z into `terrain_viewz_`, depth test EQUAL).
    *Addressing of the height texture* (the shader's own, read from the DXBC): `uv = world xz / g_world_dimensions + g_lf_uv_offset` (one scalar offset for both axes), the second axis flipped
-   (`row = size - k`), texel = `uv * g_height_map_dimension`, four `ld` loads and a manual bilinear, no clamp below sample 1 and `1 - 1/size` above. So the tool's texture is square, one sample
-   padded on the low side (`origin - step` is the world position of sample 0) and rows are stored top = highest z; `g_height_map_lf_scale` 1, `hf_scale` 1 (the instance row P2 carries y), offset 0.
+   (`row = size - k`), texel = `uv * g_height_map_dimension`, four `ld` loads and a manual bilinear, no clamp below sample 1 and `1 - 1/size` above. It holds the map context's LF
+   (R16 unorm, a square window around the camera, rows stored top = highest z; `g_height_map_lf_scale` = the LF's height, `g_height_map_vertical_offset` = 20 m plus the mean LF under the
+   open tile), or a zero texture for a tile alone. One offset for both axes: the terrain of an LF window is drawn in a frame shifted so that its column 0 and its rows start at the same
+   x and z (the camera constants shifted with it, put back after), the offset sliding that frame's origin to the camera along the window's diagonal (a shift to the map's corner lost the
+   depth's precision: 80 km of coordinates). See docs/re/battle_maps.md, "The map context in the editor".
    The vertex shader also moves distant land up and sea bed down by up to 9 cm so the material pass wins the depth test (`sign(h) * saturate((dist - 20) * 0.1) * 0.09`).
 2. **Blend**: `vs30_blend` draws one unit box per tile (instance data: `TEXCOORD0` the four layer mapping indices, `1` the box minimum, `2` the maximum, `3` the rotation index and layer base),
    back faces only, stencil-tested to the terrain pixels, `ps30_blend` into three RGBA16F targets with ONE / ONE blending (premultiplied by the tile's alpha: colour, normal, light parameters;

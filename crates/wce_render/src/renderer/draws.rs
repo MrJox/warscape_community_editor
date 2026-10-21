@@ -9,7 +9,7 @@ use std::sync::Arc;
 use wce_d3d11::*;
 use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene, StructureChange};
 
 use super::{Renderer, dynamic_buffer};
 use crate::draw_set::{DrawSet, Frustum, View as DrawView, Visible};
@@ -66,6 +66,14 @@ pub(crate) struct SceneDraws {
     pub terrain_revision: u64,
     pub model_revision: u64,
     pub moved_cursor: u64,
+
+    /// The scene's structure log as far as the sets follow it, and the first entity id they have not seen (a map context streams chunks
+    /// in and out: their entities are added and removed without rebuilding the 100 000 items).
+    pub structure_cursor: u64,
+    pub next_entity: EntityId,
+
+    /// The mesh entities whose models were still loading (`waiting` of them): added when their models come.
+    pub waiting_ids: Vec<EntityId>,
 
     /// Entity id -> item (single-item entities), NO_ITEM otherwise.
     pub item_of_entity: Vec<u32>,
@@ -226,7 +234,7 @@ impl Renderer {
         self.models.prune_terrain(scene);
         for e in scene.entities() {
             let Payload::Terrain(t) = &e.payload else { continue };
-            if !scene.drawable(e) {
+            if !scene.drawable(e) || !t.legacy {
                 continue;
             }
 
@@ -274,6 +282,10 @@ impl Renderer {
             return;
         }
 
+        if self.draw_lists.scene_id == scene_id && self.update_draws(scene, eye) {
+            return;
+        }
+
         wce_prof!("render.build_draws");
         self.draw_lists.scene_id = scene_id;
         self.draw_lists.revision = scene.structure_revision();
@@ -281,6 +293,8 @@ impl Renderer {
 
         // Everything is rebuilt from the current state: forget what was logged.
         let _ = scene.moved_since(&mut self.draw_lists.moved_cursor);
+        let _ = scene.structure_since(&mut self.draw_lists.structure_cursor);
+        self.draw_lists.next_entity = scene.next_id();
         self.draw_lists.draws.clear();
         self.draw_lists.rigid_pool.clear();
         self.draw_lists.vis = Visible::default();
@@ -288,6 +302,7 @@ impl Renderer {
         self.draw_lists.entities = 0;
         self.draw_lists.meshes = 0;
         self.draw_lists.waiting = 0;
+        self.draw_lists.waiting_ids.clear();
         self.build_terrain_draws(scene);
 
         // Request every model first: the loads run in parallel, then wait once.
@@ -305,9 +320,100 @@ impl Renderer {
 
         self.draw_lists.draws.reserve(scene.entities().len());
 
-        // One cache lookup (and one lock) per distinct model per build.
+        self.add_draws(scene, scene.entities(), eye);
+        self.draw_stats.items = self.draw_lists.draws.items() + self.draw_lists.terrain_draws.items();
+        self.draw_stats.batches = self.draw_lists.draws.batches() + self.draw_lists.terrain_draws.batches();
+        self.draw_stats.models = self.draw_lists.draws.models() + self.draw_lists.terrain_draws.models();
+        self.draw_stats.waiting_models = self.draw_lists.waiting;
+    }
+
+    /// Follows the scene's structure log since the last build: the items of removed entities go, the added entities' come (a streamed map
+    /// context's chunks). False when the log asks for a rebuild (anything but removals and payloads that are no mesh instances).
+    fn update_draws(&mut self, scene: &RenderScene, eye: Float3) -> bool {
+        let mut cursor = self.draw_lists.structure_cursor;
+        let Some(log) = scene.structure_since(&mut cursor) else { return false };
+        let item = |l: &SceneDraws, id: EntityId| l.item_of_entity.get(id as usize).is_some_and(|&i| i != NO_ITEM);
+        let mut gone: Vec<std::ops::Range<EntityId>> = vec![];
+        for c in &log {
+            match c {
+                StructureChange::Removed(r) => gone.push(r.clone()),
+                StructureChange::Payload(id) if !item(&self.draw_lists, *id) && !scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_))) => {}
+                _ => return false,
+            }
+        }
+
+        wce_prof!("render.update_draws");
+        self.draw_lists.structure_cursor = cursor;
+        self.draw_lists.revision = scene.structure_revision();
+        if !gone.is_empty() {
+            gone.sort_by_key(|r| r.start);
+            let inside = |id: EntityId| {
+                let at = gone.partition_point(|r| r.start <= id);
+                at > 0 && gone[at - 1].contains(&id)
+            };
+
+            let remap = self.draw_lists.draws.remove_items(inside);
+            self.draw_lists.waiting_ids.retain(|&id| !inside(id));
+
+            let at = |i: u32| if i == NO_ITEM { NO_ITEM } else { remap.get(i as usize).copied().unwrap_or(NO_ITEM) };
+            for slot in &mut self.draw_lists.item_of_entity {
+                *slot = at(*slot);
+            }
+
+            for pool in self.draw_lists.rigid_pool.values_mut() {
+                pool.retain_mut(|i| {
+                    *i = at(*i);
+                    *i != NO_ITEM
+                });
+            }
+
+            self.draw_lists.vis = Visible::default();
+        }
+
+        // The entities added since (their ids follow; the scene keeps them in id order).
+        let all = scene.entities();
+        let first = all.partition_point(|e| e.id < self.draw_lists.next_entity);
+        self.draw_lists.next_entity = scene.next_id();
+        let n = all.last().map_or(0, |e| e.id as usize + 1);
+        if self.draw_lists.item_of_entity.len() < n {
+            self.draw_lists.item_of_entity.resize(n, NO_ITEM);
+        }
+
+        // The entities whose models have come since (the others wait on), then the new ones.
+        let models_revision = self.models.revision();
+        if models_revision != self.draw_lists.model_revision && !self.draw_lists.waiting_ids.is_empty() {
+            let ids = std::mem::take(&mut self.draw_lists.waiting_ids);
+            let back: Vec<wce_scene::render_scene::Entity> = ids.iter().filter_map(|&id| scene.find(id)).cloned().collect();
+            self.add_draws(scene, &back, eye);
+        }
+
+        self.draw_lists.model_revision = models_revision;
+        self.add_draws(scene, &all[first..], eye);
+        self.draw_lists.waiting = self.draw_lists.waiting_ids.len();
+        self.draw_stats.waiting_models = self.draw_lists.waiting;
+        if !log.is_empty() || first < all.len() {
+            self.build_terrain_draws(scene);
+        }
+
+        // What moved meanwhile (the items added above are where their entities are already).
+        if let Some(moved) = scene.moved_since(&mut self.draw_lists.moved_cursor) {
+            for id in moved {
+                let Some(e) = scene.find(id) else { continue };
+                if let Some(&item) = self.draw_lists.item_of_entity.get(id as usize).filter(|&&item| item != NO_ITEM) {
+                    self.draw_lists.draws.set_world(item, &e.world);
+                }
+            }
+        }
+        self.draw_stats.items = self.draw_lists.draws.items() + self.draw_lists.terrain_draws.items();
+        self.draw_stats.batches = self.draw_lists.draws.batches() + self.draw_lists.terrain_draws.batches();
+        self.draw_stats.models = self.draw_lists.draws.models() + self.draw_lists.terrain_draws.models();
+        true
+    }
+
+    /// The mesh instances among `entities` as items (one cache lookup and one lock per distinct model).
+    fn add_draws(&mut self, scene: &RenderScene, entities: &[wce_scene::render_scene::Entity], eye: Float3) {
         let mut resolved = HashMap::<&str, Option<Arc<GpuModel>>>::new();
-        for e in scene.entities() {
+        for e in entities {
             let Payload::MeshInstance(mi) = &e.payload else { continue };
             if !scene.drawable(e) {
                 continue;
@@ -321,6 +427,7 @@ impl Renderer {
             let Some(m) = m else {
                 if self.models.state(&mi.model) != State::Failed {
                     self.draw_lists.waiting += 1;
+                    self.draw_lists.waiting_ids.push(e.id);
                 }
 
                 continue;
@@ -335,10 +442,5 @@ impl Renderer {
             self.draw_lists.entities += 1;
             self.draw_lists.meshes += m.meshes.len();
         }
-
-        self.draw_stats.items = self.draw_lists.draws.items() + self.draw_lists.terrain_draws.items();
-        self.draw_stats.batches = self.draw_lists.draws.batches() + self.draw_lists.terrain_draws.batches();
-        self.draw_stats.models = self.draw_lists.draws.models() + self.draw_lists.terrain_draws.models();
-        self.draw_stats.waiting_models = self.draw_lists.waiting;
     }
 }

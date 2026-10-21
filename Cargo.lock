@@ -2248,6 +2248,7 @@ dependencies = [
 name = "wce_tile_editor"
 version = "0.1.0"
 dependencies = [
+ "lz4_flex",
  "rayon",
  "rpfm_lib",
  "serde_json",

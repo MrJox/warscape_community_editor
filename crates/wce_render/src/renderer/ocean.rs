@@ -200,7 +200,11 @@ pub(crate) struct OceanGpu {
     sea_bed: Option<ID3D11ShaderResourceView>,
 
     /// What the sea bed was built from: the scene's address and terrain revision.
-    sea_bed_key: (usize, u64),
+    sea_bed_key: (usize, u64, u64),
+
+    /// The scene's terrain entities (a hash of their ids) as of a structure revision: a streamed map context adds and drops terrains
+    /// without touching the terrain revision.
+    sea_bed_terrains: (u64, u64),
 
     /// The game units per scene unit the grids and the sea bed were built with (both are in game units).
     units: f32,
@@ -213,40 +217,7 @@ pub(crate) struct OceanGpu {
 
 /// The ground height of the scene's terrains at a point, if one covers it (the first that does).
 fn ground_at(terrains: &[(&Entity, &wce_scene::render_scene::Terrain)], x: f32, z: f32) -> Option<f32> {
-    for (e, t) in terrains {
-        if let Some(sh) = &t.shared {
-            let (fi, fj) = ((x - sh.origin) / sh.step, (z - sh.origin) / sh.step);
-            if fi < 0.0 || fj < 0.0 || fi > (sh.n - 1) as f32 || fj > (sh.n - 1) as f32 {
-                continue;
-            }
-
-            let (i, j) = (fi.floor() as i32, fj.floor() as i32);
-            let (u, v) = (fi - i as f32, fj - j as f32);
-            let h = |a: i32, b: i32| sh.height_at(a, b);
-            return Some((h(i, j) * (1.0 - u) + h(i + 1, j) * u) * (1.0 - v) + (h(i, j + 1) * (1.0 - u) + h(i + 1, j + 1) * u) * v);
-        }
-
-        // The terrain's own frame: translated and scaled, never rotated.
-        let m = &e.world.m;
-        let (sx, sy, sz) = (m[0][0], m[1][1], m[2][2]);
-        if sx == 0.0 || sz == 0.0 {
-            continue;
-        }
-
-        let (lx, lz) = ((x - m[0][3]) / sx, (z - m[2][3]) / sz);
-        let (fi, fj) = ((lx - t.origin_x) / t.step, (lz - t.origin_z) / t.step);
-        if fi < 0.0 || fj < 0.0 || fi > (t.nx - 1) as f32 || fj > (t.nz - 1) as f32 {
-            continue;
-        }
-
-        let (i, j) = ((fi.floor() as i32).min(t.nx - 2).max(0), (fj.floor() as i32).min(t.nz - 2).max(0));
-        let (u, v) = (fi - i as f32, fj - j as f32);
-        let h = |a: i32, b: i32| t.height_at(a, b);
-        let local = (h(i, j) * (1.0 - u) + h(i + 1, j) * u) * (1.0 - v) + (h(i, j + 1) * (1.0 - u) + h(i + 1, j + 1) * u) * v;
-        return Some(local * sy + m[1][3]);
-    }
-
-    None
+    terrains.iter().find_map(|(e, t)| t.ground_at(&e.world, x, z))
 }
 
 /// A dynamic R16G16 texture the CPU writes every frame.
@@ -333,24 +304,44 @@ impl Renderer {
         self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps });
     }
 
-    /// The sea bed info texture of the scene's terrains (rebuilt when they change).
+    /// The sea bed info texture of the scene's terrains over it (rebuilt when they change).
     fn ocean_sea_bed(&mut self, scene: &RenderScene) {
-        let key = (scene as *const RenderScene as usize, scene.terrain_revision());
-        if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key {
-            return;
-        }
-
-        // The texture covers game units; the terrains are in scene units.
+        // The texture covers game units; the terrains are in scene units. The terrains over it (a map context has hundreds, most farther).
         let u = self.camera.units;
-        wce_prof!("render.ocean_sea_bed");
-        let terrains = scene.entities().iter()
+        let half = SEA_BED_HALF / u;
+        let over = |e: &Entity, t: &wce_scene::render_scene::Terrain| {
+            let m = &e.world.m;
+            let (x1, z1) = (t.origin_x + (t.nx - 1) as f32 * t.step, t.origin_z + (t.nz - 1) as f32 * t.step);
+            let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+            for (x, z) in [(t.origin_x, t.origin_z), (x1, t.origin_z), (t.origin_x, z1), (x1, z1)] {
+                let (wx, wz) = (m[0][0] * x + m[0][2] * z + m[0][3], m[2][0] * x + m[2][2] * z + m[2][3]);
+                (lo[0], lo[1], hi[0], hi[1]) = (lo[0].min(wx), lo[1].min(wz), hi[0].max(wx), hi[1].max(wz));
+            }
+
+            hi[0] >= -half && lo[0] <= half && hi[1] >= -half && lo[1] <= half
+        };
+
+        let terrains = || scene.entities().iter()
             .filter(|e| scene.drawable(e))
             .filter_map(|e| match &e.payload {
                 Payload::Terrain(t) => Some((e, t)),
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .filter(|(e, t)| over(e, t));
 
+        // Which they are, as of a structure revision (a streamed map context adds and drops terrains without touching the terrain revision).
+        if self.water.ocean.sea_bed_terrains.0 != scene.structure_revision() {
+            let ids = terrains().fold(0xCBF2_9CE4_8422_2325u64, |h, (e, _)| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3));
+            self.water.ocean.sea_bed_terrains = (scene.structure_revision(), ids);
+        }
+
+        let key = (scene as *const RenderScene as usize, scene.terrain_revision(), self.water.ocean.sea_bed_terrains.1);
+        if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key {
+            return;
+        }
+
+        wce_prof!("render.ocean_sea_bed");
+        let terrains = terrains().collect::<Vec<_>>();
         let n = SEA_BED_SIZE as usize;
         let texel = 2.0 * SEA_BED_HALF / SEA_BED_SIZE as f32;
         let [lo, range] = SEA_BED_RANGE;

@@ -177,13 +177,14 @@ pub struct TerrainImage {
 /// of the tile entry's TEXTURE_GROUP (red, green, blue, alpha).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainMaterial {
-    /// The rectangle the maps cover, in world metres: the tile with its border.
+    /// The rectangle the maps cover (the tile with its border), in the terrain entity's frame: the entity's rotation about y and its
+    /// translation place it, not its scale (the tile tool's z scale is already in it); the blend shader turns the maps with the rotation.
     pub x0: f64,
     pub z0: f64,
     pub x1: f64,
     pub z1: f64,
 
-    /// The vertical extent of the box that draws it.
+    /// The vertical extent of the box that draws it, around the terrain's own heights (the renderer adds the entity's lift and the LF under it).
     pub y0: f64,
     pub y1: f64,
 
@@ -195,6 +196,10 @@ pub struct TerrainMaterial {
 
     /// .a = x, .g = z of the surface normal * 0.5 + 0.5 (the two-channel normal the shader reads as .wy); follows the heights.
     pub normal: TerrainImage,
+
+    /// .r = the tile's weight where tiles overlap (the game's final_alpha: it feathers a tile's border into its neighbours'); none is 1
+    /// everywhere.
+    pub alpha: TerrainImage,
 
     /// Changes when `normal` does (the rest of the material is reused then).
     pub normal_id: u64,
@@ -231,6 +236,7 @@ impl Default for TerrainMaterial {
             y1: 1000.0,
             blend: TerrainImage::default(),
             index: TerrainImage::default(),
+            alpha: TerrainImage::default(),
             normal: TerrainImage::default(),
             normal_id: 0,
             diffuse: Default::default(),
@@ -248,8 +254,8 @@ impl Default for TerrainMaterial {
 }
 
 /// A regular grid of heights: vertex (i, j) is at x = origin_x + i * step, z = origin_z + j * step, y = heights[j * nx + i] (before the
-/// entity's world transform). The interim material tiles one diffuse texture every `tile_metres` and shades with the game's rigid
-/// G-buffer shader.
+/// entity's world transform, which may turn it about y). The interim material tiles one diffuse texture every `tile_metres` and shades with
+/// the game's rigid G-buffer shader.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Terrain {
     pub nx: i32,
@@ -258,8 +264,9 @@ pub struct Terrain {
     pub origin_z: f32,
     pub step: f32,
 
-    /// nx * nz; empty is flat at 0.
-    pub heights: Vec<f32>,
+    /// nx * nz; empty is flat at 0. The tile's own (high-frequency) heights; the placements of one tile share the buffer, and the renderer
+    /// keeps one copy of its geometry per buffer.
+    pub heights: Arc<Vec<f32>>,
     pub diffuse: String,
     pub tile_metres: f32,
 
@@ -275,9 +282,12 @@ pub struct Terrain {
     /// When set, the ground is drawn by the game's terrain shaders (the legacy patches stay for picking, shadows and the environment cube).
     pub material: Option<Arc<TerrainMaterial>>,
 
-    /// When set, the game's terrain shaders take the heights from this map (shared by several terrains, like the game's map-wide one) and
-    /// `heights` only bound the patches; the entity's world matrix must be the identity.
-    pub shared: Option<Arc<SharedHeights>>,
+    /// When set, the game's terrain shaders add this map's low-frequency heights to `heights` by world position (as the game adds its
+    /// map-wide LF to a tile's own), and its normals to the material's.
+    pub lf: Option<Arc<LfMap>>,
+
+    /// Also as the legacy patches (picking, the environment cube, a scene without the material pass); a map context's ground is not.
+    pub legacy: bool,
 
     /// Change it when the heights or the texture change: the renderer rebuilds the mesh.
     pub version: u64,
@@ -291,36 +301,82 @@ impl Default for Terrain {
             origin_x: -1.0,
             origin_z: -1.0,
             step: 2.0,
-            heights: vec![],
+            heights: Arc::default(),
             diffuse: "terrain/textures/battle/default/grass/0_su_diffuse.dds".to_owned(),
             tile_metres: 8.0,
             casts_shadow: false,
             lod: false,
             skin: None,
             material: None,
-            shared: None,
+            lf: None,
+            legacy: true,
             version: 0,
         }
     }
 }
 
-/// A square grid of heights several terrain entities draw from (the game's terrain vertex shader has one uv offset for both axes, so a
-/// height texture must start at the same world x and z: this one does, at `origin`): vertex (i, j) at x = origin + i * step,
-/// z = origin + j * step, y = heights[j * n + i].
-#[derive(Clone, Debug, PartialEq)]
-pub struct SharedHeights {
-    pub origin: f32,
+/// A map's low-frequency heights in world space (the game's `t_low_res_height_map`): sample (i, j) at x = x0 + i * step, z = z0 + j * step,
+/// its height `values[j * nx + i] / 65535 * scale - offset` (scene units), bilinear between samples and clamped at the edges.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LfMap {
+    pub x0: f32,
+    pub z0: f32,
     pub step: f32,
-    pub n: i32,
-    pub heights: Vec<f32>,
+    pub nx: i32,
+    pub nz: i32,
+    pub values: Vec<u16>,
+    pub scale: f32,
+    pub offset: f32,
+
+    /// Its normals as the blend shader reads `s_lf_normal_map`: at uv = (x, -z) / `normal_world`, wrapping (the image is the map's normals
+    /// laid around a torus of that size); .a = x, .g = -z of the unit normal * 0.5 + 0.5.
+    pub normal: TerrainImage,
+    pub normal_world: [f32; 2],
 
     /// Changes with the content.
     pub id: u64,
 }
 
-impl SharedHeights {
-    pub fn height_at(&self, i: i32, j: i32) -> f32 {
-        self.heights.get((j.clamp(0, self.n - 1) * self.n + i.clamp(0, self.n - 1)) as usize).copied().unwrap_or(0.0)
+impl LfMap {
+    fn value(&self, i: i32, j: i32) -> f32 {
+        f32::from(self.values[(j.clamp(0, self.nz - 1) * self.nx + i.clamp(0, self.nx - 1)) as usize])
+    }
+
+    /// The height at a world point (scene units).
+    pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        if self.nx < 1 || self.nz < 1 || self.values.is_empty() {
+            return -self.offset;
+        }
+
+        let fi = ((x - self.x0) / self.step).clamp(0.0, (self.nx - 1) as f32);
+        let fj = ((z - self.z0) / self.step).clamp(0.0, (self.nz - 1) as f32);
+        let (i, j) = (fi.floor() as i32, fj.floor() as i32);
+        let (u, v) = (fi - i as f32, fj - j as f32);
+        let a = self.value(i, j) + (self.value(i + 1, j) - self.value(i, j)) * u;
+        let b = self.value(i, j + 1) + (self.value(i + 1, j + 1) - self.value(i, j + 1)) * u;
+        (a + (b - a) * v) / 65535.0 * self.scale - self.offset
+    }
+
+    /// The lowest and highest height over a world rectangle (its samples and the ones around it).
+    pub fn range(&self, x0: f32, z0: f32, x1: f32, z1: f32) -> (f32, f32) {
+        if self.nx < 1 || self.nz < 1 || self.values.is_empty() {
+            return (-self.offset, -self.offset);
+        }
+
+        let i = |x: f32| (((x - self.x0) / self.step).floor() as i32).clamp(0, self.nx - 1);
+        let j = |z: f32| (((z - self.z0) / self.step).floor() as i32).clamp(0, self.nz - 1);
+        let (i0, i1) = (i(x0.min(x1)), (i(x0.max(x1)) + 1).min(self.nx - 1));
+        let (j0, j1) = (j(z0.min(z1)), (j(z0.max(z1)) + 1).min(self.nz - 1));
+        let (mut lo, mut hi) = (u16::MAX, 0u16);
+        for jj in j0..=j1 {
+            for &v in &self.values[(jj * self.nx + i0) as usize..=(jj * self.nx + i1) as usize] {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+
+        let h = |v: u16| f32::from(v) / 65535.0 * self.scale - self.offset;
+        (h(lo), h(hi))
     }
 }
 
@@ -333,6 +389,30 @@ impl Terrain {
 
     pub fn height_at(&self, i: i32, j: i32) -> f32 {
         if self.heights.is_empty() { 0.0 } else { self.heights[j as usize * self.nx as usize + i as usize] }
+    }
+
+    /// The ground's height at a world point under the entity's world matrix (its own heights plus the LF map's), `None` off its grid.
+    pub fn ground_at(&self, world: &Float4x4, x: f32, z: f32) -> Option<f32> {
+        // The inverse of the matrix's xz part (a turn about y and a scale).
+        let m = &world.m;
+        let (a, b, c, d) = (m[0][0], m[0][2], m[2][0], m[2][2]);
+        let det = a * d - b * c;
+        if det.abs() < 1e-12 || self.nx < 2 || self.nz < 2 {
+            return None;
+        }
+
+        let (px, pz) = (x - m[0][3], z - m[2][3]);
+        let (lx, lz) = ((d * px - b * pz) / det, (a * pz - c * px) / det);
+        let (fi, fj) = ((lx - self.origin_x) / self.step, (lz - self.origin_z) / self.step);
+        if fi < 0.0 || fj < 0.0 || fi > (self.nx - 1) as f32 || fj > (self.nz - 1) as f32 {
+            return None;
+        }
+
+        let (i, j) = ((fi.floor() as i32).min(self.nx - 2).max(0), (fj.floor() as i32).min(self.nz - 2).max(0));
+        let (u, v) = (fi - i as f32, fj - j as f32);
+        let h = |a: i32, b: i32| self.height_at(a, b);
+        let local = (h(i, j) * (1.0 - u) + h(i + 1, j) * u) * (1.0 - v) + (h(i, j + 1) * (1.0 - u) + h(i + 1, j + 1) * u) * v;
+        Some(local * m[1][1] + m[1][3] + self.lf.as_ref().map_or(0.0, |lf| lf.height_at(x, z)))
     }
 }
 
@@ -569,6 +649,20 @@ const NONE: u32 = u32::MAX;
 /// Moved-entity log entries kept while nobody follows the log.
 const MOVED_LOG_LIMIT: usize = 1 << 20;
 
+/// A structural change of the scene that a consumer can follow without starting over (see [`RenderScene::structure_since`]); entities
+/// added are not logged (their ids follow the last one seen).
+#[derive(Clone, Debug, PartialEq)]
+pub enum StructureChange {
+    /// The entities with these ids went.
+    Removed(std::ops::Range<EntityId>),
+
+    /// An entity's payload was replaced by another kind or another one of its kind.
+    Payload(EntityId),
+
+    /// Anything else (visibility, layers, a cleared layer): start over.
+    Other,
+}
+
 /// The scene.
 #[derive(Clone, Debug)]
 pub struct RenderScene {
@@ -586,6 +680,10 @@ pub struct RenderScene {
 
     /// The log position of moved_log[0].
     moved_base: u64,
+
+    /// The structural changes since `structure_base` (see [`StructureChange`]).
+    structure_log: Vec<StructureChange>,
+    structure_base: u64,
 
     pub environment: EnvironmentSlot,
 
@@ -613,6 +711,8 @@ impl Default for RenderScene {
             terrain_rev: 1,
             moved_log: vec![],
             moved_base: 0,
+            structure_log: vec![],
+            structure_base: 0,
             environment: EnvironmentSlot::default(),
             vegetation_season: String::new(),
             game_units: 1.0,
@@ -677,7 +777,10 @@ impl RenderScene {
 
         self.index[id as usize] = self.entities.len() as u32;
         self.entities.push(Entity { id, layer, world, source, visible: true, locked: false, payload });
-        self.touch();
+
+        // Not logged: an entity added has an id past the last one a consumer saw.
+        self.revision += 1;
+        self.structure += 1;
         id
     }
 
@@ -718,12 +821,38 @@ impl RenderScene {
             self.revision += 1;
             self.terrain_rev += 1;
         } else {
-            self.touch();
+            self.log_structure(StructureChange::Payload(id));
         }
     }
 
     /// The entities whose world matrix changed since `cursor` (start from 0, pass the same variable again); `None` when the log no
     /// longer reaches back that far (rebuild everything then). Afterwards `cursor` is the log's end.
+    /// The structural changes since `cursor` (start from 0, pass the same variable again), as [`Self::moved_since`]: `None` when the log no
+    /// longer reaches back that far (start over then).
+    pub fn structure_since(&self, cursor: &mut u64) -> Option<Vec<StructureChange>> {
+        let end = self.structure_base + self.structure_log.len() as u64;
+        let start = *cursor;
+        *cursor = end;
+        if start < self.structure_base || start > end {
+            return None;
+        }
+
+        Some(self.structure_log[(start - self.structure_base) as usize..].to_vec())
+    }
+
+    fn log_structure(&mut self, change: StructureChange) {
+        self.revision += 1;
+        self.structure += 1;
+
+        // Nobody is following: forget the old entries.
+        if self.structure_log.len() > MOVED_LOG_LIMIT {
+            self.structure_base += self.structure_log.len() as u64;
+            self.structure_log.clear();
+        }
+
+        self.structure_log.push(change);
+    }
+
     pub fn moved_since(&self, cursor: &mut u64) -> Option<Vec<EntityId>> {
         let end = self.moved_base + self.moved_log.len() as u64;
         let start = *cursor;
@@ -756,6 +885,28 @@ impl RenderScene {
     /// Removes the entities with ids in `ids` (one pass, for many entities added in a row).
     pub fn remove_range(&mut self, ids: std::ops::Range<EntityId>) {
         self.retain_entities(|e| !ids.contains(&e.id));
+    }
+
+    /// Removes the entities with ids in any of `ranges` (one pass for all: a streamed map context drops several chunks a frame).
+    pub fn remove_ranges(&mut self, ranges: &[std::ops::Range<EntityId>]) {
+        let mut sorted: Vec<std::ops::Range<EntityId>> = ranges.iter().filter(|r| !r.is_empty()).cloned().collect();
+        if sorted.is_empty() {
+            return;
+        }
+
+        sorted.sort_by_key(|r| r.start);
+        let before = self.entities.len();
+        self.entities.retain(|e| {
+            let at = sorted.partition_point(|r| r.start <= e.id);
+            at == 0 || !sorted[at - 1].contains(&e.id)
+        });
+
+        if self.entities.len() != before {
+            self.reindex();
+            for r in sorted {
+                self.log_structure(StructureChange::Removed(r));
+            }
+        }
     }
 
     /// Keeps the layer, drops its entities.
@@ -821,7 +972,6 @@ impl RenderScene {
     }
 
     pub fn touch(&mut self) {
-        self.revision += 1;
-        self.structure += 1;
+        self.log_structure(StructureChange::Other);
     }
 }
