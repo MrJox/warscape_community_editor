@@ -166,7 +166,14 @@ plains (aa .. ad) elsewhere.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
-  (several arriving in one frame hitch it).
+  (several arriving in one frame hitch it) - fixed, below.
+- **Uploads off the render thread** (2026-10-21): a streamed chunk's terrains get their GPU side (the patches' vertex buffers, the
+  material's maps with their mip chains, the climate's texture arrays) made on the loading threads (`Renderer::terrain_ready`; the D3D11
+  device is free-threaded); the panel puts a chunk on the scene once all its terrains are ready (the version it replaces stays drawn
+  meanwhile: no holes, no frame without textures), at most 3 ms of them a frame. The draw set builds the legacy terrain set again only
+  when a legacy terrain comes or goes. The walk above: 12.9 ms a frame on average (was 15.6), p95 36 ms, the worst 54 ms (was 140);
+  over tiles already in memory 10.5 ms, p95 28, worst 38. What is left comes with the chunks' level changes in one frame (the draw set
+  update, the shadow pass's first draws with the new buffers, the sea) and the tile opening on the workers competing for the cores.
 - **Render origin** (2026-10-21): far from the open tile (1,170 cells away on the campaign map, 150 000 scene units) float32 positions lost
   the depth's and the ground textures' precision: the blend shader rebuilds positions from depth and samples the layers at `world /
   repeat`, so the ground swam in moire rings as the camera moved (a 0.1-unit move changed 35 % of the pixels, now 0.3 %, as next to the

@@ -75,6 +75,9 @@ pub(crate) struct SceneDraws {
     /// The mesh entities whose models were still loading (`waiting` of them): added when their models come.
     pub waiting_ids: Vec<EntityId>,
 
+    /// The terrain entities drawn as legacy patches (a change that adds or removes none leaves the terrain set as it is).
+    pub legacy_terrain: std::collections::HashSet<EntityId>,
+
     /// Entity id -> item (single-item entities), NO_ITEM otherwise.
     pub item_of_entity: Vec<u32>,
 
@@ -235,6 +238,7 @@ impl Renderer {
         self.draw_lists.terrain_bounds.clear();
         self.draw_lists.terrain_entities = 0;
         self.draw_lists.terrain_meshes = 0;
+        self.draw_lists.legacy_terrain.clear();
         self.models.prune_terrain(scene);
         for e in scene.entities() {
             let Payload::Terrain(t) = &e.payload else { continue };
@@ -242,6 +246,7 @@ impl Renderer {
                 continue;
             }
 
+            self.draw_lists.legacy_terrain.insert(e.id);
             let Some(tg) = self.models.terrain(e.id, t) else { continue };
             let mut eb = EntityBounds { world: e.world, bmin: Float3::new(1e30, 1e30, 1e30), bmax: Float3::new(-1e30, -1e30, -1e30) };
             for p in tg.patches.iter().filter(|p| !p.meshes.is_empty()) {
@@ -395,7 +400,10 @@ impl Renderer {
         self.add_draws(scene, &all[first..], eye);
         self.draw_lists.waiting = self.draw_lists.waiting_ids.len();
         self.draw_stats.waiting_models = self.draw_lists.waiting;
-        if !log.is_empty() || first < all.len() {
+        // The legacy terrain set again only when one of its terrains came or went (a map context's are not legacy).
+        let legacy_gone = self.draw_lists.legacy_terrain.iter().any(|&id| gone.iter().any(|r| r.contains(&id)));
+        let legacy_new = all[first..].iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.legacy));
+        if legacy_gone || legacy_new {
             self.build_terrain_draws(scene);
         }
 
