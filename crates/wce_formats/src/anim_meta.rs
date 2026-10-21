@@ -4,8 +4,10 @@
 //! - u32 version (2), u32 entry count, then per entry: its type name (u16 length, bytes), u32 entry version, f32 start and end time, and
 //!   for entry versions >= 2 a tag (string: `ip_fire`, `capture`, `fire_transition`, `fire`, empty), then by type:
 //! - `EFFECT` (versions 1, 2, 3, 5): the effect (`vfx/<name>.xml`), a string ("true" / "false", not known), the position (3 floats) and
-//!   rotation (quaternion x y z w) in the piece's model space, an i32 bone (-1: none), and from version 3 an f32 scale.
-//! - `VOLUMETRIC_EFFECT` (2): the effect, then 20 floats, read as: a position (3) and a rotation (4) (seen: zero, and the identity or all
+//!   rotation (quaternion x y z w) in the piece's model space, an i32 bone (-1: none), and for version 3 and from 5 an f32 scale (the
+//!   engine's reader, fn 0x116a8680; the string is a flag, "true" / "false").
+//! - `VOLUMETRIC_EFFECT` (2): the effect, then 20 floats (the engine's reader, fn 0x116a9c00, reads them as 20 dwords), read here as:
+//!   a position (3) and a rotation (4) (seen: zero, and the identity or all
 //!   zero), the box's centre (3) and size (3) in the piece's model space, the box's rotation (4, the identity in every file seen) and 3
 //!   floats (zero in every file seen). ASSUMPTION: centre and size (the walls' boxes span their pieces: 20 x 18 x 12 m around
 //!   (0, 6.5, 4.3) for a 20 m wall); the engine was not traced.
@@ -75,7 +77,8 @@ pub fn meta_effects(bytes: &[u8]) -> Option<Vec<MetaEffect>> {
                 let position = [r.f32()?, r.f32()?, r.f32()?];
                 let rotation = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
                 let bone = r.u32()? as i32;
-                let scale = if version >= 3 { r.f32()? } else { 1.0 };
+                // The engine's reader (fn 0x116a8680) reads it for versions 3 and from 5 (4 has none).
+                let scale = if version == 3 || version >= 5 { r.f32()? } else { 1.0 };
                 out.push(MetaEffect { tag, effect, start, end, position, rotation, bone, scale, volume: None });
             }
 

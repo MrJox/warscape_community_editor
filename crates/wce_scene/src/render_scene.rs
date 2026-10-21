@@ -344,10 +344,13 @@ pub struct VfxEmitter {
     /// The effect's scale (the tile's scale / unit_scale, as BOB writes the markers).
     pub scale: f32,
 
-    /// A box (size in metres, centred on the entity, in its frame) its emitters that emit from a mesh (`AllowEmitFromMesh`) spawn over: a
-    /// building's `VOLUMETRIC_EFFECT`.
-    pub volume: Option<[f32; 3]>,
+    /// The triangles (three points, metres, in the entity's frame) its emitters that emit from a mesh (`AllowEmitFromMesh`) spawn on: a
+    /// building's `VOLUMETRIC_EFFECT` (the particle system's mesh emission).
+    pub mesh: Option<EmitMesh>,
 }
+
+/// Triangles an effect emits from: per triangle its three points (x y z each).
+pub type EmitMesh = std::sync::Arc<Vec<[f32; 9]>>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OverlayVertex {

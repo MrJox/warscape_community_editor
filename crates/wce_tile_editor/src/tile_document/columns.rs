@@ -351,7 +351,7 @@ impl Tile {
             let Some(effects) = self.piece_effects(&file) else { continue };
             for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
                 let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, volume: None };
+                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, mesh: None };
                 let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
                 if let Some(en) = scene.find_mut(id) {
                     en.locked = true;

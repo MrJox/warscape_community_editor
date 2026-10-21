@@ -8,7 +8,8 @@
 //! without a collapse animation (most houses, the siege engines' weighted collapses) changes at once, with its effects.
 //!
 //! The effects of a collapse step, each spawned at its start time and removed a while after (the particles live on for seconds):
-//! - the collapse's own `<anim>.meta`: its dust (`VOLUMETRIC_EFFECT`, `destruction_vfx_area_dust_*`, over the volume) and its effects;
+//! - the collapse's own `<anim>.meta`: its dust (`VOLUMETRIC_EFFECT`, `destruction_vfx_area_dust_*`: a group of instances emitting from
+//!   the piece's mesh inside the volume, see `emit_mesh`) and its effects;
 //! - the new level's standing `.meta`: its bursts (`VOLUMETRIC_EFFECT` such as `destruction_vfx_generic_rigid_stone`, untagged
 //!   `destruction_vfx_*` explosions), at the step's start;
 //! - from both, the `fire_transition` effects when the building burns (its `burn` property).
@@ -24,7 +25,7 @@ use wce_formats::anim::Animation;
 use wce_formats::anim_meta::{MetaEffect, meta_effects};
 use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_foundation::log;
-use wce_scene::render_scene::{EntityId, LayerId, MODEL_BONE_SUFFIX, MeshInstance, Payload, RenderScene, VfxEmitter};
+use wce_scene::render_scene::{EmitMesh, EntityId, LayerId, MODEL_BONE_SUFFIX, MeshInstance, Payload, RenderScene, VfxEmitter};
 
 use super::columns::quat_matrix;
 use super::index::{destruct_number, plain_piece, working_anim};
@@ -33,6 +34,10 @@ use super::{PieceStatus, Tile, item_of};
 
 /// How long an effect of a collapse stays after it started (seconds): the dust's particles live up to 8 s after their short emitters.
 const EFFECT_LINGER_S: f32 = 15.0;
+
+/// A volumetric effect's group: one instance of the effect per this much of its volume's surface (m^2), at most `GROUP_MAX`.
+const GROUP_AREA_M2: f32 = 64.0;
+const GROUP_MAX: usize = 32;
 
 /// A collapse animation: its mesh file and its decoded frames.
 pub(crate) struct CollapseAnim {
@@ -45,6 +50,8 @@ const LOAD_WAIT_S: f32 = 3.0;
 
 /// The step being played (from a level to the next).
 struct Step {
+    /// The level it collapses from.
+    level: i64,
     anim: Option<Arc<CollapseAnim>>,
 
     /// When it was made, and when it started playing: once its bones' models are loaded (poll_collapses), so that the standing piece
@@ -86,6 +93,9 @@ pub(crate) struct CollapseState {
 
     /// The collapses' effect entities and when they go.
     effects: Vec<(EntityId, Instant)>,
+
+    /// (piece file, volume) -> the triangles a volumetric effect emits from.
+    emit_meshes: HashMap<(String, [u32; 10]), Option<EmitMesh>>,
 }
 
 /// The column-vector matrix of a bone's local transform.
@@ -250,7 +260,7 @@ impl Tile {
 
         effects.sort_by(|a, b| a.start.total_cmp(&b.start));
         let loaded = anim.is_none();
-        Step { anim, made: now, start: None, loaded, hide_standing: false, bones: 0..0, effects: effects.into() }
+        Step { level, anim, made: now, start: None, loaded, hide_standing: false, bones: 0..0, effects: effects.into() }
     }
 
     /// The models of a collapse's bones.
@@ -345,17 +355,83 @@ impl Tile {
         out
     }
 
-    /// Spawns a collapse's effect on a piece.
-    fn spawn_effect(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, fx: &MetaEffect, now: Instant) {
-        let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-        let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / self.unit() as f32, volume: fx.volume };
-        let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
-        if let Some(en) = scene.find_mut(id) {
-            en.locked = true;
+    /// The triangles a volumetric effect emits from: those of the piece's standing mesh (`file`, the level the collapse starts from: the
+    /// dust's emitters live for a tenth of a second at its start) whose centre is inside the volume, in the volume's frame (the effect's).
+    /// ASSUMPTION: the engine emits from a mesh (fn 0x1183fa30: a random triangle of the effect owner's mesh, masked per triangle), but
+    /// which mesh a VOLUMETRIC_EFFECT gives it, and how the volume selects its triangles, were not traced.
+    fn emit_mesh(&mut self, file: &str, fx: &MetaEffect) -> Option<EmitMesh> {
+        use rpfm_lib::files::Decodeable;
+        use rpfm_lib::files::rigidmodel::RigidModel;
+        use rpfm_lib::files::rigidmodel::materials::MaterialType;
+
+        let size = fx.volume?;
+        let key = (file.to_owned(), [fx.position, size].concat().into_iter().chain(fx.rotation).map(f32::to_bits).collect::<Vec<_>>().try_into().ok()?);
+        if let Some(m) = self.collapses.emit_meshes.get(&key) {
+            return m.clone();
         }
 
+        // The volume's frame: its centre and rotation (an all-zero rotation is the identity).
+        let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
+        let to_local = wce_foundation::math::inverse(&(translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q)));
+        let half = size.map(|v| 0.5 * v.abs());
+        let found = self.files.as_deref().and_then(|f| f.read(file).ok()).and_then(|bytes| {
+            let model = RigidModel::decode(&mut std::io::Cursor::new(bytes), &Some(Default::default())).ok()?;
+            let mut tris = vec![];
+            for block in model.lods().first()?.mesh_blocks() {
+                let decal = matches!(
+                    block.mesh().material_type(),
+                    MaterialType::ProjectedDecal | MaterialType::ProjectedDecalV2 | MaterialType::ProjectedDecalV3 | MaterialType::ProjectedDecalV4
+                );
+                if decal {
+                    continue;
+                }
+
+                let pivot = block.material().v_pivot();
+                let (vs, idx) = (block.mesh().vertices(), block.mesh().indices());
+                let at = |i: u16| vs.get(usize::from(i)).map(|v| {
+                    let p = v.position();
+                    to_local.transform_point(Float3::new(p.x + pivot.x, p.y + pivot.y, p.z + pivot.z))
+                });
+
+                for t in idx.chunks_exact(3) {
+                    let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else { continue };
+                    let m = (a + b + c) * (1.0 / 3.0);
+                    if m.x.abs() <= half[0] && m.y.abs() <= half[1] && m.z.abs() <= half[2] {
+                        tris.push([a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z]);
+                    }
+                }
+            }
+
+            (!tris.is_empty()).then(|| Arc::new(tris))
+        });
+
+        self.collapses.emit_meshes.insert(key, found.clone());
+        found
+    }
+
+    /// Spawns a collapse's effect on a piece; `source` is the standing piece file the collapse starts from (a volumetric effect's mesh).
+    fn spawn_effect(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, fx: &MetaEffect, source: Option<&str>, now: Instant) {
+        let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
+        let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q);
+        let mesh = source.and_then(|f| self.emit_mesh(f, fx));
+        // A volumetric effect is a group ("Trigger a volumetric particle effect group", the engine's description of the entry): instances
+        // of the effect over the volume, each emitting from its mesh. ASSUMPTION: one instance per GROUP_AREA_M2 of the volume's surface
+        // (1 to GROUP_MAX); how the engine sizes the group was not traced.
+        let count = fx.volume.filter(|_| mesh.is_some()).map_or(1, |v| {
+            let area = 2.0 * (v[0] * v[1] + v[1] * v[2] + v[0] * v[2]).abs();
+            ((area / GROUP_AREA_M2).round() as usize).clamp(1, GROUP_MAX)
+        });
+
         let linger = EFFECT_LINGER_S + (fx.end - fx.start).max(0.0);
-        self.collapses.effects.push((id, now + std::time::Duration::from_secs_f32(linger)));
+        for _ in 0..count {
+            let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / self.unit() as f32, mesh: mesh.clone() };
+            let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
+            if let Some(en) = scene.find_mut(id) {
+                en.locked = true;
+            }
+
+            self.collapses.effects.push((id, now + std::time::Duration::from_secs_f32(linger)));
+        }
     }
 
     /// Per frame: plays the collapses (moves their bones, starts their effects, chains their steps) and removes the effects that are over.
@@ -403,9 +479,10 @@ impl Tile {
                 }
 
                 let t = step.start.map_or(0.0, |s| now.duration_since(s).as_secs_f32());
+                let source = self.standing_file(c.elem, c.piece, step.level);
                 while step.effects.front().is_some_and(|e| e.start <= t) {
                     let fx = step.effects.pop_front().expect("a front");
-                    self.spawn_effect(scene, layer, c.elem, world, &fx, now);
+                    self.spawn_effect(scene, layer, c.elem, world, &fx, source.as_deref(), now);
                 }
 
                 let duration = step.anim.as_ref().map_or(0.0, |a| a.anim.duration());
@@ -422,7 +499,7 @@ impl Tile {
                 // The step is over: its remaining effects start now, its bones go.
                 let step = c.step.take().expect("a step");
                 for fx in &step.effects {
-                    self.spawn_effect(scene, layer, c.elem, world, fx, now);
+                    self.spawn_effect(scene, layer, c.elem, world, fx, source.as_deref(), now);
                 }
 
                 scene.remove_range(step.bones);

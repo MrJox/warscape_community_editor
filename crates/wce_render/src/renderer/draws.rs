@@ -77,9 +77,51 @@ pub(crate) struct SceneDraws {
 
     /// The first instance of each set in the ring as the camera's G-buffer pass wrote them (the terrain pass draws the same instances).
     pub gbuffer_firsts: [u32; 2],
+
+    /// The effects' debris (particles::EffectRigid): per model, items of `draws` added for them and moved every frame (the unused ones
+    /// out of sight). Emptied with the set.
+    pub rigid_pool: HashMap<String, Vec<u32>>,
 }
 
 impl Renderer {
+
+    /// Places the placed effects' debris rigids (particles::effect_rigids, a frame behind the simulation) as items of the draw set: the
+    /// pool of a model grows as needed, its items are moved each frame, the unused ones out of sight. Drawn as the scene's rigid models.
+    pub(crate) fn place_effect_rigids(&mut self) {
+        let u = self.camera.units;
+        let rigids = self.particles.effect_rigids(self.camera.eye * u);
+        if rigids.is_empty() && self.draw_lists.rigid_pool.values().all(Vec::is_empty) {
+            return;
+        }
+
+        // Game units -> scene units.
+        let mut to_scene = Float4x4::IDENTITY;
+        for k in 0..3 {
+            to_scene.m[k][k] = 1.0 / u;
+        }
+
+        let mut used = HashMap::<String, usize>::new();
+        for r in rigids {
+            let Some(m) = self.models.try_get(&r.model, 0.0) else { continue };
+            let world = to_scene * r.world;
+            let n = used.entry(r.model.clone()).or_default();
+            let pool = self.draw_lists.rigid_pool.entry(r.model).or_default();
+            match pool.get(*n) {
+                Some(&item) => self.draw_lists.draws.set_world(item, &world),
+                None => pool.push(self.draw_lists.draws.add(&m, &world, None, true, true, 0)),
+            }
+
+            *n += 1;
+        }
+
+        let mut away = Float4x4 { m: [[0.0; 4]; 4] };
+        (away.m[1][3], away.m[3][3]) = (-1e9, 1.0);
+        for (model, pool) in &self.draw_lists.rigid_pool {
+            for &item in &pool[used.get(model).copied().unwrap_or(0).min(pool.len())..] {
+                self.draw_lists.draws.set_world(item, &away);
+            }
+        }
+    }
 
     /// Draws the visible batches of both sets with the bound shaders (the G-buffer and the shadow cascades share this).
     pub(crate) fn draw_batches(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh) -> bool) -> (u64, u64) {
@@ -240,6 +282,7 @@ impl Renderer {
         // Everything is rebuilt from the current state: forget what was logged.
         let _ = scene.moved_since(&mut self.draw_lists.moved_cursor);
         self.draw_lists.draws.clear();
+        self.draw_lists.rigid_pool.clear();
         self.draw_lists.vis = Visible::default();
         self.draw_lists.item_of_entity = vec![NO_ITEM; scene.entities().last().map_or(0, |e| e.id as usize + 1)];
         self.draw_lists.entities = 0;

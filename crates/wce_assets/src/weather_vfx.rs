@@ -60,6 +60,9 @@ pub struct Effect {
     pub emitters: Vec<ActiveEmitter>,
     pub lights: Vec<EffectLight>,
 
+    /// The rigid emitters whose model is not a light: debris, pebbles, shards (drawn as models by the particle system).
+    pub rigids: Vec<EffectLight>,
+
     /// Skipped emitters and missing files.
     pub notes: Vec<String>,
 }
@@ -211,6 +214,7 @@ pub fn load_weather_vfx(read: &VfxReader, definition_name: &str) -> Result<Weath
         let effect = load_effect_with(read, top_name, &mut libs);
         out.emitters.extend(effect.emitters);
         out.lights.extend(effect.lights);
+        out.notes.extend(effect.rigids.iter().map(|r| format!("{}/{}: rigid model '{}' not drawn in weather", r.instance, r.name, r.model)));
         out.notes.extend(effect.notes);
     }
 
@@ -276,7 +280,10 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
                         scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
                     });
                 } else {
-                    out.notes.push(format!("{}/{}: emitter type {} not supported (rigid model '{model}')", vfx_ref.inst_name, em.id, em.kind));
+                    out.rigids.push(EffectLight {
+                        instance: vfx_ref.inst_name.clone(), name: em.id.clone(), model: format!("rigidmodels/{model}"), def: em.clone(), tint_min, tint_max,
+                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
+                    });
                 }
 
                 continue;

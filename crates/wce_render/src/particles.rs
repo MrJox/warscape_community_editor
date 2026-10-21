@@ -12,6 +12,7 @@ use wce_assets::weather_vfx::{Effect, VfxReader, WeatherVfx, load_effect_with, l
 use wce_assets::vfx_def::VfxFile;
 use wce_d3d11::*;
 use wce_foundation::math::{Float3, Float4x4, length, normalize, rotation_x, rotation_y, rotation_z};
+use wce_scene::render_scene::EmitMesh;
 use windows_core::Interface;
 
 use crate::cbuffers::ConstantBuffers;
@@ -191,32 +192,24 @@ pub struct SpawnVertex {
     pub vel_life: [f32; 4],
 }
 
-/// A point on a box's surface (size `v`, centred on the origin) without its bottom face (the ground), faces chosen by their area, and the
-/// face's normal; `r` three randoms in [0, 1).
-fn box_surface_point(v: [f32; 3], r: [f32; 3]) -> (Float3, Float3) {
-    let h = v.map(|x| 0.5 * x.max(0.0));
-
-    // The top, then the four sides (+x, -x, +z, -z).
-    let areas = [v[0] * v[2], v[1] * v[2], v[1] * v[2], v[0] * v[1], v[0] * v[1]].map(|a| a.max(0.0));
-    let total = areas.iter().sum::<f32>();
-    if total <= 0.0 {
-        return (Float3::default(), Float3::new(0.0, 1.0, 0.0));
+/// A point of a mesh emission and its direction, as the engine's particle birth makes it (fn 0x1183fa30, when the emitter's owner has a
+/// mesh and the emitter AllowEmitFromMesh): a triangle drawn uniformly (not by area) from the instance's generator, a point on it from two
+/// draws of the shared one (folded back into the triangle when they sum past 1), and the triangle's normal `(b - a) x (c - a)`
+/// (normalised), which UseSurfaceNormal takes as the direction. The caller scales the point by the instance's scale and turns both by its
+/// rotation; there is no spawn area or SpawnPosition then.
+fn mesh_point(mesh: &[[f32; 9]], rng: &mut u32, shared: &mut u32) -> (Float3, Float3) {
+    let k = ((game_rand(rng) * mesh.len() as f32) as usize).min(mesh.len() - 1);
+    let t = &mesh[k];
+    let (a, b, c) = (Float3::new(t[0], t[1], t[2]), Float3::new(t[3], t[4], t[5]), Float3::new(t[6], t[7], t[8]));
+    let (mut u, mut v) = (game_rand(shared), game_rand(shared));
+    if u + v >= 1.0 {
+        (u, v) = (1.0 - u, 1.0 - v);
     }
 
-    let mut pick = r[0] * total;
-    let face = areas.iter().position(|&a| {
-        pick -= a;
-        pick < 0.0
-    }).unwrap_or(0);
-
-    let (u, w) = (2.0 * r[1] - 1.0, 2.0 * r[2] - 1.0);
-    match face {
-        0 => (Float3::new(u * h[0], h[1], w * h[2]), Float3::new(0.0, 1.0, 0.0)),
-        1 => (Float3::new(h[0], u * h[1], w * h[2]), Float3::new(1.0, 0.0, 0.0)),
-        2 => (Float3::new(-h[0], u * h[1], w * h[2]), Float3::new(-1.0, 0.0, 0.0)),
-        3 => (Float3::new(u * h[0], w * h[1], h[2]), Float3::new(0.0, 0.0, 1.0)),
-        _ => (Float3::new(u * h[0], w * h[1], -h[2]), Float3::new(0.0, 0.0, -1.0)),
-    }
+    let (e1, e2) = (b - a, c - a);
+    let n = Float3::new(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x);
+    let n = if length(n) > 0.0 { normalize(n) } else { Float3::new(0.0, 1.0, 0.0) };
+    (a + e1 * u + e2 * v, n)
 }
 
 /// A placed effect (a tile's VFXInstance): `vfx/<effect>.xml` at a world transform (rotation and position; scale is `scale`).
@@ -230,8 +223,8 @@ pub struct WorldEffect {
     /// The effect's scale: the tile's `scale` / unit_scale, as BOB writes it into particle_emitter_marker.markers.
     pub scale: f32,
 
-    /// The box (size, metres, centred on the effect) its mesh emitters spawn over (render_scene::VfxEmitter::volume).
-    pub volume: Option<[f32; 3]>,
+    /// The triangles (effect frame, metres) its mesh emitters spawn on (render_scene::VfxEmitter::mesh).
+    pub mesh: Option<EmitMesh>,
 }
 
 /// One emitter of a placed effect: an emitter instance after the weather's.
@@ -250,7 +243,7 @@ struct WorldInstance {
 
     /// The total scale: the effect's times the reference's (drawn in its range).
     scale: f32,
-    volume: Option<[f32; 3]>,
+    mesh: Option<EmitMesh>,
     tint: [f32; 4],
 
     /// The instance's own generator (game: emitter instance +0xc0, 0x343fd / 0x269ec3).
@@ -335,6 +328,71 @@ impl RigidBursts {
         self.rigids.retain(|&(birth, life)| birth + life > clock);
     }
 }
+
+/// A rigid of a debris emitter, from its birth: where and how it was thrown.
+#[derive(Clone, Debug)]
+struct RigidParticle {
+    birth: f32,
+    life: f32,
+    pos: Float3,
+    vel: Float3,
+
+    /// Downwards acceleration (game units / s^2).
+    gravity: f32,
+    orientation: [f32; 4],
+    axis: Float3,
+    spin: f32,
+    scale: f32,
+}
+
+/// A debris emitter of a placed effect: a rigid emitter whose model is not a light (the destruction effects' pebbles and wooden shards),
+/// its bursts and its live rigids.
+#[derive(Clone, Debug)]
+struct WorldRigid {
+    key: u64,
+
+    /// Into `world_effects[effect].rigids`.
+    effect: usize,
+    rigid: usize,
+    pos: Float3,
+    rot: Float4x4,
+    scale: f32,
+    mesh: Option<EmitMesh>,
+    start: f32,
+    bursts: RigidBursts,
+    live: Vec<RigidParticle>,
+    rng: u32,
+}
+
+/// A debris rigid to draw this frame: its model and world matrix (game units).
+#[derive(Clone, Debug)]
+pub struct EffectRigid {
+    pub model: String,
+    pub world: Float4x4,
+}
+
+/// A unit quaternion as a rotation matrix.
+fn quat_rotation(q: [f32; 4]) -> Float4x4 {
+    let [x, y, z, w] = q;
+    let mut m = Float4x4::IDENTITY;
+    m.m[0] = [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w), 0.0];
+    m.m[1] = [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w), 0.0];
+    m.m[2] = [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y), 0.0];
+    m
+}
+
+/// The quaternion product a * b.
+fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
+}
+
+/// The game's GravityAmount in game units / s^2: 50 is the earth's 9.81 (the particle simulation's factor, docs/re/particles.md).
+const GRAVITY_UNIT: f32 = 0.1962;
 
 /// A light of a placed effect: a rigid emitter whose model is a point light.
 #[derive(Clone, Debug)]
@@ -499,6 +557,7 @@ pub struct ParticleSystem {
     world_libs: BTreeMap<String, VfxFile>,
     world: Vec<WorldInstance>,
     world_lights: Vec<WorldLight>,
+    world_rigids: Vec<WorldRigid>,
 
     /// The weather's rigid lights (at the camera) and their bursts.
     weather_lights: Vec<RigidBursts>,
@@ -599,6 +658,7 @@ impl ParticleSystem {
             world_libs: BTreeMap::new(),
             world: vec![],
             world_lights: vec![],
+            world_rigids: vec![],
             weather_lights: vec![],
             light_defs: None,
             light_models: BTreeMap::new(),
@@ -873,7 +933,7 @@ impl ParticleSystem {
                         inst.pos = origin + rotate(&rot, reference * fx.scale);
                         inst.rot = rot;
                         inst.quat = quat;
-                        inst.volume = fx.volume;
+                        inst.mesh.clone_from(&fx.mesh);
                         inst
                     }
 
@@ -888,7 +948,7 @@ impl ParticleSystem {
                         let area_blend = game_rand(&mut rng);
                         let tint = std::array::from_fn(|c| lerp(em.tint_min[c], em.tint_max[c], t_tint));
                         WorldInstance {
-                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, volume: fx.volume, tint, rng,
+                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, mesh: fx.mesh.clone(), tint, rng,
                             area_blend, lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
                             emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
                             start: clock, last_spawn: clock, st: EmitterState::default(),
@@ -924,10 +984,147 @@ impl ParticleSystem {
             }
         }
 
+        // The effects' debris emitters (their rigids carry on while the effect stays).
+        let mut old_rigids = std::mem::take(&mut self.world_rigids).into_iter().map(|r| ((r.key, r.rigid), r)).collect::<BTreeMap<_, _>>();
+        for fx in effects {
+            let e = self.world_names[&fx.effect];
+            let (rot, _) = rotation_of(&fx.world);
+            let origin = Float3::new(fx.world.m[0][3], fx.world.m[1][3], fx.world.m[2][3]);
+            for (k, rigid) in self.world_effects[e].rigids.iter().enumerate() {
+                let reference = Float3::new(rigid.pos[0], rigid.pos[1], rigid.pos[2]);
+                let scale = fx.scale * 0.5 * (rigid.scale_range[0] + rigid.scale_range[1]);
+                let pos = origin + rotate(&rot, reference * fx.scale);
+                let seed = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ 0x2F6B_A5C1 ^ (k as u32).wrapping_mul(0x85EB_CA6B);
+                let mut r = old_rigids.remove(&(fx.key, k)).filter(|r| r.effect == e).unwrap_or_else(|| WorldRigid {
+                    key: fx.key, effect: e, rigid: k, pos, rot, scale, mesh: None, start: clock,
+                    bursts: RigidBursts { rng: seed, ..Default::default() }, live: vec![], rng: seed ^ 0x5bd1_e995,
+                });
+
+                (r.pos, r.rot, r.scale) = (pos, rot, scale);
+                r.mesh.clone_from(&fx.mesh);
+                self.world_rigids.push(r);
+            }
+        }
+
         let rows = (self.effect.emitters.len() + self.world.len()).div_ceil(EMITTER_WIDTH).max(1);
         if rows > self.emitter_rows {
             self.create_emitter_texture(rows.next_power_of_two());
         }
+    }
+
+    /// The debris of the placed effects now: per rigid of their rigid emitters whose model is not a light, the model and its world matrix
+    /// (game units). The bursts are timed as the lights' ([`RigidBursts`]: RigidsPerBurst rigids each living RigidLifeTime). A rigid is
+    /// thrown as a particle is born: from the effect's mesh when it has one (mesh_point, along the triangle's normal with
+    /// UseSurfaceNormal), else from SpawnPosition, in the SpawnSpread cone (SpreadMethod) or away from the emitter; at lerp(SpawnSpeed);
+    /// then it falls (GravityAmount, [`GRAVITY_UNIT`]) and spins (Spin, radians a second, about ParticleSpinAxis), from a random
+    /// orientation (RandomOrientation) or ParticleOrientation.
+    /// ASSUMPTIONS (the engine's rigid particles, fn 0x11895130's callees, were not traced): the motion is ballistic (no deceleration
+    /// or collisions: the destruction debris has EnableCollisions false); the scale is lerp(ParticleScaleStart.x, .y) per rigid (the
+    /// debris' start, mid and end are equal); rigids beyond CullDistances.w are not drawn.
+    pub fn effect_rigids(&mut self, eye: Float3) -> Vec<EffectRigid> {
+        if self.world_rigids.is_empty() || !self.enabled {
+            return vec![];
+        }
+
+        let clock = self.clock;
+        let mut out = vec![];
+        for wr in &mut self.world_rigids {
+            let def = &self.world_effects[wr.effect].rigids[wr.rigid];
+            let d = &def.def;
+            wr.bursts.update(d, clock, wr.start);
+
+            // The rigids of new bursts are thrown; those the bursts dropped are gone.
+            wr.live.retain(|r| wr.bursts.rigids.iter().any(|&(b, l)| b == r.birth && l == r.life));
+            for &(birth, life) in &wr.bursts.rigids {
+                if wr.live.iter().any(|r| r.birth == birth && r.life == life) {
+                    continue;
+                }
+
+                let rng = &mut wr.rng;
+                let mut sp = [0.0f32; 3];
+                d.vec("SpawnPosition", &mut sp);
+                let mesh = wr.mesh.as_ref().filter(|m| !m.is_empty() && d.b("AllowEmitFromMesh", false));
+                let (local, normal) = match mesh {
+                    Some(m) => {
+                        let (at, n) = mesh_point(m, rng, &mut self.global_rng);
+                        (at * wr.scale, Some(n))
+                    }
+
+                    None => (Float3::new(sp[0], sp[1], sp[2]) * wr.scale, None),
+                };
+
+                let (spread_lo, spread_hi) = d.range("SpawnSpread", 90.0, 90.0);
+                let dir = if let Some(n) = normal.filter(|_| d.b("UseSurfaceNormal", false)) {
+                    n
+                } else if d.b("SpreadMethod", true) {
+                    let az = game_rand(rng) * 2.0 * PI;
+                    let el = lerp(spread_lo, spread_hi, game_rand(rng)) * PI / 180.0;
+                    Float3::new(az.cos() * el.cos(), el.sin(), -(az.sin() * el.cos()))
+                } else {
+                    let away = local - Float3::new(sp[0], sp[1], sp[2]) * wr.scale;
+                    if length(away) > 0.0 { normalize(away) } else { Float3::new(0.0, 1.0, 0.0) }
+                };
+
+                let (v0, v1) = d.range("SpawnSpeed", 0.0, 0.0);
+                let (g0, g1) = d.range("GravityAmount", 0.0, 0.0);
+                let (s0, s1) = d.range("Spin", 0.0, 0.0);
+                let mut axis = [0.0f32, 1.0, 0.0];
+                d.vec("ParticleSpinAxis", &mut axis);
+                let mut scale = [1.0f32, 1.0];
+                d.vec("ParticleScaleStart", &mut scale);
+                let orientation = if d.b("RandomOrientation", false) {
+                    let q = [game_rand(rng) - 0.5, game_rand(rng) - 0.5, game_rand(rng) - 0.5, game_rand(rng) - 0.5];
+                    let len = q.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+                    q.map(|v| v / len)
+                } else {
+                    let mut o = [0.0f32; 3];
+                    d.vec("ParticleOrientation", &mut o);
+                    let (_, q) = rotation_of(&(rotation_z(o[2] * PI / 180.0) * rotation_y(o[1] * PI / 180.0) * rotation_x(o[0] * PI / 180.0)));
+                    q
+                };
+
+                let axis = Float3::new(axis[0], axis[1], axis[2]);
+                wr.live.push(RigidParticle {
+                    birth,
+                    life,
+                    pos: wr.pos + rotate(&wr.rot, local),
+                    vel: rotate(&wr.rot, dir) * (lerp(v0, v1, game_rand(rng)) * wr.scale),
+                    gravity: lerp(g0, g1, game_rand(rng)) * GRAVITY_UNIT * wr.scale,
+                    orientation,
+                    axis: if length(axis) > 0.0 { normalize(axis) } else { Float3::new(0.0, 1.0, 0.0) },
+                    spin: lerp(s0, s1, game_rand(rng)),
+                    scale: lerp(scale[0], scale[1], game_rand(rng)) * wr.scale,
+                });
+            }
+
+            let mut cull = [0.0f32; 4];
+            d.vec("CullDistances", &mut cull);
+            for r in &wr.live {
+                if r.birth > clock {
+                    continue;
+                }
+
+                let a = clock - r.birth;
+                let pos = r.pos + r.vel * a + Float3::new(0.0, -0.5 * r.gravity * a * a, 0.0);
+                if cull[3] > 0.0 && length(eye - pos) > cull[3] {
+                    continue;
+                }
+
+                let half = 0.5 * r.spin * a;
+                let turn = [r.axis.x * half.sin(), r.axis.y * half.sin(), r.axis.z * half.sin(), half.cos()];
+                let mut world = quat_rotation(quat_mul(turn, r.orientation));
+                for row in 0..3 {
+                    for c in 0..3 {
+                        world.m[row][c] *= r.scale;
+                    }
+                }
+
+                (world.m[0][3], world.m[1][3], world.m[2][3]) = (pos.x, pos.y, pos.z);
+                out.push(EffectRigid { model: def.model.clone(), world });
+            }
+        }
+
+        out
     }
 
     /// The point lights of the placed effects and the weather now. A rigid point light emitter makes rigids in bursts ([`RigidBursts`];
@@ -1472,10 +1669,8 @@ impl ParticleSystem {
             let emitter_rot = rotation_z(er[2] * PI / 180.0) * rotation_y(er[1] * PI / 180.0) * rotation_x(er[0] * PI / 180.0);
             let scale = inst.scale;
 
-            // A spawn-mesh emitter of an effect placed with a volume (a building's VOLUMETRIC_EFFECT): over the box's surface, along its
-            // normal (UseSurfaceNormal). ASSUMPTION: the engine emits from a mesh it makes of the volume, or from the collapsing building's own
-            // meshes (not traced); without a volume these emitters spawn as their spawn area says (zero for the destruction dust: one point).
-            let volume = inst.volume.filter(|_| d.b("AllowEmitFromMesh", false));
+            // A spawn-mesh emitter of an effect placed with a mesh (a building's VOLUMETRIC_EFFECT): on its triangles (mesh_point).
+            let mesh = inst.mesh.clone().filter(|m| !m.is_empty() && d.b("AllowEmitFromMesh", false));
             let surface_normal = d.b("UseSurfaceNormal", false);
 
             let mut batch = 0u32;
@@ -1495,10 +1690,10 @@ impl ParticleSystem {
                 let r = lerp(inner, outer, game_rand(&mut inst.rng));
                 let b = [game_rand(&mut self.global_rng), game_rand(&mut self.global_rng), game_rand(&mut self.global_rng)];
                 let local = Float3::new(angle.cos() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.sin() * r + size[2] * (b[0] - 0.5)) * scale;
-                let (offset, normal) = match volume {
-                    Some(v) => {
-                        let (at, n) = box_surface_point(v, [game_rand(&mut inst.rng), game_rand(&mut inst.rng), game_rand(&mut inst.rng)]);
-                        (at + spawn_pos * scale, Some(n))
+                let (offset, normal) = match &mesh {
+                    Some(m) => {
+                        let (at, n) = mesh_point(m, &mut inst.rng, &mut self.global_rng);
+                        (at * scale, Some(n))
                     }
 
                     None => (rotate(&emitter_rot, local) + spawn_pos * scale, None),
@@ -1517,8 +1712,8 @@ impl ParticleSystem {
                 };
 
                 let speed = lerp(speed_lo, speed_hi, game_rand(&mut inst.rng)) * scale;
-                // The box's points and normals are in the effect's frame: the emitter's rotation does not turn them.
-                let vel = rotate(&inst.rot, if volume.is_some() { dir } else { rotate(&emitter_rot, dir) }) * speed;
+                // The mesh's points and normals are in the effect's frame: the emitter's rotation does not turn them.
+                let vel = rotate(&inst.rot, if mesh.is_some() { dir } else { rotate(&emitter_rot, dir) }) * speed;
                 let steps = if spawn_t < self.clock - SUB_STEP { ((self.clock - spawn_t) / SUB_STEP).floor() } else { 0.0 };
                 let seed = game_rand(&mut self.global_rng);
                 out.push(SpawnVertex {
