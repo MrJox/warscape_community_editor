@@ -174,6 +174,15 @@ plains (aa .. ad) elsewhere.
   when a legacy terrain comes or goes. The walk above: 12.9 ms a frame on average (was 15.6), p95 36 ms, the worst 54 ms (was 140);
   over tiles already in memory 10.5 ms, p95 28, worst 38. What is left comes with the chunks' level changes in one frame (the draw set
   update, the shadow pass's first draws with the new buffers, the sea) and the tile opening on the workers competing for the cores.
+- **Removals cost the chunk, not the set; loading below normal priority** (2026-10-21): the draw set kills a removed entity's item
+  through the entity -> item table (culling skips dead items, new ones take their slots, the arrays are packed again once a quarter of
+  them is dead): its update went from 3.1 ms to 0.6 ms a change. The streamer's workers and the thread pool their tile loading runs on
+  (its own: rayon's global one is the renderer's culling) are below normal priority (`jobs::lower_thread_priority`); a worker waits for
+  another's tile outside that pool (waiting inside it deadlocked: a pool thread in a parallel loop took up the waiting job). The walks:
+  12.4 ms a frame, p95 32, worst 46 while tiles open; 10.4 ms, p95 27, worst 35 over tiles in memory. Opening tiles still slows every
+  pass by about 2 ms (memory and caches, which priority does not share out).
+- The campaign map's heights are the game's own `terrain/battles/main_attila_map/lf_height_map.dds` (8128 x 5748, `l16_dds_heights`),
+  laid into the open frame (`LfMap`); its 736 normal chunks are not read (the LF normals are made from the heights).
 - **Render origin** (2026-10-21): far from the open tile (1,170 cells away on the campaign map, 150 000 scene units) float32 positions lost
   the depth's and the ground textures' precision: the blend shader rebuilds positions from depth and samples the layers at `world /
   repeat`, so the ground swam in moire rings as the camera moved (a 0.1-unit move changed 35 % of the pixels, now 0.3 %, as next to the

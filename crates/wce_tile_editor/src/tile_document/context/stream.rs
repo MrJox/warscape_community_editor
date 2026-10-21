@@ -75,6 +75,9 @@ struct Job {
 }
 
 struct Shared {
+    /// The threads the workers' data-parallel loops run on (a tile's opening is full of them): below normal priority and apart from
+    /// rayon's global pool, which the renderer's culling uses every frame.
+    pool: rayon::ThreadPool,
     frame: Arc<Frame>,
     rq: ContextRequest,
     files: Option<Arc<dyn Files>>,
@@ -116,10 +119,10 @@ impl Shared {
         drop(tiles);
         let dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
         let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &self.rq.look, self.rq.trees)));
-        let (result, cached) = match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
+        let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
             None => (load_template(&dir, &self.rq.look, self.rq.trees, self.files.clone()), false),
-        };
+        });
 
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)
             && let Err(e) = cache::write(c, *k, t)
@@ -174,6 +177,7 @@ impl Shared {
     }
 
     fn worker(self: Arc<Self>, tx: Sender<Built>) {
+        wce_foundation::jobs::lower_thread_priority();
         loop {
             let job = {
                 let mut q = lock(&self.queue);
@@ -191,6 +195,8 @@ impl Shared {
                 }
             };
 
+            // Not in the pool: `template` may wait for another worker's tile, and a pool thread waiting inside a parallel loop can take up
+            // that very worker's job (a deadlock); only the opening and the cache read run there.
             let entities = self.frame.build_chunk(job.key, job.lod, &|i| self.template(i));
             if tx.send((job.key, job.lod, entities)).is_err() {
                 return;
@@ -221,11 +227,18 @@ impl Streamer {
     /// The frame of the request (slow on the campaign map: run it away from the UI thread) and the workers.
     pub fn new(rq: ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let started = std::time::Instant::now();
-        let frame = Arc::new(Frame::new(&rq));
+        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(cores.saturating_sub(2).clamp(2, 8))
+            .thread_name(|k| format!("map context {k}"))
+            .start_handler(|_| wce_foundation::jobs::lower_thread_priority())
+            .build()
+            .expect("the map context's threads");
+        let frame = Arc::new(pool.install(|| Frame::new(&rq)));
         let rings = [rq.near, rq.mid, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            frame, rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
+            pool, frame, rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
             clock: Default::default(), stop: AtomicBool::new(false),
         });
 

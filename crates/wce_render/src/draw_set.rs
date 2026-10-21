@@ -73,6 +73,9 @@ const CASTS_SHADOW: u8 = 1;
 const LOD: u8 = 2;
 const PARAMS: u8 = 4;
 
+/// An item whose entity went: culling skips it, `add` fills its slot again.
+const DEAD: u8 = 8;
+
 /// Cull chunk size.
 const GRAIN: usize = 2048;
 
@@ -168,6 +171,9 @@ pub struct DrawSet {
     params: Vec<f32>,
     entity: Vec<EntityId>,
 
+    /// The dead items' slots.
+    free: Vec<u32>,
+
     // Models and batches.
     models: Vec<ModelEntry>,
     /// Model address -> model index; the batches keep the models alive, so an address stays unique.
@@ -195,8 +201,35 @@ impl DrawSet {
         self.entity.reserve(n);
     }
 
+    /// The live items.
     pub fn items(&self) -> usize {
+        self.model.len() - self.free.len()
+    }
+
+    /// The items' slots, the dead ones too.
+    fn slots(&self) -> usize {
         self.model.len()
+    }
+
+    /// The dead items (their slots wait for new ones; `compact` drops them).
+    pub fn dead(&self) -> usize {
+        self.free.len()
+    }
+
+    /// Kills an item (its entity went): a removal costs its own items, not a pass over the set (a map context streams chunks of 10 000 in
+    /// and out of a set of 150 000).
+    pub fn kill(&mut self, item: u32) {
+        let i = item as usize;
+        if i < self.flags.len() && self.flags[i] & DEAD == 0 {
+            self.flags[i] = DEAD;
+            self.entity[i] = 0;
+            self.free.push(item);
+        }
+    }
+
+    /// Drops the dead items; returns each old item's new index (`u32::MAX` for the dropped ones).
+    pub fn compact(&mut self) -> Vec<u32> {
+        self.remove_items(|_| false)
     }
 
     pub fn batches(&self) -> usize {
@@ -259,22 +292,33 @@ impl DrawSet {
     pub fn add(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, entity: EntityId) -> u32 {
         let mi = self.model_index(model);
         let me = &self.models[mi as usize];
-        let item = self.items() as u32;
         let c = world.transform_point(me.centre);
-        self.sphere.extend([c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()]);
-        self.model.push(mi);
+        let sphere = [c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()];
         let mut f = if casts_shadow { CASTS_SHADOW } else { 0 } | if lod { LOD } else { 0 };
-        self.world.push([world.m[0], world.m[1], world.m[2]]);
-        match params.filter(|p| **p != DEFAULT_INSTANCE_PARAMS) {
+        let params_index = match params.filter(|p| **p != DEFAULT_INSTANCE_PARAMS) {
             Some(p) => {
                 f |= PARAMS;
-                self.params_index.push((self.params.len() / 16) as u32);
                 self.params.extend_from_slice(p);
+                (self.params.len() / 16 - 1) as u32
             }
 
-            None => self.params_index.push(0),
+            None => 0,
+        };
+
+        // A dead item's slot, else a new one.
+        let w = [world.m[0], world.m[1], world.m[2]];
+        if let Some(item) = self.free.pop() {
+            let i = item as usize;
+            self.sphere[i * 4..i * 4 + 4].copy_from_slice(&sphere);
+            (self.model[i], self.flags[i], self.world[i], self.params_index[i], self.entity[i]) = (mi, f, w, params_index, entity);
+            return item;
         }
 
+        let item = self.slots() as u32;
+        self.sphere.extend(sphere);
+        self.model.push(mi);
+        self.world.push(w);
+        self.params_index.push(params_index);
         self.flags.push(f);
         self.entity.push(entity);
         item
@@ -283,11 +327,11 @@ impl DrawSet {
     /// Drops the items of the entities `gone` names (the others keep their order); returns each old item's new index, `u32::MAX` for the
     /// dropped ones. The models and batches stay.
     pub fn remove_items(&mut self, gone: impl Fn(EntityId) -> bool) -> Vec<u32> {
-        let n = self.items();
+        let n = self.slots();
         let mut remap = vec![u32::MAX; n];
         let mut to = 0usize;
         for (from, slot) in remap.iter_mut().enumerate() {
-            if gone(self.entity[from]) {
+            if self.flags[from] & DEAD != 0 || gone(self.entity[from]) {
                 continue;
             }
 
@@ -322,6 +366,7 @@ impl DrawSet {
         }
 
         self.params = params;
+        self.free.clear();
         remap
     }
 
@@ -361,13 +406,13 @@ impl DrawSet {
     /// Culls the items for a view and groups the survivors by batch. The same culled set always gives the same draw order.
     pub fn cull(&self, v: &View, out: &mut Visible) {
         wce_prof!("drawset.cull");
-        let (n, nb) = (self.items(), self.batches());
+        let (n, nb) = (self.slots(), self.batches());
         let inv_scale = 1.0 / v.lod_scale.max(1e-3);
         let chunk_pairs = (0..n.div_ceil(GRAIN)).into_par_iter().map(|chunk| {
             let mut pairs = vec![];
             for i in chunk * GRAIN..((chunk + 1) * GRAIN).min(n) {
                 let f = self.flags[i];
-                if v.shadow && f & CASTS_SHADOW == 0 {
+                if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) {
                     continue;
                 }
 
@@ -553,5 +598,30 @@ mod tests {
         // Both kept items had parameters: packed again in order.
         assert_eq!(set.params.len(), 32);
         assert_eq!((set.params[set.params_index[0] as usize * 16], set.params[set.params_index[1] as usize * 16]), (1.0, 3.0));
+    }
+
+    #[test]
+    fn killed_items_are_skipped_reused_and_compacted() {
+        let mut set = DrawSet::default();
+        let model = Arc::new(GpuModel::default());
+        for entity in [1u32, 2, 3] {
+            set.add(&model, &Float4x4::IDENTITY, None, true, false, entity);
+        }
+
+        set.kill(1);
+        set.kill(1);
+        assert_eq!((set.items(), set.dead(), set.slots()), (2, 1, 3));
+
+        // The view culls nothing but the dead item (everything sits at the origin, inside a frustum of everything).
+        let mut vis = Visible::default();
+        set.cull(&View { frustum: Frustum::default(), ..Default::default() }, &mut vis);
+        assert!(!vis.order.contains(&1));
+
+        // A new item takes the dead slot; compacting drops what is dead and keeps the order.
+        assert_eq!(set.add(&model, &Float4x4::IDENTITY, None, true, false, 4), 1);
+        set.kill(0);
+        let remap = set.compact();
+        assert_eq!(remap, [u32::MAX, 0, 1]);
+        assert_eq!((set.items(), set.dead(), set.entity(0), set.entity(1)), (2, 0, 4, 3));
     }
 }
