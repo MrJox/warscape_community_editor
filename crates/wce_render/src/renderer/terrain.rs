@@ -130,6 +130,10 @@ pub(crate) struct TerrainGpuState {
 
     /// The climates' texture arrays by (paths, sRGB): the materials of a scene's tiles mostly use the same ones.
     arrays: BTreeMap<(String, bool), Texture>,
+
+    /// What the materials and arrays were last brought up to date for: the scene (address), its structure and terrain revisions. The
+    /// bookkeeping (texture paths joined per terrain) cost 3 ms a frame with a map context's 192 tiles.
+    materials_key: (usize, u64, u64),
     /// Index buffers of a patch of cx x cz cells at a stride, and their index counts.
     grid_ib: BTreeMap<(i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
@@ -612,7 +616,23 @@ impl Renderer {
         // ---- 1. The surface (per terrain entity: geometry, then the pixel shader's two outputs).
         let ents = self.terrain_surface_entities(scene);
 
-        // The materials (and texture arrays) the scene's terrains use stay; the others go.
+        // The materials (and texture arrays) the scene's terrains use stay; the others go. Only when the terrains changed.
+        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+        if key != self.terrain.materials_key {
+            self.terrain.materials_key = key;
+            self.update_terrain_materials(&ents);
+        }
+
+        if ents.is_empty() {
+            return;
+        }
+
+        self.draw_terrain_material(&ents, [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
+    }
+
+    /// Brings the GPU materials and texture arrays up to date with the scene's terrains (dropping those no terrain uses).
+    fn update_terrain_materials(&mut self, ents: &[&wce_scene::render_scene::Entity]) {
+        let ents = ents.to_vec();
         let used: std::collections::BTreeSet<u64> = ents.iter().filter_map(|e| match &e.payload {
             Payload::Terrain(Terrain { material: Some(m), .. }) => Some(m.id),
             _ => None,
@@ -629,11 +649,12 @@ impl Renderer {
             _ => None,
         }).flatten().collect();
         self.terrain.arrays.retain(|k, _| arrays.contains(k));
+    }
 
-        if ents.is_empty() {
-            return;
-        }
-
+    /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
+    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], shaders: [std::rc::Rc<GameShader>; 7]) {
+        let ents = ents.to_vec();
+        let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -693,63 +714,98 @@ impl Renderer {
             }
         }
 
-        for (m, boxes) in by_material {
+        // The constants every material shares, set once (they were rebuilt per material: a map context's 192 tiles spent 11 ms a frame
+        // building and comparing the 32 KB mapping array); per material only its four layers' scales change below.
+        let cbs = &mut self.cbs;
+
+        // ps_height_map_cb: the values the live game shows (dump of a battle) where the tool has no other source; the far-distance blend
+        // and the map-wide normal map are switched off (g_far_tile_distance / g_far_blend_range very large): the tile's own maps are the near
+        // field, and the editor has one tile.
+        cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[20.0, 550.0, 3.0, 0.9]);
+        cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.6, 0.0]);
+        cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[2.0]);
+        cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.96, 3.0]);
+        cbs.set_f("ps_height_map_cb", "g_channel_offsets", &[0.0; 4]);
+        cbs.set_f("ps_height_map_cb", "g_normal_scales", &[1.0, 1.0, 1.0]);
+        cbs.set_f("ps_height_map_cb", "g_blend_gain", &[1.0]);
+        cbs.set_f("ps_height_map_cb", "g_far_tile_distance", &[1.0e9]);
+        cbs.set_f("ps_height_map_cb", "g_far_blend_range", &[1.0e9, 2.0e9]);
+        cbs.set_f("ps_height_map_cb", "g_far_world_write_uv_offset", &[1.0, 1.0, 0.0, 0.0]);
+        cbs.set_f("ps_height_map_cb", "g_far_world_read_uv_offset", &[0.0]);
+        cbs.set_f("ps_height_map_cb", "g_blend_contrast", &[100.0]);
+        cbs.set_f("ps_height_map_cb", "g_lq_infield_blend_range", &[0.0]);
+        cbs.set_i("ps_height_map_cb", "g_is_campaign", 0);
+
+        // The (disabled) map-wide normal map's uv.
+        cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]);
+
+        // ps_texture_array_cb: one layer per texture group, its four variations are the slots 4 * layer + 0..3; g_array_section_sizes.z = 0
+        // keeps the index at the tile's own. The shader reads `cb3[mapping + 1]` of the cbuffer, whose row 0 is g_light_params_texture_width:
+        // that is array element [mapping] (= the layer here): (metres per repeat, outfield scale, mid-distance strength). Element [layer + 1]
+        // left layer 0 with a scale of 0 (uv = world / 0: one flat texel).
+        cbs.set_f("ps_texture_array_cb", "g_light_params_texture_width", &[16.0]);
+        cbs.set_f("ps_texture_array_cb", "g_array_section_sizes", &[1.0, 1.0, 0.0, 0.0]);
+        cbs.set_f("ps_texture_array_cb", "g_remapped_season", &[0.0]);
+        cbs.set_f("ps_texture_array_cb", "g_climate_change_index", &[0.0]);
+        cbs.set_f("ps_texture_array_cb", "g_layer_exempt_groups", &[1.0e6; 4]);
+        cbs.set_f("ps_texture_array_cb", "g_sea_texture_index", &[0.0, 0.0]);
+
+        // g_array_mapping[i] = i (a float per 16-byte element).
+        let mut map = vec![0.0f32; 2048 * 4];
+        for i in 0..2048 {
+            map[i * 4] = i as f32;
+        }
+
+        cbs.set_f("ps_mapping_array", "g_array_mapping", &map);
+        cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &[0.0f32; 400 * 4]);
+        // What every material shares, bound once: the shaders, the depth map and the samplers as the blend shader declares them (fn
+        // 0x116fd320; filter / address are D3D11 enums): the texture-quality class (vtable 0x11c8bab8, the filter from the texture filtering
+        // setting, fn 0x1177f410: anisotropic 2..16 or trilinear) wraps, except s_alpha_map (clamp); s_depth_map and s_light_params are
+        // point / clamp; s_normal_array is trilinear / wrap.
+        self.upload();
+        self.bind(&blend_vs);
+        self.bind(&blend_ps);
+        null_ps_srvs(&self.ctx, 16);
+        let ctx = &self.ctx;
+        bind_srv(ctx, &blend_ps, "s_depth_map", self.gbuffer.channels[3].srv.as_ref());
+        ps_samplers(ctx, &blend_ps, &self.states.s_wrap_aniso);
+        bind_sampler(ctx, &blend_ps, "s_alpha_map", self.states.s_clamp_aniso.as_ref());
+        bind_sampler(ctx, &blend_ps, "s_depth_map", self.states.s_clamp_point.as_ref());
+        bind_sampler(ctx, &blend_ps, "s_light_params", self.states.s_clamp_point.as_ref());
+        bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_linear.as_ref());
+
+        // Every material's boxes in the instance buffer at once (a map context blends hundreds of materials: mapping the buffer per
+        // material cost 8 us each), each drawn from its first instance; more than it holds, a buffer's worth at a time.
+        let Some(inst_vb) = self.terrain.inst_vb.clone() else { return };
+        let capacity = INSTANCE_BYTES / 4 / 16;
+        let total = by_material.iter().map(|(_, b)| b.len() / 16).sum::<usize>();
+        let mut box_first = vec![None; by_material.len()];
+        if total <= capacity {
+            let all = by_material.iter().flat_map(|(_, b)| b.iter().copied()).collect::<Vec<f32>>();
+            if ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &all)) {
+                let mut at = 0u32;
+                for (k, (_, b)) in by_material.iter().enumerate() {
+                    box_first[k] = Some(at);
+                    at += (b.len() / 16) as u32;
+                }
+            }
+        }
+
+        ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb.clone())], &[12, 64], &[0, 0]);
+        ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+        for (k, (m, boxes)) in by_material.into_iter().enumerate() {
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
-            let cbs = &mut self.cbs;
-
-            // ps_height_map_cb: the values the live game shows (dump of a battle) where the tool has no other source; the far-distance blend
-            // and the map-wide normal map are switched off (g_far_tile_distance / g_far_blend_range very large): the tile's own maps are the near
-            // field, and the editor has one tile.
-            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[20.0, 550.0, 3.0, 0.9]);
-            cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.6, 0.0]);
-            cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[2.0]);
-            cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.96, 3.0]);
-            cbs.set_f("ps_height_map_cb", "g_channel_offsets", &[0.0; 4]);
-            cbs.set_f("ps_height_map_cb", "g_normal_scales", &[1.0, 1.0, 1.0]);
-            cbs.set_f("ps_height_map_cb", "g_blend_gain", &[1.0]);
-            cbs.set_f("ps_height_map_cb", "g_far_tile_distance", &[1.0e9]);
-            cbs.set_f("ps_height_map_cb", "g_far_blend_range", &[1.0e9, 2.0e9]);
-            cbs.set_f("ps_height_map_cb", "g_far_world_write_uv_offset", &[1.0, 1.0, 0.0, 0.0]);
-            cbs.set_f("ps_height_map_cb", "g_far_world_read_uv_offset", &[0.0]);
-            cbs.set_f("ps_height_map_cb", "g_blend_contrast", &[100.0]);
-            cbs.set_f("ps_height_map_cb", "g_lq_infield_blend_range", &[0.0]);
-            cbs.set_i("ps_height_map_cb", "g_is_campaign", 0);
-
-            // The (disabled) map-wide normal map's uv.
-            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]);
-
-            // ps_texture_array_cb: one layer per texture group, its four variations are the slots 4 * layer + 0..3; g_array_section_sizes.z = 0
-            // keeps the index at the tile's own. The shader reads `cb3[mapping + 1]` of the cbuffer, whose row 0 is g_light_params_texture_width:
-            // that is array element [mapping] (= the layer here): (metres per repeat, outfield scale, mid-distance strength). Element [layer + 1]
-            // left layer 0 with a scale of 0 (uv = world / 0: one flat texel).
-            let mut arr = vec![0.0f32; 400 * 4];
+            let mut arr = [0.0f32; 16];
             for l in 0..4 {
                 arr[l * 4] = m.pixel_scale[l];
                 arr[l * 4 + 1] = m.outfield_scale[l];
                 arr[l * 4 + 2] = m.mid_strength[l];
             }
 
-            cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
-            cbs.set_f("ps_texture_array_cb", "g_light_params_texture_width", &[16.0]);
-            cbs.set_f("ps_texture_array_cb", "g_array_section_sizes", &[1.0, 1.0, 0.0, 0.0]);
-            cbs.set_f("ps_texture_array_cb", "g_remapped_season", &[0.0]);
-            cbs.set_f("ps_texture_array_cb", "g_climate_change_index", &[0.0]);
-            cbs.set_f("ps_texture_array_cb", "g_layer_exempt_groups", &[1.0e6; 4]);
-            cbs.set_f("ps_texture_array_cb", "g_sea_texture_index", &[0.0, 0.0]);
-
-            // g_array_mapping[i] = i (a float per 16-byte element).
-            let mut map = vec![0.0f32; 2048 * 4];
-            for i in 0..2048 {
-                map[i * 4] = i as f32;
-            }
-
-            cbs.set_f("ps_mapping_array", "g_array_mapping", &map);
+            // Elements 0 .. 3 (the rest stays zero).
+            self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
             self.upload();
-            self.bind(&blend_vs);
-            self.bind(&blend_ps);
-            null_ps_srvs(&self.ctx, 16);
             let ctx = &self.ctx;
-            bind_srv(ctx, &blend_ps, "s_depth_map", self.gbuffer.channels[3].srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
             bind_srv(ctx, &blend_ps, "s_index_map", g.index.srv.as_ref());
@@ -758,23 +814,17 @@ impl Renderer {
             bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
             bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
             bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
-            // The samplers as the blend shader declares them (fn 0x116fd320; filter / address are D3D11 enums): the texture-quality class
-            // (vtable 0x11c8bab8, the filter from the texture filtering setting, fn 0x1177f410: anisotropic 2..16 or trilinear) wraps,
-            // except s_alpha_map (clamp); s_depth_map and s_light_params are point / clamp; s_normal_array is trilinear / wrap.
-            ps_samplers(ctx, &blend_ps, &self.states.s_wrap_aniso);
-            bind_sampler(ctx, &blend_ps, "s_alpha_map", self.states.s_clamp_aniso.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_depth_map", self.states.s_clamp_point.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_light_params", self.states.s_clamp_point.as_ref());
-            bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_linear.as_ref());
+            if let Some(first) = box_first[k] {
+                ctx.draw_indexed_instanced(36, (boxes.len() / 16) as u32, 0, 0, first);
+                self.draw_stats.draw_calls += 1;
+                continue;
+            }
 
-            let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-            for chunk in boxes.chunks(INSTANCE_BYTES / 4 / 16 * 16) {
+            for chunk in boxes.chunks(capacity * 16) {
                 if !ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, chunk)) {
                     continue;
                 }
 
-                ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb.clone())], &[12, 64], &[0, 0]);
-                ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
                 ctx.draw_indexed_instanced(36, (chunk.len() / 16) as u32, 0, 0, 0);
                 self.draw_stats.draw_calls += 1;
             }
