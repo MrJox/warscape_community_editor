@@ -97,7 +97,9 @@ impl Renderer {
     /// pool of a model grows as needed, its items are moved each frame, the unused ones out of sight. Drawn as the scene's rigid models.
     pub(crate) fn place_effect_rigids(&mut self) {
         let u = self.camera.units;
-        let rigids = self.particles.effect_rigids(self.camera.eye * u);
+        // The particles live relative to the render origin; the draw set is absolute.
+        let o = self.camera.origin;
+        let rigids = self.particles.effect_rigids((self.camera.eye - o) * u);
         if rigids.is_empty() && self.draw_lists.rigid_pool.values().all(Vec::is_empty) {
             return;
         }
@@ -111,7 +113,8 @@ impl Renderer {
         let mut used = HashMap::<String, usize>::new();
         for r in rigids {
             let Some(m) = self.models.try_get(&r.model, 0.0) else { continue };
-            let world = to_scene * r.world;
+            let mut world = to_scene * r.world;
+            (world.m[0][3], world.m[1][3], world.m[2][3]) = (world.m[0][3] + o.x, world.m[1][3] + o.y, world.m[2][3] + o.z);
             let n = used.entry(r.model.clone()).or_default();
             let pool = self.draw_lists.rigid_pool.entry(r.model).or_default();
             match pool.get(*n) {
@@ -198,9 +201,10 @@ impl Renderer {
         let size = size_of::<RigidInstance>();
         let Some(Ok(dst)) = ms.get_mut(self.draw_lists.ring.cursor * size..(self.draw_lists.ring.cursor + n) * size).map(bytemuck::try_cast_slice_mut::<u8, RigidInstance>) else { return [0, 0] };
         let (first, second) = dst.split_at_mut(n0);
-        let units = self.camera.units;
-        sets[0].gather(viss[0], first, units);
-        sets[1].gather(viss[1], second, units);
+        let (units, o) = (self.camera.units, self.camera.origin);
+        let origin = [o.x * units, o.y * units, o.z * units];
+        sets[0].gather(viss[0], first, units, origin);
+        sets[1].gather(viss[1], second, units, origin);
         drop(ms);
 
         self.draw_lists.ring.fresh = false;

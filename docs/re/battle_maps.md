@@ -166,8 +166,14 @@ plains (aa .. ad) elsewhere.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
-  (several arriving in one frame hitch it); far from the open tile the scene's own coordinates grow (a whole-campaign viewer will need
-  camera-relative rendering for the other passes too).
+  (several arriving in one frame hitch it).
+- **Render origin** (2026-10-21): far from the open tile (1,170 cells away on the campaign map, 150 000 scene units) float32 positions lost
+  the depth's and the ground textures' precision: the blend shader rebuilds positions from depth and samples the layers at `world /
+  repeat`, so the ground swam in moire rings as the camera moved (a 0.1-unit move changed 35 % of the pixels, now 0.3 %, as next to the
+  tile). The renderer gives the shaders positions relative to a render origin (the camera, instances, terrain rows and blend boxes, the LF
+  normal map rolled by it, decals, lights, grass, shadows, the sea, rivers, effects); the scene, culling and picking stay absolute. The
+  origin stays at 0 within 16 384 scene units (128 cells) of it and moves on that grid: then the world-space texture patterns shift once
+  and the particles alive keep their old places.
 - Earlier versions: a radius around the open tile built at once, every neighbour resampled into the open frame and one shared 2 m height map
   over all of them (130 neighbours from 45 tiles, 1.2 s, about 1 GB); growing the window until no neighbour stuck out ran through the
   12 x 12 sea and mountain tiles to 200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).

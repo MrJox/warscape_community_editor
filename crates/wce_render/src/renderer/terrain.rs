@@ -126,7 +126,10 @@ pub(crate) struct LfGpu {
     i0: i32,
     j0: i32,
     n: i32,
+
+    /// The normals rolled for a render origin (the shader reads them at the relative position, wrapping).
     normal: Texture,
+    normal_origin: Float3,
 }
 
 /// The most samples a side of an LF window (8 MB; 64 km of the campaign map's 32-unit samples).
@@ -481,14 +484,39 @@ impl Renderer {
         self.terrain.placed.insert(id, placed);
     }
 
-    /// The GPU side of an LF map: its normal map (the heights' window is made when drawn, around the camera).
+    /// The GPU side of an LF map: its normal map for the render origin (the heights' window is made when drawn, around the camera).
     fn build_lf(&mut self, lf: &LfMap) {
-        if self.terrain.lf.contains_key(&lf.id) {
+        let o = self.camera.origin;
+        if self.terrain.lf.get(&lf.id).is_some_and(|g| g.normal_origin == o) {
             return;
         }
 
-        let normal = lf.normal.rgba.as_ref().map(|rgba| make_rgba_texture(&self.dev, lf.normal.w, lf.normal.h, rgba, false)).unwrap_or_default();
-        self.terrain.lf.insert(lf.id, LfGpu { normal, ..Default::default() });
+        // The shader reads it at uv = (x, -z) / normal_world of the position relative to the origin: rolled by the origin's texels (it is
+        // on their grid), column c holds the old c + ox / texel, row r the old r - oz / texel.
+        let normal = lf.normal.rgba.as_ref().map(|rgba| {
+            let (w, h) = (lf.normal.w as i64, lf.normal.h as i64);
+            let (tx, tz) = (f64::from(lf.normal_world[0]) / w as f64, f64::from(lf.normal_world[1]) / h as f64);
+            let (dx, dz) = ((f64::from(o.x) / tx).round() as i64, (f64::from(o.z) / tz).round() as i64);
+            let rolled: Vec<u8> = if dx == 0 && dz == 0 {
+                rgba.to_vec()
+            } else {
+                let mut out = vec![0u8; rgba.len()];
+                for r in 0..h {
+                    let src_r = (r - dz).rem_euclid(h);
+                    for c in 0..w {
+                        let (d, s) = (((r * w + c) * 4) as usize, ((src_r * w + (c + dx).rem_euclid(w)) * 4) as usize);
+                        out[d..d + 4].copy_from_slice(&rgba[s..s + 4]);
+                    }
+                }
+
+                out
+            };
+
+            make_rgba_texture(&self.dev, lf.normal.w, lf.normal.h, &rolled, false)
+        }).unwrap_or_default();
+
+        let g = self.terrain.lf.remove(&lf.id).unwrap_or_default();
+        self.terrain.lf.insert(lf.id, LfGpu { normal, normal_origin: o, ..g });
     }
 
     /// An LF group's height texture and addressing for the camera at `eye`. The game's vertex shader reads it at `world xz /
@@ -908,7 +936,8 @@ impl Renderer {
 
             // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max, game units), the rotation index of the material's
             // maps and the layer base 0 (T3).
-            let inst = [0.0, 1.0, 2.0, 3.0, b[0] * u, b[1] * u, b[2] * u, 0.0, b[3] * u, b[4] * u, b[5] * u, 0.0, rot, 0.0, 0.0, 0.0];
+            let o = self.camera.origin;
+            let inst = [0.0, 1.0, 2.0, 3.0, (b[0] - o.x) * u, b[1] * u, (b[2] - o.z) * u, 0.0, (b[3] - o.x) * u, b[4] * u, (b[5] - o.z) * u, 0.0, rot, 0.0, 0.0, 0.0];
             let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id));
             match slot.get(&key) {
                 Some(&k) => by_material[k].2.extend(inst),
@@ -1162,7 +1191,7 @@ impl Renderer {
         }
 
         self.ctx.set_input_layout(Some(&il));
-        let clip = game_clip(view_proj, self.camera.units);
+        let clip = rel_clip(view_proj, self.camera.origin, self.camera.units);
         let triangles = self.draw_terrain_patches(&ents, &vs, &ps, view_proj, &clip);
 
         // The cascade's matrix back for the objects after.
@@ -1186,7 +1215,7 @@ impl Renderer {
             }
         }
 
-        let (eye, units) = (self.terrain.lod_eye, self.camera.units);
+        let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
         let (view, eye_cb) = (self.camera.cb_view, self.camera.cb_eye);
         let mut triangles = 0;
         for (lf, ids) in groups {
@@ -1194,7 +1223,8 @@ impl Renderer {
             // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
             let d = match &lf {
                 Some(lf) => self.lf_draw(lf, eye),
-                None => LfDraw { srv: self.lf_zero(), n: 2.0, width: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [0.0, 0.0] },
+                // No LF: the frame of the render origin.
+                None => LfDraw { srv: self.lf_zero(), n: 2.0, width: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [origin.x, origin.z] },
             };
 
             let [sx, sz] = d.shift;
@@ -1206,12 +1236,13 @@ impl Renderer {
             cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[d.width * units, d.width * units]);
             cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[d.uv_offset]);
 
-            // The camera in the group's frame: world' = world - shift.
+            // The camera in the group's frame: world' = world - shift; the camera constants are relative to the render origin.
+            let (rx, rz) = (sx - origin.x, sz - origin.z);
             let mut to_world = Float4x4::IDENTITY;
-            (to_world.m[0][3], to_world.m[2][3]) = (sx * units, sz * units);
+            (to_world.m[0][3], to_world.m[2][3]) = (rx * units, rz * units);
             cbs.set_m("camera_VS_PS", "view_projection", (*clip * to_world).data());
             cbs.set_m("camera_VS_PS", "view", (view * to_world).data());
-            cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x - sx * units, eye_cb.y, eye_cb.z - sz * units]);
+            cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x - rx * units, eye_cb.y, eye_cb.z - rz * units]);
             self.upload();
             self.bind(vs);
             self.bind(ps);

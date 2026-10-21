@@ -290,7 +290,7 @@ impl Renderer {
             to_uv.m[0][3] = bx + 0.25;
             to_uv.m[1][1] = -0.25;
             to_uv.m[1][3] = by + 0.25;
-            matrices[c * 16..c * 16 + 16].copy_from_slice(game_clip(&(to_uv * light_vp[c]), self.camera.units).data());
+            matrices[c * 16..c * 16 + 16].copy_from_slice(rel_clip(&(to_uv * light_vp[c]), self.camera.origin, self.camera.units).data());
         }
 
         // Render the casters into the four quadrants.
@@ -323,7 +323,7 @@ impl Renderer {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = SHADOW_SIZE as f32 / 2.0;
                 self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
-                self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(&light_vp[c], self.camera.units).data());
+                self.cbs.set_m("camera_VS_PS", "view_projection", rel_clip(&light_vp[c], self.camera.origin, self.camera.units).data());
                 self.upload();
                 self.bind(&vs);
                 self.bind(&ps);

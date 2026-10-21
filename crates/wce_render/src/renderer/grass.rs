@@ -177,10 +177,11 @@ impl Renderer {
                 }
 
                 let o = mesh.offset;
+                let origin = self.camera.origin;
                 for &k in &near {
                     let m = &set.instances[k as usize];
-                    for r in 0..3 {
-                        let t = m[r * 4 + 3] + m[r * 4] * o.x + m[r * 4 + 1] * o.y + m[r * 4 + 2] * o.z;
+                    for (r, origin) in [origin.x, origin.y, origin.z].into_iter().enumerate() {
+                        let t = m[r * 4 + 3] + m[r * 4] * o.x + m[r * 4 + 1] * o.y + m[r * 4 + 2] * o.z - origin;
                         all.extend_from_slice(&[m[r * 4] * units, m[r * 4 + 1] * units, m[r * 4 + 2] * units, t * units]);
                     }
 
@@ -232,7 +233,7 @@ impl Renderer {
         for (c, vp) in light_vp.iter().enumerate() {
             let half = SHADOW_SIZE as f32 / 2.0;
             self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, super::passes::SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
-            self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
+            self.cbs.set_m("camera_VS_PS", "view_projection", rel_clip(vp, self.camera.origin, self.camera.units).data());
             self.upload();
             let mut first = 0u32;
             for (model, mi, count) in &runs {

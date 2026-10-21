@@ -99,13 +99,15 @@ impl Renderer {
             };
 
             let k = |v: f32| v * level * SUN_HDR_SCALE;
-            out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, c[0] * u, c[1] * u, c[2] * u, l.radius * u]);
+            let o = self.camera.origin;
+            out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, (c[0] - o.x) * u, (c[1] - o.y) * u, (c[2] - o.z) * u, l.radius * u]);
         }
 
         // The placed effects' lights (fire VFX): their colour already carries its level. The particles are in game units: culled in scene units.
-        for l in self.particles.effect_lights(self.camera.eye * u) {
+        let o = self.camera.origin;
+        for l in self.particles.effect_lights((self.camera.eye - o) * u) {
             let c = [l.pos.x, l.pos.y, l.pos.z];
-            if l.radius <= 0.0 || frustum.outside(&c.map(|v| v / u), l.radius / u) {
+            if l.radius <= 0.0 || frustum.outside(&[c[0] / u + o.x, c[1] / u + o.y, c[2] / u + o.z], l.radius / u) {
                 continue;
             }
 

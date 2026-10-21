@@ -186,6 +186,9 @@ struct SeaAssets {
 pub(crate) struct OceanGpu {
     planes: BTreeMap<EntityId, OceanPlane>,
 
+    /// The render origin the planes, the chunks and the sea bed are relative to (game units relative to it, as the shaders get them).
+    origin: Float3,
+
     /// The frame's chunk vertices (dynamic, grown when needed), and a chunk's index buffer and index count.
     vb: Option<ID3D11Buffer>,
     vb_floats: usize,
@@ -200,7 +203,7 @@ pub(crate) struct OceanGpu {
     sea_bed: Option<ID3D11ShaderResourceView>,
 
     /// What the sea bed was built from: the scene's address and terrain revision.
-    sea_bed_key: (usize, u64, u64),
+    sea_bed_key: (usize, u64, u64, u32, u32),
 
     /// The scene's terrain entities (a hash of their ids) as of a structure revision: a streamed map context adds and drops terrains
     /// without touching the terrain revision.
@@ -307,7 +310,7 @@ impl Renderer {
     /// The sea bed info texture of the scene's terrains over it (rebuilt when they change).
     fn ocean_sea_bed(&mut self, scene: &RenderScene) {
         // The texture covers game units; the terrains are in scene units. The terrains over it (a map context has hundreds, most farther).
-        let u = self.camera.units;
+        let (u, o) = (self.camera.units, self.camera.origin);
         let half = SEA_BED_HALF / u;
         let over = |e: &Entity, t: &wce_scene::render_scene::Terrain| {
             let m = &e.world.m;
@@ -318,7 +321,8 @@ impl Renderer {
                 (lo[0], lo[1], hi[0], hi[1]) = (lo[0].min(wx), lo[1].min(wz), hi[0].max(wx), hi[1].max(wz));
             }
 
-            hi[0] >= -half && lo[0] <= half && hi[1] >= -half && lo[1] <= half
+            // Around the render origin.
+            hi[0] >= o.x - half && lo[0] <= o.x + half && hi[1] >= o.z - half && lo[1] <= o.z + half
         };
 
         let terrains = || scene.entities().iter()
@@ -335,7 +339,7 @@ impl Renderer {
             self.water.ocean.sea_bed_terrains = (scene.structure_revision(), ids);
         }
 
-        let key = (scene as *const RenderScene as usize, scene.terrain_revision(), self.water.ocean.sea_bed_terrains.1);
+        let key = (scene as *const RenderScene as usize, scene.terrain_revision(), self.water.ocean.sea_bed_terrains.1, o.x.to_bits(), o.z.to_bits());
         if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key {
             return;
         }
@@ -350,7 +354,7 @@ impl Renderer {
             let z = -SEA_BED_HALF + (j as f32 + 0.5) * texel;
             for (i, out) in row.iter_mut().enumerate() {
                 let x = -SEA_BED_HALF + (i as f32 + 0.5) * texel;
-                let h = ground_at(&terrains, x / u, z / u).map_or(lo, |h| h * u);
+                let h = ground_at(&terrains, x / u + o.x, z / u + o.z).map_or(lo, |h| h * u);
                 *out = ((h - lo) / range).clamp(0.0, 1.0);
             }
         });
@@ -409,7 +413,13 @@ impl Renderer {
         self.ocean_neutral();
         self.ocean_sea_state();
 
-        // The planes' chunk layouts, made again when a plane's version moves on.
+        // The planes' chunk layouts, made again when a plane's version (or the render origin) moves on.
+        let o = self.camera.origin;
+        if self.water.ocean.origin != o {
+            self.water.ocean.origin = o;
+            self.water.ocean.planes.clear();
+        }
+
         let mut keep = BTreeMap::new();
         for e in &seas {
             let Payload::Water(w) = &e.payload else { continue };
@@ -420,7 +430,8 @@ impl Renderer {
 
             let (mut x0, mut z0, mut x1, mut z1, mut y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN, 0.0);
             for v in &w.verts {
-                (x0, z0, x1, z1, y) = (x0.min(v.x), z0.min(v.z), x1.max(v.x), z1.max(v.z), v.y);
+                let (x, z) = (v.x - o.x, v.z - o.z);
+                (x0, z0, x1, z1, y) = (x0.min(x), z0.min(z), x1.max(x), z1.max(z), v.y);
             }
 
             // In game units, as the ocean shaders' distances and the sea bed texture.
@@ -451,7 +462,7 @@ impl Renderer {
 
         // The chunks in view, their levels by distance, and their vertices displaced by the surfaces' heights.
         let frustum = crate::draw_set::Frustum::from_view_projection(&self.camera.view_proj);
-        let eye = self.camera.eye * u;
+        let eye = (self.camera.eye - o) * u;
         let mut jobs = vec![];
         let mut chunks = vec![];
         let mut floats = 0usize;
@@ -460,7 +471,7 @@ impl Renderer {
             let mut stack = vec![root];
             while let Some(n) = stack.pop() {
                 let r = 0.5 * (n.w * n.w + n.h * n.h + 4.0 * WAVE_MARGIN * WAVE_MARGIN).sqrt();
-                if frustum.outside(&[(n.x0 + 0.5 * n.w) / u, p.y / u, (n.z0 + 0.5 * n.h) / u], r / u) {
+                if frustum.outside(&[(n.x0 + 0.5 * n.w) / u + o.x, p.y / u, (n.z0 + 0.5 * n.h) / u + o.z], r / u) {
                     continue;
                 }
 

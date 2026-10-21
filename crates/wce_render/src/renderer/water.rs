@@ -51,6 +51,7 @@ pub(crate) struct WaterGpu {
 
     /// The game units per scene unit the instance rows hold.
     inst_units: f32,
+    inst_origin: wce_foundation::math::Float3,
     pub(crate) ds: Option<ID3D11DepthStencilState>,
 
     /// The sea planes' ocean pass (renderer/ocean.rs).
@@ -147,12 +148,12 @@ impl Renderer {
 
         // The instance data of the vertex shaders (one instance each): the rows of the 3x4 world matrix, the scene -> game units scale (the
         // vertices are in world space).
-        let u = self.camera.units;
-        if self.water.river_inst_vb.is_none() || self.water.inst_units != u {
-            self.water.inst_units = u;
+        let (u, o) = (self.camera.units, self.camera.origin);
+        if self.water.river_inst_vb.is_none() || self.water.inst_units != u || self.water.inst_origin != o {
+            (self.water.inst_units, self.water.inst_origin) = (u, o);
 
-            // P2 .. P4 rows, P5 (x >= 1 flips the uv).
-            let river = [u, 0.0, 0.0, 0.0, 0.0, u, 0.0, 0.0, 0.0, 0.0, u, 0.0, 0.0, 0.0, 0.0, 0.0];
+            // P2 .. P4 rows (moved to the render origin), P5 (x >= 1 flips the uv).
+            let river = [u, 0.0, 0.0, -o.x * u, 0.0, u, 0.0, -o.y * u, 0.0, 0.0, u, -o.z * u, 0.0, 0.0, 0.0, 0.0];
 
             // P1 .. P3 rows, P4 .. P6 unused.
             let mut sea = [0.0f32; 24];

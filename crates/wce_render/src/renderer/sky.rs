@@ -151,7 +151,8 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         for f in 0..6 {
-            self.set_camera(&face_view(f), &proj, Float3::default(), SKY_CUBE, SKY_CUBE, time_s);
+            // Directions only: the camera at the render origin.
+            self.set_camera(&face_view(f), &proj, self.camera.origin, SKY_CUBE, SKY_CUBE, time_s);
             self.upload();
             self.ctx.set_render_targets(&[self.sky.cube.face_rtv[f].clone()], None);
             self.bind(&vs);
@@ -180,7 +181,7 @@ impl Renderer {
         // The test map's ground is at 0.
         let eye = Float3::new(0.0, 50.0, 0.0);
         for f in 0..6 {
-            let view = face_view(f) * translation(-eye);
+            let view = face_view(f) * translation(-(eye - self.camera.origin));
             self.set_camera(&view, &proj, eye, n, n, time_s);
             self.upload();
             self.ctx.set_viewports(&[viewport(0.0, 0.0, n as f32, n as f32)]);
