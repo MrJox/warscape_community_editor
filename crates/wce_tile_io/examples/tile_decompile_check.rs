@@ -2,6 +2,7 @@
 //! tiles where the kit has the same tile.
 //!
 //!   cargo run --release -p wce_tile_io --example tile_decompile_check -- <game folder> [--filter TEXT] [--limit N] [--out DIR]
+//!       [--trees LIST]
 //!
 //! Per tile folder of the packs: read (`attila.tile_binary`), decompile, write as a TEd project and read it back (`attila.ted_project`).
 //! With the kit's raw tile of the same location: the entry (byte for byte), the heights (metres, inside the border), the buildings (paired
@@ -235,6 +236,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 ("SIMPLE_MESH_INSTANCE", "key", &["scale"][..]),
                 ("VFXInstance", "vfx", &["scale", "autoplay", "use_in_outfield", "seasons"][..]),
                 ("POINT_LIGHT_INSTANCE", "name", &["colour", "radius", "colour_scale", "colour_min", "random_offset", "animation_type", "falloff_type", "animation_speed_scale"][..]),
+                ("VEGETATION_INSTANCE", "key", &["scale"][..]),
             ] {
                 let mut ours = vec![];
                 scene.walk(&mut |n| {
@@ -261,7 +263,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     let Some(ci) = cands
                         .iter()
                         .enumerate()
-                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (q.y - p[1]).abs() < 0.1)
+                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (class == "VEGETATION_INSTANCE" || (q.y - p[1]).abs() < 0.1))
                         .max_by_key(|(_, (e, _))| agree(*e))
                         .map(|(i, _)| i)
                     else {
@@ -284,8 +286,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         }
                     }
 
-                    // A point light has no rotation.
-                    if class == "POINT_LIGHT_INSTANCE" {
+                    // A point light has no rotation; the trees are turned at random by the game.
+                    if class == "POINT_LIGHT_INSTANCE" || class == "VEGETATION_INSTANCE" {
                         continue;
                     }
 
@@ -400,7 +402,8 @@ fn main() {
     }
 
     let category = |key: &str| bdb.category(key).map(str::to_owned);
-    let ctx = Context { databases: &dbs, building_levels: Some(&lookup), building_category: Some(&category) };
+    let trees = opt("--trees");
+    let ctx = Context { databases: &dbs, building_levels: Some(&lookup), building_category: Some(&category), tree_list: trees.as_deref() };
     let totals = Mutex::new(Totals::default());
     let mut done = 0;
     for (p, pack) in &mut opened {
