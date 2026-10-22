@@ -43,6 +43,7 @@ struct Totals {
     height_samples: usize,
     height_within_1cm: usize,
     flat_heights: usize,
+    read_back_differs: usize,
     final_samples: usize,
     final_within_1cm: usize,
     final_tiles: usize,
@@ -128,6 +129,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 _ => Some(format!("maps {:?} / {:?}", raw.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>(), back.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>())),
             };
 
+            local.read_back_differs += 1;
             local.problems.push(format!("{name}: the written project reads into another model: {}", what.unwrap_or_default()));
         }
 
@@ -580,6 +582,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
     t.height_samples += local.height_samples;
     t.height_within_1cm += local.height_within_1cm;
     t.flat_heights += local.flat_heights;
+    t.read_back_differs += local.read_back_differs;
     t.final_samples += local.final_samples;
     t.final_within_1cm += local.final_within_1cm;
     t.final_tiles += local.final_tiles;
@@ -743,5 +746,12 @@ fn main() {
         for p in t.problems.iter().take(n) {
             println!("  {p}");
         }
+    }
+
+    // The gate: what the binary decides (the kit is evidence only).
+    let lite_wrong = t.losses.iter().filter(|(k, _)| k.starts_with("lite building zones change flags")).map(|(_, n)| n).sum::<usize>();
+    if t.failed > 0 || t.read_back_differs > 0 || lite_wrong > 0 {
+        println!("FAILED: {} tile folders do not decompile, {} decompiled projects read back differently, {lite_wrong} tiles change lite flags", t.failed, t.read_back_differs);
+        std::process::exit(1);
     }
 }
