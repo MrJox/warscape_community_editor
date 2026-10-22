@@ -264,6 +264,14 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   POSITION5.w > 0 and decals POSITION5.z: the editor sets both to 1 (ASSUMPTION: the engine's per-instance value was not traced).
   `g_snowing_intensity` is the environment's WEATHER snowing_intensity (most files have 0; e.g. charlemagne/med_wi_land_day_snow_2 has 1).
   The campaign's `snow_mask_<season>.dds` (main_attila_map, cha_attila_map) are map-level.
+- **Snow on the ground (2026-10-22, from the DXBC of `ps30_terrain_to_gbuffer_ss`):** the resolve reads `g_snowing_intensity` and `g_wind`
+  of `weather_shared` (`g_season_type` and `g_snow_mask` are unused there). With intensity i > 0 it perturbs the normal with
+  `s_snow_normals` (uv = xz * 0.0005 and * 0.07), and where the normal faces away from the wind (direction (wind.x, -1, wind.y)) beyond a
+  threshold 1 - 0.7 * (min(1.25 i^2, 1) * 0.2 + 4 * sat(i^2 - 0.8)), sharpened by * 200 and a smoothstep, it lerps the colour to 0.4 grey
+  and moves the other channels toward snow. So snow cover is the weather's, one value for the whole battle: none without falling snow.
+- **The campaign's season maps** (kit `main_attila_map/snow_map_<sp|su|au|wi>.png`, 2032 x 1441 cells): black no snow, white snow, blue sea;
+  only winter has snow (418 610 cells). They say where a battle can be snowy in a season (its weather), not a texture layer. The
+  climates' `<v>_wi_*` textures are winter ground, not white (rome_med grass 0: summer (119, 117, 67), winter (117, 102, 77)).
 - **Map-level, not in the tile's scope:** `definition.xml` gives the battle map's base terrain (2560 x 2560 for western_city_b/small); the
   ground beyond the tile, the tile's `final_alpha` feather into it, the far maps and the outfield come from the map (the later tilemaps
   scope). The tile's `outfield_mesh.rigid_model_v2` is a 49 x 49 low-resolution copy of the tile's own 1024 m.
