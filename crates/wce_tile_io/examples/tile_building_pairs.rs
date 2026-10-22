@@ -49,6 +49,182 @@ fn main() {
     }
 
     println!("paired {} (within 5 cm)", pairs.len());
+    // The list's position from the kit's world position: in f64 then rounded once, against TEd's f32 world transform (BOB's).
+    let (mut exact64, mut exact32) = ([0usize; 3], [0usize; 3]);
+    for (e, i, w) in &pairs {
+        let b = &buildings[*i];
+        let d = [(w.position.x / 2.0) as f32, w.position.y as f32, (extent_z - w.position.z / 2.0) as f32];
+        let m = wce_tile::world_transform::ted_world_matrix_f32(sc, *e);
+        let f = [m[3] * 0.5, m[7], extent_z as f32 - m[11] * 0.5];
+        for k in 0..3 {
+            exact64[k] += usize::from(d[k] == b.position[k]);
+            exact32[k] += usize::from(f[k] == b.position[k]);
+        }
+    }
+
+    println!("positions exact (x, y, z): f64 world {exact64:?}, f32 world {exact32:?} of {}", pairs.len());
+
+    // Other ways TEd may compose the chain: each element's products summed in extended precision (x87) then rounded once; and the
+    // parent on the right (row vectors).
+    let chain = |e: usize| {
+        let mut c = vec![];
+        let mut x = Some(e);
+        while let Some(y) = x {
+            if sc.doc().get(y, "position").is_some() || sc.doc().get(y, "orientation").is_some() {
+                c.push(y);
+            }
+            x = sc.doc().elements()[y].parent;
+        }
+        c.reverse();
+        c
+    };
+    let local = |e: usize| {
+        let v = |a: &str, p: &str| -> [f32; 3] {
+            sc.doc().get(e, a).and_then(|t| {
+                let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
+                let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
+                Some([it.next()??, it.next()??, it.next()??])
+            }).unwrap_or([0.0; 3])
+        };
+        let mut m = wce_tile::world_transform::ted_rotation_f32(v("orientation", "euler"));
+        let p = v("position", "vector");
+        (m[3], m[7], m[11]) = (p[0], p[1], p[2]);
+        m
+    };
+    let mul_x87 = |w: &[f32; 16], l: &[f32; 16]| -> [f32; 16] {
+        std::array::from_fn(|k| {
+            let (i, j) = (k / 4, k % 4);
+            (0..4).map(|t| f64::from(w[i * 4 + t]) * f64::from(l[t * 4 + j])).sum::<f64>() as f32
+        })
+    };
+    let mut ex = [[0usize; 3]; 2];
+    for (e, i, _) in &pairs {
+        let b = &buildings[*i];
+        let c = chain(*e);
+        let mut wa: Option<[f32; 16]> = None;
+        let mut wb: Option<[f32; 16]> = None;
+        for &x in &c {
+            let l = local(x);
+            wa = Some(wa.map_or(l, |w| mul_x87(&w, &l)));
+            // Row vectors: the translation in the last row, local * parent.
+            let lt: [f32; 16] = std::array::from_fn(|k| l[(k % 4) * 4 + k / 4]);
+            wb = Some(wb.map_or(lt, |w| wce_tile::world_transform::ted_mul_f32(&lt, &w)));
+        }
+
+        let (wa, wb) = (wa.unwrap(), wb.unwrap());
+        let half = 0.5f32;
+        let fa = [wa[3] * half, wa[7], extent_z as f32 - wa[11] * half];
+        let fb = [wb[12] * half, wb[13], extent_z as f32 - wb[14] * half];
+        for k in 0..3 {
+            ex[0][k] += usize::from(fa[k] == b.position[k]);
+            ex[1][k] += usize::from(fb[k] == b.position[k]);
+        }
+    }
+
+    println!("positions exact: x87 sums {:?}, row vectors {:?}", ex[0], ex[1]);
+
+    // How far off the f32 world is, in units in the last place of the list's value (per axis: 0, 1, 2-4, 5-100, more).
+    let mut hist = [[0usize; 5]; 3];
+    for (e, i, _) in &pairs {
+        let b = &buildings[*i];
+        let m = wce_tile::world_transform::ted_world_matrix_f32(sc, *e);
+        let f = [m[3] * 0.5, m[7], extent_z as f32 - m[11] * 0.5];
+        for k in 0..3 {
+            let ulps = (i64::from(f[k].to_bits() as i32) - i64::from(b.position[k].to_bits() as i32)).unsigned_abs();
+            hist[k][match ulps { 0 => 0, 1 => 1, 2..=4 => 2, 5..=100 => 3, _ => 4 }] += 1;
+        }
+    }
+
+    // Quaternion composition: q = qz(c) qy(a) qx(-b) from f32 half-angle sin / cos, world q = parent q * local q, world position =
+    // parent position + parent q rotating the local position (through q's matrix, or v + 2 w (u x v) + 2 u x (u x v)).
+    let qmul = |a: [f32; 4], b: [f32; 4]| -> [f32; 4] {
+        let (x1, y1, z1, w1) = (a[0], a[1], a[2], a[3]);
+        let (x2, y2, z2, w2) = (b[0], b[1], b[2], b[3]);
+        [w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2, w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2, w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2]
+    };
+    let qeuler = |e: [f32; 3]| -> [f32; 4] {
+        let h = |v: f32| { let t = f64::from(v) * 0.5; (t.sin() as f32, t.cos() as f32) };
+        let (sa, ca) = h(e[0]);
+        let (sb, cb) = h(-e[1]);
+        let (sc_, cc) = h(e[2]);
+        qmul(qmul([0.0, 0.0, sc_, cc], [0.0, sa, 0.0, ca]), [sb, 0.0, 0.0, cb])
+    };
+    let rot_m = |q: [f32; 4], v: [f32; 3]| -> [f32; 3] {
+        let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
+        let m = [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ];
+        std::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
+    };
+    let rot_v = |q: [f32; 4], v: [f32; 3]| -> [f32; 3] {
+        let u = [q[0], q[1], q[2]];
+        let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        let t = cross(u, v).map(|c| 2.0 * c);
+        let ut = cross(u, t);
+        std::array::from_fn(|k| v[k] + q[3] * t[k] + ut[k])
+    };
+    let attr3 = |e: usize, a: &str, p: &str| -> [f32; 3] {
+        sc.doc().get(e, a).and_then(|t| {
+            let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
+            let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
+            Some([it.next()??, it.next()??, it.next()??])
+        }).unwrap_or([0.0; 3])
+    };
+    let mut exq = [[0usize; 3]; 2];
+    for (e, i, _) in &pairs {
+        let b = &buildings[*i];
+        for (k, rot) in [(0usize, &rot_m as &dyn Fn([f32; 4], [f32; 3]) -> [f32; 3]), (1, &rot_v)] {
+            let (mut q, mut p) = ([0.0f32, 0.0, 0.0, 1.0], [0.0f32; 3]);
+            for &x in &chain(*e) {
+                let lp = attr3(x, "position", "vector");
+                let r = rot(q, lp);
+                p = [p[0] + r[0], p[1] + r[1], p[2] + r[2]];
+                q = qmul(q, qeuler(attr3(x, "orientation", "euler")));
+            }
+
+            let f = [p[0] * 0.5, p[1], extent_z as f32 - p[2] * 0.5];
+            for a in 0..3 {
+                exq[k][a] += usize::from(f[a] == b.position[a]);
+            }
+        }
+    }
+
+    println!("positions exact: quaternion chain, matrix rotate {:?}, vector rotate {:?}", exq[0], exq[1]);
+
+    // The f32 world's exactness (x) by chain depth and whether an ancestor turns.
+    let mut by: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for (e, i, _) in &pairs {
+        let b = &buildings[*i];
+        let c = chain(*e);
+        let turned = c[..c.len() - 1].iter().any(|&x| attr3(x, "orientation", "euler") != [0.0; 3]);
+        let own = attr3(*e, "orientation", "euler") != [0.0; 3];
+        let m = wce_tile::world_transform::ted_world_matrix_f32(sc, *e);
+        let k = format!("depth {} ancestor turned {turned} own turn {own}", c.len());
+        let v = by.entry(k).or_default();
+        v.0 += usize::from(m[3] * 0.5 == b.position[0]);
+        v.1 += 1;
+    }
+
+    // The chains without a turn: the translations and the list's x, for working out the sum.
+    let mut shown = 0;
+    for (e, i, _) in &pairs {
+        let c = chain(*e);
+        if c.iter().any(|&x| attr3(x, "orientation", "euler") != [0.0; 3]) || shown >= 15 {
+            continue;
+        }
+
+        shown += 1;
+        let xs = c.iter().map(|&x| attr3(x, "position", "vector")[0]).collect::<Vec<_>>();
+        println!("  untwisted chain x {:?} -> list x {:?} (z {:?} -> {:?})", xs, buildings[*i].position[0], c.iter().map(|&x| attr3(x, "position", "vector")[2]).collect::<Vec<_>>(), buildings[*i].position[2]);
+    }
+
+    for (k, (a, n)) in &by {
+        println!("  {k}: x exact {a} / {n}");
+    }
+
+    println!("f32 world off by ulps (0, 1, 2-4, 5-100, more): x {:?}, y {:?}, z {:?}", hist[0], hist[1], hist[2]);
     // The kit's lite building zones (world x, z polygons), against the list's `lite`.
     let zones = (0..sc.doc().elements().len())
         .filter(|&e| sc.type_of(e) == "LiteBuildingZone")

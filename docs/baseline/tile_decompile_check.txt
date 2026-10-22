@@ -5,7 +5,7 @@ heights against the kit's final_heights.dds (BOB's last export): 761 tiles, 9258
 blend maps against the kit's: 782 tiles, group weights off by 1.06 / 255 on average, dominant (group, variation) the same on 93.0 % of the pixels
 ground types from our blend map (BOB's rule) against ground_types.dds: 782 tiles, 99.99 % of the pixels
 flat CHMF (range ~0, the mesh flat too; the kit's sources are not): 171 tiles, left out of the heights above
-buildings: 1897604 decompiled, 1894770 in the kit's tile.ted, 1893919 paired (key, world position within 10 cm)
+buildings: 1897067 decompiled, 1894770 in the kit's tile.ted, 1893919 paired (key, world position within 10 cm)
   AISeparatorInstance.area (0.1 %): 108 same, 0 differ
   AISeparatorInstance.name: 108 same, 0 differ
   AISeparatorInstance.polygon_closed: 108 same, 0 differ
@@ -65,16 +65,32 @@ buildings: 1897604 decompiled, 1894770 in the kit's tile.ted, 1893919 paired (ke
   ZONE_POLYGON_INSTANCE.area (0.1 %): 557 same, 0 differ
   ZONE_POLYGON_INSTANCE.name: 557 same, 0 differ
   ZONE_POLYGON_INSTANCE.polygon_closed: 557 same, 0 differ
-  ai_breachable: 1893910 same, 9 differ
+  ai_breachable: 1893911 same, 8 differ
   building_tech_level: 1893841 same, 78 differ
   burn: 1893919 same, 0 differ
-  destruction_level: 1893899 same, 20 differ
+  compile building_list (bytes): 2 same, 500 differ
+  compile building_list.ai_breachable: 4063006 same, 0 differ
+  compile building_list.dockable: 4063006 same, 0 differ
+  compile building_list.indestructible: 4063006 same, 0 differ
+  compile building_list.key: 4063006 same, 0 differ
+  compile building_list.lite: 4063006 same, 0 differ
+  compile building_list.on_fire: 4063006 same, 0 differ
+  compile building_list.orientation: 115146 same, 3947860 differ
+  compile building_list.position: 2414579 same, 1648427 differ
+  compile building_list.position_type: 4063006 same, 0 differ
+  compile building_list.scale: 4063006 same, 0 differ
+  compile building_list.start_disabled: 4063006 same, 0 differ
+  compile building_list.starting_damage: 4062957 same, 49 differ
+  compile building_list.toggleable: 4063006 same, 0 differ
+  compile building_list.weak_point: 4063006 same, 0 differ
+  compile building_list_<layer> (bytes): 21 same, 0 differ
+  destruction_level: 1893906 same, 13 differ
   dockable: 1893881 same, 38 differ
   indestructible: 1893919 same, 0 differ
   opacity: 1893888 same, 31 differ
   orientation (world rotation, 0.001): 1893919 same, 0 differ
   toggleable: 1893919 same, 0 differ
-  weak_wall: 1893918 same, 1 differ
+  weak_wall: 1893919 same, 0 differ
 AISeparatorInstance: 108 decompiled, 108 in the kit, 108 paired
 AI_HINT_POLYGON_INSTANCE: 5919 decompiled, 5959 in the kit, 5795 paired
 CaptureLocationInstance: 999 decompiled, 999 in the kit, 998 paired
@@ -96,8 +112,25 @@ VegetationExclusionPolygonInstance: 0 decompiled, 12452 in the kit, 0 paired
 ZONE_POLYGON_INSTANCE: 558 decompiled, 575 in the kit, 557 paired
 losses (tiles that report each):
    1654 blend map
-   1658 buildings
+   1747 buildings
     350 civilian shelters
+      1 compile building_list.orientation off by < 1e-3
+   4639 compile building_list.orientation off by < 1e-5
+  3943215 compile building_list.orientation off by < 1e-6
+      5 compile building_list.orientation off by more
+  3947854 compile building_list.orientation within the text's precision
+      6 compile building_list.orientation: the binary's quaternion is not unit
+  1545328 compile building_list.position off by 1 ulp
+  89120 compile building_list.position off by 2-4 ulps
+  12163 compile building_list.position off by 5-64 ulps
+   1816 compile building_list.position off by more
+  1648427 compile building_list.position within the text's precision
+     49 compile building_list.starting_damage from older building data (no level gives it)
+     49 compile building_list.starting_damage off by more
+     27 compile: building_list carried by the project (legacy)
+      3 compile: building_list_sprawl carried by the project (legacy)
+      5 compile: building_list_veg carried by the project (legacy)
+     27 compile: far_building_list carried by the project (legacy)
     390 deployment
    1662 entry
    1023 ground type map

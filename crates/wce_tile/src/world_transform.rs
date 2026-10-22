@@ -78,3 +78,92 @@ pub fn set_world_position(scene: &mut TedScene, elem: usize, world: Double3) {
     let pw = parent_transform(scene, elem);
     scene.set_position(elem, pw.rotation.transpose() * (world - pw.position));
 }
+
+/// TEd's / BOB's euler to rotation in f32 (`FUN_100af1e0` of QtToolUtility, docs/re/vegetation.md): a row-major 4 x 4 matrix, the
+/// translation (0) in the last column.
+pub fn ted_rotation_f32(e: [f32; 3]) -> [f32; 16] {
+    let sincos = |a: f32| ((f64::from(a)).sin() as f32, (f64::from(a)).cos() as f32);
+    let (s0, c0) = sincos(e[0]);
+    let f1 = -s0;
+    let (s1, c1) = sincos(-e[1]);
+    let mut f2 = (1.0 - c1) * c0;
+    let f3 = f2 * c0 + c1;
+    let mut f6 = f1 * s1;
+    let f4 = -f6;
+    let f5 = f1 * (1.0 - c1) * f1 + c1;
+    f2 *= f1;
+    let f7 = s1 * c0;
+    let l14 = f2 * s0;
+    let f11 = f3 * c0 - l14;
+    let f8 = -f7;
+    let f9 = f6 * c0 - f8 * s0;
+    f2 *= c0;
+    let f10 = f2 - f5 * s0;
+    let f1b = f5 * c0 + l14;
+    let f2b = f3 * s0 + f2;
+    f6 = f8 * c0 + f6 * s0;
+    let (s2, c2) = sincos(e[2]);
+    let f3b = -s2;
+    let mut m = [0.0f32; 16];
+    m[0] = f3b * f9 + f11 * c2;
+    m[4] = f11 * s2 + f9 * c2;
+    m[8] = f10;
+    m[1] = f3b * c1 + c2 * f4;
+    m[5] = s2 * f4 + c2 * c1;
+    m[9] = f7;
+    m[2] = f3b * f6 + f2b * c2;
+    m[6] = f6 * c2 + f2b * s2;
+    m[10] = f1b;
+    m[15] = 1.0;
+    m
+}
+
+/// `QTU::TedEntity::world_transform`'s product in f32: the parent's matrix times the child's, each element summed left to right.
+pub fn ted_mul_f32(w: &[f32; 16], local: &[f32; 16]) -> [f32; 16] {
+    let mut r = [0.0f32; 16];
+    for i in 0..4 {
+        for j in 0..4 {
+            r[i * 4 + j] = w[i * 4] * local[j] + w[i * 4 + 1] * local[4 + j] + w[i * 4 + 2] * local[8 + j] + w[i * 4 + 3] * local[12 + j];
+        }
+    }
+
+    r
+}
+
+/// `QTU::TedEntity::world_transform` in BOB's float arithmetic (QtToolUtility): each element's local matrix from its `position` and
+/// `orientation` (`sscanf` floats; [`ted_rotation_f32`]; unit scale), the world matrix the parent's times the local one ([`ted_mul_f32`]).
+pub fn ted_world_matrix_f32(scene: &TedScene, elem: usize) -> [f32; 16] {
+    let doc = scene.doc();
+    let vec3 = |e: usize, attr: &str, prefix: &str| -> [f32; 3] {
+        let parse = || -> Option<[f32; 3]> {
+            let v = doc.get(e, attr)?;
+            let inner = v.trim().strip_prefix(prefix)?.strip_prefix('(')?.strip_suffix(')')?;
+            let mut it = inner.split(',').map(|t| t.trim().parse::<f64>().ok().map(|f| f as f32));
+            Some([it.next()??, it.next()??, it.next()??])
+        };
+        parse().unwrap_or([0.0; 3])
+    };
+    let mut chain = vec![];
+    let mut e = Some(elem);
+    while let Some(x) = e {
+        chain.push(x);
+        e = doc.elements()[x].parent;
+    }
+
+    let mut world: Option<[f32; 16]> = None;
+    for &x in chain.iter().rev() {
+        if doc.get(x, "position").is_none() && doc.get(x, "orientation").is_none() {
+            continue;
+        }
+
+        let mut local = ted_rotation_f32(vec3(x, "orientation", "euler"));
+        let p = vec3(x, "position", "vector");
+        (local[3], local[7], local[11]) = (p[0], p[1], p[2]);
+        world = Some(match world {
+            None => local,
+            Some(w) => ted_mul_f32(&w, &local),
+        });
+    }
+
+    world.unwrap_or(ted_rotation_f32([0.0; 3]))
+}

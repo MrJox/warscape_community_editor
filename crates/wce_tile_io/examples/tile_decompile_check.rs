@@ -12,7 +12,11 @@
 //! The kit is not always the version the packs were exported from, nor BOB's output (the heights: `height_map_0.png` is BOB's input), so
 //! its agreement is evidence, not a gate. Environment: `WCE_DECOMPILE_EXAMPLES` (examples of differing attributes), `WCE_DECOMPILE_HEIGHTS`
 //! (tiles whose heights differ), `WCE_DECOMPILE_ROTATIONS` (differing rotations by kind and tile family), `WCE_DECOMPILE_PROBLEMS=N` (print N
-//! problems, default 30).
+//! problems, default 30), `WCE_DECOMPILE_LEVELS=key,...` (a building's destructs per piece), `WCE_DECOMPILE_UNPAIRED` (why instances do not
+//! pair).
+//!
+//! The decompiled project is also compiled again (`attila::compile`, stage A) and compared with the binary: byte for byte, and field by
+//! field within what tile.ted's text can carry (docs/plans/tile_roundtrip.md, step 4); the gate fails on anything beyond.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -21,6 +25,7 @@ use std::sync::Mutex;
 
 use rayon::prelude::*;
 use rpfm_lib::files::Decodeable;
+use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::games::supported_games::SupportedGames;
@@ -28,6 +33,7 @@ use wce_tile::building_db::BuildingDb;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::{euler_from_matrix, euler_matrix, world_transform};
+use wce_tile_io::attila::compile::{CompileContext, compile};
 use wce_tile_io::attila::decompile::{Context, decompile, destruction_levels, split_location};
 use wce_tile_io::attila::{TedProject, TileBinary};
 use wce_tile_io::{TileFiles, TileFormat};
@@ -51,6 +57,7 @@ struct Totals {
     blend_pixels: usize,
     blend_dominant_same: usize,
     read_back_differs: usize,
+    compile_beyond: usize,
     final_samples: usize,
     final_within_1cm: usize,
     final_tiles: usize,
@@ -144,6 +151,107 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
             local.read_back_differs += 1;
             local.problems.push(format!("{name}: the written project reads into another model: {}", what.unwrap_or_default()));
+        }
+
+        // The read-back project compiled (stage A) against the binary, document by document and field by field.
+        {
+            let cctx = CompileContext { building_levels: ctx.building_levels, building_thresholds: ctx.building_thresholds };
+            let (docs, _) = compile(&back, &cctx)?;
+            let bytes = |d: &wce_tile_model::Document| {
+                let one = wce_tile_model::Tile { documents: vec![d.clone()], ..Default::default() };
+                TileBinary.write(&one).ok().and_then(|(f, _)| f.folder.get(&d.name).and_then(|b| b.bytes().ok()).map(|b| b.to_vec()))
+            };
+
+            for theirs in binary.documents.iter().filter(|d| d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) {
+                let kind = if theirs.name == "building_list" { "building_list" } else { "building_list_<layer>" };
+                let Some(ours) = docs.iter().find(|d| d.name == theirs.name) else {
+                    let carried = back.files.iter().any(|f| f.path == theirs.name);
+                    *local.losses.entry(format!("compile: {} {}", theirs.name, if carried { "carried by the project (legacy)" } else { "NOT COMPILED" })).or_default() += 1;
+                    if !carried {
+                        local.compile_beyond += 1;
+                    }
+
+                    continue;
+                };
+
+                let c = local.attr_same.entry(format!("compile {kind} (bytes)")).or_default();
+                if bytes(ours) == bytes(theirs) {
+                    c.0 += 1;
+                } else {
+                    c.1 += 1;
+                }
+
+                let (a, b) = (&ours.root.children, &theirs.root.children);
+                if a.len() != b.len() {
+                    local.problems.push(format!("{name}: compiled {} has {} buildings, the binary {}", theirs.name, a.len(), b.len()));
+                    continue;
+                }
+
+                for (x, y) in a.iter().zip(b) {
+                    for p in y.props() {
+                        let c = local.attr_same.entry(format!("compile {kind}.{}", p.name)).or_default();
+                        if x.get(p.name.as_str()) == Some(&p.value) {
+                            c.0 += 1;
+                        } else {
+                            c.1 += 1;
+                            // A value's f32 components.
+                            let comps = |v: &Value| -> Vec<f32> {
+                                match v {
+                                    Value::Vec3(a) => a.iter().map(|&x| x as f32).collect(),
+                                    Value::Floats(a) => a.iter().map(|&x| x as f32).collect(),
+                                    Value::Float(a) => vec![*a as f32],
+                                    _ => vec![],
+                                }
+                            };
+                            // Within what tile.ted's text can carry (docs/plans/tile_roundtrip.md, step 4 exactness): a position axis 4 ulps or
+                            // 1e-6 (`%.6f` loses up to 5e-7, f32 rounds both ends), a quaternion component 1e-5 (q and -q alike); anything else
+                            // is a difference.
+                            let within = x.get(p.name.as_str()).is_some_and(|ours| {
+                                let (a, b) = (comps(ours), comps(&p.value));
+                                match p.name.as_str() {
+                                    "position" => a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
+                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 1e-6
+                                    }),
+                                    "orientation" => {
+                                        let d = |sign: f32| a.iter().zip(&b).map(|(u, v)| (u - sign * v).abs()).fold(0.0f32, f32::max);
+                                        a.len() == b.len() && d(1.0).min(d(-1.0)) <= 1e-5
+                                    }
+                                    _ => false,
+                                }
+                            });
+                            if within {
+                                *local.losses.entry(format!("compile {kind}.{} within the text's precision", p.name)).or_default() += 1;
+                            } else if p.name == "orientation" && (comps(&p.value).iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() > 1e-5 {
+                                // TEd's matrix was not a pure rotation (the binary's quaternion is not unit): an euler cannot say that.
+                                *local.losses.entry(format!("compile {kind}.orientation: the binary's quaternion is not unit")).or_default() += 1;
+                            } else if p.name == "starting_damage" {
+                                // The decompiler's level is the one whose export is the binary's damage when any is (the inverse of the
+                                // export), so a damage no level gives is from older building data (another model's levels).
+                                *local.losses.entry(format!("compile {kind}.starting_damage from older building data (no level gives it)")).or_default() += 1;
+                            } else {
+                                local.compile_beyond += 1;
+                                local.problems.push(format!("{name}: compiled {} {} of {:?} beyond the text's precision: ours {:?}, binary {:?}", theirs.name, p.name, y.get("key"), x.get(p.name.as_str()), p.value));
+                            }
+
+                            // How far: the largest difference in units in the last place (absolute for quaternions).
+                            if let Some(ours) = x.get(p.name.as_str()) {
+                                let ulps = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (i64::from(a.to_bits() as i32) - i64::from(b.to_bits() as i32)).unsigned_abs()).max().unwrap_or(0);
+                                let abs = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+                                let neg = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (a + b).abs()).fold(0.0f32, f32::max);
+                                let bucket = if p.name == "orientation" {
+                                    match abs.min(neg) { d if d < 1e-6 => "< 1e-6", d if d < 1e-5 => "< 1e-5", d if d < 1e-3 => "< 1e-3", _ => "more" }
+                                } else {
+                                    match ulps { 0..=1 => "1 ulp", 2..=4 => "2-4 ulps", 5..=64 => "5-64 ulps", _ => "more" }
+                                };
+                                *local.losses.entry(format!("compile {kind}.{} off by {bucket}", p.name)).or_default() += 1;
+                            }
+                            if c.1 <= 2 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                                local.problems.push(format!("{name}: compiled {} {} of {:?}: ours {:?}, binary {:?}", theirs.name, p.name, y.get("key"), x.get(p.name.as_str()), p.value));
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if let Some(out) = out {
@@ -667,6 +775,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
     t.blend_pixels += local.blend_pixels;
     t.blend_dominant_same += local.blend_dominant_same;
     t.read_back_differs += local.read_back_differs;
+    t.compile_beyond += local.compile_beyond;
     t.final_samples += local.final_samples;
     t.final_within_1cm += local.final_within_1cm;
     t.final_tiles += local.final_tiles;
@@ -710,8 +819,8 @@ fn main() {
     let mut dbs = vec![];
     let mut opened = vec![];
     // The destruction levels of the buildings: the building's collision file (`rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`) lists
-    // each piece's destructs; the building's count is the smallest over its pieces (roman_fort_straight: piece01 has 3, the others 2, TEd
-    // uses 2 levels). Without one, the same from the models' names (`<piece>_destructNN.rigid_model_v2`).
+    // each piece's destructs; the building's count is the most over its pieces (`destruction_levels`). Without one, the same from the
+    // models' names (`<piece>_destructNN.rigid_model_v2`).
     let mut pieces: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
     let mut from_cs2: BTreeMap<String, u32> = BTreeMap::new();
     let wanted = std::env::var("WCE_DECOMPILE_LEVELS").unwrap_or_default().to_lowercase();
@@ -738,7 +847,10 @@ fn main() {
             let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
             let Some(levels) = destruction_levels(&bytes) else { continue };
             if wanted.split(',').any(|k| k == key) {
-                println!("levels of {key} ({n}): {levels}");
+                let counts = Cs2Parsed::decode(&mut Cursor::new(&bytes), &None).ok().and_then(|c| serde_json::to_value(&c).ok()).map(|v| {
+                    v["pieces"].as_array().into_iter().flatten().map(|p| p["destructs"].as_array().map_or(0, Vec::len)).collect::<Vec<_>>()
+                });
+                println!("levels of {key} ({n}): {levels}, destructs per piece {counts:?}");
             }
 
             from_cs2.insert(key, levels);
@@ -758,19 +870,35 @@ fn main() {
 
     dbs.sort_by_key(|(is_mod, _)| !is_mod);
     let dbs = dbs.into_iter().map(|(_, d)| d).collect::<Vec<_>>();
-    let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().min().unwrap_or(1))).collect::<BTreeMap<_, _>>();
+    let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().max().unwrap_or(1))).collect::<BTreeMap<_, _>>();
     levels.extend(from_cs2);
     let lookup = |key: &str| levels.get(&key.to_lowercase()).copied();
     let mut bdb = BuildingDb::default();
+    // The `destruct_thresholds` of the buildings (a list of floats, comma separated), by lower-case key.
+    let mut thresholds: BTreeMap<String, Vec<f32>> = BTreeMap::new();
     for f in ["battlefield_buildings.xml", "TWaD_battlefield_buildings.xml"] {
         if let Ok(x) = std::fs::read_to_string(kit.join("raw_data/db").join(f)) {
             bdb.add_xml(&x);
+            for rec in x.split("<battlefield_buildings ").skip(1) {
+                let field = |n: &str| rec.split(&format!("<{n}>")).nth(1).and_then(|r| r.split('<').next()).unwrap_or_default().to_owned();
+                let values = field("destruct_thresholds").split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
+                if !values.is_empty() {
+                    thresholds.insert(field("key").to_lowercase(), values);
+                }
+            }
         }
     }
 
     let category = |key: &str| bdb.category(key).map(str::to_owned);
+    let thresholds_of = |key: &str| thresholds.get(&key.to_lowercase()).cloned();
     let trees = opt("--trees");
-    let ctx = Context { databases: &dbs, building_levels: Some(&lookup), building_category: Some(&category), tree_list: trees.as_deref() };
+    let ctx = Context {
+        databases: &dbs,
+        building_levels: Some(&lookup),
+        building_category: Some(&category),
+        building_thresholds: Some(&thresholds_of),
+        tree_list: trees.as_deref(),
+    };
     let totals = Mutex::new(Totals::default());
     let mut done = 0;
     for (p, pack) in &mut opened {
@@ -845,8 +973,11 @@ fn main() {
 
     // The gate: what the binary decides (the kit is evidence only).
     let lite_wrong = t.losses.iter().filter(|(k, _)| k.starts_with("lite building zones change flags")).map(|(_, n)| n).sum::<usize>();
-    if t.failed > 0 || t.read_back_differs > 0 || lite_wrong > 0 {
-        println!("FAILED: {} tile folders do not decompile, {} decompiled projects read back differently, {lite_wrong} tiles change lite flags", t.failed, t.read_back_differs);
+    if t.failed > 0 || t.read_back_differs > 0 || lite_wrong > 0 || t.compile_beyond > 0 {
+        println!(
+            "FAILED: {} tile folders do not decompile, {} decompiled projects read back differently, {lite_wrong} tiles change lite flags, {} compiled values differ beyond the text's precision",
+            t.failed, t.read_back_differs, t.compile_beyond
+        );
         std::process::exit(1);
     }
 }

@@ -62,9 +62,12 @@ texture group names from the ground types (per group, the type it carries most, 
 
 ## Buildings
 
-- `destruction_level` = round(starting_damage x (levels - 1)); the levels of a building are the fewest destructs of its pieces in
-  `rigidmodels/buildings/<key>/<key>_tech.cs2.parsed` (`destruction_levels`; roman_fort_straight: 3, 2, 2 -> 2). The caller gives the
-  lookup (`Context::building_levels`); without it a damaged building gets 1.
+- `destruction_level` from `starting_damage`, the inverse of TEd's export (`Ted::BMDExporter::export_`, {level, min 0, max levels - 1}):
+  the levels of a building are the most destructs of its pieces in `rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`
+  (`destruction_levels`; roman_fort_straight: 3, 2, 2 -> 3). Without the building's `destruct_thresholds` (`battlefield_buildings`)
+  damage = level / max, past 1 for a level past the model's (eastern_small_domestic_1, 2 levels, has buildings at level 2: 2.0); with
+  them level 0 is 0, level max 1 and any other its threshold (index level - 1; roman_fort_straight [0.8]: level 1 is 0.8). The caller
+  gives the lookups (`Context::building_levels`, `building_thresholds`); without them a damaged building gets 1.
 - `weak_wall`, `ai_breachable`, `dockable` are written per `battlefield_buildings` category (`Context::building_category`).
 - Lite building zones: a building of the main `building_list` is `lite` exactly when its position is inside a LiteBuildingZone (every
   paired building of eastern_city_b/small and nordic_city_b/medium). The zones are rebuilt from the flags: a quadtree over the lite

@@ -9,7 +9,9 @@ use std::io::Cursor;
 use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::tile_database::TileDatabase;
-use wce_tile_model::{Entry, MapKind, Node, Raster, Samples, Sym, Tile, TileMap, Value};
+use wce_tile_model::{Entry, MapKind, Node, OpaqueFile, Raster, Samples, Sym, Tile, TileMap, Value};
+
+use crate::TileFormat;
 
 use super::building_list::BattlefieldBuilding;
 use super::ted_project;
@@ -17,6 +19,9 @@ use super::tile_binary::buildings;
 
 /// A building key's number of destruction levels.
 pub type LevelsOf<'a> = &'a (dyn Fn(&str) -> Option<u32> + Sync);
+
+/// A building key's `battlefield_buildings` `destruct_thresholds`: the starting damage of each level between the first and the last.
+pub type ThresholdsOf<'a> = &'a (dyn Fn(&str) -> Option<Vec<f32>> + Sync);
 
 /// A building key's `battlefield_buildings` category.
 pub type CategoryOf<'a> = &'a (dyn Fn(&str) -> Option<String> + Sync);
@@ -34,6 +39,9 @@ pub struct Context<'a> {
     /// The `battlefield_buildings` category of a building key: TEd writes `weak_wall`, `ai_breachable` and `dockable` for `fort_wall`,
     /// `dockable` for `unbreachable_fort_wall`, none for the others. Without it they are written when they differ from a plain building's.
     pub building_category: Option<CategoryOf<'a>>,
+
+    /// The `destruct_thresholds` of a building key (TEd exports level k, between the first and the last, as threshold k - 1).
+    pub building_thresholds: Option<ThresholdsOf<'a>>,
 
     /// The tree list whose trees become the "Decompiled vegetation" layer (default `outfield_tents.tree_list.bin`, then
     /// `default.tree_list.bin`; see docs/formats/tile_decompile.md).
@@ -413,10 +421,7 @@ pub fn quaternion_euler(q: [f64; 4]) -> [f64; 3] {
         1.0 - 2.0 * (x * x + y * y),
     );
 
-    let sa = (-m20).clamp(-1.0, 1.0);
-    let a = sa.asin();
-    let (beta, c) = if sa.abs() < 1.0 - 1e-12 { (m21.atan2(m22), m10.atan2(m00)) } else { ((-m12).atan2(m11), 0.0) };
-    [a, -beta, c]
+    rows_euler([[m00, 0.0, 0.0], [m10, m11, m12], [m20, m21, m22]])
 }
 
 /// A building of a binary list as TEd's instance, top level of its layer: scene x = 2 x, scene z = 2 (extent z - z), scene y = y (the
@@ -433,8 +438,11 @@ fn building_node(bl: &BattlefieldBuilding, extent_z: f64, ctx: &Context, losses:
     ];
 
     // TEd keeps the wall flags only on walls (their category); without the category: when they differ from a plain building's.
+    // A value a plain building would not have is kept whatever the category says (egyptian_fort_straight_with_solid_squared_bastion of
+    // dunes/nile is not a wall in the kit's tables but not breachable in the binary).
+    let odd_wall = !bl.ai_breachable || bl.weak_point;
     let (walls, docks) = match ctx.building_category.map(|f| f(&bl.key)) {
-        Some(Some(c)) => (c == "fort_wall", c == "fort_wall" || c == "unbreachable_fort_wall"),
+        Some(Some(c)) => (c == "fort_wall" || odd_wall, c == "fort_wall" || c == "unbreachable_fort_wall" || !bl.dockable),
         Some(None) | None => {
             let odd = !bl.ai_breachable || !bl.dockable || bl.weak_point;
             (odd, odd)
@@ -499,24 +507,30 @@ fn bmd_buildings(bmd: &Node) -> Vec<BattlefieldBuilding> {
         .collect()
 }
 
-/// The destruction levels of a building from its collision file (`rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`): the fewest
-/// destructs of its pieces (roman_fort_straight: piece01 has 3, the others 2, TEd uses 2 levels; 1,893,542 of the packs' 1,893,562
-/// buildings paired with the kit get the kit's level).
+/// The destruction levels of a building from its collision file (`rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`): the most destructs
+/// of its pieces (TEd's export divides by the last level: roman_fort_straight, pieces of 3, 2 and 2 destructs, has levels 0 to 2).
 pub fn destruction_levels(cs2_parsed: &[u8]) -> Option<u32> {
     let c = Cs2Parsed::decode(&mut Cursor::new(cs2_parsed), &None).ok()?;
     // rpfm's Cs2Parsed has no public getters: through serde.
     let v = serde_json::to_value(&c).ok()?;
-    v["pieces"].as_array()?.iter().map(|p| p["destructs"].as_array().map_or(0, Vec::len) as u32).min()
+    v["pieces"].as_array()?.iter().map(|p| p["destructs"].as_array().map_or(0, Vec::len) as u32).max()
 }
 
-/// TEd's destruction level of a building of the binary: its starting damage is level / (levels - 1).
+/// TEd's destruction level of a building of the binary, the inverse of its export (`Ted::BMDExporter::export_`): with
+/// `destruct_thresholds`, damage 1 is the last level and a threshold its level (index + 1); without, damage = level / (levels - 1), more
+/// than 1 for a level past the model's (eastern_small_domestic_1, 2 levels, has buildings at level 2: damage 2).
 fn destruction_level(bl: &BattlefieldBuilding, ctx: &Context, losses: &mut BuildingLosses) -> i64 {
     if bl.starting_damage <= 0.0 {
         return 0;
     }
 
+    let thresholds = ctx.building_thresholds.and_then(|f| f(&bl.key)).unwrap_or_default();
     match ctx.building_levels.and_then(|f| f(&bl.key)) {
-        Some(levels) if levels > 1 => (f64::from(bl.starting_damage) * f64::from(levels - 1)).round() as i64,
+        Some(levels) if levels > 1 => match thresholds.iter().position(|&t| t == bl.starting_damage) {
+            Some(i) => i as i64 + 1,
+            None if !thresholds.is_empty() && bl.starting_damage == 1.0 => i64::from(levels - 1),
+            None => (f64::from(bl.starting_damage) * f64::from(levels - 1)).round() as i64,
+        },
         _ => {
             losses.unknown_levels += 1;
             1
@@ -557,11 +571,20 @@ fn marker_rotation(a: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 }
 
 /// The euler angles of a rotation given by its rows.
+/// Of the two angle sets, the one with the smaller pitch and roll: TEd's own (a turn about y past 90 degrees is (a, 0, 0), not
+/// (pi - a, pi, pi), whose float sines are not 0); a pitch or roll within 1e-9 of 0 is 0.
 fn rows_euler(r: [[f64; 3]; 3]) -> [f64; 3] {
+    use std::f64::consts::PI;
     let sa = (-r[2][0]).clamp(-1.0, 1.0);
     let a = sa.asin();
     let (beta, c) = if sa.abs() < 1.0 - 1e-12 { (r[2][1].atan2(r[2][2]), r[1][0].atan2(r[0][0])) } else { ((-r[1][2]).atan2(r[1][1]), 0.0) };
-    [a, -beta, c]
+    let wrap = |v: f64| if v > PI { v - 2.0 * PI } else if v <= -PI { v + 2.0 * PI } else { v };
+    let zero = |v: f64| if v.abs() < 1e-9 { 0.0 } else { v };
+    let one = [a, -beta, c];
+    let other = [wrap(PI - a), wrap(-beta - PI), wrap(c - PI)];
+    let cost = |e: &[f64; 3]| e[1].abs() + e[2].abs();
+    let e = if sa.abs() < 1.0 - 1e-12 && cost(&other) < cost(&one) - 1e-12 { other } else { one };
+    [e[0], zero(e[1]), zero(e[2])]
 }
 
 /// TEd's seasons flags of a bit mask (bit 0 winter, 1 spring, 2 summer, 3 autumn).
@@ -1344,18 +1367,37 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     losses.note("tile.ted: the camera, the vegetation seeds and the layers' names and structure are not in the binary (made up)");
     let mut bl = BuildingLosses::default();
     let mut lite_of = vec![];
-    for (file, layer_name) in [("building_list", "Buildings"), ("far_building_list", "Far buildings"), ("building_list_sprawl", "Sprawl")] {
-        let Some(doc) = binary.document(file) else { continue };
-        let list = buildings(doc)?;
-        if list.is_empty() {
-            continue;
-        }
+    // The building lists: `building_list` from the normal layers, `building_list_<name>` from a separate layer of that name (TEd's
+    // LayerExportType_Separate). The campaign river tiles' `far_building_list` and the version 11 `building_list_sprawl` have no TEd
+    // source in the kit (legacy files): carried along as files, as the `.xml` twins some tiles ship.
+    for doc in binary.documents.iter().filter(|d| d.root.class == "BATTLEFIELD_BUILDING_LIST") {
+        let name = doc.name.as_str();
+        let separate = name.strip_prefix("building_list_").filter(|_| !name.ends_with(".xml"));
+        let current = doc.root.get("version").and_then(Value::as_int) == Some(12);
+        // TEd writes no main list for a project without buildings, but one per separate layer, empty or not: an empty main list (the
+        // campaign river tiles') is legacy.
+        let empty = doc.root.children.is_empty();
+        let (layer_name, export) = match (name, separate) {
+            ("building_list", _) if current && !empty => ("Buildings".to_owned(), "LayerExportType_Normal"),
+            (_, Some(n)) if current && n != "sprawl" => (n.to_owned(), "LayerExportType_Separate"),
+            _ => {
+                let one = Tile { documents: vec![doc.clone()], ..Default::default() };
+                let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
+                if let Some(data) = files.folder.get(name) {
+                    out.files.push(OpaqueFile { path: name.to_owned(), data: data.clone() });
+                    losses.note(format!("buildings: {name} has no TEd source (a legacy list): carried along as a file"));
+                }
 
-        let mut l = layer(layer_name, "LayerExportType_Normal");
+                continue;
+            }
+        };
+
+        let list = buildings(doc)?;
+        let mut l = layer(&layer_name, export);
         for b in &list {
             l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
-            // The zones decide the main list's flags (the kit's zoned tiles); the far and sprawl lists' are not theirs.
-            if let Some(lite) = b.lite.filter(|_| file == "building_list") {
+            // The zones decide the main list's flags (the kit's zoned tiles); the other lists' are not theirs.
+            if let Some(lite) = b.lite.filter(|_| name == "building_list") {
                 lite_of.push((2.0 * f64::from(b.position[0]), 2.0 * (extent.1 - f64::from(b.position[2])), lite));
             }
         }
