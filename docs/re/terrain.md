@@ -242,7 +242,19 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 - **`blend_map.tif` has 16 weights per pixel** (16 bit each, `blend_map.tif` of the TEd layout: 242-byte header, then `width * height * 16` little-endian samples), the same grid as the height map (`(cells + 2) * ppc` square, one cell of border: 384 x 384 for a 1 x 1 tile). The 16 weights of a pixel sum to 65535 (65519 .. 65535 over a whole tile). Channel `4 g + v` is the weight of **texture group g** (0..3 = the entry's `TEXTURE_GROUP` red, green, blue, alpha) **variation v** (0..3, the `0_`..`3_` textures of the group): in `tdd_custom_lothlorien/1x1/aa` (grass / mud / forest / rock) channel 0 carries 57 % of all weight, channel 4 25 %, channel 8 16 %, channel 12 3 %, and each group uses one or two variations. BOB reduces this to the RGBA `blend.dds` (the four group weights) and `index.dds` (which variation), the two maps `ps30_blend` reads (`s_blend_map` / `s_index_map` above).
 - **Texture files**: `terrain/textures/battle/<climate lower case>/<group>/<variation>_<su|au|wi>_<diffuse|normal>.dds`, DXT5, 1024 x 1024, 11 mips, in the TDD weather pack and the vanilla terrain packs. The climates: `default` (all 18 groups, summer only), `rome_continental`, `rome_med`, `rome_atlantic`, `rome_desert`, `rome_easterndesert`, `rome_destruct`, `rome_destructdes`, `rome_grey`; a climate that lacks a group (rome_desert has no `moorland`) uses `default`; seasons: `su` always, `au` / `wi` in the main climates. The group names are those of the tile entries and of `_settings.xml`'s `<TEXTURE name=...>` lists.
 - **Scale**: `_settings.xml` `<CLIMATE><TEXTURES><TEXTURE name blend_pixel_scale ...>`: metres per repeat of the texture inside the tile (rock 40.1, mud 9, mountain 1200.1, ...), what `g_blend_pixel_scale_array[slot].x` holds in the shader (uv = world xz / scale).
-- `ground_type_map.png`: RGBA 8 bit over the bordered tile (all zero in the TEd-made tile checked, river and sea values in the river tiles); `protection_map.dds`: R32F 0 / 1 over the tile without border (128 x 128 for a 1 x 1 tile).
+- **`ground_types.dds`** (L8, the tile without border, battle tiles only) is written by `TOOLDATABUILDER::convert_blend_map`
+  (`ToolDataBuilderDll`, `TerrainBlendMap.cpp`). A pixel painted in `ground_type_map.png` (any colour but black) is that colour's ground
+  type, `EMPIREUTILITY::ground_type_to_colour` (ARGB): forest 0 (64, 225, 231), grass 1 (0, 255, 0), mud 2 (150, 75, 0), sand 3
+  (244, 164, 96), scrub 4 (172, 225, 175), rock 5 (170, 170, 170), deep water 6 (0, 0, 255), shallow water 7 (93, 255, 255), road 8
+  (255, 96, 0), wooden floor 9 (255, 100, 100), snow 10 (255, 255, 255), sharp stones 11 (255, 255, 0), burnt 12 (64, 0, 0), none 13 black
+  (every painted pixel of the kit's 33 painted tiles matches; the river tiles paint their water, the crossings their roads). Any other
+  pixel the strongest of the four group weights (ties: red, green, blue, alpha in that order) through
+  `EMPIREUTILITY::ground_type_from_texture_group` of the entry's `TEXTURE_GROUP` name: forest 0; grass, agri, settlement_1 1; mud,
+  settlement_3 2; sand 3; rock 5; urban, settlement_2 8 (`Settlement_N` capitalised too); any other name 1 with an assert ("There is no
+  ground type for texture group %s. See BenM."). The values are the `ground_types` table's `enum_value`. Checked on western_city_b/small
+  from its DXT5 `blend.dds`: 99.2 % (the rest is the DXT error). The DDS files are written by `TOOLDATABUILDER::write_dds_ATI_compressor`
+  (ATI's compressor: what raw -> binary has to reproduce).
+- `ground_type_map.png`: RGBA 8 bit over the bordered tile, black but where a ground type is painted (the colours above); `protection_map.dds`: R32F 0 / 1 over the tile without border (128 x 128 for a 1 x 1 tile).
 
 
 - Debug views (TEd has them): *blend groups* (the four group weights as flat red / green / blue / yellow), *ground types* (the PNG as stored), *protection* (red = 1).

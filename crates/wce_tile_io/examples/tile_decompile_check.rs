@@ -43,6 +43,13 @@ struct Totals {
     height_samples: usize,
     height_within_1cm: usize,
     flat_heights: usize,
+    blend_tiles: usize,
+    ground_tiles: usize,
+    ground_pixels: usize,
+    ground_same: usize,
+    blend_group_error: f64,
+    blend_pixels: usize,
+    blend_dominant_same: usize,
     read_back_differs: usize,
     final_samples: usize,
     final_within_1cm: usize,
@@ -60,6 +67,12 @@ struct Totals {
 
 /// Every polygon of a decompiled scene with its world points (x, z): the scene's logic nodes carry no rotation, so a point is the sum of
 /// its ancestors' positions and its own.
+/// TEd's ground type colours (`EMPIREUTILITY::ground_type_to_colour`, docs/re/terrain.md).
+const PALETTE: [[u8; 3]; 13] = [
+    [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
+    [255, 96, 0], [255, 100, 100], [255, 255, 255], [255, 255, 0], [64, 0, 0],
+];
+
 /// A polygon's points (x, z).
 type Polygon = Vec<(f64, f64)>;
 
@@ -228,6 +241,70 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 ));
             }
 
+        }
+
+        // BOB's ground types (docs/re/terrain.md) from our blend map and the entry's groups, against the binary's ground_types.dds.
+        if let (Some(m), Some(gt), Some(entry)) = (raw.map(MapKind::Blend, 0), binary.map(MapKind::GroundType, 0), raw.entry.as_ref())
+            && let (Samples::U16(wts), Samples::U8(g)) = (&m.raster.samples, &gt.raster.samples)
+            && let Some(groups) = entry.root.child("TEXTURE_GROUP")
+            && gt.raster.channels == 1
+        {
+            let of = |name: &str| match name.to_lowercase().as_str() {
+                "forest" => 0u8,
+                "mud" | "settlement_3" => 2,
+                "sand" => 3,
+                "rock" => 5,
+                "urban" | "settlement_2" => 8,
+                _ => 1,
+            };
+            let types = ["red", "green", "blue", "alpha"].map(|c| of(groups.get(c).and_then(Value::as_str).unwrap_or_default()));
+            let border = (m.raster.width - gt.raster.width) / 2;
+            local.ground_tiles += 1;
+            let (before_px, before_same) = (local.ground_pixels, local.ground_same);
+            for y in (0..gt.raster.height).step_by(3) {
+                for x in (0..gt.raster.width).step_by(3) {
+                    let p = ((y + border) * m.raster.width + x + border) as usize;
+                    let sums: [u32; 4] = std::array::from_fn(|k| wts[16 * p + 4 * k..16 * p + 4 * k + 4].iter().map(|&v| u32::from(v)).sum());
+                    // The strongest group, ties to the first (BOB compares the 8-bit weights of blend.dds).
+                    let q = sums.map(|v| (f64::from(v) / 65535.0 * 255.0).round() as u32);
+                    let best = (0..4).find(|&k| (0..4).all(|j| q[k] >= q[j])).unwrap_or(0);
+                    // A colour painted in ground_type_map.png wins (EMPIREUTILITY::ground_type_to_colour).
+                    let painted = raw.map(MapKind::GroundType, 0).and_then(|png| match &png.raster.samples {
+                        Samples::U8(c) => PALETTE.iter().position(|col| c[4 * p..4 * p + 3] == col[..]).map(|t| t as u8),
+                        _ => None,
+                    });
+                    local.ground_pixels += 1;
+                    local.ground_same += usize::from(painted.unwrap_or(types[best]) == g[(y * gt.raster.width + x) as usize]);
+                }
+            }
+
+            let (n, same) = (local.ground_pixels - before_px, local.ground_same - before_same);
+            if same * 10 < n * 9 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                let mut seen = BTreeMap::new();
+                for (k, v) in g.iter().enumerate().step_by(7) {
+                    let _ = k;
+                    *seen.entry(*v).or_insert(0usize) += 1;
+                }
+                local.problems.push(format!("{name}: ground types {same} / {n} from the blend map; groups {types:?}; values in the binary {seen:?}"));
+            }
+        }
+
+        // The blend map against the kit's: the four groups' weights (mean difference in 1/255) and the dominant (group, variation).
+        if let (Ok(bytes), Some(m)) = (std::fs::read(kit_dir.join("blend_map.tif")), raw.map(MapKind::Blend, 0))
+            && let Ok((kit_b, _)) = wce_tile_io::attila::images::read_tiff(&bytes)
+            && let (Samples::U16(a), Samples::U16(b)) = (&m.raster.samples, &kit_b.samples)
+            && (kit_b.width, kit_b.height, kit_b.channels) == (m.raster.width, m.raster.height, 16)
+        {
+            local.blend_tiles += 1;
+            let n = (m.raster.width * m.raster.height) as usize;
+            for p in (0..n).step_by(5) {
+                let (pa, pb) = (&a[16 * p..16 * p + 16], &b[16 * p..16 * p + 16]);
+                let group = |w: &[u16], g: usize| w[4 * g..4 * g + 4].iter().map(|&v| f64::from(v)).sum::<f64>() / 65535.0 * 255.0;
+                local.blend_group_error += (0..4).map(|g| (group(pa, g) - group(pb, g)).abs()).sum::<f64>() / 4.0;
+                let dominant = |w: &[u16]| (0..16).max_by_key(|&c| w[c]).unwrap_or(0);
+                local.blend_pixels += 1;
+                local.blend_dominant_same += usize::from(dominant(pa) == dominant(pb));
+            }
         }
 
         // Buildings: pair on key + world position (scene units), then compare the attributes.
@@ -582,6 +659,13 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
     t.height_samples += local.height_samples;
     t.height_within_1cm += local.height_within_1cm;
     t.flat_heights += local.flat_heights;
+    t.blend_tiles += local.blend_tiles;
+    t.ground_tiles += local.ground_tiles;
+    t.ground_pixels += local.ground_pixels;
+    t.ground_same += local.ground_same;
+    t.blend_group_error += local.blend_group_error;
+    t.blend_pixels += local.blend_pixels;
+    t.blend_dominant_same += local.blend_dominant_same;
     t.read_back_differs += local.read_back_differs;
     t.final_samples += local.final_samples;
     t.final_within_1cm += local.final_within_1cm;
@@ -724,6 +808,17 @@ fn main() {
     println!("entries (but the variation's min_height / scale): {} identical to the kit's, {} differ", t.entry_same, t.entry_differ);
     println!("heights inside the border: {} of {} samples within 1 cm of the kit's ({:.1} %)", t.height_within_1cm, t.height_samples, 100.0 * t.height_within_1cm as f64 / t.height_samples.max(1) as f64);
     println!("heights against the kit's final_heights.dds (BOB's last export): {} tiles, {} of {} samples within 1 cm ({:.1} %)", t.final_tiles, t.final_within_1cm, t.final_samples, 100.0 * t.final_within_1cm as f64 / t.final_samples.max(1) as f64);
+    println!(
+        "blend maps against the kit's: {} tiles, group weights off by {:.2} / 255 on average, dominant (group, variation) the same on {:.1} % of the pixels",
+        t.blend_tiles,
+        t.blend_group_error / t.blend_pixels.max(1) as f64,
+        100.0 * t.blend_dominant_same as f64 / t.blend_pixels.max(1) as f64
+    );
+    println!(
+        "ground types from our blend map (BOB's rule) against ground_types.dds: {} tiles, {:.2} % of the pixels",
+        t.ground_tiles,
+        100.0 * t.ground_same as f64 / t.ground_pixels.max(1) as f64
+    );
     println!("flat CHMF (range ~0, the mesh flat too; the kit's sources are not): {} tiles, left out of the heights above", t.flat_heights);
     println!("buildings: {} decompiled, {} in the kit's tile.ted, {} paired (key, world position within 10 cm)", t.buildings, t.kit_buildings, t.paired);
     for (k, (a, b)) in &t.attr_same {
