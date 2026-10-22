@@ -1,6 +1,6 @@
 # Tile round trip: a game-neutral tile model with per-game readers and writers
 
-Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 not started.
+Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 planned (below), not started.
 
 ## Phase 1 result
 
@@ -126,14 +126,58 @@ files) are written from the original bytes, and the gate reports them as "kept",
 **Done when:** every TEd input file of every kit variation round-trips byte for byte (images that cannot be re-encoded counted as kept),
 unknown classes and attributes are 0 or listed and accepted, and all three test levels pass.
 
-## Phase 2 (outline; detailed plan after Phase 1)
+## Phase 2: the exported binary tile (plan, 2026-10-22, waiting for review)
 
-Exported binary tile = BOB's working_data output for a variation (`mesh.rigid_model_v*`, `outfield_mesh`, `hf_height_map.data`,
-`blend/index/normal.dds`, `ground_types.dds`, `*_procedural_bmd_data.bin`, `bmd_data_escalation*.bin`, `*.tree_list.bin`,
-`default.grass_list.bin`, `civilian_*.bin`, `building_list`, `*.markers`, `terrain_outlines.xml`, `tile_database.bin` rows).
-1. Binary reader into the model (layers, names, procedural vegetation and the camera do not exist in the binary: a reconstruction step makes
-   one layer per export group, and the exactness target is the data, not the TEd text).
-2. Binary writer from the model = the BOB pipeline (vegetation, tile database and the battle map fill are already ported; the terrain mesh,
-   `hf_height_map.data` and the DXT5 maps are not).
-3. Tests: binary -> model -> binary byte for byte; raw -> binary against BOB's output (the oracle kit at `~/wce_re/bobkit`);
-   raw -> binary -> raw keeps every value the binary carries.
+### What an exported tile is (survey)
+
+The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its packs; BOB writes the same folder into the kit's
+`working_data`. A shipped battle tile (`atlantic_mountains/custom_mont_blanc/aa`, 25 files) and BOB's own output (`~/wce_re/bobkit`):
+
+| File(s) | What it holds | Codec today |
+| --- | --- | --- |
+| `mesh.rigid_model_v2`, `outfield_mesh.rigid_model_v2` | the terrain mesh, HF heights in the vertices (decimated) | rpfm_lib `rigidmodel`; round trip of terrain meshes not checked; 11 header bytes are uninitialised memory (BOB run vs run) |
+| `hf_height_map.data` | `CHMF` v5 block table of heights | `chmf` round trip (171 / 171, `wce_formats` `roundtrip`); meaning of the blocks not decoded |
+| `blend.dds`, `index.dds`, `normal.dds` | DXT5, 11 mips: blend weights, the layer index per pixel, normals | container exact (`DdsFile`), pixels decoded (`dds_decode`); the compressor (nvtt) not reproduced |
+| `ground_types.dds` | uncompressed, TEd/BOB template header | exact |
+| `*_procedural_bmd_data.bin` / `.xml`, `definition.xml`, `bmd_data_escalation*.bin` | props, particle emitters, buildings, capture locations, outlines, deployment ... | rpfm_lib `bmd` (860 / 860) |
+| `*.tree_list.bin`, `default.grass_list.bin`, `civilian_*.bin` | generated trees and grass per climate, civilian zones | rpfm_lib `fastbin_lists`, exact |
+| `*.tree_list`, `default.grass_list` (no `.bin`, not FASTBIN: `u32 2`, ...) | the same, an older format still shipped next to the new one | **not decoded** |
+| `*.markers` | stage-A exports (particle emitters, props, decals, AI hints ...) | framing exact, payload partly decoded (point lights, particle emitters in the renderer) |
+| `terrain_outlines.xml`, `tile.agf`, `building_list` (0xABCA stream) | outlines, the tile's agf, buildings | XML exact; agf and the 0xABCA stream not decoded |
+| the `tile_database.bin` row | the entry | rpfm_lib `tile_database`, exact |
+
+### What crosses between raw and binary
+
+| Model part | Raw (TEd project) | Binary | Loss binary -> raw |
+| --- | --- | --- | --- |
+| heights | `height_map_0.png` + entry min / scale | `hf_height_map.data`, mesh vertices | quantisation; the border (overlap) may not be in the binary |
+| blend weights | `blend_map.tif`, 16 layers | `blend.dds` + `index.dds` (DXT5) | DXT5 error, and only the layers the index keeps per pixel |
+| ground types | `ground_type_map.png` | `ground_types.dds` | none expected |
+| buildings, props, decals, VFX, lights | scene nodes in layers | building list, bmd props / emitters, markers | layers, names, euler (from a quaternion), TEd-only properties; the z mirror and the half-metre scale are known |
+| logic (capture, deployment, AI hints, zones, outlines, civilians) | polygon nodes | bmd sections, markers, civilian bins | layer structure, TEd-only properties |
+| trees and grass | seeds (`modules`) + hand-placed instances | generated lists per climate | the seeds; the generated trees cannot tell which were hand placed |
+| camera, nogo, LF influence, exclusion polygons | in the raw files | not in the binary | everything |
+
+### Steps
+
+1. **Inventory**: every tile file of Attila's packs through the VFS (and BOB's working_data), counted per kind and per tile kind
+   (battle / campaign / settlement); `docs/formats/tile_binary.md`. Decode what is missing: the older `.tree_list` / `.grass_list`,
+   the `markers` payloads, `tile.agf`, the 0xABCA building list, the CHMF blocks' meaning.
+2. **`attila.tile_binary` format, byte for byte** (the Phase 1 discipline): read every file of an exported tile into the model and write
+   it back identically (compressed images kept while unchanged; the 11 uninitialised RMV2 bytes as trivia). Gate over every tile of the
+   packs, kit sample tests, synthetic tests.
+3. **Binary -> raw** (decompile): an exported tile written as a TEd project that TEd and the editor open; the losses above listed in a
+   report per tile. Check: every value the binary carries is in the raw tile.
+4. **Raw -> binary** (compile): BOB's outputs from the model, one output kind at a time, each against BOB's own output in the oracle kit
+   (vegetation, the tile database and the battle map fill are ported already). Check: raw -> binary equals BOB; binary -> raw -> binary
+   keeps every value.
+
+### Decisions (2026-10-22)
+
+- **Binary -> raw first** (step 3 before step 4); raw -> binary follows.
+- **Decompiled trees** are written as explicit `VEGETATION_INSTANCE`s in a layer of their own ("Decompiled vegetation"; the seeds are not in
+  the binary, so regenerating would move them); grass lists are carried along as files.
+- **Raw -> binary is reimplemented exactly** (terrain mesh decimation, the DXT5 compressor included), each output proven byte-identical
+  against BOB in the oracle kit, as the vegetation port was.
+- **Corpus**: every tile of Attila's packs (through the VFS), BOB's working_data (the oracle kit), and mod packs (TDD) when they are on this
+  machine.
