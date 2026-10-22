@@ -39,8 +39,16 @@ struct Totals {
     kit_buildings: usize,
     paired: usize,
     attr_same: BTreeMap<String, (usize, usize)>,
+
+    /// Per class: decompiled, in the kit, paired.
+    classes: BTreeMap<String, (usize, usize, usize)>,
     losses: BTreeMap<String, usize>,
     problems: Vec<String>,
+}
+
+/// A value as tile.ted writes it.
+fn crate_value_text(class: &str, attr: &str, v: &Value) -> String {
+    wce_tile_io::xml::value_text(&wce_tile_io::attila::schema::TedSchema, wce_tile_model::Sym::new(class), wce_tile_model::Sym::new(attr), v)
 }
 
 /// The first difference between two trees, as a path.
@@ -219,6 +227,85 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             }
         }
 
+        // The other instances: pair on (class, identifying attribute, world position), then compare attributes.
+        if let Some(scene) = &raw.scene {
+            let sc = &project.scene;
+            for (class, id, attrs) in [
+                ("ProjectedDecalInstance", "key", &["scale", "parallax_scale", "tiled"][..]),
+                ("SIMPLE_MESH_INSTANCE", "key", &["scale"][..]),
+                ("VFXInstance", "vfx", &["scale", "autoplay", "use_in_outfield", "seasons"][..]),
+                ("POINT_LIGHT_INSTANCE", "name", &["colour", "radius", "colour_scale", "colour_min", "random_offset", "animation_type", "falloff_type", "animation_speed_scale"][..]),
+            ] {
+                let mut ours = vec![];
+                scene.walk(&mut |n| {
+                    if n.class == class {
+                        ours.push(n);
+                    }
+                });
+
+                let kit_e = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == class).collect::<Vec<_>>();
+                let c = local.classes.entry(class.to_owned()).or_default();
+                c.0 += ours.len();
+                c.1 += kit_e.len();
+                let mut by_key: BTreeMap<String, Vec<(usize, wce_foundation::math::Double3)>> = BTreeMap::new();
+                for &e in &kit_e {
+                    by_key.entry(sc.doc().get(e, id).unwrap_or_default()).or_default().push((e, world_transform(sc, e).position));
+                }
+
+                for n in ours {
+                    let key = n.get(id).and_then(Value::as_str).unwrap_or_default();
+                    let p = n.get("position").and_then(Value::as_vec3).unwrap_or_default();
+                    let Some(cands) = by_key.get_mut(key) else { continue };
+                    // Several instances can share a place (lights of a window): the candidate whose attributes agree most.
+                    let agree = |e: usize| attrs.iter().filter(|a| n.get(a).map(|v| crate_value_text(class, a, v)) == sc.doc().get(e, a)).count();
+                    let Some(ci) = cands
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (q.y - p[1]).abs() < 0.1)
+                        .max_by_key(|(_, (e, _))| agree(*e))
+                        .map(|(i, _)| i)
+                    else {
+                        continue;
+                    };
+
+                    let (e, _) = cands.swap_remove(ci);
+                    local.classes.get_mut(class).expect("class").2 += 1;
+                    for attr in attrs {
+                        let ours = n.get(attr).map(|v| crate_value_text(class, attr, v));
+                        let theirs = sc.doc().get(e, attr);
+                        let c = local.attr_same.entry(format!("{class}.{attr}")).or_default();
+                        if ours == theirs {
+                            c.0 += 1;
+                        } else {
+                            c.1 += 1;
+                            if c.1 <= 2 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                                local.problems.push(format!("{name}: {class} {key} {attr}: ours {ours:?}, kit {theirs:?}"));
+                            }
+                        }
+                    }
+
+                    // A point light has no rotation.
+                    if class == "POINT_LIGHT_INSTANCE" {
+                        continue;
+                    }
+
+                    let o = n.get("orientation").and_then(Value::as_vec3).unwrap_or_default();
+                    let m = euler_matrix(wce_foundation::math::Double3::new(o[0], o[1], o[2]));
+                    let t = world_transform(sc, e).rotation;
+                    let diff = (0..3).flat_map(|r| (0..3).map(move |k| (r, k))).map(|(r, k)| (m.m[r][k] - t.m[r][k]).abs()).fold(0.0, f64::max);
+                    let c = local.attr_same.entry(format!("{class}.orientation (world)")).or_default();
+                    if diff < 0.001 {
+                        c.0 += 1;
+                    } else {
+                        c.1 += 1;
+                        if c.1 <= 3 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                            local.problems.push(format!("{name}: {class} {key} orientation: ours {o:?} {:?}, kit world {:?} ({}, file {:?}, scale {:?})", m.m, t.m, sc.layer_path(e), sc.doc().get(e, "orientation"), sc.doc().get(e, "scale")));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     })();
 
@@ -245,6 +332,13 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
     for (k, n) in local.losses {
         *t.losses.entry(k).or_default() += n;
+    }
+
+    for (k, (a, b, c)) in local.classes {
+        let e = t.classes.entry(k).or_default();
+        e.0 += a;
+        e.1 += b;
+        e.2 += c;
     }
 
     t.problems.extend(local.problems);
@@ -346,6 +440,10 @@ fn main() {
     println!("buildings: {} decompiled, {} in the kit's tile.ted, {} paired (key, world position within 10 cm)", t.buildings, t.kit_buildings, t.paired);
     for (k, (a, b)) in &t.attr_same {
         println!("  {k}: {a} same, {b} differ");
+    }
+
+    for (k, (a, b, c)) in &t.classes {
+        println!("{k}: {a} decompiled, {b} in the kit, {c} paired");
     }
 
     println!("losses (tiles that report each):");
