@@ -6,8 +6,9 @@
 //! prediction the node keeps the actual bytes as layout trivia, so any file of this shape is written back byte for byte. Values are typed by
 //! a [`Schema`]; a value whose text the schema's kind would not give back keeps its text as verbatim trivia.
 //!
-//! Not supported (a read error): text other than whitespace, comments, processing instructions or CDATA after the prolog, `=` with spaces
-//! around it, entities other than the five XML ones and character references.
+//! Text in an element is a `#text` child (property `text`: the whole run between the tags, whitespace included), a comment a `#comment`
+//! child (property `text`: what is between `<!--` and `-->`). Not supported (a read error): processing instructions or CDATA after the
+//! prolog, `=` with spaces around it, entities other than the five XML ones and character references.
 
 pub mod values;
 
@@ -128,7 +129,13 @@ fn decode_entities(raw: &str, at: usize) -> Result<String, XmlError> {
     Ok(out)
 }
 
-/// The text with `&`, `<`, `>` and the quote escaped.
+/// The class of a text child.
+pub const TEXT: &str = "#text";
+
+/// The class of a comment child.
+pub const COMMENT: &str = "#comment";
+
+/// The text with `&`, `<`, `>` and the quote escaped (`quote` 0: text content, no quote escaped).
 fn encode_entities(text: &str, quote: u8, out: &mut Vec<u8>) {
     for b in text.bytes() {
         match b {
@@ -303,7 +310,17 @@ impl Reader<'_> {
                 }
 
                 if self.t[self.pos] != b'<' {
-                    return err(self.pos, "text in an element");
+                    // Text: the whole run up to the next tag, the whitespace before it included.
+                    let end = memchr(b'<', &self.t[self.pos..]).map_or(self.t.len(), |e| self.pos + e);
+                    let Ok(raw) = std::str::from_utf8(&self.t[gap_start..end]) else { return err(gap_start, "text is not UTF-8") };
+                    let decoded = decode_entities(raw, gap_start)?;
+                    let mut written = vec![];
+                    encode_entities(&decoded, 0, &mut written);
+                    let mut child = Node::new(TEXT);
+                    child.push_read(Sym::new("text"), Value::Str(decoded), (written != raw.as_bytes()).then(|| raw.into()));
+                    node.children.push(child);
+                    self.pos = end;
+                    continue;
                 }
 
                 if self.t.get(self.pos + 1) == Some(&b'/') {
@@ -331,8 +348,25 @@ impl Reader<'_> {
                     break;
                 }
 
+                if self.t[self.pos..].starts_with(b"<!--") {
+                    let Some(e) = self.t[self.pos..].windows(3).position(|w| w == b"-->") else { return err(self.pos, "unterminated comment") };
+                    let Ok(body) = std::str::from_utf8(&self.t[self.pos + 4..self.pos + e]) else { return err(self.pos, "comment is not UTF-8") };
+                    let mut child = Node::new(COMMENT);
+                    child.push_read(Sym::new("text"), Value::Str(body.to_owned()), None);
+                    let gap = self.t[gap_start..gap_end].to_vec();
+                    self.predicted(depth + 1, &mut predicted);
+                    if gap != predicted {
+                        child.trivia_mut().layout.push((layout::BEFORE_START, gap.into()));
+                        self.stats.layout_nodes += 1;
+                    }
+
+                    node.children.push(child);
+                    self.pos += e + 3;
+                    continue;
+                }
+
                 if matches!(self.t.get(self.pos + 1), Some(b'!' | b'?')) {
-                    return err(self.pos, "comment, CDATA or processing instruction");
+                    return err(self.pos, "CDATA or processing instruction");
                 }
 
                 let gap = self.t[gap_start..gap_end].to_vec();
@@ -492,9 +526,25 @@ impl Writer<'_> {
 
         self.out.push(b'>');
         for c in &node.children {
+            if c.class == TEXT {
+                match c.verbatim(Sym::new("text")) {
+                    Some(raw) => self.out.extend_from_slice(raw.as_bytes()),
+                    None => encode_entities(c.get("text").and_then(Value::as_str).unwrap_or_default(), 0, &mut self.out),
+                }
+
+                continue;
+            }
+
             match c.trivia().and_then(|t| t.layout.iter().find(|(code, _)| *code == layout::BEFORE_START)) {
                 Some((_, g)) => self.out.extend_from_slice(g),
                 None => self.newline(depth + 1),
+            }
+
+            if c.class == COMMENT {
+                self.out.extend_from_slice(b"<!--");
+                self.out.extend_from_slice(c.get("text").and_then(Value::as_str).unwrap_or_default().as_bytes());
+                self.out.extend_from_slice(b"-->");
+                continue;
             }
 
             self.element(c, depth + 1);
@@ -583,8 +633,17 @@ mod tests {
     }
 
     #[test]
+    fn text_and_comments() {
+        let text = "<r>\r\n<name>ZONE &amp; X</name>\r\n<!-- a\r\n comment -->\r\n<p x='1'/>tail<q/></r>\r\n";
+        let (root, _) = round(text);
+        let name = &root.children[0];
+        assert_eq!(name.children[0].get("text"), Some(&Value::Str("ZONE & X".into())));
+        assert_eq!(root.children[1].class, COMMENT);
+    }
+
+    #[test]
     fn unsupported_shapes_are_errors() {
-        for bad in ["<r>text</r>", "<r><!-- c --></r>", "<r a = \"1\"/>", "<r></s>", "<r/>junk", "<r a=\"&bogus;\"/>"] {
+        for bad in ["<r><![CDATA[x]]></r>", "<r a = \"1\"/>", "<r></s>", "<r/>junk", "<r a=\"&bogus;\"/>"] {
             assert!(read(bad.as_bytes(), &Plain).is_err(), "{bad}");
         }
     }

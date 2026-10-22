@@ -1,6 +1,6 @@
 # Tile round trip: a game-neutral tile model with per-game readers and writers
 
-Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 planned (below), not started.
+Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 steps 1 and 2 done (2026-10-22), step 3 next.
 
 ## Phase 1 result
 
@@ -171,6 +171,15 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
 4. **Raw -> binary** (compile): BOB's outputs from the model, one output kind at a time, each against BOB's own output in the oracle kit
    (vegetation, the tile database and the battle map fill are ported already). Check: raw -> binary equals BOB; binary -> raw -> binary
    keeps every value.
+
+### Progress
+
+- **Step 1 done**: inventory and decoding (docs/formats/tile_binary.md): every kind of file of the exported tiles has a codec; CHMF heights
+  (decoder and the engine's encoder), markers, building lists and the older lists decoded.
+- **Step 2 done**: `attila.tile_binary` (`wce_tile_io::attila::tile_binary`): every tile folder of the packs (1,756) through the model and
+  back byte for byte, with the DXT5 textures and 545 TDD height maps kept as original bytes and the terrain meshes carried as files. Tests:
+  `tests/tile_binary.rs` (synthetic), `tests/pack_samples.rs` (8 pack folders with `WCE_ATTILA_GAME`), gates `tile_binary_roundtrip` and
+  `tile_binary_roundtrip_all` (`--corpus`).
 
 ### Decisions (2026-10-22)
 

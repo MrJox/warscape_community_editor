@@ -247,3 +247,10 @@ Assembly Kit (Steam on Linux, battle and campaign tiles in one `assembly_kit`), 
 `scene_check` on the same kit: `docs/baseline/scene_check_attila_kit.txt` (1,380 files, 17,770,581 of 17,770,581 numbers). The crate tests read the
 kit when `WCE_ATTILA_KIT` is set (`gates.sh` sets it from `WCE_GAME`): `kit_samples` round-trips 25 chosen tiles (every version, both kinds, the cases
 above). `gates.sh` gained the `ex` helper its gate lines call (it was not defined).
+
+## Exported tile format (2026-10-22, Phase 2 step 2 of `docs/plans/tile_roundtrip.md`)
+
+New gates: `tile_binary_roundtrip` (western_city_b/small from `tiles4.pack`) and, with `--corpus`, `tile_binary_roundtrip_all`
+(`wce_tile_io --example tile_binary_roundtrip_check "$GAME/data"`): 1,756 tile folders of the 31 packs, every decoded file identical, 545
+CHMF and 4,438 DXT5 textures kept, models read back equal, `all passed` (`docs/baseline/tile_binary_roundtrip_check.txt`; the counts per
+kind must stay the same). `gates.sh` exports `WCE_ATTILA_GAME` for `wce_tile_io`'s `pack_samples` test.

@@ -144,6 +144,11 @@ impl Kind {
             }
 
             Value::Str(s) => s.clone(),
+
+            // Not in TEd's files; a converted tile can carry them.
+            Value::Floats(v) => join(v),
+            Value::Ints(v) => v.iter().map(i64::to_string).collect::<Vec<_>>().join(","),
+            Value::Bytes(v) => v.iter().map(|b| format!("{b:02x}")).collect(),
         }
     }
 }

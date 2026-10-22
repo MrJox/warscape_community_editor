@@ -7,14 +7,17 @@ format is one `TileFormat` (id `<game>.<format>`): `read(&TileFiles) -> Tile` an
 ## The model (`wce_tile_model`)
 
 - **`Tile`**: `scene` (a node tree), `rivers` (node trees with an index), `maps` (rasters by kind and index), `entry` (the tile database
-  entry as a node tree, with its file name), `variation`, `files` (everything else of the folder, untouched: `OpaqueFile` = relative path
+  entry as a node tree, with its file name), `documents` (the other typed files by name: markers, building lists, BMD data ...),
+  `variation`, `files` (everything else of the folder, untouched: `OpaqueFile` = relative path
   + blob), `source_format` and `source` (that format's trivia per part, see below).
 - **`Node`**: a class (`Sym`, an interned name), its properties in order (`Prop` = name + `Value`), its child nodes. Wrappers (`children`,
   `points`, `modules`, `scene`) are nodes without properties; `wrapped("children")` / `wrapped_mut` reach their nodes.
-- **`Value`**: `Bool`, `Int`, `Float` (f64), `Vec2`, `Vec3`, `Euler` (radians), `Colour` (r, g, b, a), `Flags` (names), `Str`. A text a format
+- **`Value`**: `Bool`, `Int`, `Float` (f64), `Vec2`, `Vec3`, `Euler` (radians), `Colour` (r, g, b, a), `Flags` (names), `Str`, and
+  for the binary formats `Floats` / `Ints` (matrices, points, columns of records) and `Bytes` (fields not understood yet). A text a format
   could not type stays `Str`. Equality is meaning: two NaNs are equal (TEd writes `lf_offset="nan"`).
 - **`Raster`**: width, height, channels, `Samples` (u8 / u16 / f32), row-major from the file's first row, channels interleaved.
-- **`MapKind`**: `Height` (index n of `height_map_<n>`), `Blend`, `GroundType`, `Nogo`, `LfInfluence`.
+- **`MapKind`**: `Height` (index n of `height_map_<n>`, or the region of a CHMF), `Blend`, `GroundType`, `Nogo`, `LfInfluence`, `Water`,
+  and the exported tile's decoded textures `BlendTexture`, `IndexTexture`, `NormalTexture`.
 
 ## Trivia: how a format gives its own bytes back
 
@@ -62,3 +65,20 @@ double, zeros kept).
 byte-identical, 222 images kept (Photoshop / World Machine PNGs), 3 PNGs that do not read carried along (`plains/3x1/3x1_aa`, their LF bytes
 were converted to CRLF), 7 of 83.6 million values kept as text (flags without TEd's leading space on 5 root nodes of old files, two denormal
 `lf_offset`s that `%g` does not give back), 0 unknown attributes, 0 layout trivia.
+
+## `attila.tile_binary`
+
+An exported tile: a variation folder as BOB writes it into `working_data` and the packs ship it (docs/formats/tile_binary.md).
+
+| Files | In the model | Codec |
+| --- | --- | --- |
+| `hf_height_map.data`, `hf_water_map.data` | a `CHMF` document (header, `region` children: rect, tag) + a `Height` / `Water` raster per region | `wce_formats::chmf`, the engine's encoder; a short block table: kept |
+| `*.markers` | a document per file: the class as root, `record` children (the layout's named fields), `groups` | `wce_formats::markers` |
+| `building_list*`, `far_building_list` | `BATTLEFIELD_BUILDING_LIST` document, `building` children | rpfm_lib ESF, `attila::building_list` |
+| `*.tree_list.bin`, `*grass_list.bin` | `TREE_LIST_BIN` / `GRASS_LIST_BIN`: a `type` child per type, the trees as columns | rpfm_lib |
+| `*.tree_list`, `*.grass_list` (older) | `TREE_LIST` / `GRASS_LIST`: `type` children, a `records` child with columns | `wce_formats::old_lists` |
+| BMD binaries, civilian lists, `tile_database.bin`, other ESF | `BMD`, `CIVILIAN_*`, `TILE_DATABASE`, `ESF` documents | rpfm_lib through `serde_node` |
+| `blend.dds`, `index.dds`, `normal.dds` | decoded RGBA rasters | kept while unchanged (no compressor yet) |
+| `ground_types.dds` | a `GroundType` raster | header + pixels |
+| XML (`definition.xml`, `zones.xml`, outlines ...) | documents, values as text, `#text` / `#comment` children | the XML codec |
+| meshes, loading screens, `tile.ted_binary`, anything that does not read | `files` | untouched |

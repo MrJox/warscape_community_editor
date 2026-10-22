@@ -26,6 +26,18 @@ pub enum MapKind {
 
     /// TEd: `lf_influence_map.png`.
     LfInfluence,
+
+    /// The water surface heights (exported tile: `hf_water_map.data`).
+    Water,
+
+    /// Exported tile: the blend texture of the terrain (`blend.dds`, decoded RGBA).
+    BlendTexture,
+
+    /// Exported tile: which layers the blend texture weights (`index.dds`, decoded RGBA).
+    IndexTexture,
+
+    /// Exported tile: `normal.dds` (decoded RGBA).
+    NormalTexture,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +63,14 @@ pub struct RiverSplines {
 pub struct Entry {
     /// The entry's file name, which names it in the database (`plains_3x1.xml`).
     pub file_name: String,
+    pub root: Node,
+}
+
+/// A named typed tree that is neither the scene nor a river: the list-like files of an exported tile (markers, building lists, tree and
+/// grass lists, BMD data, the headers of height maps ...), by the name of the file it came from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Document {
+    pub name: String,
     pub root: Node,
 }
 
@@ -96,6 +116,9 @@ pub struct Tile {
     pub maps: Vec<TileMap>,
     pub entry: Option<Entry>,
 
+    /// The other typed files, by file name.
+    pub documents: Vec<Document>,
+
     /// The variation's name in the entry (`aa`, `medium`), when known.
     pub variation: Option<String>,
     pub files: Vec<OpaqueFile>,
@@ -108,6 +131,14 @@ pub struct Tile {
 impl Tile {
     pub fn map(&self, kind: MapKind, index: u32) -> Option<&TileMap> {
         self.maps.iter().find(|m| m.kind == kind && m.index == index)
+    }
+
+    pub fn document(&self, name: &str) -> Option<&Document> {
+        self.documents.iter().find(|d| d.name == name)
+    }
+
+    pub fn document_mut(&mut self, name: &str) -> Option<&mut Document> {
+        self.documents.iter_mut().find(|d| d.name == name)
     }
 
     pub fn map_mut(&mut self, kind: MapKind, index: u32) -> Option<&mut TileMap> {
@@ -132,6 +163,7 @@ impl fmt::Debug for Tile {
             .field("rivers", &self.rivers.len())
             .field("maps", &self.maps.iter().map(|m| (m.kind, m.index, m.raster.width, m.raster.height, m.raster.channels)).collect::<Vec<_>>())
             .field("entry", &self.entry.as_ref().map(|e| &e.file_name))
+            .field("documents", &self.documents.iter().map(|d| &d.name).collect::<Vec<_>>())
             .field("variation", &self.variation)
             .field("files", &self.files.iter().map(|f| &f.path).collect::<Vec<_>>())
             .field("source_format", &self.source_format)
@@ -161,6 +193,8 @@ impl PartialEq for SemanticTile<'_> {
                 (None, None) => true,
                 _ => false,
             }
+            && a.documents.len() == b.documents.len()
+            && a.documents.iter().zip(&b.documents).all(|(x, y)| x.name == y.name && x.root.without_trivia() == y.root.without_trivia())
             && a.variation == b.variation
             && a.files.iter().map(|f| &f.path).eq(b.files.iter().map(|f| &f.path))
     }

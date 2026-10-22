@@ -129,6 +129,9 @@ fn changed(v: &Value) -> Option<Value> {
         Value::Colour(c) => Value::Colour([c[0] * 0.5, c[1], c[2], c[3]]),
         Value::Flags(f) => Value::Flags(if f.is_empty() { vec![Sym::new("OIF_ACTIVE")] } else { f[1..].to_vec() }),
         Value::Str(s) => Value::Str(format!("{s}_x")),
+        Value::Floats(v) => Value::Floats(v.iter().map(|x| x + 1.5).collect()),
+        Value::Ints(v) => Value::Ints(v.iter().map(|x| x + 1).collect()),
+        Value::Bytes(v) => Value::Bytes(v.iter().map(|x| x ^ 1).collect()),
     })
 }
 
