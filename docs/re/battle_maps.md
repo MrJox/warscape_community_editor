@@ -159,7 +159,17 @@ plains (aa .. ad) elsewhere.
   and ROME_Atlantic, 36), and the plain ground is cut by the cells' climates, each with the base material given that climate's textures
   (`terrain_material::retexture`: the open tile's blend averaged, the climate's slots; one id per climate). The open tile keeps the climate
   of its own panel; the Map context section shows the map's at its placement and can use it. A tile's trees are its climate's list when the
-  tile has one (`rome_med.tree_list.bin`), as the game picks them, else `default`. Not done: the per-season `snow_map_*.png`.
+  tile has one (`rome_med.tree_list.bin`), as the game picks them, else `default`.
+- **Season snow** (2026-10-22): the kit's `snow_map_<season>.png` of the map (the campaign's: only winter has snow, 418 610 cells; read
+  top-aligned, they are 4 rows taller than the tile map) marks where a battle can be snowy; the game snows a battle as a whole through its
+  weather (`docs/re/terrain.md`). The viewer shows each place as it would be: "snow where the map says" (with an amount, the snowing
+  intensity) gives the scene snow regions (`RenderScene::set_snow`: the frame -> cell transform and a byte per cell), and the renderer snows
+  what lies in them and nothing else. The ground: a snowy tile's blend boxes (its box centre's cell) also mark stencil bit 0 (3), and the
+  resolve runs twice, the other pixels at the weather's intensity (2 -> 1), the marked ones at the regions' (3 -> 1). Buildings and decals:
+  their POSITION5 snow flag by where they stand. Trees (their shaders have no flag): in a snowy cell they are filed under `<model>#snow`
+  (`MODEL_SNOW_SUFFIX`, the same model loaded again) and those batches draw at the regions' intensity. A deviation by design (one view spans
+  places a battle never does). Coarse: a tile or a plain ground rectangle snows by its centre's cell (the far ring's rectangles reach half
+  a chunk). A change of the tile's look (season, climate) builds the context again; `map_context_snow on|off [amount]` for scripts.
 - **The renderer**: the scene logs its structural changes (`StructureChange`: removed id ranges, payloads replaced, anything else), so the
   draw set and the decals follow a chunk coming or going instead of rebuilding 150 000 items (45 ms a change, 170 ms at worst); the
   entities whose models are still loading are added when they come; the context's terrains skip the legacy patches (`Terrain::legacy`);

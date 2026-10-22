@@ -58,6 +58,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         diffuse_path: String::new(),
         bmin: Float3::default(),
         bmax: Float3::default(),
+        snow: false,
     }
 }
 

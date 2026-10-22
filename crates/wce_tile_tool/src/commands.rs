@@ -414,6 +414,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("map_context_snow", "map_context_snow on|off [amount]", "the season's snow where the map has it (the Map context section's switch and amount)", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: map_context_snow on|off [amount]"),
+        };
+
+        let amount = a.get(1).and_then(|v| v.parse::<f32>().ok());
+        with_tile(e, |t, e| {
+            t.context.snow_on = on;
+            if let Some(amount) = amount {
+                t.context.snow_amount = amount.clamp(0.0, 1.0);
+            }
+
+            t.context.stream(e);
+            ok(format!("snow {}", if e.scene.snow().is_some() { "where the map says" } else { "off (or none on the map this season)" }))
+        })
+    });
+
     c.add("map_context_cache", "map_context_cache clear", "empty the map context's cache of opened tiles", |_, a| {
         if a.first().is_none_or(|v| v != "clear") {
             return fail("usage: map_context_cache clear");

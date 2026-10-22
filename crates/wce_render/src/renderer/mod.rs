@@ -571,6 +571,12 @@ pub struct Renderer {
     pub(crate) wind: WindSim,
     pub(crate) tonemap: ToneMap,
     pub(crate) depth_range: DepthRange,
+
+    /// This frame's snowing intensities: the weather's, and with snow regions the snowy cells' (at least the weather's); the one the
+    /// shaders have now (weather_shared.g_snowing_intensity).
+    pub(crate) snow_weather: f32,
+    pub(crate) snow_region: Option<f32>,
+    pub(crate) snow_bound: f32,
     pub(crate) particles: ParticleSystem,
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
@@ -687,6 +693,9 @@ impl Renderer {
             wind: WindSim::default(),
             tonemap: ToneMap::new(dev),
             depth_range: DepthRange::default(),
+            snow_weather: 0.0,
+            snow_region: None,
+            snow_bound: 0.0,
             particles,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
             editor: editor::EditorGpu::default(),
@@ -915,6 +924,15 @@ impl Renderer {
     }
 
     /// The WEATHER node's per-frame update (fn 0x18ee0c0): the wind simulation, weather_shared, wind_VS, wind_PS.
+    /// The shaders' snowing intensity (weather_shared), uploaded when it changes.
+    pub(crate) fn set_snowing(&mut self, intensity: f32) {
+        if intensity != self.snow_bound {
+            self.snow_bound = intensity;
+            self.cbs.set_f("weather_shared", "g_snowing_intensity", &[intensity]);
+            self.upload();
+        }
+    }
+
     fn update_weather(&mut self, env: &EnvironmentParams, time_s: f32) {
         self.particles.set_weather(&env.weather_definition, self.settings.vfx_revision);
         let def = self.particles.effect().definition.clone();
@@ -923,7 +941,6 @@ impl Renderer {
         let (w, cbs) = (&self.wind, &mut self.cbs);
         cbs.set_f("weather_shared", "g_wind", &[w.smoothed.x, w.smoothed.y]);
         cbs.set_f("weather_shared", "g_wind_offset", &[w.offset.x, w.offset.y]);
-        cbs.set_f("weather_shared", "g_snowing_intensity", &[env.snowing_intensity]);
         cbs.set_i("weather_shared", "g_weather_type", def.type_index());
         cbs.set_i("weather_shared", "g_season_type", self.settings.season);
         cbs.set_f("weather_shared", "g_snow_mask", &[if self.settings.snow_cover { 1.0 } else { 0.0 }]);
@@ -991,6 +1008,11 @@ impl Renderer {
         self.clock.last_time = time_s;
         self.cloud_layer.dt = self.clock.dt;
         self.update_weather(&env, time_s);
+
+        // Snow regions: what lies in them (flagged instances, decals, snowy trees and ground) snows at their amount, the rest as the weather.
+        self.snow_weather = env.snowing_intensity;
+        self.snow_region = scene.snow().map(|s| s.amount.max(env.snowing_intensity));
+        self.set_snowing(self.snow_region.unwrap_or(self.snow_weather));
 
         self.gpu_timer.mark("sky cube");
         self.pass_sky_cube(&env, time_s);
