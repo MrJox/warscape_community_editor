@@ -49,6 +49,31 @@ fn main() {
     }
 
     println!("paired {} (within 5 cm)", pairs.len());
+    // The kit's lite building zones (world x, z polygons), against the list's `lite`.
+    let zones = (0..sc.doc().elements().len())
+        .filter(|&e| sc.type_of(e) == "LiteBuildingZone")
+        .map(|e| {
+            let w = world_transform(sc, e);
+            sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|q| { let v = w.position + w.rotation * q; (v.x, v.z) }).collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let inside = |x: f64, z: f64| {
+        zones.iter().any(|poly| {
+            let mut c = false;
+            for k in 0..poly.len() {
+                let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+                if (a.1 > z) != (b.1 > z) && x < a.0 + (z - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+                    c = !c;
+                }
+            }
+            c
+        })
+    };
+    let mut lite_table: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, i, w) in &pairs {
+        *lite_table.entry(format!("lite {:?}, inside a kit zone {}", buildings[*i].lite, inside(w.position.x, w.position.z))).or_default() += 1;
+    }
+    println!("{} lite building zones: {lite_table:?}", zones.len());
     let mut table: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     let mut rot = vec![];
     for (e, i, w) in &pairs {
@@ -57,6 +82,10 @@ fn main() {
         let attr = |a: &str| sc.doc().get(*e, a).unwrap_or_else(|| "-".to_owned());
         add("on_fire / burn", format!("{} / {}", b.on_fire, attr("burn")));
         add("starting_damage / destruction_level", format!("{} / {}", b.starting_damage, attr("destruction_level")));
+        // WCE_KEYS=key,key: the same per building key.
+        if std::env::var("WCE_KEYS").is_ok_and(|k| k.split(',').any(|k| k == b.key)) {
+            add(&format!("{}: starting_damage / destruction_level", b.key), format!("{} / {}", b.starting_damage, attr("destruction_level")));
+        }
         add("indestructible / indestructible", format!("{} / {}", b.indestructible, attr("indestructible")));
         add("toggleable / toggleable", format!("{:?} / {}", b.toggleable, attr("toggleable")));
         add("start_disabled", format!("{}", b.start_disabled));

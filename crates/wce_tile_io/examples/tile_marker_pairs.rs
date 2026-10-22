@@ -48,6 +48,8 @@ fn main() {
         let m = m.unwrap_or_default();
         let (tx, ty, tz) = if m.len() == 16 { (m[12], m[13], m[14]) } else { (m[0], m[1], m[2]) };
         println!("record {i}: key {} matrix {:?}", key_of.get(&i).cloned().unwrap_or_default(), m.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>());
+        let other = rec.props().iter().filter(|p| p.name != "transform").map(|p| format!("{}={:?}", p.name, p.value)).collect::<Vec<_>>();
+        println!("  fields {}", other.join(" "));
         // Nearest kit instance of the class to the building frame's guess (scene x = 2 tx, z = 2 (extent - tz)).
         let guess = (2.0 * tx, ty, 2.0 * (extent_z - tz));
         let best = inst

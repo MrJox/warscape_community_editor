@@ -4,6 +4,10 @@
 //! What the binary does not carry is reported as a loss ([`Losses`]): layer names and structure, the camera, the vegetation seeds, the
 //! nogo / LF influence maps, the height map's border ring, TEd-only properties.
 
+use std::io::Cursor;
+
+use rpfm_lib::files::Decodeable;
+use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::tile_database::TileDatabase;
 use wce_tile_model::{Entry, MapKind, Node, Raster, Samples, Sym, Tile, TileMap, Value};
 
@@ -23,8 +27,8 @@ pub struct Context<'a> {
     /// The tile databases, searched in order for the tile's entry (a mod's before the game's).
     pub databases: &'a [TileDatabase],
 
-    /// The number of destruction levels of a building key (its pieces' highest `destructNN`), to turn the binary's starting damage
-    /// (level / (levels - 1)) back into TEd's destruction level; without it a damaged building gets level 1.
+    /// The number of destruction levels of a building key ([`destruction_levels`] of its `.cs2.parsed`), to turn the binary's starting
+    /// damage (level / (levels - 1)) back into TEd's destruction level; without it a damaged building gets level 1.
     pub building_levels: Option<LevelsOf<'a>>,
 
     /// The `battlefield_buildings` category of a building key: TEd writes `weak_wall`, `ai_breachable` and `dockable` for `fort_wall`,
@@ -373,6 +377,16 @@ fn bmd_buildings(bmd: &Node) -> Vec<BattlefieldBuilding> {
         .collect()
 }
 
+/// The destruction levels of a building from its collision file (`rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`): the fewest
+/// destructs of its pieces (roman_fort_straight: piece01 has 3, the others 2, TEd uses 2 levels; 1,893,542 of the packs' 1,893,562
+/// buildings paired with the kit get the kit's level).
+pub fn destruction_levels(cs2_parsed: &[u8]) -> Option<u32> {
+    let c = Cs2Parsed::decode(&mut Cursor::new(cs2_parsed), &None).ok()?;
+    // rpfm's Cs2Parsed has no public getters: through serde.
+    let v = serde_json::to_value(&c).ok()?;
+    v["pieces"].as_array()?.iter().map(|p| p["destructs"].as_array().map_or(0, Vec::len) as u32).min()
+}
+
 /// TEd's destruction level of a building of the binary: its starting damage is level / (levels - 1).
 fn destruction_level(bl: &BattlefieldBuilding, ctx: &Context, losses: &mut BuildingLosses) -> i64 {
     if bl.starting_damage <= 0.0 {
@@ -445,8 +459,10 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
         std::array::from_fn(|k| (m[4 * k] * m[4 * k] + m[4 * k + 1] * m[4 * k + 1] + m[4 * k + 2] * m[4 * k + 2]).sqrt())
     };
 
+    // A model's y and z rows are negated (the 1,147 paired SIMPLE_MESH_INSTANCEs of the packs, against decals).
+    let sign = |k: usize| if decal || k == 0 { 1.0 } else { -1.0 };
     let rows = marker_rotation(std::array::from_fn(|k| {
-        let n = half[k].abs().max(1e-12);
+        let n = sign(k) * half[k].abs().max(1e-12);
         [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
     }));
 
@@ -547,7 +563,7 @@ fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
         let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
-        for (i, p) in pos.chunks_exact(3).enumerate() {
+        for (i, p) in pos.as_chunks::<3>().0.iter().enumerate() {
             out.push(instance(
                 "VEGETATION_INSTANCE",
                 "tree",
@@ -638,7 +654,7 @@ fn str_attr(n: &Node, k: &str) -> String {
 
 /// The polylines of a marker record (`points`, or `polylines` > `polyline` > `points`) as (x, z) pairs.
 fn record_polylines(rec: &Node) -> Vec<Vec<(f64, f64)>> {
-    let pts = |v: &[f64]| v.chunks_exact(2).map(|c| (c[0], c[1])).collect::<Vec<_>>();
+    let pts = |v: &[f64]| v.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])).collect::<Vec<_>>();
     if let Some(p) = rec.get("points").and_then(Value::as_floats) {
         return vec![pts(p)];
     }
@@ -858,6 +874,11 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         }
     }
 
+    // The normal layers' capture locations (the escalation layers' are in their BMDs).
+    if let Some(doc) = binary.document("capture_location_list.xml") {
+        items.extend(xml_captures(&doc.root).iter().map(|c| capture_node(c, extent_z)));
+    }
+
     if binary.document("civilian_shelter.bin").is_some() {
         losses.note("civilian shelters: not decompiled (BOB generates them for tiles whose tile.ted has none)");
     }
@@ -866,57 +887,199 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     l
 }
 
-/// The capture locations of a BMD document (`capture_location_set` > `capture_location_sets` > `item` > `capture_locations` > `item`) as
-/// TEd's CaptureLocationInstance (at the flag: the binary's `location`) with its boundary: a circle of the binary's radius doubled around
-/// the one location point, or a polygon through the location points.
-fn capture_nodes(bmd: &Node, extent_z: f64) -> Vec<Node> {
-    let mut sets = vec![];
-    all(bmd, "capture_locations", &mut sets);
-    let mut out = vec![];
-    for loc in sets.iter().flat_map(|s| s.children.iter().filter(|c| c.class == "item")) {
-        let l = loc.child("location");
-        let (lx, lz) = (2.0 * l.map_or(0.0, |l| num(l, "x")), 2.0 * (extent_z - l.map_or(0.0, |l| num(l, "y"))));
-        let f = loc.child("flag_facing");
-        // The binary's facing vector (x, y) is TEd's angle atan2(-y, x) (the z mirror).
-        let facing = (-f.map_or(0.0, |f| num(f, "y"))).atan2(f.map_or(1.0, |f| num(f, "x"))).rem_euclid(std::f64::consts::TAU);
-        let ty = if str_attr(loc, "capture_point_type") == "CAPTURE_LOCATION_MAJOR" { "CLT_MAJOR" } else { "CLT_MINOR" };
-        let mut n = instance(
-            "CaptureLocationInstance",
-            "capture_point",
-            [lx, 0.0, lz],
-            [0.0; 3],
-            vec![
-                ("flag_facing", Value::Float(r32(facing))), ("database_type", s(&str_attr(loc, "database_key"))),
-                ("min_num_players", i(loc.get("valid_for_min_num_players").and_then(Value::as_int).unwrap_or(2))), ("type", s(ty)),
-                ("max_num_players", i(loc.get("valid_for_max_num_players").and_then(Value::as_int).unwrap_or(8))), ("flag_position", Value::Vec3([0.0; 3])),
-            ],
-        );
+/// A capture location as the binary has it (the binary's frame: x, z mirrored, half scale), from a BMD set or `capture_location_list.xml`.
+struct CaptureLocation {
+    flag: (f64, f64),
+    facing: (f64, f64),
+    major: bool,
+    key: String,
+    min_players: i64,
+    max_players: i64,
+    radius: f64,
+    points: Vec<(f64, f64)>,
+}
 
-        n.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
-        n.set("surface_mode", s("MSM_LANDSCAPE"));
-        let pts = loc.child("location_points").map_or(vec![], |p| p.children.iter().map(|c| (num(c, "x"), num(c, "y"))).collect::<Vec<_>>());
-        let radius = num(loc, "radius");
-        let boundary = if radius > 0.0 && pts.len() <= 1 {
-            // TEd's circle: 20 points from +z towards +x, (r sin a, r cos a) for a = 0, 18, ... 342 degrees.
-            let c = pts.first().map_or((lx, lz), |&(x, z)| (2.0 * x, 2.0 * (extent_z - z)));
-            let r = 2.0 * radius;
-            let ring = (0..20).map(|k| {
-                let a = f64::from(k) * 18f64.to_radians();
-                (c.0 + r * a.sin(), c.1 + r * a.cos())
-            }).collect::<Vec<_>>();
+/// Whether (x, z) is inside the polygon (even-odd rule).
+fn inside(poly: &[(f64, f64)], x: f64, z: f64) -> bool {
+    let mut c = false;
+    for k in 0..poly.len() {
+        let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+        if (a.1 > z) != (b.1 > z) && x < a.0 + (z - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+            c = !c;
+        }
+    }
+    c
+}
 
-            let mut b = polygon("CaptureLocationPolygonInstance", "Boundary", &ring, true, vec![("radius", Value::Float(r32(r)))], (lx, lz));
-            b.set("polygon_shape", s("PS_CIRCLE"));
-            b
-        } else {
-            polygon("CaptureLocationPolygonInstance", "Boundary", &scene_xz(&pts, extent_z), true, vec![], (lx, lz))
-        };
-
-        n.wrapped_mut("children").push(boundary);
-        out.push(n);
+/// TEd's LiteBuildingZones back from the buildings' `lite` flags (scene x, z, lite): the exporter marks a building lite when its position
+/// is inside a zone (every paired building of the kit's zoned tiles), the zones themselves are not in the binary. A quadtree over the
+/// buildings' bounds: a square without others' buildings is covered whole, a mixed one is split, down to 1/4 scene unit (then a square per
+/// lite building); touching rectangles of equal sides merge. Returns the zones and the buildings they would get wrong.
+fn lite_zones(buildings: &[(f64, f64, bool)]) -> (Vec<Vec<(f64, f64)>>, usize) {
+    if !buildings.iter().any(|b| b.2) {
+        return (vec![], 0);
     }
 
-    out
+    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+    for &(x, z, _) in buildings {
+        lo = (lo.0.min(x), lo.1.min(z));
+        hi = (hi.0.max(x), hi.1.max(z));
+    }
+
+    let size = (hi.0 - lo.0).max(hi.1 - lo.1) + 1.0;
+    let all = buildings.iter().collect::<Vec<_>>();
+    let mut rects = vec![];
+    quad(&all, (lo.0 - 0.5, lo.1 - 0.5), size, &mut rects);
+
+    // Merge touching rectangles with a common side until none merge: (x0, z0, x1, z1).
+    loop {
+        let mut merged = false;
+        'outer: for a in 0..rects.len() {
+            for b in a + 1..rects.len() {
+                let (p, q): (Rect, Rect) = (rects[a], rects[b]);
+                let joined = if p.1 == q.1 && p.3 == q.3 && (p.2 == q.0 || q.2 == p.0) {
+                    Some((p.0.min(q.0), p.1, p.2.max(q.2), p.3))
+                } else if p.0 == q.0 && p.2 == q.2 && (p.3 == q.1 || q.3 == p.1) {
+                    Some((p.0, p.1.min(q.1), p.2, p.3.max(q.3)))
+                } else {
+                    None
+                };
+
+                if let Some(r) = joined {
+                    rects[a] = r;
+                    rects.swap_remove(b);
+                    merged = true;
+                    break 'outer;
+                }
+            }
+        }
+
+        if !merged {
+            break;
+        }
+    }
+
+    let zones = rects.iter().map(|&(a, c, b, d)| vec![(a, c), (b, c), (b, d), (a, d)]).collect::<Vec<_>>();
+    let wrong = buildings.iter().filter(|&&(x, z, lite)| zones.iter().any(|p| inside(p, x, z)) != lite).count();
+    (zones, wrong)
+}
+
+/// A rectangle (x0, z0, x1, z1).
+type Rect = (f64, f64, f64, f64);
+
+/// A quadtree square of [`lite_zones`]: `bs` the buildings inside it.
+fn quad(bs: &[&(f64, f64, bool)], at: (f64, f64), size: f64, out: &mut Vec<Rect>) {
+    if !bs.iter().any(|b| b.2) {
+        return;
+    }
+
+    if bs.iter().all(|b| b.2) {
+        out.push((at.0, at.1, at.0 + size, at.1 + size));
+        return;
+    }
+
+    if size <= 0.25 {
+        // Lite and other buildings closer than a quarter unit: the lite ones' own squares (those at the very place stay wrong).
+        for b in bs.iter().filter(|b| b.2) {
+            out.push((b.0 - 0.01, b.1 - 0.01, b.0 + 0.01, b.1 + 0.01));
+        }
+
+        return;
+    }
+
+    let h = size / 2.0;
+    for (dx, dz) in [(0.0, 0.0), (h, 0.0), (0.0, h), (h, h)] {
+        let o = (at.0 + dx, at.1 + dz);
+        let sub = bs.iter().copied().filter(|b| b.0 >= o.0 && b.0 < o.0 + h && b.1 >= o.1 && b.1 < o.1 + h).collect::<Vec<_>>();
+        quad(&sub, o, h, out);
+    }
+}
+
+/// The capture locations of a BMD document (`capture_location_set` > `capture_location_sets` > `item` > `capture_locations` > `item`).
+fn bmd_captures(bmd: &Node) -> Vec<CaptureLocation> {
+    let mut sets = vec![];
+    all(bmd, "capture_locations", &mut sets);
+    let xy = |n: Option<&Node>, d: (f64, f64)| n.map_or(d, |n| (num(n, "x"), num(n, "y")));
+    sets.iter()
+        .flat_map(|s| s.children.iter().filter(|c| c.class == "item"))
+        .map(|loc| CaptureLocation {
+            flag: xy(loc.child("location"), (0.0, 0.0)),
+            facing: xy(loc.child("flag_facing"), (1.0, 0.0)),
+            major: str_attr(loc, "capture_point_type") == "CAPTURE_LOCATION_MAJOR",
+            key: str_attr(loc, "database_key"),
+            min_players: loc.get("valid_for_min_num_players").and_then(Value::as_int).unwrap_or(2),
+            max_players: loc.get("valid_for_max_num_players").and_then(Value::as_int).unwrap_or(8),
+            radius: num(loc, "radius"),
+            points: loc.child("location_points").map_or(vec![], |p| p.children.iter().map(|c| (num(c, "x"), num(c, "y"))).collect()),
+        })
+        .collect()
+}
+
+/// The capture locations of `capture_location_list.xml` (`CAPTURE_LOCATION` elements: `position_x` / `position_y` the flag,
+/// `capture_point_list` the points `x,y;x,y...`, `flag_facing` `x,y`; the values are text).
+fn xml_captures(doc: &Node) -> Vec<CaptureLocation> {
+    let mut locs = vec![];
+    all(doc, "CAPTURE_LOCATION", &mut locs);
+    let f = |n: &Node, k: &str| str_attr(n, k).trim().parse::<f64>().unwrap_or(0.0);
+    let pair = |t: &str| {
+        let mut it = t.split(',').map(|v| v.trim().parse::<f64>().unwrap_or(0.0));
+        (it.next().unwrap_or(0.0), it.next().unwrap_or(0.0))
+    };
+    locs.iter()
+        .map(|loc| CaptureLocation {
+            flag: (f(loc, "position_x"), f(loc, "position_y")),
+            facing: pair(&str_attr(loc, "flag_facing")),
+            major: str_attr(loc, "capture_point_type_v2") == "CAPTURE_LOCATION_MAJOR",
+            key: str_attr(loc, "database_key"),
+            min_players: f(loc, "valid_for_min_num_players") as i64,
+            max_players: f(loc, "valid_for_max_num_players") as i64,
+            radius: f(loc, "radius"),
+            points: str_attr(loc, "capture_point_list").split(';').filter(|p| !p.trim().is_empty()).map(pair).collect(),
+        })
+        .collect()
+}
+
+/// A capture location as TEd's CaptureLocationInstance with its boundary. A circle (a radius and one point): the instance at the centre,
+/// the flag at `flag_position` from it, the boundary TEd's circle of the radius doubled (as the kit has them). A polygon through the
+/// points: the instance at the flag.
+fn capture_node(c: &CaptureLocation, extent_z: f64) -> Node {
+    let scene = |(x, z): (f64, f64)| (2.0 * x, 2.0 * (extent_z - z));
+    let flag = scene(c.flag);
+    let circle = c.radius > 0.0 && c.points.len() <= 1;
+    let centre = if circle { c.points.first().map_or(flag, |&p| scene(p)) } else { flag };
+    // The binary's facing vector (x, y) is TEd's angle atan2(-y, x) (the z mirror).
+    let facing = (-c.facing.1).atan2(c.facing.0).rem_euclid(std::f64::consts::TAU);
+    let mut n = instance(
+        "CaptureLocationInstance",
+        "capture_point",
+        [r32(centre.0), 0.0, r32(centre.1)],
+        [0.0; 3],
+        vec![
+            ("flag_facing", Value::Float(r32(facing))), ("database_type", s(&c.key)), ("min_num_players", i(c.min_players)),
+            ("type", s(if c.major { "CLT_MAJOR" } else { "CLT_MINOR" })), ("max_num_players", i(c.max_players)),
+            ("flag_position", Value::Vec3([r32(flag.0 - centre.0), 0.0, r32(flag.1 - centre.1)])),
+        ],
+    );
+
+    n.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+    n.set("surface_mode", s("MSM_LANDSCAPE"));
+    let boundary = if circle {
+        // TEd's circle: 20 points from +z towards +x, (r sin a, r cos a) for a = 0, 18, ... 342 degrees.
+        let r = 2.0 * c.radius;
+        let ring = (0..20).map(|k| {
+            let a = f64::from(k) * 18f64.to_radians();
+            (centre.0 + r * a.sin(), centre.1 + r * a.cos())
+        }).collect::<Vec<_>>();
+
+        let mut b = polygon("CaptureLocationPolygonInstance", "Boundary", &ring, true, vec![("radius", Value::Float(r32(r)))], centre);
+        b.set("polygon_shape", s("PS_CIRCLE"));
+        b
+    } else {
+        polygon("CaptureLocationPolygonInstance", "Boundary", &scene_xz(&c.points, extent_z), true, vec![], centre)
+    };
+
+    n.wrapped_mut("children").push(boundary);
+    n
 }
 
 #[derive(Default)]
@@ -970,6 +1133,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     let mut p = project(extent);
     losses.note("tile.ted: the camera, the vegetation seeds and the layers' names and structure are not in the binary (made up)");
     let mut bl = BuildingLosses::default();
+    let mut lite_of = vec![];
     for (file, layer_name) in [("building_list", "Buildings"), ("far_building_list", "Far buildings"), ("building_list_sprawl", "Sprawl")] {
         let Some(doc) = binary.document(file) else { continue };
         let list = buildings(doc)?;
@@ -980,9 +1144,35 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let mut l = layer(layer_name, "LayerExportType_Normal");
         for b in &list {
             l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
+            // The zones decide the main list's flags (the kit's zoned tiles); the far and sprawl lists' are not theirs.
+            if let Some(lite) = b.lite.filter(|_| file == "building_list") {
+                lite_of.push((2.0 * f64::from(b.position[0]), 2.0 * (extent.1 - f64::from(b.position[2])), lite));
+            }
         }
 
         graph(&mut p).wrapped_mut("children").push(l);
+    }
+
+    let (zones, wrong) = lite_zones(&lite_of);
+    if !zones.is_empty() {
+        let mut l = layer("Lite building zones", "LayerExportType_Normal");
+        for z in &zones {
+            l.wrapped_mut("children").push(polygon(
+                "LiteBuildingZone",
+                "Lite Building zone",
+                z,
+                true,
+                vec![("line_colour", Value::Colour([1.0, 0.78, 0.98, 1.0]))],
+                (0.0, 0.0),
+            ));
+        }
+
+        graph(&mut p).wrapped_mut("children").push(l);
+        losses.note(format!("lite building zones: not in the binary, {} made from the buildings' lite flags", zones.len()));
+    }
+
+    if wrong > 0 {
+        losses.note(format!("lite building zones: {wrong} buildings would change their lite flag"));
     }
 
     // The escalation layers (TEd's LayerExportType_Escalation<n>, exported into bmd_data_escalation<n>).
@@ -1004,7 +1194,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             l.wrapped_mut("children").push(emitter_node(&rec, &key, extent.1));
         }
 
-        l.wrapped_mut("children").extend(capture_nodes(&doc.root, extent.1));
+        l.wrapped_mut("children").extend(bmd_captures(&doc.root).iter().map(|c| capture_node(c, extent.1)));
 
         if !l.wrapped("children").is_empty() {
             graph(&mut p).wrapped_mut("children").push(l);
