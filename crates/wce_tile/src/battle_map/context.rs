@@ -185,7 +185,7 @@ impl Sizes {
 }
 
 impl PlacedMap {
-    fn placement(&mut self, sizes: &mut Sizes, name: &str, x: i32, y: i32, flags: u16, flipped: bool, climate: u8) -> MapPlacement {
+    fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8) -> MapPlacement {
         if !sizes.names.contains_key(name) {
             let (location, variation) = split_name(name);
             let size = sizes.by_location.get(&norm(&location)).copied();
@@ -212,7 +212,7 @@ impl PlacedMap {
         let mut sizes = Sizes::new(db);
         for p in &list.placements {
             let n = list.names.get(p.name).map_or("", String::as_str);
-            let pl = m.placement(&mut sizes, n, i32::from(p.x), i32::from(p.y), p.flags, p.flags & 4 != 0, p.climate);
+            let pl = m.placement(&mut sizes, n, (i32::from(p.x), i32::from(p.y)), p.flags, p.flags & 4 != 0, p.climate);
             m.placements.push(pl);
         }
 
@@ -226,7 +226,7 @@ impl PlacedMap {
         for layer in &map.layers {
             for c in layer.iter().filter(|c| c.index > 0) {
                 let n = map.names.get(c.index as usize - 1).map_or("", String::as_str);
-                let pl = m.placement(&mut sizes, n, i32::from(c.origin[0]), i32::from(c.origin[1]), c.flags, c.flipped != 0, c.climate);
+                let pl = m.placement(&mut sizes, n, (i32::from(c.origin[0]), i32::from(c.origin[1])), c.flags, c.flipped != 0, c.climate);
                 m.placements.push(pl);
             }
         }

@@ -81,6 +81,12 @@ pub struct ContextRequest {
 /// A tile location, variation and climate.
 pub type TileKey = (String, String, String);
 
+/// A plain material's base and its id.
+type PlainBase = (Option<Arc<TerrainMaterial>>, u64);
+
+/// The plain materials by grid size, far ring or not, and climate.
+type Plains = HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>;
+
 /// A cell no placement gives a climate.
 const NO_CLIMATE: u8 = u8::MAX;
 
@@ -246,8 +252,8 @@ pub struct Frame {
 
     /// Per climate (NO_CLIMATE: the look's): the plain material's base with its textures and its id; the plain material per rectangle
     /// size and climate.
-    plain_bases: Mutex<HashMap<u8, (Option<Arc<TerrainMaterial>>, u64)>>,
-    plains: Mutex<HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>>,
+    plain_bases: Mutex<HashMap<u8, PlainBase>>,
+    plains: Mutex<Plains>,
 }
 
 impl Frame {
@@ -343,7 +349,7 @@ impl Frame {
 
     /// The plain material's base for a climate and its id: the base itself for the look's climate (or NO_CLIMATE), else the base with that
     /// climate's textures (made once).
-    fn plain_for(&self, climate: u8) -> (Option<Arc<TerrainMaterial>>, u64) {
+    fn plain_for(&self, climate: u8) -> PlainBase {
         let mut bases = self.plain_bases.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(b) = bases.get(&climate).filter(|b| b.0.is_some()) {
             return b.clone();
