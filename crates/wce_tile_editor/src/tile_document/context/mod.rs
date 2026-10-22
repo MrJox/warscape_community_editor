@@ -30,6 +30,10 @@ use wce_tile::battle_map::context::{Affine2, CELL, LF_HEIGHT, MapPlacement, Plac
 
 use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use crate::terrain_bake::TerrainLook;
+use crate::terrain_material::retexture;
+use wce_formats::tile_climate::ClimateList;
+use wce_formats::tile_entry::TileTextureGroup;
+use wce_vfs::files::Files;
 use template::{BOX_ABOVE, BOX_BELOW, Template};
 
 pub use stream::{ChunkChange, ChunkKey, Lod, Streamer};
@@ -65,15 +69,20 @@ pub struct ContextRequest {
     pub look: TerrainLook,
     pub trees: bool,
 
-    /// The material the LF ground's plain one is made from (the open tile's; else the first neighbour's).
+    /// The material the LF ground's plain one is made from (the open tile's; else the first neighbour's), and its tile's texture groups
+    /// (to give it other climates' textures).
     pub plain: Option<Arc<TerrainMaterial>>,
+    pub groups: Option<TileTextureGroup>,
 
     /// The folder of the cached templates (none: always open the tiles).
     pub cache: Option<PathBuf>,
 }
 
-/// A tile location and variation.
-pub type TileKey = (String, String);
+/// A tile location, variation and climate.
+pub type TileKey = (String, String, String);
+
+/// A cell no placement gives a climate.
+const NO_CLIMATE: u8 = u8::MAX;
 
 /// A heights buffer the terrains of a size share.
 type Heights = Arc<Vec<f32>>;
@@ -221,21 +230,32 @@ pub struct Frame {
     owner: Vec<u32>,
     reach: i32,
 
+    /// Each cell's climate (row by row, the first placement over it; NO_CLIMATE: none), the database's climates, the look and the
+    /// files the plain material is given another climate's textures with.
+    climate: Vec<u8>,
+    climates: ClimateList,
+    pub look: TerrainLook,
+    groups: Option<TileTextureGroup>,
+    files: Option<Arc<dyn Files>>,
+
     /// The plain material's base and the LF ground's shared pieces: a heights buffer of zeros per grid size (every rectangle of that size
     /// draws it), the plain material per rectangle size (one id: one set of maps on the GPU).
     plain_base: Mutex<Option<Arc<TerrainMaterial>>>,
-    plain_id: u64,
     plain_normal_id: u64,
     zeros: Mutex<HashMap<(i32, i32), Heights>>,
-    plains: Mutex<HashMap<(i32, i32, bool), Arc<TerrainMaterial>>>,
+
+    /// Per climate (NO_CLIMATE: the look's): the plain material's base with its textures and its id; the plain material per rectangle
+    /// size and climate.
+    plain_bases: Mutex<HashMap<u8, (Option<Arc<TerrainMaterial>>, u64)>>,
+    plains: Mutex<HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>>,
 }
 
 impl Frame {
 
     /// The frame of a request (slow on the campaign map: its LF map; run it away from the UI thread).
-    pub fn new(rq: &ContextRequest) -> Self {
+    pub fn new(rq: &ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let map = rq.map.clone();
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: rq.spot.x, y: rq.spot.y, w: rq.cells.0, h: rq.cells.1, rotation: rq.spot.rotation, flipped: false };
+        let me = MapPlacement { location: String::new(), variation: String::new(), x: rq.spot.x, y: rq.spot.y, w: rq.cells.0, h: rq.cells.1, rotation: rq.spot.rotation, flipped: false, climate: 0 };
         let open = me.rect();
         let to_map = me.to_map();
         let from_map = to_map.inverse();
@@ -258,6 +278,22 @@ impl Frame {
         };
 
         mark(open, 1);
+
+        // The climates, the same way (the open tile's own placement gives its cells theirs).
+        let mut climate = vec![NO_CLIMATE; (w.max(0) * h.max(0)) as usize];
+        for p in map.placements.iter().filter(|p| map.climate_of(p).is_some()) {
+            let r = p.rect();
+            for y in r[1].max(0)..r[3].min(h) {
+                for x in r[0].max(0)..r[2].min(w) {
+                    let c = &mut climate[(y * w + x) as usize];
+                    if *c == NO_CLIMATE {
+                        *c = p.climate;
+                    }
+                }
+            }
+        }
+
+        let climates = ClimateList::load(&rq.raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
         let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
         let mut reach = 0;
         for (i, p) in map.placements.iter().enumerate() {
@@ -273,8 +309,9 @@ impl Frame {
         }
 
         Self {
-            map, unit: rq.unit, open, to_map, from_map, lf_mean, lf_range, lf, by_chunk, owner, reach, plain_base: Mutex::new(rq.plain.clone()),
-            plain_id: next_id(&MATERIAL_IDS), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(), plains: Mutex::default(),
+            map, unit: rq.unit, open, to_map, from_map, lf_mean, lf_range, lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
+            groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
+            plain_bases: Mutex::default(), plains: Mutex::default(),
         }
     }
 
@@ -297,6 +334,35 @@ impl Frame {
     /// The chunks of the map.
     pub fn chunks(&self) -> (i32, i32) {
         ((self.map.width as i32 + CHUNK - 1) / CHUNK, (self.map.height as i32 + CHUNK - 1) / CHUNK)
+    }
+
+    /// A placement's climate: the map's when the database has its textures, else the look's.
+    pub fn climate_name(&self, i: usize) -> String {
+        self.map.climate_of(&self.map.placements[i]).filter(|c| self.climates.find(c).is_some()).map_or_else(|| self.look.climate.clone(), str::to_owned)
+    }
+
+    /// The plain material's base for a climate and its id: the base itself for the look's climate (or NO_CLIMATE), else the base with that
+    /// climate's textures (made once).
+    fn plain_for(&self, climate: u8) -> (Option<Arc<TerrainMaterial>>, u64) {
+        let mut bases = self.plain_bases.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(b) = bases.get(&climate).filter(|b| b.0.is_some()) {
+            return b.clone();
+        }
+
+        let base = self.plain_base.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let name = self.map.climates.get(usize::from(climate)).filter(|c| self.climates.find(c).is_some());
+        let made = match (&base, name, &self.groups, &self.files) {
+            (Some(base), Some(name), Some(groups), Some(files)) if *name != self.look.climate => {
+                let look = TerrainLook { climate: name.clone(), ..self.look.clone() };
+                let id = next_id(&MATERIAL_IDS);
+                (Some(Arc::new(retexture(base, groups, &look, &self.climates, files.as_ref(), id))), id)
+            }
+
+            _ => (base, bases.get(&climate).map_or_else(|| next_id(&MATERIAL_IDS), |b| b.1)),
+        };
+
+        bases.insert(climate, made.clone());
+        made
     }
 
     /// A base for the plain material, when there is none yet.
@@ -354,32 +420,50 @@ impl Frame {
         (key.1 * self.chunks().0 + key.0) as u32 + 2
     }
 
+    /// [`Self::runs`] cut by climate: each rectangle with the climate of its cells.
+    fn runs_by_climate(&self, area: [i32; 4], take: impl Fn(u32, i32, i32) -> bool) -> Vec<([i32; 4], u8)> {
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let at = |x: i32, y: i32| self.climate[(y * w + x) as usize];
+        let mut seen = vec![];
+        for y in area[1].max(0)..area[3].min(h) {
+            for x in area[0].max(0)..area[2].min(w) {
+                let c = at(x, y);
+                if !seen.contains(&c) && take(self.owner[(y * w + x) as usize], x, y) {
+                    seen.push(c);
+                }
+            }
+        }
+
+        seen.into_iter().flat_map(|c| self.runs(area, |o, x, y| at(x, y) == c && take(o, x, y)).into_iter().map(move |r| (r, c))).collect()
+    }
+
     /// The cells of a chunk nobody covers.
-    fn uncovered(&self, key: ChunkKey) -> Vec<[i32; 4]> {
-        self.runs([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK], |o, _, _| o == 0)
+    fn uncovered(&self, key: ChunkKey) -> Vec<([i32; 4], u8)> {
+        self.runs_by_climate([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK], |o, _, _| o == 0)
     }
 
     /// The cells a chunk draws: its own nobody covers and those of its placements (which reach out of it by up to the largest tile).
-    fn owned(&self, key: ChunkKey) -> Vec<[i32; 4]> {
+    fn owned(&self, key: ChunkKey) -> Vec<([i32; 4], u8)> {
         let (me, c) = (self.owner_of(key), [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
         let inside = |x: i32, y: i32| x >= c[0] && x < c[2] && y >= c[1] && y < c[3];
-        self.runs([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| o == me || (o == 0 && inside(x, y)))
+        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| o == me || (o == 0 && inside(x, y)))
     }
 
-    /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material.
-    fn ground(&self, r: [i32; 4], far: bool) -> (Float4x4, Payload) {
+    /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
+    /// of the cells' climate.
+    fn ground(&self, r: [i32; 4], far: bool, climate: u8) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
         let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / step).round() as i32 + 1);
         let heights = self.zeros.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz)).or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize])).clone();
-        let base = self.plain_base.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let (base, plain_id) = self.plain_for(climate);
         let material = base.map(|base| {
-            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far)).or_insert_with(|| {
+            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate)).or_insert_with(|| {
                 // A little past its rectangle (one colour: its maps wrap onto themselves), so two of them side by side leave no pixel to
                 // neither (the resolve would draw it black).
-                // One id and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make the normal
-                // map again every time the next terrain's size differed).
-                let mut m = plain_material(&base, self.plain_id, self.plain_normal_id);
+                // One id per climate and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make
+                // the normal map again every time the next terrain's size differed).
+                let mut m = plain_material(&base, plain_id, self.plain_normal_id);
                 let (w, h) = (f64::from(nx - 1) * step, f64::from(nz - 1) * step);
                 let e = if far { FAR_MARGIN } else { PLAIN_MARGIN };
                 (m.x0, m.z0, m.x1, m.z1) = (-e, -e, w + e, h + e);
@@ -463,19 +547,23 @@ impl Frame {
     pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>) -> Vec<(Float4x4, Payload)> {
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make.
         if lod == Lod::Far {
-            return self.owned(key).into_iter().map(|r| self.ground(r, true)).collect();
+            return self.owned(key).into_iter().map(|(r, c)| self.ground(r, true, c)).collect();
         }
 
         let mut out = vec![];
         for &i in self.by_chunk.get(&key).map_or(&[][..], Vec::as_slice) {
             match template(i) {
                 Some(t) => self.place(i, &t, lod, &mut out),
-                None => out.push(self.ground(self.map.placements[i].rect(), false)),
+                None => {
+                    let p = &self.map.placements[i];
+                    let c = if self.map.climate_of(p).is_some() { p.climate } else { NO_CLIMATE };
+                    out.push(self.ground(p.rect(), false, c));
+                }
             }
         }
 
-        for r in self.uncovered(key) {
-            out.push(self.ground(r, false));
+        for (r, c) in self.uncovered(key) {
+            out.push(self.ground(r, false, c));
         }
 
         out
