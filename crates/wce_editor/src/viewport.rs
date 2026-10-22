@@ -15,7 +15,7 @@ use wce_render::render_target::RenderTarget;
 use wce_render::renderer::ViewParams;
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, read_graphics_options};
-use wce_scene::render_scene::{EntityId, Payload, SourceRef};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene, SourceRef};
 
 use crate::editor::Editor;
 use crate::gui;
@@ -62,6 +62,13 @@ pub struct Viewport {
     /// gives the map's north in the open tile's frame).
     pub show_compass: bool,
     pub north: [f32; 2],
+
+    /// The coordinates readout (crate::coords), the map a tool places the scene in (cells, height above the sea), the ground point under
+    /// the cursor (while it is over the image).
+    pub show_coords: bool,
+    pub map_frame: Option<crate::coords::MapFrame>,
+    pub cursor_ground: Option<Float3>,
+    probe: crate::coords::GroundProbe,
     trace: String,
     trace_w: u32,
     trace_h: u32,
@@ -84,7 +91,7 @@ impl Default for Viewport {
     fn default() -> Self {
         Self {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true,
+            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -178,6 +185,18 @@ impl Viewport {
     }
 
     /// The camera ray through a pixel of the last rendered image (world space, direction normalized). None before the first frame.
+    /// The ground point under a pixel of the image (any drawable terrain of the scene).
+    pub fn ground_under(&mut self, scene: &RenderScene, x: i32, y: i32) -> Option<Float3> {
+        let far = self.camera().zfar;
+        let (o, d) = self.ray(x, y)?;
+        self.probe.hit(scene, o, d, far)
+    }
+
+    /// The coordinates readout's lines, with the cursor's last ground point.
+    pub fn coords_lines(&self, scene: &RenderScene) -> Vec<String> {
+        crate::coords::lines(&self.camera(), !self.is_fly(), self.cursor_ground, scene.game_units, self.map_frame.as_ref())
+    }
+
     pub fn ray(&self, x: i32, y: i32) -> Option<(Float3, Float3)> {
         if !self.target.valid() {
             return None;
@@ -481,6 +500,17 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let button_id = gui::item_id();
     let io = gui::io();
     let (mouse_x, mouse_y) = (io.MousePos.x, io.MousePos.y);
+
+    // The coordinates: the ground under the cursor, then the readout.
+    if e.viewport.show_coords {
+        if hovered {
+            let (px, py) = (((mouse_x - origin.x) * density) as i32, ((mouse_y - origin.y) * density) as i32);
+            e.viewport.cursor_ground = e.viewport.ground_under(&e.scene, px, py);
+        }
+
+        crate::coords::draw(origin, size, &e.viewport.coords_lines(&e.scene));
+    }
+
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
     let fly = e.viewport.fly_active;
 

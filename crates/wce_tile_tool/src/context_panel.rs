@@ -455,6 +455,12 @@ impl ContextUi {
         true
     }
 
+    /// Where the scene sits in the map for the coordinates readout (cells, height above the sea), while a context is shown.
+    pub fn map_frame(&self) -> Option<wce_editor::coords::MapFrame> {
+        let f = self.streamer.as_ref()?.frame();
+        Some(wce_editor::coords::MapFrame { to_map: f.to_map.m, sea_y: f.sea_y(), metres: f.unit })
+    }
+
     /// Where north is in the world for the compass: the map's while a context is shown, else the tile's own +z (its rows' top edge).
     pub fn north(&self) -> [f32; 2] {
         self.streamer.as_ref().map_or([0.0, 1.0], |s| s.frame().north())
