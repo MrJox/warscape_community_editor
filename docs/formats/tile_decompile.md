@@ -33,6 +33,23 @@ horizontally.
 
 The decompiled numbers are quantised through TEd's formatter (`Num::Ted`, `Fixed6` for the entry), so the project reads back as written.
 
+## Blend map
+
+`blend_map.tif` (16 weights per pixel, channel 4 g + v = texture group g, variation v) comes back from BOB's reduction of it
+(docs/re/terrain.md): `blend.dds` holds each group's weight, the sum of its four variations (not normalised to unit length; the kit's
+western_city_b/small agrees to 0.68 / 255, the DXT5 error), and `index.dds` the variation position t = (w1 + 2 w2 + 3 w3) / sum / 3. A
+group's weight goes back to variations floor(3 t) and the next, split by the fraction; BOB's reduction of the result gives the same two
+maps. What is lost: the variations a group mixed beyond two (the dominant variation agrees with the kit's on 71.5 % of western_city_b's
+pixels, the group weights to 0.59 / 255).
+
+## Ground types
+
+BOB computes `ground_types.dds` from the blend map, the entry's texture group names and the colours painted in `ground_type_map.png`
+(docs/re/terrain.md). The decompiled PNG paints, in TEd's colours, every pixel whose binary ground type is not the strongest group's of
+the decoded `blend.dds`: the painted water and roads, and the near ties the DXT5 error turned. BOB's rule on the rebuilt blend map and
+PNG gives the binary's ground types back on 99.99 % of the pixels (`tile_decompile_check`). An entry made up for the tile gets its
+texture group names from the ground types (per group, the type it carries most, as forest / grass / mud / sand / rock / urban).
+
 ## Rotations
 
 - **Buildings**: the quaternion as TEd's euler, R = Rz(c) Ry(a) Rx(-b) (`wce_tile::world_transform`).

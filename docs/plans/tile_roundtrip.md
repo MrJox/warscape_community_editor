@@ -207,9 +207,17 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
     (eastern_city_b/small 25,720 / 25,720, nordic_city_b/medium 12,781 / 12,781). The decompiler rebuilds zones from the flags (a
     quadtree of the lite buildings, touching rectangles merged): 4,722 zones on 102 tiles where the kit has 140, no building changing
     its flag. Fewer, outline-shaped zones would be nicer for an artist; the export is the same.
+    Later: what the game does with a `lite` building is unknown (a cheaper mode for the outer city, likely). Find where the flag is
+    consumed (the game's or BOB's code, static RE) before improving the zones' shape.
   - Tiles without a database row (18: mods' assembly_kit battles, gaul / river_ford / nile tiles): an entry made from the binary (size
     from the CHMF). Every tile folder of the packs decompiles. Mapping: docs/formats/tile_decompile.md.
-  - Open: segmented splines (2 in the kit), blend / ground type maps from the DDS, tests and gates.
+  - Blend map from `blend.dds` / `index.dds` (BOB's reduction inverted; group weights 1.06 / 255 off the kit's over 782 tiles, the DXT5
+    error), ground type map as the painted overrides BOB's rule needs (`ground_type_from_texture_group`, `ground_type_to_colour`, found
+    in ToolDataBuilderDll): the rebuilt maps give the binary's ground types back on 99.99 % of the pixels.
+  - Segmented splines (4 kit tiles): a road tool baked into the heights, nothing of it in the binary.
+  - **Step 3 done** (2026-10-22): every tile folder of the packs decompiles and reads back (gates `tile_decompile`,
+    `tile_decompile_all`); docs/formats/tile_decompile.md. For step 4: BOB writes its DDS with ATI's compressor
+    (`TOOLDATABUILDER::write_dds_ATI_compressor`).
 
 ### Decisions (2026-10-22)
 

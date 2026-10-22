@@ -2,6 +2,8 @@ tile folders: 1654 decompiled, 0 failed; 1276 with the kit's raw tile
 entries (but the variation's min_height / scale): 1264 identical to the kit's, 3 differ
 heights inside the border: 719971 of 5697667 samples within 1 cm of the kit's (12.6 %)
 heights against the kit's final_heights.dds (BOB's last export): 761 tiles, 9258425 of 34142576 samples within 1 cm (27.1 %)
+blend maps against the kit's: 782 tiles, group weights off by 1.06 / 255 on average, dominant (group, variation) the same on 93.0 % of the pixels
+ground types from our blend map (BOB's rule) against ground_types.dds: 782 tiles, 99.99 % of the pixels
 flat CHMF (range ~0, the mesh flat too; the kit's sources are not): 171 tiles, left out of the heights above
 buildings: 1897604 decompiled, 1894770 in the kit's tile.ted, 1893919 paired (key, world position within 10 cm)
   AISeparatorInstance.area (0.1 %): 108 same, 0 differ
@@ -93,10 +95,12 @@ VFXInstance: 33888 decompiled, 33888 in the kit, 33402 paired
 VegetationExclusionPolygonInstance: 0 decompiled, 12452 in the kit, 0 paired
 ZONE_POLYGON_INSTANCE: 558 decompiled, 575 in the kit, 557 paired
 losses (tiles that report each):
+   1654 blend map
    1658 buildings
     350 civilian shelters
     390 deployment
-   1646 entry
+   1662 entry
+   1023 ground type map
    2232 height map
     102 lite building zones
     666 logic

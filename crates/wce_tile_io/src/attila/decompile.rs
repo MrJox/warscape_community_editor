@@ -204,6 +204,128 @@ fn height_map(binary: &Tile, cells: (u32, u32), border_cells: u32, losses: &mut 
     Some((Raster { width: ow, height: oh, channels: 1, samples: Samples::U16(out) }, min, range))
 }
 
+/// TEd's blend map (`blend_map.tif`: 16 weights per pixel, channel 4 g + v = texture group g, variation v, summing to 65535) from BOB's
+/// reduction of it (docs/re/terrain.md): `blend.dds` holds each group's weight (the sum of its four), `index.dds` the group's variation
+/// position t = (w1 + 2 w2 + 3 w3) / (w0 + w1 + w2 + w3) / 3, which the shader reads as a blend of variations floor(3 t) and the next.
+/// Each group's weight goes back to those two variations by the fraction, so BOB's reduction of the result gives the same two maps (the
+/// variations a group mixed beyond two are lost). Both maps are DXT5: the weights carry its error.
+fn blend_map(binary: &Tile) -> Option<Raster> {
+    let (bl, ix) = (binary.map(MapKind::BlendTexture, 0)?, binary.map(MapKind::IndexTexture, 0)?);
+    let (Samples::U8(b), Samples::U8(x)) = (&bl.raster.samples, &ix.raster.samples) else { return None };
+    let (w, h) = (bl.raster.width, bl.raster.height);
+    if (ix.raster.width, ix.raster.height) != (w, h) || bl.raster.channels != 4 || ix.raster.channels != 4 {
+        return None;
+    }
+
+    let mut out = vec![0u16; (w * h) as usize * 16];
+    for p in 0..(w * h) as usize {
+        let groups: [f64; 4] = std::array::from_fn(|g| f64::from(b[4 * p + g]));
+        let total = groups.iter().sum::<f64>();
+        // 16 weights in real numbers, then to integers summing to 65535 (largest remainders).
+        let mut real = [0.0; 16];
+        if total <= 0.0 {
+            real[0] = 65535.0;
+        } else {
+            for (g, gw) in groups.iter().enumerate() {
+                let pos = f64::from(x[4 * p + g]) / 255.0 * 3.0;
+                let k = (pos.floor() as usize).min(2);
+                let f = pos - k as f64;
+                let share = gw / total * 65535.0;
+                real[4 * g + k] += share * (1.0 - f);
+                real[4 * g + k + 1] += share * f;
+            }
+        }
+
+        let mut ints = real.map(|r| r.floor() as u16);
+        let short = 65535 - ints.iter().map(|&v| u32::from(v)).sum::<u32>();
+        let mut order = (0..16).collect::<Vec<_>>();
+        order.sort_by(|&a, &c| (real[c] - real[c].floor()).total_cmp(&(real[a] - real[a].floor())));
+        for &c in order.iter().take(short as usize) {
+            ints[c] += 1;
+        }
+
+        out[16 * p..16 * p + 16].copy_from_slice(&ints);
+    }
+
+    Some(Raster { width: w, height: h, channels: 16, samples: Samples::U16(out) })
+}
+
+/// `EMPIREUTILITY::ground_type_to_colour`: the colour TEd paints a ground type with in `ground_type_map.png` (index = the `ground_types`
+/// table's `enum_value`); black is no ground type.
+const GROUND_COLOURS: [[u8; 3]; 13] = [
+    [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
+    [255, 96, 0], [255, 100, 100], [255, 255, 255], [255, 255, 0], [64, 0, 0],
+];
+
+/// `EMPIREUTILITY::ground_type_from_texture_group` (any other name: grass, with BOB's assert).
+fn ground_type_of_group(name: &str) -> u8 {
+    match name {
+        "forest" => 0,
+        "mud" | "settlement_3" | "Settlement_3" => 2,
+        "sand" => 3,
+        "rock" => 5,
+        "urban" | "settlement_2" | "Settlement_2" => 8,
+        _ => 1,
+    }
+}
+
+/// The group BOB's `convert_blend_map` takes a pixel's ground type from: the strongest weight, ties to red, green, blue, alpha.
+fn dominant_group(rgba: &[u8]) -> usize {
+    (0..4).find(|&k| (0..4).all(|j| rgba[k] >= rgba[j])).unwrap_or(0)
+}
+
+/// Names for the four texture groups of an entry made up for the tile (`fallback_database`): per group, the ground type the binary has
+/// most where that group is the strongest, as the plainest name of that type (forest, grass, mud, sand, rock, urban).
+fn groups_from_ground_types(binary: &Tile) -> Option<[String; 4]> {
+    let (bl, gt) = (binary.map(MapKind::BlendTexture, 0)?, binary.map(MapKind::GroundType, 0)?);
+    let (Samples::U8(b), Samples::U8(g)) = (&bl.raster.samples, &gt.raster.samples) else { return None };
+    let border = bl.raster.width.checked_sub(gt.raster.width)? / 2;
+    let mut votes = [[0usize; 13]; 4];
+    for y in 0..gt.raster.height {
+        for x in 0..gt.raster.width {
+            let p = ((y + border) * bl.raster.width + x + border) as usize;
+            let v = g[(y * gt.raster.width + x) as usize] as usize;
+            if v < 13 {
+                votes[dominant_group(&b[4 * p..4 * p + 4])][v] += 1;
+            }
+        }
+    }
+
+    Some(std::array::from_fn(|k| {
+        let names = [(0, "forest"), (1, "grass"), (2, "mud"), (3, "sand"), (5, "rock"), (8, "urban")];
+        names.iter().max_by_key(|(t, _)| votes[k][*t]).map_or("grass", |(_, n)| n).to_owned()
+    }))
+}
+
+/// TEd's `ground_type_map.png` (RGBA over the bordered tile) from the binary: BOB's `ground_types.dds` is each pixel's strongest texture
+/// group's ground type unless the PNG paints one (docs/re/terrain.md). A pixel is painted wherever the binary's type is not the strongest
+/// group's of the decoded `blend.dds`: the painted water, roads ..., and the near ties the DXT5 error turned (so BOB gives the binary's
+/// ground types back from the project).
+fn ground_type_map(binary: &Tile, groups: [u8; 4], width: u32, height: u32) -> (Raster, usize) {
+    let mut px = [0u8, 0, 0, 255].repeat((width * height) as usize);
+    let mut painted = 0;
+    if let (Some(bl), Some(gt)) = (binary.map(MapKind::BlendTexture, 0), binary.map(MapKind::GroundType, 0))
+        && let (Samples::U8(b), Samples::U8(g)) = (&bl.raster.samples, &gt.raster.samples)
+        && (bl.raster.width, bl.raster.height) == (width, height)
+        && let Some(border) = width.checked_sub(gt.raster.width).map(|d| d / 2)
+    {
+        for y in 0..gt.raster.height {
+            for x in 0..gt.raster.width {
+                let p = ((y + border) * width + x + border) as usize;
+                let v = g[(y * gt.raster.width + x) as usize];
+                let w = &b[4 * p..4 * p + 4];
+                let paint = (v as usize) < GROUND_COLOURS.len() && v != groups[dominant_group(w)];
+                if paint {
+                    px[4 * p..4 * p + 3].copy_from_slice(&GROUND_COLOURS[v as usize]);
+                    painted += 1;
+                }
+            }
+        }
+    }
+
+    (Raster { width, height, channels: 4, samples: Samples::U8(px) }, painted)
+}
+
 // ---- the scene
 
 fn flags(names: &[&str]) -> Value {
@@ -1185,6 +1307,37 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         losses.note("no hf_height_map.data: no height map");
     }
 
+    // An entry made up for the tile has no texture groups: named after the binary's ground types.
+    if databases.as_ptr() != ctx.databases.as_ptr()
+        && let Some(names) = groups_from_ground_types(binary)
+        && let Some(tg) = entry.child_mut("TEXTURE_GROUP")
+    {
+        for (c, n) in ["red", "green", "blue", "alpha"].iter().zip(&names) {
+            tg.set(*c, s(n));
+        }
+
+        losses.note(format!("entry: texture groups {names:?} from the ground types (the climate's textures of those names)"));
+    }
+
+    match blend_map(binary) {
+        Some(raster) => {
+            let (w, h) = (raster.width, raster.height);
+            let groups = entry.child("TEXTURE_GROUP").map_or([1; 4], |tg| {
+                ["red", "green", "blue", "alpha"].map(|c| ground_type_of_group(tg.get(c).and_then(Value::as_str).unwrap_or_default()))
+            });
+
+            let (ground, painted) = ground_type_map(binary, groups, w, h);
+            // In the order the project reader gives them (by file name).
+            out.maps.push(TileMap { kind: MapKind::Blend, index: 0, raster });
+            out.maps.push(TileMap { kind: MapKind::GroundType, index: 0, raster: ground });
+            losses.note("blend map: from blend.dds / index.dds (DXT5), at most two variations per texture group");
+            if painted > 0 {
+                losses.note(format!("ground type map: {painted} pixels painted where ground_types.dds is not the strongest texture group's"));
+            }
+        }
+        None => losses.note("blend map: no blend.dds / index.dds of the same size"),
+    }
+
     // The scene.
     let extent = (f64::from(*row.width()) * 128.0, f64::from(*row.height()) * 128.0);
     let mut p = project(extent);
@@ -1372,6 +1525,66 @@ mod tests {
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
         assert_eq!(n.get("scale").and_then(Value::as_vec3), Some([2.0, 2.0, 2.0]));
+    }
+
+    #[test]
+    fn blend_map_reduces_back() {
+        // Every group weight and index pattern of a small grid; BOB's reduction of the weights gives them back.
+        let (w, h) = (16u32, 16u32);
+        let (mut bl, mut ix) = (vec![], vec![]);
+        for p in 0..(w * h) {
+            let groups = [p * 37 % 256, p * 11 % 97, (p * 5) % 61, if p % 3 == 0 { 0 } else { p % 255 }];
+            bl.extend(groups.map(|v| v as u8));
+            ix.extend([0, 85, 170, 255].map(|v: u32| ((v + p * 13) % 256) as u8));
+        }
+
+        let mut binary = Tile::default();
+        for (kind, px) in [(MapKind::BlendTexture, bl.clone()), (MapKind::IndexTexture, ix.clone())] {
+            binary.maps.push(TileMap { kind, index: 0, raster: Raster { width: w, height: h, channels: 4, samples: Samples::U8(px) } });
+        }
+
+        let r = blend_map(&binary).expect("blend map");
+        let Samples::U16(out) = &r.samples else { panic!("not u16") };
+        for p in 0..(w * h) as usize {
+            let wt = &out[16 * p..16 * p + 16];
+            assert_eq!(wt.iter().map(|&v| u32::from(v)).sum::<u32>(), 65535);
+            let total = (0..4).map(|g| f64::from(bl[4 * p + g])).sum::<f64>();
+            for g in 0..4 {
+                let v = &wt[4 * g..4 * g + 4].iter().map(|&x| f64::from(x)).collect::<Vec<_>>();
+                let sum = v.iter().sum::<f64>();
+                if total > 0.0 {
+                    // The group's share of the total, as blend.dds normalised.
+                    assert!((sum / 65535.0 - f64::from(bl[4 * p + g]) / total).abs() < 1e-3, "pixel {p} group {g}");
+                }
+
+                if sum > 100.0 {
+                    let t = (v[1] + 2.0 * v[2] + 3.0 * v[3]) / sum / 3.0 * 255.0;
+                    assert!((t - f64::from(ix[4 * p + g])).abs() < 0.6, "pixel {p} group {g}: {t} / {}", ix[4 * p + g]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ground_type_map_paints_what_the_groups_do_not_give() {
+        // 4 x 4 inner pixels in a 1-pixel border: red (grass) everywhere, but one pixel the binary has as deep water and one where green
+        // (road) is strongest.
+        let (w, h) = (6u32, 6u32);
+        let mut bl = [200u8, 50, 0, 5].repeat((w * h) as usize);
+        bl[4 * (2 * 6 + 3)..4 * (2 * 6 + 3) + 4].copy_from_slice(&[50, 200, 0, 5]);
+        let mut gt = vec![1u8; 16];
+        gt[5] = 6;
+        gt[6] = 8;
+        let mut binary = Tile::default();
+        binary.maps.push(TileMap { kind: MapKind::BlendTexture, index: 0, raster: Raster { width: w, height: h, channels: 4, samples: Samples::U8(bl) } });
+        binary.maps.push(TileMap { kind: MapKind::GroundType, index: 0, raster: Raster { width: 4, height: 4, channels: 1, samples: Samples::U8(gt) } });
+        let (r, painted) = ground_type_map(&binary, [1, 8, 2, 0], w, h);
+        assert_eq!(painted, 1);
+        let Samples::U8(px) = &r.samples else { panic!("not u8") };
+        // Inner (1, 1) of the border is pixel 2 * 6 + 2: deep water, blue; (2, 1), road from the green group, unpainted.
+        assert_eq!(&px[4 * (2 * 6 + 2)..4 * (2 * 6 + 2) + 4], &[0, 0, 255, 255]);
+        assert_eq!(&px[4 * (2 * 6 + 3)..4 * (2 * 6 + 3) + 4], &[0, 0, 0, 255]);
+        assert_eq!(&px[0..4], &[0, 0, 0, 255]);
     }
 
     #[test]
