@@ -3,9 +3,11 @@
 pub mod anim;
 pub mod anim_meta;
 pub mod c_num;
+pub mod chmf;
 pub mod dds_decode;
 pub mod env_value;
 pub mod image_containers;
+pub mod markers;
 pub mod png_file;
 pub mod text_encoding;
 pub mod tile_climate;
