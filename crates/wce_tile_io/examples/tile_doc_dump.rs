@@ -1,6 +1,8 @@
 //! A file of an exported tile as the model document `attila.tile_binary` reads it: the tree, the first values of each node.
 //!
 //!   cargo run --release -p wce_tile_io --example tile_doc_dump -- <file> [max children per node] [max depth]
+//!
+//! `WCE_TRIVIA=1` also prints each node's layout trivia (position code, bytes) and the document's style.
 
 use std::collections::BTreeMap;
 
@@ -12,6 +14,12 @@ fn show(n: &Node, depth: usize, max: usize, max_depth: usize) {
     let pad = "  ".repeat(depth);
     let props = n.props().iter().map(|p| format!("{}={}", p.name, format!("{:?}", p.value).chars().take(80).collect::<String>())).collect::<Vec<_>>().join(" ");
     println!("{pad}{} ({} children) {}", n.class, n.children.len(), props.chars().take(3000).collect::<String>());
+    if std::env::var_os("WCE_TRIVIA").is_some()
+        && let Some(t) = n.trivia()
+        && !t.layout.is_empty()
+    {
+        println!("{pad}  layout {:?}", t.layout.iter().map(|(c, b)| (format!("{c:#x}"), String::from_utf8_lossy(b).into_owned())).collect::<Vec<_>>());
+    }
     if depth >= max_depth {
         return;
     }
@@ -32,6 +40,10 @@ fn main() {
     let (tile, report) = TileBinary.read(&TileFiles { folder, ..Default::default() }).expect("read");
     println!("{:?}", report.parts);
     for d in &tile.documents {
+        if std::env::var_os("WCE_TRIVIA").is_some() {
+            println!("style {:?}", tile.trivia::<wce_tile_io::xml::DocStyle>(&d.name));
+        }
+
         show(&d.root, 0, max, max_depth);
     }
 }

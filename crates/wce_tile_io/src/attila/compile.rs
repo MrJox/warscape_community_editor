@@ -10,6 +10,9 @@ use wce_tile_model::{Document, Node, Sym, Tile, Value};
 use super::decompile::{LevelsOf, ThresholdsOf};
 use super::schema::TedSchema;
 
+/// The version to write a file in, by its name.
+pub type VersionOf<'a> = &'a (dyn Fn(&str) -> Option<i64> + Sync);
+
 /// What the compiler can be told besides the project.
 #[derive(Default)]
 pub struct CompileContext<'a> {
@@ -20,7 +23,7 @@ pub struct CompileContext<'a> {
     pub building_thresholds: Option<ThresholdsOf<'a>>,
 
     /// The version to write a markers file in (by file name); without it TEd's current one.
-    pub marker_versions: Option<&'a (dyn Fn(&str) -> Option<i64> + Sync)>,
+    pub marker_versions: Option<VersionOf<'a>>,
 }
 
 /// What a compilation left out or made up, as notes.
@@ -250,25 +253,56 @@ fn marker_key_hash(parts: &[&str]) -> u32 {
     })
 }
 
+/// A marker table's key: a string (the model, the effect, the light's name; hashed by `marker_key_hash`), or a number (an enum: the AI hint
+/// type; a uint table with the value as its hash), written as the number or as the enum's name.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum MarkerKey {
+    Text(String),
+    Number(u32),
+    Named(String, u32),
+}
+
+impl MarkerKey {
+    fn hash(&self) -> u32 {
+        match self {
+            Self::Text(s) => marker_key_hash(&[s]),
+            Self::Number(v) | Self::Named(_, v) => *v,
+        }
+    }
+
+    fn value(&self) -> Value {
+        match self {
+            Self::Text(s) | Self::Named(s, _) => Value::Str(s.clone()),
+            Self::Number(v) => Value::Int(i64::from(*v)),
+        }
+    }
+}
+
 /// The order a `MARKER_TABLE` gives its keys (in the order of their first record): a hash table from 13 slots, linear probing,
 /// growing to 2 n + 1 slots when full; the keys in slot order.
-fn marker_table_order<'k>(keys: &[&'k str]) -> Vec<&'k str> {
-    let mut slots: Vec<Option<&str>> = vec![None; 13];
-    let insert = |slots: &mut Vec<Option<&'k str>>, k: &'k str| -> bool {
+fn marker_table_order(keys: &[MarkerKey]) -> Vec<MarkerKey> {
+    let mut slots: Vec<Option<MarkerKey>> = vec![None; 13];
+    let insert = |slots: &mut Vec<Option<MarkerKey>>, k: MarkerKey| -> bool {
         let n = slots.len();
-        let start = marker_key_hash(&[k]) as usize % n;
-        (0..n).map(|i| (start + i) % n).find(|&i| slots[i].is_none()).map(|i| slots[i] = Some(k)).is_some()
+        let start = k.hash() as usize % n;
+        match (0..n).map(|i| (start + i) % n).find(|&i| slots[i].is_none()) {
+            Some(i) => {
+                slots[i] = Some(k);
+                true
+            }
+            None => false,
+        }
     };
 
-    for &k in keys {
-        if !insert(&mut slots, k) {
-            let old = slots.iter().flatten().copied().collect::<Vec<_>>();
+    for k in keys {
+        if !insert(&mut slots, k.clone()) {
+            let old = slots.iter().flatten().cloned().collect::<Vec<_>>();
             slots = vec![None; slots.len() * 2 + 1];
             for o in old {
                 insert(&mut slots, o);
             }
 
-            insert(&mut slots, k);
+            insert(&mut slots, k.clone());
         }
     }
 
@@ -276,7 +310,7 @@ fn marker_table_order<'k>(keys: &[&'k str]) -> Vec<&'k str> {
 }
 
 /// A markers document: the class's header, the records, the groups of the records by key in the marker table's order.
-fn markers_doc(name: &str, class: &str, class_id: i64, version: i64, records: Vec<(String, Node)>) -> Document {
+fn markers_doc(name: &str, class: &str, class_id: i64, version: i64, records: Vec<(MarkerKey, Node)>) -> Document {
     let mut root = Node::new(class);
     root.set("repository", Value::Str("BASE_MARKER_REPOSITORY".to_owned()));
     root.set("repository_id", Value::Int(645_563));
@@ -284,23 +318,23 @@ fn markers_doc(name: &str, class: &str, class_id: i64, version: i64, records: Ve
     root.set("repository_u16", Value::Int(1));
     root.set("class_id", Value::Int(class_id));
     root.set("version", Value::Int(version));
-    let mut first: Vec<&str> = vec![];
-    let mut indices: std::collections::HashMap<&str, Vec<i64>> = std::collections::HashMap::new();
+    let mut first: Vec<MarkerKey> = vec![];
+    let mut indices: std::collections::HashMap<MarkerKey, Vec<i64>> = std::collections::HashMap::new();
     for (i, (k, _)) in records.iter().enumerate() {
-        if !indices.contains_key(k.as_str()) {
-            first.push(k);
+        if !indices.contains_key(k) {
+            first.push(k.clone());
         }
 
-        indices.entry(k).or_default().push(i as i64);
+        indices.entry(k.clone()).or_default().push(i as i64);
     }
 
     let mut groups = Node::new("groups");
     for k in marker_table_order(&first) {
         let mut g = Node::new("group");
         let mut key = Node::new("key");
-        key.set("value", Value::Str(k.to_owned()));
+        key.set("value", k.value());
         g.children.push(key);
-        g.set("indices", Value::Ints(indices[k].clone()));
+        g.set("indices", Value::Ints(indices[&k].clone()));
         groups.children.push(g);
     }
 
@@ -368,7 +402,7 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
         }
 
         if version == 8 {
-            r.set("unknown_74", Value::Bytes(vec![0; 3].into()));
+            r.set("unknown_74", Value::Bytes(vec![0; 3]));
         } else if version >= 9 {
             r.set("unknown_74", Value::Int(0));
             for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
@@ -384,28 +418,328 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
             }
         }
 
-        records.push((key, r));
+        records.push((MarkerKey::Text(key), r));
     }
 
     (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
 }
 
-/// The stage-A documents of a project (TEd's export): the building lists and the prop markers so far.
+/// `particle_emitter_marker.markers` (version 9; 4 to 8 for the older tiles' loop): the `VFXInstance`s of the normal layers, in the scene's order, grouped by `vfx`. The
+/// matrix holds the world rotation transposed (not mirrored) and the translation (x / 2, y, extent - z / 2); `scale` is TEd's halved.
+fn emitter_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "particle_emitter_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "VFXInstance") {
+        let n = p.node;
+        let w = &p.world;
+        let mut m = [0.0f64; 16];
+        for k in 0..3 {
+            for l in 0..3 {
+                m[l * 4 + k] = f64::from(w[k * 4 + l]);
+            }
+        }
+
+        (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7]), f64::from(extent_z - w[11] * 0.5), 1.0);
+        let mut r = Node::new("record");
+        r.set("transform", Value::Floats(m.to_vec()));
+        let autoplay = u8::from(bool_of(n, "autoplay", true));
+        let outfield = u8::from(bool_of(n, "use_in_outfield", false));
+        let scale = floats_of(n, "scale").and_then(|v| v.first().copied()).unwrap_or(1.0) * 0.5;
+        let seasons = seasons_mask(n) as u32;
+        if version >= 9 {
+            r.set("unknown_64", Value::Bytes(vec![0; 6]));
+            r.set("autoplay", Value::Int(i64::from(autoplay)));
+            r.set("use_in_outfield", Value::Int(i64::from(outfield)));
+            for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+                r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
+            }
+
+            r.set("scale", Value::Float(f64::from(scale)));
+            r.set("seasons", Value::Int(i64::from(seasons)));
+        } else {
+            // Older versions keep the fields in the bytes after the matrix: 6 zeros, autoplay, (7+) use_in_outfield, (8) 2 zeros, the
+            // scale, (5+) the seasons.
+            let mut b = vec![0u8; 6];
+            b.push(autoplay);
+            if version >= 7 {
+                b.push(outfield);
+            }
+
+            if version >= 8 {
+                b.extend([0, 0]);
+            }
+
+            b.extend(scale.to_le_bytes());
+            if version >= 5 {
+                b.extend(seasons.to_le_bytes());
+            }
+
+            r.set("unknown_64", Value::Bytes(b));
+        }
+        records.push((MarkerKey::Text(n.get("vfx").and_then(Value::as_str).unwrap_or_default().to_owned()), r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "PARTICLE_EMITTER_MARKER", 618_864, version, records))
+}
+
+/// `point_light_marker.markers` (version 3): the `POINT_LIGHT_INSTANCE`s of the normal layers, in the scene's order, grouped by name; a
+/// light is a position (x / 2, y, extent - z / 2) and its parameters.
+fn light_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "point_light_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(3);
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "POINT_LIGHT_INSTANCE") {
+        let n = p.node;
+        let w = &p.world;
+        let num = |a: &str| f64::from(floats_of(n, a).and_then(|v| v.first().copied()).unwrap_or(0.0));
+        let colour = match n.get("colour") {
+            Some(Value::Colour(c)) => c.map(|v| f64::from(v as f32)),
+            _ => [1.0; 4],
+        };
+        let speed = floats_of(n, "animation_speed_scale").unwrap_or_default();
+        let text = |a: &str, d: &str| Value::Str(n.get(a).and_then(Value::as_str).unwrap_or(d).to_owned());
+        let mut r = Node::new("record");
+        r.set("x", Value::Float(f64::from(w[3] * 0.5)));
+        r.set("y", Value::Float(f64::from(w[7])));
+        r.set("z", Value::Float(f64::from(extent_z - w[11] * 0.5)));
+        r.set("radius", Value::Float(num("radius")));
+        r.set("red", Value::Float(colour[0]));
+        r.set("green", Value::Float(colour[1]));
+        r.set("blue", Value::Float(colour[2]));
+        r.set("colour_scale", Value::Float(num("colour_scale")));
+        if version >= 3 {
+            r.set("unknown_32", Value::Int(1));
+        }
+
+        r.set("animation_type", text("animation_type", "LAT_NONE"));
+        r.set("animation_speed_x", Value::Float(f64::from(speed.first().copied().unwrap_or(0.0))));
+        r.set("animation_speed_y", Value::Float(f64::from(speed.get(1).copied().unwrap_or(0.0))));
+        r.set("colour_min", Value::Float(num("colour_min")));
+        r.set("random_offset", Value::Float(num("random_offset")));
+        r.set("falloff_type", text("falloff_type", "WPLFT_SMOOTH"));
+        records.push((MarkerKey::Text(n.get("name").and_then(Value::as_str).unwrap_or_default().to_owned()), r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "POINT_LIGHT_MARKER", 12_051_502, version, records))
+}
+
+/// TEd's AI hint types, in the order of their numbers (wce_tile::property_enums::AI_HINT_TYPE).
+const AI_HINT_TYPES: [&str; 41] = [
+    "AIH_DEFENSIVE_LINE", "AIH_DEFENSIVE_HILL", "AIH_DEAD_GROUND", "AIH_IMPASSIBLE", "AIH_TOWN_CLUSTER", "AIH_CHOKE_POINT", "AIH_GOOD_CAVALRY_GROUND",
+    "AIH_COVER", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_BUILDINGS", "AIH_REDOUBT", "AIH_SUITABLE_GROUND_BOMBARDMENT", "AIH_SUITABLE_DEPLOYABLE_GABIONADE",
+    "AIH_SUITABLE_DEPLOYABLE_FOUGASSE", "AIH_SUITABLE_DEPLOYABLE_CHEVAUX_DE_FRISE", "AIH_SUITABLE_DEPLOYABLE_EARTHWORKS", "AIH_FORDING_POINT",
+    "AIH_FORT_APPROACH", "AIH_BRIDGE_CROSSING", "AIH_BEACH_LANDING", "AIH_RIVER_EDGE", "AIH_SIEGE_AREA_NODE", "AIH_SIEGE_INTERSECTION_NODE",
+    "AIH_SIEGE_STREET_EDGE", "AIH_CAPTURE_POINT_MAJOR", "AIH_CAPTURE_POINT_MINOR", "AIH_SIEGE_WALL_AREA_NODE", "AIH_SIEGE_AREA_CONNECTION_EDGE",
+    "AIH_SIEGE_WALL_EDGE", "AIH_COVER_LINE", "AIH_SIEGE_ENTRY_NODE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE", "AIH_AMBUSH_CAVALRY_LINE",
+    "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_FORT_PERIMETER", "AIH_BEACH_LANDING_FORT_APPROACH", "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_FIREBALL_LINE",
+    "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_SIEGE_PALISADE_EDGE",
+];
+
+/// A polygon instance's points in the binary's frame (x / 2, extent - z / 2), through its world matrix.
+fn polygon_points(p: &Placed, extent_z: f32) -> Vec<f64> {
+    let Some(points) = p.node.children.iter().find(|c| c.class == "points") else { return vec![] };
+    let w = &p.world;
+    points
+        .children
+        .iter()
+        .filter_map(|pt| vec3_of(pt, "position"))
+        .flat_map(|q| {
+            let x = w[0] * q[0] + w[1] * q[1] + w[2] * q[2] + w[3];
+            let z = w[8] * q[0] + w[9] * q[1] + w[10] * q[2] + w[11];
+            [f64::from(x * 0.5), f64::from(extent_z - z * 0.5)]
+        })
+        .collect()
+}
+
+/// `ai_hint_polyline_marker.markers` (version 1): the `AI_HINT_POLYGON_INSTANCE`s of the normal layers, a polyline each (a closed one repeats
+/// its first point at the end), grouped by hint type (its number).
+fn ai_hint_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "ai_hint_polyline_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "AI_HINT_POLYGON_INSTANCE") {
+        let n = p.node;
+        let mut pts = polygon_points(p, extent_z);
+        if n.get("polygon_closed").and_then(Value::as_int) == Some(1) && pts.len() >= 2 {
+            pts.extend([pts[0], pts[1]]);
+        }
+
+        let ty = n.get("hint_type").and_then(Value::as_str).unwrap_or_default();
+        let number = AI_HINT_TYPES.iter().position(|t| *t == ty).unwrap_or(0) as u32;
+        let mut r = Node::new("record");
+        r.set("points", Value::Floats(pts));
+        records.push((MarkerKey::Number(number), r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "AI_HINT_POLYLINE_MARKER", 645_568, version, records))
+}
+
+/// `ai_separator_marker.markers` (version 1): the `AISeparatorInstance`s of the normal layers, a polyline each, grouped by type
+/// (`PATHFINDING_AREA_LINK_TYPE`: PALT_NONE 0, PALT_GENERIC 1, PALT_FORT 2, written by name).
+fn separator_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "ai_separator_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "AISeparatorInstance") {
+        let ty = p.node.get("type").and_then(Value::as_str).unwrap_or("PALT_NONE").to_owned();
+        let number = ["PALT_NONE", "PALT_GENERIC", "PALT_FORT"].iter().position(|t| *t == ty).unwrap_or(0) as u32;
+        let mut r = Node::new("record");
+        r.set("points", Value::Floats(polygon_points(p, extent_z)));
+        records.push((MarkerKey::Named(ty, number), r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "AI_SEPARATOR_MARKER", 12_120_306, version, records))
+}
+
+/// `ai_hint_polyline_list_marker.markers` (version 1), the siege graph: a record per `SiegeAINodeInstance` / `SiegeAIEdgeInstance` of the
+/// normal layers, a polyline per `SIEGE_AI_POLYGON_INSTANCE` under it, grouped by the hint type of its kind (a node: area 21,
+/// intersection 22, wall area 26, entry 30; an edge: street 23, area connection 27, wall 28, palisade 40).
+fn siege_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "ai_hint_polyline_list_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    // The placed nodes by address, to find a node's polygons without a scan per node.
+    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && matches!(p.node.class.as_str(), "SiegeAINodeInstance" | "SiegeAIEdgeInstance")) {
+        let ty = p.node.get("type").and_then(Value::as_str).unwrap_or_default();
+        let number = match ty {
+            "SANT_AREA" => 21,
+            "SANT_INTERSECTION" => 22,
+            "SANT_WALL_AREA" => 26,
+            "SANT_ENTRY" => 30,
+            "SAET_STREET" => 23,
+            "SAET_AREA_CONNECTION" => 27,
+            "SAET_PALISADE" => 40,
+            _ => 28,
+        };
+
+        let own = p.node.wrapped("children");
+        let mut lists = Node::new("polylines");
+        for child in own.iter().filter(|c| c.class == "SIEGE_AI_POLYGON_INSTANCE").filter_map(|c| by_node.get(&std::ptr::from_ref(c))) {
+            let mut l = Node::new("polyline");
+            l.set("points", Value::Floats(polygon_points(child, extent_z)));
+            lists.children.push(l);
+        }
+
+        let mut r = Node::new("record");
+        r.children.push(lists);
+        records.push((MarkerKey::Number(number), r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "AI_HINT_POLYLINE_LIST_MARKER", 12_052_401, version, records))
+}
+
+/// `definition.xml`: the map's size, (cells + 2) * 256 m per axis for a battle tile (25.6 for a campaign tile), and the climate TEd
+/// previewed when it exported, which is not in the project: from a `definition.xml` the project carries (a decompiled one does), else
+/// `default`.
+fn definition(raw: &Tile, campaign: bool, cells: (i64, i64)) -> Document {
+    let carried = raw.files.iter().find(|f| f.path == "definition.xml").and_then(|f| f.data.bytes().ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let climate = carried
+        .as_deref()
+        .and_then(|t| t.split("climate='").nth(1))
+        .and_then(|t| t.split('\'').next())
+        .unwrap_or("default")
+        .to_owned();
+    let unit: f32 = if campaign { 25.6 } else { 256.0 };
+    let size = |c: i64| format!("{:.6}", (c + 2) as f32 * unit);
+    let mut root = Node::new("BATTLE_MAP_DEFINITION");
+    for (k, v) in [
+        ("bmd_type", "1".to_owned()), ("terrain_type", "3".to_owned()), ("climate", climate), ("base_terrain_width", size(cells.0)),
+        ("base_terrain_height", size(cells.1)), ("disable_outlines", "false".to_owned()),
+    ] {
+        root.set(k, Value::Str(v));
+    }
+
+    bmd_xml_layout(&mut root);
+    Document { name: "definition.xml".to_owned(), root }
+}
+
+/// The BMD XML files' layout (TEd's writer): two spaces between attributes, a space before `/>`; the document's style is
+/// [`bmd_xml_style`].
+fn bmd_xml_layout(n: &mut Node) {
+    let count = n.props().len();
+    let t = n.trivia_mut();
+    for i in 1..count {
+        t.layout.push((crate::xml::layout::ATTR_GAP + i as u32, b"  ".to_vec().into()));
+    }
+
+    t.layout.push((crate::xml::layout::BEFORE_CLOSE, b" ".to_vec().into()));
+}
+
+/// The BMD XML files' document style: single quotes, CRLF, no declaration, a CRLF after the root.
+fn bmd_xml_style() -> crate::xml::DocStyle {
+    crate::xml::DocStyle { prolog: vec![], epilog: b"\r\n".to_vec(), newline: b"\r\n".to_vec(), indent: b"\t".to_vec(), quote: b'\'' }
+}
+
+/// TEd's text of a coordinate in the logic XML files: the f32 with `%.6f`.
+fn coord(v: f64) -> Value {
+    Value::Str(wce_formats::c_num::printf_f_msvc(f64::from(v as f32), 6))
+}
+
+/// An outline file (`go_outlines.xml`, `non_terrain_outlines.xml`): an `OUTLINE` per polygon instance of the class in the normal layers,
+/// its world points as `position` (x / 2, extent - z / 2), all on one line (`outline_style`).
+fn outlines(placed: &[Placed], extent_z: f32, class: &str, name: &str) -> Option<(Document, crate::xml::DocStyle)> {
+    let mut root = Node::new("OUTLINE_LIST");
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == class) {
+        let mut o = Node::new("OUTLINE");
+        for (i, c) in polygon_points(p, extent_z).as_chunks::<2>().0.iter().enumerate() {
+            let mut pos = Node::new("position");
+            pos.set("x", coord(c[0]));
+            pos.set("y", coord(c[1]));
+            if i > 0 {
+                pos.trivia_mut().layout.push((crate::xml::layout::BEFORE_START, Box::default()));
+            }
+
+            o.children.push(pos);
+        }
+
+        o.trivia_mut().layout.push((crate::xml::layout::BEFORE_END, Box::default()));
+        root.children.push(o);
+    }
+
+    (!root.children.is_empty()).then(|| (Document { name: name.to_owned(), root }, outline_style()))
+}
+
+/// The outline files' style: no indentation, single quotes, CRLF.
+fn outline_style() -> crate::xml::DocStyle {
+    crate::xml::DocStyle { indent: vec![], ..bmd_xml_style() }
+}
+
+/// The stage-A part of a project's exported tile (TEd's export), as the model `attila.tile_binary` writes: the building lists; the prop,
+/// particle emitter, point light, AI hint, separator and siege graph markers; definition.xml (with its document style).
 ///
 /// # Errors
 ///
 /// The project has no scene or no entry to size it.
-pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Vec<Document>, CompileNotes), String> {
+pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes), String> {
     let scene = raw.scene.as_ref().ok_or("the project has no tile.ted")?;
     let entry = raw.entry.as_ref().ok_or("the project has no entry")?;
     let height = entry.root.get("height").and_then(Value::as_int).ok_or("the entry has no height")?;
+    let width = entry.root.get("width").and_then(Value::as_int).unwrap_or(height);
+    let campaign = entry.root.get("location").and_then(Value::as_str).is_some_and(|l| l.to_lowercase().contains("\\campaign\\"));
     let extent_z = height as f32 * 128.0;
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
     let mut notes = CompileNotes::default();
     let mut docs = building_lists(&placed, extent_z, ctx, &mut notes);
     docs.extend(prop_markers(&placed, extent_z, ctx));
-    Ok((docs, notes))
+    docs.extend(emitter_markers(&placed, extent_z, ctx));
+    docs.extend(light_markers(&placed, extent_z, ctx));
+    docs.extend(ai_hint_markers(&placed, extent_z, ctx));
+    docs.extend(separator_markers(&placed, extent_z, ctx));
+    docs.extend(siege_markers(&placed, extent_z, ctx));
+    let mut xml = vec![(definition(raw, campaign, (width, height)), bmd_xml_style())];
+    xml.extend(outlines(&placed, extent_z, "GO_REGION_POLYGON_INSTANCE", "go_outlines.xml"));
+    xml.extend(outlines(&placed, extent_z, "NOGO_REGION_POLYGON_INSTANCE", "non_terrain_outlines.xml"));
+    let mut out = Tile { source_format: Some(super::tile_binary::ID), variation: raw.variation.clone(), ..Default::default() };
+    for (d, style) in xml {
+        out.source.insert(d.name.clone(), std::sync::Arc::new(style));
+        docs.push(d);
+    }
+
+    out.documents = docs;
+    Ok((out, notes))
 }
 
 #[cfg(test)]
@@ -446,6 +780,30 @@ mod tests {
     }
 
     #[test]
+    fn marker_table_orders_like_ted() {
+        // tdd_settlement_dwarven_cities/dwarven_city_a/small's prop_marker.markers: keys in the order of their first record, and the
+        // groups' order in the file.
+        let text = |v: &[&str]| v.iter().map(|k| MarkerKey::Text((*k).to_owned())).collect::<Vec<_>>();
+        let first = text(&[
+            "RigidModels/Buildings/water_plane/water_plane.rigid_model_v2", "rigidmodels\\decals\\battle\\road_1.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\road_7.rigid_model_v2", "rigidmodels\\decals\\battle\\road_4.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\road_5.rigid_model_v2",
+        ]);
+        let file = text(&[
+            "rigidmodels\\decals\\battle\\road_4.rigid_model_v2", "rigidmodels\\decals\\battle\\road_5.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\road_7.rigid_model_v2", "RigidModels/Buildings/water_plane/water_plane.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\road_1.rigid_model_v2",
+        ]);
+        assert_eq!(marker_table_order(&first), file);
+
+        // Numbers hash to themselves: slot = n % 13 (27 -> 1, 28 -> 2, 30 -> 4, 21 -> 8, 22 -> 9, 23 -> 10); 14 more grow the table.
+        let numbers = |v: &[u32]| v.iter().map(|&n| MarkerKey::Number(n)).collect::<Vec<_>>();
+        assert_eq!(marker_table_order(&numbers(&[21, 23, 27, 22, 28, 30])), numbers(&[27, 28, 30, 21, 22, 23]));
+        let many = (0..14).map(|n| n * 13).collect::<Vec<u32>>();
+        assert_eq!(marker_table_order(&numbers(&many)).len(), 14);
+    }
+
+    #[test]
     fn quaternion_of_a_turn_about_y() {
         let a = 0.7f32;
         let q = quaternion(&ted_rotation_f32([a, 0.0, 0.0]));
@@ -464,7 +822,8 @@ mod tests {
         let levels = |k: &str| Some(if k == "wall" { 3 } else { 2 });
         let thresholds = |k: &str| (k == "wall").then(|| vec![0.8f32]);
         let ctx = CompileContext { building_levels: Some(&levels), building_thresholds: Some(&thresholds), ..Default::default() };
-        let (docs, _) = compile(&tile, &ctx).expect("compile");
+        let (out, _) = compile(&tile, &ctx).expect("compile");
+        let docs = out.documents.iter().filter(|d| d.name.starts_with("building_list")).cloned().collect::<Vec<_>>();
         assert_eq!(docs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["building_list_veg", "building_list"]);
         let list = &docs[1].root.children;
         assert_eq!(list.len(), 2);

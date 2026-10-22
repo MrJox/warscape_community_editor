@@ -75,6 +75,31 @@ struct Totals {
 
 /// Every polygon of a decompiled scene with its world points (x, z): the scene's logic nodes carry no rotation, so a point is the sum of
 /// its ancestors' positions and its own.
+/// The markers files the compiler writes (stage A).
+const COMPILED_MARKERS: [&str; 6] = [
+    "prop_marker.markers", "particle_emitter_marker.markers", "point_light_marker.markers", "ai_hint_polyline_marker.markers", "ai_separator_marker.markers",
+    "ai_hint_polyline_list_marker.markers",
+];
+
+/// The XML files the compiler writes (stage A).
+const COMPILED_XML: [&str; 3] = ["definition.xml", "go_outlines.xml", "non_terrain_outlines.xml"];
+
+/// Two XML documents alike but for numbers within what TEd's text carries (polygon points through `%g`: 3e-6 of the value).
+fn xml_within(a: &Node, b: &Node) -> bool {
+    a.class == b.class
+        && a.children.len() == b.children.len()
+        && a.props().len() == b.props().len()
+        && a.props().iter().zip(b.props()).all(|(x, y)| {
+            x.name == y.name
+                && (x.value == y.value
+                    || match (x.value.as_str().and_then(|v| v.parse::<f64>().ok()), y.value.as_str().and_then(|v| v.parse::<f64>().ok())) {
+                        (Some(u), Some(v)) => (u - v).abs() <= 3e-6 * v.abs().max(1.0),
+                        _ => false,
+                    })
+        })
+        && a.children.iter().zip(&b.children).all(|(x, y)| xml_within(x, y))
+}
+
 /// TEd's ground type colours (`EMPIREUTILITY::ground_type_to_colour`, docs/re/terrain.md).
 const PALETTE: [[u8; 3]; 13] = [
     [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
@@ -154,21 +179,76 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             local.problems.push(format!("{name}: the written project reads into another model: {}", what.unwrap_or_default()));
         }
 
+        // WCE_DECOMPILE_DEFINITION: definition.xml's attributes against the entry (for working out where TEd takes them from).
+        if std::env::var_os("WCE_DECOMPILE_DEFINITION").is_some()
+            && let (Some(d), Some(e)) = (binary.document("definition.xml"), raw.entry.as_ref())
+        {
+            let def = d.root.children.iter().find(|c| !c.class.as_str().starts_with('#')).unwrap_or(&d.root);
+            let attrs = def.props().iter().map(|p| format!("{}={}", p.name, p.value.as_str().unwrap_or_default())).collect::<Vec<_>>().join(" ");
+            let ent = ["width", "height", "tile_set"].iter().map(|a| format!("{a}={:?}", e.root.get(a))).collect::<Vec<_>>().join(" ");
+            let kind = folder.split('/').nth(2).unwrap_or_default();
+            *local.losses.entry(format!("definition [{kind}] {attrs} | {ent}")).or_default() += 1;
+        }
+
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
             // The binary's marker versions, so that an older file is compared field by field.
             let versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
             let version_of = |n: &str| versions.get(n).copied().flatten();
             let cctx = CompileContext { building_levels: ctx.building_levels, building_thresholds: ctx.building_thresholds, marker_versions: Some(&version_of) };
-            let (docs, _) = compile(&back, &cctx)?;
-            let bytes = |d: &wce_tile_model::Document| {
-                let one = wce_tile_model::Tile { documents: vec![d.clone()], ..Default::default() };
+            let (compiled, _) = compile(&back, &cctx)?;
+            let docs = &compiled.documents;
+            // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
+            let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {
+                let one = wce_tile_model::Tile { documents: vec![d.clone()], source_format: t.source_format.clone(), source: t.source.clone(), ..Default::default() };
                 TileBinary.write(&one).ok().and_then(|(f, _)| f.folder.get(&d.name).and_then(|b| b.bytes().ok()).map(|b| b.to_vec()))
             };
+            let bytes = |d: &wce_tile_model::Document| if docs.iter().any(|x| std::ptr::eq(x, d)) { bytes_in(&compiled, d) } else { bytes_in(&binary, d) };
 
-            for theirs in binary.documents.iter().filter(|d| (d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) || d.name == "prop_marker.markers") {
+            // The compiled XML files: the document as the binary's (values; the layout is the writer's).
+            for theirs in binary.documents.iter().filter(|d| COMPILED_XML.contains(&d.name.as_str())) {
+                let c = local.attr_same.entry(format!("compile {}", theirs.name)).or_default();
+                match docs.iter().find(|d| d.name == theirs.name) {
+                    Some(ours) if ours.root.without_trivia() == theirs.root.without_trivia() => c.0 += 1,
+                    Some(ours) if xml_within(&ours.root, &theirs.root) => {
+                        c.0 += 1;
+                        *local.losses.entry(format!("compile {} within the text's precision", theirs.name)).or_default() += 1;
+                    }
+                    Some(ours) => {
+                        c.1 += 1;
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: compiled {}: {}", theirs.name, first_diff(&ours.root, &theirs.root, "").unwrap_or_default()));
+                    }
+                    None => {
+                        c.1 += 1;
+                        local.compile_beyond += 1;
+                    }
+                }
+
+                // WCE_DECOMPILE_DUMP=DIR: the compiled and the binary's file side by side (ours.<name>, theirs.<name>).
+                if let Ok(dir) = std::env::var("WCE_DECOMPILE_DUMP") {
+                    let dir = PathBuf::from(dir).join(folder.replace('/', "_"));
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Some(b) = docs.iter().find(|d| d.name == theirs.name).and_then(|d| bytes(d)) {
+                        let _ = std::fs::write(dir.join(format!("ours.{}", theirs.name)), b);
+                    }
+
+                    if let Some(b) = bytes(theirs) {
+                        let _ = std::fs::write(dir.join(format!("theirs.{}", theirs.name)), b);
+                    }
+                }
+
+                let b = local.attr_same.entry(format!("compile {} (bytes)", theirs.name)).or_default();
+                if docs.iter().find(|d| d.name == theirs.name).and_then(|d| bytes(d)) == bytes(theirs) {
+                    b.0 += 1;
+                } else {
+                    b.1 += 1;
+                }
+            }
+
+            for theirs in binary.documents.iter().filter(|d| (d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) || COMPILED_MARKERS.contains(&d.name.as_str())) {
                 let kind = match theirs.name.as_str() {
-                    "building_list" | "prop_marker.markers" => theirs.name.as_str(),
+                    n if n == "building_list" || COMPILED_MARKERS.contains(&n) => n,
                     _ => "building_list_<layer>",
                 };
                 let Some(ours) = docs.iter().find(|d| d.name == theirs.name) else {
@@ -209,6 +289,27 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 }
 
                 for (x, y) in a.iter().zip(&b) {
+                    // A siege graph record's polylines: as many, each within the points' precision.
+                    if let Some(theirs_lines) = y.child("polylines") {
+                        let ours_lines = x.child("polylines").map_or(&[][..], |l| &l.children[..]);
+                        let pts = |n: &Node| n.get("points").and_then(Value::as_floats).unwrap_or_default().iter().map(|&v| v as f32).collect::<Vec<_>>();
+                        let same = ours_lines.len() == theirs_lines.children.len()
+                            && ours_lines.iter().zip(&theirs_lines.children).all(|(o, t)| {
+                                let (a, b) = (pts(o), pts(t));
+                                a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
+                                    (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * v.abs().max(1.0)
+                                })
+                            });
+                        let c = local.attr_same.entry(format!("compile {kind}.polylines (within the text's precision)")).or_default();
+                        if same {
+                            c.0 += 1;
+                        } else {
+                            c.1 += 1;
+                            local.compile_beyond += 1;
+                            local.problems.push(format!("{name}: compiled {} polylines differ: ours {:?}, binary {:?}", theirs.name, ours_lines.iter().map(pts).collect::<Vec<_>>(), theirs_lines.children.iter().map(pts).collect::<Vec<_>>()));
+                        }
+                    }
+
                     for p in y.props() {
                         let c = local.attr_same.entry(format!("compile {kind}.{}", p.name)).or_default();
                         if x.get(p.name.as_str()) == Some(&p.value) {
@@ -244,6 +345,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                                             let len = (b[row] * b[row] + b[row + 1] * b[row + 1] + b[row + 2] * b[row + 2]).sqrt();
                                             ulps <= 4 || (u - v).abs() <= 1e-5 * len.max(1.0)
                                         }
+                                    }),
+                                    // A polyline's points: TEd writes a polygon's points relative to it with `%g` (6 digits).
+                                    "points" => a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
+                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * v.abs().max(1.0)
                                     }),
                                     "orientation" => {
                                         let d = |sign: f32| a.iter().zip(&b).map(|(u, v)| (u - sign * v).abs()).fold(0.0f32, f32::max);

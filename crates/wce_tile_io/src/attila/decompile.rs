@@ -641,6 +641,30 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
 /// western_city_b/small agree), the position is in the buildings' frame (scene (2 x, y, 2 (extent - z))), the scale is TEd's halved.
 fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
     let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
+    // Versions before 9 keep the fields in the bytes after the matrix (docs/formats/tile_compile.md): 6 zeros, autoplay, (7+)
+    // use_in_outfield, (8) 2 zeros, the scale, (5+) the seasons; the length tells the version.
+    let mut rec = rec.clone();
+    if rec.get("autoplay").is_none()
+        && let Some(b) = rec.get("unknown_64").and_then(Value::as_bytes).map(<[u8]>::to_vec)
+    {
+        let (outfield, scale_at, seasons) = match b.len() {
+            11 => (None, 7, false),
+            15 => (None, 7, true),
+            16 => (Some(7), 8, true),
+            18 => (Some(7), 10, true),
+            _ => (None, usize::MAX, false),
+        };
+        if scale_at != usize::MAX {
+            rec.set("autoplay", i(i64::from(b[6])));
+            rec.set("use_in_outfield", i(outfield.map_or(0, |o| i64::from(b[o]))));
+            rec.set("scale", Value::Float(f64::from(f32::from_le_bytes(b[scale_at..scale_at + 4].try_into().unwrap()))));
+            if seasons {
+                rec.set("seasons", i(i64::from(u32::from_le_bytes(b[scale_at + 4..scale_at + 8].try_into().unwrap()))));
+            }
+        }
+    }
+
+    let rec = &rec;
     let rows: [[f64; 3]; 3] = std::array::from_fn(|k| [m[k], m[4 + k], m[8 + k]]);
     instance(
         "VFXInstance",
@@ -976,6 +1000,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 30 => ("SiegeAINodeInstance", "SANT_ENTRY", ["Bounding Box", "Boundary"]),
                 23 => ("SiegeAIEdgeInstance", "SAET_STREET", ["Street", "Street boundary"]),
                 27 => ("SiegeAIEdgeInstance", "SAET_AREA_CONNECTION", ["Street", "Street boundary"]),
+                40 => ("SiegeAIEdgeInstance", "SAET_PALISADE", ["Street", "Street boundary"]),
                 _ => ("SiegeAIEdgeInstance", "SAET_WALL", ["Street", "Street boundary"]),
             };
 
@@ -1464,6 +1489,25 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         }
     }
 
+    // TEd writes no markers file without records: an empty one (the legacy campaign river tiles') is carried along.
+    for doc in binary.documents.iter().filter(|d| d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) {
+        let one = Tile { documents: vec![doc.clone()], ..Default::default() };
+        let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
+        if let Some(data) = files.folder.get(&doc.name) {
+            out.files.push(OpaqueFile { path: doc.name.clone(), data: data.clone() });
+        }
+    }
+
+    // definition.xml's climate is TEd's preview climate when it exported, not in the project: the file is carried along (the compiler
+    // takes the climate from it).
+    if let Some(doc) = binary.document("definition.xml") {
+        let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format.clone(), source: binary.source.clone(), ..Default::default() };
+        let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
+        if let Some(data) = files.folder.get("definition.xml") {
+            out.files.push(OpaqueFile { path: "definition.xml".to_owned(), data: data.clone() });
+        }
+    }
+
     // The markers of the normal layers.
     let key_str = |k: Option<&Value>| k.and_then(Value::as_str).unwrap_or_default().to_owned();
     for (file, layer_name) in [("prop_marker.markers", "Props"), ("particle_emitter_marker.markers", "VFX"), ("point_light_marker.markers", "Point lights")] {
@@ -1518,6 +1562,8 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     losses.note("buildings: surface_mode (landscape / freeform) is not in the binary: freeform, at the binary's heights");
     out.scene = Some(p);
     out.entry = Some(Entry { file_name: entry_file_name(&location), root: entry });
+    // The carried files in the order the project reader gives them (by path).
+    out.files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok((out, losses))
 }
 
