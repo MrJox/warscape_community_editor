@@ -16,6 +16,7 @@ use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
 
 use super::template::{Template, load_template};
+use crate::terrain_bake::TerrainLook;
 use super::{CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
 
 /// A chunk: its column and row of CHUNK x CHUNK map cells.
@@ -98,8 +99,11 @@ impl Shared {
 
     /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
     fn template(&self, i: usize) -> Option<Arc<Template>> {
+        // Its climate's look: the map gives each placement its own.
         let p = &self.frame.map.placements[i];
-        let key = (p.location.clone(), p.variation.clone());
+        let climate = self.frame.climate_name(i);
+        let look = TerrainLook { climate: climate.clone(), ..self.rq.look.clone() };
+        let key = (p.location.clone(), p.variation.clone(), climate);
         let now = self.clock.fetch_add(1, Ordering::Relaxed);
         let mut tiles = lock(&self.tiles);
         loop {
@@ -118,10 +122,10 @@ impl Shared {
         tiles.insert(key.clone(), Slot::Loading);
         drop(tiles);
         let dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
-        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &self.rq.look, self.rq.trees)));
+        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees)));
         let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
-            None => (load_template(&dir, &self.rq.look, self.rq.trees, self.files.clone()), false),
+            None => (load_template(&dir, &look, self.rq.trees, self.files.clone()), false),
         });
 
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)
@@ -234,7 +238,7 @@ impl Streamer {
             .start_handler(|_| wce_foundation::jobs::lower_thread_priority())
             .build()
             .expect("the map context's threads");
-        let frame = Arc::new(pool.install(|| Frame::new(&rq)));
+        let frame = Arc::new(pool.install(|| Frame::new(&rq, files.clone())));
         let rings = [rq.near, rq.mid, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {

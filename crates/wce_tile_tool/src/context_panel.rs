@@ -18,6 +18,7 @@ use wce_tile::battle_map::context::{CELL, PlacedMap, Spot};
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile::battle_map::{kit_maps, load_game_map, load_kit_map};
+use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, ContextRequest, Streamer, cache};
 use wce_vfs::files::Files;
@@ -201,6 +202,7 @@ impl ContextUi {
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
             mid: self.mid, far: self.far_ring(), raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
         })
     }
@@ -603,6 +605,23 @@ impl ContextUi {
 
         changed |= gui::checkbox("their trees", &mut self.trees);
         gui::checkbox("follow the camera", &mut self.follow);
+
+        // The tiles around are drawn in the climates the map gives them; the open tile in the one its panel has.
+        let map_climate = self.loaded.as_ref().zip(self.placements.get(self.choice)).and_then(|((_, map, _), &i)| map.climate_of(&map.placements[i]).map(str::to_owned));
+        if let (Some(climate), Some(d)) = (map_climate, e.docs.find_as_mut::<TileDocument>(id)) {
+            let look = d.tile().terrain_look().clone();
+            if look.climate.eq_ignore_ascii_case(&climate) {
+                gui::text_disabled(&format!("the map's climate here: {climate}"));
+            } else {
+                gui::text_disabled(&format!("the map's climate here: {climate} (the tile: {})", look.climate));
+                gui::same_line();
+                if gui::small_button("use it") {
+                    d.tile_mut().set_terrain_look(&mut e.scene, TerrainLook { climate, ..look });
+                    changed = true;
+                }
+            }
+        }
+
         if changed && self.loaded.is_some() {
             self.rebuild(e, id);
         }

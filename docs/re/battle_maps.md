@@ -153,6 +153,12 @@ plains (aa .. ad) elsewhere.
   buffer per rectangle size), a neighbour's material averaged to one colour (one id and one normal id for all of them), its blend box a
   little past its rectangle (2 units; 16 in the far ring) so that two of them side by side leave no pixel to neither (the resolve draws such
   a pixel black). The sea: one plane at 0 m over the cells within the far ring of the focus and 4 chunks more, moved with the focus.
+- **Climates** (2026-10-22): the map gives every cell a climate (`climate_map.png`; BOB keeps it per placement: the tile map record's
+  climate byte, the tile list's too), an index into the database's climates (`_settings.xml` order). Each placement's tile is opened in
+  its climate (the template key and the cache key have it; around Rome the campaign map says ROME_Med, 3966 placements within 100 cells,
+  and ROME_Atlantic, 36), and the plain ground is cut by the cells' climates, each with the base material given that climate's textures
+  (`terrain_material::retexture`: the open tile's blend averaged, the climate's slots; one id per climate). The open tile keeps the climate
+  of its own panel; the Map context section shows the map's at its placement and can use it. Not done: the per-season `snow_map_*.png`.
 - **The renderer**: the scene logs its structural changes (`StructureChange`: removed id ranges, payloads replaced, anything else), so the
   draw set and the decals follow a chunk coming or going instead of rebuilding 150 000 items (45 ms a change, 170 ms at worst); the
   entities whose models are still loading are added when they come; the context's terrains skip the legacy patches (`Terrain::legacy`);

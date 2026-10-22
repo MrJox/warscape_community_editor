@@ -3,7 +3,7 @@
 //!
 //!   cargo run --release -p wce_tile_editor --example context_check -- <game dir> <tile folder> <map name | campaign> [placement] [near] [mid]
 //!       [far] [--no-cache | --clear-cache] [--walk <cells>] [--model <pattern>] [--water] [--coasts] [--settlements <cells>]
-//!       [--lf-grid <cell x> <cell y> <steps>]
+//!       [--lf-grid <cell x> <cell y> <steps>] [--climates <cells>]
 //!   context_check - <tile folder> - --heights x z [x z ...]   (the tile's own heights at points of its frame)
 
 use std::collections::{BTreeMap, HashMap};
@@ -88,7 +88,7 @@ fn main() {
 
     let rq = ContextRequest {
         map: Arc::new(m), spot, cells: (project.info.cells_x as i32, project.info.cells_y as i32), unit: project.unit_scale, near: n(4, 8), mid: n(5, 24),
-        far: n(6, 64), raw_root: raw, look: TerrainLook::default(), trees: true, plain: None, cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir),
+        far: n(6, 64), raw_root: raw, look: TerrainLook::default(), trees: true, plain: None, groups: None, cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir),
     };
 
     drop(project);
@@ -191,6 +191,22 @@ fn main() {
             }
 
             println!("  LF over {} {}: {lo:.2} .. {hi:.2} (sea at {:.2})", p.location, p.variation, f.sea_y());
+        }
+    }
+
+    // The climates of the placements around the tile (`--climates <cells>`): how many of each.
+    if let Some(r) = flag("--climates").and_then(|v| v.parse::<i32>().ok()) {
+        let f = s.frame();
+        let (sx, sy) = (f.open[0], f.open[1]);
+        let mut count: BTreeMap<String, usize> = BTreeMap::new();
+        for p in f.map.placements.iter().filter(|p| (p.x - sx).abs() <= r && (p.y - sy).abs() <= r) {
+            *count.entry(f.map.climate_of(p).unwrap_or("-").to_owned()).or_default() += 1;
+        }
+
+        println!("climates within {r} cells: {count:?}");
+        let near: Vec<usize> = (0..f.map.placements.len()).filter(|&i| (f.map.placements[i].x - sx).abs() <= 16 && (f.map.placements[i].y - sy).abs() <= 16).take(3).collect();
+        for i in near {
+            println!("  {} {}: map {:?}, drawn with {}", f.map.placements[i].location, f.map.placements[i].variation, f.map.climate_of(&f.map.placements[i]), f.climate_name(i));
         }
     }
 

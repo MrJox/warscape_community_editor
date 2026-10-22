@@ -37,6 +37,9 @@ pub struct MapPlacement {
     pub h: i32,
     pub rotation: u16,
     pub flipped: bool,
+
+    /// The climate the map gives its cells (an index into [`PlacedMap::climates`]: the database's climates; 0 also when none).
+    pub climate: u8,
 }
 
 impl MapPlacement {
@@ -146,6 +149,14 @@ pub struct PlacedMap {
 
     /// Names the database doesn't know (their size is taken as 1 x 1).
     pub unknown: Vec<String>,
+
+    /// The database's climates by index (a placement's `climate`).
+    pub climates: Vec<String>,
+}
+
+/// The database's climate names by index.
+fn climate_names(db: &TileDatabase) -> Vec<String> {
+    db.climates.iter().map(|c| c.name.clone()).collect()
 }
 
 /// `<tile location>\<variation>` split at the last separator.
@@ -174,7 +185,7 @@ impl Sizes {
 }
 
 impl PlacedMap {
-    fn placement(&mut self, sizes: &mut Sizes, name: &str, x: i32, y: i32, flags: u16, flipped: bool) -> MapPlacement {
+    fn placement(&mut self, sizes: &mut Sizes, name: &str, x: i32, y: i32, flags: u16, flipped: bool, climate: u8) -> MapPlacement {
         if !sizes.names.contains_key(name) {
             let (location, variation) = split_name(name);
             let size = sizes.by_location.get(&norm(&location)).copied();
@@ -187,16 +198,21 @@ impl PlacedMap {
         }
 
         let (w, h) = size.unwrap_or((1, 1));
-        MapPlacement { location, variation, x, y, w, h, rotation: flags & 0xf0, flipped }
+        MapPlacement { location, variation, x, y, w, h, rotation: flags & 0xf0, flipped, climate }
+    }
+
+    /// A placement's climate name (none when the map gives none the database knows).
+    pub fn climate_of(&self, p: &MapPlacement) -> Option<&str> {
+        self.climates.get(usize::from(p.climate)).map(String::as_str).filter(|c| !c.is_empty())
     }
 
     /// From a battle field (`terrain.tile_list`, or the fill of a kit map).
     pub fn from_tile_list(name: &str, list: &TileList, db: &TileDatabase, lf: Option<LfField>) -> Self {
-        let mut m = Self { name: name.to_owned(), width: list.battle_size[0], height: list.battle_size[1], lf, ..Default::default() };
+        let mut m = Self { name: name.to_owned(), width: list.battle_size[0], height: list.battle_size[1], lf, climates: climate_names(db), ..Default::default() };
         let mut sizes = Sizes::new(db);
         for p in &list.placements {
             let n = list.names.get(p.name).map_or("", String::as_str);
-            let pl = m.placement(&mut sizes, n, i32::from(p.x), i32::from(p.y), p.flags, p.flags & 4 != 0);
+            let pl = m.placement(&mut sizes, n, i32::from(p.x), i32::from(p.y), p.flags, p.flags & 4 != 0, p.climate);
             m.placements.push(pl);
         }
 
@@ -205,12 +221,12 @@ impl PlacedMap {
 
     /// From a saved tile map (the campaign's `tile_map.tiles`): the origin cells of both layers.
     pub fn from_tile_map(name: &str, map: &TileMap, db: &TileDatabase, lf: Option<LfField>) -> Self {
-        let mut m = Self { name: name.to_owned(), width: map.width, height: map.height, lf, ..Default::default() };
+        let mut m = Self { name: name.to_owned(), width: map.width, height: map.height, lf, climates: climate_names(db), ..Default::default() };
         let mut sizes = Sizes::new(db);
         for layer in &map.layers {
             for c in layer.iter().filter(|c| c.index > 0) {
                 let n = map.names.get(c.index as usize - 1).map_or("", String::as_str);
-                let pl = m.placement(&mut sizes, n, i32::from(c.origin[0]), i32::from(c.origin[1]), c.flags, c.flipped != 0);
+                let pl = m.placement(&mut sizes, n, i32::from(c.origin[0]), i32::from(c.origin[1]), c.flags, c.flipped != 0, c.climate);
                 m.placements.push(pl);
             }
         }
@@ -295,7 +311,7 @@ impl PlacedMap {
     /// The tiles within `radius` cells of the open tile (`w` x `h` cells) placed at the spot: every placement that overlaps the window and not
     /// the open tile's own cells.
     pub fn context(&self, spot: &Spot, w: i32, h: i32, radius: i32) -> Context {
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: spot.x, y: spot.y, w, h, rotation: spot.rotation, flipped: false };
+        let me = MapPlacement { location: String::new(), variation: String::new(), x: spot.x, y: spot.y, w, h, rotation: spot.rotation, flipped: false, climate: 0 };
         let r = me.rect();
         let window = [(r[0] - radius).max(0), (r[1] - radius).max(0), (r[2] + radius).min(self.width as i32), (r[3] + radius).min(self.height as i32)];
 
@@ -378,7 +394,7 @@ mod tests {
     use super::*;
 
     fn placed(x: i32, y: i32, w: i32, h: i32, rotation: u16) -> MapPlacement {
-        MapPlacement { location: String::new(), variation: String::new(), x, y, w, h, rotation, flipped: false }
+        MapPlacement { location: String::new(), variation: String::new(), x, y, w, h, rotation, flipped: false, climate: 0 }
     }
 
     #[test]

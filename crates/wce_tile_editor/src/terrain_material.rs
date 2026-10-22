@@ -84,11 +84,38 @@ pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, file
     // Flat until the heights are given.
     m.normal = flat_normal();
 
-    // The textures of the climate: slot = 4 * group + variation.
+    let (wanted, missing) = apply_climate(&mut m, &rq.groups, &rq.look, Some(&peak), climates, files);
+    if m.diffuse.iter().all(String::is_empty) {
+        return Err(format!("none of the climate's textures for this tile was found ({})", rq.look.climate));
+    }
+
     let climate = climates.find(&rq.look.climate).or_else(|| climates.find("default"));
+    let missing_text = if missing != 0 { format!(", {missing} texture(s) missing") } else { String::new() };
+    let report = format!(
+        "{} {}: {wanted} layer(s){missing_text}, {bw} x {bh} blend map (the game's terrain shaders)", climate.map_or("default", |c| c.name.as_str()), rq.look.season
+    );
+
+    Ok((m, report))
+}
+
+/// A material with another climate's (or season's) textures: its maps kept, its slots filled again for `look` (the groups are the
+/// tile entry's red, green, blue and alpha ones, as the material was built with). A new id for the renderer.
+pub fn retexture(base: &TerrainMaterial, groups: &TileTextureGroup, look: &TerrainLook, climates: &ClimateList, files: &dyn Files, id: u64) -> TerrainMaterial {
+    let mut m = base.clone();
+    (m.diffuse, m.normal_tex) = Default::default();
+    (m.detail_colour, m.detail_normal) = (String::new(), String::new());
+    m.id = id;
+    apply_climate(&mut m, groups, look, None, climates, files);
+    m
+}
+
+/// The textures and per-layer values of a look's climate into a material's slots (slot = 4 * group + variation), and its detail maps;
+/// with the blend map's peaks, how many of the used slots there are and how many have no texture.
+fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &TerrainLook, peak: Option<&[u32; 16]>, climates: &ClimateList, files: &dyn Files) -> (i32, i32) {
+    let climate = climates.find(&look.climate).or_else(|| climates.find("default"));
     let folder = climate.map_or_else(|| "terrain/textures/battle/default".to_owned(), |c| c.folder());
     let def = climates.find("default");
-    let groups = group_names(&rq.groups);
+    let groups = group_names(groups);
     let exists = |p: &str| files.exists(p);
     let (mut wanted, mut missing) = (0, 0);
     for (g, group) in groups.iter().enumerate() {
@@ -106,13 +133,13 @@ pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, file
                 m.reflectivity[slot] = ct.lerp_reflectivity[v] as f32;
             }
 
-            let used = peak[slot] >= 128;
+            let used = peak.is_some_and(|p| p[slot] >= 128);
             if group.is_empty() {
                 continue;
             }
 
-            m.diffuse[slot] = climate_texture_path(&folder, group, v as i32, &rq.look.season, false, exists).unwrap_or_default();
-            m.normal_tex[slot] = climate_texture_path(&folder, group, v as i32, &rq.look.season, true, exists).unwrap_or_default();
+            m.diffuse[slot] = climate_texture_path(&folder, group, v as i32, &look.season, false, exists).unwrap_or_default();
+            m.normal_tex[slot] = climate_texture_path(&folder, group, v as i32, &look.season, true, exists).unwrap_or_default();
             if used {
                 wanted += 1;
                 if m.diffuse[slot].is_empty() {
@@ -120,10 +147,6 @@ pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, file
                 }
             }
         }
-    }
-
-    if m.diffuse.iter().all(String::is_empty) {
-        return Err(format!("none of the climate's textures for this tile was found ({})", rq.look.climate));
     }
 
     // The detail maps of the climate.
@@ -138,12 +161,7 @@ pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, file
         }
     }
 
-    let missing_text = if missing != 0 { format!(", {missing} texture(s) missing") } else { String::new() };
-    let report = format!(
-        "{} {}: {wanted} layer(s){missing_text}, {bw} x {bh} blend map (the game's terrain shaders)", climate.map_or("default", |c| c.name.as_str()), rq.look.season
-    );
-
-    Ok((m, report))
+    (wanted, missing)
 }
 
 /// The normal map (.a = x, .g = z of the unit normal * 0.5 + 0.5) of a height grid (nx x nz samples, `step_x` / `step_z` metres apart, row j
