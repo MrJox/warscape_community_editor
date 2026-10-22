@@ -20,6 +20,7 @@ use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::games::supported_games::SupportedGames;
 use wce_tile::building_db::BuildingDb;
+use wce_tile::ted_scene::parse_vec3;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::{euler_from_matrix, euler_matrix, world_transform};
 use wce_tile_io::attila::decompile::{Context, decompile, split_location};
@@ -45,6 +46,21 @@ struct Totals {
     classes: BTreeMap<String, (usize, usize, usize)>,
     losses: BTreeMap<String, usize>,
     problems: Vec<String>,
+}
+
+/// Every polygon of a decompiled scene with its world points (x, z): the scene's logic nodes carry no rotation, so a point is the sum of
+/// its ancestors' positions and its own.
+fn our_polygons<'a>(n: &'a Node, origin: (f64, f64), out: &mut Vec<(&'a Node, Vec<(f64, f64)>)>) {
+    let p = n.get("position").and_then(Value::as_vec3).unwrap_or_default();
+    let here = (origin.0 + p[0], origin.1 + p[2]);
+    if let Some(points) = n.child("points") {
+        let pts = points.children.iter().filter_map(|c| c.get("position").and_then(Value::as_vec3)).map(|q| (here.0 + q[0], here.1 + q[2])).collect();
+        out.push((n, pts));
+    }
+
+    for c in &n.children {
+        our_polygons(c, if n.class == "children" || n.class == "points" { origin } else { here }, out);
+    }
 }
 
 /// A value as tile.ted writes it.
@@ -237,6 +253,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 ("VFXInstance", "vfx", &["scale", "autoplay", "use_in_outfield", "seasons"][..]),
                 ("POINT_LIGHT_INSTANCE", "name", &["colour", "radius", "colour_scale", "colour_min", "random_offset", "animation_type", "falloff_type", "animation_speed_scale"][..]),
                 ("VEGETATION_INSTANCE", "key", &["scale"][..]),
+                ("CaptureLocationInstance", "database_type", &["flag_facing", "type", "min_num_players", "max_num_players"][..]),
             ] {
                 let mut ours = vec![];
                 scene.walk(&mut |n| {
@@ -246,12 +263,20 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 });
 
                 let kit_e = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == class).collect::<Vec<_>>();
+                // A capture location is decompiled at its flag (the binary's location): the kit's flag is at position + flag_position.
+                let place = |e: usize| {
+                    let w = world_transform(sc, e);
+                    match (class, sc.doc().get(e, "flag_position").and_then(|f| parse_vec3(&f, "vector"))) {
+                        ("CaptureLocationInstance", Some(f)) => w.position + w.rotation * f,
+                        _ => w.position,
+                    }
+                };
                 let c = local.classes.entry(class.to_owned()).or_default();
                 c.0 += ours.len();
                 c.1 += kit_e.len();
                 let mut by_key: BTreeMap<String, Vec<(usize, wce_foundation::math::Double3)>> = BTreeMap::new();
                 for &e in &kit_e {
-                    by_key.entry(sc.doc().get(e, id).unwrap_or_default()).or_default().push((e, world_transform(sc, e).position));
+                    by_key.entry(sc.doc().get(e, id).unwrap_or_default()).or_default().push((e, place(e)));
                 }
 
                 for n in ours {
@@ -263,7 +288,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     let Some(ci) = cands
                         .iter()
                         .enumerate()
-                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (class == "VEGETATION_INSTANCE" || (q.y - p[1]).abs() < 0.1))
+                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (matches!(class, "VEGETATION_INSTANCE" | "CaptureLocationInstance") || (q.y - p[1]).abs() < 0.1))
                         .max_by_key(|(_, (e, _))| agree(*e))
                         .map(|(i, _)| i)
                     else {
@@ -287,7 +312,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     }
 
                     // A point light has no rotation; the trees are turned at random by the game.
-                    if class == "POINT_LIGHT_INSTANCE" || class == "VEGETATION_INSTANCE" {
+                    if matches!(class, "POINT_LIGHT_INSTANCE" | "VEGETATION_INSTANCE" | "CaptureLocationInstance") {
                         continue;
                     }
 
@@ -304,6 +329,84 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             local.problems.push(format!("{name}: {class} {key} orientation: ours {o:?} {:?}, kit world {:?} ({}, file {:?}, scale {:?})", m.m, t.m, sc.layer_path(e), sc.doc().get(e, "orientation"), sc.doc().get(e, "scale")));
                         }
                     }
+                }
+            }
+        }
+
+        // Polygons: pair on (class, centre of the world points' bounding box within 1 scene unit), then compare.
+        if let Some(scene) = &raw.scene {
+            let sc = &project.scene;
+            let mut ours = vec![];
+            our_polygons(scene, (0.0, 0.0), &mut ours);
+            let centre = |pts: &[(f64, f64)]| {
+                let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+                for &(x, z) in pts {
+                    lo = (lo.0.min(x), lo.1.min(z));
+                    hi = (hi.0.max(x), hi.1.max(z));
+                }
+
+                ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0)
+            };
+
+            let mut kit: BTreeMap<String, Vec<(usize, Vec<(f64, f64)>)>> = BTreeMap::new();
+            for e in 0..sc.doc().elements().len() {
+                let pts_e = sc.polygon_points(e);
+                if pts_e.is_empty() {
+                    continue;
+                }
+
+                let w = world_transform(sc, e);
+                let pts = pts_e.iter().filter_map(|&p| sc.point_position(p)).map(|q| {
+                    let v = w.position + w.rotation * q;
+                    (v.x, v.z)
+                }).collect::<Vec<_>>();
+                kit.entry(sc.type_of(e).to_owned()).or_default().push((e, pts));
+            }
+
+            for (class, list) in &kit {
+                local.classes.entry(class.clone()).or_default().1 += list.len();
+            }
+
+            for (n, pts) in ours {
+                let class = n.class.as_str().to_owned();
+                local.classes.entry(class.clone()).or_default().0 += 1;
+                let Some(cands) = kit.get_mut(&class) else { continue };
+                let c = centre(&pts);
+                let Some(ci) = cands.iter().position(|(_, k)| k.len() == pts.len() && {
+                    let kc = centre(k);
+                    (kc.0 - c.0).hypot(kc.1 - c.1) < 1.0
+                }) else {
+                    if std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                        let near = cands.iter().map(|(e, k)| (e, k.len(), centre(k))).min_by(|a, b| (a.2.0 - c.0).hypot(a.2.1 - c.1).total_cmp(&(b.2.0 - c.0).hypot(b.2.1 - c.1)));
+                        local.problems.push(format!("{name}: unpaired {class}: {} points, centre {c:?}; nearest kit {near:?}; ours {:?}", pts.len(), &pts[..pts.len().min(4)]));
+                    }
+
+                    continue;
+                };
+
+                let (e, _) = cands.swap_remove(ci);
+                local.classes.get_mut(&class).expect("class").2 += 1;
+                for attr in ["name", "polygon_closed", "hint_type", "type", "deployment_polygon_type", "civilian_type", "civilian_amount"] {
+                    let Some(v) = n.get(attr) else { continue };
+                    let ours = crate_value_text(&class, attr, v);
+                    let c = local.attr_same.entry(format!("{class}.{attr}")).or_default();
+                    if Some(&ours) == sc.doc().get(e, attr).as_ref() {
+                        c.0 += 1;
+                    } else {
+                        c.1 += 1;
+                        if c.1 <= 2 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                            local.problems.push(format!("{name}: {class} {attr}: ours {ours}, kit {:?}", sc.doc().get(e, attr)));
+                        }
+                    }
+                }
+
+                let ka = sc.doc().get(e, "area").and_then(|a| a.parse::<f64>().ok()).unwrap_or(0.0);
+                let oa = n.get("area").and_then(Value::as_f64).unwrap_or(0.0);
+                let c = local.attr_same.entry(format!("{class}.area (0.1 %)")).or_default();
+                if (ka - oa).abs() <= 1e-3 * ka.abs().max(1.0) {
+                    c.0 += 1;
+                } else {
+                    c.1 += 1;
                 }
             }
         }

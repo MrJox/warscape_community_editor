@@ -561,6 +561,364 @@ fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
     out
 }
 
+// ---- logic: polygons, deployment, AI hints, the siege graph
+
+/// The binaries' 2D points (x, z from the far edge, metres) in the scene (2 x, 2 (extent - z)).
+fn scene_xz(points: &[(f64, f64)], extent_z: f64) -> Vec<(f64, f64)> {
+    points.iter().map(|&(x, z)| (2.0 * x, 2.0 * (extent_z - z))).collect()
+}
+
+/// A TEd polygon instance: at the centre of its points' bounding box (y 0: the binary has no heights; landscape polygons follow the
+/// terrain), the points relative to it, the area of the outline. `parent` is the scene position of the instance it goes under.
+fn polygon(class: &str, name: &str, pts: &[(f64, f64)], closed: bool, own: Vec<(&str, Value)>, parent: (f64, f64)) -> Node {
+    // TEd gives an open polygon an area too (separators, siege streets), but for the AI hints (0 in the kit).
+    let with_area = closed || class != "AI_HINT_POLYGON_INSTANCE";
+    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+    for &(x, z) in pts {
+        lo = (lo.0.min(x), lo.1.min(z));
+        hi = (hi.0.max(x), hi.1.max(z));
+    }
+
+    let c = if pts.is_empty() { (0.0, 0.0) } else { ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0) };
+    let area = if with_area {
+        (0..pts.len()).map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            a.0 * b.1 - b.0 * a.1
+        }).sum::<f64>().abs() / 2.0
+    } else {
+        0.0
+    };
+
+    let g = |v: f64| crate::xml::values::Num::G.quantise(v);
+    let mut n = node(class, vec![("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])), ("recenter_polygon", i(0)), ("lf_offset", Value::Float(0.0))]);
+    n.set("line_colour", Value::Colour([1.0, 1.0, 1.0, 1.0]));
+    for (k, v) in own {
+        n.set(k, v);
+    }
+
+    n.set("polygon_closed", i(i64::from(closed)));
+    n.set("position", Value::Vec3([c.0 - parent.0, 0.0, c.1 - parent.1].map(r32)));
+    n.set("selected_line_colour", Value::Colour([1.0, 0.0, 0.0, 1.0]));
+    n.set("name", s(name));
+    n.set("polygon_shape", s("PS_POLYGON"));
+    n.set("area", Value::Float(r32(area)));
+    n.set("surface_mode", s("MSM_LANDSCAPE"));
+    n.set("orientation", Value::Euler([0.0; 3]));
+    let points = n.wrapped_mut("points");
+    for &(x, z) in pts {
+        points.push(node("point", vec![("position", Value::Vec3([g(x - c.0), 0.0, g(z - c.1)]))]));
+    }
+
+    n
+}
+
+/// The `position` children's (x, y) of an XML element.
+fn xml_points(e: &Node) -> Vec<(f64, f64)> {
+    e.children
+        .iter()
+        .filter(|c| c.class == "position")
+        .map(|c| (c.get("x").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0), c.get("y").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0)))
+        .collect()
+}
+
+/// Every descendant of a class.
+fn all<'a>(n: &'a Node, class: &str, out: &mut Vec<&'a Node>) {
+    for c in &n.children {
+        if c.class == class {
+            out.push(c);
+        }
+
+        all(c, class, out);
+    }
+}
+
+fn str_attr(n: &Node, k: &str) -> String {
+    n.get(k).and_then(Value::as_str).unwrap_or_default().to_owned()
+}
+
+/// The polylines of a marker record (`points`, or `polylines` > `polyline` > `points`) as (x, z) pairs.
+fn record_polylines(rec: &Node) -> Vec<Vec<(f64, f64)>> {
+    let pts = |v: &[f64]| v.chunks_exact(2).map(|c| (c[0], c[1])).collect::<Vec<_>>();
+    if let Some(p) = rec.get("points").and_then(Value::as_floats) {
+        return vec![pts(p)];
+    }
+
+    rec.child("polylines").map_or(vec![], |l| l.children.iter().filter_map(|c| c.get("points").and_then(Value::as_floats)).map(pts).collect())
+}
+
+/// TEd's AI hint type of the markers' number (the index in TEd's table).
+fn hint_type(n: i64) -> String {
+    // TEd's table (wce_tile::property_enums::AI_HINT_TYPE, read from TEd.AssemblyKit.exe).
+    const NAMES: [&str; 41] = [
+        "AIH_DEFENSIVE_LINE", "AIH_DEFENSIVE_HILL", "AIH_DEAD_GROUND", "AIH_IMPASSIBLE", "AIH_TOWN_CLUSTER", "AIH_CHOKE_POINT",
+        "AIH_GOOD_CAVALRY_GROUND", "AIH_COVER", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_BUILDINGS", "AIH_REDOUBT",
+        "AIH_SUITABLE_GROUND_BOMBARDMENT", "AIH_SUITABLE_DEPLOYABLE_GABIONADE", "AIH_SUITABLE_DEPLOYABLE_FOUGASSE",
+        "AIH_SUITABLE_DEPLOYABLE_CHEVAUX_DE_FRISE", "AIH_SUITABLE_DEPLOYABLE_EARTHWORKS", "AIH_FORDING_POINT", "AIH_FORT_APPROACH",
+        "AIH_BRIDGE_CROSSING", "AIH_BEACH_LANDING", "AIH_RIVER_EDGE", "AIH_SIEGE_AREA_NODE", "AIH_SIEGE_INTERSECTION_NODE",
+        "AIH_SIEGE_STREET_EDGE", "AIH_CAPTURE_POINT_MAJOR", "AIH_CAPTURE_POINT_MINOR", "AIH_SIEGE_WALL_AREA_NODE",
+        "AIH_SIEGE_AREA_CONNECTION_EDGE", "AIH_SIEGE_WALL_EDGE", "AIH_COVER_LINE", "AIH_SIEGE_ENTRY_NODE", "AIH_AMBUSH_MELEE_LINE",
+        "AIH_AMBUSH_MISSILE_LINE", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_FORT_PERIMETER",
+        "AIH_BEACH_LANDING_FORT_APPROACH", "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_FIREBALL_LINE", "AIH_DEFAULT_DEPLOYMENT_LINE",
+        "AIH_SIEGE_PALISADE_EDGE",
+    ];
+
+    usize::try_from(n).ok().and_then(|i| NAMES.get(i)).map_or_else(|| format!("{n}"), |s| (*s).to_owned())
+}
+
+/// The logic layer: outlines, zones, deployment areas, AI hints and separators, the siege graph.
+fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
+    let mut l = layer("Logic", "LayerExportType_Normal");
+    let mut items = vec![];
+    let xml_outlines = |file: &str| binary.document(file).map_or(vec![], |d| d.root.children.iter().filter(|c| c.class == "OUTLINE").map(xml_points).collect::<Vec<_>>());
+    for pts in xml_outlines("go_outlines.xml") {
+        items.push(polygon("GO_REGION_POLYGON_INSTANCE", "Go region", &scene_xz(&pts, extent_z), true, vec![("line_colour", Value::Colour([0.0, 0.25, 0.0, 1.0]))], (0.0, 0.0)));
+    }
+
+    for pts in xml_outlines("non_terrain_outlines.xml") {
+        items.push(polygon("NOGO_REGION_POLYGON_INSTANCE", "No-go region", &scene_xz(&pts, extent_z), true, vec![("line_colour", Value::Colour([0.65, 0.0, 0.0, 1.0]))], (0.0, 0.0)));
+    }
+
+    if let Some(z) = binary.document("zones.xml") {
+        let mut zones = vec![];
+        all(&z.root, "BATTLEFIELD_ZONE_TEMPLATE", &mut zones);
+        for t in zones {
+            items.push(polygon(
+                "ZONE_POLYGON_INSTANCE",
+                "Zone",
+                &scene_xz(&xml_points(t), extent_z),
+                true,
+                vec![
+                    ("purpose", s("EFP_LOW_WALL")), ("rank_count", i(0)), ("zone_skirt_distance", Value::Float(3.0)), ("locked", b(false)),
+                    ("max_subdivisions", i(100)), ("rank_distance", Value::Float(3.0)), ("subdivision_length", Value::Float(5.0)),
+                ],
+                (0.0, 0.0),
+            ));
+        }
+
+        if !items.is_empty() {
+            losses.note("zones: purpose, ranks and skirt are not in zones.xml (TEd's defaults)");
+        }
+    }
+
+    // Deployment: a group per (alliance, area), a polygon per boundary.
+    if let Some(d) = binary.document("deployment_areas.xml") {
+        let mut alliances = vec![];
+        all(&d.root, "ALLIANCE", &mut alliances);
+        for a in alliances {
+            let alliance = str_attr(a, "id").parse::<i64>().unwrap_or(0);
+            for area in a.children.iter().filter(|c| c.class == "deployment_area") {
+                let facing = area.child("orientation").map_or(0.0, |o| str_attr(o, "radians").parse::<f64>().unwrap_or(0.0));
+                let mut g = instance(
+                    "DeploymentZonePolygonInstanceGroup",
+                    "Deployment Zone",
+                    [0.0; 3],
+                    [0.0; 3],
+                    vec![
+                        ("deployment_category", s(&str_attr(area, "category"))), ("deployment_type", s("EDZT_1V1")), ("new_polygon_type", s("PDM_POLYGON")),
+                        ("facing_direction", Value::Float(r32(facing))), ("deployment_zone_id", i(str_attr(area, "id").parse::<i64>().unwrap_or(0))),
+                        ("add_polygon", i(0)), ("alliance_id", i(alliance)),
+                    ],
+                );
+
+                g.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+                for bnd in area.children.iter().filter(|c| c.class == "boundary") {
+                    let kind = match str_attr(bnd, "type").as_str() {
+                        "standard additive" => "DZPT_ADDITIVE",
+                        "standard subtractive" => "DZPT_SUBSTRACTIVE",
+                        "guerrilla exclusion additive" => "DZPT_GUERRILLA_EXCLUSION_ADDITIVE",
+                        _ => "DZPT_GUERRILLA_EXCLUSION_SUBTRACTIVE",
+                    };
+
+                    g.wrapped_mut("children").push(polygon(
+                        "DEPLOYMENT_ZONE_POLYGON_INSTANCE",
+                        "Deployment Zone Polygon",
+                        &scene_xz(&xml_points(bnd), extent_z),
+                        true,
+                        vec![
+                            ("line_colour", Value::Colour([0.0, 0.0, 1.0, 0.7])), ("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)),
+                            ("deployment_polygon_type", s(kind)),
+                        ],
+                        (0.0, 0.0),
+                    ));
+                }
+
+                items.push(g);
+            }
+        }
+
+        losses.note("deployment: the deployment type (1v1 ...) is not in deployment_areas.xml (EDZT_1V1)");
+    }
+
+    // AI hints and separators.
+    if let Some(d) = binary.document("ai_hint_polyline_marker.markers") {
+        for (rec, key) in marker_records(&d.root) {
+            let ty = hint_type(key.and_then(Value::as_int).unwrap_or(0));
+            for mut pts in record_polylines(rec) {
+                // A closed hint (the fort perimeter) repeats its first point at the end.
+                let closed = pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
+                if closed {
+                    pts.pop();
+                }
+
+                items.push(polygon(
+                    "AI_HINT_POLYGON_INSTANCE",
+                    "AI hint polygon",
+                    &scene_xz(&pts, extent_z),
+                    closed,
+                    vec![
+                        ("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)), ("hint_type", s(&ty)), ("is_generated", b(false)),
+                        ("generated", b(false)),
+                    ],
+                    (0.0, 0.0),
+                ));
+            }
+        }
+    }
+
+    if let Some(d) = binary.document("ai_separator_marker.markers") {
+        for (rec, key) in marker_records(&d.root) {
+            let ty = key.and_then(Value::as_str).unwrap_or("PALT_NONE").to_owned();
+            for pts in record_polylines(rec) {
+                items.push(polygon(
+                    "AISeparatorInstance",
+                    "AI Separator",
+                    &scene_xz(&pts, extent_z),
+                    false,
+                    vec![("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)), ("type", s(&ty))],
+                    (0.0, 0.0),
+                ));
+            }
+        }
+    }
+
+    // The siege graph: a node (area, intersection, wall area, entry: its boundary and bounding box) or an edge (street, connection, wall:
+    // the street and its boundaries) per polyline list.
+    if let Some(d) = binary.document("ai_hint_polyline_list_marker.markers") {
+        for (rec, key) in marker_records(&d.root) {
+            let lines = record_polylines(rec);
+            let k = key.and_then(Value::as_int).unwrap_or(0);
+            let (class, ty, names) = match k {
+                21 => ("SiegeAINodeInstance", "SANT_AREA", ["Bounding Box", "Boundary"]),
+                22 => ("SiegeAINodeInstance", "SANT_INTERSECTION", ["Bounding Box", "Boundary"]),
+                26 => ("SiegeAINodeInstance", "SANT_WALL_AREA", ["Bounding Box", "Boundary"]),
+                30 => ("SiegeAINodeInstance", "SANT_ENTRY", ["Bounding Box", "Boundary"]),
+                23 => ("SiegeAIEdgeInstance", "SAET_STREET", ["Street", "Street boundary"]),
+                27 => ("SiegeAIEdgeInstance", "SAET_AREA_CONNECTION", ["Street", "Street boundary"]),
+                _ => ("SiegeAIEdgeInstance", "SAET_WALL", ["Street", "Street boundary"]),
+            };
+
+            let node_pos = if class == "SiegeAINodeInstance" {
+                lines.first().map_or((0.0, 0.0), |p| {
+                    let p = scene_xz(p, extent_z);
+                    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+                    for &(x, z) in &p {
+                        lo = (lo.0.min(x), lo.1.min(z));
+                        hi = (hi.0.max(x), hi.1.max(z));
+                    }
+
+                    ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0)
+                })
+            } else {
+                (0.0, 0.0)
+            };
+
+            let mut n = instance(class, if class == "SiegeAINodeInstance" { "Siege AI Node" } else { "Siege AI Edge" }, [node_pos.0, 0.0, node_pos.1], [0.0; 3], vec![("add_boundary", i(0)), ("type", s(ty))]);
+            n.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+            for (j, pts) in lines.iter().enumerate() {
+                let name = names[j.min(1)];
+                // A node's bounding box and boundary are closed, an edge's street and boundaries open.
+                let closed = class == "SiegeAINodeInstance";
+                n.wrapped_mut("children").push(polygon("SIEGE_AI_POLYGON_INSTANCE", name, &scene_xz(pts, extent_z), closed, vec![], node_pos));
+            }
+
+            items.push(n);
+        }
+    }
+
+    // Civilian deployment zones (civilian_deployment.bin): a polygon each with its kind and size.
+    if let Some(d) = binary.document("civilian_deployment.bin") {
+        let mut list = vec![];
+        all(&d.root, "civilian_deployment_list", &mut list);
+        for zone in list.iter().flat_map(|l| l.children.iter().filter(|c| c.class == "item")) {
+            let mut pts = vec![];
+            if let Some(points) = zone.child("area").and_then(|a| a.child("points")) {
+                for p in &points.children {
+                    pts.push((num(p, "x"), num(p, "y")));
+                }
+            }
+
+            items.push(polygon(
+                "CivilianDeploymentZone",
+                "Civilian Deployment Zone",
+                &scene_xz(&pts, extent_z),
+                true,
+                vec![("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])), ("civilian_type", s(&str_attr(zone, "kind"))), ("civilian_amount", s(&str_attr(zone, "size")))],
+                (0.0, 0.0),
+            ));
+        }
+    }
+
+    if binary.document("civilian_shelter.bin").is_some() {
+        losses.note("civilian shelters: not decompiled (BOB generates them for tiles whose tile.ted has none)");
+    }
+
+    *l.wrapped_mut("children") = items;
+    l
+}
+
+/// The capture locations of a BMD document (`capture_location_set` > `capture_location_sets` > `item` > `capture_locations` > `item`) as
+/// TEd's CaptureLocationInstance (at the flag: the binary's `location`) with its boundary: a circle of the binary's radius doubled around
+/// the one location point, or a polygon through the location points.
+fn capture_nodes(bmd: &Node, extent_z: f64) -> Vec<Node> {
+    let mut sets = vec![];
+    all(bmd, "capture_locations", &mut sets);
+    let mut out = vec![];
+    for loc in sets.iter().flat_map(|s| s.children.iter().filter(|c| c.class == "item")) {
+        let l = loc.child("location");
+        let (lx, lz) = (2.0 * l.map_or(0.0, |l| num(l, "x")), 2.0 * (extent_z - l.map_or(0.0, |l| num(l, "y"))));
+        let f = loc.child("flag_facing");
+        // The binary's facing vector (x, y) is TEd's angle atan2(-y, x) (the z mirror).
+        let facing = (-f.map_or(0.0, |f| num(f, "y"))).atan2(f.map_or(1.0, |f| num(f, "x"))).rem_euclid(std::f64::consts::TAU);
+        let ty = if str_attr(loc, "capture_point_type") == "CAPTURE_LOCATION_MAJOR" { "CLT_MAJOR" } else { "CLT_MINOR" };
+        let mut n = instance(
+            "CaptureLocationInstance",
+            "capture_point",
+            [lx, 0.0, lz],
+            [0.0; 3],
+            vec![
+                ("flag_facing", Value::Float(r32(facing))), ("database_type", s(&str_attr(loc, "database_key"))),
+                ("min_num_players", i(loc.get("valid_for_min_num_players").and_then(Value::as_int).unwrap_or(2))), ("type", s(ty)),
+                ("max_num_players", i(loc.get("valid_for_max_num_players").and_then(Value::as_int).unwrap_or(8))), ("flag_position", Value::Vec3([0.0; 3])),
+            ],
+        );
+
+        n.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+        n.set("surface_mode", s("MSM_LANDSCAPE"));
+        let pts = loc.child("location_points").map_or(vec![], |p| p.children.iter().map(|c| (num(c, "x"), num(c, "y"))).collect::<Vec<_>>());
+        let radius = num(loc, "radius");
+        let boundary = if radius > 0.0 && pts.len() <= 1 {
+            // TEd's circle: 20 points from +z towards +x, (r sin a, r cos a) for a = 0, 18, ... 342 degrees.
+            let c = pts.first().map_or((lx, lz), |&(x, z)| (2.0 * x, 2.0 * (extent_z - z)));
+            let r = 2.0 * radius;
+            let ring = (0..20).map(|k| {
+                let a = f64::from(k) * 18f64.to_radians();
+                (c.0 + r * a.sin(), c.1 + r * a.cos())
+            }).collect::<Vec<_>>();
+
+            let mut b = polygon("CaptureLocationPolygonInstance", "Boundary", &ring, true, vec![("radius", Value::Float(r32(r)))], (lx, lz));
+            b.set("polygon_shape", s("PS_CIRCLE"));
+            b
+        } else {
+            polygon("CaptureLocationPolygonInstance", "Boundary", &scene_xz(&pts, extent_z), true, vec![], (lx, lz))
+        };
+
+        n.wrapped_mut("children").push(boundary);
+        out.push(n);
+    }
+
+    out
+}
+
 #[derive(Default)]
 struct BuildingLosses {
     unknown_levels: usize,
@@ -646,6 +1004,8 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             l.wrapped_mut("children").push(emitter_node(&rec, &key, extent.1));
         }
 
+        l.wrapped_mut("children").extend(capture_nodes(&doc.root, extent.1));
+
         if !l.wrapped("children").is_empty() {
             graph(&mut p).wrapped_mut("children").push(l);
         }
@@ -671,6 +1031,12 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         }
 
         graph(&mut p).wrapped_mut("children").push(l);
+    }
+
+    let logic = logic_layer(binary, extent.1, &mut losses);
+    if !logic.wrapped("children").is_empty() {
+        losses.note("logic: the polygons' heights are not in the binary (landscape polygons at height 0)");
+        graph(&mut p).wrapped_mut("children").push(logic);
     }
 
     // The trees: one list, as explicit instances (the seeds that would regenerate them are not in the binary).
