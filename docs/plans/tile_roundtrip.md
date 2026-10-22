@@ -180,6 +180,35 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
   back byte for byte, with the DXT5 textures and 545 TDD height maps kept as original bytes and the terrain meshes carried as files. Tests:
   `tests/tile_binary.rs` (synthetic), `tests/pack_samples.rs` (8 pack folders with `WCE_ATTILA_GAME`), gates `tile_binary_roundtrip` and
   `tile_binary_roundtrip_all` (`--corpus`).
+- **Step 3 in progress** (`attila::decompile`, check `tile_decompile_check`): entries, buildings, decals, props, VFX, lights, trees, logic
+  and capture locations decompiled.
+  - Heights: the CHMF is written as `height_map_0.png` and is exact by construction. The kit's `height_map_0.png` is **not** a reference.
+    It is BOB's input: BOB writes `final_heights.dds` from it (already different, e.g. 9 cm of relief exported as 0), then the CHMF is
+    `final_heights` plus raised building stamps (fresh BOB, farm_western/1x1/aa: 4% of the samples, up to +1 m, all positive). Many pack
+    tiles are also not the kit's version: 167 ship a flat CHMF (range ~1e-13) and a flat mesh where the kit tile has relief, and
+    rolling_valley tiles ship ~0.18 x the kit's relief. The check reports the kit agreement for information only.
+  - Buildings (1,893,562 paired): orientation and toggleable all agree (older tile.ted files omit `toggleable`, TEd's default false);
+    destruction levels come from the building's `<key>_tech.cs2.parsed` (fewest destructs over its pieces, `destruction_levels`), 20
+    differ.
+  - Simple meshes: the record's y and z rows are negated; 208 agree, the other 939 differ by a constant yaw per building group (90, 180,
+    275 degrees ...: the groups differ between the kit and the packs).
+  - Decals: 1,660,832 of the paired agree. The rest (farm_eastern / farm_western, arbitrary yaws) and the 256k unpaired at another height
+    are in the families whose kit is not the shipped version (farm_*, town_greek_plains, roads_*, sea_coast); there the binary y looks
+    terrain-relative (kit y ~ ground + 2 y, off by 0.1 - 0.7 m) while everywhere else it is absolute (2 y). Open: whether the exporter
+    writes some decals relative to the ground (needs TEd's exporter).
+  - Deployment zones: the binary's are clipped to the playable area (a reported loss).
+  - Capture locations: from the escalation BMDs and, for the normal layers, `capture_location_list.xml` (1,288 in 169 packs' files).
+    A circle (radius, one point) is placed as the kit has it: the instance at the centre, the flag at `flag_position`. 999 of the kit's
+    999 boundaries pair, the instances all but one; `flag_facing` within 2e-6 (the binary's vector has 6 digits).
+  - Not in the binary: vegetation exclusion polygons (applied to the tree lists; 4 tiles ship a `vegetation_exclusion.xml` bounding box
+    that matches no kit polygon) and the river splines (the river tiles ship `hf_water_map.data` only, the water surface; a spline could
+    only be fitted to it).
+  - Lite building zones: not in the binary, but a building of the main list is `lite` exactly when its position is inside a kit zone
+    (eastern_city_b/small 25,720 / 25,720, nordic_city_b/medium 12,781 / 12,781). The decompiler rebuilds zones from the flags (a
+    quadtree of the lite buildings, touching rectangles merged): 4,722 zones on 102 tiles where the kit has 140, no building changing
+    its flag. Fewer, outline-shaped zones would be nicer for an artist; the export is the same.
+  - Open: segmented splines, a fallback entry for tiles without a database row (18), blend / ground type maps
+    from the DDS.
 
 ### Decisions (2026-10-22)
 
