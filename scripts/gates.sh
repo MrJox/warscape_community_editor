@@ -33,6 +33,8 @@ else
     export WCE_ATTILA_KIT="${WCE_ATTILA_KIT:-$BKIT$SEP$GAME/assembly_kit_campaign_tilemap}"
 fi
 
+export WCE_ATTILA_GAME="${WCE_ATTILA_GAME:-$GAME}"   # wce_tile_io's pack_samples read the game's packs
+
 # The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 mkdir -p "$OUT"
@@ -70,6 +72,8 @@ run xml_splice_check  ex wce_formats xml_splice_check "$BKIT/raw_data/terrain/ti
 run tile_entry_check  ex wce_tile tile_entry_check "$GAME" "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE" "$BKIT/raw_data/terrain/tiles/battle/plains/3x1/3x1_aa"
 # the tile round trip (docs/plans/tile_roundtrip.md): one tile through the game-neutral model and back, byte for byte, with edits and the cross check against TedScene
 run tile_roundtrip    ex wce_tile_io tile_roundtrip_check "$TILE"
+# the exported tile format (Phase 2 of docs/plans/tile_roundtrip.md): one settlement tile read from its pack, through the model and back
+run tile_binary_roundtrip ex wce_tile_io tile_binary_roundtrip_check "$GAME/data/tiles4.pack" --filter western_city_b/small
 run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 # the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
 run terrain_check     ex wce_tile_editor terrain_check "$GAME"
@@ -78,6 +82,7 @@ if [ "$CORPUS" = 1 ]; then
     run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
     run tile_roundtrip_all ex wce_tile_io tile_roundtrip_check "$GAME"   # every TEd project of the kit(s) through the model and back (about 2 min)
+    run tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$GAME/data"   # every exported tile folder of the packs through the model and back (about 3 min)
     run tile_entry_check_all ex wce_tile tile_entry_check "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
     run placement_check ex wce_tile_editor placement_check "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame

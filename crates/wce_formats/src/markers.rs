@@ -402,6 +402,63 @@ impl MarkersFile {
     }
 }
 
+/// The bytes of a record from its named fields (as [`MarkersFile::fields`] gives them); the fields of an [`Field::IfByte`] block are
+/// written when its byte is 1.
+///
+/// # Errors
+///
+/// No layout for the class / version, a field missing or of another kind.
+pub fn record_from_fields(class: &str, version: u32, fields: &[(&str, Value)]) -> Result<Vec<u8>, MarkersError> {
+    let Some((layout, _)) = layout(class, version) else { return fail(format!("{class} version {version} has no layout")) };
+    let mut out = vec![];
+    let get = |name: &str| fields.iter().find(|(n, _)| *n == name).map(|(_, v)| v).ok_or_else(|| MarkersError(format!("no field {name}")));
+    let points = |out: &mut Vec<u8>, p: &[[f32; 2]]| {
+        out.extend_from_slice(&(p.len() as u32).to_le_bytes());
+        for [x, y] in p {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+    };
+
+    for f in layout {
+        let name = match *f {
+            IfByte(at) => {
+                if out.get(at) != Some(&1) {
+                    break;
+                }
+
+                continue;
+            }
+
+            Matrix(n) | F32(n) | U32(n) | U8(n) | Str(n) | Points(n) | PointLists(n) | Bytes(n, _) => n,
+        };
+
+        match (*f, get(name)?) {
+            (Matrix(_), Value::Matrix(m)) => m.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            (F32(_), Value::F32(v)) => out.extend_from_slice(&v.to_le_bytes()),
+            (U32(_), Value::U32(v)) => out.extend_from_slice(&v.to_le_bytes()),
+            (U8(_), Value::U8(v)) => out.push(*v),
+            (Str(_), Value::Str(s)) => {
+                out.extend_from_slice(&(s.len() as u16).to_le_bytes());
+                out.extend_from_slice(s);
+            }
+
+            (Points(_), Value::Points(p)) => points(&mut out, p),
+            (PointLists(_), Value::PointLists(l)) => {
+                out.extend_from_slice(&(l.len() as u32).to_le_bytes());
+                for p in l {
+                    points(&mut out, p);
+                }
+            }
+
+            (Bytes(_, len), Value::Bytes(b)) if b.len() == len => out.extend_from_slice(b),
+            (f, v) => return fail(format!("field {name}: {v:?} for {f:?}")),
+        }
+    }
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +489,7 @@ mod tests {
         let back = MarkersFile::parse(&bytes).unwrap();
         assert_eq!(back, f);
         let fields = back.fields(1).unwrap();
+        assert_eq!(record_from_fields("POINT_LIGHT_MARKER", 3, &fields).unwrap(), back.records[1]);
         assert_eq!(fields[3], ("radius", Value::F32(4.0)));
         assert_eq!(fields[9], ("animation_type", Value::Str(b"LAT_NONE".to_vec())));
         assert_eq!(fields.last().unwrap(), &("falloff_type", Value::Str(b"WPLFT_SMOOTH".to_vec())));
@@ -456,6 +514,9 @@ mod tests {
         assert_eq!(back.records.iter().map(Vec::len).collect::<Vec<_>>(), [79, 96]);
         assert_eq!(back.fields(0).unwrap().len(), 13);
         assert_eq!(back.fields(1).unwrap().last().unwrap(), &("scale_z", Value::F32(-2.0)));
+        for i in 0..2 {
+            assert_eq!(record_from_fields("PROP_MARKER", 9, &back.fields(i).unwrap()).unwrap(), back.records[i]);
+        }
     }
 
     #[test]

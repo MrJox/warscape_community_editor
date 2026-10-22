@@ -51,7 +51,7 @@ On 15,148 extracted files (every file of the kinds still to decode, five whole t
 | lossless XML | `*.outlines` (XML text: `OUTLINE_LIST` > `OUTLINE` > `position x y`) | text |
 | none | `tile.ted_binary`, `.jpg` | opaque: `tile.ted_binary` is a camera (below), the jpg a loading screen |
 
-## CHMF (`hf_height_map.data`, `hf_water_map.data`): decoded (2026-10-22, `wce_formats::chmf`)
+## CHMF (`hf_height_map.data`, `hf_water_map.data`): decoded and encoded (2026-10-22, `wce_formats::chmf`)
 
 The engine's `WARSCAPE::COMPRESSED_HEIGHT_MAP` (`Warscape.AssemblyKit.dll`, exported names: `load`, `value` 0x104a9150, the block
 decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.retail.dll` fn 0x11857a00).
@@ -70,8 +70,12 @@ decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.r
   `final_heights.dds` of mont_blanc: the pack was built from an older raw tile, so only 57 % of the samples agree within 1 cm).
 - Checked: the 1,911 extracted CHMF files (vanilla and TDD, battle and campaign, versions 4 and 5) parse, decode and write back
   byte-identically; on mont_blanc the steps across block borders are the same as inside blocks (mean 1.08 against 1.11 m: no seams).
-- Not exact against an oracle yet (the only BOB-made pair in `~/wce_re/bobkit` is a flat tile); the encoder BOB uses (`convert`,
-  0x104aae80 / 0x104ab0d0 / 0x104ac240) is for step 4.
+- **The encoder** (`encode_region`, the engine's `FUN_104aa1b0`): every block holds 256 samples, those past the last row / column clamped
+  to it (the game's `value` reads an edge block with the remaining width as its stride, so it misreads the last partial column and row;
+  the model holds the encoder's samples). Mode: one value -> 0; up to 128 values -> a palette unless the delta (bits of max - min) is
+  smaller; more -> the delta unless it is 513 bytes or more (then raw). The region's two u16 are the smallest and largest sample, except in
+  17 flat files (kept as data). Decode then encode gives 1,349 + 17 of the 1,911 files byte for byte; the other 545 (TDD campaign tiles)
+  have short block tables, not the engine's encoder: written from their original bytes while their samples are unchanged.
 
 ## Markers (`*.markers`): decoded (2026-10-22, `wce_formats::markers`)
 
@@ -131,3 +135,16 @@ Every kind of file of the exported tiles has a codec that writes it back byte fo
 all identical). Decoded to values: CHMF heights, markers, building lists, the old lists, and (rpfm_lib) the FASTBIN lists, BMD binaries,
 terrain meshes, the tile database. Still raw inside their codec: the bytes of the older particle emitter versions (4 to 8), a few prop
 bytes, the campaign `bmd.grass_list` / `bmd.tree_list` (ESF nodes not mapped), `tile.ted_binary`.
+
+## Step 2: the format `attila.tile_binary` (2026-10-22, `wce_tile_io::attila::tile_binary`)
+
+An exported tile folder into the model and back (docs/formats/tile_model.md, "attila.tile_binary"). Gate `tile_binary_roundtrip_check`
+over every tile folder of Attila's 31 packs, read from the packs (`docs/baseline/tile_binary_roundtrip_check.txt`, about 3 min): **1,756
+folders, every file the format reads identical** (49 kinds: markers, building lists, tree / grass lists of both formats, BMD binaries, the
+civilian lists, the tile databases, CHMF, every XML file including the ones with text and comments), the models read back from the written
+files equal; kept as original bytes: 545 CHMF (short tables) and 4,438 DXT5 textures (`blend`, `index`, `normal`: the compressor is
+step 4); carried as files: the terrain meshes (2,809), loading screens (194), `tile.ted_binary` (22), stray textures, `assembly_kit_rules.bob`.
+
+Notes from the gate: rpfm_lib invents an `id` (u64, random) for trees and capture locations that is not in the files; the model sets it
+to 0 (a re-read is the same model, the bytes prove no `id` is data). `building_list.xml` has the root of the binary list: the writer picks
+the codec by the file's name first.

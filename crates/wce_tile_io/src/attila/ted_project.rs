@@ -54,8 +54,9 @@ fn classify(name: &str) -> Option<Part> {
     })
 }
 
-fn file_name(part: Part) -> String {
-    match part {
+/// The file of a part; `None` for a map TEd's projects do not have.
+fn file_name(part: Part) -> Option<String> {
+    Some(match part {
         Part::Scene => "tile.ted".to_owned(),
         Part::River(None) => "river_spline.xml".to_owned(),
         Part::River(Some(n)) => format!("river_spline{n}.xml"),
@@ -64,7 +65,8 @@ fn file_name(part: Part) -> String {
         Part::Map(MapKind::GroundType, _) => "ground_type_map.png".to_owned(),
         Part::Map(MapKind::Nogo, _) => "nogo.png".to_owned(),
         Part::Map(MapKind::LfInfluence, _) => "lf_influence_map.png".to_owned(),
-    }
+        Part::Map(MapKind::Water | MapKind::BlendTexture | MapKind::IndexTexture | MapKind::NormalTexture, _) => return None,
+    })
 }
 
 fn merge(into: &mut ReadStats, from: ReadStats) {
@@ -165,19 +167,21 @@ impl TileFormat for TedProject {
         };
 
         if let Some(scene) = &tile.scene {
-            let name = file_name(Part::Scene);
+            let name = "tile.ted".to_owned();
             let bytes = xml::write(scene, &style(&name, DocStyle::ted), &TedSchema);
             put(name, bytes, PartWritten::Encoded, &mut out);
         }
 
         for r in &tile.rivers {
-            let name = file_name(Part::River(r.index));
+            let name = file_name(Part::River(r.index)).expect("a river file");
             let bytes = xml::write(&r.root, &style(&name, DocStyle::ted), &RiverSchema);
             put(name, bytes, PartWritten::Encoded, &mut out);
         }
 
         for m in &tile.maps {
-            let name = file_name(Part::Map(m.kind, m.index));
+            let Some(name) = file_name(Part::Map(m.kind, m.index)) else {
+                return Err(TileIoError::File { file: format!("{:?} map", m.kind), what: "a TEd project has no such map".to_owned() });
+            };
             let trivia = own.then(|| tile.trivia::<ImageTrivia>(&name)).flatten();
             let fail = |what: String| TileIoError::File { file: name.clone(), what };
             let (bytes, how) = if m.kind == MapKind::Blend {
@@ -212,7 +216,7 @@ mod tests {
     #[test]
     fn file_names_round_trip() {
         for name in ["tile.ted", "height_map_0.png", "height_map_12.png", "river_spline.xml", "river_spline3.xml", "blend_map.tif", "nogo.png"] {
-            assert_eq!(file_name(classify(name).unwrap()), name);
+            assert_eq!(file_name(classify(name).unwrap()).unwrap(), name);
         }
 
         for other in ["height_map_01.png", "river_spline_a.xml", "height_map_.png", "tile.ted.bak", "final_heights.dds"] {

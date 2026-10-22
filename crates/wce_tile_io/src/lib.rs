@@ -7,6 +7,7 @@
 //! Formats: [`attila::TedProject`] (`attila.ted_project`).
 
 pub mod attila;
+pub mod serde_node;
 pub mod xml;
 
 use std::collections::BTreeMap;
@@ -185,7 +186,7 @@ pub trait TileFormat: Sync {
 
 /// Every format, in the order they are tried.
 pub fn formats() -> Vec<Box<dyn TileFormat>> {
-    vec![Box::new(attila::TedProject)]
+    vec![Box::new(attila::TedProject), Box::new(attila::TileBinary)]
 }
 
 /// The format of a format id.

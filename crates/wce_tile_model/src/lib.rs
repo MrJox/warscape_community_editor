@@ -17,5 +17,5 @@ pub mod value;
 pub use self::node::{Node, Prop, Trivia};
 pub use self::raster::{Raster, Samples};
 pub use self::sym::{Sym, SymCache};
-pub use self::tile::{Blob, Entry, MapKind, OpaqueFile, RiverSplines, SourceTrivia, Tile, TileMap};
+pub use self::tile::{Blob, Document, Entry, MapKind, OpaqueFile, RiverSplines, SourceTrivia, Tile, TileMap};
 pub use self::value::Value;

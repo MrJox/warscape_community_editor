@@ -6,11 +6,16 @@
 //! rectangles, in samples), f32 min, f32 range; version 5: u32 spacing (metres per sample); u32 region count, per region `x0, y0, x1, y1`
 //! (in cells, end exclusive); then per region: u16 x 2, u32 block count, u32 data size, the block offsets, the block data.
 //!
-//! A region is cut into blocks of 16 x 16 samples, row by row (the last block of a row or column holds what is left); the table can stop
-//! early (TDD's campaign tiles): the game reads a sample of a missing block as 0 (`value`). A block starts with a
+//! A region is cut into blocks of 16 x 16 samples, row by row. Every block holds 256 samples: the encoder (`FUN_104aa1b0`) clamps the
+//! coordinates of the blocks past the last row or column to it. (The game's `value` reads an edge block with the width of what is left as
+//! its row stride, so it misreads the samples of the last partial column and row; the samples here are the encoder's.) The table can stop
+//! early (TDD's campaign tiles): the game reads a sample of a missing block as 0. A block starts with a
 //! mode byte `k`: 0 = one value (u16); 1 ..= 127 = a palette of `k + 1` u16 values, then one index per sample of 1 to 7 bits
 //! (`ceil(log2(k + 1))`); 128 ..= 142 = a u16 base, then `k - 127` bits per sample added to it; 143 = one u16 per sample. Bits are packed
 //! from the low bit of each byte. A sample is `value / 65535`, the height `min + range * sample`.
+//!
+//! [`encode_region`] is the encoder: one value gives mode 0; up to 128 values a palette, unless the delta (bits of max - min) is smaller;
+//! more values the delta, unless it is 513 bytes or more (then raw). The region's two u16 are its smallest and largest sample.
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -234,10 +239,10 @@ impl ChmfFile {
                 let Some(bytes) = r.data.get(start..end.max(start)) else { return fail("block offset out of range") };
                 let (cw, ch) = ((w - bx * 16).min(16), (h - by * 16).min(16));
                 block.clear();
-                decode_block(bytes, (cw * ch) as usize, &mut block)?;
+                decode_block(bytes, 256, &mut block)?;
                 for y in 0..ch {
                     for x in 0..cw {
-                        out[((by * 16 + y) * w + bx * 16 + x) as usize] = block[(y * cw + x) as usize];
+                        out[((by * 16 + y) * w + bx * 16 + x) as usize] = block[(y * 16 + x) as usize];
                     }
                 }
             }
@@ -250,6 +255,97 @@ impl ChmfFile {
     pub fn metres(&self, sample: u16) -> f32 {
         self.min + self.range * (f32::from(sample) / 65535.0)
     }
+}
+
+/// Packs values of `bits` bits from the low bit of each byte, as the encoder does.
+fn pack(values: impl Iterator<Item = u32>, bits: u32, out: &mut Vec<u8>) {
+    let (mut acc, mut n) = (0u64, 0u32);
+    for v in values {
+        acc |= u64::from(v) << n;
+        n += bits;
+        while n > 7 {
+            out.push(acc as u8);
+            acc >>= 8;
+            n -= 8;
+        }
+    }
+
+    if n != 0 {
+        out.push(acc as u8);
+    }
+}
+
+/// One block of 256 samples, as the engine's encoder writes it.
+pub fn encode_block(samples: &[u16; 256], out: &mut Vec<u8>) {
+    let mut distinct = samples.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let (lo, hi) = (distinct[0], distinct[distinct.len() - 1]);
+    let delta_bits = u16::BITS - (hi - lo).leading_zeros();
+    let delta_size = if hi == lo { 0 } else { ((delta_bits * 256 + 7) >> 3) + 3 } as usize;
+    let delta = |out: &mut Vec<u8>| {
+        out.push((delta_bits + 0x7F) as u8);
+        out.extend_from_slice(&lo.to_le_bytes());
+        pack(samples.iter().map(|&s| u32::from(s - lo)), delta_bits, out);
+    };
+
+    let n = distinct.len();
+    if n < 2 {
+        out.push(0);
+        out.extend_from_slice(&lo.to_le_bytes());
+    } else if n <= 128 {
+        let bits = match n {
+            2 => 1,
+            3..=4 => 2,
+            5..=8 => 3,
+            9..=16 => 4,
+            17..=32 => 5,
+            33..=64 => 6,
+            _ => 7,
+        };
+
+        if delta_size < ((bits as usize * 256 + 7) >> 3) + 1 + n * 2 {
+            delta(out);
+        } else {
+            out.push((n - 1) as u8);
+            for v in &distinct {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+
+            pack(samples.iter().map(|s| distinct.binary_search(s).expect("a palette entry") as u32), bits, out);
+        }
+    } else if delta_size < 0x201 {
+        delta(out);
+    } else {
+        out.push(0x8F);
+        for s in samples {
+            out.extend_from_slice(&s.to_le_bytes());
+        }
+    }
+}
+
+/// A region's samples (`w` x `h`, row-major) as the engine's encoder writes them: its two u16 (smallest and largest sample), the block
+/// offsets and the block data.
+pub fn encode_region(w: u32, h: u32, samples: &[u16]) -> ([u16; 2], Vec<u32>, Vec<u8>) {
+    let (mut offsets, mut data) = (vec![], vec![]);
+    let mut block = [0u16; 256];
+    for by in 0..h.div_ceil(16) {
+        for bx in 0..w.div_ceil(16) {
+            for y in 0..16 {
+                for x in 0..16 {
+                    let (sx, sy) = ((bx * 16 + x).min(w - 1), (by * 16 + y).min(h - 1));
+                    block[(y * 16 + x) as usize] = samples[(sy * w + sx) as usize];
+                }
+            }
+
+            offsets.push(data.len() as u32);
+            encode_block(&block, &mut data);
+        }
+    }
+
+    let lo = samples.iter().copied().min().unwrap_or(0);
+    let hi = samples.iter().copied().max().unwrap_or(0);
+    ([lo, hi], offsets, data)
 }
 
 #[cfg(test)]

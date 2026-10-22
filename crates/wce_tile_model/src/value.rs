@@ -21,6 +21,13 @@ pub enum Value {
     /// The flags that are set, in the source's order (TEd: `OIF_VISIBLE|OIF_ACTIVE`, `SEASON_BF_WINTER|...`).
     Flags(Vec<Sym>),
     Str(String),
+
+    /// A run of numbers: a matrix (16, row-major), points (x, y pairs) ...
+    Floats(Vec<f64>),
+    Ints(Vec<i64>),
+
+    /// Bytes a format keeps without knowing what they mean.
+    Bytes(Vec<u8>),
 }
 
 fn same(a: f64, b: f64) -> bool {
@@ -42,6 +49,9 @@ impl PartialEq for Value {
             (Self::Colour(a), Self::Colour(b)) => same_all(a, b),
             (Self::Flags(a), Self::Flags(b)) => a == b,
             (Self::Str(a), Self::Str(b)) => a == b,
+            (Self::Floats(a), Self::Floats(b)) => a.len() == b.len() && same_all(a, b),
+            (Self::Ints(a), Self::Ints(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
             _ => false,
         }
     }
@@ -81,6 +91,27 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::Str(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_floats(&self) -> Option<&[f64]> {
+        match self {
+            Self::Floats(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_ints(&self) -> Option<&[i64]> {
+        match self {
+            Self::Ints(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Bytes(v) => Some(v),
             _ => None,
         }
     }
