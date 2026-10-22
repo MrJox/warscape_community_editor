@@ -11,10 +11,10 @@ serde = "1"
 serde_json = "1"
 thiserror = "2"
 wce_formats = { path = "../wce_formats" }
+wce_tile = { path = "../wce_tile" }
 wce_tile_model = { path = "../wce_tile_model" }
 
 [dev-dependencies]
 serde_derive = "1"
 rayon = "1"
 wce_foundation = { path = "../wce_foundation" }
-wce_tile = { path = "../wce_tile" }

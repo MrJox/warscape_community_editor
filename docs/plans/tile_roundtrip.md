@@ -172,6 +172,27 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
    (vegetation, the tile database and the battle map fill are ported already). Check: raw -> binary equals BOB; binary -> raw -> binary
    keeps every value.
 
+### Step 4 plan (raw -> binary, 2026-10-22; user: A first, TEd stays parked)
+
+The binary is written in three stages (docs/plans/tile.md): **A** TEd's export of the logic, **B** BOB's Tile processor, **C** BOB's
+Vegetation processor. Each output kind is one compiler module (`wce_tile_io::attila::compile`), from the model of a TEd project to the
+model of `attila.tile_binary`, so the binary writer of step 2 gives the bytes.
+
+| Stage | Outputs | Oracle | Already there |
+| --- | --- | --- | --- |
+| A | `building_list` (+ far, sprawl), the `.markers` (props, emitters, lights, AI hints, separators), `definition.xml`, `terrain_outlines` / `non_terrain_outlines.xml`, `zones.xml`, `deployment_areas.xml`, `capture_location_list.xml`, `bmd_data_escalation<n>.bin`, `civilian_*.bin`, siege graph | **binary -> raw -> binary** over the 1,654 tile folders of the packs (the decompiler is the inverse of A; what it cannot carry is listed per tile); the kit's raw tiles where the packs are their export | the frames and conventions of step 3, `building_db` |
+| B | `blend.dds`, `index.dds`, `normal.dds` (DXT5, ATI's compressor), `ground_types.dds`, `hf_height_map.data` (final heights + building stamps), `hf_water_map.data`, `mesh.rigid_model_v2` / `outfield_mesh` (decimation), `final_*.dds`, `protection_map.dds`, `tile_normal.tga` | fresh BOB under Wine (`bob_tile.sh`), byte for byte (the 11 uninitialised RMV2 bytes masked) | the CHMF encoder, the blend reduction and ground type rule (docs/re/terrain.md), DDS containers |
+| C | tree / grass lists, `*_procedural_bmd_data` | fresh BOB (`bob_veg.sh`) | the vegetation port (exact on 11 tiles; the grass bug keeps it on pass-through until fixed) |
+| - | the tile database row and `tile_database.bin` | BOB | `tdb_build` (0 bytes differ) |
+
+**Exactness (user, 2026-10-22):** the shipped binaries were exported from TEd's in-memory floats, finer than tile.ted's `%.6f` text
+(an exact 180 degree turn comes from no euler text), so binary -> raw -> binary tolerates the float steps the text cannot carry (a few
+f32 ulps for positions, 1e-6 for quaternions) and is byte-exact for everything else. The compiler follows TEd's arithmetic (Ghidra:
+`Ted::BMDExporter::export_`, `Ted::transform_to_game_tile_space`, the quaternion `FUN_00474030`).
+
+Order: A, then B one output at a time (blend / index / ground types first: their rule is known, the compressor is the work), then the
+heights and meshes; C is wired to the existing port behind a switch once its bug is fixed.
+
 ### Progress
 
 - **Step 1 done**: inventory and decoding (docs/formats/tile_binary.md): every kind of file of the exported tiles has a codec; CHMF heights
@@ -218,6 +239,11 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
   - **Step 3 done** (2026-10-22): every tile folder of the packs decompiles and reads back (gates `tile_decompile`,
     `tile_decompile_all`); docs/formats/tile_decompile.md. For step 4: BOB writes its DDS with ATI's compressor
     (`TOOLDATABUILDER::write_dds_ATI_compressor`).
+- **Step 4 in progress** (docs/formats/tile_compile.md): stage A's building lists compile from the decompiled projects of every tile
+  folder of the packs within the text's precision (keys and flags identical over 4,063,006 buildings); the gates compare them. TEd's
+  export read in Ghidra (`Ted::BMDExporter::export_`): destruction levels are the most destructs over a building's pieces, the starting
+  damage level / max or the building's `destruct_thresholds`. Next: the markers (props, emitters, lights, AI hints, separators), then
+  definition.xml, outlines, zones, deployment, capture locations, BMD escalation, civilian lists.
 
 ### Decisions (2026-10-22)
 
