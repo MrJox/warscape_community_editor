@@ -242,8 +242,11 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
 - **Step 4 in progress** (docs/formats/tile_compile.md): stage A's building lists compile from the decompiled projects of every tile
   folder of the packs within the text's precision (keys and flags identical over 4,063,006 buildings); the gates compare them. TEd's
   export read in Ghidra (`Ted::BMDExporter::export_`): destruction levels are the most destructs over a building's pieces, the starting
-  damage level / max or the building's `destruct_thresholds`. Next: the markers (props, emitters, lights, AI hints, separators), then
-  definition.xml, outlines, zones, deployment, capture locations, BMD escalation, civilian lists.
+  damage level / max or the building's `destruct_thresholds`. Then the markers (props, emitters with their older layouts, lights, AI
+  hints, separators, the siege graph; group order = TEd's MARKER_TABLE), definition.xml (the climate carried) and the go / no-go outline
+  files, each within the text's precision on chosen tiles (western_city_b/small, a campaign river, dwarven_city_b, farms). Next: zones,
+  deployment, capture locations, BMD escalation, civilian lists, then stage B.
+  - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its
     export setup differs from vanilla.
