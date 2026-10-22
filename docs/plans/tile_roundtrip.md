@@ -244,6 +244,9 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   export read in Ghidra (`Ted::BMDExporter::export_`): destruction levels are the most destructs over a building's pieces, the starting
   damage level / max or the building's `destruct_thresholds`. Next: the markers (props, emitters, lights, AI hints, separators), then
   definition.xml, outlines, zones, deployment, capture locations, BMD escalation, civilian lists.
+  - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
+    middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its
+    export setup differs from vanilla.
 
 ### Decisions (2026-10-22)
 

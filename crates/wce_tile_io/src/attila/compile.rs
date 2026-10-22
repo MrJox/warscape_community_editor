@@ -18,6 +18,9 @@ pub struct CompileContext<'a> {
 
     /// The `destruct_thresholds` of a building key (`battlefield_buildings`).
     pub building_thresholds: Option<ThresholdsOf<'a>>,
+
+    /// The version to write a markers file in (by file name); without it TEd's current one.
+    pub marker_versions: Option<&'a (dyn Fn(&str) -> Option<i64> + Sync)>,
 }
 
 /// What a compilation left out or made up, as notes.
@@ -228,7 +231,166 @@ fn z_of(w: &[f32; 16]) -> f32 {
     w[11]
 }
 
-/// The stage-A documents of a project (TEd's export): the building lists so far.
+// ---- marker tables
+
+/// `EMPIREUTILITY::MARKER_TABLE`'s hash of a key's parts (docs/re/ted_export.md, "Marker tables").
+fn marker_key_hash(parts: &[&str]) -> u32 {
+    let part = |s: &str| {
+        let (mut h, mut shift) = (0xf73a_51c9u32, 0u32);
+        for u in s.encode_utf16().collect::<Vec<_>>().into_iter().rev() {
+            h ^= u32::from(u) << shift;
+            shift = (shift + 8) % 32;
+        }
+        h
+    };
+    parts.iter().fold(0u32, |h, p| {
+        let p = part(p);
+        let b = ((p as u8 ^ h as u8).wrapping_add(13) & 31) as u32;
+        ((h >> b) | (h << (b ^ 31))) ^ p
+    })
+}
+
+/// The order a `MARKER_TABLE` gives its keys (in the order of their first record): a hash table from 13 slots, linear probing,
+/// growing to 2 n + 1 slots when full; the keys in slot order.
+fn marker_table_order<'k>(keys: &[&'k str]) -> Vec<&'k str> {
+    let mut slots: Vec<Option<&str>> = vec![None; 13];
+    let insert = |slots: &mut Vec<Option<&'k str>>, k: &'k str| -> bool {
+        let n = slots.len();
+        let start = marker_key_hash(&[k]) as usize % n;
+        (0..n).map(|i| (start + i) % n).find(|&i| slots[i].is_none()).map(|i| slots[i] = Some(k)).is_some()
+    };
+
+    for &k in keys {
+        if !insert(&mut slots, k) {
+            let old = slots.iter().flatten().copied().collect::<Vec<_>>();
+            slots = vec![None; slots.len() * 2 + 1];
+            for o in old {
+                insert(&mut slots, o);
+            }
+
+            insert(&mut slots, k);
+        }
+    }
+
+    slots.into_iter().flatten().collect()
+}
+
+/// A markers document: the class's header, the records, the groups of the records by key in the marker table's order.
+fn markers_doc(name: &str, class: &str, class_id: i64, version: i64, records: Vec<(String, Node)>) -> Document {
+    let mut root = Node::new(class);
+    root.set("repository", Value::Str("BASE_MARKER_REPOSITORY".to_owned()));
+    root.set("repository_id", Value::Int(645_563));
+    root.set("repository_u32", Value::Int(1));
+    root.set("repository_u16", Value::Int(1));
+    root.set("class_id", Value::Int(class_id));
+    root.set("version", Value::Int(version));
+    let mut first: Vec<&str> = vec![];
+    let mut indices: std::collections::HashMap<&str, Vec<i64>> = std::collections::HashMap::new();
+    for (i, (k, _)) in records.iter().enumerate() {
+        if !indices.contains_key(k.as_str()) {
+            first.push(k);
+        }
+
+        indices.entry(k).or_default().push(i as i64);
+    }
+
+    let mut groups = Node::new("groups");
+    for k in marker_table_order(&first) {
+        let mut g = Node::new("group");
+        let mut key = Node::new("key");
+        key.set("value", Value::Str(k.to_owned()));
+        g.children.push(key);
+        g.set("indices", Value::Ints(indices[k].clone()));
+        groups.children.push(g);
+    }
+
+    root.children.extend(records.into_iter().map(|(_, r)| r));
+    root.children.push(groups);
+    Document { name: name.to_owned(), root }
+}
+
+/// TEd's seasons flags as the bit mask (bit 0 winter, 1 spring, 2 summer, 3 autumn); without the attribute every season.
+fn seasons_mask(n: &Node) -> i64 {
+    let Some(Value::Flags(f)) = n.get("seasons") else { return 15 };
+    ["SEASON_BF_WINTER", "SEASON_BF_SPRING", "SEASON_BF_SUMMER", "SEASON_BF_AUTUMN"]
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| f.iter().any(|x| x.as_str() == **s))
+        .map(|(i, _)| 1 << i)
+        .sum()
+}
+
+/// `prop_marker.markers`: the decals (`ProjectedDecalInstance`) and models (`SIMPLE_MESH_INSTANCE`) of the normal layers, in the scene's
+/// order. A record's 3 x 3 rows are the world rotation in the binary's frame (z mirrored: F R^T F, F = diag(1, 1, -1)) times half the
+/// instance's scale, a model's y and z rows negated; the translation (x / 2, y / 2, extent - z / 2). The inverse of the decompiler's
+/// (docs/formats/tile_decompile.md, "Rotations").
+fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
+    const NAME: &str = "prop_marker.markers";
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
+    let mut records = vec![];
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal") {
+        let n = p.node;
+        let decal = match n.class.as_str() {
+            "ProjectedDecalInstance" => true,
+            "SIMPLE_MESH_INSTANCE" => false,
+            _ => continue,
+        };
+
+        let key = n.get("key").and_then(Value::as_str).unwrap_or_default().to_owned();
+        let scale = vec3_of(n, "scale").unwrap_or([1.0; 3]);
+        let half = scale.map(|s| s * 0.5);
+        let w = &p.world;
+        let f = [1.0f32, 1.0, -1.0];
+        let mut m = [0.0f64; 16];
+        for k in 0..3 {
+            let sign = if decal || k == 0 { 1.0 } else { -1.0 };
+            let len = half[k].abs() * sign;
+            for l in 0..3 {
+                // a[k][l] = f_l f_k R[l][k] with R[l][k] = w[l * 4 + k].
+                m[k * 4 + l] = f64::from(f[l] * f[k] * w[l * 4 + k] * len);
+            }
+        }
+
+        (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7] * 0.5), f64::from(extent_z - w[11] * 0.5), 1.0);
+        let mut r = Node::new("record");
+        r.set("transform", Value::Floats(m.to_vec()));
+        r.set("unknown_64", Value::Int(0));
+        r.set("is_decal", Value::Int(i64::from(decal)));
+        for u in ["unknown_66", "unknown_67", "unknown_68"] {
+            r.set(u, Value::Int(0));
+        }
+
+        // A water plane model is flagged (FUN_00502c60 compares the model's name with `water_plane`).
+        let water = !decal && key.replace('\\', "/").rsplit('/').next().is_some_and(|f| f.eq_ignore_ascii_case("water_plane.rigid_model_v2"));
+        r.set("unknown_69", Value::Int(i64::from(water)));
+        if version >= 6 {
+            r.set("seasons", Value::Int(if decal { 15 } else { seasons_mask(n) }));
+        }
+
+        if version == 8 {
+            r.set("unknown_74", Value::Bytes(vec![0; 3].into()));
+        } else if version >= 9 {
+            r.set("unknown_74", Value::Int(0));
+            for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+                r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
+            }
+        }
+
+        if decal {
+            r.set("parallax_scale", Value::Float(f64::from(floats_of(n, "parallax_scale").and_then(|v| v.first().copied()).unwrap_or(0.0))));
+            r.set("tiled", Value::Int(i64::from(bool_of(n, "tiled", false))));
+            for (k, h) in ["scale_x", "scale_y", "scale_z"].iter().zip(half) {
+                r.set(*k, Value::Float(f64::from(h)));
+            }
+        }
+
+        records.push((key, r));
+    }
+
+    (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
+}
+
+/// The stage-A documents of a project (TEd's export): the building lists and the prop markers so far.
 ///
 /// # Errors
 ///
@@ -241,7 +403,8 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Vec<Document>, Compi
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
     let mut notes = CompileNotes::default();
-    let docs = building_lists(&placed, extent_z, ctx, &mut notes);
+    let mut docs = building_lists(&placed, extent_z, ctx, &mut notes);
+    docs.extend(prop_markers(&placed, extent_z, ctx));
     Ok((docs, notes))
 }
 
@@ -300,7 +463,7 @@ mod tests {
         ]);
         let levels = |k: &str| Some(if k == "wall" { 3 } else { 2 });
         let thresholds = |k: &str| (k == "wall").then(|| vec![0.8f32]);
-        let ctx = CompileContext { building_levels: Some(&levels), building_thresholds: Some(&thresholds) };
+        let ctx = CompileContext { building_levels: Some(&levels), building_thresholds: Some(&thresholds), ..Default::default() };
         let (docs, _) = compile(&tile, &ctx).expect("compile");
         assert_eq!(docs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["building_list_veg", "building_list"]);
         let list = &docs[1].root.children;
