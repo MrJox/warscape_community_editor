@@ -639,6 +639,32 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add("where", "where [x y | on | off]", "the camera's and the cursor's coordinates (scene and game units; map cell and height above the sea in a map context); x y: the ground under that pixel of the viewport image (or 50%); on / off: the readout in the viewport", |e, a| {
+        match a.first().map(String::as_str) {
+            Some("on") | Some("off") => {
+                e.viewport.show_coords = a[0] == "on";
+                return ok("");
+            }
+
+            Some(_) if a.len() == 2 => {
+                let (w, h) = (e.viewport.width(), e.viewport.height());
+                let px = |v: &str, n: u32| match v.strip_suffix('%') {
+                    Some(p) => p.parse::<f32>().ok().map(|p| (p / 100.0 * n as f32) as i32),
+                    None => v.parse::<i32>().ok(),
+                };
+
+                let (Some(x), Some(y)) = (px(&a[0], w), px(&a[1], h)) else { return fail("usage: where [x y | on | off]") };
+                e.viewport.cursor_ground = e.viewport.ground_under(&e.scene, x, y);
+            }
+
+            Some(_) => return fail("usage: where [x y | on | off]"),
+            None => {}
+        }
+
+        ok(e.viewport.coords_lines(&e.scene).join("
+"))
+    });
+
     c.add("panel", "panel <name> on|off", "show or hide a panel (viewport outliner inspector assets log history commands)", |e, a| {
         if a.len() < 2 {
             return fail("usage: panel <name> on|off");

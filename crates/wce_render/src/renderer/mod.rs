@@ -974,6 +974,13 @@ impl Renderer {
         }
 
         apply_environment(&env, &mut self.cbs);
+
+        // Fog off: the fog pass is skipped, and the shaders that fog themselves (the rivers) get none either.
+        if !self.settings.fog {
+            self.cbs.set_f("fog_VS_PS", "g_fog_distance_start", &[1.0e9]);
+            self.cbs.set_f("fog_VS_PS", "g_fog_distance_strength", &[0.0]);
+            self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[0.0]);
+        }
         self.clock.dt = if self.clock.last_time < 0.0 { 0.016 } else { (time_s - self.clock.last_time).max(0.0) };
 
         // The clock restarted.
@@ -1007,20 +1014,24 @@ impl Renderer {
 
         self.apply_engine_ambient(&env);
 
-        // Before the shadows: the material terrain casts its own.
+        // The camera relative to the render origin (built from the relative eye: the absolute view's translation alone lost the precision).
+        let aspect = width as f32 / height as f32;
+        let o = self.camera.origin;
+        let view_m = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
+        let proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
+
+        // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
+        // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main
+        // camera's: every fourth frame the environment cube left its last face's, and the trees' and buildings' shadows changed shape.
         self.terrain.active = self.prepare_terrain_materials(scene);
         self.terrain.lod_eye = cam.eye;
-        let aspect = width as f32 / height as f32;
+        self.set_camera(&view_m, &proj, cam.eye, width, height, time_s);
         self.gpu_timer.mark("shadows");
         {
             wce_prof!("render.shadows");
             self.pass_shadows(scene, &cam, aspect, -env.to_sun(), time_s);
         }
 
-        // The camera relative to the render origin (built from the relative eye: the absolute view's translation alone lost the precision).
-        let o = self.camera.origin;
-        let view_m = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
-        let proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
         self.set_camera(&view_m, &proj, cam.eye, width, height, time_s);
         self.camera.main_view_proj = self.camera.view_proj;
         self.upload();

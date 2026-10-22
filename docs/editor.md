@@ -93,7 +93,9 @@ Layer commands: `tile_flag`, `tile_new_layer`, `tile_rename`, `tile_move_to <wha
 **Tile links** (Phase 6a, read-only; `docs/re/tile_links.md`): the Tile panel's *Tile links* section lists the entry's link targets and rules and *show on the ground* draws the cells they name coloured by link set. Commands: `tile_links [on|off]` (no argument: log them); tests `assert_links <targets> <rules> [drawn 0|1]`, `assert_link_cell <x> <y> <x0 m> <z0 m>`.
 
 Entry commands: `tiles [words]` (the browser's rows), `tile_entry` (log the entry), `assert_entry <field> <value>`, `assert_tiles <n> [words]`; test helpers `gizmo_drag <x|y|z> <pixels>` and `cam_info`. Extra commands: `tile_mode`, `brush`, `grab_to x z`, `tile_click`, `tile_click_ground`, `tile_drag_point`, `draw_polygon`, `tile_diagnostics` and the tests `assert_instances`, `assert_type_count`, `assert_world`, `assert_world_xz`, `assert_height`, `mark_height` / `assert_height_delta`, `assert_selected_type`,
-`assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored.
+`assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored. `where [x y | on | off]` prints the camera's, its orbit target's and the cursor's coordinates (scene and game units; in a map context
+also the map cell, and the cursor's height above the sea), `x y` probing the ground under that pixel; the same readout sits in the viewport's
+bottom-left corner (View > Coordinates). View > Fog turns the distance fog off (the fog pass and the rivers' own fog), as `gfx fog off`.
 
 `tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 

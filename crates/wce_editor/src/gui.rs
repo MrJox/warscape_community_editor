@@ -632,6 +632,11 @@ pub fn frame_height_with_spacing() -> f32 {
     call!(sys::igGetFrameHeightWithSpacing())
 }
 
+pub fn calc_text_size(s: &str) -> Vec2 {
+    let r = s.as_bytes().as_ptr_range();
+    call!(sys::igCalcTextSize(r.start.cast(), r.end.cast(), false, -1.0))
+}
+
 pub fn text_line_height() -> f32 {
     call!(sys::igGetTextLineHeight())
 }

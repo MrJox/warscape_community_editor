@@ -1272,6 +1272,11 @@ impl Editor {
 
             gui::menu_item_toggle("Grid", &mut self.viewport.show_grid);
             gui::menu_item_toggle("Compass", &mut self.viewport.show_compass);
+            gui::menu_item_toggle("Coordinates", &mut self.viewport.show_coords);
+            if let Some(r) = self.renderer.as_mut() {
+                gui::menu_item_toggle("Fog", &mut r.settings.fog);
+            }
+
             gui::menu_item_toggle("Snap", &mut self.viewport.snap);
             gui::separator();
             if gui::begin_menu("Frame rate cap") {

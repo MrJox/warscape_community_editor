@@ -2,6 +2,7 @@
 //! commands and scripts, first run.
 
 pub mod commands;
+pub mod coords;
 pub mod editor;
 pub mod gui;
 pub mod images;

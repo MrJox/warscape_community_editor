@@ -1567,6 +1567,7 @@ impl Tool for TileTool {
 
         self.context.poll(e, id);
         e.viewport.north = self.context.north();
+        e.viewport.map_frame = self.context.map_frame();
 
         // Structural edits move element indices: the command says what is selected afterwards.
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
