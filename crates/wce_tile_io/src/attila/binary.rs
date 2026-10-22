@@ -13,6 +13,7 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
 use wce_formats::chmf::ChmfFile;
 use wce_formats::image_containers::DdsFile;
 use wce_formats::markers::MarkersFile;
+use wce_formats::old_lists::{OldList, OldListKind};
 use wce_formats::xml_doc::XmlDoc;
 
 /// How a file of an exported tile is read.
@@ -35,7 +36,7 @@ pub enum Codec {
     Xml,
 
     /// The older tree and grass lists (no `.bin`, not FASTBIN).
-    OldList,
+    OldList(OldListKind),
 
     /// No codec: carried as bytes.
     Opaque,
@@ -70,10 +71,12 @@ pub fn codec_of(name: &str, head: &[u8]) -> Codec {
         Codec::TileDatabase
     } else if fastbin && lower.ends_with(".bin") && (lower.contains("_bmd_data") || lower.contains("bmd_data_escalation")) {
         Codec::Bmd
-    } else if lower.ends_with(".xml") && head.iter().find(|b| !b.is_ascii_whitespace() && **b != 0xEF && **b != 0xBB && **b != 0xBF) == Some(&b'<') {
+    } else if (lower.ends_with(".xml") || lower.ends_with(".outlines")) && head.iter().find(|b| !b.is_ascii_whitespace() && **b != 0xEF && **b != 0xBB && **b != 0xBF) == Some(&b'<') {
         Codec::Xml
-    } else if lower.ends_with(".tree_list") || lower.ends_with(".grass_list") {
-        Codec::OldList
+    } else if lower.ends_with(".tree_list") {
+        Codec::OldList(OldListKind::Tree)
+    } else if lower.ends_with(".grass_list") {
+        Codec::OldList(OldListKind::Grass)
     } else {
         Codec::Opaque
     }
@@ -86,8 +89,8 @@ fn rpfm<T: Decodeable + Encodeable>(bytes: &[u8], extra: &Option<DecodeableExtra
     Ok(out)
 }
 
-/// Decodes and encodes a file with its codec; `Ok` holds the encoded bytes (the caller compares them). `Opaque` and `OldList` give the
-/// bytes back as they are.
+/// Decodes and encodes a file with its codec; `Ok` holds the encoded bytes (the caller compares them). `Opaque` gives the bytes back as
+/// they are.
 ///
 /// # Errors
 ///
@@ -113,6 +116,7 @@ pub fn round_trip(codec: Codec, bytes: &[u8]) -> Result<Vec<u8>, String> {
         Codec::Markers => MarkersFile::parse(bytes).map(|f| f.write()).map_err(|e| e.0),
         Codec::Dds => DdsFile::parse(bytes).map(|f| f.write()).map_err(|e| e.0),
         Codec::Xml => XmlDoc::parse(bytes.to_vec()).map(|d| d.save()).map_err(|e| e.to_string()),
-        Codec::OldList | Codec::Opaque => Ok(bytes.to_vec()),
+        Codec::OldList(kind) => OldList::parse(kind, bytes).map(|l| l.write()).map_err(|e| e.0),
+        Codec::Opaque => Ok(bytes.to_vec()),
     }
 }

@@ -40,14 +40,16 @@ On 15,148 extracted files (every file of the kinds still to decode, five whole t
 
 | Codec | Files | Content decoded |
 | --- | --- | --- |
-| rpfm_lib ESF (CAAB) | building lists, `far_building_list`, `bmd.grass_list`, `bmd.tree_list` | the node tree (names, values); the meaning of the building fields to map |
+| rpfm_lib ESF (CAAB) | building lists, `far_building_list`, `bmd.grass_list`, `bmd.tree_list` | the node tree; **building lists typed** (`attila::building_list`, below); the campaign `bmd.*_list` not mapped yet |
 | rpfm_lib FASTBIN lists, BMD, tile database | tree / grass / civilian bins, BMD binaries | yes |
 | rpfm_lib rigid model | terrain meshes | vertices and indices |
 | `wce_formats::chmf` | `hf_height_map.data`, `hf_water_map.data` | **decoded** (heights; see below) |
-| `wce_formats::markers` | `*.markers` | framing only: **payloads to decode** (point lights and particle emitters partly known, docs/re) |
+| `wce_formats::markers` | `*.markers` | **decoded** (records split and named per class and version; see below) |
 | `wce_formats::image_containers::DdsFile` | `*.dds` | container; DXT5 pixels decoded by `dds_decode`, the compressor not reproduced |
 | lossless XML | the XML files | text |
-| none | older `.tree_list` / `.grass_list`, `tile.ted_binary`, `*.outlines`, `.jpg` | **to decode** (the jpg stays opaque) |
+| `wce_formats::old_lists` | older `.tree_list` / `.grass_list` | **decoded** (below) |
+| lossless XML | `*.outlines` (XML text: `OUTLINE_LIST` > `OUTLINE` > `position x y`) | text |
+| none | `tile.ted_binary`, `.jpg` | opaque: `tile.ted_binary` is a camera (below), the jpg a loading screen |
 
 ## CHMF (`hf_height_map.data`, `hf_water_map.data`): decoded (2026-10-22, `wce_formats::chmf`)
 
@@ -70,3 +72,62 @@ decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.r
   byte-identically; on mont_blanc the steps across block borders are the same as inside blocks (mean 1.08 against 1.11 m: no seams).
 - Not exact against an oracle yet (the only BOB-made pair in `~/wce_re/bobkit` is a flat tile); the encoder BOB uses (`convert`,
   0x104aae80 / 0x104ab0d0 / 0x104ac240) is for step 4.
+
+## Markers (`*.markers`): decoded (2026-10-22, `wce_formats::markers`)
+
+Written by `EMPIREUTILITY::BASE_MARKER_REPOSITORY::write` (`EmpireUtility.AssemblyKit.dll` 0x106e5c30; the old versions are read by each
+class's `handle_backwards_compatibility`, e.g. `POINT_LIGHT_MARKER` 0x100a1520). `wstr` = u16 count + UTF-16, `str` = u16 count + bytes.
+
+- Header: wstr `BASE_MARKER_REPOSITORY`; the repository id (16 bytes: 12 zero + u32 0x9D9BB); u32 1; u16 1; the class id (12 zero + u32);
+  wstr class name; the class id again; u32 version; u32 count.
+- The records (layouts below), then the **groups**, omitted in empty files: u16 group count; per group u16 key part count, the parts, u32
+  index count, the u32 indices of the group's records. The key is a wstr for props and lights (the model path, the TEd layer name), a u32
+  for the AI polylines and polyline lists (8 in the vanilla files: the hint type, to confirm), a str for the AI separators (`PALT_FORT`,
+  `PALT_GENERIC`). This is `EMPIREUTILITY::MARKER_IB_NODE<T>` (reader 0x1009c7d0).
+- Record layouts (`wce_formats::markers::layout`), every file of the extraction fits (records consumed exactly, the groups end the file):
+
+| Class | Version | Files | Layout |
+| --- | --- | --- | --- |
+| `PROP_MARKER` | 5, 6, 8, 9 | 71, 97, 16, 375 | 4 x 4 matrix (row-major, translation last); u8 x 6 (byte 65 = is decal); v6+: u32 seasons (15 = all); v8: 3 bytes; v9: u8, then 4 u8 visible inside / outside snow / destruction zones; if decal: f32 parallax_scale, u8 tiled, f32 scale x, y, z (z negative) |
+| `PARTICLE_EMITTER_MARKER` | 4, 5, 7, 8 | 675, 325, 75, 5 | matrix + 11, 15, 16, 18 bytes not named yet |
+| `PARTICLE_EMITTER_MARKER` | 9 | 264 | matrix; 6 bytes; u8 autoplay; u8 use_in_outfield; the 4 visibility u8; f32 scale; u32 seasons |
+| `POINT_LIGHT_MARKER` | 2, 3 | 40, 230 | f32 x, y, z, radius, r, g, b, colour_scale; v3: u8 (1); str animation type (`LAT_*`); f32 animation speed x, y, colour_min, random_offset; str falloff (`WPLFT_*`) |
+| `AI_HINT_POLYLINE_MARKER` | 1 | 613 | u32 count + (x, z) f32 points |
+| `AI_HINT_POLYLINE_LIST_MARKER` | 1 | 281 | u32 count + point lists |
+| `AI_SEPARATOR_MARKER` | 1 | 175 | u32 count + points |
+| `AI_HINT_DIRECTED_POINT`, `BUILDING`, `DECAL`, `GENERIC`, `TREE` | | 27, 27, 27, 11, 27 | no records in any shipped file |
+
+The names of the prop and particle bytes come from their distributions (seasons is 15 in every record, the four visibility bytes are 1 in
+all but 5 of 300k) and BMD's PROP / PARTICLE_EMITTER (docs/formats/fastbin_tile.md); the frames of positions against tile.ted (x, y doubled,
+z mirrored for the lights: docs/re/renderer.md) are settled in step 3.
+
+## Building lists (`building_list`, `far_building_list`, `building_list_sprawl`, `building_list_veg`): decoded (2026-10-22)
+
+CAAB ESF (rpfm_lib), `BATTLEFIELD_BUILDING_LIST` (record version 12; 11 in three sprawl lists) > `BATTLEFIELD_BUILDING_LIST_BLOCK`, one
+block per building of 17 values (15 in version 11): ascii key, vec3 position, f32 x 4 orientation (quaternion i, j, k, w), vec3 scale,
+f32 starting_damage, bool on_fire, start_disabled, weak_point, ai_breachable, indestructible, dockable, u32 position_type (2 =
+`lf_relative`), then (version 12) bool toggleable, lite. The names are the XML twin's (TEd's `building_list.xml`; `wce_tile_io::attila::
+building_list`). Checked (`tile_building_list_check`): the 591 extracted lists read (4,064,620 buildings), and the 32 that ship with an XML
+twin agree with it on every attribute of 6,698 buildings (numbers in the XML's `%.6f`, rounded half away from zero).
+
+## Older tree and grass lists: decoded (2026-10-22, `wce_formats::old_lists`)
+
+`<climate>.tree_list`, `default.tree_list`, `outfield_tents.tree_list`, `default.grass_list` (no `.bin`): u32 version, u32 type count, u32
+record count; per type a u16-counted name and the u32 index of its first record; then the records. Trees v2 (3,196 files): 10 bytes, half
+floats x, y, z (metres in the tile, up to 5,116), u8 0, u8 scale x 127, 2 bytes not named (the first 0 or 1, the second varies). Trees v0
+(5 files): 28 bytes, f32 x, y, z, f32 (0, 1, 0), 3 bytes, u8 scale x 127. Grass v1 (703): 6 bytes, half floats x, y, z. Grass v0 (5): 12
+bytes, f32 x, y, z. Every extracted file (3,909) reads with no byte left and writes back identically. Their climates are often ones Attila
+does not have (`rome_alpine`): left from Rome II, the game reads `.tree_list` still (loader list above).
+
+## `tile.ted_binary` (22 files, 76 bytes)
+
+A camera: 8 doubles stored with their two 32-bit halves swapped, after 8 bytes (0, 0xC0000000): the vertical field of view (1.0472), a
+point, the aspect ratio (1.71889), another point; then u32 0. The points do not match the kit's tile.ted cameras (the packs were built from
+other raw states). The game's tile loader does not read it; carried as an opaque file.
+
+## Step 1 status (2026-10-22)
+
+Every kind of file of the exported tiles has a codec that writes it back byte for byte (`tile_binary_check` over 15,148 extracted files:
+all identical). Decoded to values: CHMF heights, markers, building lists, the old lists, and (rpfm_lib) the FASTBIN lists, BMD binaries,
+terrain meshes, the tile database. Still raw inside their codec: the bytes of the older particle emitter versions (4 to 8), a few prop
+bytes, the campaign `bmd.grass_list` / `bmd.tree_list` (ESF nodes not mapped), `tile.ted_binary`.
