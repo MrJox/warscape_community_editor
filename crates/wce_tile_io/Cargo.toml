@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rpfm_lib.workspace = true
 thiserror = "2"
 wce_formats = { path = "../wce_formats" }
 wce_tile_model = { path = "../wce_tile_model" }

@@ -16,7 +16,9 @@ use rpfm_lib::files::bmd::Bmd;
 use rpfm_lib::files::fastbin_lists::{CivilianDeploymentFile, CivilianShelterFile, GrassListFile, TreeListFile};
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
+use wce_formats::chmf::ChmfFile;
 use wce_formats::image_containers::{DdsFile, TgaFile, TiffFile};
+use wce_formats::markers::MarkersFile;
 use wce_formats::png_file::PngFile;
 use wce_formats::xml_doc::XmlDoc;
 
@@ -71,134 +73,14 @@ fn ends_with_ci(s: &str, suffix: &str) -> bool {
 
 const FASTBIN: &[u8; 8] = b"FASTBIN0";
 
-// ---- CHMF (the version 5 height maps of the kit): the header, the data size and the offsets, the data kept as bytes.
+// ---- CHMF and .markers: their framings (wce_formats::chmf, wce_formats::markers), the data kept as bytes.
 
 fn chmf_round_trip(b: &[u8]) -> Result<Vec<u8>, String> {
-    let rd32 = |o: usize| b.get(o..o + 4).map(|x| u32::from_le_bytes(x.try_into().expect("4 bytes"))).ok_or_else(|| format!("truncated at {o}"));
-    if b.len() < 64 || &b[..4] != b"CHMF" {
-        return Err("not CHMF".to_owned());
-    }
-
-    let header = (0..16).map(|i| rd32(4 * i)).collect::<Result<Vec<_>, _>>()?;
-    if header[1] != 5 {
-        return Err(format!("unsupported version {}", header[1]));
-    }
-
-    let mut p = 4 * header.len();
-    let data_size = rd32(p)? as usize;
-    p += 4;
-    let mut offsets = vec![];
-    for _ in 0..header[15] {
-        offsets.push(rd32(p)?);
-        p += 4;
-    }
-
-    if p + data_size != b.len() {
-        return Err("data size does not match file size".to_owned());
-    }
-
-    let mut o = vec![];
-    for v in header.iter().chain([data_size as u32].iter()).chain(offsets.iter()) {
-        o.extend_from_slice(&v.to_le_bytes());
-    }
-
-    o.extend_from_slice(&b[p..]);
-    Ok(o)
+    ChmfFile::parse(b).map(|f| f.write()).map_err(|e| e.0)
 }
 
-// ---- .markers: the repository name, the raw prefix up to the class name, the class header, the payload kept as bytes.
-
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
-
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], String> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| format!("truncated at {}", self.p))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32, String> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn str16(&mut self) -> Result<String, String> {
-        let n = u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")) as usize;
-        let s = self.take(n * 2)?;
-        let mut out = String::new();
-        for c in s.chunks(2) {
-            if c[1] != 0 || c[0] >= 0x80 {
-                return Err("non-ASCII character in STR16".to_owned());
-            }
-
-            out.push(char::from(c[0]));
-        }
-
-        Ok(out)
-    }
-}
-
-fn put_str16(o: &mut Vec<u8>, s: &str) {
-    o.extend_from_slice(&(s.len() as u16).to_le_bytes());
-    for c in s.bytes() {
-        o.push(c);
-        o.push(0);
-    }
-}
-
-fn markers_round_trip(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut r = Reader { b: bytes, p: 0 };
-    let repository = r.str16()?;
-    if repository != "BASE_MARKER_REPOSITORY" {
-        return Err("not a markers file".to_owned());
-    }
-
-    // The class name: the first plausible STR16 after the repository name.
-    let start = r.p;
-    let mut found = None;
-    let mut off = start;
-    while off + 2 <= bytes.len() && off < start + 80 {
-        let mut t = Reader { b: bytes, p: off };
-        if let Ok(s) = t.str16()
-            && s.len() >= 3
-            && s.contains("MARKER")
-        {
-            found = Some((off, s));
-            break;
-        }
-
-        off += 1;
-    }
-
-    let Some((found, _)) = found else { return Err("class name not found".to_owned()) };
-    let prefix = &bytes[start..found];
-    if prefix.len() < 4 {
-        return Err("short prefix".to_owned());
-    }
-
-    let class_tag = u32::from_le_bytes(prefix[prefix.len() - 4..].try_into().expect("4 bytes"));
-    r.p = found;
-    let class_name = r.str16()?;
-    r.take(12)?;
-    if r.u32()? != class_tag {
-        return Err("class tag mismatch".to_owned());
-    }
-
-    let class_version = r.u32()?;
-    let count = r.u32()?;
-    let mut o = vec![];
-    put_str16(&mut o, &repository);
-    o.extend_from_slice(prefix);
-    put_str16(&mut o, &class_name);
-    o.extend_from_slice(&[0; 12]);
-    for v in [class_tag, class_version, count] {
-        o.extend_from_slice(&v.to_le_bytes());
-    }
-
-    o.extend_from_slice(&bytes[r.p..]);
-    Ok(o)
+fn markers_round_trip(b: &[u8]) -> Result<Vec<u8>, String> {
+    MarkersFile::parse(b).map(|f| f.write()).map_err(|e| e.0)
 }
 
 fn dds_round_trip(bytes: &[u8]) -> RoundTrip {

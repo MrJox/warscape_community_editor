@@ -2266,6 +2266,7 @@ name = "wce_tile_io"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "rpfm_lib",
  "thiserror",
  "wce_formats",
  "wce_foundation",
