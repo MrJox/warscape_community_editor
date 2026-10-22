@@ -180,8 +180,10 @@ impl Renderer {
             }
 
             inst[12..16].copy_from_slice(&[size[0], size[1], size[2], parallax]);
-            // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings).
-            inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, 1.0]);
+            // POSITION5 = (tiled, opacity, snow): the decal takes snow while it snows (ASSUMPTION, as the buildings); with snow regions only
+            // inside them.
+            let snow = if scene.snowy_at(w.m[0][3], w.m[2][3]) { 1.0 } else { 0.0 };
+            inst[16..19].copy_from_slice(&[if tiled { 1.0 } else { 0.0 }, opacity, snow]);
             let r = 0.5 * (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() / units;
             d.items.push(DecalItem { entity, model, inst, sphere: [w.m[0][3], w.m[1][3], w.m[2][3], r] });
         };
@@ -320,6 +322,7 @@ impl Renderer {
     pub(crate) fn pass_decals(&mut self, scene: &RenderScene) {
         wce_prof!("render.decals");
         self.collect_decals(scene);
+        self.set_snowing(self.snow_region.unwrap_or(self.snow_weather));
 
         // The visible decals, in runs of one model.
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);

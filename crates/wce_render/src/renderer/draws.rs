@@ -9,7 +9,7 @@ use std::sync::Arc;
 use wce_d3d11::*;
 use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene, StructureChange};
+use wce_scene::render_scene::{EntityId, MODEL_SNOW_SUFFIX, Payload, RenderScene, StructureChange};
 
 use super::{Renderer, dynamic_buffer};
 use crate::draw_set::{DrawSet, Frustum, View as DrawView, Visible};
@@ -440,20 +440,32 @@ impl Renderer {
 
     /// The mesh instances among `entities` as items (one cache lookup and one lock per distinct model).
     fn add_draws(&mut self, scene: &RenderScene, entities: &[wce_scene::render_scene::Entity], eye: Float3) {
-        let mut resolved = HashMap::<&str, Option<Arc<GpuModel>>>::new();
+        let mut resolved = HashMap::<String, Option<Arc<GpuModel>>>::new();
+        let mut resolve = |r: &mut Self, path: &str, e: &wce_scene::render_scene::Entity| {
+            resolved.entry(path.to_owned()).or_insert_with(|| {
+                let d = Float3::new(e.world.m[0][3] - eye.x, e.world.m[1][3] - eye.y, e.world.m[2][3] - eye.z);
+                r.models.try_get(path, length(d))
+            }).clone()
+        };
+
         for e in entities {
             let Payload::MeshInstance(mi) = &e.payload else { continue };
             if !scene.drawable(e) {
                 continue;
             }
 
-            let m = resolved.entry(&mi.model).or_insert_with(|| {
-                let d = Float3::new(e.world.m[0][3] - eye.x, e.world.m[1][3] - eye.y, e.world.m[2][3] - eye.z);
-                self.models.try_get(&mi.model, length(d))
-            }).clone();
+            // In snow regions (a map context's season): the instance takes snow by where it stands; a tree in a snowy cell is filed under
+            // its `#snow` model, drawn with the snow's intensity (the tree shaders have no flag of their own).
+            let snowy = scene.snow().map(|s| s.at(e.world.m[0][3], e.world.m[2][3]));
+            let mut m = resolve(self, &mi.model, e);
+            let tree = m.as_ref().is_some_and(|m| m.meshes.iter().any(|mesh| mesh.kind.is_tree()));
+            let path = if tree && snowy == Some(true) { format!("{}{MODEL_SNOW_SUFFIX}", mi.model) } else { mi.model.clone() };
+            if path != mi.model {
+                m = resolve(self, &path, e);
+            }
 
             let Some(m) = m else {
-                if self.models.state(&mi.model) != State::Failed {
+                if self.models.state(&path) != State::Failed {
                     self.draw_lists.waiting += 1;
                     self.draw_lists.waiting_ids.push(e.id);
                 }
@@ -461,7 +473,12 @@ impl Renderer {
                 continue;
             };
 
-            let params: [f32; 16] = std::array::from_fn(|i| [mi.p4, mi.p5, mi.p6, mi.p7][i / 4][i % 4]);
+            let mut params: [f32; 16] = std::array::from_fn(|i| [mi.p4, mi.p5, mi.p6, mi.p7][i / 4][i % 4]);
+            if let (Some(snowy), false) = (snowy, tree) {
+                // POSITION5.w: the rigid shaders put snow on the instance while it snows.
+                params[7] = if snowy { params[7].max(1.0) } else { 0.0 };
+            }
+
             let item = self.draw_lists.draws.add(&m, &e.world, Some(&params), mi.casts_shadow, mi.lod, e.id);
             if let Some(slot) = self.draw_lists.item_of_entity.get_mut(e.id as usize) {
                 *slot = item;

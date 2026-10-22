@@ -152,7 +152,7 @@ struct LfDraw {
 }
 
 /// A material's blend boxes this frame (with the LF map their terrains read): the instance rows.
-type MaterialBoxes = (Arc<TerrainMaterial>, Option<Arc<LfMap>>, Vec<f32>);
+type MaterialBoxes = (Arc<TerrainMaterial>, Option<Arc<LfMap>>, Vec<f32>, bool);
 
 /// One patch's vertex buffer: the 65 x 65 grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the vertices
 /// repeat its edge (the index buffers of a smaller patch never reach them).
@@ -399,6 +399,10 @@ pub(crate) struct TerrainGpuState {
     ds_lequal: Option<ID3D11DepthStencilState>,
     ds_stencil: Option<ID3D11DepthStencilState>,
     ds_resolve: Option<ID3D11DepthStencilState>,
+
+    /// Snow regions: a snowy tile's boxes mark its pixels 3 (2 | 1), resolved apart with the snow's intensity (3 -> 1).
+    ds_stencil_snow: Option<ID3D11DepthStencilState>,
+    ds_resolve_snow: Option<ID3D11DepthStencilState>,
     bs_add: Option<ID3D11BlendState>,
     rs_front_cull: Option<ID3D11RasterizerState>,
 }
@@ -458,15 +462,22 @@ impl Renderer {
         // The terrain-blend meshes' view-space depth comes from another vertex shader than their G-buffer pass: not bit for bit the same depth.
         t.ds_lequal = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() });
 
-        // Only the terrain pixels (stencil 2) ...
+        // Only the terrain pixels (stencil 2, or 3 once a snowy tile marked them: bit 1 is what is tested) ...
         let keep = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL, ..replace };
-        let mut s = D3D11_DEPTH_STENCIL_DESC { DepthEnable: false.into(), StencilEnable: true.into(), StencilReadMask: 0xFF, StencilWriteMask: 0xFF, FrontFace: keep, BackFace: keep, ..Default::default() };
+        let mut s = D3D11_DEPTH_STENCIL_DESC { DepthEnable: false.into(), StencilEnable: true.into(), StencilReadMask: 0x02, StencilWriteMask: 0xFF, FrontFace: keep, BackFace: keep, ..Default::default() };
         t.ds_stencil = depth_stencil(&dev, &s);
 
-        // ... and they become geometry (stencil 1) for the lights.
+        // A snowy tile's boxes (ref 3) also set bit 0 of the pixels they draw.
+        let mark = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_REPLACE, ..keep };
+        t.ds_stencil_snow = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { StencilWriteMask: 0x01, FrontFace: mark, BackFace: mark, ..s });
+
+        // ... and they become geometry (stencil 1) for the lights: 2 -> 1 here, 3 -> 1 (bit 1 cleared) in the snowy resolve.
+        s.StencilReadMask = 0xFF;
         s.FrontFace.StencilPassOp = D3D11_STENCIL_OP_DECR;
         s.BackFace = s.FrontFace;
         t.ds_resolve = depth_stencil(&dev, &s);
+        let clear = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_ZERO, ..keep };
+        t.ds_resolve_snow = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { StencilWriteMask: 0x02, FrontFace: clear, BackFace: clear, ..s });
 
         // The tiles accumulate (premultiplied by their alpha).
         t.bs_add = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
@@ -972,7 +983,7 @@ impl Renderer {
             return;
         }
 
-        self.draw_terrain_material(&ents, [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
+        self.draw_terrain_material(&ents, scene.snow(), [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
     }
 
     /// Brings the GPU materials and texture arrays up to date with the scene's terrains (dropping those no terrain uses).
@@ -1000,7 +1011,7 @@ impl Renderer {
     }
 
     /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
-    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], shaders: [std::rc::Rc<GameShader>; 7]) {
+    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], snow: Option<&wce_scene::render_scene::SnowRegions>, shaders: [std::rc::Rc<GameShader>; 7]) {
         let ents = ents.to_vec();
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
@@ -1048,7 +1059,7 @@ impl Renderer {
 
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
         let mut by_material: Vec<MaterialBoxes> = vec![];
-        let mut slot: HashMap<(u64, u64), usize> = HashMap::new();
+        let mut slot: HashMap<(u64, u64, bool), usize> = HashMap::new();
         let (u, view_proj) = (self.camera.units, self.camera.main_view_proj);
         for e in &ents {
             let Payload::Terrain(t) = &e.payload else { continue };
@@ -1061,12 +1072,14 @@ impl Renderer {
             // maps and the layer base 0 (T3).
             let o = self.camera.origin;
             let inst = [0.0, 1.0, 2.0, 3.0, (b[0] - o.x) * u, (b[1] - o.y) * u, (b[2] - o.z) * u, 0.0, (b[3] - o.x) * u, (b[4] - o.y) * u, (b[5] - o.z) * u, 0.0, rot, 0.0, 0.0, 0.0];
-            let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id));
+            // In snow regions: whether the tile's cell (its box's centre) has snow.
+            let snowy = snow.is_some_and(|s| s.at(0.5 * (b[0] + b[3]), 0.5 * (b[2] + b[5])));
+            let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id), snowy);
             match slot.get(&key) {
                 Some(&k) => by_material[k].2.extend(inst),
                 None => {
                     slot.insert(key, by_material.len());
-                    by_material.push((m, t.lf.clone(), inst.to_vec()));
+                    by_material.push((m, t.lf.clone(), inst.to_vec(), snowy));
                 }
             }
         }
@@ -1135,13 +1148,13 @@ impl Renderer {
         // material cost 8 us each), each drawn from its first instance; more than it holds, a buffer's worth at a time.
         let Some(inst_vb) = self.terrain.inst_vb.clone() else { return };
         let capacity = INSTANCE_BYTES / 4 / 16;
-        let total = by_material.iter().map(|(_, _, b)| b.len() / 16).sum::<usize>();
+        let total = by_material.iter().map(|(_, _, b, _)| b.len() / 16).sum::<usize>();
         let mut box_first = vec![None; by_material.len()];
         if total <= capacity {
-            let all = by_material.iter().flat_map(|(_, _, b)| b.iter().copied()).collect::<Vec<f32>>();
+            let all = by_material.iter().flat_map(|(_, _, b, _)| b.iter().copied()).collect::<Vec<f32>>();
             if ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &all)) {
                 let mut at = 0u32;
-                for (k, (_, _, b)) in by_material.iter().enumerate() {
+                for (k, (_, _, b, _)) in by_material.iter().enumerate() {
                     box_first[k] = Some(at);
                     at += (b.len() / 16) as u32;
                 }
@@ -1150,8 +1163,13 @@ impl Renderer {
 
         ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb.clone())], &[12, 64], &[0, 0]);
         ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
-        for (k, (m, lf, boxes)) in by_material.into_iter().enumerate() {
+        for (k, (m, lf, boxes, snow)) in by_material.into_iter().enumerate() {
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
+            if snow {
+                self.ctx.set_depth_stencil_state(self.terrain.ds_stencil_snow.as_ref(), 3);
+            } else {
+                self.ctx.set_depth_stencil_state(self.terrain.ds_stencil.as_ref(), 2);
+            }
 
             // The LF map's normals, at uv = (x, -z) / g_world_dimensions (wrapping); a flat normal without one.
             let lf_normal = lf.as_ref().and_then(|lf| self.terrain.lf.get(&lf.id)).and_then(|l| l.normal.srv.clone()).or_else(|| g.lf_normal.srv.clone());
@@ -1262,8 +1280,18 @@ impl Renderer {
         bind_sampler(ctx, &res_ps, "s_shroud", self.states.s_clamp_linear.as_ref());
         ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);
         ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        ctx.draw(6, 0);
 
+        // With snow regions: the pixels of the tiles outside them as the weather snows, then those inside at their intensity.
+        if let Some(region) = self.snow_region {
+            let weather = self.snow_weather;
+            self.set_snowing(weather);
+            self.ctx.draw(6, 0);
+            self.set_snowing(region);
+            self.ctx.set_depth_stencil_state(self.terrain.ds_resolve_snow.as_ref(), 3);
+            self.draw_stats.draw_calls += 1;
+        }
+
+        self.ctx.draw(6, 0);
         self.draw_stats.draw_calls += 1;
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());

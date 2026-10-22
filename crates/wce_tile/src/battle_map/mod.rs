@@ -123,6 +123,15 @@ pub fn kit_maps(raw_root: &Path) -> Vec<String> {
     out
 }
 
+/// A kit map's snow in a season (`snow_map_<season>.png`: white cells have snow, black none, blue is sea): its size and a byte per cell
+/// (1: snow), row by row; none without the file or without a snowy cell (only the campaign map's winter has them).
+pub fn load_snow_map(map: &Path, season: &str) -> Option<(u32, u32, Vec<u8>)> {
+    let bytes = std::fs::read(map.join(format!("snow_map_{season}.png"))).ok()?;
+    let (w, h, px) = png_rgb(&bytes).ok()?;
+    let cells: Vec<u8> = px.iter().map(|p| u8::from(p[0] > 200 && p[1] > 200 && p[2] > 200)).collect();
+    cells.contains(&1).then_some((w, h, cells))
+}
+
 /// A kit map filled as BOB does, with its `lf_heights.tif`.
 ///
 /// # Errors

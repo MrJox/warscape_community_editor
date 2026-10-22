@@ -122,6 +122,11 @@ impl Renderer {
                     return false;
                 }
 
+                // With snow regions a tree batch snows by its model's mark (MODEL_SNOW_SUFFIX), the rest at the regions' intensity.
+                if let Some(region) = r.snow_region {
+                    r.set_snowing(if m.kind.is_tree() && !m.snow { r.snow_weather } else { region });
+                }
+
                 if !bound {
                     r.bind(&vs);
                     for &slot in vs.textures.values() {

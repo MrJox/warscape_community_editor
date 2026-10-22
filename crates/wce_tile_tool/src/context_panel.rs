@@ -13,7 +13,7 @@ use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::{log, wce_prof};
 use wce_foundation::math::Float4x4;
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, RenderScene, SourceRef};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, RenderScene, SnowRegions, SourceRef};
 use wce_tile::battle_map::context::{CELL, PlacedMap, Spot};
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
@@ -80,6 +80,13 @@ pub struct ContextUi {
     sea_at: (f64, f64),
     db: Option<(PathBuf, Arc<TileDatabase>)>,
     maps_for: PathBuf,
+
+    /// The season's snow where the map has it (its `snow_map_<season>.png`), how much; the snow map loaded (map folder, season) and the
+    /// regions' key the scene has (season, on, amount).
+    pub snow_on: bool,
+    pub snow_amount: f32,
+    snow_map: Option<(PathBuf, String, Option<Arc<SnowMap>>)>,
+    snow_key: Option<(String, bool, u32)>,
 }
 
 impl Default for ContextUi {
@@ -88,10 +95,13 @@ impl Default for ContextUi {
             shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
-            sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(),
+            sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
         }
     }
 }
+
+/// A season's snow map: its size and a byte per cell.
+type SnowMap = (u32, u32, Vec<u8>);
 
 fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabase>, String> {
     if let Some((r, db)) = &ui.db
@@ -359,10 +369,57 @@ impl ContextUi {
         true
     }
 
+    /// The map's folder in the kit (its season maps).
+    fn map_dir(&self, raw: &Path) -> Option<PathBuf> {
+        let (name, _, _) = self.loaded.as_ref()?;
+        let folder = if name == GAME_MAP { GAME_DIR.rsplit('/').next().unwrap_or_default() } else { name.as_str() };
+        Some(raw.join("terrain/battles").join(folder))
+    }
+
+    /// The scene's snow regions for the open tile's season (the map's snow map of it), made again when the season, the switch or the
+    /// amount change; and a new context when the tile's look is no longer the one the context was made with (its tiles' textures).
+    fn follow_look(&mut self, e: &mut Editor) {
+        let Some(d) = e.docs.find_as::<TileDocument>(self.doc) else { return };
+        let look = d.tile().terrain_look().clone();
+        let raw = d.project().raw_root.clone();
+        let Some(s) = self.streamer.as_ref() else { return };
+        if s.frame().look != look {
+            let doc = self.doc;
+            self.rebuild(e, doc);
+            return;
+        }
+
+        let key = (look.season.clone(), self.snow_on, self.snow_amount.to_bits());
+        if self.snow_key.as_ref() == Some(&key) {
+            return;
+        }
+
+        self.snow_key = Some(key);
+        let dir = raw.as_deref().and_then(|r| self.map_dir(r));
+        let regions = match (self.snow_on, dir) {
+            (true, Some(dir)) => {
+                if self.snow_map.as_ref().is_none_or(|(d, season, _)| *d != dir || *season != look.season) {
+                    let cells = wce_tile::battle_map::load_snow_map(&dir, &look.season).map(Arc::new);
+                    self.snow_map = Some((dir, look.season.clone(), cells));
+                }
+
+                let to_cell = s.frame().to_map.m.map(|row| row.map(|v| v as f32));
+                self.snow_map.as_ref().and_then(|(_, _, c)| c.clone()).map(|c| SnowRegions {
+                    to_cell, w: c.0, h: c.1, cells: Arc::new(c.2.clone()), amount: self.snow_amount,
+                })
+            }
+
+            _ => None,
+        };
+
+        e.scene.set_snow(regions);
+    }
+
     /// One update of the streamer: the chunks it finished replace theirs on the layer, the ones it dropped go (one pass over the scene); the
     /// sea follows the focus.
     pub fn stream(&mut self, e: &mut Editor) -> bool {
         wce_prof!("context.stream");
+        self.follow_look(e);
         let Some(focus) = self.focus(e) else { return false };
         let widened = self.follow_view(e, focus);
         let reach = self.sea_reach();
@@ -505,6 +562,8 @@ impl ContextUi {
 
         self.streamer = None;
         e.scene.sea_level = 0.0;
+        e.scene.set_snow(None);
+        self.snow_key = None;
         self.chunks.clear();
         self.waiting.clear();
         self.gone.clear();
@@ -619,6 +678,18 @@ impl ContextUi {
                     d.tile_mut().set_terrain_look(&mut e.scene, TerrainLook { climate, ..look });
                     changed = true;
                 }
+            }
+        }
+
+        // The season's snow where the map has it (winter on the campaign map): the ground, buildings, decals and trees of those cells.
+        gui::checkbox("snow where the map says", &mut self.snow_on);
+        if self.snow_on {
+            gui::slider_float("snow amount", &mut self.snow_amount, 0.05, 1.0, "%.2f");
+            let season = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().season.clone()).unwrap_or_default();
+            match &self.snow_map {
+                Some((_, s, Some(c))) if *s == season => gui::text_disabled(&format!("{} snowy cells this season", c.2.iter().filter(|&&v| v != 0).count())),
+                Some((_, s, None)) if *s == season => gui::text_disabled("no snow on the map this season"),
+                _ => {}
             }
         }
 

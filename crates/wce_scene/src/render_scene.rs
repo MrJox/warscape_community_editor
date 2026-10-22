@@ -115,6 +115,10 @@ pub struct Decal {
 /// `i_matrix_index`), as stored, in the bone's frame. A building's collapse is drawn with one instance per bone.
 pub const MODEL_BONE_SUFFIX: &str = "#bone=";
 
+/// `<file>#snow`: the model as it is, its meshes marked to take the snow regions' snow (the renderer files the trees in a snowy cell
+/// under it: they draw with the snow's intensity, the others with the weather's).
+pub const MODEL_SNOW_SUFFIX: &str = "#snow";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshInstance {
     /// VFS path of the .rigid_model_v2 (or one bone's blocks of it: [`MODEL_BONE_SUFFIX`]).
@@ -701,6 +705,31 @@ pub struct RenderScene {
     /// the open tile, and puts this a little above its sea: Frame::bias_y). The shaders get heights relative to it, as the game's are to its
     /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
     pub sea_level: f32,
+
+    /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
+    /// Set with [`Self::set_snow`].
+    snow: Option<SnowRegions>,
+}
+
+/// The cells of a map that have snow: a frame point's cell is `to_cell * (x, z, 1)`; one byte per cell (non-zero: snow), row by row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnowRegions {
+    pub to_cell: [[f32; 3]; 2],
+    pub w: u32,
+    pub h: u32,
+    pub cells: Arc<Vec<u8>>,
+
+    /// The snowing intensity the snowy cells are drawn with (the shaders' g_snowing_intensity; 0 .. 1).
+    pub amount: f32,
+}
+
+impl SnowRegions {
+    /// Whether the cell under a frame point has snow.
+    pub fn at(&self, x: f32, z: f32) -> bool {
+        let m = &self.to_cell;
+        let (cx, cy) = ((m[0][0] * x + m[0][1] * z + m[0][2]).floor(), (m[1][0] * x + m[1][1] * z + m[1][2]).floor());
+        cx >= 0.0 && cy >= 0.0 && (cx as u32) < self.w && (cy as u32) < self.h && self.cells[(cy as u32 * self.w + cx as u32) as usize] != 0
+    }
 }
 
 impl Default for RenderScene {
@@ -722,6 +751,7 @@ impl Default for RenderScene {
             vegetation_season: String::new(),
             game_units: 1.0,
             sea_level: 0.0,
+            snow: None,
         }
     }
 }
@@ -979,5 +1009,22 @@ impl RenderScene {
 
     pub fn touch(&mut self) {
         self.log_structure(StructureChange::Other);
+    }
+
+    /// Where snow lies (the draws are made again: their snow flags follow it).
+    pub fn snow(&self) -> Option<&SnowRegions> {
+        self.snow.as_ref()
+    }
+
+    pub fn set_snow(&mut self, snow: Option<SnowRegions>) {
+        if self.snow != snow {
+            self.snow = snow;
+            self.log_structure(StructureChange::Other);
+        }
+    }
+
+    /// Whether a frame point takes snow: inside the snow regions when there are some, everywhere otherwise (the weather decides).
+    pub fn snowy_at(&self, x: f32, z: f32) -> bool {
+        self.snow.as_ref().is_none_or(|s| s.at(x, z))
     }
 }

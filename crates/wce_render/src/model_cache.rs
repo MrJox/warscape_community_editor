@@ -20,7 +20,7 @@ use wce_foundation::jobs::{Handle, JobPool, io_pool};
 use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, Payload, RenderScene, Terrain};
+use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -167,6 +167,9 @@ pub struct GpuMesh {
     /// The bounds of the vertices (model space, before `offset`).
     pub bmin: Float3,
     pub bmax: Float3,
+
+    /// Loaded as `<file>#snow` (MODEL_SNOW_SUFFIX): drawn with the snow regions' intensity.
+    pub snow: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -656,6 +659,12 @@ impl ModelInner {
     fn build(&self, path: &str) -> Result<Option<GpuModel>, String> {
         wce_prof!("model.build");
 
+        // `<file>#snow`: the same model, marked (MODEL_SNOW_SUFFIX).
+        let (path, snow) = match path.strip_suffix(MODEL_SNOW_SUFFIX) {
+            Some(p) => (p, true),
+            None => (path, false),
+        };
+
         // `<file>#bone=K`: the blocks of one bone of an animation's mesh, unposed (a building's collapse, MODEL_BONE_SUFFIX).
         let (file, bone) = match path.split_once(MODEL_BONE_SUFFIX) {
             Some((file, k)) => (file, Some(k.parse::<i32>().map_err(|_| format!("bad bone '{k}'"))?)),
@@ -817,6 +826,7 @@ impl ModelInner {
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
+                snow,
             })
         };
 
@@ -1367,6 +1377,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         diffuse_path: String::new(),
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
+        snow: false,
     };
 
     let cells = (ci1 - ci0).max(cj1 - cj0);
