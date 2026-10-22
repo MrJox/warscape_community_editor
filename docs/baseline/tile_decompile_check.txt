@@ -1,0 +1,110 @@
+tile folders: 1654 decompiled, 0 failed; 1276 with the kit's raw tile
+entries (but the variation's min_height / scale): 1264 identical to the kit's, 3 differ
+heights inside the border: 719971 of 5697667 samples within 1 cm of the kit's (12.6 %)
+heights against the kit's final_heights.dds (BOB's last export): 761 tiles, 9258425 of 34142576 samples within 1 cm (27.1 %)
+flat CHMF (range ~0, the mesh flat too; the kit's sources are not): 171 tiles, left out of the heights above
+buildings: 1897604 decompiled, 1894770 in the kit's tile.ted, 1893919 paired (key, world position within 10 cm)
+  AISeparatorInstance.area (0.1 %): 108 same, 0 differ
+  AISeparatorInstance.name: 108 same, 0 differ
+  AISeparatorInstance.polygon_closed: 108 same, 0 differ
+  AISeparatorInstance.type: 108 same, 0 differ
+  AI_HINT_POLYGON_INSTANCE.area (0.1 %): 5376 same, 419 differ
+  AI_HINT_POLYGON_INSTANCE.hint_type: 5795 same, 0 differ
+  AI_HINT_POLYGON_INSTANCE.name: 5795 same, 0 differ
+  AI_HINT_POLYGON_INSTANCE.polygon_closed: 5795 same, 0 differ
+  CaptureLocationInstance.flag_facing: 953 same, 45 differ
+  CaptureLocationInstance.max_num_players: 998 same, 0 differ
+  CaptureLocationInstance.min_num_players: 998 same, 0 differ
+  CaptureLocationInstance.type: 998 same, 0 differ
+  CaptureLocationPolygonInstance.area (0.1 %): 999 same, 0 differ
+  CaptureLocationPolygonInstance.name: 999 same, 0 differ
+  CaptureLocationPolygonInstance.polygon_closed: 999 same, 0 differ
+  CivilianDeploymentZone.area (0.1 %): 940 same, 0 differ
+  CivilianDeploymentZone.civilian_amount: 940 same, 0 differ
+  CivilianDeploymentZone.civilian_type: 940 same, 0 differ
+  CivilianDeploymentZone.name: 940 same, 0 differ
+  CivilianDeploymentZone.polygon_closed: 940 same, 0 differ
+  DEPLOYMENT_ZONE_POLYGON_INSTANCE.area (0.1 %): 362 same, 45 differ
+  DEPLOYMENT_ZONE_POLYGON_INSTANCE.deployment_polygon_type: 375 same, 32 differ
+  DEPLOYMENT_ZONE_POLYGON_INSTANCE.name: 407 same, 0 differ
+  DEPLOYMENT_ZONE_POLYGON_INSTANCE.polygon_closed: 407 same, 0 differ
+  GO_REGION_POLYGON_INSTANCE.area (0.1 %): 191 same, 0 differ
+  GO_REGION_POLYGON_INSTANCE.name: 191 same, 0 differ
+  GO_REGION_POLYGON_INSTANCE.polygon_closed: 191 same, 0 differ
+  LiteBuildingZone.area (0.1 %): 0 same, 1 differ
+  LiteBuildingZone.name: 1 same, 0 differ
+  LiteBuildingZone.polygon_closed: 1 same, 0 differ
+  NOGO_REGION_POLYGON_INSTANCE.area (0.1 %): 3698 same, 4 differ
+  NOGO_REGION_POLYGON_INSTANCE.name: 3702 same, 0 differ
+  NOGO_REGION_POLYGON_INSTANCE.polygon_closed: 3701 same, 1 differ
+  POINT_LIGHT_INSTANCE.animation_speed_scale: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.animation_type: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.colour: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.colour_min: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.colour_scale: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.falloff_type: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.radius: 152138 same, 0 differ
+  POINT_LIGHT_INSTANCE.random_offset: 152138 same, 0 differ
+  ProjectedDecalInstance.orientation (world): 1660832 same, 5806 differ
+  ProjectedDecalInstance.parallax_scale: 1666638 same, 0 differ
+  ProjectedDecalInstance.scale: 1666638 same, 0 differ
+  ProjectedDecalInstance.tiled: 1666638 same, 0 differ
+  SIEGE_AI_POLYGON_INSTANCE.area (0.1 %): 9008 same, 51 differ
+  SIEGE_AI_POLYGON_INSTANCE.name: 9037 same, 22 differ
+  SIEGE_AI_POLYGON_INSTANCE.polygon_closed: 9059 same, 0 differ
+  SIMPLE_MESH_INSTANCE.orientation (world): 208 same, 939 differ
+  SIMPLE_MESH_INSTANCE.scale: 1144 same, 3 differ
+  VEGETATION_INSTANCE.scale: 1055218 same, 0 differ
+  VFXInstance.autoplay: 33389 same, 13 differ
+  VFXInstance.orientation (world): 33402 same, 0 differ
+  VFXInstance.scale: 33389 same, 13 differ
+  VFXInstance.seasons: 33402 same, 0 differ
+  VFXInstance.use_in_outfield: 33399 same, 3 differ
+  ZONE_POLYGON_INSTANCE.area (0.1 %): 557 same, 0 differ
+  ZONE_POLYGON_INSTANCE.name: 557 same, 0 differ
+  ZONE_POLYGON_INSTANCE.polygon_closed: 557 same, 0 differ
+  ai_breachable: 1893910 same, 9 differ
+  building_tech_level: 1893841 same, 78 differ
+  burn: 1893919 same, 0 differ
+  destruction_level: 1893899 same, 20 differ
+  dockable: 1893881 same, 38 differ
+  indestructible: 1893919 same, 0 differ
+  opacity: 1893888 same, 31 differ
+  orientation (world rotation, 0.001): 1893919 same, 0 differ
+  toggleable: 1893919 same, 0 differ
+  weak_wall: 1893918 same, 1 differ
+AISeparatorInstance: 108 decompiled, 108 in the kit, 108 paired
+AI_HINT_POLYGON_INSTANCE: 5919 decompiled, 5959 in the kit, 5795 paired
+CaptureLocationInstance: 999 decompiled, 999 in the kit, 998 paired
+CaptureLocationPolygonInstance: 999 decompiled, 999 in the kit, 999 paired
+CivilianDeploymentZone: 940 decompiled, 941 in the kit, 940 paired
+DEPLOYMENT_ZONE_POLYGON_INSTANCE: 781 decompiled, 781 in the kit, 407 paired
+GO_REGION_POLYGON_INSTANCE: 222 decompiled, 222 in the kit, 191 paired
+LiteBuildingZone: 4722 decompiled, 140 in the kit, 1 paired
+NOGO_REGION_POLYGON_INSTANCE: 3713 decompiled, 3974 in the kit, 3702 paired
+POINT_LIGHT_INSTANCE: 164225 decompiled, 166054 in the kit, 152138 paired
+ProjectedDecalInstance: 1923121 decompiled, 1921275 in the kit, 1666638 paired
+SEGMENTED_SPLINE_INSTANCE: 0 decompiled, 2 in the kit, 0 paired
+SIEGE_AI_POLYGON_INSTANCE: 9059 decompiled, 9059 in the kit, 9059 paired
+SIMPLE_MESH_INSTANCE: 1234 decompiled, 1231 in the kit, 1147 paired
+SplineRiverInstance: 0 decompiled, 216 in the kit, 0 paired
+VEGETATION_INSTANCE: 1156800 decompiled, 1403018 in the kit, 1055218 paired
+VFXInstance: 33888 decompiled, 33888 in the kit, 33402 paired
+VegetationExclusionPolygonInstance: 0 decompiled, 12452 in the kit, 0 paired
+ZONE_POLYGON_INSTANCE: 558 decompiled, 575 in the kit, 557 paired
+losses (tiles that report each):
+   1658 buildings
+    350 civilian shelters
+    390 deployment
+   1646 entry
+   2232 height map
+    102 lite building zones
+    666 logic
+      1 the entry has no variation ab
+      1 the entry has no variation ac
+      1 the entry has no variation ad
+      1 the entry has no variation ae
+      4 the entry has no variation bb
+   1654 tile.ted
+    455 vegetation
+    247 zones

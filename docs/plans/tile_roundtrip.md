@@ -207,8 +207,9 @@ The game reads a tile from `terrain/tiles/<kind>/<set>/.../<variation>/` in its 
     (eastern_city_b/small 25,720 / 25,720, nordic_city_b/medium 12,781 / 12,781). The decompiler rebuilds zones from the flags (a
     quadtree of the lite buildings, touching rectangles merged): 4,722 zones on 102 tiles where the kit has 140, no building changing
     its flag. Fewer, outline-shaped zones would be nicer for an artist; the export is the same.
-  - Open: segmented splines, a fallback entry for tiles without a database row (18), blend / ground type maps
-    from the DDS.
+  - Tiles without a database row (18: mods' assembly_kit battles, gaul / river_ford / nile tiles): an entry made from the binary (size
+    from the CHMF). Every tile folder of the packs decompiles. Mapping: docs/formats/tile_decompile.md.
+  - Open: segmented splines (2 in the kit), blend / ground type maps from the DDS, tests and gates.
 
 ### Decisions (2026-10-22)
 

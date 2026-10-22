@@ -2,15 +2,20 @@
 //! the older lists and `tile.ted_binary`, a campaign tile, a version 4 height map, TDD's Hornburg and a TDD campaign tile whose height map
 //! has a short block table, an assembly kit map tile.
 //!
+//! Each is also decompiled (`attila::decompile`), written as a TEd project and read back into the same model.
+//!
 //! Needs `WCE_ATTILA_GAME=<Attila>` (the folder with `data/`); without it the test says so and passes. Every tile of the packs: the
-//! `tile_binary_roundtrip_check` example.
+//! `tile_binary_roundtrip_check` and `tile_decompile_check` examples.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::pack::Pack;
+use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::games::supported_games::SupportedGames;
-use wce_tile_io::attila::TileBinary;
+use wce_tile_io::attila::decompile::{Context, decompile};
+use wce_tile_io::attila::{TedProject, TileBinary};
 use wce_tile_io::{PartRead, PartWritten, TileFiles, TileFormat};
 use wce_tile_model::Blob;
 
@@ -40,9 +45,13 @@ fn pack_samples_round_trip() {
         by_pack.entry(pack).or_default().push(dir);
     }
 
+    // The game's tile databases, a mod's own before them.
+    let read = |name: &str| Pack::read_and_merge(&[game.join("data").join(name)], attila, true, false, false).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let game_dbs = databases(&mut read("tiles.pack"));
     for (pack_name, dirs) in by_pack {
-        let path = game.join("data").join(pack_name);
-        let mut pack = Pack::read_and_merge(&[path], attila, true, false, false).unwrap_or_else(|e| panic!("{pack_name}: {e}"));
+        let mut pack = read(pack_name);
+        let mut dbs = if pack_name.starts_with("tiles") { vec![] } else { databases(&mut pack) };
+        dbs.extend(game_dbs.iter().cloned());
         for dir in dirs {
             let prefix = format!("{dir}/");
             let names = pack.files().keys().filter(|n| n.starts_with(&prefix) && !n[prefix.len()..].contains('/')).cloned().collect::<Vec<_>>();
@@ -75,8 +84,36 @@ fn pack_samples_round_trip() {
             if back.semantic() != tile.semantic() {
                 failures.push(format!("{dir}: another model read back"));
             }
+
+            // Decompiled, written as a TEd project, read back.
+            match decompile(&tile, dir, &Context { databases: &dbs, ..Default::default() }) {
+                Ok((raw, _)) => {
+                    let (written, _) = TedProject.write(&raw).unwrap_or_else(|e| panic!("{dir}: {e}"));
+                    let (back, _) = TedProject.read(&written).unwrap_or_else(|e| panic!("{dir}: {e}"));
+                    if back.semantic() != raw.semantic() {
+                        failures.push(format!("{dir}: the decompiled project reads back into another model"));
+                    }
+
+                    if raw.scene.is_none() || raw.entry.is_none() {
+                        failures.push(format!("{dir}: decompiled without a scene or an entry"));
+                    }
+                }
+                Err(e) => failures.push(format!("{dir}: decompile: {e}")),
+            }
         }
     }
 
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The tile databases of a pack (`terrain/tiles/*/tile_database.bin`).
+fn databases(pack: &mut Pack) -> Vec<TileDatabase> {
+    let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
+    names
+        .iter()
+        .filter_map(|n| {
+            let bytes = pack.files_mut().get_mut(n)?.encode(&None, false, false, true).ok()??;
+            TileDatabase::decode(&mut std::io::Cursor::new(&bytes), &None).ok()
+        })
+        .collect()
 }

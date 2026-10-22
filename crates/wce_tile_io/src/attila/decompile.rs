@@ -1090,17 +1090,74 @@ struct BuildingLosses {
     position_type: usize,
 }
 
+/// A tile database with one tile for a location no database has (the assembly_kit battles of mods, tiles left out of the game's): the
+/// size from the CHMF (samples x spacing, 128 m cells), one variation, the rest of the fields their defaults. A row of `databases` is the
+/// template (rpfm's tile types can only be had through a database).
+fn fallback_database(databases: &[TileDatabase], binary: &Tile, location: &str, variation: &str) -> Result<TileDatabase, String> {
+    let template = databases.iter().flat_map(|d| d.tiles().iter()).find(|t| !t.variations().is_empty()).ok_or("no tile database to make an entry from")?;
+    let doc = binary.document("hf_height_map.data").ok_or("no tile database has the tile, and no hf_height_map.data to size it")?;
+    let m = binary.map(MapKind::Height, 0).ok_or("no heights to size the tile")?;
+    let spacing = doc.root.get("spacing").and_then(Value::as_f64).unwrap_or(1.0);
+    let cells = |samples: u32| ((f64::from(samples - 1) * spacing / 128.0).round() as u32).max(1);
+    let mut db = TileDatabase::default();
+    db.tiles_mut().push(template.clone());
+    let t = &mut db.tiles_mut()[0];
+    t.set_location(location.to_owned());
+    t.set_tile_set(String::new());
+    t.set_mask(String::new());
+    t.set_width(cells(m.raster.width));
+    t.set_height(cells(m.raster.height));
+    t.set_red(0.0);
+    t.set_green(0.0);
+    t.set_blue(0.0);
+    t.set_requires_infield_lodding(false);
+    t.set_random_rotatable(false);
+    t.set_custom_alpha_blend_texture(String::new());
+    t.set_scalable(false);
+    t.set_encampable(false);
+    t.set_custom_blend_tile(String::new());
+    t.set_texture_red(String::new());
+    t.set_texture_green(String::new());
+    t.set_texture_blue(String::new());
+    t.set_texture_alpha(String::new());
+    t.links_mut().clear();
+    t.link_targets_mut().clear();
+    t.variations_mut().truncate(1);
+    let v = &mut t.variations_mut()[0];
+    v.set_location(variation.to_owned());
+    v.set_normal_strength(1.0);
+    v.set_overlap_border_size(1.0);
+    v.set_raw_data_tri_density(128);
+    v.set_blend_common(String::new());
+    v.set_index_common(String::new());
+    v.set_normal_common(String::new());
+    v.set_red(0.0);
+    v.set_green(0.0);
+    v.set_blue(0.0);
+    v.set_barbarian(false);
+    Ok(db)
+}
+
 /// The TEd project of an exported tile. `folder` is the tile's folder in the pack (`terrain/tiles/battle/<set>/<tile>/<variation>`).
 ///
 /// # Errors
 ///
 /// The databases do not have the tile.
 pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Losses), String> {
-    let databases = ctx.databases;
     let (location, variation) = split_location(folder);
+    let mut losses = Losses::default();
+    let fallback;
+    let databases = match find_tile(ctx.databases, &location) {
+        Some(_) => ctx.databases,
+        None => {
+            fallback = [fallback_database(ctx.databases, binary, &location, &variation)?];
+            losses.note(format!("entry: no tile database has {location}; made from the binary (size from the heights, the rest defaults)"));
+            &fallback[..]
+        }
+    };
+
     let (d, index) = find_tile(databases, &location).ok_or_else(|| format!("no tile database has {location}"))?;
     let row = &databases[d].tiles()[index];
-    let mut losses = Losses::default();
     let mut out = Tile { source_format: None, variation: Some(variation.clone()), ..Default::default() };
     let mut entry = entry_node(&databases[d], index);
     let vi = row.variations().iter().position(|v| v.location().eq_ignore_ascii_case(&variation));
@@ -1172,7 +1229,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     }
 
     if wrong > 0 {
-        losses.note(format!("lite building zones: {wrong} buildings would change their lite flag"));
+        losses.note(format!("lite building zones change flags: {wrong} buildings would get another lite flag"));
     }
 
     // The escalation layers (TEd's LayerExportType_Escalation<n>, exported into bmd_data_escalation<n>).
@@ -1256,4 +1313,91 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     out.scene = Some(p);
     out.entry = Some(Entry { file_name: entry_file_name(&location), root: entry });
     Ok((out, losses))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lite_zones_keep_every_flag() {
+        // A block of lite houses, others around and between them, two at almost the same place.
+        let mut bs = vec![];
+        for k in 0..400 {
+            let (x, z) = (f64::from(k % 20) * 7.3, f64::from(k / 20) * 5.1);
+            bs.push((x, z, x > 40.0 && x < 100.0 && z > 20.0 && (k % 7 != 0)));
+        }
+
+        bs.push((60.0, 30.0, true));
+        bs.push((60.1, 30.0, false));
+        let (zones, wrong) = lite_zones(&bs);
+        assert_eq!(wrong, 0);
+        assert!(!zones.is_empty());
+        for &(x, z, lite) in &bs {
+            assert_eq!(zones.iter().any(|p| inside(p, x, z)), lite, "({x}, {z})");
+        }
+
+        // All lite: one rectangle; none lite: no zone.
+        let all = bs.iter().map(|&(x, z, _)| (x, z, true)).collect::<Vec<_>>();
+        assert_eq!(lite_zones(&all).0.len(), 1);
+        let none = bs.iter().map(|&(x, z, _)| (x, z, false)).collect::<Vec<_>>();
+        assert!(lite_zones(&none).0.is_empty());
+    }
+
+    fn prop(m: [f64; 16], decal: bool) -> Node {
+        let mut r = Node::new("record");
+        r.set("transform", Value::Floats(m.to_vec()));
+        r.set("is_decal", i(i64::from(decal)));
+        for k in ["scale_x", "scale_y", "scale_z"] {
+            r.set(k, Value::Float(1.0));
+        }
+
+        r
+    }
+
+    #[test]
+    fn prop_frames() {
+        // A turn about y by a: the record's rows are the rotation's (F A^T F with A a turn about y is A).
+        let a: f64 = 0.4;
+        let (c, sn) = (a.cos(), a.sin());
+        let m = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, -sn, 0.0, c, 0.0, 10.0, 0.5, 30.0, 1.0];
+        let n = prop_node(&prop(m, true), "k", 100.0);
+        assert_eq!(n.get("position").and_then(Value::as_vec3), Some([20.0, 1.0, 140.0]));
+        let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
+        assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
+
+        // A simple mesh of the same turn has its y and z rows negated.
+        let mm = [c, 0.0, sn, 0.0, 0.0, -1.0, 0.0, 0.0, sn, 0.0, -c, 0.0, 10.0, 0.5, 30.0, 1.0];
+        let n = prop_node(&prop(mm, false), "k", 100.0);
+        let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
+        assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
+        assert_eq!(n.get("scale").and_then(Value::as_vec3), Some([2.0, 2.0, 2.0]));
+    }
+
+    #[test]
+    fn capture_circle_from_the_list() {
+        let mut list = Node::new("CAPTURE_LOCATION_SET");
+        let mut l = Node::new("CAPTURE_LOCATION");
+        for (k, v) in [
+            ("radius", "7.500000"), ("position_x", "569.485779"), ("position_y", "449.696472"), ("valid_for_min_num_players", "2"),
+            ("valid_for_max_num_players", "8"), ("capture_point_type_v2", "CAPTURE_LOCATION_MINOR"), ("capture_point_list", "569.544983,454.443054"),
+            ("database_key", "capture_point_tower_only"), ("flag_facing", "-0.309017,0.951057"),
+        ] {
+            l.set(k, s(v));
+        }
+
+        list.children.push(l);
+        let caps = xml_captures(&list);
+        assert_eq!(caps.len(), 1);
+        let n = capture_node(&caps[0], 1024.0);
+        // The instance at the circle's centre, the flag at the list's position.
+        let p = n.get("position").and_then(Value::as_vec3).unwrap();
+        let f = n.get("flag_position").and_then(Value::as_vec3).unwrap();
+        assert!((p[0] - 1139.089966).abs() < 1e-3 && (p[2] - 1139.113892).abs() < 1e-3, "{p:?}");
+        assert!((p[0] + f[0] - 1138.971558).abs() < 1e-3 && (p[2] + f[2] - 1148.607056).abs() < 1e-3, "{f:?}");
+        assert_eq!(n.get("flag_facing").and_then(Value::as_f64), Some(r32(4.39823)));
+        let boundary = &n.wrapped("children")[0];
+        assert_eq!(boundary.get("radius").and_then(Value::as_f64), Some(15.0));
+        assert_eq!(boundary.wrapped("points").len(), 20);
+    }
 }

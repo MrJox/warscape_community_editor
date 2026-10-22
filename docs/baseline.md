@@ -254,3 +254,11 @@ New gates: `tile_binary_roundtrip` (western_city_b/small from `tiles4.pack`) and
 (`wce_tile_io --example tile_binary_roundtrip_check "$GAME/data"`): 1,756 tile folders of the 31 packs, every decoded file identical, 545
 CHMF and 4,438 DXT5 textures kept, models read back equal, `all passed` (`docs/baseline/tile_binary_roundtrip_check.txt`; the counts per
 kind must stay the same). `gates.sh` exports `WCE_ATTILA_GAME` for `wce_tile_io`'s `pack_samples` test.
+
+## Exported tile -> TEd project (2026-10-22, Phase 2 step 3 of `docs/plans/tile_roundtrip.md`)
+
+New gates: `tile_decompile` (western_city_b/small) and, with `--corpus`, `tile_decompile_all` (`wce_tile_io --example
+tile_decompile_check "$GAME"`): 1,654 tile folders of the packs decompiled (16 of them with an entry made from the binary), each written as a
+TEd project and read back into the same model; the lite building zones keep every building's flag. The gate fails on a folder that does not
+decompile or read back. The agreement with the kit's raw tiles is printed, not gated (the kit is not always the packs' version, nor BOB's
+output: docs/formats/tile_decompile.md): `docs/baseline/tile_decompile_check.txt`. The `pack_samples` test decompiles its 8 samples too.

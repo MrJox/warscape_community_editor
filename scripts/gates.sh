@@ -74,6 +74,8 @@ run tile_entry_check  ex wce_tile tile_entry_check "$GAME" "$BKIT/raw_data/terra
 run tile_roundtrip    ex wce_tile_io tile_roundtrip_check "$TILE"
 # the exported tile format (Phase 2 of docs/plans/tile_roundtrip.md): one settlement tile read from its pack, through the model and back
 run tile_binary_roundtrip ex wce_tile_io tile_binary_roundtrip_check "$GAME/data/tiles4.pack" --filter western_city_b/small
+# binary -> TEd project (Phase 2 step 3): the settlement tile decompiled, written, read back; exits 1 on a tile that does not decompile or read back
+run tile_decompile    ex wce_tile_io tile_decompile_check "$GAME" --filter western_city_b/small
 run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 # the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
 run terrain_check     ex wce_tile_editor terrain_check "$GAME"
@@ -83,6 +85,7 @@ if [ "$CORPUS" = 1 ]; then
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
     run tile_roundtrip_all ex wce_tile_io tile_roundtrip_check "$GAME"   # every TEd project of the kit(s) through the model and back (about 2 min)
     run tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$GAME/data"   # every exported tile folder of the packs through the model and back (about 3 min)
+    run tile_decompile_all ex wce_tile_io tile_decompile_check "$GAME"   # every exported tile folder of the packs decompiled and read back; the kit agreement is in the output, not gated (about 8 min)
     run tile_entry_check_all ex wce_tile tile_entry_check "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
     run placement_check ex wce_tile_editor placement_check "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
