@@ -20,6 +20,11 @@ pub enum Num {
 }
 
 impl Num {
+    /// The value this style's text reads back as (what a file of this style can hold).
+    pub fn quantise(self, v: f64) -> f64 {
+        self.format(v).parse().unwrap_or(v)
+    }
+
     pub fn format(self, v: f64) -> String {
         match self {
             Self::Ted => {

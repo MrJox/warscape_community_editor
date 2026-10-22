@@ -89,7 +89,7 @@ fn read_xml(bytes: &[u8], schema: &dyn Schema, report: &mut ReadReport) -> std::
 }
 
 /// The style TEd's tools write an entry in, for an entry the tile was not read with.
-fn entry_style() -> DocStyle {
+pub(crate) fn entry_style() -> DocStyle {
     DocStyle { prolog: vec![], epilog: b"\r\n".to_vec(), newline: b"\r\n".to_vec(), indent: b"\t".to_vec(), quote: b'\'' }
 }
 
