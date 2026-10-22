@@ -384,6 +384,149 @@ fn destruction_level(bl: &BattlefieldBuilding, ctx: &Context, losses: &mut Build
     }
 }
 
+// ---- markers
+
+/// (record, group key) of a markers document: the key is the group's first part (a string: the model, the effect, the light's name; a
+/// number: the AI hint type).
+fn marker_records(doc: &Node) -> Vec<(&Node, Option<&Value>)> {
+    let recs = doc.children.iter().filter(|c| c.class == "record").collect::<Vec<_>>();
+    let mut keys = vec![None; recs.len()];
+    if let Some(gs) = doc.child("groups") {
+        for g in &gs.children {
+            let key = g.children.first().and_then(|k| k.get("value"));
+            for &i in g.get("indices").and_then(Value::as_ints).unwrap_or_default() {
+                if let Some(k) = keys.get_mut(i as usize) {
+                    *k = key;
+                }
+            }
+        }
+    }
+
+    recs.into_iter().zip(keys).collect()
+}
+
+fn num(n: &Node, k: &str) -> f64 {
+    n.get(k).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+/// The world rotation of a marker's 3 x 3 (rows `a`, scale removed): the markers keep the rotation transposed and in the frame with z
+/// mirrored, R = F a^T F with F = diag(1, 1, -1) (for a turn about y alone that is `a` itself).
+fn marker_rotation(a: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let f = [1.0, 1.0, -1.0];
+    std::array::from_fn(|i| std::array::from_fn(|j| f[i] * a[j][i] * f[j]))
+}
+
+/// The euler angles of a rotation given by its rows.
+fn rows_euler(r: [[f64; 3]; 3]) -> [f64; 3] {
+    let sa = (-r[2][0]).clamp(-1.0, 1.0);
+    let a = sa.asin();
+    let (beta, c) = if sa.abs() < 1.0 - 1e-12 { (r[2][1].atan2(r[2][2]), r[1][0].atan2(r[0][0])) } else { ((-r[1][2]).atan2(r[1][1]), 0.0) };
+    [a, -beta, c]
+}
+
+/// TEd's seasons flags of a bit mask (bit 0 winter, 1 spring, 2 summer, 3 autumn).
+fn seasons(mask: i64) -> Value {
+    let names = ["SEASON_BF_WINTER", "SEASON_BF_SPRING", "SEASON_BF_SUMMER", "SEASON_BF_AUTUMN"];
+    flags(&names.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, n)| *n).collect::<Vec<_>>())
+}
+
+/// A prop record: a projected decal, or a model (SIMPLE_MESH_INSTANCE). The matrix rows hold the rotation ([`marker_rotation`]) times |scale| / 2;
+/// the position is (x, y, z) halved and z mirrored: scene (2 x, 2 y, 2 (extent - z)). The decal's scale fields are TEd's scale halved.
+fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+    let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
+    let decal = rec.get("is_decal").and_then(Value::as_int) == Some(1);
+    let half = if decal {
+        [num(rec, "scale_x"), num(rec, "scale_y"), num(rec, "scale_z")]
+    } else {
+        std::array::from_fn(|k| (m[4 * k] * m[4 * k] + m[4 * k + 1] * m[4 * k + 1] + m[4 * k + 2] * m[4 * k + 2]).sqrt())
+    };
+
+    let rows = marker_rotation(std::array::from_fn(|k| {
+        let n = half[k].abs().max(1e-12);
+        [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
+    }));
+
+    let pos = [2.0 * m[12], 2.0 * m[13], 2.0 * (extent_z - m[14])];
+    let scale = Value::Vec3(half.map(|h| r32(2.0 * h)));
+    if decal {
+        instance(
+            "ProjectedDecalInstance",
+            "Projected Decal",
+            pos,
+            rows_euler(rows),
+            vec![("scale", scale), ("key", s(key)), ("parallax_scale", Value::Float(r32(num(rec, "parallax_scale")))), ("tiled", b(num(rec, "tiled") != 0.0))],
+        )
+    } else {
+        instance("SIMPLE_MESH_INSTANCE", "Simple Mesh", pos, rows_euler(rows), vec![("scale", scale), ("key", s(key)), ("seasons", seasons(num(rec, "seasons") as i64))])
+    }
+}
+
+/// A particle emitter record as a VFXInstance: the matrix holds the rotation transposed (not mirrored, unlike a prop's: all 42 emitters of
+/// western_city_b/small agree), the position is in the buildings' frame (scene (2 x, y, 2 (extent - z))), the scale is TEd's halved.
+fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+    let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
+    let rows: [[f64; 3]; 3] = std::array::from_fn(|k| [m[k], m[4 + k], m[8 + k]]);
+    instance(
+        "VFXInstance",
+        "VFX",
+        [2.0 * m[12], m[13], 2.0 * (extent_z - m[14])],
+        rows_euler(rows),
+        vec![
+            ("vfx", s(key)), ("use_in_outfield", b(num(rec, "use_in_outfield") != 0.0)), ("scale", Value::Float(r32(2.0 * num(rec, "scale")))),
+            ("seasons", seasons(rec.get("seasons").and_then(Value::as_int).unwrap_or(15))), ("autoplay", b(num(rec, "autoplay") != 0.0)),
+        ],
+    )
+}
+
+/// A point light record (the buildings' frame, no rotation).
+fn light_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+    instance(
+        "POINT_LIGHT_INSTANCE",
+        key,
+        [2.0 * num(rec, "x"), num(rec, "y"), 2.0 * (extent_z - num(rec, "z"))],
+        [0.0; 3],
+        vec![
+            ("random_offset", Value::Float(r32(num(rec, "random_offset")))), ("animation_type", rec.get("animation_type").cloned().unwrap_or_else(|| s("LAT_NONE"))),
+            ("radius", Value::Float(r32(num(rec, "radius")))), ("falloff_type", rec.get("falloff_type").cloned().unwrap_or_else(|| s("WPLFT_SMOOTH"))),
+            ("colour_min", Value::Float(r32(num(rec, "colour_min")))), ("colour_scale", Value::Float(r32(num(rec, "colour_scale")))),
+            ("colour", Value::Colour([num(rec, "red"), num(rec, "green"), num(rec, "blue"), 1.0].map(r32))),
+            ("animation_speed_scale", Value::Vec2([num(rec, "animation_speed_x"), num(rec, "animation_speed_y")].map(r32))),
+        ],
+    )
+}
+
+/// A BMD transform (`m00` .. `m33`) as 16 numbers, row-major.
+fn bmd_matrix(n: Option<&Node>) -> Value {
+    Value::Floats((0..16).map(|i| n.map_or(0.0, |n| num(n, &format!("m{}{}", i / 4, i % 4)))).collect())
+}
+
+/// A BMD prop (`prop_list` > `markers` > `item`) as a prop marker record and its key (prop_type 1: a decal).
+fn bmd_prop_record(item: &Node) -> (Node, String) {
+    let mut r = Node::new("record");
+    r.set("transform", bmd_matrix(item.child("transform")));
+    r.set("is_decal", i(i64::from(item.get("prop_type").and_then(Value::as_int) == Some(1))));
+    let sc = item.child("decal_scale");
+    for (k, a) in [("scale_x", "x"), ("scale_y", "y"), ("scale_z", "z")] {
+        r.set(k, Value::Float(sc.map_or(0.0, |n| num(n, a))));
+    }
+
+    r.set("parallax_scale", Value::Float(num(item, "decal_parallax")));
+    r.set("tiled", i(item.get("decal_tiled").and_then(Value::as_int).unwrap_or(0)));
+    r.set("seasons", i(15));
+    (r, item.get("key").and_then(Value::as_str).unwrap_or_default().to_owned())
+}
+
+/// A BMD particle emitter (`particle_emitter_list` > `markers` > `item`) as an emitter marker record and its key.
+fn bmd_emitter_record(item: &Node) -> (Node, String) {
+    let mut r = Node::new("record");
+    r.set("transform", bmd_matrix(item.child("transform")));
+    r.set("scale", Value::Float(num(item, "scale")));
+    r.set("autoplay", i(i64::from(item.get("autoplay").and_then(Value::as_bool).unwrap_or(true))));
+    r.set("use_in_outfield", i(i64::from(item.get("use_in_outfield").and_then(Value::as_bool).unwrap_or(false))));
+    r.set("seasons", i(15));
+    (r, item.get("key").and_then(Value::as_str).unwrap_or_default().to_owned())
+}
+
 #[derive(Default)]
 struct BuildingLosses {
     unknown_levels: usize,
@@ -453,14 +596,44 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     // The escalation layers (TEd's LayerExportType_Escalation<n>, exported into bmd_data_escalation<n>).
     for n in 1..=3 {
         let Some(doc) = binary.document(&format!("bmd_data_escalation{n}.bin")) else { continue };
-        let list = bmd_buildings(&doc.root);
-        if list.is_empty() {
+        let items = |list: &str| doc.root.child(list).and_then(|l| l.child("markers")).map_or(&[][..], |m| &m.children[..]);
+        let mut l = layer(&format!("Escalation {n}"), &format!("LayerExportType_Escalation{n}"));
+        for b in &bmd_buildings(&doc.root) {
+            l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
+        }
+
+        for it in items("prop_list") {
+            let (rec, key) = bmd_prop_record(it);
+            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1));
+        }
+
+        for it in items("particle_emitter_list") {
+            let (rec, key) = bmd_emitter_record(it);
+            l.wrapped_mut("children").push(emitter_node(&rec, &key, extent.1));
+        }
+
+        if !l.wrapped("children").is_empty() {
+            graph(&mut p).wrapped_mut("children").push(l);
+        }
+    }
+
+    // The markers of the normal layers.
+    let key_str = |k: Option<&Value>| k.and_then(Value::as_str).unwrap_or_default().to_owned();
+    for (file, layer_name) in [("prop_marker.markers", "Props"), ("particle_emitter_marker.markers", "VFX"), ("point_light_marker.markers", "Point lights")] {
+        let Some(doc) = binary.document(file) else { continue };
+        let recs = marker_records(&doc.root);
+        if recs.is_empty() {
             continue;
         }
 
-        let mut l = layer(&format!("Escalation {n}"), &format!("LayerExportType_Escalation{n}"));
-        for b in &list {
-            l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
+        let mut l = layer(layer_name, "LayerExportType_Normal");
+        for (rec, key) in recs {
+            let key = key_str(key);
+            l.wrapped_mut("children").push(match file {
+                "prop_marker.markers" => prop_node(rec, &key, extent.1),
+                "particle_emitter_marker.markers" => emitter_node(rec, &key, extent.1),
+                _ => light_node(rec, &key, extent.1),
+            });
         }
 
         graph(&mut p).wrapped_mut("children").push(l);
