@@ -24,12 +24,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rayon::prelude::*;
-use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
+use rpfm_lib::files::db::DB;
 use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::tile_database::TileDatabase;
+use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::games::supported_games::SupportedGames;
-use wce_tile::building_db::BuildingDb;
+use rpfm_lib::schema::Schema;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::{euler_from_matrix, euler_matrix, world_transform};
@@ -155,15 +156,21 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
-            let cctx = CompileContext { building_levels: ctx.building_levels, building_thresholds: ctx.building_thresholds };
+            // The binary's marker versions, so that an older file is compared field by field.
+            let versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
+            let version_of = |n: &str| versions.get(n).copied().flatten();
+            let cctx = CompileContext { building_levels: ctx.building_levels, building_thresholds: ctx.building_thresholds, marker_versions: Some(&version_of) };
             let (docs, _) = compile(&back, &cctx)?;
             let bytes = |d: &wce_tile_model::Document| {
                 let one = wce_tile_model::Tile { documents: vec![d.clone()], ..Default::default() };
                 TileBinary.write(&one).ok().and_then(|(f, _)| f.folder.get(&d.name).and_then(|b| b.bytes().ok()).map(|b| b.to_vec()))
             };
 
-            for theirs in binary.documents.iter().filter(|d| d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) {
-                let kind = if theirs.name == "building_list" { "building_list" } else { "building_list_<layer>" };
+            for theirs in binary.documents.iter().filter(|d| (d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) || d.name == "prop_marker.markers") {
+                let kind = match theirs.name.as_str() {
+                    "building_list" | "prop_marker.markers" => theirs.name.as_str(),
+                    _ => "building_list_<layer>",
+                };
                 let Some(ours) = docs.iter().find(|d| d.name == theirs.name) else {
                     let carried = back.files.iter().any(|f| f.path == theirs.name);
                     *local.losses.entry(format!("compile: {} {}", theirs.name, if carried { "carried by the project (legacy)" } else { "NOT COMPILED" })).or_default() += 1;
@@ -181,13 +188,27 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     c.1 += 1;
                 }
 
-                let (a, b) = (&ours.root.children, &theirs.root.children);
+                // A markers file's groups: their order (the marker table's) and indices must be the binary's.
+                if let (Some(g1), Some(g2)) = (ours.root.child("groups"), theirs.root.child("groups")) {
+                    let c = local.attr_same.entry(format!("compile {kind} (groups)")).or_default();
+                    if g1.without_trivia() == g2.without_trivia() {
+                        c.0 += 1;
+                    } else {
+                        c.1 += 1;
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: compiled {} groups differ", theirs.name));
+                    }
+                }
+
+                let rec = |d: &wce_tile_model::Document| d.root.children.iter().filter(|c| c.class != "groups").cloned().collect::<Vec<_>>();
+                let (a, b) = (rec(ours), rec(theirs));
                 if a.len() != b.len() {
-                    local.problems.push(format!("{name}: compiled {} has {} buildings, the binary {}", theirs.name, a.len(), b.len()));
+                    local.compile_beyond += 1;
+                    local.problems.push(format!("{name}: compiled {} has {} records, the binary {}", theirs.name, a.len(), b.len()));
                     continue;
                 }
 
-                for (x, y) in a.iter().zip(b) {
+                for (x, y) in a.iter().zip(&b) {
                     for p in y.props() {
                         let c = local.attr_same.entry(format!("compile {kind}.{}", p.name)).or_default();
                         if x.get(p.name.as_str()) == Some(&p.value) {
@@ -212,11 +233,28 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                                     "position" => a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
                                         (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 1e-6
                                     }),
+                                    // A marker's matrix: the rotation within 1e-5 rad times its row's length (the scale), through the
+                                    // text's euler and scale; the translation like a position.
+                                    "transform" => a.len() == 16 && b.len() == 16 && a.iter().zip(&b).enumerate().all(|(i, (u, v))| {
+                                        let ulps = (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs();
+                                        if (12..15).contains(&i) {
+                                            ulps <= 4 || (u - v).abs() <= 1e-6
+                                        } else {
+                                            let row = i / 4 * 4;
+                                            let len = (b[row] * b[row] + b[row + 1] * b[row + 1] + b[row + 2] * b[row + 2]).sqrt();
+                                            ulps <= 4 || (u - v).abs() <= 1e-5 * len.max(1.0)
+                                        }
+                                    }),
                                     "orientation" => {
                                         let d = |sign: f32| a.iter().zip(&b).map(|(u, v)| (u - sign * v).abs()).fold(0.0f32, f32::max);
                                         a.len() == b.len() && d(1.0).min(d(-1.0)) <= 1e-5
                                     }
-                                    _ => false,
+                                    // Any other number: within 4 ulps or 1e-6 (TEd's float behind the text, like parallax_scale 0.02
+                                    // one ulp above f32 0.02).
+                                    _ => a.len() == 1 && b.len() == 1 && {
+                                        let (u, v) = (a[0], b[0]);
+                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 1e-6
+                                    },
                                 }
                             });
                             if within {
@@ -822,6 +860,9 @@ fn main() {
     // each piece's destructs; the building's count is the most over its pieces (`destruction_levels`). Without one, the same from the
     // models' names (`<piece>_destructNN.rigid_model_v2`).
     let mut pieces: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
+    let schema_path = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config/rpfm/schemas/schema_att.ron");
+    let schema = Schema::load(&schema_path, None).unwrap_or_else(|e| panic!("{}: {e}", schema_path.display()));
+    let mut building_rows: Vec<(bool, String, String, Vec<f32>)> = vec![];
     let mut from_cs2: BTreeMap<String, u32> = BTreeMap::new();
     let wanted = std::env::var("WCE_DECOMPILE_LEVELS").unwrap_or_default().to_lowercase();
     for p in &packs {
@@ -856,6 +897,23 @@ fn main() {
             from_cs2.insert(key, levels);
         }
 
+        // The battlefield_buildings tables (category, destruct_thresholds per key).
+        let tables = pack.files().keys().filter(|n| n.starts_with("db/battlefield_buildings_tables/")).cloned().collect::<Vec<_>>();
+        let is_mod = !p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("data") || f.to_string_lossy().starts_with("tiles"));
+        for n in tables {
+            let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
+            let mut extra = DecodeableExtraData::default();
+            extra.set_schema(Some(&schema));
+            extra.set_table_name(Some("battlefield_buildings_tables"));
+            let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else { continue };
+            let col = |c: &str| db.column_position_by_name(c);
+            let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
+            for row in db.data().iter() {
+                let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
+                building_rows.push((is_mod, row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
+            }
+        }
+
         let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
         for n in names {
             let bytes = pack.files_mut().get_mut(&n).unwrap().encode(&None, false, false, true).unwrap().unwrap();
@@ -873,24 +931,16 @@ fn main() {
     let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().max().unwrap_or(1))).collect::<BTreeMap<_, _>>();
     levels.extend(from_cs2);
     let lookup = |key: &str| levels.get(&key.to_lowercase()).copied();
-    let mut bdb = BuildingDb::default();
-    // The `destruct_thresholds` of the buildings (a list of floats, comma separated), by lower-case key.
-    let mut thresholds: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for f in ["battlefield_buildings.xml", "TWaD_battlefield_buildings.xml"] {
-        if let Ok(x) = std::fs::read_to_string(kit.join("raw_data/db").join(f)) {
-            bdb.add_xml(&x);
-            for rec in x.split("<battlefield_buildings ").skip(1) {
-                let field = |n: &str| rec.split(&format!("<{n}>")).nth(1).and_then(|r| r.split('<').next()).unwrap_or_default().to_owned();
-                let values = field("destruct_thresholds").split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
-                if !values.is_empty() {
-                    thresholds.insert(field("key").to_lowercase(), values);
-                }
-            }
-        }
+    // The battlefield_buildings rows of the packs (rpfm's schema): a mod's (TDD's tables are in its main pack) before the game's.
+    building_rows.sort_by_key(|r| !r.0);
+    let (mut categories, mut thresholds): (BTreeMap<String, String>, BTreeMap<String, Vec<f32>>) = (BTreeMap::new(), BTreeMap::new());
+    for (_, key, category, values) in building_rows {
+        categories.entry(key.clone()).or_insert(category);
+        thresholds.entry(key).or_insert(values);
     }
 
-    let category = |key: &str| bdb.category(key).map(str::to_owned);
-    let thresholds_of = |key: &str| thresholds.get(&key.to_lowercase()).cloned();
+    let category = |key: &str| categories.get(&key.to_lowercase()).cloned();
+    let thresholds_of = |key: &str| thresholds.get(&key.to_lowercase()).filter(|t| !t.is_empty()).cloned();
     let trees = opt("--trees");
     let ctx = Context {
         databases: &dbs,

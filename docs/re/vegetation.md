@@ -331,7 +331,7 @@ height (List heights) for every type, and checks the model file only for trees. 
   chimney smoke (outfield_tents).
 - **Order**: the markers of a key are in generation order, props before decals. The keys come out in the order of BOB's `MARKER_TABLE`, a
   tree of the key's path parts in a `CA::HashTableNoRemove` (linear probing; the hasher `FUN_10011aa0` didn't decompile) walked by its flat
-  marker iterator. That is not reproduced: the port puts the keys in the order they first appear. The order has no effect in the game.
+  marker iterator. That is not reproduced yet: the port puts the keys in the order they first appear. The order has no effect in the game. The table's hash and growth are now known (docs/re/ted_export.md, "Marker tables").
 - rpfm read the v4 particle emitter marker with the emission rate before the transform; it comes after it (fixed in the fork). Read the
   wrong way round, the position lands in m23 and every element moves one place, which the identity rotation and the emission rate of 1
   hid.

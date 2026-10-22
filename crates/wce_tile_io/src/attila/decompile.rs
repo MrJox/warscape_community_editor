@@ -575,15 +575,18 @@ fn marker_rotation(a: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 /// (pi - a, pi, pi), whose float sines are not 0); a pitch or roll within 1e-9 of 0 is 0.
 fn rows_euler(r: [[f64; 3]; 3]) -> [f64; 3] {
     use std::f64::consts::PI;
-    let sa = (-r[2][0]).clamp(-1.0, 1.0);
-    let a = sa.asin();
-    let (beta, c) = if sa.abs() < 1.0 - 1e-12 { (r[2][1].atan2(r[2][2]), r[1][0].atan2(r[0][0])) } else { ((-r[1][2]).atan2(r[1][1]), 0.0) };
+    // a from atan2, not asin: near a turn of 90 degrees the asin of an f32 element loses most of its digits; gimbal lock by cos a, not
+    // by sin a = 1 (an f32 row of a scaled matrix can give exactly 1 at 90.009 degrees).
+    let ca = r[2][1].hypot(r[2][2]);
+    let a = (-r[2][0]).atan2(ca);
+    let locked = ca < 1e-12;
+    let (beta, c) = if locked { ((-r[1][2]).atan2(r[1][1]), 0.0) } else { (r[2][1].atan2(r[2][2]), r[1][0].atan2(r[0][0])) };
     let wrap = |v: f64| if v > PI { v - 2.0 * PI } else if v <= -PI { v + 2.0 * PI } else { v };
     let zero = |v: f64| if v.abs() < 1e-9 { 0.0 } else { v };
     let one = [a, -beta, c];
     let other = [wrap(PI - a), wrap(-beta - PI), wrap(c - PI)];
     let cost = |e: &[f64; 3]| e[1].abs() + e[2].abs();
-    let e = if sa.abs() < 1.0 - 1e-12 && cost(&other) < cost(&one) - 1e-12 { other } else { one };
+    let e = if !locked && cost(&other) < cost(&one) - 1e-12 { other } else { one };
     [e[0], zero(e[1]), zero(e[2])]
 }
 
@@ -622,7 +625,15 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
             vec![("scale", scale), ("key", s(key)), ("parallax_scale", Value::Float(r32(num(rec, "parallax_scale")))), ("tiled", b(num(rec, "tiled") != 0.0))],
         )
     } else {
-        instance("SIMPLE_MESH_INSTANCE", "Simple Mesh", pos, rows_euler(rows), vec![("scale", scale), ("key", s(key)), ("seasons", seasons(num(rec, "seasons") as i64))])
+        let mut own = vec![("scale", scale), ("key", s(key)), ("seasons", seasons(num(rec, "seasons") as i64))];
+        // A version 9 record's visibility, TEd's attributes of the model.
+        for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+            if let Some(x) = rec.get(v).and_then(Value::as_int) {
+                own.push((v, b(x != 0)));
+            }
+        }
+
+        instance("SIMPLE_MESH_INSTANCE", "Simple Mesh", pos, rows_euler(rows), own)
     }
 }
 
