@@ -30,6 +30,10 @@ pub struct Context<'a> {
     /// The `battlefield_buildings` category of a building key: TEd writes `weak_wall`, `ai_breachable` and `dockable` for `fort_wall`,
     /// `dockable` for `unbreachable_fort_wall`, none for the others. Without it they are written when they differ from a plain building's.
     pub building_category: Option<CategoryOf<'a>>,
+
+    /// The tree list whose trees become the "Decompiled vegetation" layer (default `outfield_tents.tree_list.bin`, then
+    /// `default.tree_list.bin`; see docs/formats/tile_decompile.md).
+    pub tree_list: Option<&'a str>,
 }
 
 /// What the conversion could not carry over, or had to make up.
@@ -527,6 +531,36 @@ fn bmd_emitter_record(item: &Node) -> (Node, String) {
     (r, item.get("key").and_then(Value::as_str).unwrap_or_default().to_owned())
 }
 
+/// TEd's vegetation key of a tree model path (`BattleTerrain/vegetation/trees\olive\olive_d.rigid_model_v2` -> `olive.olive_d`).
+pub fn tree_key(model: &str) -> String {
+    let parts = model.split(['/', '\\']).collect::<Vec<_>>();
+    let variant = parts.last().copied().unwrap_or_default();
+    let variant = variant.split('.').next().unwrap_or(variant);
+    let species = parts.len().checked_sub(2).map_or("", |i| parts[i]);
+    format!("{}.{}", species.to_lowercase(), variant.to_lowercase())
+}
+
+/// The trees of a FASTBIN tree list document as TEd's VEGETATION_INSTANCEs (the list's frame: x, z metres with z from the far edge, y in
+/// scene units; scale as the list's).
+fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
+    let mut out = vec![];
+    for t in doc.children.iter().filter(|c| c.class == "type") {
+        let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
+        let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
+        for (i, p) in pos.chunks_exact(3).enumerate() {
+            out.push(instance(
+                "VEGETATION_INSTANCE",
+                "tree",
+                [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])],
+                [0.0; 3],
+                vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))],
+            ));
+        }
+    }
+
+    out
+}
+
 #[derive(Default)]
 struct BuildingLosses {
     unknown_levels: usize,
@@ -637,6 +671,18 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         }
 
         graph(&mut p).wrapped_mut("children").push(l);
+    }
+
+    // The trees: one list, as explicit instances (the seeds that would regenerate them are not in the binary).
+    let lists = ctx.tree_list.map_or(vec!["outfield_tents.tree_list.bin", "default.tree_list.bin"], |l| vec![l]);
+    if let Some(doc) = lists.iter().find_map(|l| binary.document(l)) {
+        let trees = tree_nodes(&doc.root, extent.1);
+        if !trees.is_empty() {
+            losses.note(format!("vegetation: {} trees of {} as explicit instances (the generation seeds are not in the binary)", trees.len(), doc.name));
+            let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
+            *l.wrapped_mut("children") = trees;
+            graph(&mut p).wrapped_mut("children").push(l);
+        }
     }
 
     if bl.unknown_levels > 0 {
