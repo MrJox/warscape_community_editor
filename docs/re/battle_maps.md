@@ -215,6 +215,27 @@ plains (aa .. ad) elsewhere.
   over all of them (130 neighbours from 45 tiles, 1.2 s, about 1 GB); growing the window until no neighbour stuck out ran through the
   12 x 12 sea and mountain tiles to 200 x 170 cells (5,350 neighbours, 6 GB) and the app was killed (OOM).
 
+## Tile seams: the export's edge blend (findings 2026-10-22)
+
+TEd's / BOB's tile export writes `final_heights.dds` and `final_alpha.dds` next to the raw maps (R32F, 1025 x 1025: the tile without its
+border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are never-exported custom tiles). Measured on
+`settlement_western_ports/western_port_a/minor` (`height_map_0.png` scaled by the entry's min height -20 and scale 105.94):
+
+- **Heights**: `final_heights` equals the editing heights exactly more than 64 m from the edges. Within 64 m of a land edge it is the
+  editing height times a weight of the distance d (m) from the edge: 0 for d <= 2, then 0.0011, 0.0043, 0.0097 ... 0.1912 (16), 0.4087 (24),
+  0.6253 (32), 0.7959 (40), 0.9067 (48), 0.9674 (56), 0.9933 (63), 1 from 64; one curve for every column (spread 0). So a land edge is 0 m
+  (on the LF) whatever the tile has there. Edges the entry links to the sea keep the sea's -20; a `sea_coast` link gets a ramp. The left
+  and right edges of this tile come out identical value for value (both have the same links: `sea_coast` at row 3, sea below): the edge
+  is a profile of the links, not of the tile, so any two tiles that meet agree. The links' `blend_size` (48, 64, 128 px),
+  `no_offline_blend` ("offline": done at export) and `<blend_quad/>`, and the tile sets' `linking_tile`, are the inputs (not traced yet).
+- **Weights**: `final_alpha` is 0 at a land edge and 1 from about 64 m in (the same kind of curve); 1 along the edges linked to the sea.
+- **Blend weights**: the packed `blend.dds` (DXT5, 1280 x 1280 with the border) matches the raw `blend_map.tif` reduction everywhere
+  (1 to 2 levels, the compression): the export does not touch the texture weights at the edges; tiles' textures meet through
+  `final_alpha`. What the game draws where both neighbours' alpha is near 0 (the map-wide ground: `config.xml`'s default texture groups
+  in the cell's climate, the far / outfield maps?) is the engine's side, not traced yet.
+- The packed tile has `hf_height_map.data` ("CHMF" version 5, 1025 x 1025, min / max floats -20 / 22.1): the game's copy of the final
+  heights, presumably. It also has a tree list per climate (`rome_med.tree_list.bin` ...).
+
 ## Open
 
 - The flags / byte / floats of a placement; the header fields after the origin.
