@@ -240,6 +240,13 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, files: Option<
     t.display.lod = false;
     if !trees {
         t.display.tree_list.clear();
+    } else {
+        // The climate's own tree list when the tile has one (the packed tiles have `rome_med.tree_list.bin` and the like), as the game
+        // picks it; else the default one.
+        let own = look.climate.to_lowercase();
+        if t.tree_lists().contains(&own) {
+            t.display.tree_list = own;
+        }
     }
 
     let mut scratch = RenderScene::default();

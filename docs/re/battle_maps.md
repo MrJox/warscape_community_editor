@@ -158,7 +158,8 @@ plains (aa .. ad) elsewhere.
   its climate (the template key and the cache key have it; around Rome the campaign map says ROME_Med, 3966 placements within 100 cells,
   and ROME_Atlantic, 36), and the plain ground is cut by the cells' climates, each with the base material given that climate's textures
   (`terrain_material::retexture`: the open tile's blend averaged, the climate's slots; one id per climate). The open tile keeps the climate
-  of its own panel; the Map context section shows the map's at its placement and can use it. Not done: the per-season `snow_map_*.png`.
+  of its own panel; the Map context section shows the map's at its placement and can use it. A tile's trees are its climate's list when the
+  tile has one (`rome_med.tree_list.bin`), as the game picks them, else `default`. Not done: the per-season `snow_map_*.png`.
 - **The renderer**: the scene logs its structural changes (`StructureChange`: removed id ranges, payloads replaced, anything else), so the
   draw set and the decals follow a chunk coming or going instead of rebuilding 150 000 items (45 ms a change, 170 ms at worst); the
   entities whose models are still loading are added when they come; the context's terrains skip the legacy patches (`Terrain::legacy`);
