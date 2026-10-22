@@ -239,6 +239,16 @@ impl Streamer {
             .build()
             .expect("the map context's threads");
         let frame = Arc::new(pool.install(|| Frame::new(&rq, files.clone())));
+
+        // The cache's templates of an older format go (in the background: a large cache takes a while to look through).
+        if let Some(dir) = rq.cache.clone() {
+            std::thread::spawn(move || {
+                let (n, bytes) = cache::prune(&dir);
+                if n > 0 {
+                    wce_foundation::log::info(format!("map context cache: {n} templates of an older format removed ({} MB)", bytes >> 20));
+                }
+            });
+        }
         let rings = [rq.near, rq.mid, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {

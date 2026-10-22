@@ -16,7 +16,7 @@ use super::template::{Grid, Template};
 use crate::terrain_bake::TerrainLook;
 
 const MAGIC: &[u8; 6] = b"WCECTX";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {
@@ -33,6 +33,30 @@ pub fn clear(dir: &Path) -> usize {
     }
 
     n
+}
+
+/// Removes the cached templates of another format (an older version's: no reader of this one opens them again). How many and their bytes.
+pub fn prune(dir: &Path) -> (usize, u64) {
+    let (mut n, mut bytes) = (0, 0);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "bin") {
+            continue;
+        }
+
+        let mut head = [0u8; 8];
+        let current = std::fs::File::open(&path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head)).is_ok()
+            && &head[..6] == MAGIC
+            && u16::from_le_bytes([head[6], head[7]]) == VERSION;
+        if !current {
+            let size = e.metadata().map_or(0, |m| m.len());
+            if std::fs::remove_file(&path).is_ok() {
+                (n, bytes) = (n + 1, bytes + size);
+            }
+        }
+    }
+
+    (n, bytes)
 }
 
 fn fnv(h: u64, bytes: &[u8]) -> u64 {
@@ -462,6 +486,22 @@ pub fn write(dir: &Path, key: u64, t: &Template) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_removes_only_other_formats() {
+        let dir = std::env::temp_dir().join(format!("wce_cache_prune_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch folder");
+        let mut t = Template { extent: (8.0, 8.0), own: Grid { nx: 2, nz: 2, ox: 0.0, oz: 0.0, step: 2.0, heights: Arc::new(vec![0.0; 4]) }, ..Default::default() };
+        t.finish();
+        write(&dir, 1, &t).expect("written");
+        let mut old = MAGIC.to_vec();
+        old.extend((VERSION - 1).to_le_bytes());
+        std::fs::write(path(&dir, 2), &old).expect("an old one");
+        std::fs::write(dir.join("other.txt"), b"kept").expect("another file");
+        assert_eq!(prune(&dir).0, 1);
+        assert!(read(&dir, 1).is_some() && !path(&dir, 2).exists() && dir.join("other.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_template_reads_back_as_written() {
