@@ -102,7 +102,14 @@ pub fn round_trip(codec: Codec, bytes: &[u8]) -> Result<Vec<u8>, String> {
         Codec::Bmd => rpfm::<Bmd>(bytes, &None),
         Codec::TileDatabase => rpfm::<TileDatabase>(bytes, &None),
         Codec::RigidModel => rpfm::<RigidModel>(bytes, &Some(DecodeableExtraData::default())),
-        Codec::Chmf => ChmfFile::parse(bytes).map(|f| f.write()).map_err(|e| e.0),
+        Codec::Chmf => {
+            let f = ChmfFile::parse(bytes).map_err(|e| e.0)?;
+            for r in 0..f.regions.len() {
+                f.region_samples(r).map_err(|e| format!("region {r}: {}", e.0))?;
+            }
+
+            Ok(f.write())
+        }
         Codec::Markers => MarkersFile::parse(bytes).map(|f| f.write()).map_err(|e| e.0),
         Codec::Dds => DdsFile::parse(bytes).map(|f| f.write()).map_err(|e| e.0),
         Codec::Xml => XmlDoc::parse(bytes.to_vec()).map(|d| d.save()).map_err(|e| e.to_string()),

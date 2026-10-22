@@ -36,21 +36,37 @@ Which of a `.bin` / `.xml` / plain pair wins is not read yet.
 ## Codecs (`wce_tile_io::attila::binary`, `tile_binary_check`)
 
 On 15,148 extracted files (every file of the kinds still to decode, five whole tiles), decode then encode is byte-identical for all but
-4 `hf_height_map.data` of CHMF **version 4** (`roads*/2x2_straight_br_l*/bb`). What each codec understands:
+4 `hf_height_map.data` of CHMF **version 4** (`roads*/2x2_straight_br_l*/bb`; read since the CHMF decoding). What each codec understands:
 
 | Codec | Files | Content decoded |
 | --- | --- | --- |
 | rpfm_lib ESF (CAAB) | building lists, `far_building_list`, `bmd.grass_list`, `bmd.tree_list` | the node tree (names, values); the meaning of the building fields to map |
 | rpfm_lib FASTBIN lists, BMD, tile database | tree / grass / civilian bins, BMD binaries | yes |
 | rpfm_lib rigid model | terrain meshes | vertices and indices |
-| `wce_formats::chmf` | `hf_height_map.data`, `hf_water_map.data` | framing only (header, block offsets): **to decode** |
+| `wce_formats::chmf` | `hf_height_map.data`, `hf_water_map.data` | **decoded** (heights; see below) |
 | `wce_formats::markers` | `*.markers` | framing only: **payloads to decode** (point lights and particle emitters partly known, docs/re) |
 | `wce_formats::image_containers::DdsFile` | `*.dds` | container; DXT5 pixels decoded by `dds_decode`, the compressor not reproduced |
 | lossless XML | the XML files | text |
 | none | older `.tree_list` / `.grass_list`, `tile.ted_binary`, `*.outlines`, `.jpg` | **to decode** (the jpg stays opaque) |
 
-## CHMF (`hf_height_map.data`)
+## CHMF (`hf_height_map.data`, `hf_water_map.data`): decoded (2026-10-22, `wce_formats::chmf`)
 
-Version 5, header of 16 u32: magic, version, then for `farm_eastern/2x1/aa` (a 2 x 1 tile): 257, 129 (samples: one per metre plus the
-edge), 1, 1, 0, a float 1.477, 1, 1, 0, 0, 257, 129, 0xFFFF0000, 153 (blocks); then the data size and 153 offsets; blocks of 3 to about
-200 bytes (compressed). Meaning to decode.
+The engine's `WARSCAPE::COMPRESSED_HEIGHT_MAP` (`Warscape.AssemblyKit.dll`, exported names: `load`, `value` 0x104a9150, the block
+decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.retail.dll` fn 0x11857a00).
+
+- Header: `"CHMF"`, u32 version (4 or 5), u32 width, height (samples; a battle tile has `cells * per_cell + 1`: 257 x 129 for a 2 x 1 tile at
+  1 m, 961 x 961 for mont_blanc's 30 x 30 at 4 m), u32 `cells_x`, `cells_y` (the unit of the region rectangles, in samples: 1 in battle
+  tiles, 8 or 32 in TDD campaign tiles), f32 min, f32 range (metres), version 5: u32 spacing (metres per sample).
+- u32 region count, per region `x0, y0, x1, y1` (cells, end exclusive); then per region u16 x 2 (0, 0xFFFF in battle tiles; meaning not
+  read), u32 block count, u32 data size, the block offsets (u32), the block data.
+- Blocks of 16 x 16 samples, row by row; the last block of a row / column holds the rest (961 = 60 x 16 + 1: 61 x 61 = 3,721 blocks). A
+  table can stop early (545 TDD campaign files): the game reads a missing block as 0.
+- A block's first byte `k` picks the mode (the table at 0x107b68e8): 0 = one u16 for the block; 1 ..= 127 = a palette of `k + 1` u16, then
+  one `ceil(log2(k + 1))`-bit index per sample; 128 ..= 142 = a u16 base, then `k - 127` bits per sample added to it; 143 = one u16 per
+  sample. Bits are packed from the low bit of each byte (the game reads them through unaligned u16 / u32 loads).
+- A sample is `u16 / 65535`; the height `min + range * sample`. Row y of the grid is the tile's z (no flip, checked against the kit's
+  `final_heights.dds` of mont_blanc: the pack was built from an older raw tile, so only 57 % of the samples agree within 1 cm).
+- Checked: the 1,911 extracted CHMF files (vanilla and TDD, battle and campaign, versions 4 and 5) parse, decode and write back
+  byte-identically; on mont_blanc the steps across block borders are the same as inside blocks (mean 1.08 against 1.11 m: no seams).
+- Not exact against an oracle yet (the only BOB-made pair in `~/wce_re/bobkit` is a flat tile); the encoder BOB uses (`convert`,
+  0x104aae80 / 0x104ab0d0 / 0x104ac240) is for step 4.
