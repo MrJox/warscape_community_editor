@@ -280,8 +280,8 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   Masked tiles and `raw_data_tri_density` 32 (the mountains): influence, flags, the square skip, the per-subtile fringe, the
   density scale of vertices, rasterisers and CHMF spacing; every terrain file exact on river/4x4_y_l1_r0_b3/aa and
   atlantic_mountains/small_round/aa (13 oracle tiles in all).
-  Still open in stage B: a river-only water map check, the per-subtile `mesh<x>x<y>` files tile.agf lists (BOB wrote none for the
-  tiles tried: which tiles get them?), 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
+  The per-subtile `mesh<x>x<y>` entries of tile.agf are only listed: BOB writes no such file and the game's packs hold none.
+  Still open in stage B: a river-only water map check, 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
   stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
   (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
