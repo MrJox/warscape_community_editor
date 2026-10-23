@@ -305,7 +305,16 @@ These paths follow the decompiled code but no BOB run has exercised them; check 
   plane whose first block isn't type 83 makes BOB stop the remaining planes; we do the same, untested.
 - **Link blend with a 4-point `blend_quad`**: no vanilla link has one.
 - **Link blend with `height_map_0`** (a linking tile that is the tile itself, outside self tiling): the PNG path, / 65535, untested.
-- **Masked tiles in the link blend and influence**: the subtile mask checks are not ported (masked tiles are an open item).
+- **The DXT5 residual** (a few blocks in 10^5: 5 on dense_forest_rugged/8x8/ac, 3 on river/4x4_y_l1_r0_b3). Facts so far:
+  - BOB is deterministic: two runs give the same bytes.
+  - Our port gives the same blocks whether its expressions run in double or in float (x87 precision is not the cause).
+  - The blocks are ordinary gradients, and BOB's encoding fits them slightly worse than ours (squared error 232 against 230 on
+    river/4x4 block (304, 304)).
+
+  So the codec's search starts from something other than the block: most likely state left on the stack by an earlier block
+  (uninitialised arrays). Modelling that needs the leak found in the compressor's code. Left as a residual.
+- **Masked tiles in the link blend**: `FUN_10015610` skips a link whose cell fails `subtile_masked_valid(x, h - y - 1)`; not ported
+  (the masked oracle's links blend in valid cells, and the influence's mask is ported).
 - **Go outline chunks**: TBB cuts the rows into chunks of `max(rows / ((threads x 5 + 5) x 4), 64)` rounded down to 64, and each
   chunk restarts the f32 y accumulation. We assume 64 (any thread count up to dozens on a tile this size); with no worker threads
   BOB runs the range in one piece.
