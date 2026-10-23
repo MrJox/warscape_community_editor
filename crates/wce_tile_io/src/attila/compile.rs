@@ -1710,8 +1710,15 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
 
     out.documents = docs;
     if let Some(b) = &ctx.stage_b {
-        // Stage B's files read back as the exported tile's parts (maps, documents, files), then merged in.
-        let (files, more) = super::stage_b::stage_b_files(raw, b)?;
+        // Stage B's files read back as the exported tile's parts (maps, documents, files), then merged in. A project stage B cannot
+        // take (no blend map, heights not in subtiles) compiles without it, noted.
+        let (files, more) = match super::stage_b::stage_b_files(raw, b) {
+            Ok(r) => r,
+            Err(e) => {
+                notes.notes.push(format!("stage B not compiled ({e})"));
+                (vec![], CompileNotes::default())
+            }
+        };
         notes.notes.extend(more.notes);
         let folder = files.into_iter().map(|(name, bytes)| (name, wce_tile_model::Blob::Bytes(bytes.into()))).collect();
         let tf = crate::TileFiles { folder, entry: None, variation: raw.variation.clone() };
