@@ -1,6 +1,7 @@
 # Tile round trip: a game-neutral tile model with per-game readers and writers
 
-Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22), waiting for review; Phase 2 steps 1 and 2 done (2026-10-22), step 3 next.
+Branch `tile-roundtrip`. Status: **Phase 1 done** (2026-10-22); Phase 2 steps 1 to 3 done, step 4 (raw -> binary) done but the open items
+under "Progress" (2026-10-24); the editor opens exported tiles and saves them back.
 
 ## Phase 1 result
 
@@ -299,6 +300,23 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its
     export setup differs from vanilla.
+
+- **Stage C done** (2026-10-24, `attila::stage_c`, docs/formats/tile_compile.md "Stage C"): the vegetation port wired into the compile
+  and its writers ported (the tree map's order, BOB's constant flag bytes, the decal matrix's zeros, no empty lists): every file byte for
+  byte against fresh BOB on 13 oracle tiles, but the 1 x 1 grass (BOB under Wine; the packs agree with the port) and three ROME_Med
+  oracles made with the props test file (byte for byte with it, BOB's stack fields masked). The leaf density comparison stays last
+  (vegetation_remaining.md).
+- **Carried outputs** (user, 2026-10-24: carry, regenerate on edit): a decompiled project carries BOB's stage-B and stage-C files with
+  fingerprints of their inputs (`attila::carry`), so an unedited resave writes them back byte for byte; an edited group is made again.
+  The decompiler adds a whole-tile vegetation exclusion polygon (the instances are the trees) and carries the files nothing makes
+  (`sound_emitter_list.xml`, `tree_random_seed.xml`, `loading_screen_radar.jpg`). On 34 tiles every file of the binary compiles back,
+  none is added, every stage-B and stage-C file byte for byte.
+- **Editor workflow** (2026-10-24, docs/formats/tile_workflow.md; user: a workspace folder, folder output now and packs later): the
+  decompile context from the packs is a library (`attila::game_data`), `attila::workflow` opens an exported tile (a folder or the packs')
+  into a kit-like workspace and saves a project as an exported tile with the tile database in effect plus its entry; the tile tool's
+  `open_exported` / `save_exported` commands and Tile menu entries; `tile_workflow_check`, `scripts/tile_exported.txt`.
+- **Next**: pack output for "Save as exported tile"; the 16 stage-A values; `tile_normal.tga`; the DXT5 residual; the unverified items
+  below.
 
 ### Unverified in stage B (ported from the RE, no oracle yet)
 

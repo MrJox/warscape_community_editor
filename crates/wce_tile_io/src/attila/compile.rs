@@ -28,6 +28,10 @@ pub struct CompileContext<'a> {
     /// Stage B too (BOB's Tile processor: textures, meshes, heights, outlines), with what it needs from the kit; without it, stage A
     /// alone.
     pub stage_b: Option<super::stage_b::StageB<'a>>,
+
+    /// Stage C too (BOB's Vegetation processor: tree and grass lists, procedural BMDs) for a battle tile, with what it needs from the
+    /// kit; a decompiled project's carried vegetation is kept while its inputs are unchanged (`stage_c::stage_c_files`).
+    pub stage_c: Option<super::stage_c::StageC<'a>>,
 }
 
 /// What a compilation left out or made up, as notes.
@@ -839,7 +843,7 @@ fn bmd_xml_layout(n: &mut Node) {
 }
 
 /// The BMD XML files' document style: single quotes, CRLF, no declaration, a CRLF after the root.
-fn bmd_xml_style() -> crate::xml::DocStyle {
+pub fn bmd_xml_style() -> crate::xml::DocStyle {
     crate::xml::DocStyle { prolog: vec![], epilog: b"\r\n".to_vec(), newline: b"\r\n".to_vec(), indent: b"\t".to_vec(), quote: b'\'' }
 }
 
@@ -1163,9 +1167,9 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<Strin
 
 // ---- the escalation BMDs and the civilian deployment list (rpfm_lib's structs, built through serde_json)
 
-type Json = serde_json::Value;
+pub(crate) type Json = serde_json::Value;
 
-fn jf(v: f32) -> Json {
+pub(crate) fn jf(v: f32) -> Json {
     Json::from(f64::from(v))
 }
 
@@ -1178,7 +1182,7 @@ fn json_points(points: &[(f32, f32)]) -> Json {
 }
 
 /// A `Transform4x4` from a record's row-major matrix (element (r, c) at r * 4 + c, as `m{r}{c}`).
-fn json_matrix(m: &[f64]) -> Json {
+pub(crate) fn json_matrix(m: &[f64]) -> Json {
     let mut t = serde_json::Map::new();
     for r in 0..4 {
         for c in 0..4 {
@@ -1495,7 +1499,7 @@ fn array(v: &Json) -> &[Json] {
 
 /// The XML twin TEd writes next to a BMD (`BATTLE_MAP_DEFINITION_DATA`): the same data in its XML serialiser's names, in the binary's
 /// section order (version 5 adds the civilian deployment list, 6 the shelter list).
-fn bmd_twin(v: &Json, name: &str) -> Document {
+pub(crate) fn bmd_twin(v: &Json, name: &str) -> Document {
     let version = v["serialise_version"].as_i64().unwrap_or(6);
     let sv = |n: i64| ("serialise_version", n.to_string());
     let props = array(&v["prop_list"]["markers"])
@@ -1660,11 +1664,23 @@ pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
         .collect()
 }
 
+/// Whether a file a project carries (at its root) goes into the exported tile as it is when no stage makes it: what the decompiler
+/// carries from a binary that nothing reproduces (TEd's state when it exported, the packs' extras) and legacy lists without a TEd source.
+pub fn carried_into_export(name: &str) -> bool {
+    let n = name.to_lowercase();
+    !n.contains('/')
+        && (["vegetation_exclusion.xml", "civilian_deployment.bin", "civilian_shelter.bin", "sound_emitter_list.xml", "tree_random_seed.xml", "loading_screen_radar.jpg"]
+            .contains(&n.as_str())
+            || n.ends_with(".markers")
+            || n.starts_with("building_list")
+            || n.starts_with("far_building_list"))
+}
+
 /// A project's exported tile, as the model `attila.tile_binary` writes. Stage A (TEd's export): the building lists; the prop, particle
 /// emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas and
 /// capture locations (with their document styles); civilian_deployment.bin and civilian_shelter.bin; the escalation BMDs and their XML
-/// twins. With
-/// `ctx.stage_b`, stage B too ([`super::stage_b::stage_b_files`]).
+/// twins. With `ctx.stage_b`, stage B too ([`super::stage_b::stage_b_files`]); with `ctx.stage_c`, stage C
+/// ([`super::stage_c::stage_c_files`]).
 ///
 /// # Errors
 ///
@@ -1686,7 +1702,13 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     docs.extend(ai_hint_markers(&placed, extent_z, ctx));
     docs.extend(separator_markers(&placed, extent_z, ctx));
     docs.extend(siege_markers(&placed, extent_z, ctx));
-    let mut xml = vec![(definition(raw, campaign, (width, height)), bmd_xml_style())];
+    // A decompiled project (it carries BOB's files) without a carried definition.xml comes from a binary that had none (campaign tiles).
+    let decompiled = raw.files.iter().any(|f| f.path.starts_with(super::stage_b::CARRIED_DIR) || f.path.starts_with(super::stage_c::CARRIED_DIR));
+    let mut xml = vec![];
+    if !decompiled || raw.files.iter().any(|f| f.path == "definition.xml") {
+        xml.push((definition(raw, campaign, (width, height)), bmd_xml_style()));
+    }
+
     xml.extend(outlines(&placed, extent_z, "GO_REGION_POLYGON_INSTANCE", "go_outlines.xml"));
     xml.extend(outlines(&placed, extent_z, "NOGO_REGION_POLYGON_INSTANCE", "non_terrain_outlines.xml"));
     xml.extend(zones(&placed, extent_z));
@@ -1709,17 +1731,37 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     }
 
     out.documents = docs;
+    // Stages B and C's files read back as the exported tile's parts (maps, documents, files), then merged in. A project a stage cannot
+    // take (no blend map, heights not in subtiles) compiles without it, noted.
+    let mut files = vec![];
     if let Some(b) = &ctx.stage_b {
-        // Stage B's files read back as the exported tile's parts (maps, documents, files), then merged in. A project stage B cannot
-        // take (no blend map, heights not in subtiles) compiles without it, noted.
-        let (files, more) = match super::stage_b::stage_b_files(raw, b) {
-            Ok(r) => r,
-            Err(e) => {
-                notes.notes.push(format!("stage B not compiled ({e})"));
-                (vec![], CompileNotes::default())
+        match super::stage_b::stage_b_files(raw, b) {
+            Ok((f, more)) => {
+                files.extend(f);
+                notes.notes.extend(more.notes);
             }
-        };
-        notes.notes.extend(more.notes);
+            Err(e) => notes.notes.push(format!("stage B not compiled ({e})")),
+        }
+    }
+
+    // BOB's Vegetation processor makes nothing for a campaign tile: a decompiled one's carried files go back as they are.
+    if ctx.stage_c.is_some() && campaign {
+        files.extend(super::stage_c::carried_files(raw)?);
+    }
+
+    if let Some(c) = &ctx.stage_c
+        && !campaign
+    {
+        match super::stage_c::stage_c_files(raw, c) {
+            Ok((f, more)) => {
+                files.extend(f);
+                notes.notes.extend(more.notes);
+            }
+            Err(e) => notes.notes.push(format!("stage C not compiled ({e})")),
+        }
+    }
+
+    if !files.is_empty() {
         let folder = files.into_iter().map(|(name, bytes)| (name, wce_tile_model::Blob::Bytes(bytes.into()))).collect();
         let tf = crate::TileFiles { folder, entry: None, variation: raw.variation.clone() };
         let (read, _) = crate::TileFormat::read(&super::tile_binary::TileBinary, &tf).map_err(|e| e.to_string())?;
@@ -1731,6 +1773,10 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
         }
     }
 
+    // The carried files no stage made, as they are.
+    let made = |name: &str| out.documents.iter().any(|d| d.name.eq_ignore_ascii_case(name)) || out.files.iter().any(|f| f.path.eq_ignore_ascii_case(name));
+    let carried = raw.files.iter().filter(|f| carried_into_export(&f.path) && !made(&f.path)).cloned().collect::<Vec<_>>();
+    out.files.extend(carried);
     Ok((out, notes))
 }
 

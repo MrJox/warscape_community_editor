@@ -312,6 +312,34 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "open_exported", "open_exported <exported tile folder | terrain/tiles/... in the packs> [workspace folder] [--fresh]",
+        "open an exported tile: decompile it into a TEd project in the workspace (tile_workspace in wce.ini) and open that; a pack tile \
+         decompiled before opens the workspace's copy unless --fresh",
+        |e, a| {
+            let fresh = a.iter().any(|x| x == "--fresh");
+            let a = a.iter().filter(|x| *x != "--fresh").collect::<Vec<_>>();
+            let Some(target) = a.first() else { return fail("usage: open_exported <exported tile folder | terrain/tiles/...> [workspace folder] [--fresh]") };
+            let workspace = a.get(1).map(PathBuf::from);
+            with_tile(e, |t, e| t.open_exported(e, target, workspace.as_deref(), fresh).map_or_else(fail, ok))
+        },
+    );
+
+    c.add("tile_browse", "tile_browse <kit number | packs> [filter words]", "show a source in the Tiles panel (a kit, or the game packs' exported tiles) with a filter", |e, a| {
+        let Some(source) = a.first() else { return fail("usage: tile_browse <kit number | packs> [filter words]") };
+        let filter = a[1..].join(" ");
+        with_tile(e, |t, e| t.browse(e, source, &filter).map_or_else(fail, ok))
+    });
+
+    c.add(
+        "save_exported", "save_exported [output folder]",
+        "save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: the output folder)",
+        |e, a| {
+            let out = a.first().map_or_else(|| e.output_dir(), PathBuf::from);
+            with_tile(e, |t, e| t.save_exported(e, &out).map_or_else(fail, ok))
+        },
+    );
+
+    c.add(
         "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [near cells] [mid cells] [far cells]",
         "show the open tile among its neighbours in a battle map, streamed around the camera (waits for the chunks around it); 'campaign' is the game's campaign battle map",
         |e, a| {

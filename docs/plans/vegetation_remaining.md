@@ -10,7 +10,9 @@ All of it is bit-exact against fresh BOB output on 11 tiles. docs/re/vegetation.
 
 ## Left to do, in order
 
-1. **Write the files.** The editor generates and draws the lists but doesn't write them. That means `<category>.tree_list.bin`,
+1. **Write the files.** Done (2026-10-24): `wce_tile_io::attila::stage_c` writes the tree lists, the procedural BMDs with their twins
+   and the grass list byte for byte against fresh BOB (docs/re/vegetation.md, "The writers"). The notes below are kept for the record.
+   The editor generates and draws the lists but doesn't write them. That means `<category>.tree_list.bin`,
    `default.grass_list.bin` and `<category>_procedural_bmd_data.bin` / `.xml`, through rpfm's encoders. To settle when writing:
    - **Tree item `id`:** a 64-bit value per item, possibly random; not reproduced yet.
    - **Grass f16 rounding:** grass positions are stored as f16, rounded to nearest with ties toward zero (`FUN_10057610`).

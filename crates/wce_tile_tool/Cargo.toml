@@ -15,6 +15,7 @@ wce_render = { path = "../wce_render" }
 wce_scene = { path = "../wce_scene" }
 wce_tile = { path = "../wce_tile" }
 wce_tile_editor = { path = "../wce_tile_editor" }
+wce_tile_io = { path = "../wce_tile_io" }
 wce_vfs = { path = "../wce_vfs" }
 
 [dev-dependencies]

@@ -391,3 +391,22 @@ that sets variables by name hash would not show up in this search; only a memory
     `vegetation_season` (the tile's ground season).
 - `tree_metadata.txt` LOD distances vs the models' own.
 - The second instance matrix (untilted) vs the shader's TEXCOORD0..2 / 3..5: the editor feeds the tilted matrix to both.
+
+## The writers (2026-10-24)
+
+What BOB writes besides the objects themselves (BOB_Vegetation `FUN_100477a0`, `FUN_10033450`, `FUN_10047240`); the port is
+`wce_tile_io::attila::stage_c`, byte for byte against fresh BOB on 13 tiles (docs/formats/tile_compile.md, "Stage C"):
+
+- **Map order.** The tree list's models and the grass list's keys come out of a chained hash table (`FUN_10044a10`, grown by
+  `FUN_10044660`): 4 bucket lists, a key's hash from its last byte back (each signed byte shifted 0, 8, 16, 24, 0 ... bits and xored into
+  0xf73a51c9) modulo the bucket count, appended to its bucket; when the count would pass the bucket count (load factor 1) the table grows
+  to 2 n + 1 first, moving the entries bucket by bucket in order. The keys go in in the order of the path-sorted list. 101 of 101 tree
+  lists and 13 of 13 grass lists of the oracle tiles.
+- **Empty lists.** A category with no trees gets no tree list (`FUN_10033450`); the rule `DeleteEmptyClimateTreeLists` (default on)
+  removes a stale one, and `default.tree_list` (the older format) and `bmd.tree_list` are removed.
+- **Procedural BMDs.** One empty capture location list. The props' flag bytes in the binary are constants: `decal_tiled` 64 for a prop,
+  0 for a decal, then `is_fauna` 0, `snow` 0, `destruction` 8; the XML twin says tiled (props), not fauna, snow, destruction. A prop's
+  decal parallax and scale are stack memory (pointers). A decal's matrix is the product scale x rotation x translation with every
+  zero term summed in (the sign of its zeros); the rotation axis is (n.z, 0, -n.x) with the minus as a sign flip; the last column is
+  written 0, 0, 0, 1.
+- **BOB under Wine** is off on the 1 x 1 tiles' grass (an f32 tie in the count): the packs' 8 1 x 1 grass lists agree with the port.

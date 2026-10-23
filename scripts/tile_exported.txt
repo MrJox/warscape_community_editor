@@ -1,0 +1,19 @@
+# Opens an exported tile from the packs (decompiled into %WORKSPACE%), moves a tree and raises the terrain, and saves it as an exported
+# tile under %OUT%: the stages' files and the tile database are written.
+open_exported terrain/tiles/battle/farm_western/1x1/aa "%WORKSPACE%"
+frames 3
+assert_file_exists "%WORKSPACE%/raw_data/terrain/tiles/battle/farm_western/1x1/aa/tile.ted"
+assert_file_exists "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/farm_western_1x1.xml"
+assert_modified 0
+tile_select VEGETATION_INSTANCE
+tile_move 5 5
+paint raise 100 100 10
+assert_modified 1
+save_exported "%OUT%"
+assert_modified 0
+assert_file_exists "%OUT%/terrain/tiles/battle/farm_western/1x1/aa/mesh.rigid_model_v2"
+assert_file_exists "%OUT%/terrain/tiles/battle/farm_western/1x1/aa/hf_height_map.data"
+assert_file_exists "%OUT%/terrain/tiles/battle/farm_western/1x1/aa/default.tree_list.bin"
+assert_file_exists "%OUT%/terrain/tiles/battle/farm_western/1x1/aa/building_list"
+assert_file_exists "%OUT%/terrain/tiles/battle/tile_database.bin"
+quit

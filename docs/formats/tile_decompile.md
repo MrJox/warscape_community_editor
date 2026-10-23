@@ -82,7 +82,14 @@ texture group names from the ground types (per group, the type it carries most, 
 
 The trees of one tree list (`Context::tree_list`; default `outfield_tents.tree_list.bin`, then `default.tree_list.bin`) become explicit
 `VEGETATION_INSTANCE`s in a "Decompiled vegetation" layer, in the buildings' frame: the seeds are not in the binary, so regenerating would
-move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are carried along as files.
+move them. A tree whose list flag is 0 gets `surface_mode` MSM_LANDSCAPE (BOB's flag is MSM_FREEFORM). The layer also holds a
+`VegetationExclusionPolygonInstance` over the whole tile (a metre past each edge): BOB keeps only the static trees inside an exclusion
+polygon and generates nothing there, so an edited project exports exactly its instances. The tree list's `id`s are rpfm's (random), not
+data.
+
+Every vegetation file (tree, grass and procedural BMD files, the older lists, the per-climate emitter markers) is carried in
+`decompiled_vegetation/`, and BOB's terrain files in `decompiled_terrain/`, with the fingerprints of what they come from: the compile
+writes them back while the project is unchanged (docs/formats/tile_compile.md, "Carried outputs").
 
 ## Logic
 
@@ -101,8 +108,9 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
   capture locations, no-go regions, zones, civilian deployment zones. The props and emitters come grouped by key in `MARKER_TABLE`
   order: the groups are placed in an insertion order that gives that order back (docs/formats/tile_compile.md, "Insertion order"), the
   records' order kept within a group.
-- An empty `civilian_deployment.bin` is carried along (the compiler writes the file when there are zones), and so is
-  `vegetation_exclusion.xml` (docs/formats/tile_compile.md).
+- An empty `civilian_deployment.bin` is carried along (the compiler writes the file when there are zones), and so are
+  `vegetation_exclusion.xml` (docs/formats/tile_compile.md), `sound_emitter_list.xml`, `tree_random_seed.xml` and
+  `loading_screen_radar.jpg` (a few tiles; nothing in TEd's project or BOB makes them).
 - A deployment area's `facing_direction` is the file's `radians` - 1.570796, plus 6.283185 below 0 (the inverse of the export).
 
 ## Not in the binary
@@ -116,5 +124,6 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
 ## The entry
 
 The tile database row of the location (a mod's database before the game's), as BOB writes the entry, with the variation's `min_height`
-/ `scale` set to the CHMF's min / range. A location no database has (mods' `assembly_kit` battles, 16 tiles of the game's packs) gets
+/ `scale` set to the CHMF's min / range (saving the project as an exported tile puts the database's values back while the terrain is
+unchanged, docs/formats/tile_workflow.md). A location no database has (mods' `assembly_kit` battles, 16 tiles of the game's packs) gets
 an entry made from the binary: the size from the CHMF (samples x spacing / 128), one variation, the other fields their defaults.
