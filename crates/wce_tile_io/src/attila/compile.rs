@@ -7,7 +7,7 @@
 use wce_tile::world_transform::{ted_mul_f32, ted_rotation_f32};
 use wce_tile_model::{Document, Node, Sym, Tile, Value};
 
-use super::decompile::{LevelsOf, ThresholdsOf};
+use super::decompile::{CategoryOf, LevelsOf, ThresholdsOf};
 use super::schema::TedSchema;
 
 /// The version to write a file in, by its name.
@@ -21,6 +21,9 @@ pub struct CompileContext<'a> {
 
     /// The `destruct_thresholds` of a building key (`battlefield_buildings`).
     pub building_thresholds: Option<ThresholdsOf<'a>>,
+
+    /// The `battlefield_buildings` category of a building key (a capture location links the `fort_tower` and `gate` buildings at it).
+    pub building_category: Option<CategoryOf<'a>>,
 
     /// The version to write a markers file in (by file name); without it TEd's current one.
     pub marker_versions: Option<VersionOf<'a>>,
@@ -355,9 +358,9 @@ fn seasons_mask(n: &Node) -> i64 {
 }
 
 /// `prop_marker.markers`: the decals (`ProjectedDecalInstance`) and models (`SIMPLE_MESH_INSTANCE`) of the normal layers, in the scene's
-/// order. A record's 3 x 3 rows are the world rotation in the binary's frame (z mirrored: F R^T F, F = diag(1, 1, -1)) times half the
-/// instance's scale, a model's y and z rows negated; the translation (x / 2, y / 2, extent - z / 2). The inverse of the decompiler's
-/// (docs/formats/tile_decompile.md, "Rotations").
+/// order. A record's row k is the world rotation in the binary's frame (z mirrored: F R^T F, F = diag(1, 1, -1)) times half the
+/// instance's scale: its magnitude for a decal, f_k times it signed for a model (f = F); the translation (x / 2, y / 2, extent - z / 2).
+/// The inverse of the decompiler's (docs/formats/tile_decompile.md, "Rotations").
 fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "prop_marker.markers";
     let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
@@ -377,8 +380,8 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
         let f = [1.0f32, 1.0, -1.0];
         let mut m = [0.0f64; 16];
         for k in 0..3 {
-            let sign = if decal || k == 0 { 1.0 } else { -1.0 };
-            let len = half[k].abs() * sign;
+            // A decal: |half scale| (version 5: signed); a model: f_k * the signed half scale (f = (1, 1, -1)).
+            let len = if decal && version >= 6 { half[k].abs() } else if decal || k != 2 { half[k] } else { -half[k] };
             for l in 0..3 {
                 // a[k][l] = f_l f_k R[l][k] with R[l][k] = w[l * 4 + k].
                 m[k * 4 + l] = f64::from(f[l] * f[k] * w[l * 4 + k] * len);
@@ -394,8 +397,9 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
             r.set(u, Value::Int(0));
         }
 
-        // A water plane model is flagged (FUN_00502c60 compares the model's name with `water_plane`).
-        let water = !decal && key.replace('\\', "/").rsplit('/').next().is_some_and(|f| f.eq_ignore_ascii_case("water_plane.rigid_model_v2"));
+        // A model named `water_plane` is flagged (FUN_00502c60 compares the instance's name; 1,184 of the kit's water planes are so
+        // named, 8 `Object`).
+        let water = !decal && n.get("name").and_then(Value::as_str) == Some("water_plane");
         r.set("unknown_69", Value::Int(i64::from(water)));
         if version >= 6 {
             r.set("seasons", Value::Int(if decal { 15 } else { seasons_mask(n) }));
@@ -413,8 +417,9 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
         if decal {
             r.set("parallax_scale", Value::Float(f64::from(floats_of(n, "parallax_scale").and_then(|v| v.first().copied()).unwrap_or(0.0))));
             r.set("tiled", Value::Int(i64::from(bool_of(n, "tiled", false))));
+            // Version 5 writes the magnitudes.
             for (k, h) in ["scale_x", "scale_y", "scale_z"].iter().zip(half) {
-                r.set(*k, Value::Float(f64::from(h)));
+                r.set(*k, Value::Float(f64::from(if version >= 6 { h } else { h.abs() })));
             }
         }
 
@@ -701,6 +706,201 @@ fn outlines(placed: &[Placed], extent_z: f32, class: &str, name: &str) -> Option
     (!root.children.is_empty()).then(|| (Document { name: name.to_owned(), root }, outline_style()))
 }
 
+/// An element holding a text, closed on its line (`<zone_name>ZONE_POLYGON_INSTANCE</zone_name>`).
+fn text_element(class: &str, text: &str) -> Node {
+    let mut n = Node::new(class);
+    let mut t = Node::new(crate::xml::TEXT);
+    t.set("text", Value::Str(text.to_owned()));
+    n.children.push(t);
+    n.trivia_mut().layout.push((crate::xml::layout::BEFORE_END, Box::default()));
+    n
+}
+
+/// `zones.xml`: a `TRANSFORMED_BATTLEFIELD_ZONE_TEMPLATE` per `ZONE_POLYGON_INSTANCE` of the normal layers: the template (its name
+/// `ZONE_POLYGON_INSTANCE`, the world points on one line, an empty formation template) and an identity `Transformation` (every one of
+/// the packs' 1,909 is so).
+fn zones(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocStyle)> {
+    use crate::xml::layout::{BEFORE_START, EMPTY_PAIR};
+    let mut root = Node::new("BATTLEFIELD_ZONE_TEMPLATE_LIST");
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "ZONE_POLYGON_INSTANCE") {
+        let mut template = Node::new("BATTLEFIELD_ZONE_TEMPLATE");
+        template.children.push(text_element("zone_name", "ZONE_POLYGON_INSTANCE"));
+        for (i, c) in polygon_points(p, extent_z).as_chunks::<2>().0.iter().enumerate() {
+            let mut pos = Node::new("position");
+            pos.set("x", coord(c[0]));
+            pos.set("y", coord(c[1]));
+            if i > 0 {
+                pos.trivia_mut().layout.push((BEFORE_START, Box::default()));
+            }
+
+            template.children.push(pos);
+        }
+
+        let mut formation = Node::new("ENTITY_FORMATION_TEMPLATE");
+        formation.set("name", Value::Str(String::new()));
+        formation.trivia_mut().layout.extend([(BEFORE_START, Box::default()), (EMPTY_PAIR, b"\r\n".to_vec().into())]);
+        template.children.push(formation);
+        let mut transformation = Node::new("Transformation");
+        for k in 0..16 {
+            transformation.children.push(text_element(&format!("element_{k}"), if k % 5 == 0 { "1" } else { "0" }));
+        }
+
+        let mut t = Node::new("TRANSFORMED_BATTLEFIELD_ZONE_TEMPLATE");
+        t.children.extend([template, transformation]);
+        root.children.push(t);
+    }
+
+    (!root.children.is_empty()).then(|| (Document { name: "zones.xml".to_owned(), root }, outline_style()))
+}
+
+/// `deployment_areas.xml`: per alliance (by id) its areas (`DeploymentZonePolygonInstanceGroup`s of the normal layers: `alliance_id`,
+/// `deployment_zone_id`, `deployment_category`), each with a `boundary` per `DEPLOYMENT_ZONE_POLYGON_INSTANCE` under it (its type, its
+/// world points) and the facing direction. TEd clips the boundaries to the playable area on export (a decompiled project already holds
+/// the clipped ones); that is not done here yet.
+fn deployment(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocStyle)> {
+    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let mut alliances: std::collections::BTreeMap<i64, Vec<Node>> = std::collections::BTreeMap::new();
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "DeploymentZonePolygonInstanceGroup") {
+        let n = p.node;
+        let int = |a: &str| n.get(a).and_then(Value::as_int).unwrap_or(0);
+        let mut area = Node::new("deployment_area");
+        area.set("id", Value::Str(int("deployment_zone_id").to_string()));
+        area.set("category", Value::Str(n.get("deployment_category").and_then(Value::as_str).unwrap_or("DAC_DEFAULT").to_owned()));
+        for c in n.wrapped("children").iter().filter(|c| c.class == "DEPLOYMENT_ZONE_POLYGON_INSTANCE").filter_map(|c| by_node.get(&std::ptr::from_ref(c))) {
+            let kind = match c.node.get("deployment_polygon_type").and_then(Value::as_str).unwrap_or_default() {
+                "DZPT_ADDITIVE" => "standard additive",
+                "DZPT_SUBSTRACTIVE" => "standard subtractive",
+                "DZPT_GUERRILLA_EXCLUSION_ADDITIVE" => "guerrilla exclusion additive",
+                _ => "guerrilla exclusion subtractive",
+            };
+            let mut b = Node::new("boundary");
+            b.set("type", Value::Str(kind.to_owned()));
+            for xy in polygon_points(c, extent_z).as_chunks::<2>().0 {
+                let mut pos = Node::new("position");
+                pos.set("x", coord(xy[0]));
+                pos.set("y", coord(xy[1]));
+                b.children.push(pos);
+            }
+
+            area.children.push(b);
+        }
+
+        if let Some(f) = floats_of(n, "facing_direction").and_then(|v| v.first().copied()) {
+            let mut o = Node::new("orientation");
+            o.set("radians", coord(f64::from(f)));
+            area.children.push(o);
+        }
+
+        alliances.entry(int("alliance_id")).or_default().push(area);
+    }
+
+    if alliances.is_empty() {
+        return None;
+    }
+
+    let mut areas = Node::new("BATTLE_DEPLOYMENT_AREAS");
+    for (id, list) in alliances {
+        let mut a = Node::new("ALLIANCE");
+        a.set("id", Value::Str(id.to_string()));
+        a.children = list;
+        areas.children.push(a);
+    }
+
+    let mut root = Node::new("BATTLE_DEPLOYMENT_AREA_HASH_TABLE");
+    root.children.push(areas);
+    Some((Document { name: "deployment_areas.xml".to_owned(), root }, bmd_xml_style()))
+}
+
+/// `capture_location_list.xml`: the `CaptureLocationInstance`s of the normal layers (the escalation layers' go into their BMDs). The
+/// flag's world position, the boundary (a circle: half TEd's radius and its centre, the instance's position; a polygon: radius 0 and its
+/// points), players, type, key, the facing as (cos, -sin), and the main list's towers and gates at it (`building_list`, their indices).
+/// `buildings` are the main list's (key, x, z).
+fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32, f32)], ctx: &CompileContext) -> Option<(Document, crate::xml::DocStyle)> {
+    use crate::xml::layout::BEFORE_START;
+    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let ted = |v: f32| crate::xml::values::Num::Ted.format(f64::from(v));
+    // flag_facing keeps one decimal (`1.0,-0.0`).
+    let one = |v: f32| {
+        let t = ted(v);
+        if t.contains('.') { t } else { format!("{t}.0") }
+    };
+    let mut list = Node::new("CAPTURE_LOCATION_LIST");
+    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "CaptureLocationInstance") {
+        let n = p.node;
+        let w = &p.world;
+        let fp = vec3_of(n, "flag_position").unwrap_or([0.0; 3]);
+        let (fx, fz) = (w[0] * fp[0] + w[1] * fp[1] + w[2] * fp[2] + w[3], w[8] * fp[0] + w[9] * fp[1] + w[10] * fp[2] + w[11]);
+        let boundary = n.wrapped("children").iter().find(|c| c.class == "CaptureLocationPolygonInstance").and_then(|c| by_node.get(&std::ptr::from_ref(c)));
+        let circle = boundary.is_some_and(|b| b.node.get("polygon_shape").and_then(Value::as_str) == Some("PS_CIRCLE"));
+        let (radius, points): (f32, Vec<(f32, f32)>) = match boundary {
+            Some(b) if circle => {
+                let r = floats_of(b.node, "radius").and_then(|v| v.first().copied()).unwrap_or(0.0) * 0.5;
+                (r, vec![(w[3] * 0.5, extent_z - w[11] * 0.5)])
+            }
+            Some(b) => (0.0, polygon_points(b, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect()),
+            None => (0.0, vec![]),
+        };
+
+        // TEd links the towers and gates at the capture location (their footprints, not known here): those within 20 m of its boundary
+        // (camps' corner towers 6 to 16 m from a 7.5 to 10 m circle, the next 47 m off; a gate and its two towers at a polygon).
+        let near = |x: f32, z: f32| {
+            if circle {
+                return points.first().is_some_and(|c| (x - c.0).hypot(z - c.1) <= radius + 20.0);
+            }
+
+            inside(&points, x, z)
+                || (0..points.len()).any(|k| {
+                    let (a, b) = (points[k], points[(k + 1) % points.len()]);
+                    let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+                    let t = (((x - a.0) * dx + (z - a.1) * dz) / (dx * dx + dz * dz).max(1e-12)).clamp(0.0, 1.0);
+                    (x - (a.0 + t * dx)).hypot(z - (a.1 + t * dz)) <= 20.0
+                })
+        };
+        let category = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
+        let building = buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, (k, x, z))| !points.is_empty() && matches!(category(k).as_str(), "fort_tower" | "gate") && near(*x, *z))
+            .map(|(i, _)| i.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        let facing = floats_of(n, "flag_facing").and_then(|v| v.first().copied()).unwrap_or(0.0);
+        let int = |a: &str, d: i64| n.get(a).and_then(Value::as_int).unwrap_or(d).to_string();
+        let mut c = Node::new("CAPTURE_LOCATION");
+        for (k, v) in [
+            ("radius", wce_formats::c_num::printf_f_msvc(f64::from(radius), 6)),
+            ("position_x", wce_formats::c_num::printf_f_msvc(f64::from(fx * 0.5), 6)),
+            ("position_y", wce_formats::c_num::printf_f_msvc(f64::from(extent_z - fz * 0.5), 6)),
+            ("valid_for_min_num_players", int("min_num_players", 2)), ("valid_for_max_num_players", int("max_num_players", 8)),
+            (
+                "capture_point_type_v2",
+                if n.get("type").and_then(Value::as_str) == Some("CLT_MAJOR") { "CAPTURE_LOCATION_MAJOR" } else { "CAPTURE_LOCATION_MINOR" }.to_owned(),
+            ),
+            ("capture_point_list", points.iter().map(|&(x, z)| format!("{},{}", ted(x), ted(z))).collect::<Vec<_>>().join(";")),
+            ("building_list", building), ("database_key", n.get("database_type").and_then(Value::as_str).unwrap_or_default().to_owned()),
+            ("flag_facing", format!("{},{}", one(facing.cos()), one(-facing.sin()))),
+        ] {
+            c.set(k, Value::Str(v));
+        }
+
+        bmd_xml_layout(&mut c);
+        if list.children.is_empty() {
+            c.trivia_mut().layout.push((BEFORE_START, b"\r\n\t\r\n".to_vec().into()));
+        }
+
+        list.children.push(c);
+    }
+
+    if list.children.is_empty() {
+        return None;
+    }
+
+    list.trivia_mut().layout.push((BEFORE_START, b"\r\n\r\n\t\t".to_vec().into()));
+    let mut root = Node::new("CAPTURE_LOCATION_SET");
+    root.children.push(list);
+    Some((Document { name: "capture_location_list.xml".to_owned(), root }, outline_style()))
+}
+
 /// The outline files' style: no indentation, single quotes, CRLF.
 fn outline_style() -> crate::xml::DocStyle {
     crate::xml::DocStyle { indent: vec![], ..bmd_xml_style() }
@@ -732,6 +932,18 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     let mut xml = vec![(definition(raw, campaign, (width, height)), bmd_xml_style())];
     xml.extend(outlines(&placed, extent_z, "GO_REGION_POLYGON_INSTANCE", "go_outlines.xml"));
     xml.extend(outlines(&placed, extent_z, "NOGO_REGION_POLYGON_INSTANCE", "non_terrain_outlines.xml"));
+    xml.extend(zones(&placed, extent_z));
+    xml.extend(deployment(&placed, extent_z));
+    // The main list's buildings, for the capture locations' links.
+    let main = docs.iter().find(|d| d.name == "building_list").map_or(vec![], |d| {
+        d.root
+            .children
+            .iter()
+            .filter_map(|b| Some((b.get("key")?.as_str()?.to_owned(), b.get("position").and_then(Value::as_vec3)?)))
+            .map(|(k, p)| (k, p[0] as f32, p[2] as f32))
+            .collect::<Vec<_>>()
+    });
+    xml.extend(capture_locations(&placed, extent_z, &main, ctx));
     let mut out = Tile { source_format: Some(super::tile_binary::ID), variation: raw.variation.clone(), ..Default::default() };
     for (d, style) in xml {
         out.source.insert(d.name.clone(), std::sync::Arc::new(style));
