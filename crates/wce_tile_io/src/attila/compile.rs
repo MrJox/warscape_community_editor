@@ -1577,6 +1577,20 @@ fn outline_style() -> crate::xml::DocStyle {
     crate::xml::DocStyle { indent: vec![], ..bmd_xml_style() }
 }
 
+/// Every BUILDING_INSTANCE of the project (in document order, whatever its layer) with its key and TEd's world matrix (row-major, the
+/// translation in the last column; x and z in TEd's half metres), as BOB_Tile's `QTU::TedScene::elements("BUILDING_INSTANCE")` and
+/// `QTU::TedEntity::world_transform` give them.
+pub fn buildings(raw: &Tile) -> Vec<(String, [f32; 16])> {
+    let Some(scene) = raw.scene.as_ref() else { return vec![] };
+    let mut placed = vec![];
+    walk(scene, None, "LayerExportType_Normal", "", &mut placed);
+    placed
+        .iter()
+        .filter(|p| p.node.class == "BUILDING_INSTANCE")
+        .map(|p| (p.node.get("key").and_then(Value::as_str).unwrap_or_default().to_owned(), p.world))
+        .collect()
+}
+
 /// The stage-A part of a project's exported tile (TEd's export), as the model `attila.tile_binary` writes: the building lists; the prop,
 /// particle emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas
 /// and capture locations (with their document styles); civilian_deployment.bin; the escalation BMDs and their XML twins.
