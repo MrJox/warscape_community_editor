@@ -1,6 +1,8 @@
 //! Total War: ATTILA.
 
+pub mod ati_dxt;
 pub mod binary;
+pub mod bob_tile;
 pub mod building_list;
 pub mod images;
 pub mod schema;

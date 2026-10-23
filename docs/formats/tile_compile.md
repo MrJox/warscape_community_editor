@@ -132,3 +132,28 @@ target), so it belongs to BOB's stage.
 
 Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
 text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.
+
+## Stage B: BOB's Tile processor (`attila::bob_tile`, `attila::ati_dxt`)
+
+BOB's own intermediates (`final_heights.dds`, `final_alpha.dds`, `tile_normal.tga`) are not inputs: BOB rebuilds them from TEd's raw files
+(deleted, a fresh run writes them again, every output the same). Check: `bob_tile_check <raw tile> <BOB's working tile>` against a fresh
+run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
+
+- **Blend and index maps** (`TOOLDATABUILDER::convert_blend_map`, `FUN_10027430`): the 16 weights as `IMAGE::convert` makes them
+  (x the f32 of 1 / 65535: 514 / 65535 x 255 truncates to 1); per group the sum of its variations x 255 truncated (blend), and
+  (0 w0 + 0.33333 w1 + 0.66666 w2 + w3) / sum x 255 truncated (index); group red, green, blue, alpha to R, G, B, A.
+- **Ground types** (the same function): per pixel of the tile without its 128-pixel border the strongest group of the blend map (ties to
+  red, green, blue, alpha) as its `ground_type_from_texture_group`, a colour of `ground_type_map.png`'s palette over it. Written by
+  `IMAGE::save_raw_to_file`: L8, no mips.
+- **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
+  ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
+- **ATI's DXT5 compressor** (`ATI_TC_ConvertTexture`, statically linked; `ati_dxt`): the 2008 ATI_Compress, ported from AMD
+  Compressonator's legacy codec and corrected where the 2008 binary differs:
+  - the colour part runs on the x87 under `/fp:precise` (each expression in double, rounded to float where stored);
+  - its ramp searches are SSE2 (`FUN_101e5940`, `FUN_101e54a0`): the nearest ramp point by `cvtps2dq` (ties to even) clamped to the
+    ends, the errors in four lanes summed (l0 + l2) + (l1 + l3), no early exit; the colour index vector the same way;
+  - the alpha part is single float operations (the x87's stored results are the f32 ones);
+  - a float endpoint becomes a byte through int (`(BYTE)256.0f` = 0: an all-255 alpha block is written 0, 255).
+- Measured: blend, index and ground types byte for byte on farm_western/1x1/aa, terrain_rolling_hills_med/1x1/aa and
+  western_city_b/small, but 2 colour blocks of western_city_b/small's index (of 133,000): the 2008 refinement reads, for the padding of
+  a 4-colour group, error and colour slots it never writes (its stack), so a stale NaN can stop a refinement pass in rare blocks.

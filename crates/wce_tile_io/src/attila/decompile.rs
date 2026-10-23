@@ -261,13 +261,13 @@ fn blend_map(binary: &Tile) -> Option<Raster> {
 
 /// `EMPIREUTILITY::ground_type_to_colour`: the colour TEd paints a ground type with in `ground_type_map.png` (index = the `ground_types`
 /// table's `enum_value`); black is no ground type.
-const GROUND_COLOURS: [[u8; 3]; 13] = [
+pub(crate) const GROUND_COLOURS: [[u8; 3]; 13] = [
     [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
     [255, 96, 0], [255, 100, 100], [255, 255, 255], [255, 255, 0], [64, 0, 0],
 ];
 
 /// `EMPIREUTILITY::ground_type_from_texture_group` (any other name: grass, with BOB's assert).
-fn ground_type_of_group(name: &str) -> u8 {
+pub(crate) fn ground_type_of_group(name: &str) -> u8 {
     match name {
         "forest" => 0,
         "mud" | "settlement_3" | "Settlement_3" => 2,
