@@ -7,7 +7,7 @@
 use wce_tile::world_transform::{ted_mul_f32, ted_rotation_f32};
 use wce_tile_model::{Document, Node, Sym, Tile, Value};
 
-use super::decompile::{CategoryOf, LevelsOf, ThresholdsOf};
+use super::decompile::{LevelsOf, ThresholdsOf};
 use super::schema::TedSchema;
 
 /// The version to write a file in, by its name.
@@ -21,9 +21,6 @@ pub struct CompileContext<'a> {
 
     /// The `destruct_thresholds` of a building key (`battlefield_buildings`).
     pub building_thresholds: Option<ThresholdsOf<'a>>,
-
-    /// The `battlefield_buildings` category of a building key (a capture location links the `fort_tower` and `gate` buildings at it).
-    pub building_category: Option<CategoryOf<'a>>,
 
     /// The version to write a markers file in (by file name); without it TEd's current one.
     pub marker_versions: Option<VersionOf<'a>>,
@@ -68,10 +65,11 @@ fn walk<'a>(n: &'a Node, world: Option<[f32; 16]>, export: &'a str, layer: &'a s
         world
     };
 
-    let (export, layer) = if n.class == "LayerInstance" {
-        (n.get("export_type").and_then(Value::as_str).unwrap_or("LayerExportType_Normal"), n.get("name").and_then(Value::as_str).unwrap_or_default())
-    } else {
-        (export, layer)
+    // A normal layer inside another exports with it (the kit's escalation layers hold their content in normal sub-layers).
+    let (export, layer) = match n.get("export_type").and_then(Value::as_str).filter(|_| n.class == "LayerInstance") {
+        Some(e) if e != "LayerExportType_Normal" || export == "LayerExportType_Normal" => (e, n.get("name").and_then(Value::as_str).unwrap_or_default()),
+        None if n.class == "LayerInstance" && export == "LayerExportType_Normal" => ("LayerExportType_Normal", n.get("name").and_then(Value::as_str).unwrap_or_default()),
+        _ => (export, layer),
     };
 
     if let Some(w) = world
@@ -996,8 +994,17 @@ fn by_node<'p, 'a>(placed: &'p [Placed<'a>]) -> ByNode<'p, 'a> {
     placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect()
 }
 
-/// A `CaptureLocationInstance` as a [`Capture`]; `buildings` are the (key, x, z) of the list it links into (its layer's).
-fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[(String, f32, f32)], ctx: &CompileContext) -> Capture {
+/// The `capture_location` of each building among the placed nodes, in the list's order.
+fn capture_names<'p, 'a: 'p>(placed: impl Iterator<Item = &'p Placed<'a>>) -> Vec<Option<String>> {
+    placed
+        .filter(|p| p.node.class == "BUILDING_INSTANCE")
+        .map(|p| p.node.get("capture_location").and_then(Value::as_str).filter(|c| !c.is_empty()).map(str::to_owned))
+        .collect()
+}
+
+/// A `CaptureLocationInstance` as a [`Capture`]; `buildings` are the `capture_location`s of the list it links into (the main list, or
+/// its escalation layer's).
+fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[Option<String>]) -> Capture {
     let n = p.node;
     let w = &p.world;
     let fp = vec3_of(n, "flag_position").unwrap_or([0.0; 3]);
@@ -1013,28 +1020,9 @@ fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[(Str
         None => (0.0, vec![]),
     };
 
-    // TEd links the towers and gates at the capture location (their footprints, not known here): those within 20 m of its boundary
-    // (camps' corner towers 6 to 16 m from a 7.5 to 10 m circle, the next 47 m off; a gate and its two towers at a polygon).
-    let near = |x: f32, z: f32| {
-        if circle {
-            return points.first().is_some_and(|c| (x - c.0).hypot(z - c.1) <= radius + 20.0);
-        }
-
-        inside(&points, x, z)
-            || (0..points.len()).any(|k| {
-                let (a, b) = (points[k], points[(k + 1) % points.len()]);
-                let (dx, dz) = (b.0 - a.0, b.1 - a.1);
-                let t = (((x - a.0) * dx + (z - a.1) * dz) / (dx * dx + dz * dz).max(1e-12)).clamp(0.0, 1.0);
-                (x - (a.0 + t * dx)).hypot(z - (a.1 + t * dz)) <= 20.0
-            })
-    };
-    let category = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
-    let links = buildings
-        .iter()
-        .enumerate()
-        .filter(|(_, (k, x, z))| !points.is_empty() && matches!(category(k).as_str(), "fort_tower" | "gate") && near(*x, *z))
-        .map(|(i, _)| i)
-        .collect();
+    // TEd links the buildings whose `capture_location` is the capture location's name (towers and gates, set in their properties).
+    let name = n.get("name").and_then(Value::as_str).unwrap_or_default();
+    let links = buildings.iter().enumerate().filter(|(_, c)| !name.is_empty() && c.as_deref() == Some(name)).map(|(i, _)| i).collect();
     let int = |a: &str, d: i64| n.get(a).and_then(Value::as_int).unwrap_or(d);
     Capture {
         radius,
@@ -1050,8 +1038,8 @@ fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[(Str
 }
 
 /// `capture_location_list.xml`: the `CaptureLocationInstance`s of the normal layers (the escalation layers' go into their BMDs), linking
-/// into the main list (`buildings`, its (key, x, z)). The facing is written as (cos, -sin).
-fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32, f32)], ctx: &CompileContext) -> Option<(Document, crate::xml::DocStyle)> {
+/// into the main list (`buildings`, their `capture_location`s). The facing is written as (cos, -sin).
+fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<String>]) -> Option<(Document, crate::xml::DocStyle)> {
     use crate::xml::layout::BEFORE_START;
     let by_node = by_node(placed);
     let ted = |v: f32| crate::xml::values::Num::Ted.format(f64::from(v));
@@ -1062,7 +1050,7 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32
     };
     let mut list = Node::new("CAPTURE_LOCATION_LIST");
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "CaptureLocationInstance") {
-        let c = capture_record(p, &by_node, extent_z, buildings, ctx);
+        let c = capture_record(p, &by_node, extent_z, buildings);
         let mut n = Node::new("CAPTURE_LOCATION");
         for (k, v) in [
             ("radius", wce_formats::c_num::printf_f_msvc(f64::from(c.radius), 6)),
@@ -1266,11 +1254,7 @@ fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes
             notes.notes.push(format!("{name}: {unknown_levels} damaged buildings without their destruction levels (starting damage 1)"));
         }
 
-        let positions = buildings
-            .iter()
-            .filter_map(|b| Some((b.get("key")?.as_str()?.to_owned(), b.get("position").and_then(Value::as_vec3)?)))
-            .map(|(k, p)| (k, p[0] as f32, p[2] as f32))
-            .collect::<Vec<_>>();
+        let links = capture_names(layer.iter().copied());
         // Props and emitters grouped by key in the marker table's order, as the markers files.
         let grouped = |records: Vec<(MarkerKey, Node)>| {
             let mut first: Vec<MarkerKey> = vec![];
@@ -1291,7 +1275,7 @@ fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes
         let captures = layer
             .iter()
             .filter(|p| p.node.class == "CaptureLocationInstance")
-            .map(|p| bmd_capture(&capture_record(p, &by_node, extent_z, &positions, ctx)))
+            .map(|p| bmd_capture(&capture_record(p, &by_node, extent_z, &links)))
             .collect::<Vec<_>>();
         let outline = |class: &str| {
             layer
@@ -1565,16 +1549,9 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     xml.extend(outlines(&placed, extent_z, "NOGO_REGION_POLYGON_INSTANCE", "non_terrain_outlines.xml"));
     xml.extend(zones(&placed, extent_z));
     xml.extend(deployment(&placed, extent_z));
-    // The main list's buildings, for the capture locations' links.
-    let main = docs.iter().find(|d| d.name == "building_list").map_or(vec![], |d| {
-        d.root
-            .children
-            .iter()
-            .filter_map(|b| Some((b.get("key")?.as_str()?.to_owned(), b.get("position").and_then(Value::as_vec3)?)))
-            .map(|(k, p)| (k, p[0] as f32, p[2] as f32))
-            .collect::<Vec<_>>()
-    });
-    xml.extend(capture_locations(&placed, extent_z, &main, ctx));
+    // The main list's buildings' capture locations, for the links.
+    let main = capture_names(placed.iter().filter(|p| p.export == "LayerExportType_Normal"));
+    xml.extend(capture_locations(&placed, extent_z, &main));
     docs.extend(civilian_deployment(&placed, extent_z)?);
     for (bin, twin) in escalation_bmds(&placed, extent_z, ctx, &mut notes)? {
         docs.push(bin);
@@ -1685,6 +1662,23 @@ mod tests {
         let insertion = marker_insertion_order(&order).expect("an insertion order");
         assert_eq!(marker_table_order(&insertion), order);
         assert_ne!(insertion, order);
+    }
+
+    #[test]
+    fn normal_sub_layers_export_with_their_escalation_layer() {
+        // The kit's layout: an escalation layer's buildings in a normal sub-layer.
+        let tile = project(vec![
+            layer("Buildings", "LayerExportType_Normal", vec![building("house", [10.0, 0.0, 20.0], 0.0, 0)]),
+            layer("Escalation 1", "LayerExportType_Escalation1", vec![layer("Gates and Towers", "LayerExportType_Normal", vec![building("gate", [0.0; 3], 0.0, 0)])]),
+        ]);
+        let (out, _) = compile(&tile, &CompileContext::default()).expect("compile");
+        let main = out.documents.iter().find(|d| d.name == "building_list").expect("the main list");
+        assert_eq!(main.root.children.len(), 1);
+        let bmd = out.documents.iter().find(|d| d.name == "bmd_data_escalation1.bin").expect("the escalation BMD");
+        let buildings = bmd.root.child("battlefield_building_list").and_then(|l| l.child("buildings")).expect("buildings");
+        assert_eq!(buildings.children.len(), 1);
+        assert_eq!(buildings.children[0].get("building_key").and_then(Value::as_str), Some("gate"));
+        assert!(out.documents.iter().any(|d| d.name == "bmd_data_escalation1.xml"));
     }
 
     #[test]

@@ -15,6 +15,11 @@ position axis within 4 ulps or 1e-6, a quaternion component within 1e-5; everyth
 by name: buildings whose binary quaternion is not unit (TEd's matrix was not a pure rotation; 6 in 3 TDD tiles), starting damages no level
 gives with the current building data (an older model's levels; 49), and legacy lists the project carries as files.
 
+## Layers
+
+An instance exports with its layer's `export_type`; a `LayerExportType_Normal` layer inside another layer exports with that one (the
+kit's escalation layers hold their content in normal sub-layers: "Gates and Towers", "Capture_Points").
+
 ## Arithmetic
 
 - A value is read from its text as `sscanf` does (f32). World matrices are `QTU::TedEntity::world_transform`'s
@@ -74,11 +79,9 @@ f32, the capture point lists trimmed (`512.19342`), the facing with one decimal 
   area; a decompiled project holds clipped ones, the compiler does not clip yet.
 - `capture_location_list.xml`: per `CaptureLocationInstance` of the normal layers (the escalation layers' are in their BMDs): radius
   (half TEd's circle, 0 for a polygon), the flag's position, players, type (`CAPTURE_LOCATION_MAJOR` / `MINOR`), the point list (a
-  circle's centre or the polygon's points), the key, the facing as (cos f, -sin f), and `building_list`: the main list's `fort_tower` and
-  `gate` buildings within 20 m of the boundary, `;` separated. **Open**: TEd's linking rule. Its export (`FUN_00500f60`, the instance
-  copied by `FUN_00437190`) sets no links, and neither the instance nor `add_capture_location_set` holds any: they come from code not
-  found yet (likely the buildings' footprints at their destruction level: escalation 3 of western_city_b/small links a gate without its
-  two destroyed towers but keeps two other destroyed ones). The 20 m rule is an approximation; the check compares the links apart.
+  circle's centre or the polygon's points), the key, the facing as (cos f, -sin f), and `building_list`: the indices (in the main list,
+  `;` separated) of the buildings whose `capture_location` property is the capture location's `name` (TEd's towers and gates name the
+  capture location they belong to). The kit's tiles give the binaries' links this way, the escalation BMDs' included.
 
 ## Escalation BMDs (`bmd_data_escalation<n>.bin` and `.xml`)
 
@@ -92,7 +95,7 @@ the binary's is passed: 4 and 5 drop the civilian lists), built through serde_js
   file, but a BMD keeps no record order: the decompiler places the groups in an insertion order that gives the file's order back (below).
   A prop's `allow_in_outfield` is the water-plane flag (the markers' `unknown_69`: TEd's flags word, bit 3); an emitter's snow and
   destruction flags are the instance's `visible_*` ones.
-- Capture locations of the layer (one set), linking into the layer's own buildings; no-go regions (`non_terrain_outlines`); zones
+- Capture locations of the layer (one set), linking (by `capture_location`) into the layer's own buildings; no-go regions (`non_terrain_outlines`); zones
   (`zones_template_list`: `ZONE_POLYGON_INSTANCE`, the points, an empty formation template, an identity transform); civilian deployment
   zones.
 - TEd's garbage: the PROP serialiser (`FUN_004d38e0` binary, `FUN_004d4a10` XML) reads `snow` and `destruction` into locals it never

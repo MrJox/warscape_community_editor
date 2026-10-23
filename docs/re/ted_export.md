@@ -29,8 +29,8 @@ assembly kit's TEd). The compiler that follows it: `wce_tile_io::attila::compile
   `destruction` (version 2) are read into stack locals nothing sets, so their bytes are garbage (a per-export constant: 0, 1, 72, 136 ...);
   `snow_inside` / `_outside`, `destruction_inside` / `_outside` (bits 5 to 8) and the seasons (bits 9 to 12) only for versions above 2.
 - **Capture locations** (`FUN_00500f60`): a `CAPTURE_LOCATION` per instance (`FUN_00437190`: type, location, radius, points; the facing
-  `FUN_00437480`), grouped into sets, `BATTLE_MAP_DEFINITION::add_capture_location_set` (EmpireUtility: a push). No building links are set
-  here: where they come from is open.
+  `FUN_00437480`), grouped into sets, `BATTLE_MAP_DEFINITION::add_capture_location_set` (EmpireUtility: a push). The building links are
+  the buildings whose `capture_location` property is the capture location's name (a building's property in the scene).
 
 ## Marker tables (`EMPIREUTILITY::MARKER_TABLE`, UtilMarker.h)
 
