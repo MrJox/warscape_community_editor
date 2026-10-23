@@ -1043,8 +1043,14 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 );
 
                 g.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+                // The file's angle is TEd's facing + pi / 2 wrapped into (-pi, pi]: the facing is back in [0, 2 pi).
                 if let Some(f) = facing {
-                    g.set("facing_direction", Value::Float(r32(f)));
+                    let mut f = f as f32 - super::compile::TED_HALF_PI;
+                    if f < 0.0 {
+                        f += super::compile::TED_TWO_PI;
+                    }
+
+                    g.set("facing_direction", Value::Float(r32(f64::from(f))));
                 }
 
                 for bnd in area.children.iter().filter(|c| c.class == "boundary") {
@@ -1710,11 +1716,14 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
     // definition.xml's climate is TEd's preview climate when it exported, not in the project: the file is carried along (the compiler
     // takes the climate from it).
-    if let Some(doc) = binary.document("definition.xml") {
+    // vegetation_exclusion.xml (4 encampments): TEd's box of the buildings' render bounds, padded (`FUN_005002d0`, `FUN_005022e0`); the
+    // bounds are the loaded models' in the editor, not reproduced: the file is carried along.
+    for name in ["definition.xml", "vegetation_exclusion.xml"] {
+        let Some(doc) = binary.document(name) else { continue };
         let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
-        if let Some(data) = files.folder.get("definition.xml") {
-            out.files.push(OpaqueFile { path: "definition.xml".to_owned(), data: data.clone() });
+        if let Some(data) = files.folder.get(name) {
+            out.files.push(OpaqueFile { path: name.to_owned(), data: data.clone() });
         }
     }
 

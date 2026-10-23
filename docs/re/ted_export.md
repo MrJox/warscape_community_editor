@@ -31,6 +31,10 @@ assembly kit's TEd). The compiler that follows it: `wce_tile_io::attila::compile
 - **Capture locations** (`FUN_00500f60`): a `CAPTURE_LOCATION` per instance (`FUN_00437190`: type, location, radius, points; the facing
   `FUN_00437480`), grouped into sets, `BATTLE_MAP_DEFINITION::add_capture_location_set` (EmpireUtility: a push). The building links are
   the buildings whose `capture_location` property is the capture location's name (a building's property in the scene).
+- **Vegetation exclusion** (`FUN_005002d0`, the export's end): when the location contains `/encampments/`,
+  `BATTLE_MAP_DEFINITION::add_vegetation_exclusion` with the exporter's `AABB_2` (+0x1d8), which the building export grows: the
+  instance's cached world box (`FUN_00413dc0`, a virtual of its bounds interface), its corners to tile space (`FUN_00502c00`), padded by a
+  scalar (`FUN_005029d0`) and joined (`FUN_00502a50`: max of the maxima, min of the minima).
 
 ## Marker tables (`EMPIREUTILITY::MARKER_TABLE`, UtilMarker.h)
 
