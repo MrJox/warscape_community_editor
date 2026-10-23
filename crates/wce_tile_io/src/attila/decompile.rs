@@ -411,17 +411,11 @@ fn graph(p: &mut Node) -> &mut Node {
 pub fn quaternion_euler(q: [f64; 4]) -> [f64; 3] {
     let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt().max(1e-30);
     let (x, y, z, w) = (q[0] / n, q[1] / n, q[2] / n, q[3] / n);
-    let (m00, m10, m11, m12, m20, m21, m22) = (
-        1.0 - 2.0 * (y * y + z * z),
-        2.0 * (x * y + z * w),
-        1.0 - 2.0 * (x * x + z * z),
-        2.0 * (y * z - x * w),
-        2.0 * (x * z - y * w),
-        2.0 * (y * z + x * w),
-        1.0 - 2.0 * (x * x + y * y),
-    );
-
-    rows_euler([[m00, 0.0, 0.0], [m10, m11, m12], [m20, m21, m22]])
+    rows_euler([
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+    ])
 }
 
 /// A building of a binary list as TEd's instance, top level of its layer: scene x = 2 x, scene z = 2 (extent z - z), scene y = y (the
@@ -587,7 +581,72 @@ fn rows_euler(r: [[f64; 3]; 3]) -> [f64; 3] {
     let other = [wrap(PI - a), wrap(-beta - PI), wrap(c - PI)];
     let cost = |e: &[f64; 3]| e[1].abs() + e[2].abs();
     let e = if !locked && cost(&other) < cost(&one) - 1e-12 { other } else { one };
+    // Near the lock (cos a under 0.01) b and c come from elements of the size of cos a: refined against all nine elements (Gauss-Newton
+    // on Rz(c) Ry(a) Rx(-b), the order of wce_tile::world_transform::euler_matrix).
+    let e = if ca < 1e-2 { refine_euler(r, e) } else { e };
     [e[0], zero(e[1]), zero(e[2])]
+}
+
+/// The euler angles `e` refined so that Rz(c) Ry(a) Rx(-b) is closest to the rotation `r` (rows): a few Gauss-Newton steps over the nine
+/// elements, numerical derivatives.
+fn refine_euler(r: [[f64; 3]; 3], mut e: [f64; 3]) -> [f64; 3] {
+    let m = |e: [f64; 3]| -> [f64; 9] {
+        let (sa, ca) = e[0].sin_cos();
+        let (sb, cb) = (-e[1]).sin_cos();
+        let (sc, cc) = e[2].sin_cos();
+        // Rz(c) * Ry(a) * Rx(beta), beta = -b.
+        [
+            cc * ca, cc * sa * sb - sc * cb, cc * sa * cb + sc * sb,
+            sc * ca, sc * sa * sb + cc * cb, sc * sa * cb - cc * sb,
+            -sa, ca * sb, ca * cb,
+        ]
+    };
+    let target = [r[0][0], r[0][1], r[0][2], r[1][0], r[1][1], r[1][2], r[2][0], r[2][1], r[2][2]];
+    for _ in 0..8 {
+        let base = m(e);
+        let res: [f64; 9] = std::array::from_fn(|k| base[k] - target[k]);
+        let h = 1e-7;
+        let jac: [[f64; 9]; 3] = std::array::from_fn(|j| {
+            let mut d = e;
+            d[j] += h;
+            let p = m(d);
+            std::array::from_fn(|k| (p[k] - base[k]) / h)
+        });
+        // Solve (J^T J) dx = -J^T res (3 x 3).
+        let mut a = [[0.0f64; 4]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                a[i][j] = (0..9).map(|k| jac[i][k] * jac[j][k]).sum::<f64>() + if i == j { 1e-12 } else { 0.0 };
+            }
+            a[i][3] = -(0..9).map(|k| jac[i][k] * res[k]).sum::<f64>();
+        }
+
+        for c in 0..3 {
+            let piv = (c..3).max_by(|&x, &y| a[x][c].abs().total_cmp(&a[y][c].abs())).unwrap_or(c);
+            a.swap(c, piv);
+            if a[c][c].abs() < 1e-30 {
+                return e;
+            }
+
+            for rr in 0..3 {
+                if rr != c {
+                    let f = a[rr][c] / a[c][c];
+                    let pivot = a[c];
+                    for (x, p) in a[rr].iter_mut().zip(pivot).skip(c) {
+                        *x -= f * p;
+                    }
+                }
+            }
+        }
+
+        let dx = [a[0][3] / a[0][0], a[1][3] / a[1][1], a[2][3] / a[2][2]];
+        e = [e[0] + dx[0], e[1] + dx[1], e[2] + dx[2]];
+        if dx.iter().all(|d| d.abs() < 1e-13) {
+            break;
+        }
+    }
+
+    e
 }
 
 /// TEd's seasons flags of a bit mask (bit 0 winter, 1 spring, 2 summer, 3 autumn).
@@ -598,7 +657,7 @@ fn seasons(mask: i64) -> Value {
 
 /// A prop record: a projected decal, or a model (SIMPLE_MESH_INSTANCE). The matrix rows hold the rotation ([`marker_rotation`]) times |scale| / 2;
 /// the position is (x, y, z) halved and z mirrored: scene (2 x, 2 y, 2 (extent - z)). The decal's scale fields are TEd's scale halved.
-fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+fn prop_node(rec: &Node, key: &str, extent_z: f64, version: i64) -> Node {
     let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
     let decal = rec.get("is_decal").and_then(Value::as_int) == Some(1);
     let half = if decal {
@@ -607,12 +666,37 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
         std::array::from_fn(|k| (m[4 * k] * m[4 * k] + m[4 * k + 1] * m[4 * k + 1] + m[4 * k + 2] * m[4 * k + 2]).sqrt())
     };
 
-    // A model's y and z rows are negated (the 1,147 paired SIMPLE_MESH_INSTANCEs of the packs, against decals).
-    let sign = |k: usize| if decal || k == 0 { 1.0 } else { -1.0 };
-    let rows = marker_rotation(std::array::from_fn(|k| {
-        let n = sign(k) * half[k].abs().max(1e-12);
-        [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
-    }));
+    // A decal's row k is |scale_k| (F R^T F)_k, its signed scale in its fields (TEd's z is usually negative, `++-`; osgiliath has `+++`
+    // ones); in a version 5 file the fields are magnitudes and the row the signed scale (dunes/nile's decals). A model's row k is f_k scale_k (F R^T F)_k, f = (1, 1, -1), the scale its rows' lengths, positive unless that makes the
+    // rotation a mirror (a negative determinant: then the axis that leaves the model upright is negative). The water planes of
+    // dunes/nile: a turn about y and a positive scale, as the kit has them.
+    let mut half = half;
+    let f = [1.0, 1.0, -1.0];
+    let rows_of = |half: &[f64; 3]| -> [[f64; 3]; 3] {
+        std::array::from_fn(|k| {
+            let n = if decal && version >= 6 { half[k].abs() } else if decal { half[k] } else { f[k] * half[k] };
+            let n = if n.abs() < 1e-12 { 1e-12 } else { n };
+            [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
+        })
+    };
+    let det = |a: &[[f64; 3]; 3]| a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    // A version 5 decal's scale fields are magnitudes: TEd's negative z is in its rows (a mirror with the fields' signs).
+    if decal && version < 6 && det(&rows_of(&half)) < 0.0 {
+        half[2] = -half[2];
+    }
+
+    if !decal && det(&rows_of(&half)) < 0.0 {
+        // A mirror: the axis whose negative scale leaves the model most upright (r11 of the rotation closest to 1).
+        let upright = |h: &[f64; 3]| marker_rotation(rows_of(h))[1][1];
+        let flip = |k: usize| {
+            let mut h = half;
+            h[k] = -h[k];
+            h
+        };
+        half = [flip(1), flip(2), flip(0)].into_iter().max_by(|a, b| upright(a).total_cmp(&upright(b))).unwrap_or(half);
+    }
+
+    let rows = marker_rotation(rows_of(&half));
 
     let pos = [2.0 * m[12], 2.0 * m[13], 2.0 * (extent_z - m[14])];
     let scale = Value::Vec3(half.map(|h| r32(2.0 * h)));
@@ -633,7 +717,9 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64) -> Node {
             }
         }
 
-        instance("SIMPLE_MESH_INSTANCE", "Simple Mesh", pos, rows_euler(rows), own)
+        // The water plane flag is the instance's name (TEd's FUN_00502c60 tests it); the kit's other models are `Object`.
+        let name = if num(rec, "unknown_69") != 0.0 { "water_plane" } else { "Object" };
+        instance("SIMPLE_MESH_INSTANCE", name, pos, rows_euler(rows), own)
     }
 }
 
@@ -903,7 +989,8 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         for a in alliances {
             let alliance = str_attr(a, "id").parse::<i64>().unwrap_or(0);
             for area in a.children.iter().filter(|c| c.class == "deployment_area") {
-                let facing = area.child("orientation").map_or(0.0, |o| str_attr(o, "radians").parse::<f64>().unwrap_or(0.0));
+                // An area without an orientation (9 of the packs' 777) gets no facing direction, so the compiler writes none.
+                let facing = area.child("orientation").map(|o| str_attr(o, "radians").parse::<f64>().unwrap_or(0.0));
                 let mut g = instance(
                     "DeploymentZonePolygonInstanceGroup",
                     "Deployment Zone",
@@ -911,12 +998,16 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                     [0.0; 3],
                     vec![
                         ("deployment_category", s(&str_attr(area, "category"))), ("deployment_type", s("EDZT_1V1")), ("new_polygon_type", s("PDM_POLYGON")),
-                        ("facing_direction", Value::Float(r32(facing))), ("deployment_zone_id", i(str_attr(area, "id").parse::<i64>().unwrap_or(0))),
+                        ("deployment_zone_id", i(str_attr(area, "id").parse::<i64>().unwrap_or(0))),
                         ("add_polygon", i(0)), ("alliance_id", i(alliance)),
                     ],
                 );
 
                 g.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
+                if let Some(f) = facing {
+                    g.set("facing_direction", Value::Float(r32(f)));
+                }
+
                 for bnd in area.children.iter().filter(|c| c.class == "boundary") {
                     let kind = match str_attr(bnd, "type").as_str() {
                         "standard additive" => "DZPT_ADDITIVE",
@@ -1474,7 +1565,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
         for it in items("prop_list") {
             let (rec, key) = bmd_prop_record(it);
-            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1));
+            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1, 9));
         }
 
         for it in items("particle_emitter_list") {
@@ -1501,7 +1592,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     // definition.xml's climate is TEd's preview climate when it exported, not in the project: the file is carried along (the compiler
     // takes the climate from it).
     if let Some(doc) = binary.document("definition.xml") {
-        let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format.clone(), source: binary.source.clone(), ..Default::default() };
+        let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
         if let Some(data) = files.folder.get("definition.xml") {
             out.files.push(OpaqueFile { path: "definition.xml".to_owned(), data: data.clone() });
@@ -1521,7 +1612,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         for (rec, key) in recs {
             let key = key_str(key);
             l.wrapped_mut("children").push(match file {
-                "prop_marker.markers" => prop_node(rec, &key, extent.1),
+                "prop_marker.markers" => prop_node(rec, &key, extent.1, doc.root.get("version").and_then(Value::as_int).unwrap_or(9)),
                 "particle_emitter_marker.markers" => emitter_node(rec, &key, extent.1),
                 _ => light_node(rec, &key, extent.1),
             });
@@ -1613,14 +1704,14 @@ mod tests {
         let a: f64 = 0.4;
         let (c, sn) = (a.cos(), a.sin());
         let m = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, -sn, 0.0, c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(m, true), "k", 100.0);
+        let n = prop_node(&prop(m, true), "k", 100.0, 9);
         assert_eq!(n.get("position").and_then(Value::as_vec3), Some([20.0, 1.0, 140.0]));
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
 
-        // A simple mesh of the same turn has its y and z rows negated.
-        let mm = [c, 0.0, sn, 0.0, 0.0, -1.0, 0.0, 0.0, sn, 0.0, -c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(mm, false), "k", 100.0);
+        // A simple mesh of the same turn has its z row negated (f = F).
+        let mm = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, sn, 0.0, -c, 0.0, 10.0, 0.5, 30.0, 1.0];
+        let n = prop_node(&prop(mm, false), "k", 100.0, 9);
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
         assert_eq!(n.get("scale").and_then(Value::as_vec3), Some([2.0, 2.0, 2.0]));

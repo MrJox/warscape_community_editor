@@ -46,7 +46,7 @@ binary's; TEd's current ones: props 9, emitters 9, lights 3, the rest 1).
 
 | File | From | Record |
 | --- | --- | --- |
-| `prop_marker.markers` | `ProjectedDecalInstance`, `SIMPLE_MESH_INSTANCE`; key the model | rows: the world rotation in the binary's frame (F R^T F, F = diag(1, 1, -1)) times half the scale, a model's y and z rows negated; translation (x / 2, y / 2, extent - z / 2); `is_decal`; `unknown_69` = a `water_plane` model; seasons (decals 15), the visibility flags (decals all on); a decal's parallax, tiled and half scale |
+| `prop_marker.markers` | `ProjectedDecalInstance`, `SIMPLE_MESH_INSTANCE`; key the model | rows: the world rotation in the binary's frame (F R^T F, F = diag(1, 1, -1)) times half the scale (a decal: its magnitude, version 5 signed; a model: F times it signed); translation (x / 2, y / 2, extent - z / 2); `is_decal`; `unknown_69` = a model named `water_plane`; seasons (decals 15), the visibility flags (decals all on); a decal's parallax, tiled and half scale (version 5: magnitudes) |
 | `particle_emitter_marker.markers` | `VFXInstance`; key `vfx` | the rotation transposed, translation (x / 2, y, extent - z / 2); 6 zero bytes; autoplay, use_in_outfield, visibility, half the scale, seasons |
 | `point_light_marker.markers` | `POINT_LIGHT_INSTANCE`; key the name | (x / 2, y, extent - z / 2), radius, colour, colour scale, `unknown_32` 1, animation, colour min, random offset, falloff |
 | `ai_hint_polyline_marker.markers` | `AI_HINT_POLYGON_INSTANCE`; key the hint type's number | the polygon's world points (x / 2, extent - z / 2); a closed one repeats its first point |
@@ -59,6 +59,23 @@ binary's; TEd's current ones: props 9, emitters 9, lights 3, the rest 1).
 f32, `%.6f`), `disable_outlines` false, and `climate`: TEd's preview climate when it exported, not in the project; the decompiler carries
 the shipped file and the compiler takes the climate from it, else `default`. TEd's BMD XML layout: single quotes, two spaces between
 attributes, a space before `/>`, CRLF.
+
+## The logic XML files
+
+TEd's layouts per file (CRLF, single quotes; the outline files and zones without indentation, deployment with tabs); numbers `%.6f` of the
+f32, the capture point lists trimmed (`512.19342`), the facing with one decimal at least (`1.0,-0.0`).
+
+- `go_outlines.xml`, `non_terrain_outlines.xml`: an `OUTLINE` per `GO_REGION_POLYGON_INSTANCE` / `NOGO_REGION_POLYGON_INSTANCE`, its
+  world points (x / 2, extent - z / 2) on one line. Written only when there are some (no tile ships an empty one).
+- `zones.xml`: per `ZONE_POLYGON_INSTANCE` a `TRANSFORMED_BATTLEFIELD_ZONE_TEMPLATE`: the template (`zone_name` ZONE_POLYGON_INSTANCE,
+  the points, an empty `ENTITY_FORMATION_TEMPLATE`) and an identity `Transformation` (all 1,909 of the packs are so).
+- `deployment_areas.xml`: per alliance (by id) its `deployment_area`s (the `DeploymentZonePolygonInstanceGroup`s: id, category), a
+  `boundary` per polygon under it (type, points) and the `orientation` (the facing direction). TEd clips the boundaries to the playable
+  area; a decompiled project holds clipped ones, the compiler does not clip yet.
+- `capture_location_list.xml`: per `CaptureLocationInstance` of the normal layers (the escalation layers' are in their BMDs): radius
+  (half TEd's circle, 0 for a polygon), the flag's position, players, type (`CAPTURE_LOCATION_MAJOR` / `MINOR`), the point list (a
+  circle's centre or the polygon's points), the key, the facing as (cos f, -sin f), and `building_list`: the main list's `fort_tower` and
+  `gate` buildings within 20 m of the boundary, `;` separated (an approximation: TEd tests the buildings' footprints).
 
 Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
 text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.

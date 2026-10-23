@@ -82,22 +82,32 @@ const COMPILED_MARKERS: [&str; 6] = [
 ];
 
 /// The XML files the compiler writes (stage A).
-const COMPILED_XML: [&str; 3] = ["definition.xml", "go_outlines.xml", "non_terrain_outlines.xml"];
+const COMPILED_XML: [&str; 6] = ["definition.xml", "go_outlines.xml", "non_terrain_outlines.xml", "zones.xml", "deployment_areas.xml", "capture_location_list.xml"];
 
-/// Two XML documents alike but for numbers within what TEd's text carries (polygon points through `%g`: 3e-6 of the value).
-fn xml_within(a: &Node, b: &Node) -> bool {
+/// The largest magnitude of the numbers of an XML document (its coordinates' scale).
+fn xml_scale(n: &Node) -> f64 {
+    let own = n.props().iter().filter_map(|p| p.value.as_str().and_then(|v| v.parse::<f64>().ok())).map(f64::abs).fold(1.0, f64::max);
+    n.children.iter().map(xml_scale).fold(own, f64::max)
+}
+
+/// Two XML documents alike but for numbers within what TEd's text carries: a polygon's points are written relative to it with `%g` (6
+/// digits), so a point is good to 3e-6 of the document's scale (`xml_scale`), whatever its own size.
+fn xml_within(a: &Node, b: &Node, scale: f64) -> bool {
     a.class == b.class
         && a.children.len() == b.children.len()
         && a.props().len() == b.props().len()
         && a.props().iter().zip(b.props()).all(|(x, y)| {
             x.name == y.name
-                && (x.value == y.value
-                    || match (x.value.as_str().and_then(|v| v.parse::<f64>().ok()), y.value.as_str().and_then(|v| v.parse::<f64>().ok())) {
-                        (Some(u), Some(v)) => (u - v).abs() <= 3e-6 * v.abs().max(1.0),
+                && (x.value == y.value || {
+                    // A number, or a list of them (`x,y;x,y`), each within the precision.
+                    let nums = |v: &Value| v.as_str().map(|t| t.split([',', ';']).map(|n| n.trim().parse::<f64>().ok()).collect::<Option<Vec<_>>>());
+                    match (nums(&x.value), nums(&y.value)) {
+                        (Some(Some(u)), Some(Some(v))) => u.len() == v.len() && u.iter().zip(&v).all(|(a, b)| (a - b).abs() <= 3e-6 * scale),
                         _ => false,
-                    })
+                    }
+                })
         })
-        && a.children.iter().zip(&b.children).all(|(x, y)| xml_within(x, y))
+        && a.children.iter().zip(&b.children).all(|(x, y)| xml_within(x, y, scale))
 }
 
 /// TEd's ground type colours (`EMPIREUTILITY::ground_type_to_colour`, docs/re/terrain.md).
@@ -190,17 +200,57 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             *local.losses.entry(format!("definition [{kind}] {attrs} | {ent}")).or_default() += 1;
         }
 
+        // WCE_DECOMPILE_CAPTURE: each capture location of capture_location_list.xml with its linked buildings (key, distance from the
+        // centre) and the buildings within its radius that are not linked (for working out TEd's rule).
+        if std::env::var_os("WCE_DECOMPILE_CAPTURE").is_some()
+            && let (Some(c), Some(bl)) = (binary.document("capture_location_list.xml"), binary.document("building_list"))
+            && let Ok(list) = wce_tile_io::attila::tile_binary::buildings(bl)
+        {
+            let mut locs = vec![];
+            fn all<'a>(n: &'a Node, out: &mut Vec<&'a Node>) {
+                for c in &n.children {
+                    if c.class == "CAPTURE_LOCATION" {
+                        out.push(c);
+                    }
+                    all(c, out);
+                }
+            }
+            all(&c.root, &mut locs);
+            for l in locs {
+                let attr = |a: &str| l.get(a).and_then(Value::as_str).unwrap_or_default().to_owned();
+                let radius = attr("radius").parse::<f32>().unwrap_or(0.0);
+                let first = attr("capture_point_list").split(';').next().unwrap_or_default().split(',').map(|v| v.parse::<f32>().unwrap_or(0.0)).collect::<Vec<_>>();
+                let (cx, cz) = (first.first().copied().unwrap_or(0.0), first.get(1).copied().unwrap_or(0.0));
+                let linked = attr("building_list").split(';').filter_map(|i| i.parse::<usize>().ok()).collect::<Vec<_>>();
+                let dist = |b: &wce_tile_io::attila::building_list::BattlefieldBuilding| (b.position[0] - cx).hypot(b.position[2] - cz);
+                let cat = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
+                let shown = linked.iter().filter_map(|&i| list.get(i)).map(|b| format!("{} [{}] {:.1}", b.key, cat(&b.key), dist(b))).collect::<Vec<_>>();
+                let others = list.iter().enumerate().filter(|(i, b)| !linked.contains(i) && radius > 0.0 && dist(b) <= radius).map(|(_, b)| format!("{} [{}]", b.key, cat(&b.key))).collect::<Vec<_>>();
+                // The nearest buildings of the linked ones' categories that are not linked.
+                let cats = linked.iter().filter_map(|&i| list.get(i)).map(|b| cat(&b.key)).collect::<Vec<_>>();
+                let mut near = list.iter().enumerate().filter(|(i, b)| !linked.contains(i) && cats.contains(&cat(&b.key))).map(|(_, b)| (dist(b), b.key.clone())).collect::<Vec<_>>();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let others = others.into_iter().chain(near.iter().take(2).map(|(d, k)| format!("nearest unlinked {k} {d:.1}"))).collect::<Vec<_>>();
+                local.problems.push(format!("{name}: capture {} r {radius}: linked {shown:?}; unlinked inside {}: {:?}", attr("database_key"), others.len(), others.iter().take(4).collect::<Vec<_>>()));
+            }
+        }
+
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
             // The binary's marker versions, so that an older file is compared field by field.
             let versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
             let version_of = |n: &str| versions.get(n).copied().flatten();
-            let cctx = CompileContext { building_levels: ctx.building_levels, building_thresholds: ctx.building_thresholds, marker_versions: Some(&version_of) };
+            let cctx = CompileContext {
+                building_levels: ctx.building_levels,
+                building_thresholds: ctx.building_thresholds,
+                building_category: ctx.building_category,
+                marker_versions: Some(&version_of),
+            };
             let (compiled, _) = compile(&back, &cctx)?;
             let docs = &compiled.documents;
             // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
             let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {
-                let one = wce_tile_model::Tile { documents: vec![d.clone()], source_format: t.source_format.clone(), source: t.source.clone(), ..Default::default() };
+                let one = wce_tile_model::Tile { documents: vec![d.clone()], source_format: t.source_format, source: t.source.clone(), ..Default::default() };
                 TileBinary.write(&one).ok().and_then(|(f, _)| f.folder.get(&d.name).and_then(|b| b.bytes().ok()).map(|b| b.to_vec()))
             };
             let bytes = |d: &wce_tile_model::Document| if docs.iter().any(|x| std::ptr::eq(x, d)) { bytes_in(&compiled, d) } else { bytes_in(&binary, d) };
@@ -210,7 +260,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 let c = local.attr_same.entry(format!("compile {}", theirs.name)).or_default();
                 match docs.iter().find(|d| d.name == theirs.name) {
                     Some(ours) if ours.root.without_trivia() == theirs.root.without_trivia() => c.0 += 1,
-                    Some(ours) if xml_within(&ours.root, &theirs.root) => {
+                    Some(ours) if xml_within(&ours.root, &theirs.root, xml_scale(&theirs.root)) => {
                         c.0 += 1;
                         *local.losses.entry(format!("compile {} within the text's precision", theirs.name)).or_default() += 1;
                     }
@@ -222,6 +272,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     None => {
                         c.1 += 1;
                         local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: {} not compiled", theirs.name));
                     }
                 }
 
@@ -229,7 +280,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 if let Ok(dir) = std::env::var("WCE_DECOMPILE_DUMP") {
                     let dir = PathBuf::from(dir).join(folder.replace('/', "_"));
                     let _ = std::fs::create_dir_all(&dir);
-                    if let Some(b) = docs.iter().find(|d| d.name == theirs.name).and_then(|d| bytes(d)) {
+                    if let Some(b) = docs.iter().find(|d| d.name == theirs.name).and_then(bytes) {
                         let _ = std::fs::write(dir.join(format!("ours.{}", theirs.name)), b);
                     }
 
@@ -239,7 +290,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 }
 
                 let b = local.attr_same.entry(format!("compile {} (bytes)", theirs.name)).or_default();
-                if docs.iter().find(|d| d.name == theirs.name).and_then(|d| bytes(d)) == bytes(theirs) {
+                if docs.iter().find(|d| d.name == theirs.name).and_then(bytes) == bytes(theirs) {
                     b.0 += 1;
                 } else {
                     b.1 += 1;
@@ -296,8 +347,9 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         let same = ours_lines.len() == theirs_lines.children.len()
                             && ours_lines.iter().zip(&theirs_lines.children).all(|(o, t)| {
                                 let (a, b) = (pts(o), pts(t));
+                                let scale = b.iter().map(|v| v.abs()).fold(1.0f32, f32::max);
                                 a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
-                                    (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * v.abs().max(1.0)
+                                    (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * scale
                                 })
                             });
                         let c = local.attr_same.entry(format!("compile {kind}.polylines (within the text's precision)")).or_default();
@@ -347,9 +399,12 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                                         }
                                     }),
                                     // A polyline's points: TEd writes a polygon's points relative to it with `%g` (6 digits).
-                                    "points" => a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
-                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * v.abs().max(1.0)
-                                    }),
+                                    "points" => a.len() == b.len() && {
+                                        let scale = b.iter().map(|v| v.abs()).fold(1.0f32, f32::max);
+                                        a.iter().zip(&b).all(|(u, v)| {
+                                            (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * scale
+                                        })
+                                    },
                                     "orientation" => {
                                         let d = |sign: f32| a.iter().zip(&b).map(|(u, v)| (u - sign * v).abs()).fold(0.0f32, f32::max);
                                         a.len() == b.len() && d(1.0).min(d(-1.0)) <= 1e-5

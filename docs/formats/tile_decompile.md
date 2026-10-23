@@ -53,9 +53,13 @@ texture group names from the ground types (per group, the type it carries most, 
 ## Rotations
 
 - **Buildings**: the quaternion as TEd's euler, R = Rz(c) Ry(a) Rx(-b) (`wce_tile::world_transform`).
-- **Props** (`prop_marker.markers`, BMD `prop_list`): the matrix rows divided by |scale_k| are A; the rotation is F A^T F with
-  F = diag(1, 1, -1). A simple mesh's y and z rows are negated (1,147 paired: 208 agree, the rest differ by a constant yaw per kit building
-  group). A decal's scale is twice the record's `scale_x/y/z`, a simple mesh's twice its rows' lengths.
+- **Props** (`prop_marker.markers`, BMD `prop_list`): row k of the matrix is s_k (F R^T F)_k with F = diag(1, 1, -1) and s the half
+  scale: for a decal its magnitude (its signed scale is the record's `scale_x/y/z`, TEd's z usually negative; in a version 5 file the
+  fields are magnitudes and the rows carry the sign: a z that makes the rotation a mirror is negative); for a simple mesh f_k s_k with f = F,
+  s its rows' lengths, positive unless that makes the rotation a mirror, then the axis that leaves the model upright is negative
+  (osgiliath). A model whose record has `unknown_69` is named `water_plane` (TEd's flag is the name), else `Object`.
+- **Euler angles** from a rotation: a by atan2 (asin loses digits near 90 degrees), of the two angle sets the one with less pitch and roll
+  (TEd's (a, 0, 0) for a turn past 90 degrees), and near gimbal lock (cos a < 0.01) refined against all nine elements (Gauss-Newton).
 - **Particle emitters**: the matrix transposed, not mirrored; the scale doubled.
 - Decals in a group with a pitch: the exporter seems to apply the decal's own small yaw before the group's pitch (up to 0.003 off TEd's
   composition).
