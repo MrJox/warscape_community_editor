@@ -405,6 +405,12 @@ pub fn protection_map(raw: &wce_tile_model::Tile) -> Option<(Vec<f32>, usize, us
 /// as BOB's SSE code orders it (one sample per metre: the variation's `raw_data_tri_density` is the tile size, 128).
 pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; w * h];
+    rasterise_into(&mut out, verts, tris, w, h);
+    out
+}
+
+/// [`rasterise`] into a field already filled (the water map's starts at -1000).
+pub fn rasterise_into(out: &mut [f32], verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) {
     for t in tris {
         let [a, b, c] = t.map(|i| &verts[i as usize]);
         let xs = [a.x as i32, b.x as i32, c.x as i32];
@@ -446,8 +452,6 @@ pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) -> Vec
             }
         }
     }
-
-    out
 }
 
 /// A building's height-map mesh (`FUN_1008a2f0`): the CS2's meshes tagged `height_map_mesh...` (a string attribute, `class_rigidINFO`
@@ -639,7 +643,7 @@ pub fn f16_bits(v: f32) -> u16 {
 /// bounds of the whole mesh's f32 positions, the shader `rigid_default` (BOB leaves the rest of its 32 bytes uninitialised: zeros
 /// here), `TerrainBase<k>` (the block's number), 32 zeros, the tile's size in metres x and z, its samples per row, 1, 16, the count
 /// of the block's indices of `is_surface` triangles; its vertices, indices.
-pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) -> bool, size: (u32, u32), row: u32) -> Vec<u8> {
+pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) -> bool, size: (u32, u32), row: u32, river: &super::river::RiverMesh) -> Vec<u8> {
     struct Block {
         order: Vec<u32>,
         indices: Vec<u16>,
@@ -691,14 +695,27 @@ pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) 
         }
     }
 
-    let vbytes = blocks.iter().map(|b| b.order.len() as u32 * 8).sum::<u32>();
-    let ibytes = blocks.iter().map(|b| b.indices.len() as u32 * 2).sum::<u32>();
+    // The river's block (type 90): its vertices numbered by first use, 8 f32 each.
+    let mut number = vec![u32::MAX; river.vertices.len()];
+    let (mut river_order, mut river_indices) = (vec![], vec![]);
+    for &i in river.triangles.iter().flatten() {
+        if number[i as usize] == u32::MAX {
+            number[i as usize] = river_order.len() as u32;
+            river_order.push(i);
+        }
+
+        river_indices.push(number[i as usize] as u16);
+    }
+
+    let vbytes = blocks.iter().map(|b| b.order.len() as u32 * 8).sum::<u32>() + river_order.len() as u32 * 32;
+    let ibytes = blocks.iter().map(|b| b.indices.len() as u32 * 2).sum::<u32>() + river_indices.len() as u32 * 2;
     let mut o = b"RMV2".to_vec();
     let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
     put(&mut o, 6);
     put(&mut o, 1);
     o.resize(0x8c, 0);
-    for v in [blocks.len() as u32, vbytes, ibytes, 0xa0, 70.0f32.to_bits()] {
+    let count = blocks.len() as u32 + u32::from(!river_order.is_empty());
+    for v in [count, vbytes, ibytes, 0xa0, 70.0f32.to_bits()] {
         put(&mut o, v);
     }
 
@@ -732,6 +749,39 @@ pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) 
         }
 
         for &i in &b.indices {
+            o.extend_from_slice(&i.to_le_bytes());
+        }
+    }
+
+    if !river_order.is_empty() {
+        // `FUN_100228f0`: the bounds of the river's vertices, y at -0.1 and 0.1.
+        let (mut lo, mut hi) = ([f32::MAX, -0.1, f32::MAX], [f32::MIN, 0.1, f32::MIN]);
+        for v in &river.vertices {
+            for k in [0, 2] {
+                lo[k] = lo[k].min(v[k]);
+                hi[k] = hi[k].max(v[k]);
+            }
+        }
+
+        let (vb, ib) = (river_order.len() as u32 * 32, river_indices.len() as u32 * 2);
+        for v in [0x5a, 0x50 + vb + ib, 0x50, river_order.len() as u32, 0x50 + vb, river_indices.len() as u32] {
+            put(&mut o, v);
+        }
+
+        for v in lo.into_iter().chain(hi) {
+            put(&mut o, v.to_bits());
+        }
+
+        let start = o.len();
+        o.extend_from_slice(b"rigid_default");
+        o.resize(start + 32, 0);
+        for &i in &river_order {
+            for c in river.vertices[i as usize] {
+                put(&mut o, c.to_bits());
+            }
+        }
+
+        for &i in &river_indices {
             o.extend_from_slice(&i.to_le_bytes());
         }
     }
@@ -803,24 +853,44 @@ pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
     text.split("triangle_decimation_angle_factors0=\"").nth(1).and_then(|t| t.split('"').next()).and_then(|v| v.parse().ok()).unwrap_or(20.0)
 }
 
+/// The kit's tile sets' linking tiles (`_settings.xml`'s `TILE_SET` `name` and `linking_tile`), for [`super::bob_tile::InfluenceLinks`].
+pub fn linking_tiles(raw_data: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = std::fs::read_to_string(raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
+    let attr = |t: &str, k: &str| t.split(&format!(" {k}=\"")).nth(1).and_then(|v| v.split('"').next()).map(str::to_owned);
+    text.split("<TILE_SET ").skip(1).filter_map(|t| Some((attr(t, "name")?, attr(t, "linking_tile")?))).collect()
+}
+
 /// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2`,
 /// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it) and `terrain_outlines.xml`, from the project's height map, the variation's
-/// numbers and `protection_map.dds`.
+/// numbers, its tile links (the height influence joins them, [`super::tile_links::blend_links`] eases the heights into the linking
+/// tiles', under the kit's `raw_data`) and `protection_map.dds`; with a river (its block in both meshes) or water planes,
+/// `hf_water_map.data`. `models` gives a model's bytes by its key (BOB's VFS: the game's packs) for the water planes.
 ///
 /// # Errors
 ///
-/// The project has no 16-bit height map.
-pub fn terrain_files(raw: &wce_tile_model::Tile, angle: f32, stamps: &[Stamp]) -> Result<Vec<(String, Vec<u8>)>, String> {
-    use super::bob_tile::{CELL, HeightNumbers, chmf, final_heights, influence};
+/// The project has no 16-bit height map, or a linking tile's heights are missing.
+pub fn terrain_files(
+    raw: &wce_tile_model::Tile,
+    raw_data: &std::path::Path,
+    angle: f32,
+    stamps: &[Stamp],
+    models: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use super::bob_tile::{CELL, HeightNumbers, InfluenceLinks, chmf, final_heights, influence};
+    let linking = linking_tiles(raw_data);
+    let links = &InfluenceLinks::of(raw, &linking);
     let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
     let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
     let n = HeightNumbers::of(raw);
-    let (heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, n.scale, n.min_height);
-    let alpha = influence(CELL, (w - 1) / CELL, (h - 1) / CELL);
+    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, n.scale, n.min_height, links);
+    super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
+    // The vertices' alpha: the influence BOB's mesh pass builds (`FUN_10013a40` without the links, the extra ones still).
+    let alpha = influence(CELL, (w - 1) / CELL, (h - 1) / CELL, &links.without_links());
     let base = grid_vertices(&heights, &alpha, w, h, n.normal_strength);
     let prot = protection_map(raw);
     let prot = prot.as_ref().map(|(p, pw, ph)| (p.as_slice(), *pw, *ph));
     let cos = cos_degrees(angle);
+    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / CELL));
     let mut out = vec![];
     for (name, kind) in [("outfield_mesh.rigid_model_v2", OUTFIELD), ("mesh.rigid_model_v2", INFIELD)] {
         let mut verts = base.clone();
@@ -830,7 +900,7 @@ pub fn terrain_files(raw: &wce_tile_model::Tile, angle: f32, stamps: &[Stamp]) -
         let list = merge(&verts, &flags, &grid, cos);
         let is_surface = |t: &[u32; 3]| !t.iter().any(|&i| verts[i as usize].fringe);
         let surface = list.iter().filter(|t| is_surface(t)).copied().collect::<Vec<_>>();
-        out.push((name.to_owned(), rmv2(&verts, &list, is_surface, ((w - 1) as u32, (h - 1) as u32), w as u32)));
+        out.push((name.to_owned(), rmv2(&verts, &list, is_surface, ((w - 1) as u32, (h - 1) as u32), w as u32, &river)));
         if kind == INFIELD {
             let mut field = rasterise(&verts, &surface, w, h);
             for (mesh, m) in stamps {
@@ -839,6 +909,17 @@ pub fn terrain_files(raw: &wce_tile_model::Tile, angle: f32, stamps: &[Stamp]) -
 
             out.push(("hf_height_map.data".to_owned(), chmf(&field, w, h)));
         }
+    }
+
+    // `hf_water_map.data` (`FUN_10089b80`): a field of -1000, the river's triangles rasterised into it (as the terrain's), then the
+    // water planes; none without either.
+    let planes = super::compile::instances(raw, "SIMPLE_MESH_INSTANCE");
+    if !river.triangles.is_empty() || !planes.is_empty() {
+        let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
+        let mut water = vec![-1000.0f32; w * h];
+        rasterise_into(&mut water, &verts, &river.triangles, w, h);
+        super::river::rasterise_water_planes(&mut water, w, h, &planes, models);
+        out.push(("hf_water_map.data".to_owned(), chmf(&water, w, h)));
     }
 
     out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h)));
