@@ -803,8 +803,8 @@ pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
     text.split("triangle_decimation_angle_factors0=\"").nth(1).and_then(|t| t.split('"').next()).and_then(|v| v.parse().ok()).unwrap_or(20.0)
 }
 
-/// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2` and
-/// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it), from the project's height map, the variation's
+/// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2`,
+/// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it) and `terrain_outlines.xml`, from the project's height map, the variation's
 /// numbers and `protection_map.dds`.
 ///
 /// # Errors
@@ -841,5 +841,6 @@ pub fn terrain_files(raw: &wce_tile_model::Tile, angle: f32, stamps: &[Stamp]) -
         }
     }
 
+    out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h)));
     Ok(out)
 }

@@ -224,11 +224,28 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   index, mesh, normal, outfield_mesh, terrain_outlines; and `mesh<x>x<y>.rigid_model_v2` per cell but 0x0, sorted); each section
   closed by a blank line, `#files` by two; then per file `##<file>:<file>` and two blank lines. The folder is the entry's location
   and the variation, with `/`. Byte for byte on 4 tiles.
-- **`terrain_outlines.xml`** (`FUN_10088790` -> `FUN_100877d0`): not `nogo.png` (its writer, `FUN_1002a1a0`, is another action):
-  `EMPIREUTILITY::no_go_outlines_from_heights` on the final heights (a `HEIGHTFIELD_OUTLINE_DATA_PROVIDER`, slope against the
-  tile database's render params + 0xc), less the tile's go outlines, saved by `EMPIRE_OUTLINE_LIST::save_to_xml` (`<OUTLINE_LIST>`,
-  per outline `<OUTLINE>` and `<position x='%f' y='%f'/>`s). Empty (`<OUTLINE_LIST>\n</OUTLINE_LIST>\n`) on gentle tiles; not
-  ported yet (oracle: atlantic_mountains/small_round/aa, one outline).
+- **`terrain_outlines.xml`** (`FUN_10088790` -> `FUN_100877d0` -> EmpireUtility `no_go_outlines_from_heights`;
+  `attila::terrain_outlines`): not `nogo.png` (its writer, `FUN_1002a1a0`, is another action), the steep areas of the final heights:
+  - No-go samples (`HEIGHTFIELD_OUTLINE_DATA_PROVIDER`, `FUN_10037df0` / `FUN_10a82a10`): the normal by central differences (the
+    sample itself past the edges) at 2 units per sample (the tile database's `unit_scale`, whatever the sample density), no-go where
+    its upright part is below sin(90 - 30) degrees (`MAXIMUM_PASSABLE_SLOPE_ANGLE_DEGREES`, a tweaker of default 30; `fsin`), f32.
+  - Blurred (`BLUR_OUTLINE_DATA_PROVIDER::blur(3, 0.1)`): a separable triangle kernel (3 - |i|) / 3 x 1 / 3 across then down,
+    clamped, set above 0.1.
+  - Traced (`OUTLINE_CALCULATOR::compute_outlines`): row by row, an unmarked set cell starting an outline (2 x 2 case 1, or 9 with
+    its upper left cell traced) not inside an outline found before is walked by the marching squares table (EmpireUtility
+    0x10df6980: move, three edge points, the cells marked with the outline's number; saddles 6 and 9 by the previous step), the
+    points merged when in line (`add_point`), until it closes or w h / 4 steps; kept when wider or taller than 6 cells.
+  - Simplified (`OUTLINE_SIMPLIFIER::simplify`, in units of 2 per cell): 3 passes at error 0.99 lookahead 10; 1 at 3.0 growing the
+    area only; 1 at 1.0. Per outline (not left unchanged by a pass of the same call), from each kept point the target among the next
+    `lookahead` (from two ahead, the last point never) whose skipped points lie within the error of the shortcut (point to segment)
+    and on an allowed side, with the least error (ties to the later), taken when `is_valid_outline`: the shortcut crosses no kept
+    segment, no edge of the outline from the target on, no edge of an outline whose box it touches (Cyrus-Beck), crossings measured
+    along the edge (`LINE_2::intersects` with the edge as the line: an end of the edge is no crossing).
+  - Written (`EMPIRE_OUTLINE_LIST::save_to_xml`): `<OUTLINE_LIST>\n`, per outline `<OUTLINE>\n`, `<position x='%f' y='%f'/>` per point
+    (x, rows - y, in samples), `</OUTLINE>\n`; `</OUTLINE_LIST>\n`.
+  - Byte for byte on dense_forest_rugged/8x8/ac (28 outlines) and the gentle tiles (empty). Not handled yet: the tile's go outlines
+    (rasterised out of the no-go field first, `FUN_100c0eb0`) and masked tiles (an outline must lie in valid subtiles; the
+    atlantic_mountains/small_round/aa oracle keeps the one of its two outlines that does).
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
