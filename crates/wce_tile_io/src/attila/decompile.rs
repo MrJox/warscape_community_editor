@@ -13,6 +13,7 @@ use wce_tile_model::{Entry, MapKind, Node, OpaqueFile, Raster, Samples, Sym, Til
 
 use crate::TileFormat;
 
+use super::compile::{MarkerKey, marker_insertion_order};
 use super::building_list::BattlefieldBuilding;
 use super::ted_project;
 use super::tile_binary::buildings;
@@ -796,6 +797,8 @@ fn bmd_prop_record(item: &Node) -> (Node, String) {
         r.set(k, Value::Float(sc.map_or(0.0, |n| num(n, a))));
     }
 
+    // `allow_in_outfield` is the markers' water-plane flag (`unknown_69`: TEd's flags word, bit 3).
+    r.set("unknown_69", i(i64::from(item.get("allow_in_outfield").and_then(Value::as_bool).unwrap_or(false))));
     r.set("parallax_scale", Value::Float(num(item, "decal_parallax")));
     r.set("tiled", i(item.get("decal_tiled").and_then(Value::as_int).unwrap_or(0)));
     r.set("seasons", i(15));
@@ -947,6 +950,52 @@ fn hint_type(n: i64) -> String {
     usize::try_from(n).ok().and_then(|i| NAMES.get(i)).map_or_else(|| format!("{n}"), |s| (*s).to_owned())
 }
 
+/// A no-go region (`non_terrain_outlines.xml`, a BMD's `non_terrain_outlines`) through scene points.
+fn nogo_node(pts: &[(f64, f64)]) -> Node {
+    polygon("NOGO_REGION_POLYGON_INSTANCE", "No-go region", pts, true, vec![("line_colour", Value::Colour([0.65, 0.0, 0.0, 1.0]))], (0.0, 0.0))
+}
+
+/// A zone (`zones.xml`, a BMD's `zones_template_list`) through scene points, with TEd's defaults for what the files do not keep.
+fn zone_node(pts: &[(f64, f64)]) -> Node {
+    polygon(
+        "ZONE_POLYGON_INSTANCE",
+        "Zone",
+        pts,
+        true,
+        vec![
+            ("purpose", s("EFP_LOW_WALL")), ("rank_count", i(0)), ("zone_skirt_distance", Value::Float(3.0)), ("locked", b(false)),
+            ("max_subdivisions", i(100)), ("rank_distance", Value::Float(3.0)), ("subdivision_length", Value::Float(5.0)),
+        ],
+        (0.0, 0.0),
+    )
+}
+
+/// The civilian deployment zones below a node (`civilian_deployment.bin`, a BMD's `civilian_deployment_list`): a polygon each with its
+/// kind and size.
+fn civilian_nodes(root: &Node, extent_z: f64) -> Vec<Node> {
+    let mut list = vec![];
+    all(root, "civilian_deployment_list", &mut list);
+    list.iter()
+        .flat_map(|l| l.children.iter().filter(|c| c.class == "item"))
+        .map(|zone| {
+            let pts = zone.child("area").and_then(|a| a.child("points")).map_or(vec![], bmd_points);
+            polygon(
+                "CivilianDeploymentZone",
+                "Civilian Deployment Zone",
+                &scene_xz(&pts, extent_z),
+                true,
+                vec![("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])), ("civilian_type", s(&str_attr(zone, "kind"))), ("civilian_amount", s(&str_attr(zone, "size")))],
+                (0.0, 0.0),
+            )
+        })
+        .collect()
+}
+
+/// The points of a BMD point array (`item`s with x and y).
+fn bmd_points(n: &Node) -> Vec<(f64, f64)> {
+    n.children.iter().map(|p| (num(p, "x"), num(p, "y"))).collect()
+}
+
 /// The logic layer: outlines, zones, deployment areas, AI hints and separators, the siege graph.
 fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     let mut l = layer("Logic", "LayerExportType_Normal");
@@ -957,24 +1006,14 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     }
 
     for pts in xml_outlines("non_terrain_outlines.xml") {
-        items.push(polygon("NOGO_REGION_POLYGON_INSTANCE", "No-go region", &scene_xz(&pts, extent_z), true, vec![("line_colour", Value::Colour([0.65, 0.0, 0.0, 1.0]))], (0.0, 0.0)));
+        items.push(nogo_node(&scene_xz(&pts, extent_z)));
     }
 
     if let Some(z) = binary.document("zones.xml") {
         let mut zones = vec![];
         all(&z.root, "BATTLEFIELD_ZONE_TEMPLATE", &mut zones);
         for t in zones {
-            items.push(polygon(
-                "ZONE_POLYGON_INSTANCE",
-                "Zone",
-                &scene_xz(&xml_points(t), extent_z),
-                true,
-                vec![
-                    ("purpose", s("EFP_LOW_WALL")), ("rank_count", i(0)), ("zone_skirt_distance", Value::Float(3.0)), ("locked", b(false)),
-                    ("max_subdivisions", i(100)), ("rank_distance", Value::Float(3.0)), ("subdivision_length", Value::Float(5.0)),
-                ],
-                (0.0, 0.0),
-            ));
+            items.push(zone_node(&scene_xz(&xml_points(t), extent_z)));
         }
 
         if !items.is_empty() {
@@ -1123,27 +1162,9 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         }
     }
 
-    // Civilian deployment zones (civilian_deployment.bin): a polygon each with its kind and size.
+    // Civilian deployment zones (civilian_deployment.bin).
     if let Some(d) = binary.document("civilian_deployment.bin") {
-        let mut list = vec![];
-        all(&d.root, "civilian_deployment_list", &mut list);
-        for zone in list.iter().flat_map(|l| l.children.iter().filter(|c| c.class == "item")) {
-            let mut pts = vec![];
-            if let Some(points) = zone.child("area").and_then(|a| a.child("points")) {
-                for p in &points.children {
-                    pts.push((num(p, "x"), num(p, "y")));
-                }
-            }
-
-            items.push(polygon(
-                "CivilianDeploymentZone",
-                "Civilian Deployment Zone",
-                &scene_xz(&pts, extent_z),
-                true,
-                vec![("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])), ("civilian_type", s(&str_attr(zone, "kind"))), ("civilian_amount", s(&str_attr(zone, "size")))],
-                (0.0, 0.0),
-            ));
-        }
+        items.extend(civilian_nodes(&d.root, extent_z));
     }
 
     // The normal layers' capture locations (the escalation layers' are in their BMDs).
@@ -1563,25 +1584,71 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
         }
 
-        for it in items("prop_list") {
-            let (rec, key) = bmd_prop_record(it);
+        // The props and emitters are grouped by key in TEd's marker table order: the groups are placed in an insertion order that gives
+        // it back (the records' own order kept in a group).
+        let mut unordered = 0;
+        let mut in_table_order = |records: Vec<(Node, String)>| {
+            let mut keys: Vec<String> = vec![];
+            for (_, k) in &records {
+                if !keys.contains(k) {
+                    keys.push(k.clone());
+                }
+            }
+
+            let table = keys.iter().map(|k| MarkerKey::Text(k.clone())).collect::<Vec<_>>();
+            let order = match marker_insertion_order(&table) {
+                Some(o) => o.into_iter().map(|k| if let MarkerKey::Text(s) = k { s } else { String::new() }).collect(),
+                None => {
+                    unordered += 1;
+                    keys
+                }
+            };
+            order.into_iter().flat_map(|k| records.iter().filter(|(_, r)| *r == k).cloned().collect::<Vec<_>>()).collect::<Vec<_>>()
+        };
+        for (rec, key) in in_table_order(items("prop_list").iter().map(bmd_prop_record).collect()) {
             l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1, 9));
         }
 
-        for it in items("particle_emitter_list") {
-            let (rec, key) = bmd_emitter_record(it);
+        for (rec, key) in in_table_order(items("particle_emitter_list").iter().map(bmd_emitter_record).collect()) {
             l.wrapped_mut("children").push(emitter_node(&rec, &key, extent.1));
         }
 
-        l.wrapped_mut("children").extend(bmd_captures(&doc.root).iter().map(|c| capture_node(c, extent.1)));
-
-        if !l.wrapped("children").is_empty() {
-            graph(&mut p).wrapped_mut("children").push(l);
+        if unordered > 0 {
+            losses.note(format!("escalation props / emitters: no insertion order gives the marker table's order ({unordered} lists of bmd_data_escalation{n}.bin)"));
         }
+
+        l.wrapped_mut("children").extend(bmd_captures(&doc.root).iter().map(|c| capture_node(c, extent.1)));
+        // No-go regions, zones and civilian deployment zones.
+        if let Some(nt) = doc.root.child("non_terrain_outlines").and_then(|n| n.child("empire_outline")) {
+            for o in &nt.children {
+                let pts = o.child("outline").map_or(vec![], bmd_points);
+                l.wrapped_mut("children").push(nogo_node(&scene_xz(&pts, extent.1)));
+            }
+        }
+
+        if let Some(zs) = doc.root.child("zones_template_list").and_then(|n| n.child("zones")) {
+            for z in &zs.children {
+                let pts = z.child("battlefield_zone_template").and_then(|t| t.child("outline")).and_then(|o| o.child("outline")).map_or(vec![], bmd_points);
+                l.wrapped_mut("children").push(zone_node(&scene_xz(&pts, extent.1)));
+            }
+        }
+
+        if let Some(c) = doc.root.child("civilian_deployment_list") {
+            l.wrapped_mut("children").extend(civilian_nodes(c, extent.1));
+        }
+
+        // TEd writes an escalation layer's file even when it is empty.
+        graph(&mut p).wrapped_mut("children").push(l);
     }
 
-    // TEd writes no markers file without records: an empty one (the legacy campaign river tiles') is carried along.
-    for doc in binary.documents.iter().filter(|d| d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) {
+    // TEd writes no markers file without records: an empty one (the legacy campaign river tiles') is carried along. So is an empty
+    // civilian_deployment.bin (154 tiles ship one, others none: the compiler writes it when there are zones).
+    let empty_civilians = |d: &wce_tile_model::Document| {
+        let mut l = vec![];
+        all(&d.root, "civilian_deployment_list", &mut l);
+        d.name == "civilian_deployment.bin" && !l.iter().any(|l| l.children.iter().any(|c| c.class == "item"))
+    };
+    for doc in binary.documents.iter().filter(|d| (d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) || empty_civilians(d)) {
         let one = Tile { documents: vec![doc.clone()], ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
         if let Some(data) = files.folder.get(&doc.name) {

@@ -244,8 +244,14 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   export read in Ghidra (`Ted::BMDExporter::export_`): destruction levels are the most destructs over a building's pieces, the starting
   damage level / max or the building's `destruct_thresholds`. Then the markers (props, emitters with their older layouts, lights, AI
   hints, separators, the siege graph; group order = TEd's MARKER_TABLE), definition.xml (the climate carried) and the go / no-go outline
-  files, each within the text's precision on chosen tiles (western_city_b/small, a campaign river, dwarven_city_b, farms). Next: zones,
-  deployment, capture locations, BMD escalation, civilian lists, then stage B.
+  files, each within the text's precision on chosen tiles (western_city_b/small, a campaign river, dwarven_city_b, farms); zones,
+  deployment, capture locations; the escalation BMDs with their XML twins and civilian_deployment.bin (TEd's garbage bytes counted
+  apart; the BMDs' prop / emitter group order through a reconstructed insertion order). Tested on western_city_b/small, dwarven_city_b,
+  eastern_port_constantinople, dunedain_city_a/medium, osgiliath, nordic_port_a/minor, farm_eastern, an encampment.
+  - Open: the capture locations' building links (TEd's rule not found; a 20 m approximation, compared apart); deployment clipping to the
+    playable area; `vegetation_exclusion.xml` (4 tiles).
+  - Stage B owns `civilian_shelter.bin` (capacities not in tile.ted).
+  - Next: stage B.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its

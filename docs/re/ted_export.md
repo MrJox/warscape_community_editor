@@ -21,8 +21,16 @@ assembly kit's TEd). The compiler that follows it: `wce_tile_io::attila::compile
   level max, else threshold[level - 1] (`FUN_00505c70`, a `VECTOR<float>`).
 - **Flags**: `weak_point`, `ai_breachable`, `indestructible`, `dockable`, `toggleable` from the instance (offsets 0x1e8 .. 0x1ec);
   `lite` from `FUN_00505740` (a lite building zone test); `position_type` 2.
-- **Props** (into `BATTLE_MAP_DEFINITION::markers`, `FUN_00509a60`): simple meshes `FUN_00502c60` (a `water_plane` model is special
-  cased), decals `FUN_00503360` (scales divided by the unit scale `param[99]`), a third kind `FUN_00504710`. Not read in detail yet.
+- **Props** (into `BATTLE_MAP_DEFINITION::markers`, `FUN_00509a60`): simple meshes `FUN_00502c60` (a model named `water_plane` gets the
+  flags word's bit 3), decals `FUN_00504710` (scales divided by the unit scale `param[99]`; parallax and `tiled` from the instance's
+  +0x148, +0x14c), a third kind `FUN_00503360`. A model's decal fields are never set (garbage in the files).
+- **PROP marker serialiser** (`FUN_004d38e0` binary, `FUN_004d4a10` XML; version 2): `transform`, then from the flags word at +0x48:
+  clamp (bit 2), `type` (1 unless bit 0), `allow_in_outfield` (bit 3), the decal fields, `is_fauna` (bit 4, version > 1); `snow` and
+  `destruction` (version 2) are read into stack locals nothing sets, so their bytes are garbage (a per-export constant: 0, 1, 72, 136 ...);
+  `snow_inside` / `_outside`, `destruction_inside` / `_outside` (bits 5 to 8) and the seasons (bits 9 to 12) only for versions above 2.
+- **Capture locations** (`FUN_00500f60`): a `CAPTURE_LOCATION` per instance (`FUN_00437190`: type, location, radius, points; the facing
+  `FUN_00437480`), grouped into sets, `BATTLE_MAP_DEFINITION::add_capture_location_set` (EmpireUtility: a push). No building links are set
+  here: where they come from is open.
 
 ## Marker tables (`EMPIREUTILITY::MARKER_TABLE`, UtilMarker.h)
 

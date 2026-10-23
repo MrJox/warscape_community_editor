@@ -110,6 +110,153 @@ fn xml_within(a: &Node, b: &Node, scale: f64) -> bool {
         && a.children.iter().zip(&b.children).all(|(x, y)| xml_within(x, y, scale))
 }
 
+/// The serde documents the compiler writes (stage A): the escalation BMDs and the civilian deployment list.
+fn compiled_serde(name: &str) -> bool {
+    name == "civilian_deployment.bin" || (name.starts_with("bmd_data_escalation") && name.ends_with(".bin"))
+}
+
+/// The escalation BMDs' XML twins.
+fn compiled_twin(name: &str) -> bool {
+    name.starts_with("bmd_data_escalation") && name.ends_with(".xml")
+}
+
+/// A document without what TEd writes from memory it never set (docs/formats/tile_compile.md, "Escalation BMDs"): a prop's `snow` and
+/// `destruction` bytes, and a model's decal fields; the names of the masked fields that differed are added to `masked`.
+fn mask_garbage(ours: &Node, theirs: &Node, masked: &mut Vec<String>) -> (Node, Node) {
+    let (mut a, mut b) = (ours.clone(), theirs.clone());
+    fn walk(a: &mut Node, b: &mut Node, masked: &mut Vec<String>) {
+        // A BMD prop (`prop_type`) or its twin's marker (`type` next to `decal_params_tiled`).
+        let model = |n: &Node| match (n.get("prop_type"), n.get("type"), n.get("decal_params_tiled")) {
+            (Some(t), _, _) => Some(t.as_int() == Some(0)),
+            (None, Some(t), Some(_)) => Some(t.as_str() == Some("0")),
+            _ => None,
+        };
+        if let Some(is_model) = model(b) {
+            let mut fields = vec!["snow", "destruction"];
+            if is_model {
+                fields.extend(["decal_parallax", "decal_tiled", "decal_params_parallax", "decal_params_scalex", "decal_params_scaley", "decal_params_scalez", "decal_params_tiled"]);
+            }
+
+            for f in fields {
+                if a.get(f) != b.get(f) {
+                    masked.push(f.to_owned());
+                }
+
+                a.remove(f);
+                b.remove(f);
+            }
+
+            if is_model && let (Some(x), Some(y)) = (a.child("decal_scale").cloned(), b.child("decal_scale")) {
+                if x != *y {
+                    masked.push("decal_scale".to_owned());
+                }
+
+                a.children.retain(|c| c.class != "decal_scale");
+                b.children.retain(|c| c.class != "decal_scale");
+            }
+        }
+
+        for (x, y) in a.children.iter_mut().zip(b.children.iter_mut()) {
+            walk(x, y, masked);
+        }
+    }
+
+    walk(&mut a, &mut b, masked);
+    (a, b)
+}
+
+/// A document without its capture locations' building links (a BMD's `building_links`, a twin's `building_indices`, capture_location_list.xml's
+/// `building_list`), and the links in document order: TEd's linking rule is not known (docs/formats/tile_compile.md), so they are compared apart.
+fn strip_links(n: &Node, links: &mut Vec<String>) -> Node {
+    let mut out = n.clone();
+    out.children.clear();
+    if out.remove("building_links").is_some() {
+        links.push(String::new());
+    }
+
+    // capture_location_list.xml's `building_list` (indices `;` separated).
+    if out.class == "CAPTURE_LOCATION"
+        && let Some(v) = out.remove("building_list")
+    {
+        links.push(v.as_str().unwrap_or_default().to_owned());
+    }
+
+    for c in &n.children {
+        match c.class.as_str() {
+            "building_links" => links.push(c.children.iter().map(|l| l.get("building_index").and_then(Value::as_int).unwrap_or(-1).to_string()).collect::<Vec<_>>().join(";")),
+            "building_indices" => links.push(c.props().iter().map(|p| p.value.as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>().join(";")),
+            _ => out.children.push(strip_links(c, links)),
+        }
+    }
+
+    out
+}
+
+/// The largest magnitude of a serde document's 2D coordinates (`x`, `y`, `z` floats).
+fn serde_scale(n: &Node) -> f64 {
+    let own = n.props().iter().filter(|p| matches!(p.name.as_str(), "x" | "y" | "z")).filter_map(|p| p.value.as_f64()).map(f64::abs).fold(1.0, f64::max);
+    n.children.iter().map(serde_scale).fold(own, f64::max)
+}
+
+/// Two serde documents alike but for numbers within what TEd's text carries (the building lists' and markers' tolerances): a
+/// quaternion 1e-5 (q and -q alike), a matrix's rotation 1e-5 times its row's length, a point 3e-6 of the document's scale, any other
+/// float 4 ulps or 1e-6. Starting damages that differ are counted in `exceptions` (older building data), as are non-unit quaternions.
+fn serde_within(a: &Node, b: &Node, scale: f64, path: &str, exceptions: &mut Vec<String>) -> Option<String> {
+    let path = format!("{path}/{}", b.class);
+    if a.class != b.class || a.children.len() != b.children.len() || a.props().len() != b.props().len() {
+        return Some(format!("{path}: shape: ours {} props {} children, theirs {} props {} children", a.props().len(), a.children.len(), b.props().len(), b.children.len()));
+    }
+
+    let ulps = |u: f32, v: f32| (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs();
+    if b.class == "orientation" && b.get("w").is_some() {
+        let q = |n: &Node| ["i", "j", "k", "w"].map(|k| n.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32);
+        let (u, v) = (q(a), q(b));
+        let d = |sign: f32| u.iter().zip(&v).map(|(x, y)| (x - sign * y).abs()).fold(0.0f32, f32::max);
+        if d(1.0).min(d(-1.0)) <= 1e-5 {
+            return None;
+        }
+
+        if (v.iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() > 1e-5 {
+            exceptions.push("orientation: the binary's quaternion is not unit".to_owned());
+            return None;
+        }
+
+        return Some(format!("{path}: ours {u:?}, theirs {v:?}"));
+    }
+
+    for (x, y) in a.props().iter().zip(b.props()) {
+        if x.name != y.name {
+            return Some(format!("{path}: property {} vs {}", x.name, y.name));
+        }
+
+        if x.value == y.value {
+            continue;
+        }
+
+        let (Some(u), Some(v)) = (x.value.as_f64().map(|u| u as f32), y.value.as_f64().map(|v| v as f32)) else {
+            return Some(format!("{path}.{}: ours {:?}, theirs {:?}", y.name, x.value, y.value));
+        };
+        let name = y.name.as_str();
+        let ok = if b.class == "transform" && name.len() == 3 && name.as_bytes()[1] < b'3' && name.as_bytes()[2] < b'3' {
+            let row = &name[..2];
+            let len = (0..3).map(|c| b.get(&format!("{row}{c}")).and_then(Value::as_f64).unwrap_or(0.0).powi(2)).sum::<f64>().sqrt();
+            ulps(u, v) <= 4 || f64::from((u - v).abs()) <= 1e-5 * len.max(1.0)
+        } else if matches!(name, "x" | "y") && b.get("z").is_none() {
+            ulps(u, v) <= 4 || f64::from((u - v).abs()) <= 3e-6 * scale
+        } else if name == "starting_damage_unary" {
+            exceptions.push("starting_damage from older building data".to_owned());
+            true
+        } else {
+            ulps(u, v) <= 4 || (u - v).abs() <= 1e-6
+        };
+        if !ok {
+            return Some(format!("{path}.{name}: ours {u}, theirs {v}"));
+        }
+    }
+
+    a.children.iter().zip(&b.children).enumerate().find_map(|(i, (x, y))| serde_within(x, y, scale, &format!("{path}[{i}]"), exceptions))
+}
+
 /// TEd's ground type colours (`EMPIREUTILITY::ground_type_to_colour`, docs/re/terrain.md).
 const PALETTE: [[u8; 3]; 13] = [
     [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
@@ -238,7 +385,14 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
             // The binary's marker versions, so that an older file is compared field by field.
-            let versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
+            let mut versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
+            // A BMD's version and its props' (the records' own; a file's are all one).
+            for d in binary.documents.iter().filter(|d| d.root.class == "BMD") {
+                versions.insert(d.name.clone(), d.root.get("serialise_version").and_then(Value::as_int));
+                let prop = d.root.child("prop_list").and_then(|l| l.child("markers")).and_then(|m| m.children.first());
+                versions.insert(format!("{}/props", d.name), prop.and_then(|p| p.get("serialise_version")).and_then(Value::as_int));
+            }
+
             let version_of = |n: &str| versions.get(n).copied().flatten();
             let cctx = CompileContext {
                 building_levels: ctx.building_levels,
@@ -256,21 +410,38 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let bytes = |d: &wce_tile_model::Document| if docs.iter().any(|x| std::ptr::eq(x, d)) { bytes_in(&compiled, d) } else { bytes_in(&binary, d) };
 
             // The compiled XML files: the document as the binary's (values; the layout is the writer's).
-            for theirs in binary.documents.iter().filter(|d| COMPILED_XML.contains(&d.name.as_str())) {
-                let c = local.attr_same.entry(format!("compile {}", theirs.name)).or_default();
-                match docs.iter().find(|d| d.name == theirs.name) {
-                    Some(ours) if ours.root.without_trivia() == theirs.root.without_trivia() => c.0 += 1,
-                    Some(ours) if xml_within(&ours.root, &theirs.root, xml_scale(&theirs.root)) => {
-                        c.0 += 1;
-                        *local.losses.entry(format!("compile {} within the text's precision", theirs.name)).or_default() += 1;
+            for theirs in binary.documents.iter().filter(|d| COMPILED_XML.contains(&d.name.as_str()) || compiled_twin(&d.name)) {
+                let kind = if compiled_twin(&theirs.name) { "bmd_data_escalation<n>.xml" } else { theirs.name.as_str() };
+                let ckey = format!("compile {kind}");
+                // TEd's garbage bytes masked (counted by name).
+                let mut masked = vec![];
+                let (mut ours_links, mut theirs_links) = (vec![], vec![]);
+                let pair = docs.iter().find(|d| d.name == theirs.name).map(|ours| {
+                    let (a, b) = (strip_links(&ours.root.without_trivia(), &mut ours_links), strip_links(&theirs.root.without_trivia(), &mut theirs_links));
+                    mask_garbage(&a, &b, &mut masked)
+                });
+                if (compiled_twin(&theirs.name) || theirs.name == "capture_location_list.xml") && pair.is_some() {
+                    let l = local.attr_same.entry(format!("compile {kind} capture building links (open: TEd's rule)")).or_default();
+                    if ours_links == theirs_links { l.0 += 1 } else { l.1 += 1 }
+                }
+
+                for m in masked.iter().collect::<std::collections::BTreeSet<_>>() {
+                    *local.losses.entry(format!("compile {kind}: {m} differs (TEd's unset memory)")).or_default() += 1;
+                }
+
+                match pair.as_ref() {
+                    Some((ours, theirs_masked)) if ours == theirs_masked => local.attr_same.entry(ckey.clone()).or_default().0 += 1,
+                    Some((ours, theirs_masked)) if xml_within(ours, theirs_masked, xml_scale(theirs_masked)) => {
+                        local.attr_same.entry(ckey.clone()).or_default().0 += 1;
+                        *local.losses.entry(format!("compile {kind} within the text's precision")).or_default() += 1;
                     }
-                    Some(ours) => {
-                        c.1 += 1;
+                    Some((ours, theirs_masked)) => {
+                        local.attr_same.entry(ckey.clone()).or_default().1 += 1;
                         local.compile_beyond += 1;
-                        local.problems.push(format!("{name}: compiled {}: {}", theirs.name, first_diff(&ours.root, &theirs.root, "").unwrap_or_default()));
+                        local.problems.push(format!("{name}: compiled {}: {}", theirs.name, first_diff(ours, theirs_masked, "").unwrap_or_default()));
                     }
                     None => {
-                        c.1 += 1;
+                        local.attr_same.entry(ckey.clone()).or_default().1 += 1;
                         local.compile_beyond += 1;
                         local.problems.push(format!("{name}: {} not compiled", theirs.name));
                     }
@@ -289,11 +460,80 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     }
                 }
 
-                let b = local.attr_same.entry(format!("compile {} (bytes)", theirs.name)).or_default();
+                let b = local.attr_same.entry(format!("compile {kind} (bytes)")).or_default();
                 if docs.iter().find(|d| d.name == theirs.name).and_then(bytes) == bytes(theirs) {
                     b.0 += 1;
                 } else {
                     b.1 += 1;
+                }
+            }
+
+            // The serde documents (escalation BMDs, civilian deployment): the tree within the text's precision, TEd's garbage masked.
+            for theirs in binary.documents.iter().filter(|d| compiled_serde(&d.name)) {
+                let kind = if theirs.name.starts_with("bmd_data_escalation") { "bmd_data_escalation<n>.bin" } else { theirs.name.as_str() };
+                let ckey = format!("compile {kind}");
+                let Some(ours) = docs.iter().find(|d| d.name == theirs.name) else {
+                    let carried = back.files.iter().any(|f| f.path == theirs.name);
+                    if carried {
+                        *local.losses.entry(format!("compile: {kind} carried by the project (empty)")).or_default() += 1;
+                        local.attr_same.entry(ckey.clone()).or_default().0 += 1;
+                    } else {
+                        local.attr_same.entry(ckey.clone()).or_default().1 += 1;
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: {} not compiled", theirs.name));
+                    }
+
+                    continue;
+                };
+
+                let mut masked = vec![];
+                let (mut ours_links, mut theirs_links) = (vec![], vec![]);
+                let (a, b) = mask_garbage(&strip_links(&ours.root, &mut ours_links), &strip_links(&theirs.root, &mut theirs_links), &mut masked);
+                if ours_links.len() + theirs_links.len() > 0 {
+                    let l = local.attr_same.entry(format!("compile {kind} capture building links (open: TEd's rule)")).or_default();
+                    if ours_links == theirs_links {
+                        l.0 += 1;
+                    } else {
+                        l.1 += 1;
+                        if std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
+                            local.problems.push(format!("{name}: {} capture links: ours {ours_links:?}, binary {theirs_links:?}", theirs.name));
+                        }
+                    }
+                }
+
+                for m in masked.iter().collect::<std::collections::BTreeSet<_>>() {
+                    *local.losses.entry(format!("compile {kind}: {m} differs (TEd's unset memory)")).or_default() += 1;
+                }
+
+                let mut exceptions = vec![];
+                match serde_within(&a, &b, serde_scale(&b), "", &mut exceptions) {
+                    None => local.attr_same.entry(ckey.clone()).or_default().0 += 1,
+                    Some(diff) => {
+                        local.attr_same.entry(ckey.clone()).or_default().1 += 1;
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: compiled {}: {diff}", theirs.name));
+                    }
+                }
+
+                for e in exceptions {
+                    *local.losses.entry(format!("compile {kind}: {e}")).or_default() += 1;
+                }
+
+                if let Ok(dir) = std::env::var("WCE_DECOMPILE_DUMP") {
+                    let dir = PathBuf::from(dir).join(folder.replace('/', "_"));
+                    let _ = std::fs::create_dir_all(&dir);
+                    for (who, d) in [("ours", ours), ("theirs", theirs)] {
+                        if let Some(b) = bytes(d) {
+                            let _ = std::fs::write(dir.join(format!("{who}.{}", theirs.name)), b);
+                        }
+                    }
+                }
+
+                let bc = local.attr_same.entry(format!("compile {kind} (bytes)")).or_default();
+                if bytes(ours) == bytes(theirs) {
+                    bc.0 += 1;
+                } else {
+                    bc.1 += 1;
                 }
             }
 
