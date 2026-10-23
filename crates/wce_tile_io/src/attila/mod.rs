@@ -6,6 +6,7 @@ pub mod bob_tile;
 pub mod building_list;
 pub mod images;
 pub mod schema;
+pub mod terrain_mesh;
 pub mod compile;
 pub mod decompile;
 mod ted_project;

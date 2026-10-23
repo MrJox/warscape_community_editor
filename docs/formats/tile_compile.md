@@ -160,13 +160,37 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   `v = lerp_y x lerp_x x lerp_y(lerp_x(corners above), lerp_x(corners below)) x 2.1`, the influence `(1 - 1 / powf(e, v^2)) / 0.9878448`
   (e as the f32 2.7182817). Byte for byte on terrain_rolling_hills_med/2x2/ae (tile links, which open a side to a neighbour, not
   ported).
-- **`hf_height_map.data`** (`FUN_10089b80`): not the final heights. BOB decimates the terrain mesh from them (`FUN_10019750`, the
-  variation's `raw_data_tri_density`), rasterises its triangles into a field of the final heights' size ("Rasterize final heightmap",
-  `FUN_1001bf20`: barycentric, inside within a small epsilon, rows flipped), raises the buildings' height meshes into it
-  (`FUN_1008a700` -> `WARSCAPE::rasterise_max_heights`; "Height map mesh file ... is missing" when a `.cs2` lacks), and writes it with
-  `COMPRESSED_HEIGHT_MAP::convert` (Warscape.AssemblyKit.dll 0x104ac240): CHMF 5, the field's min and max in metres, each sample
-  `(h - min) / (max - min) x 65535` truncated (SSE), one region, the encoder of `wce_formats::chmf`. Ported: the writer (`chmf`); the
-  mesh and the rasteriser are next.
+- **`hf_height_map.data`** (`FUN_10089b80`): not the final heights but the terrain mesh (below) rasterised ("Rasterize final
+  heightmap", `FUN_1001bf20`), the buildings' height meshes raised into it (`FUN_1008a700` -> `WARSCAPE::rasterise_max_heights`;
+  "Height map mesh file ... is missing" when a `.cs2` lacks), written by `COMPRESSED_HEIGHT_MAP::convert` (Warscape.AssemblyKit.dll
+  0x104ac240): CHMF 5, the field's min and max in metres, each sample `(h - min) / (max - min) x 65535` truncated (SSE), one region,
+  the encoder of `wce_formats::chmf`. The rasteriser (`terrain_mesh::rasterise`): a field of zeros the final heights' size; per
+  triangle (a, b, c) in order, the samples of its box in whole metres (truncated, widened by one below) whose barycentric weights are
+  all within [-0.0001, 1.0001] get `(c.h w + b.h v) + a.h u` (`v = (d20 d11 - d21 d01) / det`, `w = (d21 d00 - d20 d01) / det`,
+  `u = (1 - v) - w`, all f32 as BOB's SSE orders them) at row `size - 1 - z`. Byte for byte on terrain_rolling_hills_med/2x2/ae
+  (no building stamps; BOB's min of -7e-14 included). The stamps are next.
+- **Terrain mesh** (`TILE_RAW_DATA::build_base_mesh`, `FUN_10019750`; `attila::terrain_mesh`): the surface of `mesh.rigid_model_v2`
+  and the CHMF's source.
+  - A vertex per final-heights sample: x, z in metres from the near corner, the height of the field's row `size - 1 - z`, the normal
+    `calculate_normal` there (the normal map's Sobel, f32). BOB's vertex is also written with the final alpha (the RMV2's w).
+  - A flag per vertex: 0 (locked) near the edge, where the cell of x - 1, x + 1, z - 1 or z + 1 (rounded down) is off the tile: the
+    border, and the column and row next to the far edges (BOB's asymmetry); and every 16th sample both ways; and where
+    `protection_map.dds` (TEd's painted R32F, `cells x 128` square) is above 0.5, vertex (x, z) reading its row z - 1. 2 (free)
+    elsewhere. (3: the fringe's top row, which only moves along the edge; 1 and 4 are campaign flags.)
+  - The grid: per square, row by row, (x, z) (x, z + 1) (x + 1, z) and (x, z + 1) (x + 1, z + 1) (x + 1, z).
+  - `TRIANGLE_MERGER` (the tweaker `terrain_enable_triangle_merge`, default on; `FUN_10003140`): passes 1 ..= 50 (max(trunc(120 /
+    6), 50)) of a longest edge of pass x 2.4 m; after 4 passes in a row without a change it skips 10. Each pass rebuilds per vertex its
+    triangles, then tries every vertex in index order: a free vertex may go when each neighbour's normal is within the angle
+    (|n . n'| >= cos of `_settings.xml`'s `triangle_decimation_angle_factors0`, 20 degrees: degrees x 3.1415925 x f32(1 / 180),
+    `fcos`) and its height within 3 m; its targets are the neighbours (per triangle, in corner order, repeats kept) for which every
+    remapped triangle keeps its locked corners (a triangle collapsing onto a free target must have no corner below 2), is not thin
+    (the sine of its angle at the first corner, in the ground plane, >= 0.1), has no edge over the pass's length and is not turned
+    over (`(c.z - a.z)(b.x - a.x) - (b.z - a.z)(c.x - a.x) <= 0`); the first target not free wins, else the nearest (MSVC's
+    insertion sort, stable; an introsort past 32 candidates, not ported). The collapse appends the vertex's triangles to the target's,
+    renames it, zeroes the degenerate ones.
+  - Exact against fresh BOB: the surface triangles of terrain_rolling_hills_med/2x2/ae (3,360) and farm_western/1x1/aa (17,536).
+  - Not ported yet: the fringe (`FUN_10017120`: the border's vertices again with flag 3, and 10 m below with flag 0), the vertex
+    list cleaner, the mesh splitter, the RMV2 writer.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.

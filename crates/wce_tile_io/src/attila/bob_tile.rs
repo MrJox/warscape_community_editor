@@ -123,30 +123,38 @@ pub fn dds_dxt5(bgra: &[u8], w: usize, h: usize) -> Vec<u8> {
 /// rounded to f32 (terrain_rolling_hills_med/2x2/ae's pixel (325, 437): 114 so, 113 in double).
 pub fn normal_map(heights: &[u16], w: usize, h: usize, scale: f32, min_height: f32, strength: f32) -> Vec<u8> {
     let metres = heights.iter().map(|&v| f32::from(v) * (1.0f32 / 65535.0) * scale + min_height).collect::<Vec<_>>();
-    let at = |x: isize, y: isize| metres[(y.clamp(0, h as isize - 1) as usize) * w + x.clamp(0, w as isize - 1) as usize];
-    const K: [[f32; 3]; 3] = [[1.0, 0.0, -1.0], [2.0, 0.0, -2.0], [1.0, 0.0, -1.0]];
-    let z = 1.0f32 / strength;
     let mut out = vec![0u8; w * h * 4];
     for y in 0..h {
         for x in 0..w {
-            let (mut gx, mut gy) = (0.0f32, 0.0f32);
-            for (dy, row) in K.iter().enumerate() {
-                for (dx, k) in row.iter().enumerate() {
-                    let v = at(x as isize + dx as isize - 1, y as isize + dy as isize - 1);
-                    gx += k * v;
-                    gy += K[dx][dy] * v;
-                }
-            }
-
-            let (gx, gy) = (gx / 9.0, gy / 9.0);
-            let len = gy * gy + gx * gx + z * z;
-            let inv = 1.0f32 / len.sqrt();
+            let [nx, ny, nz] = calculate_normal(&metres, w, h, x, y, strength);
             let byte = |c: f32| ((c + 1.0) * 0.5 * 255.0) as i32 as u8;
-            out[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&[byte(inv * z), byte(gy * inv), byte(gx * inv), 255]);
+            out[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&[byte(nz), byte(ny), byte(nx), 255]);
         }
     }
 
     out
+}
+
+/// TileRawData.cpp's `calculate_normal` (ToolDataBuilderDll `FUN_10022750`) at a sample of a field of heights: the Sobel gradients
+/// (x: 1 0 -1 / 2 0 -2 / 1 0 -1, y its transpose, samples clamped at the edges) / 9, the vector (gx, gy, 1 / strength) normalised, in
+/// f32 (see [`normal_map`]).
+pub fn calculate_normal(field: &[f32], w: usize, h: usize, x: usize, y: usize, strength: f32) -> [f32; 3] {
+    const K: [[f32; 3]; 3] = [[1.0, 0.0, -1.0], [2.0, 0.0, -2.0], [1.0, 0.0, -1.0]];
+    let at = |x: isize, y: isize| field[(y.clamp(0, h as isize - 1) as usize) * w + x.clamp(0, w as isize - 1) as usize];
+    let z = 1.0f32 / strength;
+    let (mut gx, mut gy) = (0.0f32, 0.0f32);
+    for (dy, row) in K.iter().enumerate() {
+        for (dx, k) in row.iter().enumerate() {
+            let v = at(x as isize + dx as isize - 1, y as isize + dy as isize - 1);
+            gx += k * v;
+            gy += K[dx][dy] * v;
+        }
+    }
+
+    let (gx, gy) = (gx / 9.0, gy / 9.0);
+    let len = gy * gy + gx * gx + z * z;
+    let inv = 1.0f32 / len.sqrt();
+    [gx * inv, gy * inv, inv * z]
 }
 
 /// `normal.dds` from the normal map (ToolDataBuilderDll `FUN_10087420`): each pixel to (B 0, G y, R 255, A x), DXT5; none when the map is
@@ -270,6 +278,26 @@ pub fn dds_l8(px: &[u8], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
+/// The variation's numbers BOB reads the height map with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeightNumbers {
+    pub scale: f32,
+    pub min_height: f32,
+    pub normal_strength: f32,
+}
+
+impl HeightNumbers {
+    /// The project's variation's (its tile database entry), TEd's defaults when missing.
+    pub fn of(raw: &Tile) -> Self {
+        let entry = raw.entry.as_ref().map(|e| &e.root);
+        let variation = entry.and_then(|e| e.child("VARIATIONS")).and_then(|vs| {
+            vs.children.iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref())
+        });
+        let num = |k: &str, d: f32| variation.and_then(|v| v.get(k)).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok()))).map_or(d, |v| v as f32);
+        Self { scale: num("scale", 1.0), min_height: num("min_height", 0.0), normal_strength: num("normal_strength", 1.0) }
+    }
+}
+
 /// The stage-B textures of a project (BOB's Tile processor), as files: `blend.dds`, `index.dds` (DXT5) and `ground_types.dds` (battle
 /// tiles), from `blend_map.tif`, the entry's texture groups and `ground_type_map.png`.
 pub fn textures(raw: &Tile) -> Result<Vec<(String, Vec<u8>)>, String> {
@@ -279,16 +307,12 @@ pub fn textures(raw: &Tile) -> Result<Vec<(String, Vec<u8>)>, String> {
     let (blend, index) = blend_and_index(weights, w, h);
     let mut out = vec![("blend.dds".to_owned(), dds_dxt5(&blend, w, h)), ("index.dds".to_owned(), dds_dxt5(&index, w, h))];
     let entry = raw.entry.as_ref().map(|e| &e.root);
-    // The variation's height range and normal strength.
-    let variation = entry.and_then(|e| e.child("VARIATIONS")).and_then(|vs| {
-        vs.children.iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref())
-    });
-    let num = |k: &str, d: f32| variation.and_then(|v| v.get(k)).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok()))).map_or(d, |v| v as f32);
     if let Some(hm) = raw.map(MapKind::Height, 0)
         && let Samples::U16(hs) = &hm.raster.samples
     {
         let (hw, hh) = (hm.raster.width as usize, hm.raster.height as usize);
-        let normals = normal_map(hs, hw, hh, num("scale", 1.0), num("min_height", 0.0), num("normal_strength", 1.0));
+        let v = HeightNumbers::of(raw);
+        let normals = normal_map(hs, hw, hh, v.scale, v.min_height, v.normal_strength);
         out.extend(normal_dds(&normals, hw, hh).map(|d| ("normal.dds".to_owned(), d)));
     }
 
