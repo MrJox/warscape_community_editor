@@ -204,14 +204,20 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     (t j+1, b j, b j+1); x = max (t j, t j+1, b j) (t j+1, b j+1, b j)). The tops are the surface's vertices (locked); a bottom's
     flag is 1 at the corners and where x and z are multiples of 16, else 4 (moves only into a 4 or a 1): the bottom row decimates
     along the edge. The thin test measures upright triangles in their own plane, the height step does not apply to flags 1 and 4.
-  - `mesh.rigid_model_v2` (`terrain_mesh::rmv2`): the merged list (surface then fringe, in order), its vertices numbered by first use
-    (the vertex list cleaner), each f16 x, height, z, alpha (rounded to nearest; the alpha of the influence's row z, unflipped,
-    where the height is row `size - 1 - z`: BOB's), u16 indices. Header: `RMV2` 6, 1 LOD, zero skeleton name; the LOD's block
-    count 1, vertex and index bytes, offset 0xa0, distance 70; the block's type 0x61, size, header 0xa8, vertex count, index
-    offset and count, the f32 bounds, `rigid_default` (BOB leaves the rest of its 32 bytes uninitialised), `TerrainBase0`, 32
-    zeros, the tile's metres x and z, samples per row, 1, 16, the surface's index count; then vertices, indices.
-  - Exact against fresh BOB: terrain_rolling_hills_med/2x2/ae and farm_western/1x1/aa, the whole index list in order and the file
-    byte for byte (the uninitialised name tail masked). The outfield mesh is next.
+  - `mesh.rigid_model_v2` (`terrain_mesh::rmv2`): the merged list (surface then fringe, in order) cut into blocks by the
+    `MESH_SPLITTER` (`FUN_10004970`): a block takes triangles until it holds 65,000 vertices or more, and the triangle that filled
+    it starts the next block again (its loop only advances while there is room); a block's vertices numbered by first use (the
+    vertex list cleaner), each f16 x, height, z, alpha (rounded to nearest; the alpha of the influence's row z, unflipped, where
+    the height is row `size - 1 - z`: BOB's), u16 indices. Header: `RMV2` 6, 1 LOD, zero skeleton name; the LOD's block count,
+    vertex and index bytes, offset 0xa0, distance 70; per block its type 0x61, size, header 0xa8, vertex count, index offset and
+    count, the whole mesh's f32 bounds, `rigid_default` (BOB leaves the rest of its 32 bytes uninitialised), `TerrainBase<k>`, 32
+    zeros, the tile's metres x and z, samples per row, 1, 16, the block's count of surface indices; then its vertices, indices.
+  - `outfield_mesh.rigid_model_v2`: the same from the same final heights with a grid of 16 (near-edge band 16, the "every n-th
+    sample" lock and the fringe's kept bottoms at multiples of 2048), built first (`process_tile_internal`).
+  - Exact against fresh BOB, the uninitialised name tails masked: terrain_rolling_hills_med/1x1/aa and /2x2/ae, farm_western/1x1/aa
+    (all three terrain files) and western_city_b/small (both meshes, 8 blocks, 9.4 MB; BOB writes no CHMF there: two display walls'
+    meshes are missing from the kit). Entry point `terrain_mesh::terrain_files` (with `building_stamps` and `decimation_angle` from
+    the kit); check `terrain_mesh_check <raw tile> <BOB's working tile> <kit raw_data>`.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
