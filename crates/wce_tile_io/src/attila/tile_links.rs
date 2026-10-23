@@ -239,7 +239,7 @@ fn straight_self_tiling(raw: &Tile, entry: &Node, raw_data: &Path, linking_tiles
         Some(load_field(&file, 0).ok_or_else(|| format!("You need to convert {one} first."))?)
     };
     let s = |field: &[f32], row: usize, col: usize| source.as_ref().map_or(field[row * w + col], |(sw, _, v)| v[row * sw + col]);
-    let size = CELL;
+    let size = super::bob_tile::HeightNumbers::of(raw).tri_density;
     let inv = 1.0f32 / int(&links[first], "blend_size") as u32 as f32;
     let t_of = |i: usize| ((f64::from(i as u32) * f64::from(inv)) as f32).clamp(0.0, 1.0);
     let two_clean = count == 2 && sea.is_none();
@@ -309,7 +309,8 @@ pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, 
     let variation = entry.wrapped("VARIATIONS").iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref());
     let density = variation.map_or(CELL as i32, |v| int(v, "raw_data_tri_density")).max(1);
     let k = (CELL as i32 / density) as u32;
-    let size = CELL as i32;
+    // BOB's tile size: the subtile in samples.
+    let size = density;
     let targets = entry.wrapped("TILE_LINK_TARGETS").iter().map(|t| (int(t, "x"), int(t, "y"))).collect::<Vec<_>>();
     let links = entry.wrapped("TILE_LINKS");
     for sea in [true, false] {

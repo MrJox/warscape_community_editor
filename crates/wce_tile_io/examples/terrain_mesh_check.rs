@@ -1,6 +1,7 @@
 //! Stage B's terrain files against a fresh BOB run: `wce_tile_io::attila::terrain_mesh::terrain_files` on a raw tile folder (kit
 //! layout) against BOB's working folder: `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2` (the shader name's uninitialised tail
-//! masked) and `hf_height_map.data` (its samples compared when it differs).
+//! masked) and `hf_height_map.data` (its samples compared when it differs); `final_heights.dds` and `final_alpha.dds` against BOB's
+//! raw folder (the working one's path with `raw_data`).
 //!
 //!   cargo run --release -p wce_tile_io --example terrain_mesh_check -- <raw tile folder> <BOB's working tile folder> <kit raw_data>
 
@@ -39,7 +40,9 @@ fn main() {
     let out = terrain_files(&project, kit, decimation_angle(kit), &stamps, &models).expect("stage B");
     println!("built in {:?}", t0.elapsed());
     for (name, ours) in out {
-        let Ok(theirs) = std::fs::read(work.join(&name)) else {
+        // BOB writes the final heights and alpha into the raw folder: look there too.
+        let raw_oracle = PathBuf::from(work.to_string_lossy().replace("working_data", "raw_data")).join(&name);
+        let Ok(theirs) = std::fs::read(work.join(&name)).or_else(|_| std::fs::read(raw_oracle)) else {
             println!("{name}: BOB wrote none");
             continue;
         };

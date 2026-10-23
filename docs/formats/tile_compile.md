@@ -268,6 +268,35 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     meshes are missing from the kit). Entry point `terrain_mesh::terrain_files` (the kit's `raw_data` for the linking tiles,
     `building_stamps` and `decimation_angle` from the kit, a model resolver for the water planes); check
     `terrain_mesh_check <raw tile> <BOB's working tile> <kit raw_data>` (it resolves models from the game's packs).
+- **Masked and large tiles** (`terrain_mesh::Grid`).
+  - **The tile size** is the variation's `raw_data_tri_density` T: samples per subtile (128; the kit's mountains 32, all masked).
+    - The height map has a border of one subtile (T samples), and the final heights are `cells x T + 1` square.
+    - Vertices are in metres: `sample x f32(128 / T)`.
+    - The outfield's step is `1 << ((T == 128) + 3)`: 16, or 8.
+    - The CHMF's spacing is `128 / T`. The rasteriser walks whole metres and writes sample `trunc(m / (128 / T))` (row: `trunc((h -
+      z) - 1)` on the x87); several metres share a sample and the last one wins.
+    - The water planes' samples are scaled the same way.
+    - Tile links and self tiling use T as their tile size.
+    - The protection map stays 128 per subtile, and BOB indexes it by sample.
+  - **The mask** (`mask='0011…'`, subtiles row by row from the bottom; `TILE::subtile_masked_valid` rejects anything outside the
+    tile first):
+    - The influence (`FUN_104bdde0`): an invalid subtile writes nothing, and sides and corners come from the neighbours' validity.
+    - Flags: a vertex is locked when the subtile of `floor((x ± s) / T)` or `floor((z ± s) / T)` is invalid, then (masked) when that
+      of `(x ± s) / T` or `(z ± s) / T` (truncated) is. The step is at most T.
+    - Squares: one is left out when its corner (x, z)'s subtile (metres / 128, truncated) is invalid, and (x + s, z)'s is too in the
+      same subtile column, or (x, z + s)'s is, in the same column (both clamped to the last subtile).
+    - The fringe (`FUN_10017120`): per valid subtile (rows from the bottom, x inner), per side (left, right, below, above) whose
+      neighbour is invalid, its T + 1 vertices each pushed again:
+      - BOB pushes the grid vertex's pointer twice, so the top is a second index of the same vertex, flag 3;
+      - then a copy 10 m lower, flag 0.
+
+      Triangles per step: left (t j, t i, b i) (t j, b i, b j); right (t i, t j, b i) (b i, t j, b j); below (t j, b i, t i) (t j,
+      b j, b i); above (t j, t i, b i) (b j, t j, b i). The duplicated tops stay apart in the RMV2 (2,080 identical vertices on
+      river/4x4_y_l1_r0_b3).
+    - The outline filter reads the mask with the field's y (rows from the top) and the entry's size; with T < 128 its 1 / 256 no
+      longer matches the subtiles.
+  - Exact: river/4x4_y_l1_r0_b3/aa (masked, T 128, a river and links) and atlantic_mountains/small_round/aa (masked, T 32), in every
+    terrain file, the final heights and alpha too.
 - **The river** (`FUN_1001c610`; `attila::river`): the meshes' last block, type 90.
   - **Reading the splines** (`FUN_10011a20`): `river_spline0.xml`, `river_spline1.xml`, … up to the first missing file (the
     unnumbered `river_spline.xml` is not read).

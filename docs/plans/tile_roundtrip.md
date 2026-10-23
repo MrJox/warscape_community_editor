@@ -277,8 +277,11 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   settlement_nordic_cities/nordic_city_c/minor (416 stamps, a water plane, three go regions) is byte for byte in every terrain
   file: the go outlines (stage A's `go_outlines.xml`) are cut out of the no-go field, and outlines reaching past the tile's subtiles
   are dropped.
-  Still open in stage B: a river-only water map check, masked and large tiles (raw_data_tri_density other than 128, masks,
-  per-cell `mesh<x>x<y>`), 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
+  Masked tiles and `raw_data_tri_density` 32 (the mountains): influence, flags, the square skip, the per-subtile fringe, the
+  density scale of vertices, rasterisers and CHMF spacing; every terrain file exact on river/4x4_y_l1_r0_b3/aa and
+  atlantic_mountains/small_round/aa (13 oracle tiles in all).
+  Still open in stage B: a river-only water map check, the per-subtile `mesh<x>x<y>` files tile.agf lists (BOB wrote none for the
+  tiles tried: which tiles get them?), 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
   stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
   (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
@@ -309,6 +312,13 @@ These paths follow the decompiled code but no BOB run has exercised them; check 
   BOB runs the range in one piece.
 - **Go outline space**: the field's origin (0, 0), spacing 2 and bounds ((w - 1) 2, (h - 1) 2) come from `FUN_1000b360` and the
   output transform; the provider's own bounds accessors were not decompiled. Exact on the one go-region oracle.
+- **Mask orientation in the outline filter**: BOB passes the field's y (rows from the top) to `subtile_masked_valid`, whose rows
+  count from the bottom; we do the same. The masked oracle's mask (0011 1111 1111 0011) is symmetric top to bottom, so the
+  orientation is unchecked.
+- **Building stamps at density 32**: `rasterise_max_heights` writes by the stamp matrix's metres; whether BOB scales them to the
+  32-per-subtile samples was not checked (no mountain tile has stamps in the kit's oracle set).
+- **Rivers, water planes and tile links at density 32**: scaled by the RE (`128 / T`), but the density-32 oracle has none.
+- **Unmasked tiles with density other than 128**: none in the kit. The unmasked fringe keeps its sample-index modulus.
 - **`optimise_spline` / spline edge cases**: degenerate segments (repeated control points) and splines whose sample count is 3 or
   less; the vanilla rivers have neither.
 
