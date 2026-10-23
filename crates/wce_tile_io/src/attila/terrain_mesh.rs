@@ -9,29 +9,69 @@ use super::bob_tile::calculate_normal;
 pub const LOCKED: u8 = 0;
 pub const FREE: u8 = 2;
 pub const EDGE: u8 = 3;
+/// The fringe's bottom row (`build_base_mesh`'s flags for the vertices `FUN_10017120` adds): moves only into another of its row or a
+/// `FRINGE_KEPT` one; `FRINGE_KEPT` at the corners and every 16th sample.
+pub const FRINGE: u8 = 4;
+pub const FRINGE_KEPT: u8 = 1;
 
-/// A vertex of the mesh: its position (x, the height, z; metres) and normal.
+/// A vertex of the mesh: its position (x, the height, z; metres), normal, the final alpha at it (the RMV2's w) and whether it is the
+/// fringe's bottom (10 m below the edge; BOB's vertex +0x78).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vertex {
     pub x: f32,
     pub h: f32,
     pub z: f32,
     pub normal: [f32; 3],
+    pub alpha: f32,
+    pub fringe: bool,
 }
 
 /// The vertices of a tile's mesh, one per sample of the final heights (`w` x `h`, rows as `final_heights.dds`: row 0 is the far
 /// edge), row by row from z = 0: vertex `z * w + x` stands at (x, z) with the height of the field's row `h - 1 - z`, its normal
-/// [`calculate_normal`] there.
-pub fn grid_vertices(heights: &[f32], w: usize, h: usize, strength: f32) -> Vec<Vertex> {
+/// [`calculate_normal`] there, and the alpha (`final_alpha.dds`, the [`super::bob_tile::influence`]) of row z: BOB reads that
+/// field unflipped (the influence's rows differ at the middle of a cell: 1 against 0.965 at row 64 of a 2 x 2 tile).
+pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strength: f32) -> Vec<Vertex> {
     let mut out = Vec::with_capacity(w * h);
     for z in 0..h {
         let row = h - 1 - z;
         for x in 0..w {
-            out.push(Vertex { x: x as f32, h: heights[row * w + x], z: z as f32, normal: calculate_normal(heights, w, h, x, row, strength) });
+            let normal = calculate_normal(heights, w, h, x, row, strength);
+            out.push(Vertex { x: x as f32, h: heights[row * w + x], z: z as f32, normal, alpha: alpha[z * w + x], fringe: false });
         }
     }
 
     out
+}
+
+/// The fringe (`FUN_10017120`, a tile without a mask): per edge (z = 0, z = h - 1, x = 0, x = w - 1) a copy of its vertices 10 m lower
+/// appended to `verts`, then per square of the edge (`step` samples) two upright triangles appended to `tris`, top t and bottom b:
+/// z = 0 (t i, t i+s, b i) (t i+s, b i+s, b i); z = h - 1 (t i+s, t i, b i) (t i+s, b i, b i+s); x = 0 (t j, b j, t j+s)
+/// (t j+s, b j, b j+s); x = w - 1 (t j, t j+s, b j) (t j+s, b j+s, b j). The new vertices' flags (`build_base_mesh`) go to `flags`:
+/// [`FRINGE_KEPT`] at the tile's corners and where x and z are both multiples of 16, else [`FRINGE`].
+pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[u32; 3]>, w: usize, h: usize, step: usize) {
+    let mut edge = |tops: Vec<usize>, tri: &dyn Fn(u32, u32, u32, u32) -> [[u32; 3]; 2]| {
+        let base = verts.len();
+        for &t in &tops {
+            let mut v = verts[t];
+            v.h -= 10.0;
+            v.fringe = true;
+            verts.push(v);
+            let (x, z) = (v.x as usize, v.z as usize);
+            let corner = (x == 0 || x == w - 1) && (z == 0 || z == h - 1);
+            flags.push(if corner || (x % 16 == 0 && z % 16 == 0) { FRINGE_KEPT } else { FRINGE });
+        }
+
+        let n = tops.len();
+        for i in (0..n - step.min(n)).step_by(step) {
+            let [a, b] = tri(tops[i] as u32, tops[i + step] as u32, (base + i) as u32, (base + i + step) as u32);
+            tris.push(a);
+            tris.push(b);
+        }
+    };
+    edge((0..w).collect(), &|t0, t1, b0, b1| [[t0, t1, b0], [t1, b1, b0]]);
+    edge((0..w).map(|x| (h - 1) * w + x).collect(), &|t0, t1, b0, b1| [[t1, t0, b0], [t1, b0, b1]]);
+    edge((0..h).map(|z| z * w).collect(), &|t0, t1, b0, b1| [[t0, b0, t1], [t1, b0, b1]]);
+    edge((0..h).map(|z| z * w + w - 1).collect(), &|t0, t1, b0, b1| [[t0, t1, b0], [t1, b1, b0]]);
 }
 
 /// The vertex flags of a battle tile alone (`build_base_mesh`, step 1): locked near the edge, where the cell of x - 1, x + 1, z - 1 or
@@ -535,4 +575,113 @@ fn inside(x: f32, z: f32, a: &[f32; 3], b: &[f32; 3], c: &[f32; 3]) -> bool {
     }
 
     odd
+}
+
+/// f32 to IEEE half, rounded to nearest even (BOB's vertex positions).
+pub fn f16_bits(v: f32) -> u16 {
+    let b = v.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        return sign | 0x7c00 | if man != 0 { 0x200 } else { 0 };
+    }
+
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+
+        let m = man | 0x80_0000;
+        let shift = (14 - e) as u32;
+        let half = 1u32 << (shift - 1);
+        let rest = m & ((1 << shift) - 1);
+        let mut out = m >> shift;
+        if rest > half || (rest == half && out & 1 == 1) {
+            out += 1;
+        }
+
+        return sign | out as u16;
+    }
+
+    let rest = man & 0x1fff;
+    let mut out = ((e as u32) << 10) | (man >> 13);
+    if rest > 0x1000 || (rest == 0x1000 && out & 1 == 1) {
+        out += 1;
+    }
+
+    sign | out as u16
+}
+
+/// `mesh.rigid_model_v2` as BOB writes a tile's mesh (`TERRAIN_MESH_WRITER_V2`, one LOD, one block): the triangles' vertices numbered
+/// by first use (the vertex list cleaner), each as f16 x, height, z, alpha; u16 indices. The header: RMV2 version 6, 1 LOD, a zero
+/// skeleton name; the LOD's block count, vertex and index bytes, its offset (0xa0) and distance (70); the block's type 0x61, size,
+/// header size 0xa8, vertex count, index offset and count, the bounds of the f32 positions, the shader `rigid_default` (BOB leaves
+/// the rest of its 32 bytes uninitialised: zeros here), `TerrainBase0`, 32 zeros, the tile's size in metres x and z, its samples per
+/// row, 1, 16 and the count of the surface's indices (`surface` triangles come first).
+pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], surface: usize, size: (u32, u32), row: u32) -> Vec<u8> {
+    let mut number = vec![u32::MAX; verts.len()];
+    let mut order = vec![];
+    let mut indices = Vec::with_capacity(tris.len() * 3);
+    for &i in tris.iter().flatten() {
+        if number[i as usize] == u32::MAX {
+            number[i as usize] = order.len() as u32;
+            order.push(i);
+        }
+
+        indices.push(number[i as usize] as u16);
+    }
+
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for &i in &order {
+        let v = &verts[i as usize];
+        for (k, c) in [v.x, v.h, v.z].into_iter().enumerate() {
+            lo[k] = lo[k].min(c);
+            hi[k] = hi[k].max(c);
+        }
+    }
+
+    let (vbytes, ibytes) = (order.len() as u32 * 8, indices.len() as u32 * 2);
+    let mut o = b"RMV2".to_vec();
+    let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
+    put(&mut o, 6);
+    put(&mut o, 1);
+    o.resize(0x8c, 0);
+    for v in [1, vbytes, ibytes, 0xa0, 70.0f32.to_bits(), 0x61, 0xa8 + vbytes + ibytes, 0xa8, order.len() as u32, 0xa8 + vbytes, indices.len() as u32] {
+        put(&mut o, v);
+    }
+
+    for v in lo.into_iter().chain(hi) {
+        put(&mut o, v.to_bits());
+    }
+
+    let name = |o: &mut Vec<u8>, s: &str| {
+        let start = o.len();
+        o.extend_from_slice(s.as_bytes());
+        o.resize(start + 32, 0);
+    };
+    name(&mut o, "rigid_default");
+    name(&mut o, "TerrainBase0");
+    o.resize(o.len() + 32, 0);
+    for v in [size.0, size.1, row, 1, 16, surface as u32 * 3] {
+        put(&mut o, v);
+    }
+
+    for &i in &order {
+        let v = &verts[i as usize];
+        for c in [v.x, v.h, v.z, v.alpha] {
+            o.extend_from_slice(&f16_bits(c).to_le_bytes());
+        }
+    }
+
+    for i in indices {
+        o.extend_from_slice(&i.to_le_bytes());
+    }
+
+    o
 }
