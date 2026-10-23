@@ -313,8 +313,8 @@ These paths follow the decompiled code but no BOB run has exercised them; check 
 
   So the codec's search starts from something other than the block: most likely state left on the stack by an earlier block
   (uninitialised arrays). Modelling that needs the leak found in the compressor's code. Left as a residual.
-- **Masked tiles in the link blend**: `FUN_10015610` skips a link whose cell fails `subtile_masked_valid(x, h - y - 1)`; not ported
-  (the masked oracle's links blend in valid cells, and the influence's mask is ported).
+- **Masked tiles in the link blend**: `FUN_10015610` skips a link whose cell fails `subtile_masked_valid(x, h - y - 1)`; ported,
+  but the masked oracle's links all fall in valid cells.
 - **Go outline chunks**: TBB cuts the rows into chunks of `max(rows / ((threads x 5 + 5) x 4), 64)` rounded down to 64, and each
   chunk restarts the f32 y accumulation. We assume 64 (any thread count up to dozens on a tile this size); with no worker threads
   BOB runs the range in one piece.

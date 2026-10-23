@@ -311,6 +311,7 @@ pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, 
     let k = (CELL as i32 / density) as u32;
     // BOB's tile size: the subtile in samples.
     let size = density;
+    let mask = super::bob_tile::entry_mask(raw);
     let targets = entry.wrapped("TILE_LINK_TARGETS").iter().map(|t| (int(t, "x"), int(t, "y"))).collect::<Vec<_>>();
     let links = entry.wrapped("TILE_LINKS");
     for sea in [true, false] {
@@ -339,6 +340,11 @@ pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, 
 
                 let cell = (rx + inverted.0, ry + inverted.1);
                 if cell.0 < 0 || cell.0 >= tw || cell.1 < 0 || cell.1 >= th {
+                    continue;
+                }
+
+                // A masked tile's link into an invalid subtile (the cell is rows down, the mask's rows from the bottom).
+                if !mask.is_empty() && !super::bob_tile::subtile_valid(&mask, tw as usize, th as usize, cell.0, th - cell.1 - 1) {
                     continue;
                 }
 
