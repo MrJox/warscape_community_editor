@@ -117,13 +117,12 @@ pub fn read_blend_map(path: &Path) -> Result<(usize, usize, Vec<f32>), String> {
 
 /// The cells of the tile's links that blend with the neighbour (`build_height_alpha_map`): the link's tile set has a linking tile (in the
 /// kit's `_settings.xml`), the test is not `TLT_NOT_EQUALS` and the link doesn't have `no_offline_blend`.
-fn blending_links(entry: &wce_formats::tile_entry::TileEntry) -> Vec<(i32, i32)> {
+fn blending_links(entry: &wce_formats::tile_entry::TileEntry, settings: Option<&Path>) -> Vec<(i32, i32)> {
     let links = entry.links();
     if links.is_empty() {
         return vec![];
     }
 
-    let settings = entry.file().parent().and_then(Path::parent).map(|d| d.join("_settings.xml"));
     let Some(doc) = settings.and_then(|p| std::fs::read(p).ok()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).ok()) else { return vec![] };
     let linking: HashSet<String> = doc
         .elements()
@@ -142,25 +141,47 @@ fn blending_links(entry: &wce_formats::tile_entry::TileEntry) -> Vec<(i32, i32)>
 /// The generator's inputs from a raw tile.
 pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
     let entry = project.entry.as_ref().ok_or("no tile database entry")?;
-    let variation = project.variation.and_then(|v| entry.variations().get(v).cloned()).ok_or("no tile variation")?;
+    let variation = project.variation.ok_or("no tile variation")?;
     let hf = project.height.as_ref().ok_or("no height map")?;
-    let (min, scale) = (variation.min_height as f32, variation.scale as f32);
     let (map_w, map_h) = (hf.width() as usize, hf.height() as usize);
-    let mut heights = Vec::with_capacity(map_w * map_h);
-    for y in 0..map_h as u32 {
-        for x in 0..map_w as u32 {
-            // BOB's image conversion multiplies by 1 / 65535 (dividing is an ulp off in places).
-            heights.push((f32::from(hf.raw(x, y)) * (1.0 / 65535.0)) * scale + min);
-        }
-    }
-
+    let raw = (0..map_h as u32).flat_map(|y| (0..map_w as u32).map(move |x| hf.raw(x, y))).collect::<Vec<u16>>();
     let (bw, bh, blend) = read_blend_map(&project.dir.join("blend_map.tif"))?;
     if (bw, bh) != (map_w, map_h) {
         return Err(format!("blend_map.tif is {bw}x{bh}, the height map {map_w}x{map_h}"));
     }
 
+    // The tile database's `_settings.xml`, next to the entry's TILES folder.
+    let settings = entry.file().parent().and_then(Path::parent).map(|d| d.join("_settings.xml"));
+    tile_inputs_from(entry, variation, &raw, (map_w, map_h), blend, exclusions(&project.scene), settings.as_deref())
+}
+
+/// The generator's inputs from a raw tile's parts: its entry and variation, `height_map_0`'s samples (`size` = width, height), the blend
+/// map's 16 values per pixel (0..1, as [`read_blend_map`] gives them), the exclusion polygons ([`exclusions`]) and the tile database's
+/// `_settings.xml` (for the links that blend).
+///
+/// # Errors
+///
+/// The entry has no such variation, or the blend map is not the height map's size.
+pub fn tile_inputs_from(
+    entry: &wce_formats::tile_entry::TileEntry,
+    variation: usize,
+    height: &[u16],
+    size: (usize, usize),
+    blend: Vec<f32>,
+    exclusions: Vec<Vec<(f32, f32)>>,
+    settings: Option<&Path>,
+) -> Result<TileInputs, String> {
+    let variation = entry.variations().get(variation).cloned().ok_or("no tile variation")?;
+    let (min, scale) = (variation.min_height as f32, variation.scale as f32);
+    let (map_w, map_h) = size;
+    if height.len() != map_w * map_h || blend.len() != map_w * map_h * 16 {
+        return Err(format!("the height map is {map_w}x{map_h} but has {} samples, the blend map {} values", height.len(), blend.len()));
+    }
+
+    // BOB's image conversion multiplies by 1 / 65535 (dividing is an ulp off in places).
+    let heights = height.iter().map(|&h| (f32::from(h) * (1.0 / 65535.0)) * scale + min).collect();
     let cells = cells(entry.width(), entry.height(), &entry.mask());
-    let height_alpha = height_alpha::HeightAlpha::build(entry.width(), entry.height(), variation.raw_data_tri_density, &cells, &blending_links(entry));
+    let height_alpha = height_alpha::HeightAlpha::build(entry.width(), entry.height(), variation.raw_data_tri_density, &cells, &blending_links(entry, settings));
     let tg = entry.texture_group();
     Ok(TileInputs {
         heights,
@@ -173,8 +194,8 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
         texture_groups: vec![tg.red, tg.green, tg.blue, tg.alpha],
         cells,
         height_alpha,
-        render_scale: project.unit_scale as f32,
-        exclusions: exclusions(&project.scene),
+        render_scale: 2.0,
+        exclusions,
     })
 }
 

@@ -167,6 +167,9 @@ pub struct TileTool {
     browse_rows_key: String,
     browse_index: Option<Arc<TileIndex>>,
 
+    /// The kit index's rows, shared as the packs' are (copied when the index changes).
+    browse_kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
+
     // Weather picker (data only: which .environment file the game picks for this map).
     env: Option<AssetVariationDb>,
     wq: BTreeMap<String, String>,
@@ -174,6 +177,12 @@ pub struct TileTool {
 
     /// The Map context section (the tiles around the open one).
     pub(crate) context: crate::context_panel::ContextUi,
+
+    /// The game's tile data for opening and saving exported tiles (read once per game folder).
+    exported_game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
+
+    /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
+    browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
 }
 
 impl Default for TileTool {
@@ -187,8 +196,9 @@ impl Default for TileTool {
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
-            browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, env: None,
+            browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(), env: None,
             wq: BTreeMap::from([("map".to_owned(), "default_map".to_owned())]), env_status: String::new(), context: Default::default(),
+            exported_game: None, browse_packs: None,
         }
     }
 }
@@ -376,6 +386,146 @@ impl TileTool {
         }
 
         Ok(msg)
+    }
+
+    /// The game's tile data for exported tiles (the packs' databases, buildings and models, the kit's vegetation parameters), read on first
+    /// use from the game folder (`game_dir`).
+    fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
+        let dir = e.settings().get("game_dir", Some("WCE_GAME")).ok_or("no game folder (setup <game folder>)")?;
+        if let Some(g) = self.exported_game.as_ref().filter(|g| g.dir == Path::new(&dir)) {
+            return Ok(g.clone());
+        }
+
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::load(Path::new(&dir))?);
+        for w in &game.warnings {
+            log::warn(format!("exported tiles: {w}"));
+        }
+
+        self.exported_game = Some(game.clone());
+        Ok(game)
+    }
+
+    /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use.
+    fn pack_entries(&mut self, e: &mut Editor) -> Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String> {
+        if let Some(r) = &self.browse_packs {
+            return r.clone();
+        }
+
+        let r = self.exported_game(e).map(|game| {
+            let mut rows = vec![];
+            for kind in ["battle", "campaign"] {
+                let Some(db) = game.data.database(kind) else { continue };
+                for t in db.tiles() {
+                    let location = t.location().clone();
+                    let key = wce_formats::tile_entry::normalize_location(&location);
+                    let name = key.trim_start_matches(&format!("terrain/tiles/{kind}/")).replace('/', "_");
+                    rows.push(wce_formats::tile_index::TileIndexEntry {
+                        name,
+                        kind: kind.to_owned(),
+                        location,
+                        key,
+                        tile_set: t.tile_set().clone(),
+                        width: *t.width(),
+                        height: *t.height(),
+                        red: *t.red(),
+                        green: *t.green(),
+                        blue: *t.blue(),
+                        variations: t.variations().iter().map(|v| v.location().clone()).collect(),
+                        links: t.links().len() as u32,
+                        targets: t.link_targets().len() as u32,
+                        ..Default::default()
+                    });
+                }
+            }
+
+            rows.sort_by(|a, b| a.key.cmp(&b.key));
+            Arc::new(rows)
+        });
+        self.browse_packs = Some(r.clone());
+        r
+    }
+
+    /// The Tiles panel's source (`packs` or a kit's number, from 0) and filter, as the panel's combo and text field set them.
+    ///
+    /// # Errors
+    ///
+    /// No such kit.
+    pub fn browse(&mut self, e: &mut Editor, source: &str, filter: &str) -> Result<String, String> {
+        let roots = self.kit_roots(e);
+        self.browse_kit = match source {
+            "packs" => roots.len(),
+            n => n.parse::<usize>().ok().filter(|&n| n < roots.len()).ok_or_else(|| format!("no kit {n}: {} kits, or 'packs'", roots.len()))?,
+        };
+        self.browse_filter = filter.to_owned();
+        gui::set_window_focus("Tiles");
+        let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse_kit]).entries().len() };
+        Ok(format!("{rows} tiles in the source"))
+    }
+
+    /// Where opened exported tiles are decompiled to: `tile_workspace` in wce.ini, else `<settings folder>/tile_workspace`.
+    pub fn workspace_dir(e: &mut Editor) -> PathBuf {
+        e.settings().get("tile_workspace", Some("WCE_TILE_WORKSPACE")).map_or_else(|| wce_foundation::settings::Settings::default_dir().join("tile_workspace"), PathBuf::from)
+    }
+
+    /// Opens an exported tile: a folder on disk (`.../terrain/tiles/<kind>/.../<variation>`) or the packs' (`terrain/tiles/...`). It is
+    /// decompiled into a TEd project in the workspace (`workspace`, else [`Self::workspace_dir`]), which then opens as a kit tile.
+    ///
+    /// # Errors
+    ///
+    /// The tile can't be found, read, decompiled or opened.
+    pub fn open_exported(&mut self, e: &mut Editor, target: &str, workspace: Option<&Path>, fresh: bool) -> Result<String, String> {
+        use wce_tile_io::attila::workflow::{open_exported, tile_folder};
+        let workspace = workspace.map_or_else(|| Self::workspace_dir(e), Path::to_path_buf);
+
+        // A tile of the packs decompiled before opens from the workspace (with its edits), unless `fresh`.
+        if !fresh && !Path::new(target).is_dir() {
+            let folder = target.replace('\\', "/").trim_matches('/').to_lowercase();
+            let dir = workspace.join("raw_data").join(&folder);
+            if dir.join("tile.ted").is_file() {
+                let msg = self.open_folder(e, &dir.display().to_string())?;
+                return Ok(format!("{msg}  (the workspace's copy; open_exported {folder} --fresh decompiles it again)"));
+            }
+        }
+
+        let game = self.exported_game(e)?;
+        let p = Path::new(target);
+        let (files, folder) = if p.is_dir() {
+            let folder = tile_folder(p).ok_or_else(|| format!("{target} is not under a terrain/tiles/ folder"))?;
+            (wce_tile_io::TileFiles::from_dir(p).map_err(|err| err.to_string())?, folder)
+        } else {
+            let folder = target.replace('\\', "/").trim_matches('/').to_lowercase();
+            (game.exported_from_packs(&folder)?, folder)
+        };
+
+        let (dir, losses) = open_exported(&game, &files, &folder, &workspace)?;
+        for n in &losses.notes {
+            log::info(format!("{folder}: {n}"));
+        }
+
+        let msg = self.open_folder(e, &dir.display().to_string())?;
+        Ok(format!("{msg}  (decompiled into {}; {} notes in the log)", dir.display(), losses.notes.len()))
+    }
+
+    /// Saves the open tile as an exported tile under `out` (`<out>/terrain/tiles/...` and the tile database), after saving its project.
+    ///
+    /// # Errors
+    ///
+    /// No tile is open, the project can't be saved, or the compile fails.
+    pub fn save_exported(&mut self, e: &mut Editor, out: &Path) -> Result<String, String> {
+        let game = self.exported_game(e)?;
+        let id = document_id(e).ok_or("no tile is open")?;
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let (dir, modified) = (d.project().dir.clone(), d.modified());
+        if modified {
+            e.docs.save_one(id)?;
+        }
+
+        let (saved, notes) = wce_tile_io::attila::workflow::save_exported(&game, &dir, out)?;
+        for n in &notes.notes {
+            log::info(format!("{}: {n}", saved.display()));
+        }
+
+        Ok(format!("saved as an exported tile in {} ({} notes in the log)", saved.display(), notes.notes.len()))
     }
 
     /// Opens a tile folder (its tile.ted) or a tile.ted.
@@ -1064,31 +1214,58 @@ impl TileTool {
             return;
         }
 
+        // The kits' raw tiles, then the game's packs (exported tiles, decompiled into the workspace when opened).
+        const PACKS_LABEL: &str = "game packs (exported tiles)";
         let kit_label = |r: &Path| r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        self.browse_kit = self.browse_kit.min(self.browse_roots.len() - 1);
+        self.browse_kit = self.browse_kit.min(self.browse_roots.len());
+        let packs = self.browse_kit == self.browse_roots.len();
         gui::set_next_item_width(220.0);
-        if gui::begin_combo("kit", &kit_label(&self.browse_roots[self.browse_kit])) {
+        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_label(&self.browse_roots[self.browse_kit]) }) {
             for (i, r) in self.browse_roots.iter().enumerate() {
                 if gui::selectable(&kit_label(r), i == self.browse_kit, 0) {
                     self.browse_kit = i;
                 }
             }
 
+            if gui::selectable(PACKS_LABEL, packs, 0) {
+                self.browse_kit = self.browse_roots.len();
+            }
+
             gui::end_combo();
         }
+
+        let packs = self.browse_kit == self.browse_roots.len();
 
         gui::same_line();
         gui::set_next_item_width(110.0);
         gui::combo("##kind", &mut self.browse_kind, &["all kinds", "battle", "campaign"]);
         gui::set_next_item_width(-1.0);
         gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse_filter, 96, 0);
-        let index = TileIndex::shared(&self.browse_roots[self.browse_kit]);
-        let key = format!("{}|{}|{}|{:p}", self.browse_kit, self.browse_kind, self.browse_filter, Arc::as_ptr(&index));
+        // The rows' source: the kit's index, or the packs' databases (read on first use: the game's packs, a few seconds).
+        let source: Arc<Vec<wce_formats::tile_index::TileIndexEntry>> = if packs {
+            match self.pack_entries(e) {
+                Ok(rows) => rows,
+                Err(err) => {
+                    gui::text_wrapped(&format!("The game's packs did not load: {err}"));
+                    gui::end();
+                    return;
+                }
+            }
+        } else {
+            let index = TileIndex::shared(&self.browse_roots[self.browse_kit]);
+            if self.browse_index.as_ref().is_none_or(|i| !Arc::ptr_eq(i, &index)) {
+                self.browse_kit_rows = Arc::new(index.entries().to_vec());
+                self.browse_index = Some(index);
+            }
+
+            self.browse_kit_rows.clone()
+        };
+
+        let key = format!("{}|{}|{}|{:p}", self.browse_kit, self.browse_kind, self.browse_filter, Arc::as_ptr(&source));
         if key != self.browse_rows_key {
             self.browse_rows_key = key;
             let words = self.browse_filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
-            self.browse_rows = index
-                .entries()
+            self.browse_rows = source
                 .iter()
                 .enumerate()
                 .filter(|(_, en)| match self.browse_kind {
@@ -1099,13 +1276,12 @@ impl TileTool {
                 .filter(|(_, en)| matches_words(en, &words))
                 .map(|(i, _)| i)
                 .collect();
-            self.browse_index = Some(index.clone());
         }
 
-        gui::text_disabled(&format!("{} of {} tiles", self.browse_rows.len(), index.entries().len()));
+        gui::text_disabled(&format!("{} of {} tiles", self.browse_rows.len(), source.len()));
         let footer = gui::frame_height_with_spacing() * 4.5;
         let mut open = None;
-        let entries = self.browse_index.as_ref().map_or(&[][..], |i| i.entries());
+        let entries = &source[..];
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
             let rows = &self.browse_rows;
             let selected_key = &mut self.browse_selected;
@@ -1120,7 +1296,7 @@ impl TileTool {
                 if gui::selectable(&format!("{shown}  {}x{}{vars}", en.width, en.height), *selected_key == en.key, gui::SELECTABLE_ALLOW_DOUBLE_CLICK) {
                     *selected_key = en.key.clone();
                     if gui::is_mouse_double_clicked(0) {
-                        open = Some((en.xml.display().to_string(), String::new()));
+                        open = Some((en.xml.display().to_string(), String::new(), en.key.clone(), en.variations.first().cloned().unwrap_or_default()));
                     }
                 }
 
@@ -1143,18 +1319,24 @@ impl TileTool {
                     }
 
                     if gui::button(&format!("{name}##v{v}")) {
-                        open = Some((sel.xml.display().to_string(), v.to_string()));
+                        open = Some((sel.xml.display().to_string(), v.to_string(), sel.key.clone(), name.clone()));
                     }
                 }
             }
 
+            None if packs => gui::text_disabled("Select a tile; double-click opens its first variation (decompiled into the workspace)."),
             None => gui::text_disabled("Select a tile; double-click opens its first variation."),
         }
 
         gui::end();
-        if let Some((xml, variation)) = open {
-            let msg = self.open_tile(e, &xml, &variation).unwrap_or_else(|m| format!("open failed: {m}"));
-            e.status(&msg, false);
+        if let Some((xml, variation, key, variation_name)) = open {
+            // A pack tile: its folder (`terrain/tiles/<kind>/.../<variation>`) through open_exported.
+            let msg = if packs {
+                self.open_exported(e, &format!("{key}/{}", variation_name.to_lowercase()), None, false)
+            } else {
+                self.open_tile(e, &xml, &variation)
+            };
+            e.status(&msg.unwrap_or_else(|m| format!("open failed: {m}")), false);
         }
     }
 
@@ -1630,6 +1812,19 @@ impl Tool for TileTool {
                 let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
                 e.status(&msg, false);
             }
+        }
+
+        if gui::menu_item("Open exported tile...", None, false, true)
+            && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
+        {
+            let msg = self.open_exported(e, &dir.display().to_string(), None, true).unwrap_or_else(|m| format!("open failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::menu_item("Save as exported tile", None, false, document(e).is_some()) {
+            let out = e.output_dir();
+            let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("save failed: {m}"));
+            e.status(&msg, false);
         }
 
         if gui::menu_item("Tile browser", None, false, true) {

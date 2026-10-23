@@ -22,23 +22,17 @@
 //! BOB); `WCE_STAGE_B_DUMP=DIR` writes both sides.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rayon::prelude::*;
-use rpfm_lib::files::cs2_parsed::Cs2Parsed;
-use rpfm_lib::files::db::DB;
 use rpfm_lib::files::pack::Pack;
-use rpfm_lib::files::tile_database::TileDatabase;
-use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::games::supported_games::SupportedGames;
-use rpfm_lib::schema::Schema;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::{euler_from_matrix, euler_matrix, world_transform};
 use wce_tile_io::attila::compile::{CompileContext, compile};
-use wce_tile_io::attila::decompile::{Context, decompile, destruction_levels, split_location};
+use wce_tile_io::attila::decompile::{Context, decompile, split_location};
 use wce_tile_io::attila::{TedProject, TileBinary};
 use wce_tile_io::{TileFiles, TileFormat};
 use wce_tile_model::{Blob, MapKind, Node, Samples, Value};
@@ -366,11 +360,15 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let stage_b = std::env::var_os("WCE_COMPILE_STAGE_B").is_some();
             let raw_data = kit.join("raw_data");
             let models = stage_b.then(|| models_of(&kit.join("../data")));
+            // WCE_COMPILE_STAGE_C=1: stage C too (the kit's vegetation parameters, the packs for the tree models), its files compared with
+            // the binary's (a decompiled project's vegetation is carried while unchanged: the same bytes).
+            let stage_c = std::env::var_os("WCE_COMPILE_STAGE_C").is_some().then(|| stage_c_of(&raw_data, &kit.join("../data"))).flatten();
             let cctx = CompileContext {
                 building_levels: ctx.building_levels,
                 building_thresholds: ctx.building_thresholds,
                 marker_versions: Some(&version_of),
                 stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { raw_data: &raw_data, models: m }),
+                stage_c,
             };
             // WCE_COMPILE_KIT=1: compile the kit's raw tile instead (TEd's own project: what the export does with it; tiles whose kit is
             // not the shipped version differ, and nested groups add their text's rounding).
@@ -383,7 +381,20 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 None
             };
             // A panic in the compile (stage B on a project it does not expect) is a problem of this tile, not the run's end.
-            let project = kit_project.as_ref().unwrap_or(&back);
+            // WCE_STAGE_C_REGEN=1: the decompiled project without its vegetation fingerprints, so stage C regenerates every kind (as after an
+            // edit): the source list's trees come back from the decompiled instances.
+            // WCE_STAGE_B_REGEN=1: the same for stage B (its files made from the decompiled project, as the corpus run of 2026-10-24).
+            let regen_b = std::env::var_os("WCE_STAGE_B_REGEN").is_some();
+            let regen_c = std::env::var_os("WCE_STAGE_C_REGEN").is_some();
+            let regen = (regen_b || regen_c).then(|| {
+                use wce_tile_io::attila::{carry::FINGERPRINTS, stage_b, stage_c};
+                let mut p = back.clone();
+                p.files.retain(|f| {
+                    !((regen_b && f.path == format!("{}/{FINGERPRINTS}", stage_b::CARRIED_DIR)) || (regen_c && f.path == format!("{}/{FINGERPRINTS}", stage_c::CARRIED_DIR)))
+                });
+                p
+            });
+            let project = kit_project.as_ref().or(regen.as_ref()).unwrap_or(&back);
             let (compiled, cnotes) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile(project, &cctx))) {
                 Ok(r) => r?,
                 Err(p) => {
@@ -402,6 +413,22 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     n.split(" (").next().unwrap_or(n).to_owned()
                 };
                 *local.losses.entry(format!("compile: {key}")).or_default() += 1;
+            }
+
+            // WCE_COMPILE_MISSING=1: the binary's files the compile does not produce (climates and escalation numbers masked).
+            if std::env::var_os("WCE_COMPILE_MISSING").is_some() {
+                let (ours, _) = TileBinary.write(&compiled).map_err(|e| e.to_string())?;
+                let (theirs, _) = TileBinary.write(&binary).map_err(|e| e.to_string())?;
+                for name in theirs.folder.keys().filter(|n| !ours.folder.contains_key(*n)) {
+                    let carried = back.files.iter().any(|f| f.path == *name);
+                    let key = name.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect::<String>();
+                    *local.losses.entry(format!("not compiled{}: {key}", if carried { " (carried by the project)" } else { "" })).or_default() += 1;
+                }
+
+                for name in ours.folder.keys().filter(|n| !theirs.folder.contains_key(*n)) {
+                    let key = name.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect::<String>();
+                    *local.losses.entry(format!("compiled, not in the binary: {key}")).or_default() += 1;
+                }
             }
 
             // Stage B's files, both tiles written by the binary writer, compared byte for byte.
@@ -429,6 +456,73 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     }
                 }
             }
+            // Stage C's files (the vegetation): a decompiled project carries them, so byte for byte the binary's.
+            if cctx.stage_c.is_some() {
+                use wce_tile_io::attila::stage_c::{Kind, kind_of};
+                let (ours, _) = TileBinary.write(&compiled).map_err(|e| e.to_string())?;
+                let (theirs, _) = TileBinary.write(&binary).map_err(|e| e.to_string())?;
+                for (name, blob) in &theirs.folder {
+                    let Some(kind) = kind_of(name) else { continue };
+                    let what = match kind {
+                        Kind::Trees => "tree lists",
+                        Kind::Procedural => "procedural BMDs and markers",
+                        Kind::Grass => "grass lists",
+                    };
+                    let e = local.attr_same.entry(format!("compile stage C {what} (bytes)")).or_default();
+                    match (ours.folder.get(name).and_then(|b| b.bytes().ok()), blob.bytes().ok()) {
+                        (Some(a), Some(b)) if a == b => e.0 += 1,
+                        _ => e.1 += 1,
+                    }
+                }
+            }
+
+            // With WCE_STAGE_C_REGEN: the decompiled list's trees regenerated from the instances, as (model, x, y, z, scale byte, flag) against
+            // the binary's: exact, and within 1 mm / the same byte.
+            if regen_c {
+                let trees = |t: &wce_tile_model::Tile, name: &str| -> Vec<(String, [f64; 3], i64, i64)> {
+                    let Some(d) = t.document(name) else { return vec![] };
+                    d.root
+                        .children
+                        .iter()
+                        .flat_map(|ty| {
+                            let key = ty.get("key").and_then(Value::as_str).unwrap_or_default().to_lowercase();
+                            let pos = ty.get("position").and_then(Value::as_floats).unwrap_or_default().to_vec();
+                            let sc = ty.get("scale").and_then(Value::as_floats).unwrap_or_default().to_vec();
+                            let fl = ty.get("flags").and_then(Value::as_ints).unwrap_or_default().to_vec();
+                            (0..sc.len()).map(move |i| (key.clone(), [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]], (sc[i] * 127.0).round() as i64, fl[i]))
+                        })
+                        .collect()
+                };
+                for name in ["outfield_tents.tree_list.bin", "default.tree_list.bin"] {
+                    let theirs = trees(&binary, name);
+                    if theirs.is_empty() {
+                        continue;
+                    }
+
+                    let mut ours = trees(&compiled, name);
+                    let (mut exact, mut near) = (0, 0);
+                    for t in &theirs {
+                        if let Some(i) = ours.iter().position(|o| o == t) {
+                            ours.swap_remove(i);
+                            exact += 1;
+                        } else if let Some(i) = ours.iter().position(|o| o.0 == t.0 && o.2 == t.2 && o.3 == t.3 && (0..3).all(|k| (o.1[k] - t.1[k]).abs() < 1e-3)) {
+                            ours.swap_remove(i);
+                            near += 1;
+                        } else if local.problems.len() < 40 {
+                            local.problems.push(format!("{name}: regenerated tree missing: {t:?}; nearest {:?}", ours.iter().filter(|o| o.0 == t.0).min_by(|a, b| ((a.1[0] - t.1[0]).abs() + (a.1[2] - t.1[2]).abs()).total_cmp(&((b.1[0] - t.1[0]).abs() + (b.1[2] - t.1[2]).abs())))));
+                        }
+                    }
+
+                    let e = local.attr_same.entry(format!("stage C regenerated {name} trees: exact")).or_default();
+                    e.0 += exact;
+                    e.1 += theirs.len() - exact;
+                    let e = local.attr_same.entry(format!("stage C regenerated {name} trees: within 1 mm, same scale and flag")).or_default();
+                    e.0 += exact + near;
+                    e.1 += theirs.len() - exact - near + ours.len();
+                    break;
+                }
+            }
+
             let docs = &compiled.documents;
             // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
             let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {
@@ -1281,6 +1375,26 @@ fn models_of(data: &Path) -> &'static Models {
     MODELS.get_or_init(|| Box::new(wce_tile_io::attila::stage_b::pack_models(data))).as_ref()
 }
 
+/// Stage C's context over the kit (its vegetation parameters, the tile database's settings) and the game's packs (the tree models), made
+/// once.
+fn stage_c_of(raw_data: &Path, data: &Path) -> Option<wce_tile_io::attila::stage_c::StageC<'static>> {
+    use wce_tile::vegetation::{GenerationParams, grass::GrassParams};
+    use wce_tile_io::attila::stage_b::PackIndex;
+    static PARAMS: std::sync::OnceLock<Option<(GenerationParams, Option<GrassParams>, PathBuf)>> = std::sync::OnceLock::new();
+    static PACKS: std::sync::OnceLock<PackIndex> = std::sync::OnceLock::new();
+    let (params, grass, settings) = PARAMS
+        .get_or_init(|| {
+            let (p, g) = wce_tile_io::attila::stage_c::kit_params(raw_data).ok()?;
+            Some((p, g, raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")))
+        })
+        .as_ref()?;
+    let packs = PACKS.get_or_init(|| PackIndex::new(data));
+    type Exists = Box<dyn Fn(&str) -> bool + Send + Sync>;
+    static EXISTS: std::sync::OnceLock<Exists> = std::sync::OnceLock::new();
+    let exists = EXISTS.get_or_init(|| Box::new(move |p: &str| packs.exists(p)));
+    Some(wce_tile_io::attila::stage_c::StageC { params, grass: grass.as_ref(), settings: Some(settings), model_exists: exists.as_ref() })
+}
+
 /// The files stage B makes (`attila::stage_b`).
 const STAGE_B_FILES: [&str; 10] = [
     "blend.dds",
@@ -1308,102 +1422,16 @@ fn main() {
     let mut packs = std::fs::read_dir(game.join("data")).expect("data").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
     packs.sort();
 
-    // The databases: the mods' first (they override the game's), then tiles.pack's.
-    let mut dbs = vec![];
-    let mut opened = vec![];
-    // The destruction levels of the buildings: the building's collision file (`rigidmodels/buildings/<key>/<key>_tech.cs2.parsed`) lists
-    // each piece's destructs; the building's count is the most over its pieces (`destruction_levels`). Without one, the same from the
-    // models' names (`<piece>_destructNN.rigid_model_v2`).
-    let mut pieces: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
-    let schema_path = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config/rpfm/schemas/schema_att.ron");
-    let schema = Schema::load(&schema_path, None).unwrap_or_else(|e| panic!("{}: {e}", schema_path.display()));
-    let mut building_rows: Vec<(bool, String, String, Vec<f32>)> = vec![];
-    let mut from_cs2: BTreeMap<String, u32> = BTreeMap::new();
-    let wanted = std::env::var("WCE_DECOMPILE_LEVELS").unwrap_or_default().to_lowercase();
-    for p in &packs {
-        let Ok(mut pack) = Pack::read_and_merge(std::slice::from_ref(p), attila, true, false, false) else { continue };
-        let mut cs2 = vec![];
-        for n in pack.files().keys() {
-            let Some(rest) = n.strip_prefix("rigidmodels/buildings/") else { continue };
-            let Some((key, file)) = rest.split_once('/') else { continue };
-            if file.ends_with(".cs2.parsed") {
-                cs2.push((key.to_owned(), n.clone()));
-            } else if let Some(at) = file.find("_destruct")
-                && file.ends_with(".rigid_model_v2")
-            {
-                let digits = file[at + 9..].chars().take_while(char::is_ascii_digit).collect::<String>();
-                if let Ok(level) = digits.parse::<u32>() {
-                    let e = pieces.entry(key.to_owned()).or_default().entry(file[..at].to_owned()).or_default();
-                    *e = (*e).max(level);
-                }
-            }
-        }
-
-        for (key, n) in cs2 {
-            let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
-            let Some(levels) = destruction_levels(&bytes) else { continue };
-            if wanted.split(',').any(|k| k == key) {
-                let counts = Cs2Parsed::decode(&mut Cursor::new(&bytes), &None).ok().and_then(|c| serde_json::to_value(&c).ok()).map(|v| {
-                    v["pieces"].as_array().into_iter().flatten().map(|p| p["destructs"].as_array().map_or(0, Vec::len)).collect::<Vec<_>>()
-                });
-                println!("levels of {key} ({n}): {levels}, destructs per piece {counts:?}");
-            }
-
-            from_cs2.insert(key, levels);
-        }
-
-        // The battlefield_buildings tables (category, destruct_thresholds per key).
-        let tables = pack.files().keys().filter(|n| n.starts_with("db/battlefield_buildings_tables/")).cloned().collect::<Vec<_>>();
-        let is_mod = !p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("data") || f.to_string_lossy().starts_with("tiles"));
-        for n in tables {
-            let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
-            let mut extra = DecodeableExtraData::default();
-            extra.set_schema(Some(&schema));
-            extra.set_table_name(Some("battlefield_buildings_tables"));
-            let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else { continue };
-            let col = |c: &str| db.column_position_by_name(c);
-            let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
-            for row in db.data().iter() {
-                let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
-                building_rows.push((is_mod, row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
-            }
-        }
-
-        let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
-        for n in names {
-            let bytes = pack.files_mut().get_mut(&n).unwrap().encode(&None, false, false, true).unwrap().unwrap();
-            if let Ok(db) = TileDatabase::decode(&mut Cursor::new(&bytes), &None) {
-                let is_mod = !p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("tiles"));
-                dbs.push((is_mod, db));
-            }
-        }
-
-        opened.push((p.clone(), pack));
+    // The game's tile data (the databases, the buildings' destruction levels, categories and thresholds), then the packs again for their
+    // tile folders.
+    let data = wce_tile_io::attila::game_data::GameData::load(&game.join("data"), wce_tile_io::attila::game_data::default_schema_path().as_deref()).expect("data");
+    for w in &data.warnings {
+        eprintln!("{w}");
     }
 
-    dbs.sort_by_key(|(is_mod, _)| !is_mod);
-    let dbs = dbs.into_iter().map(|(_, d)| d).collect::<Vec<_>>();
-    let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().max().unwrap_or(1))).collect::<BTreeMap<_, _>>();
-    levels.extend(from_cs2);
-    let lookup = |key: &str| levels.get(&key.to_lowercase()).copied();
-    // The battlefield_buildings rows of the packs (rpfm's schema): a mod's (TDD's tables are in its main pack) before the game's.
-    building_rows.sort_by_key(|r| !r.0);
-    let (mut categories, mut thresholds): (BTreeMap<String, String>, BTreeMap<String, Vec<f32>>) = (BTreeMap::new(), BTreeMap::new());
-    for (_, key, category, values) in building_rows {
-        categories.entry(key.clone()).or_insert(category);
-        thresholds.entry(key).or_insert(values);
-    }
-
-    let category = |key: &str| categories.get(&key.to_lowercase()).cloned();
-    let thresholds_of = |key: &str| thresholds.get(&key.to_lowercase()).filter(|t| !t.is_empty()).cloned();
+    let mut opened = packs.iter().filter_map(|p| Pack::read_and_merge(std::slice::from_ref(p), attila, true, false, false).ok().map(|pack| (p.clone(), pack))).collect::<Vec<_>>();
     let trees = opt("--trees");
-    let ctx = Context {
-        databases: &dbs,
-        building_levels: Some(&lookup),
-        building_category: Some(&category),
-        building_thresholds: Some(&thresholds_of),
-        tree_list: trees.as_deref(),
-    };
+    let ctx = data.context(trees.as_deref());
     let totals = Mutex::new(Totals::default());
     let mut done = 0;
     for (p, pack) in &mut opened {

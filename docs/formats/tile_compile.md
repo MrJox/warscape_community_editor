@@ -426,3 +426,60 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   (40 m of relief), blend, index and ground types on western_city_b/small (BOB stops before its normal map: the kit lacks its buildings'
   height-map meshes), but 2 colour blocks of western_city_b/small's index (of 133,000): the 2008 refinement reads, for the padding of
   a 4-colour group, error and colour slots it never writes (its stack), so a stale NaN can stop a refinement pass in rare blocks.
+
+## Stage C: BOB's Vegetation processor (`attila::stage_c`)
+
+`stage_c::stage_c_documents` runs the vegetation port (`wce_tile::vegetation`, docs/re/vegetation.md) on the project's model: its
+tile.ted and entry are written as TEd text and read back by `wce_tile`'s readers (`TedScene`, `TileEntry`), so the generator sees what
+BOB reads; the height and blend maps come from the model (`vegetation::tile_inputs_from`). The kit gives the parameters
+(`working_data/BattleTerrain/vegetation`, `max_grass.xml`), the tile database's `_settings.xml` (the links that blend) and, through the
+packs (`stage_b::PackIndex`), whether a tree model exists. Campaign tiles get none (BOB's processor makes nothing for them).
+
+Per generation category, in the parameters' order and named as they name it (`ROME_Atlantic`, `default`, `outfield_tents` ...):
+
+- **`<category>.tree_list.bin`** (version 3): the generated trees and the static ones (`VEGETATION_INSTANCE`s inside an exclusion polygon,
+  converted per climate). The models in the order of BOB's tree map (`FUN_10044a10`): a chained hash table of 4 bucket lists, the key
+  hashed from its last byte back (each signed byte shifted 0, 8, 16, 24, 0 ... bits, xored into 0xf73a51c9), appended to its bucket;
+  before an insert that would pass one entry per bucket the table grows to 2 n + 1 (`FUN_10044660`, the entries moved bucket by bucket
+  in order). Keys go in in path order (the list's MSVC sort); written bucket by bucket. An empty category's list is not written
+  (`FUN_10033450`; BOB's rule `DeleteEmptyClimateTreeLists` then deletes a stale one).
+- **`<category>_procedural_bmd_data.bin`** and its XML twin: a `BATTLE_MAP_DEFINITION_DATA` v6 with one empty capture location list, the
+  generated props and decals (`PROPS`, marker v2) and VFX (`PARTICLE_EMITTERS`, v4), each grouped by key in `MARKER_TABLE` order (the
+  table of TEd's markers files, `compile::marker_table_order`). The binary's flag bytes are not the twin's booleans: every prop has
+  `decal_tiled` 64 (a decal 0), `is_fauna` 0, `snow` 0 and `destruction` 8, where the twin says tiled (props), not fauna, snow and
+  destruction. A prop's `decal_parallax` and `decal_scale` are BOB's stack (pointers): written 0, masked by the check. A decal's matrix
+  is BOB's full 4 x 4 product, scale times rotation times translation with every zero term summed in (`generate::decal_matrix`), which
+  decides the sign of its zeros; its last column is written 0, 0, 0, 1.
+- **`default.grass_list.bin`** (version 1): the keys in the tree map's order, positions as BOB's f16 (to nearest, ties toward zero).
+
+Check: `stage_c_check -- <game> <oracle working_data> [filter]` against fresh BOB (`~/wce_re/scripts/bob_veg.sh`). On the 13 oracle
+tiles every file is byte for byte but two kinds: the 1 x 1 tiles' grass, where BOB under Wine is off on an f32 tie (the packs agree with
+us: 8 of 8 1 x 1 grass lists), and the ROME_Med files of three oracles made with the props test file (`WCE_VEG_PARAMS` with that file:
+the tree lists byte for byte, the BMDs too with the props' stack fields masked).
+
+## Carried outputs (`attila::carry`)
+
+A decompiled project only approximates BOB's inputs (the heights from the CHMF, the blend map from the DDS, no river splines or
+vegetation seeds), so BOB's outputs made from it are not the shipped ones. The decompiler therefore carries them in the project, with
+fingerprints (FNV-1a over what each group is made from, `fingerprints.txt`), and the compile writes a group back as it is while its
+fingerprint is unchanged, and makes it otherwise (noted). A group the binary had no file of stays without one while unchanged.
+
+| Folder | Group | Files | Made from |
+| --- | --- | --- | --- |
+| `decompiled_terrain/` | textures | `blend.dds`, `index.dds`, `ground_types.dds` | the entry, the blend and ground type maps |
+| | terrain | `normal.dds`, `tile.agf`, the two meshes, `hf_height_map.data`, `terrain_outlines.xml` | the entry, the other maps, the buildings, the go outlines, the rivers |
+| | water | `hf_water_map.data` | the entry, the rivers, the simple meshes (the water planes) |
+| `decompiled_vegetation/` | trees | `*.tree_list.bin`, the older `*.tree_list` | the entry, heights, blend map, seeds, exclusion polygons, the static trees |
+| | procedural | `*_procedural_bmd_data.*`, the per-climate `*particle_emitter_marker.markers` | the same without the static trees |
+| | grass | `*.grass_list.bin`, `*.grass_list` | the entry, heights, blend map, grass seed |
+
+A made group drops the packs' older files of its kind (BOB writes none). Campaign tiles' vegetation is always carried. Files the decompiler
+carries that no stage makes go out as they are (`compile::carried_into_export`): `vegetation_exclusion.xml`, empty civilian files and
+markers, legacy building lists, `sound_emitter_list.xml`, `tree_random_seed.xml`, `loading_screen_radar.jpg`. A decompiled project that
+carries no `definition.xml` came from a binary without one (campaign tiles), and the compile writes none.
+
+Measured with `tile_decompile_check` (`WCE_COMPILE_STAGE_B=1 WCE_COMPILE_STAGE_C=1 WCE_COMPILE_MISSING=1`) on 34 tiles of farms,
+settlements, rivers, sea coasts, encampments and campaign tiles: every file of the binary is compiled, none is added, and every stage-B
+and stage-C file is byte for byte. `WCE_STAGE_B_REGEN=1` / `WCE_STAGE_C_REGEN=1` drop the fingerprints (as after an edit): the
+regenerated source list's trees come back from the decompiled instances within 1 mm (farm_western/1x1: 2,400 of 2,400; 1,397 exact,
+the rest tile.ted's text on y).

@@ -926,12 +926,7 @@ pub fn to_decal_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListProp> {
         let s = c.size;
         out.push(ListProp {
             key: format!("RigidModels/Decals/{}.rigid_model_v2", c.model),
-            transform: [
-                r[0][0] * s, r[0][1] * s, r[0][2] * s, 0.0,
-                r[1][0] * s, r[1][1] * s, r[1][2] * s, 0.0,
-                r[2][0] * s, r[2][1] * s, r[2][2] * s, 0.0,
-                x, y, z, 1.0,
-            ],
+            transform: decal_matrix(&r, s, [x, y, z]),
             prop_type: 1,
             allow_in_outfield: c.include_in_outfield,
             decal_parallax: 1.0,
@@ -941,6 +936,33 @@ pub fn to_decal_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListProp> {
     }
 
     out
+}
+
+/// A decal's transform as BOB composes it (FUN_100477a0, the decal case): the size's scale matrix times the rotation, then times the
+/// translation, as full 4 x 4 products whose zero terms are summed in, in BOB's order; the sums decide the sign of the zeros. The last
+/// column is written as 0, 0, 0, 1.
+fn decal_matrix(r: &[[f32; 3]; 3], s: f32, t: [f32; 3]) -> [f32; 16] {
+    let z = |v: f32| v * 0.0;
+    let a = [
+        [(r[0][0] * s + z(r[1][0])) + z(r[2][0]), (r[0][1] * s + z(r[1][1])) + z(r[2][1]), (r[0][2] * s + z(r[1][2])) + z(r[2][2])],
+        [(r[1][0] * s + z(r[0][0])) + z(r[2][0]), (r[1][1] * s + z(r[0][1])) + z(r[2][1]), (r[1][2] * s + z(r[0][2])) + z(r[2][2])],
+        [r[2][0] * s + (z(r[0][0]) + z(r[1][0])), (z(r[0][1]) + z(r[1][1])) + r[2][1] * s, r[2][2] * s + (z(r[0][2]) + z(r[1][2]))],
+        [(z(r[0][0]) + z(r[1][0])) + z(r[2][0]), (z(r[0][1]) + z(r[1][1])) + z(r[2][1]), (z(r[0][2]) + z(r[1][2])) + z(r[2][2])],
+    ];
+    let mut m = [0.0f32; 16];
+    for i in 0..3 {
+        let [a0, a1, a2] = a[i];
+        m[i * 4] = ((a0 + z(a1)) + z(a2)) + z(t[0]);
+        m[i * 4 + 1] = ((a1 + z(a0)) + z(a2)) + z(t[1]);
+        m[i * 4 + 2] = ((a2 + z(a0)) + z(a1)) + z(t[2]);
+    }
+
+    let [a0, a1, a2] = a[3];
+    m[12] = ((a0 + z(a1)) + z(a2)) + t[0];
+    m[13] = ((a1 + z(a0)) + z(a2)) + t[1];
+    m[14] = (a2 + (z(a0) + z(a1))) + t[2];
+    m[15] = 1.0;
+    m
 }
 
 /// A `PARTICLE_EMITTER` of a category's `_procedural_bmd_data` (a VFX object, type 8).

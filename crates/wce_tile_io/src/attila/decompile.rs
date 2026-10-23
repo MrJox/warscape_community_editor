@@ -833,14 +833,16 @@ fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
         let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
+        let flags = t.get("flags").and_then(Value::as_ints).unwrap_or_default();
         for (i, p) in pos.as_chunks::<3>().0.iter().enumerate() {
-            out.push(instance(
-                "VEGETATION_INSTANCE",
-                "tree",
-                [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])],
-                [0.0; 3],
-                vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))],
-            ));
+            let own = vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))];
+            let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
+            // The list's flag is BOB's `surface_mode == MSM_FREEFORM`.
+            if flags.get(i).is_none_or(|f| f & 1 == 0) {
+                n.set("surface_mode", s("MSM_LANDSCAPE"));
+            }
+
+            out.push(n);
         }
     }
 
@@ -1757,7 +1759,9 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     // takes the climate from it).
     // vegetation_exclusion.xml (4 encampments): TEd's box of the buildings' render bounds, padded (`FUN_005002d0`, `FUN_005022e0`); the
     // bounds are the loaded models' in the editor, not reproduced: the file is carried along.
-    for name in ["definition.xml", "vegetation_exclusion.xml"] {
+    // sound_emitter_list.xml, tree_random_seed.xml and loading_screen_radar.jpg (a few shipped tiles): nothing in TEd's project or BOB
+    // makes them; carried along.
+    for name in ["definition.xml", "vegetation_exclusion.xml", "sound_emitter_list.xml", "tree_random_seed.xml"] {
         let Some(doc) = binary.document(name) else { continue };
         let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
@@ -1765,6 +1769,9 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             out.files.push(OpaqueFile { path: name.to_owned(), data: data.clone() });
         }
     }
+
+    let extra = binary.files.iter().filter(|f| super::compile::carried_into_export(&f.path) && !out.files.iter().any(|o| o.path == f.path)).cloned().collect::<Vec<_>>();
+    out.files.extend(extra);
 
     // The markers of the normal layers.
     let key_str = |k: Option<&Value>| k.and_then(Value::as_str).unwrap_or_default().to_owned();
@@ -1794,16 +1801,25 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         graph(&mut p).wrapped_mut("children").push(logic);
     }
 
-    // The trees: one list, as explicit instances (the seeds that would regenerate them are not in the binary).
+    // The trees: one list, as explicit instances (the seeds that would regenerate them are not in the binary), inside an exclusion
+    // polygon over the whole tile: BOB keeps only the instances inside one (and generates nothing there), so a project whose trees are
+    // edited exports exactly its instances.
     let lists = ctx.tree_list.map_or(vec!["outfield_tents.tree_list.bin", "default.tree_list.bin"], |l| vec![l]);
-    if let Some(doc) = lists.iter().find_map(|l| binary.document(l)) {
-        let trees = tree_nodes(&doc.root, extent.1);
-        if !trees.is_empty() {
+    let vegetation = binary.documents.iter().any(|d| super::stage_c::kind_of(&d.name).is_some());
+    if vegetation {
+        let doc = lists.iter().find_map(|l| binary.document(l));
+        let trees = doc.map(|d| tree_nodes(&d.root, extent.1)).unwrap_or_default();
+        if let Some(doc) = doc.filter(|_| !trees.is_empty()) {
             losses.note(format!("vegetation: {} trees of {} as explicit instances (the generation seeds are not in the binary)", trees.len(), doc.name));
-            let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
-            *l.wrapped_mut("children") = trees;
-            graph(&mut p).wrapped_mut("children").push(l);
         }
+
+        let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
+        // The tile in the scene's half metres, a metre past each edge.
+        let (w, h) = (2.0 * extent.0, 2.0 * extent.1);
+        let whole = [(-2.0, -2.0), (w + 2.0, -2.0), (w + 2.0, h + 2.0), (-2.0, h + 2.0)];
+        l.wrapped_mut("children").push(polygon("VegetationExclusionPolygonInstance", "Polygon Instance", &whole, true, vec![], (0.0, 0.0)));
+        l.wrapped_mut("children").extend(trees);
+        graph(&mut p).wrapped_mut("children").push(l);
     }
 
     if bl.unknown_levels > 0 {
@@ -1820,6 +1836,51 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     losses.note("buildings: surface_mode (landscape / freeform) is not in the binary: freeform, at the binary's heights");
     out.scene = Some(p);
     out.entry = Some(Entry { file_name: entry_file_name(&location), root: entry });
+
+    // Stage B's files (BOB's terrain: textures, meshes, heights, outlines, the water surface) carried in `decompiled_terrain/` with the
+    // fingerprints of what they come from: a decompiled project only approximates BOB's inputs (the heights from the CHMF, the blend map
+    // from the DDS, no river splines), so the compile writes them back while their inputs are unchanged (`stage_b::stage_b_files`).
+    {
+        use super::stage_b::{CARRIED_DIR, fingerprints, group_of};
+        let (files, _) = super::TileBinary.write(binary).map_err(|e| e.to_string())?;
+        let mut any = false;
+        for (name, data) in files.folder.into_iter().filter(|(n, _)| group_of(n).is_some()) {
+            out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{name}"), data });
+            any = true;
+        }
+
+        if any {
+            let text = super::carry::text(&fingerprints(&out));
+            out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{}", super::carry::FINGERPRINTS), data: wce_tile_model::Blob::Bytes(text.into_bytes().into()) });
+            losses.note("terrain: BOB's files carried along (written back while the heights, maps, buildings, rivers and water planes are unchanged)");
+        }
+    }
+
+    // The vegetation files (stage C's: tree and grass lists, procedural BMDs; and the older lists and per-climate emitters the packs
+    // ship) carried in `decompiled_vegetation/` with the fingerprints of what they come from, so the compile writes them back while
+    // the project's trees, terrain and seeds are unchanged (`stage_c::stage_c_files`).
+    if vegetation {
+        use super::stage_c::{CARRIED_DIR, FINGERPRINTS, Fingerprints, kind_of};
+        let docs = binary.documents.iter().filter(|d| kind_of(&d.name).is_some()).cloned().collect();
+        let one = Tile { documents: docs, source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
+        let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
+        for (name, data) in files.folder {
+            out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{name}"), data });
+        }
+
+        for f in binary.files.iter().filter(|f| kind_of(&f.path).is_some()) {
+            out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{}", f.path), data: f.data.clone() });
+        }
+
+        match Fingerprints::of(&out) {
+            Ok(f) => {
+                out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{FINGERPRINTS}"), data: wce_tile_model::Blob::Bytes(f.text().into_bytes().into()) });
+                losses.note("vegetation: the tree, grass and procedural files carried along (written back while the trees, terrain and seeds are unchanged)");
+            }
+            Err(e) => losses.note(format!("vegetation: the files carried along without fingerprints ({e}): the compile regenerates them")),
+        }
+    }
+
     // The carried files in the order the project reader gives them (by path).
     out.files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok((out, losses))
