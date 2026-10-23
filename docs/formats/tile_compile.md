@@ -168,7 +168,17 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   triangle (a, b, c) in order, the samples of its box in whole metres (truncated, widened by one below) whose barycentric weights are
   all within [-0.0001, 1.0001] get `(c.h w + b.h v) + a.h u` (`v = (d20 d11 - d21 d01) / det`, `w = (d21 d00 - d20 d01) / det`,
   `u = (1 - v) - w`, all f32 as BOB's SSE orders them) at row `size - 1 - z`. Byte for byte on terrain_rolling_hills_med/2x2/ae
-  (no building stamps; BOB's min of -7e-14 included). The stamps are next.
+  (no building stamps; BOB's min of -7e-14 included) and farm_western/1x1/aa (31 stamps).
+- **Building stamps** (BOB_Tile `FUN_1000bb10` builds the list, ToolDataBuilderDll `FUN_1008a700` stamps it): every
+  `BUILDING_INSTANCE` of tile.ted (document order, any layer) whose `battlefield_buildings` row has `height_map_mesh` 1 (23 keys:
+  the global grounds, ruins, display walls, a bridge, a swamp), its mesh from `models_building.cs2_file` under the kit's `raw_data`
+  (any case). The matrix is TEd's world matrix (`QTU::TedEntity::world_transform`, f32) with its x and z rows halved. The mesh
+  (`FUN_1008a2f0`): the CS2's meshes with a string attribute starting `height_map_mesh` (`class_rigidINFO height_map_mesh01`), moved
+  by their scene node (identity in the vanilla grounds; the ruins' nodes are translated), renumbered into one list
+  (`wce_formats::cas2`, `terrain_mesh::HeightMesh`). `WARSCAPE::rasterise_max_heights` (`terrain_mesh::rasterise_max_heights`, SSE
+  f32): per triangle moved by the matrix, the samples of its truncated box widened by one (clamped to the field less its last row
+  and column; field row z, not flipped) inside it by the crossing rule over (a c), (b a), (c b) take the height interpolated by the
+  sub-triangle areas (`|cross| / 2 / area`) when it is not below theirs.
 - **Terrain mesh** (`TILE_RAW_DATA::build_base_mesh`, `FUN_10019750`; `attila::terrain_mesh`): the surface of `mesh.rigid_model_v2`
   and the CHMF's source.
   - A vertex per final-heights sample: x, z in metres from the near corner, the height of the field's row `size - 1 - z`, the normal

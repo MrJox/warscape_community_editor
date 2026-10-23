@@ -396,3 +396,143 @@ pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) -> Vec
 
     out
 }
+
+/// A building's height-map mesh (`FUN_1008a2f0`): the CS2's meshes tagged `height_map_mesh...` (a string attribute, `class_rigidINFO`
+/// in the files), each moved by its scene node's transform (the first node of its name: position, rotation, scale), one list of
+/// vertices with the triangles renumbered into it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HeightMesh {
+    pub positions: Vec<[f32; 3]>,
+    pub faces: Vec<[u32; 3]>,
+}
+
+impl HeightMesh {
+    pub fn of(f: &wce_formats::cas2::Cas2File) -> Self {
+        let mut out = Self::default();
+        for m in &f.meshes {
+            if !m.strings.iter().any(|(_, vs)| vs.iter().any(|v| v.starts_with("height_map_mesh"))) {
+                continue;
+            }
+
+            let t = f.nodes.iter().position(|n| n.name == m.name).map_or(IDENTITY_3X4, |i| node_matrix(f, i));
+            let base = out.positions.len() as u32;
+            for &[x, y, z] in &m.positions {
+                out.positions.push([
+                    x * t[0] + t[1] * y + z * t[2] + t[3],
+                    y * t[5] + x * t[4] + z * t[6] + t[7],
+                    y * t[9] + t[8] * x + z * t[10] + t[11],
+                ]);
+            }
+
+            out.faces.extend(m.faces.iter().map(|f| f.map(|i| i + base)));
+        }
+
+        out
+    }
+}
+
+const IDENTITY_3X4: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+
+/// A scene node's 3 x 4 matrix (rows; translation last), its parents' applied. (The files read so far have identity rotations and no
+/// scale: BOB's own composition is not checked against a rotated node.)
+fn node_matrix(f: &wce_formats::cas2::Cas2File, i: usize) -> [f32; 12] {
+    let n = &f.nodes[i];
+    let [qx, qy, qz, qw] = n.rotation.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+    let [sx, sy, sz] = n.scale.unwrap_or([1.0; 3]);
+    let [tx, ty, tz] = n.position.unwrap_or([0.0; 3]);
+    let r = [
+        [1.0 - 2.0 * (qy * qy + qz * qz), 2.0 * (qx * qy - qz * qw), 2.0 * (qx * qz + qy * qw)],
+        [2.0 * (qx * qy + qz * qw), 1.0 - 2.0 * (qx * qx + qz * qz), 2.0 * (qy * qz - qx * qw)],
+        [2.0 * (qx * qz - qy * qw), 2.0 * (qy * qz + qx * qw), 1.0 - 2.0 * (qx * qx + qy * qy)],
+    ];
+    let local = [
+        r[0][0] * sx, r[0][1] * sy, r[0][2] * sz, tx,
+        r[1][0] * sx, r[1][1] * sy, r[1][2] * sz, ty,
+        r[2][0] * sx, r[2][1] * sy, r[2][2] * sz, tz,
+    ];
+    if n.parent < 0 || n.parent as usize >= f.nodes.len() || n.parent as usize == i {
+        return local;
+    }
+
+    let p = node_matrix(f, n.parent as usize);
+    let mut out = [0.0f32; 12];
+    for row in 0..3 {
+        for col in 0..4 {
+            let mut v = p[row * 4] * local[col] + p[row * 4 + 1] * local[4 + col] + p[row * 4 + 2] * local[8 + col];
+            if col == 3 {
+                v += p[row * 4 + 3];
+            }
+
+            out[row * 4 + col] = v;
+        }
+    }
+
+    out
+}
+
+/// The matrix BOB_Tile stamps a building's height mesh with (`FUN_1000bb10`): TEd's world matrix with its x and z rows halved (TEd's
+/// half metres to samples).
+pub fn stamp_matrix(world: &[f32; 16]) -> [f32; 16] {
+    let mut m = *world;
+    for i in (0..4).chain(8..12) {
+        m[i] *= 0.5;
+    }
+
+    m
+}
+
+/// `WARSCAPE::rasterise_max_heights` (Warscape.AssemblyKit.dll 0x1056edb0): each triangle of the mesh, moved by `m` (rows x, y, z),
+/// raises the samples of the field (`w` x `h`, row z, column x, not flipped) inside it to its height there. The box of a triangle is
+/// its corners' truncated x and z widened by one, clamped to the field less its last row and column; a sample is inside by the
+/// crossing rule over the edges (a c), (b a), (c b); its height interpolates by the areas of the sub-triangles. All SSE f32.
+pub fn rasterise_max_heights(mesh: &HeightMesh, m: &[f32; 16], field: &mut [f32], w: usize, h: usize) {
+    let tr = |p: &[f32; 3]| {
+        let row = |r: usize| p[0] * m[r * 4] + p[1] * m[r * 4 + 1] + p[2] * m[r * 4 + 2] + 1.0 * m[r * 4 + 3];
+        [row(0), row(1), row(2)]
+    };
+    for f in &mesh.faces {
+        let [a, b, c] = f.map(|i| tr(&mesh.positions[i as usize]));
+        let xs = [a[0] as i32, b[0] as i32, c[0] as i32];
+        let zs = [a[2] as i32, b[2] as i32, c[2] as i32];
+        let (x0, x1) = (*xs.iter().min().expect("3") - 1, *xs.iter().max().expect("3") + 1);
+        let (z0, z1) = (*zs.iter().min().expect("3") - 1, *zs.iter().max().expect("3") + 1);
+        let (wl, hl) = (w as i32 - 1, h as i32 - 1);
+        if x1 < 0 || wl < x0 || z1 < 0 || hl < z0 {
+            continue;
+        }
+
+        let (e1x, e1z, e2x, e2z) = (b[0] - a[0], b[2] - a[2], c[0] - a[0], c[2] - a[2]);
+        let ny = e1z * e2x - e1x * e2z;
+        let area = (ny * ny).sqrt() * 0.5;
+        for z in z0.max(0)..z1.min(hl) {
+            for x in x0.max(0)..x1.min(wl) {
+                if !inside(x as f32, z as f32, &a, &b, &c) {
+                    continue;
+                }
+
+                let (dx, dz) = (x as f32 - a[0], z as f32 - a[2]);
+                let by = dz * e2x - dx * e2z;
+                let cy = dz * e1x - dx * e1z;
+                let wb = (by * by).sqrt() / 2.0 / area;
+                let wc = (cy * cy).sqrt() / 2.0 / area;
+                let height = b[1] * wb + c[1] * wc + ((1.0 - wb) - wc) * a[1];
+                let s = &mut field[z as usize * w + x as usize];
+                if *s <= height {
+                    *s = height;
+                }
+            }
+        }
+    }
+}
+
+/// `FUN_1056eba0`: the crossing rule (a point left of an odd number of the edges it straddles in z).
+fn inside(x: f32, z: f32, a: &[f32; 3], b: &[f32; 3], c: &[f32; 3]) -> bool {
+    let mut odd = false;
+    for (p, q) in [(a, c), (b, a), (c, b)] {
+        if (z < p[2]) != (z < q[2]) && x < (q[0] - p[0]) * (z - p[2]) / (q[2] - p[2]) + p[0] {
+            odd = !odd;
+        }
+    }
+
+    odd
+}

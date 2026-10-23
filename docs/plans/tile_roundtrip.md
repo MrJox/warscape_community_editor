@@ -260,8 +260,10 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   second float is the max, not a range: the decompiler's scale is now max - min). The CHMF is the decimated terrain mesh rasterised
   (plus building stamps), so the mesh comes first.
   Terrain mesh surface (grid, flags with the protection map, `TRIANGLE_MERGER`) exact on 2 tiles; rasterised, the CHMF is byte for
-  byte on terrain_rolling_hills_med/2x2/ae (no stamps).
-  Next: the building stamps (`rasterise_max_heights`), the fringe and the RMV2 writer, the water map. The kit lacks most buildings' raw height-map meshes
+  byte on terrain_rolling_hills_med/2x2/ae (no stamps) and, with the buildings' height meshes stamped (a CS2 reader for the kit's
+  raw models), on farm_western/1x1/aa.
+  Next: the fringe and the RMV2 writer (`mesh.rigid_model_v2`, `outfield_mesh`), the water map. Still to wire: the CHMF into
+  `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
   (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and

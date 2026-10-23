@@ -1,17 +1,22 @@
 //! Stage B's terrain mesh against a fresh BOB run: the raw tile's surface (`wce_tile_io::attila::terrain_mesh`) against the surface
 //! triangles of BOB's `mesh.rigid_model_v2` (the fringe left out), compared as sets of triangles by their corners' (x, z).
 //!
-//!   cargo run --release -p wce_tile_io --example terrain_mesh_check -- <raw tile folder> <BOB's working tile folder>
+//!   cargo run --release -p wce_tile_io --example terrain_mesh_check -- <raw tile folder> <BOB's working tile folder> [<kit raw_data>]
+//!
+//! With the kit's `raw_data`, the buildings' height meshes are stamped into the CHMF (`battlefield_buildings.height_map_mesh`,
+//! `models_building.cs2_file`).
 //!
 //! `WCE_SHOW=1` prints a few triangles found on one side only.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use wce_tile_io::attila::TedProject;
 use wce_formats::chmf::ChmfFile;
+use wce_formats::cas2::Cas2File;
 use wce_tile_io::attila::bob_tile::{HeightNumbers, chmf, final_heights};
-use wce_tile_io::attila::terrain_mesh::{cos_degrees, grid_flags, grid_triangles, grid_vertices, merge, protection_map, rasterise};
+use wce_tile_io::attila::compile::buildings;
+use wce_tile_io::attila::terrain_mesh::{cos_degrees, grid_flags, grid_triangles, grid_vertices, merge, protection_map, rasterise, rasterise_max_heights, stamp_matrix, HeightMesh};
 use wce_tile_io::{TileFiles, TileFormat};
 use wce_tile_model::{MapKind, Samples};
 
@@ -67,7 +72,13 @@ fn main() {
     let theirs = bob_surface(&std::fs::read(work.join("mesh.rigid_model_v2")).expect("BOB's mesh"));
     let (only_ours, only_theirs) = (ours.difference(&theirs).collect::<Vec<_>>(), theirs.difference(&ours).collect::<Vec<_>>());
     println!("surface: {} ours, {} BOB's; {} only ours, {} only BOB's", ours.len(), theirs.len(), only_ours.len(), only_theirs.len());
-    let (ours, theirs) = (chmf(&rasterise(&verts, &tris, w, h), w, h), std::fs::read(work.join("hf_height_map.data")).expect("BOB's CHMF"));
+    let mut field = rasterise(&verts, &tris, w, h);
+    if let Some(kit) = args.get(2) {
+        let stamped = stamp_buildings(&project, kit, &mut field, w, h);
+        println!("stamped {stamped} buildings");
+    }
+
+    let (ours, theirs) = (chmf(&field, w, h), std::fs::read(work.join("hf_height_map.data")).expect("BOB's CHMF"));
     println!("hf_height_map.data: {}", if ours == theirs { "identical" } else { "differs" });
     let (ours, theirs) = (ChmfFile::parse(&ours).expect("our CHMF"), ChmfFile::parse(&theirs).expect("BOB's CHMF"));
     let ((_, _, os), (_, _, ts)) = (ours.region_samples(0).expect("ours"), theirs.region_samples(0).expect("BOB's"));
@@ -84,4 +95,52 @@ fn main() {
             println!("  BOB  {t:?}");
         }
     }
+}
+
+/// The records of a kit table (`raw_data/db/<table>.xml`): per record its fields.
+fn table(kit: &Path, name: &str) -> Vec<Vec<(String, String)>> {
+    let text = std::fs::read_to_string(kit.join("db").join(format!("{name}.xml"))).unwrap_or_default();
+    let open = format!("<{name} ");
+    text.split(&open).skip(1).map(|rec| {
+        let rec = rec.split(&format!("</{name}>")).next().unwrap_or_default();
+        rec.split('<').filter_map(|t| {
+            let (tag, value) = t.split_once('>')?;
+            (!tag.starts_with('/') && !tag.contains(' ')).then(|| (tag.to_owned(), value.to_owned()))
+        }).collect()
+    }).collect()
+}
+
+/// A file of the kit by its path, whatever the case of its name (BOB runs on Windows).
+fn find(kit: &Path, rel: &str) -> Option<PathBuf> {
+    let p = kit.join(rel.replace('\\', "/"));
+    let dir = p.parent()?;
+    let name = p.file_name()?.to_str()?.to_lowercase();
+    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase() == name))
+}
+
+fn stamp_buildings(project: &wce_tile_model::Tile, kit: &Path, field: &mut [f32], w: usize, h: usize) -> usize {
+    let get = |r: &Vec<(String, String)>, k: &str| r.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let with_mesh = table(kit, "battlefield_buildings").iter().filter(|r| get(r, "height_map_mesh") == "1").map(|r| get(r, "key")).collect::<BTreeSet<_>>();
+    let cs2 = table(kit, "models_building").iter().map(|r| (get(r, "key"), get(r, "cs2_file"))).collect::<std::collections::HashMap<_, _>>();
+    let mut meshes = std::collections::HashMap::new();
+    let mut n = 0;
+    for (key, world) in buildings(project) {
+        if !with_mesh.contains(&key) {
+            continue;
+        }
+
+        let mesh = meshes.entry(key.clone()).or_insert_with(|| {
+            let path = cs2.get(&key).and_then(|c| find(kit, c))?;
+            Some(HeightMesh::of(&Cas2File::parse(&std::fs::read(path).ok()?).ok()?))
+        });
+        match mesh {
+            Some(m) => {
+                rasterise_max_heights(m, &stamp_matrix(&world), field, w, h);
+                n += 1;
+            }
+            None => println!("  {key}: no height mesh file"),
+        }
+    }
+
+    n
 }
