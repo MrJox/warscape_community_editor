@@ -868,6 +868,23 @@ fn outlines(placed: &[Placed], extent_z: f32, class: &str, name: &str) -> Option
     (!root.children.is_empty()).then(|| (Document { name: name.to_owned(), root }, outline_style()))
 }
 
+/// The go outlines of `go_outlines.xml` (see [`outlines`]) as BOB reads that file back: each point's `%.6f` text through CA's float
+/// parser (`river::ca_parse_f32`), x and y (y = extent - z / 2).
+pub fn go_outlines(raw: &Tile) -> Vec<Vec<(f32, f32)>> {
+    let (Some(scene), Some(entry)) = (raw.scene.as_ref(), raw.entry.as_ref()) else { return vec![] };
+    let Some(height) = entry.root.get("height").and_then(Value::as_int) else { return vec![] };
+    let extent_z = height as f32 * 128.0;
+    let mut placed = vec![];
+    walk(scene, None, "LayerExportType_Normal", "", &mut placed);
+    let read = |v: f64| coord(v).as_str().and_then(super::river::ca_parse_f32).unwrap_or(0.0);
+    placed
+        .iter()
+        .filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "GO_REGION_POLYGON_INSTANCE")
+        .map(|p| polygon_points(p, extent_z).as_chunks::<2>().0.iter().map(|c| (read(c[0]), read(c[1]))).collect::<Vec<_>>())
+        .filter(|o| !o.is_empty())
+        .collect()
+}
+
 /// An element holding a text, closed on its line (`<zone_name>ZONE_POLYGON_INSTANCE</zone_name>`).
 fn text_element(class: &str, text: &str) -> Node {
     let mut n = Node::new(class);

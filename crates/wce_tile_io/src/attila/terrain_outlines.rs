@@ -460,8 +460,84 @@ impl Simplifier {
 /// (3 passes at 0.99 with a lookahead of 10; 1 at 3 growing only; 1 at 1), written as `<OUTLINE>`s of `<position x='%f' y='%f'/>`
 /// with x and `h - y` in cells. (The go outlines a tile has, which BOB rasterises out of the no-go field first, and masked tiles,
 /// whose outlines must lie in valid subtiles, are not handled yet.)
-pub fn terrain_outlines(heights: &[f32], w: usize, h: usize) -> Vec<u8> {
-    let field = blur(&no_go(heights, w, h, 2.0, 30.0), w, h);
+/// `FUN_10a81810`: whether `p` is inside the polygon by crossings, the edges (first, last), (first, second), ...; an edge counts
+/// when `p.y` lies in `[low y, high y)` and `p` is left of it (`(b.x - a.x)(p.y - a.y) > (p.x - a.x)(b.y - a.y)` from the lower end).
+fn contains(points: &[(f32, f32)], p: (f32, f32)) -> bool {
+    use std::cmp::Ordering::{Equal, Less};
+    // BOB's test is `!(l < r || l == r)`: a NaN product counts as a crossing.
+    let above = |l: f32, r: f32| !matches!(l.partial_cmp(&r), Some(Less | Equal));
+    let mut inside = false;
+    let mut edge = |a: (f32, f32), b: (f32, f32)| {
+        let crossed = if a.1 <= b.1 {
+            a.1 <= p.1 && p.1 < b.1 && above((b.0 - a.0) * (p.1 - a.1), (p.0 - a.0) * (b.1 - a.1))
+        } else {
+            b.1 <= p.1 && p.1 < a.1 && above((a.0 - b.0) * (p.1 - b.1), (a.1 - b.1) * (p.0 - b.0))
+        };
+        if crossed {
+            inside = !inside;
+        }
+    };
+    edge(points[0], points[points.len() - 1]);
+    for k in 1..points.len() {
+        edge(points[k - 1], points[k]);
+    }
+
+    inside
+}
+
+/// The go outlines cut out of the no-go field (`no_go_outlines_from_heights` -> `FUN_100c0eb0`, a TBB `TBB_HEIGHTFIELD_OUTLINE_RASTERISE`
+/// per outline): the outline's points into the field's space (`FUN_100877d0` inverts the output transform: x 2 gx, y -2 gy + 2 h,
+/// spacing 2), its box clipped to the field's ((w - 1) x 2, (h - 1) x 2), the samples `[floor(min / 2), floor(max / 2))` both ways;
+/// per chunk of 64 rows (TBB's range, from the first row) y = rows into the chunk x 2 + the first row's, then + 2 per row, x from the
+/// first column's + 2 per column, all f32; a no-go sample inside the outline ([`contains`]) is cleared.
+fn cut_go_outlines(field: &mut [bool], w: usize, h: usize, go: &[Vec<(f32, f32)>]) {
+    let (sx, sy) = (2.0f32, 2.0f32);
+    let (bx, by) = (((w - 1) as f32) * sx, ((h - 1) as f32) * sy);
+    let top = 2.0 * h as f32;
+    for outline in go {
+        let points = outline.iter().map(|&(x, y)| (2.0 * x, -2.0 * y + top)).collect::<Vec<_>>();
+        let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (-f32::MAX, -f32::MAX));
+        for &(x, y) in &points {
+            lo = (lo.0.min(x), lo.1.min(y));
+            hi = (hi.0.max(x), hi.1.max(y));
+        }
+
+        if !(lo.0 <= bx && 0.0 <= hi.0 && lo.1 <= by && 0.0 <= hi.1) {
+            continue;
+        }
+
+        let (lo, hi) = ((lo.0.max(0.0), lo.1.max(0.0)), (hi.0.min(bx), hi.1.min(by)));
+        let floor = |v: f32| v.floor() as i64;
+        let (c0, r0) = (floor(lo.0 * 0.5), floor(0.5 * lo.1));
+        let (c1, r1) = (floor(hi.0 * 0.5), floor(hi.1 * 0.5));
+        let (ox, oy) = ((c0 as f64 * f64::from(sx)) as f32, (r0 as f64 * f64::from(sy)) as f32);
+        let mut begin = r0;
+        while begin < r1 {
+            let end = (begin + 64).min(r1);
+            let mut py = ((begin - r0) as f32) * sy + oy;
+            for row in begin..end {
+                let mut px = ox;
+                for col in c0..c1 {
+                    let i = row as usize * w + col as usize;
+                    if field[i] && contains(&points, (px, py)) {
+                        field[i] = false;
+                    }
+
+                    px += sx;
+                }
+
+                py += sy;
+            }
+
+            begin = end;
+        }
+    }
+}
+
+pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>]) -> Vec<u8> {
+    let mut field = no_go(heights, w, h, 2.0, 30.0);
+    cut_go_outlines(&mut field, w, h, go);
+    let field = blur(&field, w, h);
     let traced = trace(&field, w, h, 6);
     let outlines = traced
         .iter()
@@ -482,8 +558,19 @@ pub fn terrain_outlines(heights: &[f32], w: usize, h: usize) -> Vec<u8> {
     s.simplify(3, 0.99, 10, true, true);
     s.simplify(1, 3.0, 4, true, false);
     s.simplify(1, 1.0, 4, true, true);
+    // `FUN_100886f0`: an outline stays only when every point's subtile (`(int)(x x f32(1 / 256))`, the field's space) is
+    // `subtile_masked_valid`: inside the tile (and, on a masked tile, in the mask: not ported). Points on the far edges (2 (w - 1))
+    // fall in the subtile past the last, so outlines touching the right or bottom edge go.
+    let (cells_x, cells_y) = (((w - 1) / super::bob_tile::CELL) as i32, ((h - 1) / super::bob_tile::CELL) as i32);
+    let scale = 1.0f32 / (128.0 * 2.0);
+    let valid = |o: &&Vec<(f32, f32)>| {
+        o.iter().all(|&(x, y)| {
+            let (cx, cy) = ((scale * x) as i32, (scale * y) as i32);
+            (0..cells_x).contains(&cx) && (0..cells_y).contains(&cy)
+        })
+    };
     let mut out = String::from("<OUTLINE_LIST>\n");
-    for o in &s.outlines {
+    for o in s.outlines.iter().filter(valid) {
         out.push_str("<OUTLINE>\n");
         for &(x, y) in o {
             out.push_str(&format!("<position x='{:.6}' y='{:.6}'/>", x / 2.0, h as f32 - y / 2.0));

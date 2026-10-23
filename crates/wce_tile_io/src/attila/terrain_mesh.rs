@@ -922,6 +922,6 @@ pub fn terrain_files(
         out.push(("hf_water_map.data".to_owned(), chmf(&water, w, h)));
     }
 
-    out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h)));
+    out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h, &super::compile::go_outlines(raw))));
     Ok(out)
 }

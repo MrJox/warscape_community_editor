@@ -274,12 +274,10 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   river_start_shallow/2x2_small_bl/aa: every stage-B terrain file of that tile now matches.
   `apply_straight_self_tiling` (the 1 x 1 linking tiles: river, river_shallow, roads, roads_stone, sea_coast) is byte for byte on
   three of them; its above-and-below branch is unused by the kit.
-  settlement_nordic_cities/nordic_city_c/minor (416 stamps, a water plane) is byte for byte but for `terrain_outlines.xml`: BOB
-  reads the tile's `go_outlines.xml` through its VFS (the shipped one is in tiles4.pack; in the round trip it is stage A's) and
-  `no_go_outlines_from_heights` rasterises it out of the no-go field (`FUN_100c0eb0`, a TBB `TBB_HEIGHTFIELD_OUTLINE_RASTERISE` over
-  the outlines, per instance `FUN_10a8b010` / `FUN_10a9a280`, the provider's vtable for bounds and spacing) after ToolDataBuilderDll
-  `FUN_100877d0` moved it by a matrix (`FUN_1009eda0`). BOB keeps 8 outlines there, we 21 (7 shared).
-  Still open in stage B: a river-only water map check, go outlines in the no-go field, masked and large tiles (raw_data_tri_density other than 128, masks,
+  settlement_nordic_cities/nordic_city_c/minor (416 stamps, a water plane, three go regions) is byte for byte in every terrain
+  file: the go outlines (stage A's `go_outlines.xml`) are cut out of the no-go field, and outlines reaching past the tile's subtiles
+  are dropped.
+  Still open in stage B: a river-only water map check, masked and large tiles (raw_data_tri_density other than 128, masks,
   per-cell `mesh<x>x<y>`), 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
   stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
@@ -306,6 +304,11 @@ These paths follow the decompiled code but no BOB run has exercised them; check 
 - **Link blend with a 4-point `blend_quad`**: no vanilla link has one.
 - **Link blend with `height_map_0`** (a linking tile that is the tile itself, outside self tiling): the PNG path, / 65535, untested.
 - **Masked tiles in the link blend and influence**: the subtile mask checks are not ported (masked tiles are an open item).
+- **Go outline chunks**: TBB cuts the rows into chunks of `max(rows / ((threads x 5 + 5) x 4), 64)` rounded down to 64, and each
+  chunk restarts the f32 y accumulation. We assume 64 (any thread count up to dozens on a tile this size); with no worker threads
+  BOB runs the range in one piece.
+- **Go outline space**: the field's origin (0, 0), spacing 2 and bounds ((w - 1) 2, (h - 1) 2) come from `FUN_1000b360` and the
+  output transform; the provider's own bounds accessors were not decompiled. Exact on the one go-region oracle.
 - **`optimise_spline` / spline edge cases**: degenerate segments (repeated control points) and splines whose sample count is 3 or
   less; the vanilla rivers have neither.
 
