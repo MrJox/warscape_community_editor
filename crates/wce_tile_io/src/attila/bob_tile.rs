@@ -278,6 +278,51 @@ pub fn dds_l8(px: &[u8], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
+/// The tile's files BOB's Tile processor declares (BOB_Tile `FUN_100095b0`), whether it writes them or not, as `tile.agf` lists them.
+const TILE_OUTPUTS: [&str; 9] = [
+    "blend.dds", "ground_types.dds", "hf_height_map.data", "hf_water_map.data", "index.dds", "mesh.rigid_model_v2", "normal.dds",
+    "outfield_mesh.rigid_model_v2", "terrain_outlines.xml",
+];
+
+/// `tile.agf`, the tile's asset graph file (BOB's "Create tile agf"): `##<folder>`, then `#all` (the entities and files, sorted),
+/// `#entities` (only when there are any: `battle/buildings/<key>` per building key of tile.ted, sorted), `#files` (the declared outputs,
+/// and `mesh<x>x<y>.rigid_model_v2` per cell but the first, sorted), each section ending in a blank line, one more, then per file
+/// `##<file>:<file>` and two blank lines. Paths are the tile's folder below `working_data`, with `/`.
+pub fn tile_agf(raw: &Tile) -> Option<Vec<u8>> {
+    let entry = &raw.entry.as_ref()?.root;
+    let location = entry.get("location")?.as_str()?.replace('\\', "/");
+    let folder = format!("{location}/{}", raw.variation.as_deref()?);
+    let cells = |k: &str| entry.get(k).and_then(|v| v.as_int().or_else(|| v.as_str().and_then(|t| t.parse().ok()))).unwrap_or(1).max(1);
+    let (cw, ch) = (cells("width"), cells("height"));
+    let mut files = TILE_OUTPUTS.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>();
+    for x in 0..cw {
+        for y in 0..ch {
+            if (x, y) != (0, 0) {
+                files.push(format!("mesh{x}x{y}.rigid_model_v2"));
+            }
+        }
+    }
+
+    let mut files = files.into_iter().map(|f| format!("{folder}/{f}")).collect::<Vec<_>>();
+    files.sort();
+    let keys = super::compile::buildings(raw).into_iter().map(|(k, _)| k).collect::<std::collections::BTreeSet<_>>();
+    let entities = keys.iter().map(|k| format!("battle/buildings/{k}")).collect::<Vec<_>>();
+    let mut all = entities.iter().chain(&files).cloned().collect::<Vec<_>>();
+    all.sort();
+    let lines = |v: &[String]| v.iter().map(|l| format!("{l}\n")).collect::<String>();
+    let mut out = format!("##{folder}\n#all\n{}\n", lines(&all));
+    if !entities.is_empty() {
+        out += &format!("#entities\n{}\n", lines(&entities));
+    }
+
+    out += &format!("#files\n{}\n\n", lines(&files));
+    for f in &files {
+        out += &format!("##{f}:{f}\n\n\n");
+    }
+
+    Some(out.into_bytes())
+}
+
 /// The variation's numbers BOB reads the height map with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HeightNumbers {
@@ -341,6 +386,7 @@ pub fn textures(raw: &Tile) -> Result<Vec<(String, Vec<u8>)>, String> {
         });
         let gt = ground_types(&blend, w, h, types, lookup.as_ref().map(|f| f as &dyn Fn(usize, usize) -> Option<u8>));
         out.push(("ground_types.dds".to_owned(), dds_l8(&gt, w - 256, h - 256)));
+        out.extend(tile_agf(raw).map(|a| ("tile.agf".to_owned(), a)));
     }
 
     Ok(out)

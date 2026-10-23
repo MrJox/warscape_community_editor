@@ -218,6 +218,17 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     (all three terrain files) and western_city_b/small (both meshes, 8 blocks, 9.4 MB; BOB writes no CHMF there: two display walls'
     meshes are missing from the kit). Entry point `terrain_mesh::terrain_files` (with `building_stamps` and `decimation_angle` from
     the kit); check `terrain_mesh_check <raw tile> <BOB's working tile> <kit raw_data>`.
+- **`tile.agf`** (BOB's "Create tile agf"; `bob_tile::tile_agf`): `##<folder>`; `#all` (entities and files, sorted together);
+  `#entities` only when the tile has buildings (`battle/buildings/<key>` per building key of tile.ted, sorted); `#files` (the nine
+  outputs the Tile processor declares, BOB_Tile `FUN_100095b0`, written or not: blend, ground_types, hf_height_map, hf_water_map,
+  index, mesh, normal, outfield_mesh, terrain_outlines; and `mesh<x>x<y>.rigid_model_v2` per cell but 0x0, sorted); each section
+  closed by a blank line, `#files` by two; then per file `##<file>:<file>` and two blank lines. The folder is the entry's location
+  and the variation, with `/`. Byte for byte on 4 tiles.
+- **`terrain_outlines.xml`** (`FUN_10088790` -> `FUN_100877d0`): not `nogo.png` (its writer, `FUN_1002a1a0`, is another action):
+  `EMPIREUTILITY::no_go_outlines_from_heights` on the final heights (a `HEIGHTFIELD_OUTLINE_DATA_PROVIDER`, slope against the
+  tile database's render params + 0xc), less the tile's go outlines, saved by `EMPIRE_OUTLINE_LIST::save_to_xml` (`<OUTLINE_LIST>`,
+  per outline `<OUTLINE>` and `<position x='%f' y='%f'/>`s). Empty (`<OUTLINE_LIST>\n</OUTLINE_LIST>\n`) on gentle tiles; not
+  ported yet (oracle: atlantic_mountains/small_round/aa, one outline).
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
