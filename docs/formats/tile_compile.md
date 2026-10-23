@@ -348,7 +348,7 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
       rule over (c, b), (a, c), (b, a) gets `(a.y ua + b.y ub) + c.y ((1 - ua) - ub)` on the x87. The weights are areas from 3D
       cross products (y = 0) and fsqrt; ua is rounded to f32. The value is stored at row z, unflipped.
   - CHMF as the heights.
-  - Exact on river_start_shallow/2x2_small_bl/aa (one 50x plane over the river). The river-only path is unchecked.
+  - Exact on river_start_shallow/2x2_small_bl/aa (one 50x plane over the river) and river/2x2_lt_tr/aa (the river alone).
 - **`tile.agf`** (BOB's "Create tile agf"; `bob_tile::tile_agf`): `##<folder>`; `#all` (entities and files, sorted together);
   `#entities` only when the tile has buildings (`battle/buildings/<key>` per building key of tile.ted, sorted); `#files` (the nine
   outputs the Tile processor declares, BOB_Tile `FUN_100095b0`, written or not: blend, ground_types, hf_height_map, hf_water_map,
