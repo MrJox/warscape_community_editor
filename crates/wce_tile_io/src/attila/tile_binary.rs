@@ -157,7 +157,7 @@ fn read_chmf(name: &str, kind: MapKind, b: &[u8], tile: &mut Tile) -> std::resul
     root.set("cells_x", Value::Int(i64::from(f.cells_x)));
     root.set("cells_y", Value::Int(i64::from(f.cells_y)));
     root.set("min", Value::Float(f64::from(f.min)));
-    root.set("range", Value::Float(f64::from(f.range)));
+    root.set("max", Value::Float(f64::from(f.max)));
     root.set("spacing", Value::Int(i64::from(f.spacing)));
     let mut maps = vec![];
     let mut exact = true;
@@ -203,7 +203,7 @@ fn write_chmf(doc: &Document, tile: &Tile, own: bool) -> std::result::Result<(Ve
         cells_x: int(root, "cells_x")? as u32,
         cells_y: int(root, "cells_y")? as u32,
         min: float(root, "min")? as f32,
-        range: float(root, "range")? as f32,
+        max: float(root, "max")? as f32,
         spacing: int(root, "spacing")? as u32,
         regions: vec![],
     };

@@ -3,7 +3,7 @@
 //! 0x104a9790; the game's reader is `empire.retail.dll` fn 0x11857a00). docs/formats/tile_binary.md, "CHMF".
 //!
 //! Layout (little endian): `"CHMF"`, u32 version (4 or 5); u32 width, height (samples), u32 `cells_x`, `cells_y` (the unit of the region
-//! rectangles, in samples), f32 min, f32 range; version 5: u32 spacing (metres per sample); u32 region count, per region `x0, y0, x1, y1`
+//! rectangles, in samples), f32 min, f32 max (metres); version 5: u32 spacing (metres per sample); u32 region count, per region `x0, y0, x1, y1`
 //! (in cells, end exclusive); then per region: u16 x 2, u32 block count, u32 data size, the block offsets, the block data.
 //!
 //! A region is cut into blocks of 16 x 16 samples, row by row. Every block holds 256 samples: the encoder (`FUN_104aa1b0`) clamps the
@@ -12,7 +12,8 @@
 //! early (TDD's campaign tiles): the game reads a sample of a missing block as 0. A block starts with a
 //! mode byte `k`: 0 = one value (u16); 1 ..= 127 = a palette of `k + 1` u16 values, then one index per sample of 1 to 7 bits
 //! (`ceil(log2(k + 1))`); 128 ..= 142 = a u16 base, then `k - 127` bits per sample added to it; 143 = one u16 per sample. Bits are packed
-//! from the low bit of each byte. A sample is `value / 65535`, the height `min + range * sample`.
+//! from the low bit of each byte. A sample is `value / 65535`, the height `min + (max - min) * sample` (BOB's converter writes
+//! `(h - min) / (max - min) * 65535` truncated; the engine's fields are `min_height`, `max_height`).
 //!
 //! [`encode_region`] is the encoder: one value gives mode 0; up to 128 values a palette, unless the delta (bits of max - min) is smaller;
 //! more values the delta, unless it is 513 bytes or more (then raw). The region's two u16 are its smallest and largest sample.
@@ -45,7 +46,7 @@ pub struct ChmfFile {
     pub cells_x: u32,
     pub cells_y: u32,
     pub min: f32,
-    pub range: f32,
+    pub max: f32,
 
     /// Metres per sample (version 5; 1 for version 4).
     pub spacing: u32,
@@ -151,7 +152,7 @@ impl ChmfFile {
         }
 
         let (width, height, cells_x, cells_y) = (r.u32()?, r.u32()?, r.u32()?, r.u32()?);
-        let (min, range) = (f32::from_bits(r.u32()?), f32::from_bits(r.u32()?));
+        let (min, max) = (f32::from_bits(r.u32()?), f32::from_bits(r.u32()?));
         let spacing = if version > 4 { r.u32()? } else { 1 };
         let n = r.u32()? as usize;
         if n > b.len() / 16 {
@@ -174,13 +175,13 @@ impl ChmfFile {
             return fail(format!("{} bytes after the last region", b.len() - r.p));
         }
 
-        Ok(Self { version, width, height, cells_x, cells_y, min, range, spacing, regions })
+        Ok(Self { version, width, height, cells_x, cells_y, min, max, spacing, regions })
     }
 
     pub fn write(&self) -> Vec<u8> {
         let mut o = b"CHMF".to_vec();
         let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
-        for v in [self.version, self.width, self.height, self.cells_x, self.cells_y, self.min.to_bits(), self.range.to_bits()] {
+        for v in [self.version, self.width, self.height, self.cells_x, self.cells_y, self.min.to_bits(), self.max.to_bits()] {
             put(&mut o, v);
         }
 
@@ -253,7 +254,7 @@ impl ChmfFile {
 
     /// A sample as metres.
     pub fn metres(&self, sample: u16) -> f32 {
-        self.min + self.range * (f32::from(sample) / 65535.0)
+        self.min + (self.max - self.min) * (f32::from(sample) / 65535.0)
     }
 }
 

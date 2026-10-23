@@ -152,6 +152,21 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   blend compression (one pixel of terrain_rolling_hills_med/2x2/ae tells them apart).
 - **`normal.dds`** (`FUN_10087420`): each pixel to (B 0, G y, R 255, A x), DXT5 like the others; none for a flat map (every pixel 127,
   127, 255: the variation's `normal_common` becomes `terrain/textures/common/flat_normal.dds`).
+- **Final heights** (`final_heights.dds`, R32F, `cells x 128 + 1` square): the height map without its one-cell border, in metres as
+  above, times the tile's influence (`final_alpha.dds`), TEd's `WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_hf_influence_map`
+  (Warscape.AssemblyKit.dll). Per cell, each side is 1 when a cell of the tile lies past it, else 0; a corner is 1 when its cell exists
+  or its two sides differ. Per sample, `lerp(i, a, b)`: in the first half of the cell (`i < (k + 1) / 2`) from side a to 1,
+  `t = clamp(i - 2, 0, 5000) / ((k + 0.5) / 2)`, `(1 - a) t + a`; in the second half the same from side b with `k - i`. The value is
+  `v = lerp_y x lerp_x x lerp_y(lerp_x(corners above), lerp_x(corners below)) x 2.1`, the influence `(1 - 1 / powf(e, v^2)) / 0.9878448`
+  (e as the f32 2.7182817). Byte for byte on terrain_rolling_hills_med/2x2/ae (tile links, which open a side to a neighbour, not
+  ported).
+- **`hf_height_map.data`** (`FUN_10089b80`): not the final heights. BOB decimates the terrain mesh from them (`FUN_10019750`, the
+  variation's `raw_data_tri_density`), rasterises its triangles into a field of the final heights' size ("Rasterize final heightmap",
+  `FUN_1001bf20`: barycentric, inside within a small epsilon, rows flipped), raises the buildings' height meshes into it
+  (`FUN_1008a700` -> `WARSCAPE::rasterise_max_heights`; "Height map mesh file ... is missing" when a `.cs2` lacks), and writes it with
+  `COMPRESSED_HEIGHT_MAP::convert` (Warscape.AssemblyKit.dll 0x104ac240): CHMF 5, the field's min and max in metres, each sample
+  `(h - min) / (max - min) x 65535` truncated (SSE), one region, the encoder of `wce_formats::chmf`. Ported: the writer (`chmf`); the
+  mesh and the rasteriser are next.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.

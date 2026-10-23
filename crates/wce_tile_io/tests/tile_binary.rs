@@ -15,7 +15,7 @@ use wce_tile_model::{Blob, MapKind, Samples, Value};
 fn chmf(w: u32, h: u32) -> Vec<u8> {
     let samples = (0..w * h).map(|i| ((i * 37) % 900 + (i / w) * 13) as u16).collect::<Vec<_>>();
     let (tag, offsets, data) = encode_region(w, h, &samples);
-    ChmfFile { version: 5, width: w, height: h, cells_x: 1, cells_y: 1, min: -2.5, range: 30.0, spacing: 1, regions: vec![ChmfRegion { rect: [0, 0, w, h], tag, offsets, data }] }
+    ChmfFile { version: 5, width: w, height: h, cells_x: 1, cells_y: 1, min: -2.5, max: 27.5, spacing: 1, regions: vec![ChmfRegion { rect: [0, 0, w, h], tag, offsets, data }] }
         .write()
 }
 
