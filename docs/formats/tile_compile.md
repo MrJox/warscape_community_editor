@@ -345,9 +345,24 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     along the edge (`LINE_2::intersects` with the edge as the line: an end of the edge is no crossing).
   - Written (`EMPIRE_OUTLINE_LIST::save_to_xml`): `<OUTLINE_LIST>\n`, per outline `<OUTLINE>\n`, `<position x='%f' y='%f'/>` per point
     (x, rows - y, in samples), `</OUTLINE>\n`; `</OUTLINE_LIST>\n`.
-  - Byte for byte on dense_forest_rugged/8x8/ac (28 outlines) and the gentle tiles (empty). Not handled yet: the tile's go outlines
-    (rasterised out of the no-go field first, `FUN_100c0eb0`) and masked tiles (an outline must lie in valid subtiles; the
-    atlantic_mountains/small_round/aa oracle keeps the one of its two outlines that does).
+  - **Go outlines** (ToolDataBuilderDll `FUN_100877d0`; `terrain_outlines::cut_go_outlines`):
+    - BOB reads the tile's `go_outlines.xml` through its VFS: TEd's export, or the packs' copy (tiles4.pack for the kit's
+      settlements). In the round trip it is stage A's (`compile::go_outlines`, each `%.6f` read back by CA's parser).
+    - Each point goes into the field's space by the inverse of the output transform: (2 x, -2 y + 2 h), with h the rows.
+    - EmpireUtility `FUN_100c0eb0` (a TBB `TBB_HEIGHTFIELD_OUTLINE_RASTERISE` per outline) then clears the no-go samples inside it,
+      before the blur:
+      - The outline's box is clipped to (0, 0)-((w - 1) 2, (h - 1) 2), and the samples are `[floor(min / 2), floor(max / 2))` both
+        ways (round-down `fistp`).
+      - The rows are cut into TBB chunks of 64 from the first row. In each chunk, y = rows into the chunk x 2 + the first row's y,
+        then + 2 per row; x starts at the first column's and goes + 2 per column; all f32.
+      - Inside test (`FUN_10a81810`): crossings over the edges (first, last), (first, second), …. An edge counts when y lies in
+        [low, high) and the point is left of it.
+  - **The subtile filter** (`FUN_100886f0`): after simplifying, an outline stays only when every point's subtile,
+    `(int)(x x f32(1 / 256))`, passes `subtile_masked_valid`. That means inside the tile, and in the mask on a masked tile (not
+    ported). So outlines touching the right or bottom edge (2 (w - 1)) are dropped.
+  - Byte for byte on dense_forest_rugged/8x8/ac (28 outlines), sea_coast/2x2_bt_inner/2x2_aa,
+    settlement_nordic_cities/nordic_city_c/minor (three go regions, two edge outlines dropped) and the gentle tiles (empty).
+    Masked tiles' mask test is not handled yet.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
