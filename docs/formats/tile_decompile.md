@@ -95,13 +95,20 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
   flag, `capture_point_list` the points `x,y;x,y...`, `flag_facing` a vector). A circle (a radius, one point): the instance at the
   centre, the flag at `flag_position`, the boundary TEd's 20-point circle of twice the radius. Otherwise a polygon through the points,
   the instance at the flag. `flag_facing` = atan2(-y, x) mod 2 pi.
+- **Escalation layers** (`bmd_data_escalation<n>.bin`, a layer `Escalation <n>` of `LayerExportType_Escalation<n>`, made even when the
+  file is empty: TEd writes one per layer): buildings, props (a model with `allow_in_outfield` is a `water_plane`), particle emitters,
+  capture locations, no-go regions, zones, civilian deployment zones. The props and emitters come grouped by key in `MARKER_TABLE`
+  order: the groups are placed in an insertion order that gives that order back (docs/formats/tile_compile.md, "Insertion order"), the
+  records' order kept within a group.
+- An empty `civilian_deployment.bin` is carried along (the compiler writes the file when there are zones).
 
 ## Not in the binary
 
 - Vegetation exclusion polygons: applied to the tree lists by BOB. Four tiles ship a `vegetation_exclusion.xml` bounding box that matches
   no kit polygon.
 - River splines: the river tiles ship the water surface (`hf_water_map.data`) only.
-- Civilian shelters are left out (BOB generates them for tiles whose tile.ted has none).
+- Civilian shelters are left out: `civilian_shelter.bin`'s capacities are not in tile.ted (BOB's stage; tiles without `CivilianShelter`s
+  get generated ones).
 
 ## The entry
 

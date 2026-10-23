@@ -75,7 +75,46 @@ f32, the capture point lists trimmed (`512.19342`), the facing with one decimal 
 - `capture_location_list.xml`: per `CaptureLocationInstance` of the normal layers (the escalation layers' are in their BMDs): radius
   (half TEd's circle, 0 for a polygon), the flag's position, players, type (`CAPTURE_LOCATION_MAJOR` / `MINOR`), the point list (a
   circle's centre or the polygon's points), the key, the facing as (cos f, -sin f), and `building_list`: the main list's `fort_tower` and
-  `gate` buildings within 20 m of the boundary, `;` separated (an approximation: TEd tests the buildings' footprints).
+  `gate` buildings within 20 m of the boundary, `;` separated. **Open**: TEd's linking rule. Its export (`FUN_00500f60`, the instance
+  copied by `FUN_00437190`) sets no links, and neither the instance nor `add_capture_location_set` holds any: they come from code not
+  found yet (likely the buildings' footprints at their destruction level: escalation 3 of western_city_b/small links a gate without its
+  two destroyed towers but keeps two other destroyed ones). The 20 m rule is an approximation; the check compares the links apart.
+
+## Escalation BMDs (`bmd_data_escalation<n>.bin` and `.xml`)
+
+A file per `LayerExportType_Escalation<n>` layer (n 1 to 3), written even when the layer is empty: rpfm_lib's `Bmd` (version 6 unless
+the binary's is passed: 4 and 5 drop the civilian lists), built through serde_json and checked by deserialising it.
+
+- Buildings: the building list's records as `Building` version 3 (`BBPT_LF_RELATIVE`, the transform zero, `lite` false, the other
+  properties false).
+- Props (`PropMarker`, version 2, or 1 for older files; the version is an option like the markers'), particle emitters
+  (`ParticleEmitterMarker`): the markers' records of version 9 (the same frames). Grouped by key in `MARKER_TABLE` order, like a markers
+  file, but a BMD keeps no record order: the decompiler places the groups in an insertion order that gives the file's order back (below).
+  A prop's `allow_in_outfield` is the water-plane flag (the markers' `unknown_69`: TEd's flags word, bit 3); an emitter's snow and
+  destruction flags are the instance's `visible_*` ones.
+- Capture locations of the layer (one set), linking into the layer's own buildings; no-go regions (`non_terrain_outlines`); zones
+  (`zones_template_list`: `ZONE_POLYGON_INSTANCE`, the points, an empty formation template, an identity transform); civilian deployment
+  zones.
+- TEd's garbage: the PROP serialiser (`FUN_004d38e0` binary, `FUN_004d4a10` XML) reads `snow` and `destruction` into locals it never
+  sets, and a model's decal fields (`FUN_00502c60`) are members its export never sets (`17479188480.0` and the like in the XML). They are
+  written as 0; the check counts the bytes that differ by name.
+- The XML twin (`BATTLE_MAP_DEFINITION_DATA`): the same data in TEd's XML names (`PROP` > `marker` with `decal_params_*`,
+  `PARTICLE_EMITTER` > `marker` version 4, `BUILDING` with the properties as attributes, `CAPTURE_LOCATION` with `building_indices`
+  repeating `index`), `%f` floats, tabs, single quotes, CRLF. Every vanilla escalation BMD has one; TDD's packs drop all BMD twins.
+
+**Insertion order** (`marker_insertion_order`). Linear probing fills the same slots whatever the order, so the file's group order gives
+each key its final slot; a key must be inserted after the keys between its home slot and its own. The table's growth re-inserts the
+keys it held in their slot order, so that order is the full smaller table's, which must be reachable in turn: the search draws orders
+level by level (favouring keys near their home in the smaller table), with a simulated annealing over insertion orders where that finds
+none. All 759 prop and emitter lists of the packs' escalation BMDs (the Python prototype, whose dump truncates 2 lists' long keys) and
+the kit's own order for western_city_b and eastern_city_b reproduce.
+
+## civilian_deployment.bin
+
+rpfm_lib's `CivilianDeploymentFile` (version 1): the normal layers' `CivilianDeploymentZone`s (kind = `civilian_type`, size =
+`civilian_amount`, the polygon's points). Written when there are zones; 154 tiles ship it empty and 1,245 not at all, so the decompiler
+carries an empty one. `civilian_shelter.bin` is not TEd's: its capacities are not in tile.ted (`CivilianShelter`: a position and a
+target), so it belongs to BOB's stage.
 
 Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
 text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.

@@ -1,5 +1,5 @@
 //! A TEd project as an exported (binary) tile: the model `attila.ted_project` reads turned into the documents `attila.tile_binary` writes
-//! (docs/plans/tile_roundtrip.md, Phase 2 step 4). Stage A, TEd's export of the logic, first: the building lists.
+//! (docs/plans/tile_roundtrip.md, Phase 2 step 4). Stage A, TEd's export of the logic, first (docs/formats/tile_compile.md).
 //!
 //! The numbers go through TEd's float arithmetic: a value is read from its text as `sscanf` reads it (f32), the world matrices are
 //! `QTU::TedEntity::world_transform`'s (`wce_tile::world_transform::ted_rotation_f32` / `ted_mul_f32`).
@@ -179,42 +179,8 @@ fn building_lists(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes:
             _ => continue,
         };
 
-        let n = p.node;
-        let w = &p.world;
-        let (x, y, z) = (w[3], w[7], w[11]);
-        let key = n.get("key").and_then(Value::as_str).unwrap_or_default();
-        let level = n.get("destruction_level").and_then(Value::as_int).unwrap_or(0);
-        // `Ted::BMDExporter::export_` ({level, min 0, max levels - 1}): without `destruct_thresholds`, level / max (past 1 for a level
-        // past the model's); with them, level 0 is 0, level max 1, any other its threshold (index level - 1).
-        let thresholds = ctx.building_thresholds.and_then(|f| f(key)).unwrap_or_default();
-        let damage = match (level, ctx.building_levels.and_then(|f| f(key))) {
-            (0, _) => 0.0,
-            (l, Some(levels)) if levels > 1 && !thresholds.is_empty() => {
-                if l == i64::from(levels - 1) { 1.0 } else { thresholds.get(l as usize - 1).copied().unwrap_or(1.0) }
-            }
-            (l, Some(levels)) if levels > 1 => (l as f32) / ((levels - 1) as f32),
-            _ => {
-                unknown_levels += 1;
-                1.0
-            }
-        };
-
-        let mut b = Node::new("building");
-        b.set("key", Value::Str(key.to_owned()));
-        b.set("position", Value::Vec3([f64::from(x * 0.5), f64::from(y), f64::from(extent_z - z * 0.5)]));
-        b.set("orientation", Value::Floats(quaternion(w).iter().map(|&v| f64::from(v)).collect()));
-        b.set("scale", Value::Vec3([1.0; 3]));
-        b.set("starting_damage", Value::Float(f64::from(damage)));
-        for (k, attr, default) in [
-            ("on_fire", "burn", false), ("start_disabled", "", false), ("weak_point", "weak_wall", false), ("ai_breachable", "ai_breachable", true),
-            ("indestructible", "indestructible", false), ("dockable", "dockable", true),
-        ] {
-            b.set(k, Value::Bool(if attr.is_empty() { default } else { bool_of(n, attr, default) }));
-        }
-
-        b.set("position_type", Value::Int(2));
-        b.set("toggleable", Value::Bool(bool_of(n, "toggleable", false)));
-        b.set("lite", Value::Bool(name == "building_list" && zones.iter().any(|z| inside(z, x, z_of(w)))));
+        let lite = name == "building_list" && zones.iter().any(|z| inside(z, p.world[3], z_of(&p.world)));
+        let b = building_record(p, extent_z, ctx, lite, &mut unknown_levels);
         match lists.iter_mut().find(|(n, _)| *n == name) {
             Some((_, l)) => l.children.push(b),
             None => {
@@ -231,6 +197,48 @@ fn building_lists(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes:
     }
 
     lists.into_iter().map(|(name, root)| Document { name, root }).collect()
+}
+
+/// A building of an exported list (the building list's record) from its BUILDING_INSTANCE (`Ted::BMDExporter::export_`); a building
+/// whose destruction levels are not known counts in `unknown_levels` (starting damage 1).
+fn building_record(p: &Placed, extent_z: f32, ctx: &CompileContext, lite: bool, unknown_levels: &mut usize) -> Node {
+    let n = p.node;
+    let w = &p.world;
+    let (x, y, z) = (w[3], w[7], w[11]);
+    let key = n.get("key").and_then(Value::as_str).unwrap_or_default();
+    let level = n.get("destruction_level").and_then(Value::as_int).unwrap_or(0);
+    // {level, min 0, max levels - 1}: without `destruct_thresholds`, level / max (past 1 for a level past the model's); with them, level 0
+    // is 0, level max 1, any other its threshold (index level - 1).
+    let thresholds = ctx.building_thresholds.and_then(|f| f(key)).unwrap_or_default();
+    let damage = match (level, ctx.building_levels.and_then(|f| f(key))) {
+        (0, _) => 0.0,
+        (l, Some(levels)) if levels > 1 && !thresholds.is_empty() => {
+            if l == i64::from(levels - 1) { 1.0 } else { thresholds.get(l as usize - 1).copied().unwrap_or(1.0) }
+        }
+        (l, Some(levels)) if levels > 1 => (l as f32) / ((levels - 1) as f32),
+        _ => {
+            *unknown_levels += 1;
+            1.0
+        }
+    };
+
+    let mut b = Node::new("building");
+    b.set("key", Value::Str(key.to_owned()));
+    b.set("position", Value::Vec3([f64::from(x * 0.5), f64::from(y), f64::from(extent_z - z * 0.5)]));
+    b.set("orientation", Value::Floats(quaternion(w).iter().map(|&v| f64::from(v)).collect()));
+    b.set("scale", Value::Vec3([1.0; 3]));
+    b.set("starting_damage", Value::Float(f64::from(damage)));
+    for (k, attr, default) in [
+        ("on_fire", "burn", false), ("start_disabled", "", false), ("weak_point", "weak_wall", false), ("ai_breachable", "ai_breachable", true),
+        ("indestructible", "indestructible", false), ("dockable", "dockable", true),
+    ] {
+        b.set(k, Value::Bool(if attr.is_empty() { default } else { bool_of(n, attr, default) }));
+    }
+
+    b.set("position_type", Value::Int(2));
+    b.set("toggleable", Value::Bool(bool_of(n, "toggleable", false)));
+    b.set("lite", Value::Bool(lite));
+    b
 }
 
 fn z_of(w: &[f32; 16]) -> f32 {
@@ -259,7 +267,7 @@ fn marker_key_hash(parts: &[&str]) -> u32 {
 /// A marker table's key: a string (the model, the effect, the light's name; hashed by `marker_key_hash`), or a number (an enum: the AI hint
 /// type; a uint table with the value as its hash), written as the number or as the enum's name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum MarkerKey {
+pub(crate) enum MarkerKey {
     Text(String),
     Number(u32),
     Named(String, u32),
@@ -281,35 +289,189 @@ impl MarkerKey {
     }
 }
 
-/// The order a `MARKER_TABLE` gives its keys (in the order of their first record): a hash table from 13 slots, linear probing,
-/// growing to 2 n + 1 slots when full; the keys in slot order.
-fn marker_table_order(keys: &[MarkerKey]) -> Vec<MarkerKey> {
-    let mut slots: Vec<Option<MarkerKey>> = vec![None; 13];
-    let insert = |slots: &mut Vec<Option<MarkerKey>>, k: MarkerKey| -> bool {
+/// The slots of a `MARKER_TABLE` after inserting the keys in this order (the index of the key in each slot): 13 slots, linear probing,
+/// growing to 2 n + 1 when full by re-inserting the keys in slot order.
+fn marker_table(keys: &[MarkerKey]) -> Vec<Option<usize>> {
+    let insert = |slots: &mut Vec<Option<usize>>, i: usize| -> bool {
         let n = slots.len();
-        let start = k.hash() as usize % n;
-        match (0..n).map(|i| (start + i) % n).find(|&i| slots[i].is_none()) {
-            Some(i) => {
-                slots[i] = Some(k);
+        let start = keys[i].hash() as usize % n;
+        match (0..n).map(|j| (start + j) % n).find(|&j| slots[j].is_none()) {
+            Some(j) => {
+                slots[j] = Some(i);
                 true
             }
             None => false,
         }
     };
 
-    for k in keys {
-        if !insert(&mut slots, k.clone()) {
-            let old = slots.iter().flatten().cloned().collect::<Vec<_>>();
+    let mut slots: Vec<Option<usize>> = vec![None; 13];
+    for i in 0..keys.len() {
+        if !insert(&mut slots, i) {
+            let old = slots.iter().flatten().copied().collect::<Vec<_>>();
             slots = vec![None; slots.len() * 2 + 1];
             for o in old {
                 insert(&mut slots, o);
             }
 
-            insert(&mut slots, k.clone());
+            insert(&mut slots, i);
         }
     }
 
-    slots.into_iter().flatten().collect()
+    slots
+}
+
+/// The order a `MARKER_TABLE` gives its keys (inserted in the order of their first record): the keys in slot order.
+pub(crate) fn marker_table_order(keys: &[MarkerKey]) -> Vec<MarkerKey> {
+    marker_table(keys).into_iter().flatten().map(|i| keys[i].clone()).collect()
+}
+
+/// A small deterministic generator (xorshift), so a decompiled project is the same every time.
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    fn unit(&mut self) -> f64 {
+        (self.next() >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// The keys between each key's home slot and its slot (indices into `keys`), at a capacity; `None` when one of those slots is empty.
+fn probe_deps(keys: &[MarkerKey], slot: &[usize], cap: usize) -> Option<Vec<Vec<usize>>> {
+    let at = slot.iter().enumerate().map(|(i, &s)| (s, i)).collect::<std::collections::HashMap<_, _>>();
+    keys.iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let (mut d, mut j) = (vec![], k.hash() as usize % cap);
+            while j != slot[i] {
+                d.push(*at.get(&j)?);
+                j = (j + 1) % cap;
+            }
+
+            Some(d)
+        })
+        .collect()
+}
+
+/// An insertion order (indices into `keys`) that leaves each key in its `slot` of a table of `cap` slots, growth included: the keys
+/// inserted before the last growth are re-inserted in their slot order there (a full table of the previous capacity), which must
+/// itself be reachable. That order is drawn among those that respect the probing, favouring keys near their home slot below.
+fn growth_order(keys: &[MarkerKey], slot: &[usize], cap: usize, rng: &mut Xorshift, budget: usize) -> Option<Vec<usize>> {
+    let deps = probe_deps(keys, slot, cap)?;
+    let n = keys.len();
+    let ready = |done: &[bool], i: usize| !done[i] && deps[i].iter().all(|&d| done[d]);
+    if cap == 13 {
+        let (mut done, mut out) = (vec![false; n], vec![]);
+        while out.len() < n {
+            let i = (0..n).find(|&i| ready(&done, i))?;
+            done[i] = true;
+            out.push(i);
+        }
+
+        return Some(out);
+    }
+
+    let prev = (cap - 1) / 2;
+    for _ in 0..budget {
+        let (mut done, mut tau) = (vec![false; n], Vec::with_capacity(n));
+        while tau.len() < n {
+            let r = (0..n).filter(|&i| ready(&done, i)).collect::<Vec<_>>();
+            if r.is_empty() {
+                return None;
+            }
+
+            let pos = tau.len();
+            let pick = if pos < prev {
+                // Weighted by the distance from the key's home in the smaller table to the slot it would take there.
+                let w = r.iter().map(|&i| (-0.7 * ((pos + prev - keys[i].hash() as usize % prev) % prev) as f64).exp()).collect::<Vec<_>>();
+                let mut x = rng.unit() * w.iter().sum::<f64>();
+                let mut k = r.len() - 1;
+                for (j, wj) in w.iter().enumerate() {
+                    if x < *wj {
+                        k = j;
+                        break;
+                    }
+
+                    x -= wj;
+                }
+
+                r[k]
+            } else {
+                r[rng.below(r.len())]
+            };
+            done[pick] = true;
+            tau.push(pick);
+        }
+
+        let early = tau[..prev].iter().map(|&i| keys[i].clone()).collect::<Vec<_>>();
+        if let Some(sub) = growth_order(&early, &(0..prev).collect::<Vec<_>>(), prev, rng, (budget / 4).max(1)) {
+            return Some(sub.into_iter().map(|j| tau[j]).chain(tau[prev..].iter().copied()).collect());
+        }
+    }
+
+    None
+}
+
+/// An insertion order of keys whose [`marker_table_order`] is `order`, for files that keep only the grouped records (the BMDs' props
+/// and emitters). Linear probing fills the same slots whatever the order, so `order` gives every key its final slot, and a key must come
+/// after the keys between its home slot and its own; [`growth_order`] searches the orders that respect that through the table's growth,
+/// and a local search (simulated annealing on the keys left in their slot) takes over where it finds none.
+pub(crate) fn marker_insertion_order(order: &[MarkerKey]) -> Option<Vec<MarkerKey>> {
+    let n = order.len();
+    let mut cap = 13;
+    while cap < n {
+        cap = cap * 2 + 1;
+    }
+
+    let mut occupied = vec![false; cap];
+    for k in order {
+        let home = k.hash() as usize % cap;
+        let j = (0..cap).map(|i| (home + i) % cap).find(|&j| !occupied[j])?;
+        occupied[j] = true;
+    }
+
+    let slot = (0..cap).filter(|&j| occupied[j]).collect::<Vec<_>>();
+    let keys_of = |o: &[usize]| o.iter().map(|&i| order[i].clone()).collect::<Vec<_>>();
+    let mut rng = Xorshift(0x9e37_79b9_7f4a_7c15);
+    if let Some(o) = growth_order(order, &slot, cap, &mut rng, 200)
+        && marker_table_order(&keys_of(&o)) == order
+    {
+        return Some(keys_of(&o));
+    }
+
+    // The local search: move one key at a time, keeping a worse order now and then while the temperature is high.
+    let score = |o: &[usize]| {
+        let table = marker_table(&keys_of(o));
+        table.iter().enumerate().filter(|(j, k)| k.is_some_and(|k| slot.get(o[k]) == Some(j))).count()
+    };
+    let mut cur = (0..n).collect::<Vec<_>>();
+    let (mut sc, mut t) = (score(&cur), 2.0f64);
+    for _ in 0..100_000 {
+        if sc == n {
+            return Some(keys_of(&cur));
+        }
+
+        let mut next = cur.clone();
+        let x = next.remove(rng.below(n));
+        next.insert(rng.below(n), x);
+        let s2 = score(&next);
+        if s2 >= sc || rng.unit() < ((s2 as f64 - sc as f64) / t).exp() {
+            (cur, sc) = (next, s2);
+        }
+
+        t = (t * 0.9999).max(0.05);
+    }
+
+    None
 }
 
 /// A markers document: the class's header, the records, the groups of the records by key in the marker table's order.
@@ -364,69 +526,70 @@ fn seasons_mask(n: &Node) -> i64 {
 fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "prop_marker.markers";
     let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
-    let mut records = vec![];
-    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal") {
-        let n = p.node;
-        let decal = match n.class.as_str() {
-            "ProjectedDecalInstance" => true,
-            "SIMPLE_MESH_INSTANCE" => false,
-            _ => continue,
-        };
+    let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal").filter_map(|p| prop_record(p, extent_z, version)).collect::<Vec<_>>();
+    (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
+}
 
-        let key = n.get("key").and_then(Value::as_str).unwrap_or_default().to_owned();
-        let scale = vec3_of(n, "scale").unwrap_or([1.0; 3]);
-        let half = scale.map(|s| s * 0.5);
-        let w = &p.world;
-        let f = [1.0f32, 1.0, -1.0];
-        let mut m = [0.0f64; 16];
-        for k in 0..3 {
-            // A decal: |half scale| (version 5: signed); a model: f_k * the signed half scale (f = (1, 1, -1)).
-            let len = if decal && version >= 6 { half[k].abs() } else if decal || k != 2 { half[k] } else { -half[k] };
-            for l in 0..3 {
-                // a[k][l] = f_l f_k R[l][k] with R[l][k] = w[l * 4 + k].
-                m[k * 4 + l] = f64::from(f[l] * f[k] * w[l * 4 + k] * len);
-            }
+/// A prop marker record (of the markers version) and its key from a `ProjectedDecalInstance` or `SIMPLE_MESH_INSTANCE`.
+fn prop_record(p: &Placed, extent_z: f32, version: i64) -> Option<(MarkerKey, Node)> {
+    let n = p.node;
+    let decal = match n.class.as_str() {
+        "ProjectedDecalInstance" => true,
+        "SIMPLE_MESH_INSTANCE" => false,
+        _ => return None,
+    };
+
+    let key = n.get("key").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let scale = vec3_of(n, "scale").unwrap_or([1.0; 3]);
+    let half = scale.map(|s| s * 0.5);
+    let w = &p.world;
+    let f = [1.0f32, 1.0, -1.0];
+    let mut m = [0.0f64; 16];
+    for k in 0..3 {
+        // A decal: |half scale| (version 5: signed); a model: f_k * the signed half scale (f = (1, 1, -1)).
+        let len = if decal && version >= 6 { half[k].abs() } else if decal || k != 2 { half[k] } else { -half[k] };
+        for l in 0..3 {
+            // a[k][l] = f_l f_k R[l][k] with R[l][k] = w[l * 4 + k].
+            m[k * 4 + l] = f64::from(f[l] * f[k] * w[l * 4 + k] * len);
         }
-
-        (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7] * 0.5), f64::from(extent_z - w[11] * 0.5), 1.0);
-        let mut r = Node::new("record");
-        r.set("transform", Value::Floats(m.to_vec()));
-        r.set("unknown_64", Value::Int(0));
-        r.set("is_decal", Value::Int(i64::from(decal)));
-        for u in ["unknown_66", "unknown_67", "unknown_68"] {
-            r.set(u, Value::Int(0));
-        }
-
-        // A model named `water_plane` is flagged (FUN_00502c60 compares the instance's name; 1,184 of the kit's water planes are so
-        // named, 8 `Object`).
-        let water = !decal && n.get("name").and_then(Value::as_str) == Some("water_plane");
-        r.set("unknown_69", Value::Int(i64::from(water)));
-        if version >= 6 {
-            r.set("seasons", Value::Int(if decal { 15 } else { seasons_mask(n) }));
-        }
-
-        if version == 8 {
-            r.set("unknown_74", Value::Bytes(vec![0; 3]));
-        } else if version >= 9 {
-            r.set("unknown_74", Value::Int(0));
-            for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
-                r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
-            }
-        }
-
-        if decal {
-            r.set("parallax_scale", Value::Float(f64::from(floats_of(n, "parallax_scale").and_then(|v| v.first().copied()).unwrap_or(0.0))));
-            r.set("tiled", Value::Int(i64::from(bool_of(n, "tiled", false))));
-            // Version 5 writes the magnitudes.
-            for (k, h) in ["scale_x", "scale_y", "scale_z"].iter().zip(half) {
-                r.set(*k, Value::Float(f64::from(if version >= 6 { h } else { h.abs() })));
-            }
-        }
-
-        records.push((MarkerKey::Text(key), r));
     }
 
-    (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
+    (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7] * 0.5), f64::from(extent_z - w[11] * 0.5), 1.0);
+    let mut r = Node::new("record");
+    r.set("transform", Value::Floats(m.to_vec()));
+    r.set("unknown_64", Value::Int(0));
+    r.set("is_decal", Value::Int(i64::from(decal)));
+    for u in ["unknown_66", "unknown_67", "unknown_68"] {
+        r.set(u, Value::Int(0));
+    }
+
+    // A model named `water_plane` is flagged (FUN_00502c60 compares the instance's name; 1,184 of the kit's water planes are so
+    // named, 8 `Object`).
+    let water = !decal && n.get("name").and_then(Value::as_str) == Some("water_plane");
+    r.set("unknown_69", Value::Int(i64::from(water)));
+    if version >= 6 {
+        r.set("seasons", Value::Int(if decal { 15 } else { seasons_mask(n) }));
+    }
+
+    if version == 8 {
+        r.set("unknown_74", Value::Bytes(vec![0; 3]));
+    } else if version >= 9 {
+        r.set("unknown_74", Value::Int(0));
+        for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+            r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
+        }
+    }
+
+    if decal {
+        r.set("parallax_scale", Value::Float(f64::from(floats_of(n, "parallax_scale").and_then(|v| v.first().copied()).unwrap_or(0.0))));
+        r.set("tiled", Value::Int(i64::from(bool_of(n, "tiled", false))));
+        // Version 5 writes the magnitudes.
+        for (k, h) in ["scale_x", "scale_y", "scale_z"].iter().zip(half) {
+            r.set(*k, Value::Float(f64::from(if version >= 6 { h } else { h.abs() })));
+        }
+    }
+
+    Some((MarkerKey::Text(key), r))
 }
 
 /// `particle_emitter_marker.markers` (version 9; 4 to 8 for the older tiles' loop): the `VFXInstance`s of the normal layers, in the scene's order, grouped by `vfx`. The
@@ -434,58 +597,59 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
 fn emitter_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "particle_emitter_marker.markers";
     let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
-    let mut records = vec![];
-    for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "VFXInstance") {
-        let n = p.node;
-        let w = &p.world;
-        let mut m = [0.0f64; 16];
-        for k in 0..3 {
-            for l in 0..3 {
-                m[l * 4 + k] = f64::from(w[k * 4 + l]);
-            }
+    let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "VFXInstance").map(|p| emitter_record(p, extent_z, version)).collect::<Vec<_>>();
+    (!records.is_empty()).then(|| markers_doc(NAME, "PARTICLE_EMITTER_MARKER", 618_864, version, records))
+}
+
+/// A particle emitter marker record (of the markers version) and its key from a `VFXInstance`.
+fn emitter_record(p: &Placed, extent_z: f32, version: i64) -> (MarkerKey, Node) {
+    let n = p.node;
+    let w = &p.world;
+    let mut m = [0.0f64; 16];
+    for k in 0..3 {
+        for l in 0..3 {
+            m[l * 4 + k] = f64::from(w[k * 4 + l]);
         }
-
-        (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7]), f64::from(extent_z - w[11] * 0.5), 1.0);
-        let mut r = Node::new("record");
-        r.set("transform", Value::Floats(m.to_vec()));
-        let autoplay = u8::from(bool_of(n, "autoplay", true));
-        let outfield = u8::from(bool_of(n, "use_in_outfield", false));
-        let scale = floats_of(n, "scale").and_then(|v| v.first().copied()).unwrap_or(1.0) * 0.5;
-        let seasons = seasons_mask(n) as u32;
-        if version >= 9 {
-            r.set("unknown_64", Value::Bytes(vec![0; 6]));
-            r.set("autoplay", Value::Int(i64::from(autoplay)));
-            r.set("use_in_outfield", Value::Int(i64::from(outfield)));
-            for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
-                r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
-            }
-
-            r.set("scale", Value::Float(f64::from(scale)));
-            r.set("seasons", Value::Int(i64::from(seasons)));
-        } else {
-            // Older versions keep the fields in the bytes after the matrix: 6 zeros, autoplay, (7+) use_in_outfield, (8) 2 zeros, the
-            // scale, (5+) the seasons.
-            let mut b = vec![0u8; 6];
-            b.push(autoplay);
-            if version >= 7 {
-                b.push(outfield);
-            }
-
-            if version >= 8 {
-                b.extend([0, 0]);
-            }
-
-            b.extend(scale.to_le_bytes());
-            if version >= 5 {
-                b.extend(seasons.to_le_bytes());
-            }
-
-            r.set("unknown_64", Value::Bytes(b));
-        }
-        records.push((MarkerKey::Text(n.get("vfx").and_then(Value::as_str).unwrap_or_default().to_owned()), r));
     }
 
-    (!records.is_empty()).then(|| markers_doc(NAME, "PARTICLE_EMITTER_MARKER", 618_864, version, records))
+    (m[12], m[13], m[14], m[15]) = (f64::from(w[3] * 0.5), f64::from(w[7]), f64::from(extent_z - w[11] * 0.5), 1.0);
+    let mut r = Node::new("record");
+    r.set("transform", Value::Floats(m.to_vec()));
+    let autoplay = u8::from(bool_of(n, "autoplay", true));
+    let outfield = u8::from(bool_of(n, "use_in_outfield", false));
+    let scale = floats_of(n, "scale").and_then(|v| v.first().copied()).unwrap_or(1.0) * 0.5;
+    let seasons = seasons_mask(n) as u32;
+    if version >= 9 {
+        r.set("unknown_64", Value::Bytes(vec![0; 6]));
+        r.set("autoplay", Value::Int(i64::from(autoplay)));
+        r.set("use_in_outfield", Value::Int(i64::from(outfield)));
+        for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+            r.set(v, Value::Int(i64::from(bool_of(n, v, true))));
+        }
+
+        r.set("scale", Value::Float(f64::from(scale)));
+        r.set("seasons", Value::Int(i64::from(seasons)));
+    } else {
+        // Older versions keep the fields in the bytes after the matrix: 6 zeros, autoplay, (7+) use_in_outfield, (8) 2 zeros, the
+        // scale, (5+) the seasons.
+        let mut b = vec![0u8; 6];
+        b.push(autoplay);
+        if version >= 7 {
+            b.push(outfield);
+        }
+
+        if version >= 8 {
+            b.extend([0, 0]);
+        }
+
+        b.extend(scale.to_le_bytes());
+        if version >= 5 {
+            b.extend(seasons.to_le_bytes());
+        }
+
+        r.set("unknown_64", Value::Bytes(b));
+    }
+    (MarkerKey::Text(n.get("vfx").and_then(Value::as_str).unwrap_or_default().to_owned()), r)
 }
 
 /// `point_light_marker.markers` (version 3): the `POINT_LIGHT_INSTANCE`s of the normal layers, in the scene's order, grouped by name; a
@@ -604,7 +768,7 @@ fn siege_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Opti
     const NAME: &str = "ai_hint_polyline_list_marker.markers";
     let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
     // The placed nodes by address, to find a node's polygons without a scan per node.
-    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let by_node = by_node(placed);
     let mut records = vec![];
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && matches!(p.node.class.as_str(), "SiegeAINodeInstance" | "SiegeAIEdgeInstance")) {
         let ty = p.node.get("type").and_then(Value::as_str).unwrap_or_default();
@@ -758,7 +922,7 @@ fn zones(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocS
 /// world points) and the facing direction. TEd clips the boundaries to the playable area on export (a decompiled project already holds
 /// the clipped ones); that is not done here yet.
 fn deployment(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocStyle)> {
-    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let by_node = by_node(placed);
     let mut alliances: std::collections::BTreeMap<i64, Vec<Node>> = std::collections::BTreeMap::new();
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "DeploymentZonePolygonInstanceGroup") {
         let n = p.node;
@@ -811,13 +975,85 @@ fn deployment(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml:
     Some((Document { name: "deployment_areas.xml".to_owned(), root }, bmd_xml_style()))
 }
 
-/// `capture_location_list.xml`: the `CaptureLocationInstance`s of the normal layers (the escalation layers' go into their BMDs). The
-/// flag's world position, the boundary (a circle: half TEd's radius and its centre, the instance's position; a polygon: radius 0 and its
-/// points), players, type, key, the facing as (cos, -sin), and the main list's towers and gates at it (`building_list`, their indices).
-/// `buildings` are the main list's (key, x, z).
+/// A capture location as TEd exports it (the binary's frame): the flag's position, the boundary (a circle: half TEd's radius and its
+/// centre; a polygon: radius 0 and its points), players, type, key, the facing angle and the linked buildings (indices in `buildings`).
+struct Capture {
+    radius: f32,
+    flag: (f32, f32),
+    points: Vec<(f32, f32)>,
+    min_players: i64,
+    max_players: i64,
+    major: bool,
+    key: String,
+    facing: f32,
+    links: Vec<usize>,
+}
+
+/// The nodes of a scene by address, for finding a node's placement.
+type ByNode<'p, 'a> = std::collections::HashMap<*const Node, &'p Placed<'a>>;
+
+fn by_node<'p, 'a>(placed: &'p [Placed<'a>]) -> ByNode<'p, 'a> {
+    placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect()
+}
+
+/// A `CaptureLocationInstance` as a [`Capture`]; `buildings` are the (key, x, z) of the list it links into (its layer's).
+fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[(String, f32, f32)], ctx: &CompileContext) -> Capture {
+    let n = p.node;
+    let w = &p.world;
+    let fp = vec3_of(n, "flag_position").unwrap_or([0.0; 3]);
+    let (fx, fz) = (w[0] * fp[0] + w[1] * fp[1] + w[2] * fp[2] + w[3], w[8] * fp[0] + w[9] * fp[1] + w[10] * fp[2] + w[11]);
+    let boundary = n.wrapped("children").iter().find(|c| c.class == "CaptureLocationPolygonInstance").and_then(|c| by_node.get(&std::ptr::from_ref(c)));
+    let circle = boundary.is_some_and(|b| b.node.get("polygon_shape").and_then(Value::as_str) == Some("PS_CIRCLE"));
+    let (radius, points): (f32, Vec<(f32, f32)>) = match boundary {
+        Some(b) if circle => {
+            let r = floats_of(b.node, "radius").and_then(|v| v.first().copied()).unwrap_or(0.0) * 0.5;
+            (r, vec![(w[3] * 0.5, extent_z - w[11] * 0.5)])
+        }
+        Some(b) => (0.0, polygon_points(b, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect()),
+        None => (0.0, vec![]),
+    };
+
+    // TEd links the towers and gates at the capture location (their footprints, not known here): those within 20 m of its boundary
+    // (camps' corner towers 6 to 16 m from a 7.5 to 10 m circle, the next 47 m off; a gate and its two towers at a polygon).
+    let near = |x: f32, z: f32| {
+        if circle {
+            return points.first().is_some_and(|c| (x - c.0).hypot(z - c.1) <= radius + 20.0);
+        }
+
+        inside(&points, x, z)
+            || (0..points.len()).any(|k| {
+                let (a, b) = (points[k], points[(k + 1) % points.len()]);
+                let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+                let t = (((x - a.0) * dx + (z - a.1) * dz) / (dx * dx + dz * dz).max(1e-12)).clamp(0.0, 1.0);
+                (x - (a.0 + t * dx)).hypot(z - (a.1 + t * dz)) <= 20.0
+            })
+    };
+    let category = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
+    let links = buildings
+        .iter()
+        .enumerate()
+        .filter(|(_, (k, x, z))| !points.is_empty() && matches!(category(k).as_str(), "fort_tower" | "gate") && near(*x, *z))
+        .map(|(i, _)| i)
+        .collect();
+    let int = |a: &str, d: i64| n.get(a).and_then(Value::as_int).unwrap_or(d);
+    Capture {
+        radius,
+        flag: (fx * 0.5, extent_z - fz * 0.5),
+        points,
+        min_players: int("min_num_players", 2),
+        max_players: int("max_num_players", 8),
+        major: n.get("type").and_then(Value::as_str) == Some("CLT_MAJOR"),
+        key: n.get("database_type").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        facing: floats_of(n, "flag_facing").and_then(|v| v.first().copied()).unwrap_or(0.0),
+        links,
+    }
+}
+
+/// `capture_location_list.xml`: the `CaptureLocationInstance`s of the normal layers (the escalation layers' go into their BMDs), linking
+/// into the main list (`buildings`, its (key, x, z)). The facing is written as (cos, -sin).
 fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32, f32)], ctx: &CompileContext) -> Option<(Document, crate::xml::DocStyle)> {
     use crate::xml::layout::BEFORE_START;
-    let by_node = placed.iter().map(|p| (std::ptr::from_ref(p.node), p)).collect::<std::collections::HashMap<_, _>>();
+    let by_node = by_node(placed);
     let ted = |v: f32| crate::xml::values::Num::Ted.format(f64::from(v));
     // flag_facing keeps one decimal (`1.0,-0.0`).
     let one = |v: f32| {
@@ -826,69 +1062,27 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32
     };
     let mut list = Node::new("CAPTURE_LOCATION_LIST");
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "CaptureLocationInstance") {
-        let n = p.node;
-        let w = &p.world;
-        let fp = vec3_of(n, "flag_position").unwrap_or([0.0; 3]);
-        let (fx, fz) = (w[0] * fp[0] + w[1] * fp[1] + w[2] * fp[2] + w[3], w[8] * fp[0] + w[9] * fp[1] + w[10] * fp[2] + w[11]);
-        let boundary = n.wrapped("children").iter().find(|c| c.class == "CaptureLocationPolygonInstance").and_then(|c| by_node.get(&std::ptr::from_ref(c)));
-        let circle = boundary.is_some_and(|b| b.node.get("polygon_shape").and_then(Value::as_str) == Some("PS_CIRCLE"));
-        let (radius, points): (f32, Vec<(f32, f32)>) = match boundary {
-            Some(b) if circle => {
-                let r = floats_of(b.node, "radius").and_then(|v| v.first().copied()).unwrap_or(0.0) * 0.5;
-                (r, vec![(w[3] * 0.5, extent_z - w[11] * 0.5)])
-            }
-            Some(b) => (0.0, polygon_points(b, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect()),
-            None => (0.0, vec![]),
-        };
-
-        // TEd links the towers and gates at the capture location (their footprints, not known here): those within 20 m of its boundary
-        // (camps' corner towers 6 to 16 m from a 7.5 to 10 m circle, the next 47 m off; a gate and its two towers at a polygon).
-        let near = |x: f32, z: f32| {
-            if circle {
-                return points.first().is_some_and(|c| (x - c.0).hypot(z - c.1) <= radius + 20.0);
-            }
-
-            inside(&points, x, z)
-                || (0..points.len()).any(|k| {
-                    let (a, b) = (points[k], points[(k + 1) % points.len()]);
-                    let (dx, dz) = (b.0 - a.0, b.1 - a.1);
-                    let t = (((x - a.0) * dx + (z - a.1) * dz) / (dx * dx + dz * dz).max(1e-12)).clamp(0.0, 1.0);
-                    (x - (a.0 + t * dx)).hypot(z - (a.1 + t * dz)) <= 20.0
-                })
-        };
-        let category = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
-        let building = buildings
-            .iter()
-            .enumerate()
-            .filter(|(_, (k, x, z))| !points.is_empty() && matches!(category(k).as_str(), "fort_tower" | "gate") && near(*x, *z))
-            .map(|(i, _)| i.to_string())
-            .collect::<Vec<_>>()
-            .join(";");
-        let facing = floats_of(n, "flag_facing").and_then(|v| v.first().copied()).unwrap_or(0.0);
-        let int = |a: &str, d: i64| n.get(a).and_then(Value::as_int).unwrap_or(d).to_string();
-        let mut c = Node::new("CAPTURE_LOCATION");
+        let c = capture_record(p, &by_node, extent_z, buildings, ctx);
+        let mut n = Node::new("CAPTURE_LOCATION");
         for (k, v) in [
-            ("radius", wce_formats::c_num::printf_f_msvc(f64::from(radius), 6)),
-            ("position_x", wce_formats::c_num::printf_f_msvc(f64::from(fx * 0.5), 6)),
-            ("position_y", wce_formats::c_num::printf_f_msvc(f64::from(extent_z - fz * 0.5), 6)),
-            ("valid_for_min_num_players", int("min_num_players", 2)), ("valid_for_max_num_players", int("max_num_players", 8)),
-            (
-                "capture_point_type_v2",
-                if n.get("type").and_then(Value::as_str) == Some("CLT_MAJOR") { "CAPTURE_LOCATION_MAJOR" } else { "CAPTURE_LOCATION_MINOR" }.to_owned(),
-            ),
-            ("capture_point_list", points.iter().map(|&(x, z)| format!("{},{}", ted(x), ted(z))).collect::<Vec<_>>().join(";")),
-            ("building_list", building), ("database_key", n.get("database_type").and_then(Value::as_str).unwrap_or_default().to_owned()),
-            ("flag_facing", format!("{},{}", one(facing.cos()), one(-facing.sin()))),
+            ("radius", wce_formats::c_num::printf_f_msvc(f64::from(c.radius), 6)),
+            ("position_x", wce_formats::c_num::printf_f_msvc(f64::from(c.flag.0), 6)),
+            ("position_y", wce_formats::c_num::printf_f_msvc(f64::from(c.flag.1), 6)),
+            ("valid_for_min_num_players", c.min_players.to_string()), ("valid_for_max_num_players", c.max_players.to_string()),
+            ("capture_point_type_v2", if c.major { "CAPTURE_LOCATION_MAJOR" } else { "CAPTURE_LOCATION_MINOR" }.to_owned()),
+            ("capture_point_list", c.points.iter().map(|&(x, z)| format!("{},{}", ted(x), ted(z))).collect::<Vec<_>>().join(";")),
+            ("building_list", c.links.iter().map(ToString::to_string).collect::<Vec<_>>().join(";")), ("database_key", c.key.clone()),
+            ("flag_facing", format!("{},{}", one(c.facing.cos()), one(-c.facing.sin()))),
         ] {
-            c.set(k, Value::Str(v));
+            n.set(k, Value::Str(v));
         }
 
-        bmd_xml_layout(&mut c);
+        bmd_xml_layout(&mut n);
         if list.children.is_empty() {
-            c.trivia_mut().layout.push((BEFORE_START, b"\r\n\t\r\n".to_vec().into()));
+            n.trivia_mut().layout.push((BEFORE_START, b"\r\n\t\r\n".to_vec().into()));
         }
 
-        list.children.push(c);
+        list.children.push(n);
     }
 
     if list.children.is_empty() {
@@ -901,13 +1095,450 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[(String, f32
     Some((Document { name: "capture_location_list.xml".to_owned(), root }, outline_style()))
 }
 
+// ---- the escalation BMDs and the civilian deployment list (rpfm_lib's structs, built through serde_json)
+
+type Json = serde_json::Value;
+
+fn jf(v: f32) -> Json {
+    Json::from(f64::from(v))
+}
+
+fn json_point(x: f32, y: f32) -> Json {
+    serde_json::json!({ "x": jf(x), "y": jf(y) })
+}
+
+fn json_points(points: &[(f32, f32)]) -> Json {
+    Json::Array(points.iter().map(|&(x, y)| json_point(x, y)).collect())
+}
+
+/// A `Transform4x4` from a record's row-major matrix (element (r, c) at r * 4 + c, as `m{r}{c}`).
+fn json_matrix(m: &[f64]) -> Json {
+    let mut t = serde_json::Map::new();
+    for r in 0..4 {
+        for c in 0..4 {
+            t.insert(format!("m{r}{c}"), jf(m.get(r * 4 + c).copied().unwrap_or(0.0) as f32));
+        }
+    }
+
+    Json::Object(t)
+}
+
+fn identity_json() -> Json {
+    json_matrix(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+}
+
+fn record_f32(r: &Node, k: &str) -> f32 {
+    r.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32
+}
+
+fn record_flag(r: &Node, k: &str) -> bool {
+    match r.get(k) {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Int(i)) => *i != 0,
+        _ => false,
+    }
+}
+
+/// A BMD building (`Building`, version 3) from a building list record.
+fn bmd_building(b: &Node) -> Json {
+    let p = b.get("position").and_then(Value::as_vec3).unwrap_or_default().map(|v| v as f32);
+    let q = b.get("orientation").and_then(Value::as_floats).unwrap_or_default();
+    let q = |i: usize| jf(q.get(i).copied().unwrap_or(0.0) as f32);
+    let mut t = serde_json::Map::new();
+    for r in 0..4 {
+        for c in 0..3 {
+            t.insert(format!("m{r}{c}"), jf(0.0));
+        }
+    }
+
+    let flag = |k: &str| record_flag(b, k);
+    serde_json::json!({
+        "serialise_version": 3, "building_id": "", "parent_id": 0, "building_key": b.get("key").and_then(Value::as_str).unwrap_or_default(),
+        "position_type": "BBPT_LF_RELATIVE", "transform": t, "position": { "x": jf(p[0]), "y": jf(p[1]), "z": jf(p[2]) },
+        "orientation": { "i": q(0), "j": q(1), "k": q(2), "w": q(3) }, "scale": { "x": jf(1.0), "y": jf(1.0), "z": jf(1.0) },
+        "properties": {
+            "serialise_version": 0, "building_id": "", "starting_damage_unary": jf(record_f32(b, "starting_damage")), "on_fire": flag("on_fire"),
+            "start_disabled": flag("start_disabled"), "weak_point": flag("weak_point"), "ai_breachable": flag("ai_breachable"),
+            "indestructible": flag("indestructible"), "dockable": flag("dockable"), "toggleable": flag("toggleable"), "lite": flag("lite"),
+            "clamp_to_surface": false, "cast_shadows": false, "dont_merge_building": false, "key_building": false, "key_building_use_fort": false,
+            "is_prop_in_outfield": false, "settlement_level_configurable": false, "hide_tooltip": false, "include_in_fog": false,
+            "tint_inherit_from_parent": false,
+        },
+        "height_mode": "", "uid": 0,
+    })
+}
+
+/// A BMD prop (`PropMarker`, version 1 or 2) from a prop marker record of version 9. TEd's serialiser (`FUN_004d38e0`) writes the flags
+/// word's bits (clamp 2, outfield = the water plane 3, fauna 4); `snow` and `destruction` come from locals it never sets, and a model's
+/// decal fields from members its export never sets: those bytes are TEd's stack and heap garbage, written here as 0.
+fn bmd_prop(key: &str, r: &Node, version: i64) -> Json {
+    let decal = record_flag(r, "is_decal");
+    let m = r.get("transform").and_then(Value::as_floats).unwrap_or_default();
+    let d = |k: &str| jf(if decal { record_f32(r, k) } else { 0.0 });
+    serde_json::json!({
+        "key": key, "serialise_version": version, "transform": json_matrix(m), "clamp_to_surface": false, "prop_type": u32::from(decal),
+        "allow_in_outfield": record_flag(r, "unknown_69"), "decal_parallax": d("parallax_scale"),
+        "decal_scale": { "x": d("scale_x"), "y": d("scale_y"), "z": d("scale_z") }, "decal_tiled": u8::from(decal && record_flag(r, "tiled")),
+        "is_fauna": 0, "snow": 0, "destruction": 0,
+    })
+}
+
+/// A BMD particle emitter (`ParticleEmitterMarker`) from a particle emitter marker record of version 9.
+fn bmd_emitter(key: &str, r: &Node) -> Json {
+    let m = r.get("transform").and_then(Value::as_floats).unwrap_or_default();
+    let flag = |k: &str| record_flag(r, k);
+    serde_json::json!({
+        "key": key, "transform": json_matrix(m), "emission_rate": jf(0.0), "instance_name": "", "autoplay": flag("autoplay"),
+        "scale": jf(record_f32(r, "scale")), "use_in_outfield": flag("use_in_outfield"), "snow_inside": flag("visible_inside_snow_zone"),
+        "snow_outside": flag("visible_outside_snow_zone"), "destruction_inside": flag("visible_inside_destruction_zone"),
+        "destruction_outside": flag("visible_outside_destruction_zone"),
+    })
+}
+
+/// A BMD capture location (`CaptureLocation`); the links index the BMD's own buildings.
+fn bmd_capture(c: &Capture) -> Json {
+    let links = c
+        .links
+        .iter()
+        .map(|&i| {
+            serde_json::json!({
+                "serialise_version": 0, "building_index": i, "prefab_index": 0, "prefab_building_key": "", "uid": 0, "prefab_uid": 0,
+                "building_reference": { "serialise_version": 0, "building_index": 0 },
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "id": 0, "location": json_point(c.flag.0, c.flag.1), "radius": jf(c.radius), "valid_for_min_num_players": c.min_players,
+        "valid_for_max_num_players": c.max_players,
+        "capture_point_type": if c.major { "CAPTURE_LOCATION_MAJOR" } else { "CAPTURE_LOCATION_MINOR" }, "restore_type": "",
+        "location_points": json_points(&c.points), "database_key": c.key, "flag_facing": json_point(c.facing.cos(), -c.facing.sin()),
+        "destroy_building_on_capture": false, "disable_building_abilities_when_no_original_owner": false, "abilities_affect_globally": false,
+        "building_links": links, "toggle_slots_links": [], "ai_hints_links": [], "script_id": "", "is_time_based": false,
+    })
+}
+
+/// The civilian deployment zones (`CivilianDeploymentZone`s) of the placed nodes as a `CivilianDeploymentList`'s items.
+fn civilian_json(placed: &[&Placed], extent_z: f32) -> Vec<Json> {
+    placed
+        .iter()
+        .filter(|p| p.node.class == "CivilianDeploymentZone")
+        .map(|p| {
+            let pts = polygon_points(p, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect::<Vec<_>>();
+            let attr = |k: &str| p.node.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+            serde_json::json!({ "kind": attr("civilian_type"), "size": attr("civilian_amount"), "area": { "points": json_points(&pts) } })
+        })
+        .collect()
+}
+
+/// `civilian_deployment.bin`: the civilian deployment zones of the normal layers (written when there are some; tiles that ship it
+/// empty carry it in the project).
+fn civilian_deployment(placed: &[Placed], extent_z: f32) -> Result<Option<Document>, String> {
+    let normal = placed.iter().filter(|p| p.export == "LayerExportType_Normal").collect::<Vec<_>>();
+    let zones = civilian_json(&normal, extent_z);
+    if zones.is_empty() {
+        return Ok(None);
+    }
+
+    let v = serde_json::json!({ "serialise_version": 1, "civilian_deployment_list": { "civilian_deployment_list": zones } });
+    let file: rpfm_lib::files::fastbin_lists::CivilianDeploymentFile = serde_json::from_value(v).map_err(|e| format!("civilian_deployment.bin: {e}"))?;
+    Ok(Some(Document { name: "civilian_deployment.bin".to_owned(), root: crate::serde_node::to_node("CIVILIAN_DEPLOYMENT", &file)? }))
+}
+
+/// `bmd_data_escalation<n>.bin` (BMD version 6 unless told) and its XML twin: an escalation layer's buildings, props, particle emitters,
+/// capture locations (linking into its own buildings), no-go regions, zones and civilian deployment zones. TEd writes a file per
+/// escalation layer, empty or not.
+fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes: &mut CompileNotes) -> Result<Vec<(Document, Document)>, String> {
+    let by_node = by_node(placed);
+    let mut out = vec![];
+    for n in 1..=3 {
+        let export = format!("LayerExportType_Escalation{n}");
+        if !placed.iter().any(|p| p.node.class == "LayerInstance" && p.export == export) {
+            continue;
+        }
+
+        let name = format!("bmd_data_escalation{n}.bin");
+        let version = ctx.marker_versions.and_then(|f| f(&name)).unwrap_or(6);
+        let prop_version = ctx.marker_versions.and_then(|f| f(&format!("{name}/props"))).unwrap_or(2);
+        let layer = placed.iter().filter(|p| p.export == export).collect::<Vec<_>>();
+        let mut unknown_levels = 0;
+        let buildings = layer.iter().filter(|p| p.node.class == "BUILDING_INSTANCE").map(|p| building_record(p, extent_z, ctx, false, &mut unknown_levels)).collect::<Vec<_>>();
+        if unknown_levels > 0 {
+            notes.notes.push(format!("{name}: {unknown_levels} damaged buildings without their destruction levels (starting damage 1)"));
+        }
+
+        let positions = buildings
+            .iter()
+            .filter_map(|b| Some((b.get("key")?.as_str()?.to_owned(), b.get("position").and_then(Value::as_vec3)?)))
+            .map(|(k, p)| (k, p[0] as f32, p[2] as f32))
+            .collect::<Vec<_>>();
+        // Props and emitters grouped by key in the marker table's order, as the markers files.
+        let grouped = |records: Vec<(MarkerKey, Node)>| {
+            let mut first: Vec<MarkerKey> = vec![];
+            for (k, _) in &records {
+                if !first.contains(k) {
+                    first.push(k.clone());
+                }
+            }
+
+            marker_table_order(&first).into_iter().flat_map(|k| records.iter().filter(move |(r, _)| *r == k).cloned().collect::<Vec<_>>()).collect::<Vec<_>>()
+        };
+        let text = |k: &MarkerKey| match k {
+            MarkerKey::Text(s) | MarkerKey::Named(s, _) => s.clone(),
+            MarkerKey::Number(v) => v.to_string(),
+        };
+        let props = grouped(layer.iter().filter_map(|p| prop_record(p, extent_z, 9)).collect());
+        let emitters = grouped(layer.iter().filter(|p| p.node.class == "VFXInstance").map(|p| emitter_record(p, extent_z, 9)).collect());
+        let captures = layer
+            .iter()
+            .filter(|p| p.node.class == "CaptureLocationInstance")
+            .map(|p| bmd_capture(&capture_record(p, &by_node, extent_z, &positions, ctx)))
+            .collect::<Vec<_>>();
+        let outline = |class: &str| {
+            layer
+                .iter()
+                .filter(|p| p.node.class == class)
+                .map(|p| polygon_points(p, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+        let nogo = outline("NOGO_REGION_POLYGON_INSTANCE").iter().map(|o| serde_json::json!({ "outline": json_points(o) })).collect::<Vec<_>>();
+        let zones = outline("ZONE_POLYGON_INSTANCE")
+            .iter()
+            .map(|o| {
+                serde_json::json!({
+                    "battlefield_zone_template": {
+                        "zone_name": "ZONE_POLYGON_INSTANCE", "outline": { "outline": json_points(o) },
+                        "entity_formation_template": { "name": "", "lines": [] },
+                    },
+                    "transform": identity_json(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut v = serde_json::to_value(rpfm_lib::files::bmd::Bmd::default()).map_err(|e| e.to_string())?;
+        v["serialise_version"] = Json::from(version);
+        for section in ["battlefield_building_list", "battlefield_building_list_far", "bmd_outline_list", "capture_location_set", "deployment_list", "prefab_instance_list", "zones_template_list"] {
+            v[section]["serialise_version"] = Json::from(1);
+        }
+
+        v["battlefield_building_list"]["buildings"] = Json::Array(buildings.iter().map(bmd_building).collect());
+        v["prop_list"]["markers"] = Json::Array(props.iter().map(|(k, r)| bmd_prop(&text(k), r, prop_version)).collect());
+        v["particle_emitter_list"]["markers"] = Json::Array(emitters.iter().map(|(k, r)| bmd_emitter(&text(k), r)).collect());
+        if !captures.is_empty() {
+            v["capture_location_set"]["capture_location_sets"] = serde_json::json!([{ "capture_locations": captures }]);
+        }
+
+        v["non_terrain_outlines"]["empire_outline"] = Json::Array(nogo);
+        v["zones_template_list"]["zones"] = Json::Array(zones);
+        v["civilian_deployment_list"]["civilian_deployment_list"] = Json::Array(civilian_json(&layer, extent_z));
+        let twin = bmd_twin(&v, &format!("bmd_data_escalation{n}.xml"));
+        let bmd: rpfm_lib::files::bmd::Bmd = serde_json::from_value(v).map_err(|e| format!("{name}: {e}"))?;
+        out.push((Document { name, root: crate::serde_node::to_node("BMD", &bmd)? }, twin));
+    }
+
+    Ok(out)
+}
+
+/// An element with its attributes in order (the BMD XML twin's).
+fn el(class: &str, attrs: Vec<(&str, String)>) -> Node {
+    let mut n = Node::new(class);
+    for (k, v) in attrs {
+        n.push_read(Sym::new(k), Value::Str(v), None);
+    }
+
+    n
+}
+
+fn el_with(class: &str, attrs: Vec<(&str, String)>, children: Vec<Node>) -> Node {
+    let mut n = el(class, attrs);
+    n.children = children;
+    n
+}
+
+/// The BMD XML twin's texts: floats `%f` of the f32, booleans `true` / `false`.
+fn tf(v: &Json) -> String {
+    wce_formats::c_num::printf_f_msvc(f64::from(v.as_f64().unwrap_or(0.0) as f32), 6)
+}
+
+fn tb(v: &Json) -> String {
+    match v {
+        Json::Bool(b) => b.to_string(),
+        other => (other.as_i64().unwrap_or(0) != 0).to_string(),
+    }
+}
+
+fn ti(v: &Json) -> String {
+    v.as_i64().map_or_else(|| v.to_string(), |i| i.to_string())
+}
+
+fn ts(v: &Json) -> String {
+    v.as_str().unwrap_or_default().to_owned()
+}
+
+/// The `x`, `y` (and `z`) of a point as attributes.
+fn xy(v: &Json, class: &str) -> Node {
+    el(class, vec![("x", tf(&v["x"])), ("y", tf(&v["y"]))])
+}
+
+fn matrix_el(m: &Json) -> Node {
+    let mut attrs = vec![];
+    for r in 0..4 {
+        for c in 0..4 {
+            let k = format!("m{r}{c}");
+            attrs.push((k.clone(), tf(&m[k.as_str()])));
+        }
+    }
+
+    let mut n = Node::new("transform");
+    for (k, v) in attrs {
+        n.push_read(Sym::new(&k), Value::Str(v), None);
+    }
+
+    n
+}
+
+fn array(v: &Json) -> &[Json] {
+    v.as_array().map_or(&[][..], Vec::as_slice)
+}
+
+/// The XML twin TEd writes next to a BMD (`BATTLE_MAP_DEFINITION_DATA`): the same data in its XML serialiser's names, in the binary's
+/// section order (version 5 adds the civilian deployment list, 6 the shelter list).
+fn bmd_twin(v: &Json, name: &str) -> Document {
+    let version = v["serialise_version"].as_i64().unwrap_or(6);
+    let sv = |n: i64| ("serialise_version", n.to_string());
+    let props = array(&v["prop_list"]["markers"])
+        .iter()
+        .map(|p| {
+            let mut attrs = vec![
+                ("serialise_version", ti(&p["serialise_version"])), ("clamp_to_surface", tb(&p["clamp_to_surface"])), ("type", ti(&p["prop_type"])),
+                ("allow_in_outfield", tb(&p["allow_in_outfield"])), ("decal_params_parallax", tf(&p["decal_parallax"])),
+                ("decal_params_scalex", tf(&p["decal_scale"]["x"])), ("decal_params_scaley", tf(&p["decal_scale"]["y"])),
+                ("decal_params_scalez", tf(&p["decal_scale"]["z"])), ("decal_params_tiled", tb(&p["decal_tiled"])),
+            ];
+            if p["serialise_version"].as_i64() == Some(2) {
+                attrs.extend([("is_fauna", tb(&p["is_fauna"])), ("snow", tb(&p["snow"])), ("destruction", tb(&p["destruction"]))]);
+            }
+
+            el_with("PROP", vec![("key", ts(&p["key"]))], vec![el_with("marker", attrs, vec![matrix_el(&p["transform"])])])
+        })
+        .collect();
+    let emitters = array(&v["particle_emitter_list"]["markers"])
+        .iter()
+        .map(|e| {
+            let attrs = vec![
+                ("serialise_version", "4".to_owned()), ("emission_rate", tf(&e["emission_rate"])), ("instance_name", ts(&e["instance_name"])),
+                ("autoplay", tb(&e["autoplay"])), ("scale", tf(&e["scale"])), ("use_in_outfield", tb(&e["use_in_outfield"])),
+                ("snow_inside", tb(&e["snow_inside"])), ("snow_outside", tb(&e["snow_outside"])), ("destruction_inside", tb(&e["destruction_inside"])),
+                ("destruction_outside", tb(&e["destruction_outside"])),
+            ];
+            el_with("PARTICLE_EMITTER", vec![("key", ts(&e["key"]))], vec![el_with("marker", attrs, vec![matrix_el(&e["transform"])])])
+        })
+        .collect();
+    let buildings = array(&v["battlefield_building_list"]["buildings"])
+        .iter()
+        .map(|b| {
+            let pr = &b["properties"];
+            let attrs = vec![
+                ("serialise_version", ti(&b["serialise_version"])), ("building_key", ts(&b["building_key"])), ("position_type", ts(&b["position_type"])),
+                ("starting_damage_unary", tf(&pr["starting_damage_unary"])), ("on_fire", tb(&pr["on_fire"])), ("start_disabled", tb(&pr["start_disabled"])),
+                ("weak_point", tb(&pr["weak_point"])), ("ai_breachable", tb(&pr["ai_breachable"])), ("indestructible", tb(&pr["indestructible"])),
+                ("dockable", tb(&pr["dockable"])), ("toggleable", tb(&pr["toggleable"])), ("lite", tb(&pr["lite"])),
+            ];
+            let (p, q, s) = (&b["position"], &b["orientation"], &b["scale"]);
+            el_with("BUILDING", attrs, vec![
+                el("position", vec![("x", tf(&p["x"])), ("y", tf(&p["y"])), ("z", tf(&p["z"]))]),
+                el("orientation", vec![("i", tf(&q["i"])), ("j", tf(&q["j"])), ("k", tf(&q["k"])), ("w", tf(&q["w"]))]),
+                el("scale", vec![("x", tf(&s["x"])), ("y", tf(&s["y"])), ("z", tf(&s["z"]))]),
+            ])
+        })
+        .collect();
+    let sets = array(&v["capture_location_set"]["capture_location_sets"])
+        .iter()
+        .map(|set| {
+            let locs = array(&set["capture_locations"])
+                .iter()
+                .map(|c| {
+                    let attrs = vec![
+                        ("radius", tf(&c["radius"])), ("valid_for_min_num_players", ti(&c["valid_for_min_num_players"])),
+                        ("valid_for_max_num_players", ti(&c["valid_for_max_num_players"])), ("capture_point_type", ts(&c["capture_point_type"])),
+                        ("database_key", ts(&c["database_key"])),
+                    ];
+                    let indices = el("building_indices", array(&c["building_links"]).iter().map(|l| ("index", ti(&l["building_index"]))).collect());
+                    el_with("CAPTURE_LOCATION", attrs, vec![
+                        xy(&c["location"], "location"),
+                        el_with("location_points", vec![], array(&c["location_points"]).iter().map(|p| xy(p, "point")).collect()),
+                        indices,
+                        xy(&c["flag_facing"], "flag_facing"),
+                    ])
+                })
+                .collect();
+            el_with("CAPTURE_LOCATION_LIST", vec![], vec![el_with("CAPTURE_LOCATION_LIST", vec![], locs)])
+        })
+        .collect();
+    let outline = |o: &Json, class: &str| el_with(class, vec![], array(o).iter().map(|p| xy(p, "position")).collect());
+    let nogo = array(&v["non_terrain_outlines"]["empire_outline"]).iter().map(|o| el_with("EMPIRE_OUTLINE", vec![], vec![outline(&o["outline"], "OUTLINE")])).collect();
+    let zones = array(&v["zones_template_list"]["zones"])
+        .iter()
+        .map(|z| {
+            let t = &z["battlefield_zone_template"];
+            el_with("ZONE", vec![], vec![
+                el_with("BATTLEFIELD_ZONE_TEMPLATE", vec![("zone_name", ts(&t["zone_name"]))], vec![
+                    outline(&t["outline"]["outline"], "OUTLINE"),
+                    el_with("entity_formation_template", vec![("name", String::new())], vec![Node::new("lines")]),
+                ]),
+                matrix_el(&z["transform"]),
+            ])
+        })
+        .collect();
+    let civilians = array(&v["civilian_deployment_list"]["civilian_deployment_list"])
+        .iter()
+        .map(|c| {
+            el_with("CIVILIAN_DEPLOYMENT", vec![sv(1), ("civilian_type", ts(&c["kind"])), ("civilian_amount", ts(&c["size"]))], vec![el_with(
+                "outline",
+                vec![],
+                array(&c["area"]["points"]).iter().map(|p| xy(p, "point")).collect(),
+            )])
+        })
+        .collect();
+
+    let mut root = el("BATTLE_MAP_DEFINITION_DATA", vec![sv(version)]);
+    root.children = vec![
+        el_with("PROPS", vec![], props),
+        el_with("PARTICLE_EMITTERS", vec![], emitters),
+        Node::new("AI_HINT_POLYLINES"),
+        Node::new("AI_HINT_POLYLINE_LISTS"),
+        Node::new("AI_SEPARATORS"),
+        el_with("BATTLE_DEPLOYMENT_AREA_MANAGER", vec![sv(1)], vec![Node::new("BATTLE_DEPLOYMENT_AREA_MANAGER")]),
+        el_with("BATTLEFIELD_BUILDING_LIST", vec![sv(1)], vec![el_with("BUILDINGS", vec![], buildings)]),
+        el_with("BATTLEFIELD_BUILDING_LIST_FAR", vec![sv(1)], vec![Node::new("BUILDINGS")]),
+        el_with("CAPTURE_LOCATION_SET", vec![sv(1)], vec![el_with("CAPTURE_LOCATION_SET", vec![], sets)]),
+        el_with("EF_LINE_LIST", vec![], vec![Node::new("LINES")]),
+        Node::new("GO_OUTLINES"),
+        el_with("NON_TERRAIN_OUTLINES", vec![], nogo),
+        el_with("ZONES_TEMPLATE_LIST", vec![sv(1)], vec![el_with("ZONES", vec![], zones)]),
+        el_with("PREFAB_INSTANCE_LIST", vec![sv(1)], vec![Node::new("PREFAB_INSTANCE")]),
+        el_with("BMD_OUTLINE_LIST", vec![sv(1)], vec![Node::new("BMD_OUTLINES")]),
+        Node::new("TERRAIN_OUTLINES"),
+        Node::new("LITE_BUILDING_OUTLINES"),
+    ];
+    if version >= 5 {
+        root.children.push(el_with("CIVILIAN_DEPLOYMENT_LIST", vec![], civilians));
+    }
+
+    if version >= 6 {
+        root.children.push(Node::new("CIVILIAN_SHELTER_LIST"));
+    }
+
+    Document { name: name.to_owned(), root }
+}
+
 /// The outline files' style: no indentation, single quotes, CRLF.
 fn outline_style() -> crate::xml::DocStyle {
     crate::xml::DocStyle { indent: vec![], ..bmd_xml_style() }
 }
 
 /// The stage-A part of a project's exported tile (TEd's export), as the model `attila.tile_binary` writes: the building lists; the prop,
-/// particle emitter, point light, AI hint, separator and siege graph markers; definition.xml (with its document style).
+/// particle emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas
+/// and capture locations (with their document styles); civilian_deployment.bin; the escalation BMDs and their XML twins.
 ///
 /// # Errors
 ///
@@ -944,6 +1575,12 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
             .collect::<Vec<_>>()
     });
     xml.extend(capture_locations(&placed, extent_z, &main, ctx));
+    docs.extend(civilian_deployment(&placed, extent_z)?);
+    for (bin, twin) in escalation_bmds(&placed, extent_z, ctx, &mut notes)? {
+        docs.push(bin);
+        xml.push((twin, bmd_xml_style()));
+    }
+
     let mut out = Tile { source_format: Some(super::tile_binary::ID), variation: raw.variation.clone(), ..Default::default() };
     for (d, style) in xml {
         out.source.insert(d.name.clone(), std::sync::Arc::new(style));
@@ -1013,6 +1650,41 @@ mod tests {
         assert_eq!(marker_table_order(&numbers(&[21, 23, 27, 22, 28, 30])), numbers(&[27, 28, 30, 21, 22, 23]));
         let many = (0..14).map(|n| n * 13).collect::<Vec<u32>>();
         assert_eq!(marker_table_order(&numbers(&many)).len(), 14);
+    }
+
+    #[test]
+    fn insertion_order_gives_a_bmd_group_order_back() {
+        // tiles4.pack's western_city_b/small, bmd_data_escalation2.bin: the props' groups (24 keys: the table grows from 13 to 27).
+        let order = [
+            "rigidmodels\\decals\\battle\\global_terrain_path_04.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\border_1.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\rubble_3.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_mud_02.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\rubble_4.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_mud_01.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_puddle_01.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\rubble_1.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\dirt_1.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\border_2.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\rubble_2.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\dirt_2.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_cracked_01.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_03.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_rocks_01.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_10.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_puddle_02.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_rocks_04.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\path_plans.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_path_03.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_08.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_09.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_12.rigid_model_v2",
+            "rigidmodels\\decals\\battle\\global_terrain_erossion_06.rigid_model_v2",
+        ]
+        .map(|k| MarkerKey::Text(k.to_owned()));
+        let insertion = marker_insertion_order(&order).expect("an insertion order");
+        assert_eq!(marker_table_order(&insertion), order);
+        assert_ne!(insertion, order);
     }
 
     #[test]
