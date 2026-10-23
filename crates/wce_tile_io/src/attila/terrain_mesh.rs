@@ -47,8 +47,9 @@ pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strengt
 /// appended to `verts`, then per square of the edge (`step` samples) two upright triangles appended to `tris`, top t and bottom b:
 /// z = 0 (t i, t i+s, b i) (t i+s, b i+s, b i); z = h - 1 (t i+s, t i, b i) (t i+s, b i, b i+s); x = 0 (t j, b j, t j+s)
 /// (t j+s, b j, b j+s); x = w - 1 (t j, t j+s, b j) (t j+s, b j+s, b j). The new vertices' flags (`build_base_mesh`) go to `flags`:
-/// [`FRINGE_KEPT`] at the tile's corners and where x and z are both multiples of 16, else [`FRINGE`].
-pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[u32; 3]>, w: usize, h: usize, step: usize) {
+/// [`FRINGE_KEPT`] at the tile's corners and where x and z are both multiples of the kind's modulus, else [`FRINGE`].
+pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[u32; 3]>, w: usize, h: usize, kind: MeshKind) {
+    let step = kind.step;
     let mut edge = |tops: Vec<usize>, tri: &dyn Fn(u32, u32, u32, u32) -> [[u32; 3]; 2]| {
         let base = verts.len();
         for &t in &tops {
@@ -58,7 +59,7 @@ pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[
             verts.push(v);
             let (x, z) = (v.x as usize, v.z as usize);
             let corner = (x == 0 || x == w - 1) && (z == 0 || z == h - 1);
-            flags.push(if corner || (x % 16 == 0 && z % 16 == 0) { FRINGE_KEPT } else { FRINGE });
+            flags.push(if corner || (x % kind.modulus == 0 && z % kind.modulus == 0) { FRINGE_KEPT } else { FRINGE });
         }
 
         let n = tops.len();
@@ -74,16 +75,28 @@ pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[
     edge((0..h).map(|z| z * w + w - 1).collect(), &|t0, t1, b0, b1| [[t0, t1, b0], [t1, b1, b0]]);
 }
 
-/// The vertex flags of a battle tile alone (`build_base_mesh`, step 1): locked near the edge, where the cell of x - 1, x + 1, z - 1 or
-/// z + 1 (rounded down) is off the tile (so the border, and the column and row next to the far edges: x and z >= size - 2), and every
-/// 16th sample both ways; the rest free; and locked where `protection_map.dds` (`cells x 128` square, R32F) is above 0.5: vertex
-/// (x, z) reads its row z - 1.
-pub fn grid_flags(w: usize, h: usize, protection: Option<(&[f32], usize, usize)>) -> Vec<u8> {
+/// Infield (`mesh.rigid_model_v2`) and outfield (`outfield_mesh.rigid_model_v2`) numbers of `build_base_mesh` for a battle tile:
+/// the grid's step, and the modulus of the samples locked inside (and of the fringe's kept bottoms).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshKind {
+    pub step: usize,
+    pub modulus: usize,
+}
+
+pub const INFIELD: MeshKind = MeshKind { step: 1, modulus: 16 };
+pub const OUTFIELD: MeshKind = MeshKind { step: 16, modulus: 2048 };
+
+/// The vertex flags of a battle tile alone (`build_base_mesh`, step 1): locked near the edge, where the cell of x - s, x + s, z - s
+/// or z + s (rounded down) is off the tile (s the grid's step: the border, and x and z >= size - 1 - s, BOB's asymmetry), and where
+/// x and z are both multiples of the kind's modulus; the rest free; and locked where `protection_map.dds` (`cells x 128` square,
+/// R32F) is above 0.5: vertex (x, z) reads its row z - 1.
+pub fn grid_flags(w: usize, h: usize, kind: MeshKind, protection: Option<(&[f32], usize, usize)>) -> Vec<u8> {
+    let s = kind.step;
     let mut out = Vec::with_capacity(w * h);
     for z in 0..h {
         for x in 0..w {
-            let edge = x == 0 || z == 0 || x + 2 >= w || z + 2 >= h;
-            let mut flag = if edge || (x % 16 == 0 && z % 16 == 0) { LOCKED } else { FREE };
+            let edge = x < s || z < s || x + 1 + s > w - 1 || z + 1 + s > h - 1;
+            let mut flag = if edge || (x % kind.modulus == 0 && z % kind.modulus == 0) { LOCKED } else { FREE };
             if let Some((p, pw, ph)) = protection
                 && z >= 1
                 && z - 1 < ph
@@ -618,27 +631,59 @@ pub fn f16_bits(v: f32) -> u16 {
     sign | out as u16
 }
 
-/// `mesh.rigid_model_v2` as BOB writes a tile's mesh (`TERRAIN_MESH_WRITER_V2`, one LOD, one block): the triangles' vertices numbered
-/// by first use (the vertex list cleaner), each as f16 x, height, z, alpha; u16 indices. The header: RMV2 version 6, 1 LOD, a zero
-/// skeleton name; the LOD's block count, vertex and index bytes, its offset (0xa0) and distance (70); the block's type 0x61, size,
-/// header size 0xa8, vertex count, index offset and count, the bounds of the f32 positions, the shader `rigid_default` (BOB leaves
-/// the rest of its 32 bytes uninitialised: zeros here), `TerrainBase0`, 32 zeros, the tile's size in metres x and z, its samples per
-/// row, 1, 16 and the count of the surface's indices (`surface` triangles come first).
-pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], surface: usize, size: (u32, u32), row: u32) -> Vec<u8> {
-    let mut number = vec![u32::MAX; verts.len()];
-    let mut order = vec![];
-    let mut indices = Vec::with_capacity(tris.len() * 3);
-    for &i in tris.iter().flatten() {
-        if number[i as usize] == u32::MAX {
-            number[i as usize] = order.len() as u32;
-            order.push(i);
-        }
-
-        indices.push(number[i as usize] as u16);
+/// `mesh.rigid_model_v2` as BOB writes a tile's mesh (`TERRAIN_MESH_WRITER_V2`, one LOD). The `MESH_SPLITTER` (`FUN_10004970`) cuts
+/// the triangle list into blocks: a block takes triangles until it holds 65,000 vertices or more, and the triangle that filled it
+/// starts the next block again; a block's vertices are numbered by first use (the vertex list cleaner), each as f16 x, height, z,
+/// alpha; its indices u16. The header: RMV2 version 6, 1 LOD, a zero skeleton name; the LOD's block count, vertex and index bytes,
+/// its offset (0xa0) and distance (70). Per block: type 0x61, size, header size 0xa8, vertex count, index offset and count, the
+/// bounds of the whole mesh's f32 positions, the shader `rigid_default` (BOB leaves the rest of its 32 bytes uninitialised: zeros
+/// here), `TerrainBase<k>` (the block's number), 32 zeros, the tile's size in metres x and z, its samples per row, 1, 16, the count
+/// of the block's indices of `is_surface` triangles; its vertices, indices.
+pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) -> bool, size: (u32, u32), row: u32) -> Vec<u8> {
+    struct Block {
+        order: Vec<u32>,
+        indices: Vec<u16>,
+        surface: u32,
     }
 
+    let mut blocks = vec![];
+    let mut number = vec![u32::MAX; verts.len()];
+    let mut block = Block { order: vec![], indices: vec![], surface: 0 };
+    let mut k = 0;
+    while k < tris.len() {
+        let t = &tris[k];
+        for &i in t {
+            if number[i as usize] == u32::MAX {
+                number[i as usize] = block.order.len() as u32;
+                block.order.push(i);
+            }
+
+            block.indices.push(number[i as usize] as u16);
+        }
+
+        if is_surface(t) {
+            block.surface += 3;
+        }
+
+        // The splitter moves to the next triangle only while the block has room: the triangle that fills a block starts the next
+        // one again (BOB's blocks share it).
+        if block.order.len() < 65_000 {
+            k += 1;
+            continue;
+        }
+
+        for &i in &block.order {
+            number[i as usize] = u32::MAX;
+        }
+
+        blocks.push(std::mem::replace(&mut block, Block { order: vec![], indices: vec![], surface: 0 }));
+    }
+
+    if !block.indices.is_empty() || blocks.is_empty() {
+        blocks.push(block);
+    }
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for &i in &order {
+    for &i in blocks.iter().flat_map(|b| &b.order) {
         let v = &verts[i as usize];
         for (k, c) in [v.x, v.h, v.z].into_iter().enumerate() {
             lo[k] = lo[k].min(c);
@@ -646,42 +691,155 @@ pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], surface: usize, size: (u32, u32
         }
     }
 
-    let (vbytes, ibytes) = (order.len() as u32 * 8, indices.len() as u32 * 2);
+    let vbytes = blocks.iter().map(|b| b.order.len() as u32 * 8).sum::<u32>();
+    let ibytes = blocks.iter().map(|b| b.indices.len() as u32 * 2).sum::<u32>();
     let mut o = b"RMV2".to_vec();
     let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
     put(&mut o, 6);
     put(&mut o, 1);
     o.resize(0x8c, 0);
-    for v in [1, vbytes, ibytes, 0xa0, 70.0f32.to_bits(), 0x61, 0xa8 + vbytes + ibytes, 0xa8, order.len() as u32, 0xa8 + vbytes, indices.len() as u32] {
+    for v in [blocks.len() as u32, vbytes, ibytes, 0xa0, 70.0f32.to_bits()] {
         put(&mut o, v);
     }
 
-    for v in lo.into_iter().chain(hi) {
-        put(&mut o, v.to_bits());
-    }
+    for (k, b) in blocks.iter().enumerate() {
+        let (vb, ib) = (b.order.len() as u32 * 8, b.indices.len() as u32 * 2);
+        for v in [0x61, 0xa8 + vb + ib, 0xa8, b.order.len() as u32, 0xa8 + vb, b.indices.len() as u32] {
+            put(&mut o, v);
+        }
 
-    let name = |o: &mut Vec<u8>, s: &str| {
-        let start = o.len();
-        o.extend_from_slice(s.as_bytes());
-        o.resize(start + 32, 0);
-    };
-    name(&mut o, "rigid_default");
-    name(&mut o, "TerrainBase0");
-    o.resize(o.len() + 32, 0);
-    for v in [size.0, size.1, row, 1, 16, surface as u32 * 3] {
-        put(&mut o, v);
-    }
+        for v in lo.into_iter().chain(hi) {
+            put(&mut o, v.to_bits());
+        }
 
-    for &i in &order {
-        let v = &verts[i as usize];
-        for c in [v.x, v.h, v.z, v.alpha] {
-            o.extend_from_slice(&f16_bits(c).to_le_bytes());
+        let name = |o: &mut Vec<u8>, s: &str| {
+            let start = o.len();
+            o.extend_from_slice(s.as_bytes());
+            o.resize(start + 32, 0);
+        };
+        name(&mut o, "rigid_default");
+        name(&mut o, &format!("TerrainBase{k}"));
+        o.resize(o.len() + 32, 0);
+        for v in [size.0, size.1, row, 1, 16, b.surface] {
+            put(&mut o, v);
+        }
+
+        for &i in &b.order {
+            let v = &verts[i as usize];
+            for c in [v.x, v.h, v.z, v.alpha] {
+                o.extend_from_slice(&f16_bits(c).to_le_bytes());
+            }
+        }
+
+        for &i in &b.indices {
+            o.extend_from_slice(&i.to_le_bytes());
         }
     }
 
-    for i in indices {
-        o.extend_from_slice(&i.to_le_bytes());
+    o
+}
+
+/// The records of a kit table (`raw_data/db/<table>.xml`): per record its fields, in order.
+fn kit_table(raw_data: &std::path::Path, name: &str) -> Vec<Vec<(String, String)>> {
+    let text = std::fs::read_to_string(raw_data.join("db").join(format!("{name}.xml"))).unwrap_or_default();
+    let open = format!("<{name} ");
+    text.split(&open)
+        .skip(1)
+        .map(|rec| {
+            let rec = rec.split(&format!("</{name}>")).next().unwrap_or_default();
+            rec.split('<')
+                .filter_map(|t| {
+                    let (tag, value) = t.split_once('>')?;
+                    (!tag.starts_with('/') && !tag.contains(' ')).then(|| (tag.to_owned(), value.to_owned()))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A file of the kit by its path below `raw_data`, whatever the case of its name (BOB runs on Windows).
+fn kit_file(raw_data: &std::path::Path, rel: &str) -> Option<std::path::PathBuf> {
+    let p = raw_data.join(rel.replace('\\', "/"));
+    let name = p.file_name()?.to_str()?.to_lowercase();
+    std::fs::read_dir(p.parent()?).ok()?.flatten().map(|e| e.path()).find(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase() == name))
+}
+
+/// A building's height mesh and its [`stamp_matrix`].
+pub type Stamp = (std::sync::Arc<HeightMesh>, [f32; 16]);
+
+/// The height-mesh stamps of a project's buildings (BOB_Tile `FUN_1000bb10`): each `BUILDING_INSTANCE` whose `battlefield_buildings`
+/// row has `height_map_mesh` 1, its [`HeightMesh`] from `models_building.cs2_file` under the kit's `raw_data`, and its
+/// [`stamp_matrix`]. The keys without a mesh file come back apart (BOB fails the tile: "Height map mesh file ... is missing").
+pub fn building_stamps(raw: &wce_tile_model::Tile, raw_data: &std::path::Path) -> (Vec<Stamp>, Vec<String>) {
+    let get = |r: &Vec<(String, String)>, k: &str| r.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let with_mesh = kit_table(raw_data, "battlefield_buildings").iter().filter(|r| get(r, "height_map_mesh") == "1").map(|r| get(r, "key")).collect::<std::collections::HashSet<_>>();
+    let cs2 = kit_table(raw_data, "models_building").iter().map(|r| (get(r, "key"), get(r, "cs2_file"))).collect::<std::collections::HashMap<_, _>>();
+    let mut meshes = std::collections::HashMap::new();
+    let (mut out, mut missing) = (vec![], vec![]);
+    for (key, world) in super::compile::buildings(raw) {
+        if !with_mesh.contains(&key) {
+            continue;
+        }
+
+        let mesh = meshes.entry(key.clone()).or_insert_with(|| {
+            let path = cs2.get(&key).and_then(|c| kit_file(raw_data, c))?;
+            let f = wce_formats::cas2::Cas2File::parse(&std::fs::read(path).ok()?).ok()?;
+            Some(std::sync::Arc::new(HeightMesh::of(&f)))
+        });
+        match mesh {
+            Some(m) => out.push((m.clone(), stamp_matrix(&world))),
+            None if !missing.contains(&key) => missing.push(key),
+            None => {}
+        }
     }
 
-    o
+    (out, missing)
+}
+
+/// The decimation angle of the kit's battle tiles (`_tile_database/_settings.xml`, `CONVERSION_PARAMS`
+/// `triangle_decimation_angle_factors0`; 20 degrees in the vanilla kit and when missing).
+pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
+    let text = std::fs::read_to_string(raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
+    text.split("triangle_decimation_angle_factors0=\"").nth(1).and_then(|t| t.split('"').next()).and_then(|v| v.parse().ok()).unwrap_or(20.0)
+}
+
+/// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2` and
+/// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it), from the project's height map, the variation's
+/// numbers and `protection_map.dds`.
+///
+/// # Errors
+///
+/// The project has no 16-bit height map.
+pub fn terrain_files(raw: &wce_tile_model::Tile, angle: f32, stamps: &[Stamp]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use super::bob_tile::{CELL, HeightNumbers, chmf, final_heights, influence};
+    let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
+    let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
+    let n = HeightNumbers::of(raw);
+    let (heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, n.scale, n.min_height);
+    let alpha = influence(CELL, (w - 1) / CELL, (h - 1) / CELL);
+    let base = grid_vertices(&heights, &alpha, w, h, n.normal_strength);
+    let prot = protection_map(raw);
+    let prot = prot.as_ref().map(|(p, pw, ph)| (p.as_slice(), *pw, *ph));
+    let cos = cos_degrees(angle);
+    let mut out = vec![];
+    for (name, kind) in [("outfield_mesh.rigid_model_v2", OUTFIELD), ("mesh.rigid_model_v2", INFIELD)] {
+        let mut verts = base.clone();
+        let mut flags = grid_flags(w, h, kind, prot);
+        let mut grid = grid_triangles(w, h, kind.step);
+        add_fringe(&mut verts, &mut flags, &mut grid, w, h, kind);
+        let list = merge(&verts, &flags, &grid, cos);
+        let is_surface = |t: &[u32; 3]| !t.iter().any(|&i| verts[i as usize].fringe);
+        let surface = list.iter().filter(|t| is_surface(t)).copied().collect::<Vec<_>>();
+        out.push((name.to_owned(), rmv2(&verts, &list, is_surface, ((w - 1) as u32, (h - 1) as u32), w as u32)));
+        if kind == INFIELD {
+            let mut field = rasterise(&verts, &surface, w, h);
+            for (mesh, m) in stamps {
+                rasterise_max_heights(mesh, m, &mut field, w, h);
+            }
+
+            out.push(("hf_height_map.data".to_owned(), chmf(&field, w, h)));
+        }
+    }
+
+    Ok(out)
 }

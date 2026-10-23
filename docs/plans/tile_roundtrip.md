@@ -262,8 +262,9 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   Terrain mesh surface (grid, flags with the protection map, `TRIANGLE_MERGER`) exact on 2 tiles; rasterised, the CHMF is byte for
   byte on terrain_rolling_hills_med/2x2/ae (no stamps) and, with the buildings' height meshes stamped (a CS2 reader for the kit's
   raw models), on farm_western/1x1/aa.
-  `mesh.rigid_model_v2` (fringe, merger, writer) byte for byte on both tiles but BOB's uninitialised shader name tail.
-  Next: `outfield_mesh`, the water map. Still to wire: the CHMF into
+  `mesh.rigid_model_v2` and `outfield_mesh.rigid_model_v2` (fringe, merger, splitter, writer) byte for byte on 4 tiles (the 8-block
+  western_city_b/small included) but BOB's uninitialised shader name tails; `terrain_mesh::terrain_files` builds all three.
+  Next (the small ones, user 2026-10-23): `terrain_outlines.xml`, `tile.agf`, the water map; then wiring stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
   (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
