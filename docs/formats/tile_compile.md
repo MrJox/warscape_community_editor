@@ -145,6 +145,14 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
 - **Ground types** (the same function): per pixel of the tile without its 128-pixel border the strongest group of the blend map (ties to
   red, green, blue, alpha) as its `ground_type_from_texture_group`, a colour of `ground_type_map.png`'s palette over it. Written by
   `IMAGE::save_raw_to_file`: L8, no mips.
+- **Normal map** (`FUN_10012a00` -> `FUN_10021300`, `calculate_normal`; written as `tile_normal.tga`): the heights in metres (the
+  16-bit samples x the f32 of 1 / 65535, x scale + min height), per pixel the Sobel gradients (x: 1 0 -1 / 2 0 -2 / 1 0 -1, y its
+  transpose, samples clamped at the edges) / 9, (gx, gy, 1 / normal strength) normalised, each component (n + 1) x 0.5 x 255 truncated
+  (R x, G y, B z, A 255). All in f32: the x87 runs at 24-bit precision here (a Direct3D device's FPU setting, most likely), unlike the
+  blend compression (one pixel of terrain_rolling_hills_med/2x2/ae tells them apart).
+- **`normal.dds`** (`FUN_10087420`): each pixel to (B 0, G y, R 255, A x), DXT5 like the others; none for a flat map (every pixel 127,
+  127, 255: the variation's `normal_common` becomes `terrain/textures/common/flat_normal.dds`).
+- `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
 - **ATI's DXT5 compressor** (`ATI_TC_ConvertTexture`, statically linked; `ati_dxt`): the 2008 ATI_Compress, ported from AMD
@@ -154,6 +162,7 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     ends, the errors in four lanes summed (l0 + l2) + (l1 + l3), no early exit; the colour index vector the same way;
   - the alpha part is single float operations (the x87's stored results are the f32 ones);
   - a float endpoint becomes a byte through int (`(BYTE)256.0f` = 0: an all-255 alpha block is written 0, 255).
-- Measured: blend, index and ground types byte for byte on farm_western/1x1/aa, terrain_rolling_hills_med/1x1/aa and
-  western_city_b/small, but 2 colour blocks of western_city_b/small's index (of 133,000): the 2008 refinement reads, for the padding of
+- Measured: blend, index, normal and ground types byte for byte on farm_western/1x1/aa, terrain_rolling_hills_med/1x1/aa and /2x2/ae
+  (40 m of relief), blend, index and ground types on western_city_b/small (BOB stops before its normal map: the kit lacks its buildings'
+  height-map meshes), but 2 colour blocks of western_city_b/small's index (of 133,000): the 2008 refinement reads, for the padding of
   a 4-colour group, error and colour slots it never writes (its stack), so a stale NaN can stop a refinement pass in rare blocks.
