@@ -135,6 +135,17 @@ text's precision; quaternions within 1e-5 but the 6 not unit; every `building_li
 
 ## Stage B: BOB's Tile processor (`attila::bob_tile`, `attila::ati_dxt`)
 
+**In the compile** (`attila::stage_b`): `compile` with `CompileContext::stage_b` adds stage B's files to the exported tile, read back
+through `attila.tile_binary` (maps, documents, files): `bob_tile::textures` and `terrain_mesh::terrain_files` (but the two DDS BOB leaves
+in the raw folder). It needs the kit's `raw_data` (`_settings.xml`, the linking tiles, the db tables and the buildings' raw height-map
+meshes) and a model lookup (`stage_b::pack_models`: the game's packs, for the water planes). A building without its raw height-map mesh
+becomes a note (BOB itself then writes no `hf_height_map.data` nor `terrain_outlines.xml`).
+
+Against the shipped packs (`tile_decompile_check` with `WCE_COMPILE_KIT=1 WCE_COMPILE_STAGE_B=1`), the kit's raw tiles give byte-identical
+textures on most tiles (20 tiles of five families: blend 16, index 15, normal 13 of 19, ground types 19 of 19; none on the two
+atlantic_mountains tiles, whose kit is not the shipped version). The meshes, CHMF and outlines never match there: CA's pipeline writes terrain blocks of another type (66, a 164-byte header,
+fewer vertices) and CRLF outline files. The kit's BOB is the reference for those, and the oracles match it.
+
 BOB's own intermediates (`final_heights.dds`, `final_alpha.dds`, `tile_normal.tga`) are not inputs: BOB rebuilds them from TEd's raw files
 (deleted, a fresh run writes them again, every output the same). Check: `bob_tile_check <raw tile> <BOB's working tile>` against a fresh
 run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).

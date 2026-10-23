@@ -8,6 +8,7 @@ pub mod images;
 pub mod schema;
 pub mod terrain_mesh;
 pub mod river;
+pub mod stage_b;
 pub mod terrain_outlines;
 pub mod tile_links;
 pub mod compile;
