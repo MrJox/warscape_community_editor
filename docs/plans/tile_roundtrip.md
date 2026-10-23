@@ -253,7 +253,10 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
     circles at their polygon's position. `WCE_COMPILE_KIT=1` compiles the kit's raw tiles: deployment and capture files as the packs'.
   - `vegetation_exclusion.xml` (4 encampments) is carried: TEd's box comes from the editor's loaded models (not reproduced).
   - Stage B owns `civilian_shelter.bin` (capacities not in tile.ted).
-  - Next: stage B.
+  - Stage A done but the carried `vegetation_exclusion.xml`.
+- **Stage B in progress**: blend, index (ATI's DXT5 compressor ported, 2008 corrections from the binary) and ground types byte for byte
+  against fresh BOB on 3 tiles (2 blocks of 133k off: BOB's unset stack). Next: `normal.dds` (BOB's `tile_normal.tga` from the
+  heights), the CHMF (`final_heights` + building stamps), the water map, the meshes.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its
