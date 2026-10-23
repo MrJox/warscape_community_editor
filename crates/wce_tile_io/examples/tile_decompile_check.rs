@@ -382,9 +382,26 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             } else {
                 None
             };
-            let (compiled, cnotes) = compile(kit_project.as_ref().unwrap_or(&back), &cctx)?;
+            // A panic in the compile (stage B on a project it does not expect) is a problem of this tile, not the run's end.
+            let project = kit_project.as_ref().unwrap_or(&back);
+            let (compiled, cnotes) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile(project, &cctx))) {
+                Ok(r) => r?,
+                Err(p) => {
+                    let what = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
+                    local.compile_beyond += 1;
+                    local.problems.push(format!("{name}: the compile panicked: {what}"));
+                    *local.losses.entry("compile panicked".to_owned()).or_default() += 1;
+                    (wce_tile_model::Tile::default(), Default::default())
+                }
+            };
             for n in &cnotes.notes {
-                *local.losses.entry(format!("compile: {}", n.split(" (").next().unwrap_or(n))).or_default() += 1;
+                // Stage B's refusals keep their reason, numbers masked; other notes their head.
+                let key = if n.starts_with("stage B not compiled") {
+                    n.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect::<String>()
+                } else {
+                    n.split(" (").next().unwrap_or(n).to_owned()
+                };
+                *local.losses.entry(format!("compile: {key}")).or_default() += 1;
             }
 
             // Stage B's files, both tiles written by the binary writer, compared byte for byte.

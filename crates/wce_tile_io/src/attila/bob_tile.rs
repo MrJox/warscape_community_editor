@@ -424,8 +424,16 @@ fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: O
 
 /// BOB's final heights (`final_heights.dds`): the height map without its one-cell border, in metres (as [`normal_map`] reads them),
 /// times the tile's [`influence`]. With the size, `(w / 128 - 2) * 128 + 1` by the same of `h`.
-pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, links: &InfluenceLinks) -> (Vec<f32>, usize, usize) {
+///
+/// # Errors
+///
+/// The height map is not `(cells + 2) x T` samples each way (a border subtile of T samples all round).
+pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, links: &InfluenceLinks) -> Result<(Vec<f32>, usize, usize), String> {
     let (t, scale, min_height) = (n.tri_density, n.scale, n.min_height);
+    if heights.len() != w * h || !w.is_multiple_of(t) || !h.is_multiple_of(t) || w < 3 * t || h < 3 * t {
+        return Err(format!("a height map of {w} x {h} is not a tile of {t} samples per subtile with a border subtile"));
+    }
+
     let (cw, ch) = (w / t - 2, h / t - 2);
     let (fw, fh) = (cw * t + 1, ch * t + 1);
     let alpha = influence(t, cw, ch, links);
@@ -437,7 +445,7 @@ pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, lin
         }
     }
 
-    (out, fw, fh)
+    Ok((out, fw, fh))
 }
 
 /// `hf_height_map.data` from heights in metres (`COMPRESSED_HEIGHT_MAP::convert`, Warscape.AssemblyKit.dll 0x104ac240, with one metre

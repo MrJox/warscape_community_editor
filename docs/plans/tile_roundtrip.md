@@ -286,6 +286,12 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   Stage B is wired into the compile (`CompileContext::stage_b`, `attila::stage_b`): the compiled tile carries every stage-B file. Against
   the shipped packs the kit's raw tiles give the same textures on most tiles; the packs' meshes, CHMF and outlines come from CA's own
   pipeline (another terrain block type, CRLF), so the kit's BOB stays the reference for those.
+  Corpus (2026-10-24, `tile_decompile_check` with `WCE_COMPILE_STAGE_B=1`, every pack tile, 28 min): 1,654 tile folders decompile and
+  read back, none panics. Stage B compiles 1,028 decompiled projects and refuses 626 with a note: 485 densities that do not divide
+  128 (the campaign tiles' and some coarse lakes'), 141 projects without a blend map (campaign). Its files against the packs differ
+  almost everywhere, as expected: a decompiled project only approximates BOB's inputs (heights from the CHMF, the blend map from the
+  DDS) and the packs are CA's pipeline. civilian_shelter.bin: 350 of 350 trees the same (209 byte for byte, 141 carried empty).
+  Stage A: 16 values beyond the text's precision, the known kinds (escalation BMD and prop transforms, definition, deployment).
   Still open in stage B: the DXT5 residual (see "Unverified"). The kit lacks most
   buildings' raw height-map meshes (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without
   such buildings.

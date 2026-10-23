@@ -1063,7 +1063,12 @@ pub fn terrain_files(
     let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
     let n = HeightNumbers::of(raw);
     let t = n.tri_density;
-    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links);
+    // BOB's mesh steps (1, 8, 16) and its 128-metre subtile assume a density dividing 128; with another the fringe's pairs run past
+    // the subtile (BOB asserts "base_index1 < vertices.size()").
+    if t == 0 || 128 % t != 0 {
+        return Err(format!("raw_data_tri_density {t} does not divide 128"));
+    }
+    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
     super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
     // BOB writes these two into the raw folder: the blended final heights and the influence (with the links).
     let mut out = vec![

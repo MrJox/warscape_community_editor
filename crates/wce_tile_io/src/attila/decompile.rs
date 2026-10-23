@@ -1525,12 +1525,21 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
     let border_cells = vi.map_or(1.0, |v| *row.variations()[v].overlap_border_size()) as u32;
     if let Some((raster, min, range)) = height_map(binary, (*row.width(), *row.height()), border_cells, &mut losses) {
+        // The height map's samples per subtile (the binary's; some shipped tiles are coarser than their entry says).
+        let ppc = raster.width / (*row.width() + 2 * border_cells).max(1);
         out.maps.push(TileMap { kind: MapKind::Height, index: 0, raster });
 
         // The variation's numbers become the binary's, so the raw values are its samples.
         if let Some(v) = vi
             && let Some(vn) = entry.child_mut("VARIATIONS").and_then(|vs| vs.children.get_mut(v))
         {
+            // So does its density: the project's height map has the binary's samples per subtile.
+            let density = vn.get("raw_data_tri_density").and_then(Value::as_int);
+            if density != Some(i64::from(ppc)) && ppc > 0 {
+                losses.note(format!("entry: {variation} raw_data_tri_density {density:?} -> {ppc} (the binary's heights' samples per subtile)"));
+                vn.set("raw_data_tri_density", i(ppc));
+            }
+
             let (old_min, old_scale) = (vn.get("min_height").and_then(Value::as_f64), vn.get("scale").and_then(Value::as_f64));
             if old_min != f(min).as_f64() || old_scale != f(range).as_f64() {
                 losses.note(format!("entry: {variation} min_height / scale {old_min:?} / {old_scale:?} -> {min} / {range} (the binary's heights)"));
