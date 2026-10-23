@@ -158,8 +158,57 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   or its two sides differ. Per sample, `lerp(i, a, b)`: in the first half of the cell (`i < (k + 1) / 2`) from side a to 1,
   `t = clamp(i - 2, 0, 5000) / ((k + 0.5) / 2)`, `(1 - a) t + a`; in the second half the same from side b with `k - i`. The value is
   `v = lerp_y x lerp_x x lerp_y(lerp_x(corners above), lerp_x(corners below)) x 2.1`, the influence `(1 - 1 / powf(e, v^2)) / 0.9878448`
-  (e as the f32 2.7182817). Byte for byte on terrain_rolling_hills_med/2x2/ae (tile links, which open a side to a neighbour, not
-  ported).
+  (e as the f32 2.7182817). Cells overlap on their shared edges; the later cell wins.
+  - **Tile links in the influence** (ToolDataBuilderDll `FUN_10013a40` calls the builder, `bob_tile::InfluenceLinks`). These links
+    count: their tile set has a `linking_tile` in `_settings.xml`, and their test is `TLT_EQUALS`.
+    - `links`: the links without `no_offline_blend` (sea links always).
+    - `extra`: the sea links, plus the links to the tile's own set on a tile that tiles with itself (`FUN_10016250`). Such a tile is
+      1 x 1 with exactly two blending non-sea links on opposite sides, and both their linking tiles start with its location.
+    - Link points are inverted to rows down: `(x, height - 1 - y)`.
+    - A point of `links` outside the tile, or on its first row or column (BOB tests `< 1`), opens the side of the cell it touches.
+    - With `extra` points, BOB builds a second map without `links`. Every side starts at 0. The extra points set the sides and corners
+      they touch, and then these rules apply:
+      - a corner whose two sides are 1 is 1;
+      - left, up and up-right set gives right (and the mirror);
+      - an inner side next to a corner of 1 is 1.
+
+      The influence is the larger of the two maps.
+    - The final heights and `final_alpha.dds` use the full influence. The mesh's vertex alpha uses the one built without `links`
+      (BOB's mesh pass passes false).
+  - **The link blend** (`FUN_10015fd0`, after the influence, before the meshes; `attila::tile_links`). It runs on links with a linking
+    tile, `TLT_EQUALS` and no `no_offline_blend`, sea links first. A tile that tiles with itself goes first to
+    `apply_straight_self_tiling` (`FUN_10016410`, `tile_links::straight_self_tiling`); when that applies, nothing else is blended.
+    - **Straight self tiling.** The two blending links must lie on opposite sides. Count the non-sea `TLT_EQUALS` links (with
+      `no_offline_blend` too) and note any sea one. The source is the tile's own field when both links' linking tiles end with its
+      variation's location.
+    - For each column i (links left and right) or row i (above and below): t = `clamp(i x (1 / blend), 0, 1)` (x87, rounded to f32),
+      and the line eases into its mirror:
+      - left and right, two links and no sea: `(1 - t) c[j][i] + c[j][size - i] t` from a copy of the source, then every row
+        averaged with its mirror row from a copy of the result;
+      - left and right otherwise: `f[j][size - i] t + (1 - t) s[j][i]`, on the live field;
+      - above and below: with two links in all (two such, no sea), first each row averaged with its mirror column into both; then
+        `(1 - t) s[i][j] + f[size - i][j] t`.
+    - Exact: river_shallow/1x1_blend/aa and roads/1x1_straight/aa (two links), sea_coast/1x1/1x1_aa (sea links). No vanilla tile
+      links above and below, so that branch is unchecked.
+    - For each link, the rotations 0 to 3 (`FUN_10015610`):
+      - rotate the link's `base_x`, `base_y` in the linking tile's size (`TILE_MAP::rotate_in_tile_space`: (x, y), (h-1-y, x),
+        (w-1-x, h-1-y), (y, w-1-x));
+      - if a link target is next to the link point, skip unless a target is at (link x + rx, link y - ry);
+      - the cell is the rotated base plus the inverted link point, and must lie in the tile;
+      - load the linking tile's `final_heights.dds` (`height_map_0` when it is the tile itself; png first, / 65535), turned by the
+        rotation.
+    - The region (`FUN_100148a0`): for each side of the cell the inverted link point lies past, two triangles over a `blend_size`
+      strip along that side, weight 1 on the edge and 0 inside (or the 4-point `blend_quad`). Before the right or bottom strip, the
+      cell's corner moves back by `max((blend / 128 - 1) x 128, 0)`.
+    - Every whole sample of the region's box widened by 1 gets a weight from the first triangle that contains it (`FUN_10014520`):
+      the three edge signs agree, then barycentric weights (`FUN_100140b0`: areas from 3D cross products, square roots and products
+      in double, the inverse area rounded to f32) all within [-0.0001, 1.0001].
+    - It then becomes `(1 - w) h + L w`, where L is the linking field at `((x - x0) k mod W, (y - y0) k mod H)` (u32 arithmetic,
+      `k = 128 / raw_data_tri_density`).
+  - Byte for byte, final heights and meshes:
+    - terrain_rolling_hills_med/2x2/ae;
+    - river_start_shallow/2x2_small_bl/aa: its river link opens the influence; the blend gate fails;
+    - sea_coast/2x2_bt_inner/2x2_aa: sea and sea_coast links, both maps, two blends.
 - **`hf_height_map.data`** (`FUN_10089b80`): not the final heights but the terrain mesh (below) rasterised ("Rasterize final
   heightmap", `FUN_1001bf20`), the buildings' height meshes raised into it (`FUN_1008a700` -> `WARSCAPE::rasterise_max_heights`;
   "Height map mesh file ... is missing" when a `.cs2` lacks), written by `COMPRESSED_HEIGHT_MAP::convert` (Warscape.AssemblyKit.dll
@@ -216,8 +265,61 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     sample" lock and the fringe's kept bottoms at multiples of 2048), built first (`process_tile_internal`).
   - Exact against fresh BOB, the uninitialised name tails masked: terrain_rolling_hills_med/1x1/aa and /2x2/ae, farm_western/1x1/aa
     (all three terrain files) and western_city_b/small (both meshes, 8 blocks, 9.4 MB; BOB writes no CHMF there: two display walls'
-    meshes are missing from the kit). Entry point `terrain_mesh::terrain_files` (with `building_stamps` and `decimation_angle` from
-    the kit); check `terrain_mesh_check <raw tile> <BOB's working tile> <kit raw_data>`.
+    meshes are missing from the kit). Entry point `terrain_mesh::terrain_files` (the kit's `raw_data` for the linking tiles,
+    `building_stamps` and `decimation_angle` from the kit, a model resolver for the water planes); check
+    `terrain_mesh_check <raw tile> <BOB's working tile> <kit raw_data>` (it resolves models from the game's packs).
+- **The river** (`FUN_1001c610`; `attila::river`): the meshes' last block, type 90.
+  - **Reading the splines** (`FUN_10011a20`): `river_spline0.xml`, `river_spline1.xml`, … up to the first missing file (the
+    unnumbered `river_spline.xml` is not read).
+    - Each `SPLINE` is a segment: POINT0..3, and at each end (POINT0 and POINT3) `foam_amount`, `alpha_fade`, `flow_speed` and
+      `width`.
+    - Numbers go through `CA::UniString::parse(float &)` (CALibs, `river::ca_parse_f32`). It works in f32: integer digits as
+      `v x 10 + d`, each fraction digit `d x s + v` with s multiplied by 0.1 per digit, the exponent by repeated multiplies. It is not
+      correctly rounded: 100.731 comes out an ulp below `strtof`, and that shifts the river's total length.
+    - z becomes `((-((z + 128) - half)) + half) - 128`, with half = `(height + 2) x 128 / 2`.
+  - **The spline** (`UTILITYDLL::SEGMENTED_SPLINE_3`, cubic Béziers, f32 SSE):
+    - Basis rows (`FUN_106975d0`): (-1, 3, -3, 1), (3, -6, 3, 0), (-3, 3, 0, 0), (1, 0, 0, 0). Point j's weight is
+      `((t^3 r0 + t^2 r1) + t r2) + r3`; the sum is `((P0 w0 + P1 w1) + P2 w2) + P3 w3`. The tangent uses (3t^2, 2t, 1, 0); t^3 is
+      `(t t) t`.
+    - A repeated end point becomes the midpoint of its neighbours.
+    - A segment's length (`FUN_1037acb0`): sqrtss of the tangent summed for t = 0, 1/1000, … while below 1 (t accumulated in f32),
+      times the step. Totals and starts are accumulated.
+    - `find(u)`: the first segment whose share (length / total) holds u. The segment's own parameter is `(u total - start) / length`.
+  - **Sampling** (`optimise_spline`, density 20, tolerance 0.02):
+    - n = `floor(total x 20 + 0.5)` (x87, rounding down). Points k / (n - 1) are computed on the x87.
+    - Starting from [0], keep (i - 1) / (n - 1) where the unit direction from the last kept point to point `last` and the one from
+      i - 1 to i have a dot below 0.98. Then push 1.
+    - Merge in 0, 1/8, …, 6/8 (7 values), sort, and `std::unique` without the erase: the tail keeps its values, so with 0 in both
+      lists the last sample, 1, comes twice.
+  - **Tessellation** (Warscape `WS_SCENE_NODE_DYNAMIC::tesselate_river_spline`):
+    - Per sample u: the segment's parameter, clamped to [0, 1], lerps `(e1 - e0) c + e0` of alpha, width, flow (and foam, not
+      written).
+    - Five vertices across, b / 4 on the x87. The offset is `s = (hw - -hw) c + -hw` along the tangent's ground direction normalised,
+      turned left (x + s dz, z - s dx).
+    - Vertex: x, y, z, flow, c x width, u x total, alpha, c.
+    - Triangles per square: (next c, this c, next c + 1) and (this c, this c + 1, next c + 1).
+  - **The block**: vertices numbered by first use, 8 f32 each.
+    - Header: 0x5a, size, 0x50, vertex count, index offset, index count.
+    - The river's bounds, y fixed at -0.1 / 0.1 (`FUN_100228f0`).
+    - `rigid_default` in 32 bytes (tail uninitialised).
+    - The LOD header's block count and byte totals include it.
+- **`hf_water_map.data`** (`FUN_10089b80`): written only when there is a river or a water plane (BOB deletes it otherwise).
+  - The field (the final heights' size) starts at -1000.
+  - The river's triangles are rasterised into it as the terrain's are (row `size - 1 - z`).
+  - Then the water planes (`TOOLDATABUILDER::rasterized_water_planes`, `FUN_10088960`; `river::rasterise_water_planes`) overwrite it:
+    - Every `SIMPLE_MESH_INSTANCE` of tile.ted (BOB_Tile collects them all, key and world matrix) is a plane. The scale is applied as
+      rotation x scale: an assumption, since the vanilla planes are not rotated.
+    - Its model comes from BOB's VFS: the game's packs, e.g. `rigidmodels/buildings/water_plane/water_plane.rigid_model_v2` in
+      models2.pack.
+    - In the model: the first LOD's first block, which must be type 83 (else BOB stops); the pivot at block + 0x4b4 before version 6,
+      + 0x274 after; 12-byte vertices whose first 8 bytes are f16 x, y, z, w; u16 indices.
+    - Per row of the matrix, `t = ((m0 px + m1 py) + m2 pz) + m3`. A vertex row is `((r0 x + r1 y) + r2 z) + t w`; x and z are
+      halved.
+    - Per triangle (idx1, idx2, idx0 as a, b, c), every whole (x, z) of the truncated box widened by one that passes the crossing
+      rule over (c, b), (a, c), (b, a) gets `(a.y ua + b.y ub) + c.y ((1 - ua) - ub)` on the x87. The weights are areas from 3D
+      cross products (y = 0) and fsqrt; ua is rounded to f32. The value is stored at row z, unflipped.
+  - CHMF as the heights.
+  - Exact on river_start_shallow/2x2_small_bl/aa (one 50x plane over the river). The river-only path is unchecked.
 - **`tile.agf`** (BOB's "Create tile agf"; `bob_tile::tile_agf`): `##<folder>`; `#all` (entities and files, sorted together);
   `#entities` only when the tile has buildings (`battle/buildings/<key>` per building key of tile.ted, sorted); `#files` (the nine
   outputs the Tile processor declares, BOB_Tile `FUN_100095b0`, written or not: blend, ground_types, hf_height_map, hf_water_map,

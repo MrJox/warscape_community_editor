@@ -1581,13 +1581,30 @@ fn outline_style() -> crate::xml::DocStyle {
 /// translation in the last column; x and z in TEd's half metres), as BOB_Tile's `QTU::TedScene::elements("BUILDING_INSTANCE")` and
 /// `QTU::TedEntity::world_transform` give them.
 pub fn buildings(raw: &Tile) -> Vec<(String, [f32; 16])> {
+    instances(raw, "BUILDING_INSTANCE")
+}
+
+/// [`buildings`] for any class of entity (`SIMPLE_MESH_INSTANCE`: BOB's water planes), an instance's own `scale` (a vector) applied
+/// to its matrix's columns (rotation x scale; the order is an assumption: the vanilla water planes are not rotated).
+pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
     let Some(scene) = raw.scene.as_ref() else { return vec![] };
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
     placed
         .iter()
-        .filter(|p| p.node.class == "BUILDING_INSTANCE")
-        .map(|p| (p.node.get("key").and_then(Value::as_str).unwrap_or_default().to_owned(), p.world))
+        .filter(|p| p.node.class == class)
+        .map(|p| {
+            let mut m = p.world;
+            if let Some(s) = vec3_of(p.node, "scale") {
+                for r in 0..3 {
+                    for c in 0..3 {
+                        m[r * 4 + c] *= s[c];
+                    }
+                }
+            }
+
+            (p.node.get("key").and_then(Value::as_str).unwrap_or_default().to_owned(), m)
+        })
         .collect()
 }
 

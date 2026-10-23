@@ -171,12 +171,159 @@ pub fn normal_dds(normals: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
 /// Samples per cell of a battle tile's height map.
 pub const CELL: usize = 128;
 
-/// TEd's height influence of a tile alone (`WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_hf_influence_map`, Warscape.AssemblyKit.dll, no
-/// tile links): `cw * k + 1` by `ch * k + 1` values, 0 at the tile's edges, 1 inside. Per cell, each side and corner is 1 when a cell
-/// of the tile lies past it (a corner also when its two sides differ); per sample, `lerp(i)` runs from a side's value to 1 over the
-/// first half of the cell (`t = clamp(i - 2, 0, 5000) / ((k + 0.5) / 2)`) and back to the far side's value over the second half; the
-/// value is `lerp_y x lerp_x x lerp_y(lerp_x of the corners)` x 2.1, squared, and the influence `(1 - 1 / e^v) / 0.98784` (e as an f32).
-pub fn influence(k: usize, cw: usize, ch: usize) -> Vec<f32> {
+/// The tile links the height influence joins (ToolDataBuilderDll `FUN_10013a40`), cell x, y as the tile database has them (y up). Only
+/// links whose tile set has a linking tile (`_settings.xml`) and whose test is `TLT_EQUALS` count. `links` are those without
+/// `no_offline_blend` (sea links always); `extra` the sea links and, on a tile that tiles with itself ([`self_tiling`]), the links to its
+/// own set.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InfluenceLinks {
+    pub links: Vec<(i32, i32)>,
+    pub extra: Vec<(i32, i32)>,
+}
+
+impl InfluenceLinks {
+    /// The project's entry's links; `linking_tiles` maps a tile set to its linking tile.
+    pub fn of(raw: &Tile, linking_tiles: &std::collections::HashMap<String, String>) -> Self {
+        let Some(entry) = raw.entry.as_ref().map(|e| &e.root) else { return Self::default() };
+        let own_set = entry.get("tile_set").and_then(|v| v.as_str()).unwrap_or_default();
+        let self_tiling = self_tiling(entry, linking_tiles);
+        let mut out = Self::default();
+        for l in entry.wrapped("TILE_LINKS") {
+            let (set, link) = link_of(l);
+            if linking_tiles.get(set).is_none_or(|t| t.is_empty()) || !link.equals {
+                continue;
+            }
+
+            if !link.no_offline_blend || set == "sea" {
+                out.links.push(link.point);
+            }
+
+            if set == "sea" || (self_tiling && set == own_set) {
+                out.extra.push(link.point);
+            }
+        }
+
+        out
+    }
+
+    /// The same without `links` (BOB's mesh pass asks `FUN_10013a40` for no links; the extra ones stay).
+    pub fn without_links(&self) -> Self {
+        Self { links: vec![], extra: self.extra.clone() }
+    }
+}
+
+struct Link {
+    point: (i32, i32),
+    equals: bool,
+    no_offline_blend: bool,
+}
+
+fn link_of(l: &Node) -> (&str, Link) {
+    let int = |k: &str| l.get(k).and_then(|v| v.as_int()).unwrap_or(0) as i32;
+    let set = l.get("link_set").and_then(|v| v.as_str()).unwrap_or_default();
+    let equals = l.get("test").and_then(|v| v.as_str()).is_none_or(|t| t == "TLT_EQUALS");
+    let no_offline_blend = l.get("no_offline_blend").and_then(|v| v.as_bool()).unwrap_or(false);
+    (set, Link { point: (int("x"), int("y")), equals, no_offline_blend })
+}
+
+/// ToolDataBuilderDll `FUN_10016250`: a 1 x 1 tile with two blending links (`TLT_EQUALS`, no `no_offline_blend`, not sea) on opposite
+/// sides whose linking tiles are the tile itself (they start with its location). A third such link, or none, fails; with one, BOB
+/// pairs it with link 0.
+pub(crate) fn self_tiling(entry: &Node, linking_tiles: &std::collections::HashMap<String, String>) -> bool {
+    let int = |k: &str| entry.get(k).and_then(|v| v.as_int()).unwrap_or(0);
+    if int("width") != 1 || int("height") != 1 {
+        return false;
+    }
+
+    let links = entry.wrapped("TILE_LINKS");
+    let (mut first, mut second, mut count) = (0, 0, 0);
+    for (i, l) in links.iter().enumerate() {
+        let (set, link) = link_of(l);
+        if link.equals && !link.no_offline_blend && set != "sea" {
+            match count {
+                0 => first = i,
+                1 => second = i,
+                _ => return false,
+            }
+
+            count += 1;
+        }
+    }
+
+    if first == second {
+        return false;
+    }
+
+    let location = entry.get("location").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    let starts = |l: &Node| linking_tiles.get(link_of(l).0).is_some_and(|t| t.to_lowercase().starts_with(&location));
+    let ((_, a), (_, b)) = (link_of(&links[first]), link_of(&links[second]));
+    // `link_point_inverted` on a 1-high tile is (x, -y).
+    starts(&links[first]) && starts(&links[second]) && a.point.0 + b.point.0 == 0 && a.point.1 + b.point.1 == 0
+}
+
+/// TEd's height influence of a tile (`WS_SCENE_NODE_TERRAIN_EDITOR_V2::build_hf_influence_map`, Warscape.AssemblyKit.dll, as BOB calls
+/// it: no border, every subtile valid): `cw * k + 1` by `ch * k + 1` values, 0 at the tile's edges, 1 inside. Per cell (rows down),
+/// each side and corner is 1 when a cell of the tile lies past it; a link of `links` just outside the tile (or on its first row or
+/// column: the test is `< 1`) sets the side it touches; a corner still 0 is 1 when its two sides differ. Per sample, `lerp(i)` runs
+/// from a side's value to 1 over the first half of the cell (`t = clamp(i - 2, 0, 5000) / ((k + 0.5) / 2)`) and back to the far side's
+/// value over the second half; the value is `lerp_y x lerp_x x lerp_y(lerp_x of the corners)` x 2.1, squared, and the influence
+/// `(1 - 1 / e^v) / 0.98784` (e as an f32). Later cells overwrite the shared edges.
+///
+/// With `extra` links BOB builds a second map, without `links`: every side starts 0 and the extra links set sides and corners, filled
+/// in by [`extra_rules`]; the influence is the larger of the two.
+pub fn influence(k: usize, cw: usize, ch: usize, links: &InfluenceLinks) -> Vec<f32> {
+    let mut out = influence_pass(k, cw, ch, &links.links, None);
+    if !links.extra.is_empty() {
+        let other = influence_pass(k, cw, ch, &[], Some(&links.extra));
+        for (a, b) in out.iter_mut().zip(other) {
+            *a = a.max(b);
+        }
+    }
+
+    out
+}
+
+/// A cell's sides and corners: left, right, up, down, up-left, up-right, down-left, down-right.
+type Sides = [f32; 8];
+const L: usize = 0;
+const R: usize = 1;
+const U: usize = 2;
+const D: usize = 3;
+const UL: usize = 4;
+const UR: usize = 5;
+const DL: usize = 6;
+const DR: usize = 7;
+
+/// The rules BOB applies after the extra links: a corner whose two sides are both 1 is 1; with left, up and up-right 1 the right is
+/// too (and the mirror); a side inside the tile next to a corner of 1 is 1.
+fn extra_rules(s: &mut Sides, x: i32, y: i32, w: i32, h: i32) {
+    for (c, a, b) in [(UL, L, U), (DL, L, D), (UR, R, U), (DR, R, D)] {
+        if s[c] == 0.0 && s[a] == 1.0 && s[b] == 1.0 {
+            s[c] = 1.0;
+        }
+    }
+
+    if s[L] == 1.0 && s[U] == 1.0 && s[UR] == 1.0 && s[R] == 0.0 {
+        s[R] = 1.0;
+    }
+    if s[R] == 1.0 && s[U] == 1.0 && s[UL] == 1.0 && s[L] == 0.0 {
+        s[L] = 1.0;
+    }
+    if s[L] == 0.0 && x > 0 && (s[UL] == 1.0 || s[DL] == 1.0) {
+        s[L] = 1.0;
+    }
+    if s[R] == 0.0 && x < w - 1 && (s[UR] == 1.0 || s[DR] == 1.0) {
+        s[R] = 1.0;
+    }
+    if s[U] == 0.0 && y > 0 && (s[UL] == 1.0 || s[UR] == 1.0) {
+        s[U] = 1.0;
+    }
+    if s[D] == 0.0 && y < h - 1 && (s[DL] == 1.0 || s[DR] == 1.0) {
+        s[D] = 1.0;
+    }
+}
+
+fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: Option<&[(i32, i32)]>) -> Vec<f32> {
     let half = (k as f32 + 0.5) * 0.5;
     let lerp = |s: usize, a: f32, b: f32| {
         if ((k + 1) as f32) * 0.5 > s as f32 {
@@ -187,25 +334,62 @@ pub fn influence(k: usize, cw: usize, ch: usize) -> Vec<f32> {
             (1.0 - b) * t + b
         }
     };
-    let w = cw * k + 1;
-    let mut out = vec![0.0f32; w * (ch * k + 1)];
-    for y in 0..ch {
-        for x in 0..cw {
+    let (w, h) = (cw as i32, ch as i32);
+    // `link_point_inverted`: rows down.
+    let invert = |&(x, y): &(i32, i32)| (x, h - y - 1);
+    let outside = |(x, y): (i32, i32)| x < 1 || x >= w || y < 1 || y >= h;
+    let fw = cw * k + 1;
+    let mut out = vec![0.0f32; fw * (ch * k + 1)];
+    for y in 0..h {
+        for x in 0..w {
             let flag = |inside: bool| if inside { 1.0f32 } else { 0.0 };
-            let (xm, xp, ym, yp) = (flag(x > 0), flag(x + 1 < cw), flag(y > 0), flag(y + 1 < ch));
-            let corner = |c: f32, a: f32, b: f32| if c == 0.0 && a != b { 1.0 } else { c };
-            let c00 = corner(flag(x > 0 && y > 0), xm, ym);
-            let c10 = corner(flag(x + 1 < cw && y > 0), xp, ym);
-            let c01 = corner(flag(x > 0 && y + 1 < ch), xm, yp);
-            let c11 = corner(flag(x + 1 < cw && y + 1 < ch), xp, yp);
+            let (xm, xp, ym, yp) = (x > 0, x + 1 < w, y > 0, y + 1 < h);
+            let mut s: Sides = [flag(xm), flag(xp), flag(ym), flag(yp), flag(xm && ym), flag(xp && ym), flag(xm && yp), flag(xp && yp)];
+            for p in links.iter().map(invert).filter(|&p| outside(p)) {
+                for (side, at) in [(L, (x - 1, y)), (R, (x + 1, y)), (U, (x, y - 1)), (D, (x, y + 1))] {
+                    if p == at {
+                        s[side] = 1.0;
+                    }
+                }
+            }
+
+            if let Some(extra) = extra {
+                s[..4].fill(0.0);
+                for p in extra.iter().map(invert).filter(|&p| outside(p)) {
+                    for (side, at) in [
+                        (L, (x - 1, y)),
+                        (R, (x + 1, y)),
+                        (U, (x, y - 1)),
+                        (D, (x, y + 1)),
+                        (UL, (x - 1, y - 1)),
+                        (UR, (x + 1, y - 1)),
+                        (DL, (x - 1, y + 1)),
+                        (DR, (x + 1, y + 1)),
+                    ] {
+                        if p == at {
+                            s[side] = 1.0;
+                        }
+                    }
+                }
+
+                extra_rules(&mut s, x, y, w, h);
+            }
+
+            for (c, a, b) in [(UL, L, U), (DL, L, D), (UR, R, U), (DR, R, D)] {
+                if s[c] == 0.0 && s[a] != s[b] {
+                    s[c] = 1.0;
+                }
+            }
+
+            let (x, y) = (x as usize, y as usize);
             for j in 0..=k {
-                let ly = lerp(j, ym, yp);
+                let ly = lerp(j, s[U], s[D]);
                 for i in 0..=k {
-                    let lx = lerp(i, xm, xp);
-                    let c = lerp(j, lerp(i, c00, c10), lerp(i, c01, c11));
+                    let lx = lerp(i, s[L], s[R]);
+                    let c = lerp(j, lerp(i, s[UL], s[UR]), lerp(i, s[DL], s[DR]));
                     let v = ly * lx * c * 2.1;
                     let e = f64::from(f32::from_bits(0x402d_f854)).powf(f64::from(v * v)) as f32;
-                    out[(y * k + j) * w + x * k + i] = (1.0 - 1.0 / e) / f32::from_bits(0x3f7c_e366);
+                    out[(y * k + j) * fw + x * k + i] = (1.0 - 1.0 / e) / f32::from_bits(0x3f7c_e366);
                 }
             }
         }
@@ -216,10 +400,10 @@ pub fn influence(k: usize, cw: usize, ch: usize) -> Vec<f32> {
 
 /// BOB's final heights (`final_heights.dds`): the height map without its one-cell border, in metres (as [`normal_map`] reads them),
 /// times the tile's [`influence`]. With the size, `(w / 128 - 2) * 128 + 1` by the same of `h`.
-pub fn final_heights(heights: &[u16], w: usize, h: usize, scale: f32, min_height: f32) -> (Vec<f32>, usize, usize) {
+pub fn final_heights(heights: &[u16], w: usize, h: usize, scale: f32, min_height: f32, links: &InfluenceLinks) -> (Vec<f32>, usize, usize) {
     let (cw, ch) = (w / CELL - 2, h / CELL - 2);
     let (fw, fh) = (cw * CELL + 1, ch * CELL + 1);
-    let alpha = influence(CELL, cw, ch);
+    let alpha = influence(CELL, cw, ch, links);
     let mut out = Vec::with_capacity(fw * fh);
     for y in 0..fh {
         for x in 0..fw {
@@ -408,7 +592,7 @@ mod tests {
     #[test]
     fn influence_as_ted_builds_it() {
         // terrain_rolling_hills_med/2x2/ae's final_alpha.dds (BOB's), row 128 every 8 samples.
-        let alpha = influence(CELL, 2, 2);
+        let alpha = influence(CELL, 2, 2, &InfluenceLinks::default());
         let row = (0..9).map(|i| alpha[128 * 257 + i * 8]).collect::<Vec<_>>();
         assert_eq!(row, [0.0, 0.038_192_786, 0.191_242_77, 0.408_694_4, 0.625_269, 0.795_853_9, 0.906_724_93, 0.967_387_14, 0.995_637_4]);
     }

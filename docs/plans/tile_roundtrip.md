@@ -266,8 +266,20 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   western_city_b/small included) but BOB's uninitialised shader name tails; `terrain_mesh::terrain_files` builds all three.
   `tile.agf` and `terrain_outlines.xml` byte for byte (the latter a slope / blur / marching squares / simplifier pipeline, 28
   outlines on dense_forest_rugged/8x8/ac).
-  Still open in stage B: tile links (height blending at linked edges, e.g. river_start_shallow/2x2_small_bl), the river mesh block
-  and `hf_water_map.data`, go outlines in the no-go field, masked and large tiles (raw_data_tri_density other than 128, masks,
+  Tile links: the influence opens linked sides (two maps when there are sea links), and BOB's offline blend eases the strips into
+  the linking tiles' final heights (`tile_links`). Final heights, meshes and CHMF are byte for byte on sea_coast/2x2_bt_inner/2x2_aa
+  and river_start_shallow/2x2_small_bl/aa, the latter's river block aside.
+  The river's mesh block (spline reading with CA's float parser, `optimise_spline`, the tessellation) and `hf_water_map.data`
+  (the river and the `SIMPLE_MESH_INSTANCE` water planes, their models from the game's packs) are byte for byte on
+  river_start_shallow/2x2_small_bl/aa: every stage-B terrain file of that tile now matches.
+  `apply_straight_self_tiling` (the 1 x 1 linking tiles: river, river_shallow, roads, roads_stone, sea_coast) is byte for byte on
+  three of them; its above-and-below branch is unused by the kit.
+  settlement_nordic_cities/nordic_city_c/minor (416 stamps, a water plane) is byte for byte but for `terrain_outlines.xml`: BOB
+  reads the tile's `go_outlines.xml` through its VFS (the shipped one is in tiles4.pack; in the round trip it is stage A's) and
+  `no_go_outlines_from_heights` rasterises it out of the no-go field (`FUN_100c0eb0`, a TBB `TBB_HEIGHTFIELD_OUTLINE_RASTERISE` over
+  the outlines, per instance `FUN_10a8b010` / `FUN_10a9a280`, the provider's vtable for bounds and spacing) after ToolDataBuilderDll
+  `FUN_100877d0` moved it by a matrix (`FUN_1009eda0`). BOB keeps 8 outlines there, we 21 (7 shared).
+  Still open in stage B: a river-only water map check, go outlines in the no-go field, masked and large tiles (raw_data_tri_density other than 128, masks,
   per-cell `mesh<x>x<y>`), 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
   stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
@@ -276,6 +288,26 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its
     export setup differs from vanilla.
+
+### Unverified in stage B (ported from the RE, no oracle yet)
+
+These paths follow the decompiled code but no BOB run has exercised them; check them when a tile that uses them turns up.
+
+- **Straight self tiling, links above and below** (`tile_links::straight_self_tiling`, the vertical branch): no vanilla 1 x 1 linking
+  tile links that way. Its left-and-right branches are exact on river_shallow/1x1_blend, roads/1x1_straight and sea_coast/1x1.
+- **Straight self tiling from another tile's heights**: when the links' linking tiles don't end with the tile's own variation, BOB
+  loads the first one's `final_heights` instead of using the tile's own field. Not seen in the kit.
+- **The river in `hf_water_map.data`**: the river's triangles are rasterised before the water planes. On the only river oracle
+  (river_start_shallow/2x2_small_bl/aa) a water plane covers the whole river, so the river's own values never reach the file.
+- **Water plane scale order**: the instance's `scale` is applied as rotation x scale (`compile::instances`). TEd's `world_transform`
+  for scaled entities was not reverse-engineered; the vanilla planes are unrotated, where the order doesn't matter.
+- **Water plane models of RMV2 version 6+** (pivot at block + 0x274): only the version-5 `water_plane.rigid_model_v2` was tried. A
+  plane whose first block isn't type 83 makes BOB stop the remaining planes; we do the same, untested.
+- **Link blend with a 4-point `blend_quad`**: no vanilla link has one.
+- **Link blend with `height_map_0`** (a linking tile that is the tile itself, outside self tiling): the PNG path, / 65535, untested.
+- **Masked tiles in the link blend and influence**: the subtile mask checks are not ported (masked tiles are an open item).
+- **`optimise_spline` / spline edge cases**: degenerate segments (repeated control points) and splines whose sample count is 3 or
+  less; the vanilla rivers have neither.
 
 ### Decisions (2026-10-22)
 

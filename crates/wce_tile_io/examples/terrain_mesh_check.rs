@@ -19,13 +19,33 @@ fn main() {
     let (stamps, missing) = building_stamps(&project, kit);
     println!("{} building stamps{}", stamps.len(), if missing.is_empty() { String::new() } else { format!("; no mesh file for {missing:?}") });
     let t0 = std::time::Instant::now();
-    let out = terrain_files(&project, decimation_angle(kit), &stamps).expect("stage B");
+    // BOB's VFS for the water planes' models: the game's packs (the kit's `../../data`), searched only when a model is asked for.
+    let data = kit.join("../../data");
+    let models = |key: &str| -> Option<Vec<u8>> {
+        use rpfm_lib::files::pack::Pack;
+        let key = key.replace('\\', "/").to_lowercase();
+        let attila = rpfm_lib::games::supported_games::SupportedGames::default().game("attila")?.clone();
+        let mut packs = std::fs::read_dir(&data).ok()?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
+        packs.sort();
+        for p in packs {
+            let Ok(mut pack) = Pack::read_and_merge(std::slice::from_ref(&p), &attila, true, false, false) else { continue };
+            let Some(name) = pack.files().keys().find(|n| n.to_lowercase() == key).cloned() else { continue };
+            if let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&name).map(|f| f.encode(&None, false, false, true)) {
+                return Some(bytes);
+            }
+        }
+        None
+    };
+    let out = terrain_files(&project, kit, decimation_angle(kit), &stamps, &models).expect("stage B");
     println!("built in {:?}", t0.elapsed());
     for (name, ours) in out {
         let Ok(theirs) = std::fs::read(work.join(&name)) else {
             println!("{name}: BOB wrote none");
             continue;
         };
+        if let Ok(dir) = std::env::var("WCE_DUMP") {
+            std::fs::write(PathBuf::from(dir).join(&name), &ours).expect("dump");
+        }
         if name.ends_with(".data") {
             let (o, t) = (ChmfFile::parse(&ours).expect("ours"), ChmfFile::parse(&theirs).expect("BOB's"));
             let ((_, _, os), (_, _, ts)) = (o.region_samples(0).expect("ours"), t.region_samples(0).expect("BOB's"));
@@ -60,8 +80,5 @@ fn main() {
         let (om, tm) = (masked(&ours), masked(&theirs));
         let diff = om.iter().zip(&tm).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect::<Vec<_>>();
         println!("{name}: {} bytes ours, {} BOB's; {} bytes differ{}", om.len(), tm.len(), diff.len(), diff.first().map(|i| format!(", first at {i:#x}")).unwrap_or_default());
-        if let Ok(dir) = std::env::var("WCE_DUMP") {
-            std::fs::write(PathBuf::from(dir).join(&name), &ours).expect("dump");
-        }
     }
 }
