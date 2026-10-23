@@ -14,8 +14,8 @@ fn main() {
 
     let f = ChmfFile::parse(&std::fs::read(path).expect("read")).expect("CHMF");
     println!(
-        "version {}, {} x {} samples, cells {} x {}, min {}, range {}, spacing {} m, {} regions",
-        f.version, f.width, f.height, f.cells_x, f.cells_y, f.min, f.range, f.spacing, f.regions.len()
+        "version {}, {} x {} samples, cells {} x {}, min {}, max {}, spacing {} m, {} regions",
+        f.version, f.width, f.height, f.cells_x, f.cells_y, f.min, f.max, f.spacing, f.regions.len()
     );
 
     for (i, r) in f.regions.iter().enumerate() {

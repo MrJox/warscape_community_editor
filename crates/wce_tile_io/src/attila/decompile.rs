@@ -209,8 +209,9 @@ fn height_map(binary: &Tile, cells: (u32, u32), border_cells: u32, losses: &mut 
     }
 
     let min = doc.root.get("min").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-    let range = doc.root.get("range").and_then(Value::as_f64).unwrap_or(1.0) as f32;
-    Some((Raster { width: ow, height: oh, channels: 1, samples: Samples::U16(out) }, min, range))
+    // The samples run from min to max: the variation's scale is the difference.
+    let max = doc.root.get("max").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+    Some((Raster { width: ow, height: oh, channels: 1, samples: Samples::U16(out) }, min, max - min))
 }
 
 /// TEd's blend map (`blend_map.tif`: 16 weights per pixel, channel 4 g + v = texture group g, variation v, summing to 65535) from BOB's

@@ -58,7 +58,7 @@ decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.r
 
 - Header: `"CHMF"`, u32 version (4 or 5), u32 width, height (samples; a battle tile has `cells * per_cell + 1`: 257 x 129 for a 2 x 1 tile at
   1 m, 961 x 961 for mont_blanc's 30 x 30 at 4 m), u32 `cells_x`, `cells_y` (the unit of the region rectangles, in samples: 1 in battle
-  tiles, 8 or 32 in TDD campaign tiles), f32 min, f32 range (metres), version 5: u32 spacing (metres per sample).
+  tiles, 8 or 32 in TDD campaign tiles), f32 min, f32 max (metres; the engine's `min_height`, `max_height`), version 5: u32 spacing (metres per sample).
 - u32 region count, per region `x0, y0, x1, y1` (cells, end exclusive); then per region u16 x 2 (0, 0xFFFF in battle tiles; meaning not
   read), u32 block count, u32 data size, the block offsets (u32), the block data.
 - Blocks of 16 x 16 samples, row by row; the last block of a row / column holds the rest (961 = 60 x 16 + 1: 61 x 61 = 3,721 blocks). A
@@ -66,7 +66,8 @@ decoder 0x104a9790 and its mode table at 0x107b68e8; the game's reader `empire.r
 - A block's first byte `k` picks the mode (the table at 0x107b68e8): 0 = one u16 for the block; 1 ..= 127 = a palette of `k + 1` u16, then
   one `ceil(log2(k + 1))`-bit index per sample; 128 ..= 142 = a u16 base, then `k - 127` bits per sample added to it; 143 = one u16 per
   sample. Bits are packed from the low bit of each byte (the game reads them through unaligned u16 / u32 loads).
-- A sample is `u16 / 65535`; the height `min + range * sample`. Row y of the grid is the tile's z (no flip, checked against the kit's
+- A sample is `u16 / 65535`; the height `min + (max - min) * sample` (BOB's `COMPRESSED_HEIGHT_MAP::convert` writes
+  `(h - min) / (max - min) * 65535` truncated). Row y of the grid is the tile's z (no flip, checked against the kit's
   `final_heights.dds` of mont_blanc: the pack was built from an older raw tile, so only 57 % of the samples agree within 1 cm).
 - Checked: the 1,911 extracted CHMF files (vanilla and TDD, battle and campaign, versions 4 and 5) parse, decode and write back
   byte-identically; on mont_blanc the steps across block borders are the same as inside blocks (mean 1.08 against 1.11 m: no seams).

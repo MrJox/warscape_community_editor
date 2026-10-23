@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use wce_formats::chmf::ChmfFile;
 use wce_tile_io::attila::TedProject;
 use wce_tile_io::attila::bob_tile::textures;
 use wce_tile_io::{TileFiles, TileFormat};
@@ -23,6 +24,19 @@ fn main() {
         };
         if ours == theirs {
             println!("{name}: identical ({} bytes)", ours.len());
+            continue;
+        }
+
+        if name.ends_with(".data") {
+            let (o, t) = (ChmfFile::parse(&ours).expect("our CHMF"), ChmfFile::parse(&theirs).expect("BOB's CHMF"));
+            println!("{name}: {} bytes ours, {} BOB's; min {} / {}, max {} / {}", ours.len(), theirs.len(), o.min, t.min, o.max, t.max);
+            let ((w, _, os), (_, _, ts)) = (o.region_samples(0).expect("ours"), t.region_samples(0).expect("BOB's"));
+            let diff = os.iter().zip(&ts).enumerate().filter(|(_, (a, b))| a != b).collect::<Vec<_>>();
+            let most = diff.iter().map(|(_, (a, b))| (i32::from(**a) - i32::from(**b)).abs()).max().unwrap_or(0);
+            println!("  {} of {} samples differ, by up to {most}", diff.len(), os.len());
+            for (i, (a, b)) in diff.iter().take(if std::env::var_os("WCE_SHOW").is_some() { 5 } else { 0 }) {
+                println!("  ({}, {}): ours {a}, BOB {b}", i % w as usize, i / w as usize);
+            }
             continue;
         }
 
