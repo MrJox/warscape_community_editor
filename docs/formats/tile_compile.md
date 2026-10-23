@@ -198,9 +198,20 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     over (`(c.z - a.z)(b.x - a.x) - (b.z - a.z)(c.x - a.x) <= 0`); the first target not free wins, else the nearest (MSVC's
     insertion sort, stable; an introsort past 32 candidates, not ported). The collapse appends the vertex's triangles to the target's,
     renames it, zeroes the degenerate ones.
-  - Exact against fresh BOB: the surface triangles of terrain_rolling_hills_med/2x2/ae (3,360) and farm_western/1x1/aa (17,536).
-  - Not ported yet: the fringe (`FUN_10017120`: the border's vertices again with flag 3, and 10 m below with flag 0), the vertex
-    list cleaner, the mesh splitter, the RMV2 writer.
+  - The fringe (`FUN_10017120`, `terrain_mesh::add_fringe`; before the merger): per edge (z = 0, z = max, x = 0, x = max) the edge's
+    vertices again 10 m lower (BOB's vertex +0x78 = 1), then per square two upright triangles into the grid list (top t, bottom b:
+    z = 0 (t i, t i+1, b i) (t i+1, b i+1, b i); z = max (t i+1, t i, b i) (t i+1, b i, b i+1); x = 0 (t j, b j, t j+1)
+    (t j+1, b j, b j+1); x = max (t j, t j+1, b j) (t j+1, b j+1, b j)). The tops are the surface's vertices (locked); a bottom's
+    flag is 1 at the corners and where x and z are multiples of 16, else 4 (moves only into a 4 or a 1): the bottom row decimates
+    along the edge. The thin test measures upright triangles in their own plane, the height step does not apply to flags 1 and 4.
+  - `mesh.rigid_model_v2` (`terrain_mesh::rmv2`): the merged list (surface then fringe, in order), its vertices numbered by first use
+    (the vertex list cleaner), each f16 x, height, z, alpha (rounded to nearest; the alpha of the influence's row z, unflipped,
+    where the height is row `size - 1 - z`: BOB's), u16 indices. Header: `RMV2` 6, 1 LOD, zero skeleton name; the LOD's block
+    count 1, vertex and index bytes, offset 0xa0, distance 70; the block's type 0x61, size, header 0xa8, vertex count, index
+    offset and count, the f32 bounds, `rigid_default` (BOB leaves the rest of its 32 bytes uninitialised), `TerrainBase0`, 32
+    zeros, the tile's metres x and z, samples per row, 1, 16, the surface's index count; then vertices, indices.
+  - Exact against fresh BOB: terrain_rolling_hills_med/2x2/ae and farm_western/1x1/aa, the whole index list in order and the file
+    byte for byte (the uninitialised name tail masked). The outfield mesh is next.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
