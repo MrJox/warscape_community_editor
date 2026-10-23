@@ -281,7 +281,8 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   density scale of vertices, rasterisers and CHMF spacing; every terrain file exact on river/4x4_y_l1_r0_b3/aa and
   atlantic_mountains/small_round/aa (13 oracle tiles in all).
   The per-subtile `mesh<x>x<y>` entries of tile.agf are only listed: BOB writes no such file and the game's packs hold none.
-  Still open in stage B: a river-only water map check, 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
+  A river without water planes (river/2x2_lt_tr/aa) is byte for byte too, its water map the river's alone.
+  Still open in stage B: 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
   stage B into the compile. Still to wire: the CHMF into
   `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
   (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
@@ -298,8 +299,6 @@ These paths follow the decompiled code but no BOB run has exercised them; check 
   tile links that way. Its left-and-right branches are exact on river_shallow/1x1_blend, roads/1x1_straight and sea_coast/1x1.
 - **Straight self tiling from another tile's heights**: when the links' linking tiles don't end with the tile's own variation, BOB
   loads the first one's `final_heights` instead of using the tile's own field. Not seen in the kit.
-- **The river in `hf_water_map.data`**: the river's triangles are rasterised before the water planes. On the only river oracle
-  (river_start_shallow/2x2_small_bl/aa) a water plane covers the whole river, so the river's own values never reach the file.
 - **Water plane scale order**: the instance's `scale` is applied as rotation x scale (`compile::instances`). TEd's `world_transform`
   for scaled entities was not reverse-engineered; the vanilla planes are unrotated, where the order doesn't matter.
 - **Water plane models of RMV2 version 6+** (pivot at block + 0x274): only the version-5 `water_plane.rigid_model_v2` was tried. A
