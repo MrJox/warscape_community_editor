@@ -101,7 +101,9 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
   capture locations, no-go regions, zones, civilian deployment zones. The props and emitters come grouped by key in `MARKER_TABLE`
   order: the groups are placed in an insertion order that gives that order back (docs/formats/tile_compile.md, "Insertion order"), the
   records' order kept within a group.
-- An empty `civilian_deployment.bin` is carried along (the compiler writes the file when there are zones).
+- An empty `civilian_deployment.bin` is carried along (the compiler writes the file when there are zones), and so is
+  `vegetation_exclusion.xml` (docs/formats/tile_compile.md).
+- A deployment area's `facing_direction` is the file's `radians` - 1.570796, plus 6.283185 below 0 (the inverse of the export).
 
 ## Not in the binary
 

@@ -364,7 +364,17 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 building_thresholds: ctx.building_thresholds,
                 marker_versions: Some(&version_of),
             };
-            let (compiled, _) = compile(&back, &cctx)?;
+            // WCE_COMPILE_KIT=1: compile the kit's raw tile instead (TEd's own project: what the export does with it; tiles whose kit is
+            // not the shipped version differ, and nested groups add their text's rounding).
+            let kit_project = if std::env::var_os("WCE_COMPILE_KIT").is_some() {
+                let dir = kit.join("raw_data").join(folder);
+                let Ok(files) = TileFiles::from_kit_dir(&dir) else { return Ok(()) };
+                let Ok((p, _)) = TedProject.read(&files) else { return Ok(()) };
+                Some(p)
+            } else {
+                None
+            };
+            let (compiled, _) = compile(kit_project.as_ref().unwrap_or(&back), &cctx)?;
             let docs = &compiled.documents;
             // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
             let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {

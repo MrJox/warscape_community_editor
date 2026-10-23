@@ -915,11 +915,59 @@ fn zones(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocS
     (!root.children.is_empty()).then(|| (Document { name: "zones.xml".to_owned(), root }, outline_style()))
 }
 
+/// TEd's rounded literals for a quarter and a full turn (a deployment area's orientation): `1.570796` and `6.283185`, not the f32 of
+/// pi / 2 and 2 pi (the packs' `3.141592`).
+#[allow(clippy::approx_constant)]
+pub(crate) const TED_HALF_PI: f32 = 1.570_796;
+#[allow(clippy::approx_constant)]
+pub(crate) const TED_TWO_PI: f32 = 6.283_185;
+
+/// A side of the playable area: whether a point is inside, and where a segment crosses it.
+type ClipSide<'a> = (&'a dyn Fn((f32, f32)) -> bool, &'a dyn Fn((f32, f32), (f32, f32)) -> (f32, f32));
+
+/// A deployment boundary (the binary's frame) clipped to the playable area, the tile less 32.5 m on every side (Sutherland-Hodgman against
+/// y >= 32.5, x <= width - 32.5, y <= height - 32.5, x >= 32.5 in that order, each edge from the previous point: the order and start TEd's
+/// output has, on all 17 clipped boundaries of 9 kit tiles).
+fn clip_to_playable(points: &[(f32, f32)], extent: (f32, f32)) -> Vec<(f32, f32)> {
+    const MARGIN: f32 = 32.5;
+    let (w, h) = (extent.0 - MARGIN, extent.1 - MARGIN);
+    // In double (the x87), stored as f32.
+    let lerp = |a: f32, b: f32, t: f64| (f64::from(a) + t * (f64::from(b) - f64::from(a))) as f32;
+    let at_x = |a: (f32, f32), b: (f32, f32), x: f32| (x, lerp(a.1, b.1, (f64::from(x) - f64::from(a.0)) / (f64::from(b.0) - f64::from(a.0))));
+    let at_y = |a: (f32, f32), b: (f32, f32), y: f32| (lerp(a.0, b.0, (f64::from(y) - f64::from(a.1)) / (f64::from(b.1) - f64::from(a.1))), y);
+    let sides: [ClipSide; 4] = [
+        (&|p| p.1 >= MARGIN, &|a, b| at_y(a, b, MARGIN)),
+        (&|p| p.0 <= w, &|a, b| at_x(a, b, w)),
+        (&|p| p.1 <= h, &|a, b| at_y(a, b, h)),
+        (&|p| p.0 >= MARGIN, &|a, b| at_x(a, b, MARGIN)),
+    ];
+    let mut poly = points.to_vec();
+    for (inside, cross) in sides {
+        let mut out = vec![];
+        for k in 0..poly.len() {
+            let (s, p) = (poly[(k + poly.len() - 1) % poly.len()], poly[k]);
+            if inside(p) {
+                if !inside(s) {
+                    out.push(cross(s, p));
+                }
+
+                out.push(p);
+            } else if inside(s) {
+                out.push(cross(s, p));
+            }
+        }
+
+        poly = out;
+    }
+
+    poly
+}
+
 /// `deployment_areas.xml`: per alliance (by id) its areas (`DeploymentZonePolygonInstanceGroup`s of the normal layers: `alliance_id`,
 /// `deployment_zone_id`, `deployment_category`), each with a `boundary` per `DEPLOYMENT_ZONE_POLYGON_INSTANCE` under it (its type, its
-/// world points) and the facing direction. TEd clips the boundaries to the playable area on export (a decompiled project already holds
-/// the clipped ones); that is not done here yet.
-fn deployment(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml::DocStyle)> {
+/// world points, clipped to the playable area: [`clip_to_playable`]) and the facing direction.
+fn deployment(placed: &[Placed], extent: (f32, f32)) -> Option<(Document, crate::xml::DocStyle)> {
+    let extent_z = extent.1;
     let by_node = by_node(placed);
     let mut alliances: std::collections::BTreeMap<i64, Vec<Node>> = std::collections::BTreeMap::new();
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "DeploymentZonePolygonInstanceGroup") {
@@ -937,19 +985,27 @@ fn deployment(placed: &[Placed], extent_z: f32) -> Option<(Document, crate::xml:
             };
             let mut b = Node::new("boundary");
             b.set("type", Value::Str(kind.to_owned()));
-            for xy in polygon_points(c, extent_z).as_chunks::<2>().0 {
+            let points = polygon_points(c, extent_z).as_chunks::<2>().0.iter().map(|xy| (xy[0] as f32, xy[1] as f32)).collect::<Vec<_>>();
+            for (x, y) in clip_to_playable(&points, extent) {
                 let mut pos = Node::new("position");
-                pos.set("x", coord(xy[0]));
-                pos.set("y", coord(xy[1]));
+                pos.set("x", coord(f64::from(x)));
+                pos.set("y", coord(f64::from(y)));
                 b.children.push(pos);
             }
 
             area.children.push(b);
         }
 
+        // The facing turned a quarter, wrapped into (-pi, pi], in f32 with TEd's constants 1.570796 and 6.283185 (the kit's 0, 1.570796
+        // and 4.712389 give the packs' 1.570796, 3.141592 and 0).
         if let Some(f) = floats_of(n, "facing_direction").and_then(|v| v.first().copied()) {
+            let mut r = f + TED_HALF_PI;
+            if r > std::f32::consts::PI {
+                r -= TED_TWO_PI;
+            }
+
             let mut o = Node::new("orientation");
-            o.set("radians", coord(f64::from(f)));
+            o.set("radians", coord(f64::from(r)));
             area.children.push(o);
         }
 
@@ -1013,8 +1069,9 @@ fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[Opti
     let circle = boundary.is_some_and(|b| b.node.get("polygon_shape").and_then(Value::as_str) == Some("PS_CIRCLE"));
     let (radius, points): (f32, Vec<(f32, f32)>) = match boundary {
         Some(b) if circle => {
+            // The circle's centre is its polygon's position (the kit's sit off their capture location's).
             let r = floats_of(b.node, "radius").and_then(|v| v.first().copied()).unwrap_or(0.0) * 0.5;
-            (r, vec![(w[3] * 0.5, extent_z - w[11] * 0.5)])
+            (r, vec![(b.world[3] * 0.5, extent_z - b.world[11] * 0.5)])
         }
         Some(b) => (0.0, polygon_points(b, extent_z).as_chunks::<2>().0.iter().map(|c| (c[0] as f32, c[1] as f32)).collect()),
         None => (0.0, vec![]),
@@ -1043,7 +1100,7 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<Strin
     use crate::xml::layout::BEFORE_START;
     let by_node = by_node(placed);
     let ted = |v: f32| crate::xml::values::Num::Ted.format(f64::from(v));
-    // flag_facing keeps one decimal (`1.0,-0.0`).
+    // flag_facing and the points keep one decimal (`1.0,-0.0`, `492.5,576.0`).
     let one = |v: f32| {
         let t = ted(v);
         if t.contains('.') { t } else { format!("{t}.0") }
@@ -1058,7 +1115,7 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<Strin
             ("position_y", wce_formats::c_num::printf_f_msvc(f64::from(c.flag.1), 6)),
             ("valid_for_min_num_players", c.min_players.to_string()), ("valid_for_max_num_players", c.max_players.to_string()),
             ("capture_point_type_v2", if c.major { "CAPTURE_LOCATION_MAJOR" } else { "CAPTURE_LOCATION_MINOR" }.to_owned()),
-            ("capture_point_list", c.points.iter().map(|&(x, z)| format!("{},{}", ted(x), ted(z))).collect::<Vec<_>>().join(";")),
+            ("capture_point_list", c.points.iter().map(|&(x, z)| format!("{},{}", one(x), one(z))).collect::<Vec<_>>().join(";")),
             ("building_list", c.links.iter().map(ToString::to_string).collect::<Vec<_>>().join(";")), ("database_key", c.key.clone()),
             ("flag_facing", format!("{},{}", one(c.facing.cos()), one(-c.facing.sin()))),
         ] {
@@ -1548,7 +1605,8 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     xml.extend(outlines(&placed, extent_z, "GO_REGION_POLYGON_INSTANCE", "go_outlines.xml"));
     xml.extend(outlines(&placed, extent_z, "NOGO_REGION_POLYGON_INSTANCE", "non_terrain_outlines.xml"));
     xml.extend(zones(&placed, extent_z));
-    xml.extend(deployment(&placed, extent_z));
+    xml.extend(deployment(&placed, (width as f32 * 128.0, extent_z)));
+
     // The main list's buildings' capture locations, for the links.
     let main = capture_names(placed.iter().filter(|p| p.export == "LayerExportType_Normal"));
     xml.extend(capture_locations(&placed, extent_z, &main));
@@ -1679,6 +1737,19 @@ mod tests {
         assert_eq!(buildings.children.len(), 1);
         assert_eq!(buildings.children[0].get("building_key").and_then(Value::as_str), Some("gate"));
         assert!(out.documents.iter().any(|d| d.name == "bmd_data_escalation1.xml"));
+    }
+
+    #[test]
+    fn deployment_clipping_starts_where_ted_does() {
+        // western_city_a/medium's guerrilla exclusion square, past the tile on every side: TEd's output starts at the corner its last
+        // side's clipping leaves first.
+        let square = [(1055.43, 1068.96), (-47.08, 1075.1), (-52.32, -51.19), (1059.66, -49.73)];
+        assert_eq!(clip_to_playable(&square, (1024.0, 1024.0)), [(32.5, 32.5), (991.5, 32.5), (991.5, 991.5), (32.5, 991.5)]);
+
+        // An edge crossing x = 32.5 is cut there; points inside stay.
+        let cut = clip_to_playable(&[(19.93, 429.89), (42.94, 430.56), (42.94, 500.0)], (1024.0, 1024.0));
+        assert_eq!(cut.len(), 4);
+        assert!(cut.contains(&(42.94, 430.56)) && cut.iter().all(|p| p.0 >= 32.5));
     }
 
     #[test]

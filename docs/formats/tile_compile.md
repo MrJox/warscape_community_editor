@@ -5,7 +5,9 @@
 follows TEd's own export (Ghidra, `TEd.AssemblyKit.exe`): stage A, the logic TEd writes, comes first; BOB's stages follow.
 
 Check: `tile_decompile_check` (gates `tile_decompile`, `tile_decompile_all`) decompiles every tile folder of the packs, writes and reads
-the project back, compiles it, and compares each document with the binary's, byte for byte and field by field.
+the project back, compiles it, and compares each document with the binary's, byte for byte and field by field. With `WCE_COMPILE_KIT=1`
+it compiles the kit's raw tile instead (TEd's own project): the direct test of the export, where the kit is the shipped version (its
+nested groups add their text's rounding, up to 6.5e-5 on a building's position).
 
 ## Exactness
 
@@ -75,13 +77,22 @@ f32, the capture point lists trimmed (`512.19342`), the facing with one decimal 
 - `zones.xml`: per `ZONE_POLYGON_INSTANCE` a `TRANSFORMED_BATTLEFIELD_ZONE_TEMPLATE`: the template (`zone_name` ZONE_POLYGON_INSTANCE,
   the points, an empty `ENTITY_FORMATION_TEMPLATE`) and an identity `Transformation` (all 1,909 of the packs are so).
 - `deployment_areas.xml`: per alliance (by id) its `deployment_area`s (the `DeploymentZonePolygonInstanceGroup`s: id, category), a
-  `boundary` per polygon under it (type, points) and the `orientation` (the facing direction). TEd clips the boundaries to the playable
-  area; a decompiled project holds clipped ones, the compiler does not clip yet.
+  `boundary` per polygon under it (type, points) and the `orientation`: the facing direction + 1.570796, less 6.283185 above pi (f32,
+  TEd's literals: the kit's 0, 1.570796, 4.712389 are the packs' 1.570796, 3.141592, 0). The boundaries are clipped to the playable area,
+  the tile less 32.5 m on every side (all 777 files of the packs keep inside it), by Sutherland-Hodgman against y >= 32.5, x <= width -
+  32.5, y <= height - 32.5, x >= 32.5 in that order, an edge from the previous point to the current: the kit's tiles give the packs'
+  files, 6 of 9 byte for byte (the others 2 ulps off on a cut point).
 - `capture_location_list.xml`: per `CaptureLocationInstance` of the normal layers (the escalation layers' are in their BMDs): radius
   (half TEd's circle, 0 for a polygon), the flag's position, players, type (`CAPTURE_LOCATION_MAJOR` / `MINOR`), the point list (a
   circle's centre or the polygon's points), the key, the facing as (cos f, -sin f), and `building_list`: the indices (in the main list,
   `;` separated) of the buildings whose `capture_location` property is the capture location's `name` (TEd's towers and gates name the
-  capture location they belong to). The kit's tiles give the binaries' links this way, the escalation BMDs' included.
+  capture location they belong to). The kit's tiles give the binaries' links this way, the escalation BMDs' included. A circle's point is
+  its `CaptureLocationPolygonInstance`'s position (the kit's sit off their capture location: (-7, 0, -3) and the like); every number of
+  the point list keeps a decimal (`492.5,576.0`).
+- `vegetation_exclusion.xml` (4 encampments; TEd writes it when the location has `/encampments/`, `FUN_005002d0`): the box of the
+  buildings' bounds as the editor has them loaded (each building's cached world box, `FUN_00413dc0`, to tile space and padded,
+  `FUN_005029d0`, then joined, `FUN_00502a50`). The collision and render models' boxes do not give the shipped ones (the editor's
+  render state and the pad are not known), so the decompiler carries the file.
 
 ## Escalation BMDs (`bmd_data_escalation<n>.bin` and `.xml`)
 
