@@ -24,6 +24,10 @@ pub struct CompileContext<'a> {
 
     /// The version to write a markers file in (by file name); without it TEd's current one.
     pub marker_versions: Option<VersionOf<'a>>,
+
+    /// Stage B too (BOB's Tile processor: textures, meshes, heights, outlines), with what it needs from the kit; without it, stage A
+    /// alone.
+    pub stage_b: Option<super::stage_b::StageB<'a>>,
 }
 
 /// What a compilation left out or made up, as notes.
@@ -1625,9 +1629,10 @@ pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
         .collect()
 }
 
-/// The stage-A part of a project's exported tile (TEd's export), as the model `attila.tile_binary` writes: the building lists; the prop,
-/// particle emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas
-/// and capture locations (with their document styles); civilian_deployment.bin; the escalation BMDs and their XML twins.
+/// A project's exported tile, as the model `attila.tile_binary` writes. Stage A (TEd's export): the building lists; the prop, particle
+/// emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas and
+/// capture locations (with their document styles); civilian_deployment.bin; the escalation BMDs and their XML twins. With
+/// `ctx.stage_b`, stage B too ([`super::stage_b::stage_b_files`]).
 ///
 /// # Errors
 ///
@@ -1671,6 +1676,21 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     }
 
     out.documents = docs;
+    if let Some(b) = &ctx.stage_b {
+        // Stage B's files read back as the exported tile's parts (maps, documents, files), then merged in.
+        let (files, more) = super::stage_b::stage_b_files(raw, b)?;
+        notes.notes.extend(more.notes);
+        let folder = files.into_iter().map(|(name, bytes)| (name, wce_tile_model::Blob::Bytes(bytes.into()))).collect();
+        let tf = crate::TileFiles { folder, entry: None, variation: raw.variation.clone() };
+        let (read, _) = crate::TileFormat::read(&super::tile_binary::TileBinary, &tf).map_err(|e| e.to_string())?;
+        out.maps.extend(read.maps);
+        out.documents.extend(read.documents);
+        out.files.extend(read.files);
+        for (name, style) in read.source {
+            out.source.insert(name, style);
+        }
+    }
+
     Ok((out, notes))
 }
 

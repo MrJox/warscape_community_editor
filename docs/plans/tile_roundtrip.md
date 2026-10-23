@@ -282,10 +282,12 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   atlantic_mountains/small_round/aa (13 oracle tiles in all).
   The per-subtile `mesh<x>x<y>` entries of tile.agf are only listed: BOB writes no such file and the game's packs hold none.
   A river without water planes (river/2x2_lt_tr/aa) is byte for byte too, its water map the river's alone.
-  Still open in stage B: 5 DXT5 blocks of 102,400 off on dense_forest_rugged/8x8/ac (blend colour, normal alpha); then wiring
-  stage B into the compile. Still to wire: the CHMF into
-  `textures()` (needs the kit's db and art for the stamps, and `_settings.xml`'s angle). The kit lacks most buildings' raw height-map meshes
-  (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without such buildings.
+  Stage B is wired into the compile (`CompileContext::stage_b`, `attila::stage_b`): the compiled tile carries every stage-B file. Against
+  the shipped packs the kit's raw tiles give the same textures on most tiles; the packs' meshes, CHMF and outlines come from CA's own
+  pipeline (another terrain block type, CRLF), so the kit's BOB stays the reference for those.
+  Still open in stage B: the DXT5 residual (see "Unverified"); `civilian_shelter.bin` (capacities not in tile.ted). The kit lacks most
+  buildings' raw height-map meshes (`raw_data/art/.../*.cs2`), so BOB cannot finish tiles that use them: oracle tiles are those without
+  such buildings.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).
   - For later (the user can fetch them): TDD's raw tiles (tile.ted + maps, `_tile_database`), at least dwarven_city_b/medium and
     middle_men_city_hornburg/medium + small for the 6 non-unit building quaternions; TDD's working_data of a few tiles for stage B if its

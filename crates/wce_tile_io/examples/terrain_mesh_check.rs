@@ -20,23 +20,8 @@ fn main() {
     let (stamps, missing) = building_stamps(&project, kit);
     println!("{} building stamps{}", stamps.len(), if missing.is_empty() { String::new() } else { format!("; no mesh file for {missing:?}") });
     let t0 = std::time::Instant::now();
-    // BOB's VFS for the water planes' models: the game's packs (the kit's `../../data`), searched only when a model is asked for.
-    let data = kit.join("../../data");
-    let models = |key: &str| -> Option<Vec<u8>> {
-        use rpfm_lib::files::pack::Pack;
-        let key = key.replace('\\', "/").to_lowercase();
-        let attila = rpfm_lib::games::supported_games::SupportedGames::default().game("attila")?.clone();
-        let mut packs = std::fs::read_dir(&data).ok()?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
-        packs.sort();
-        for p in packs {
-            let Ok(mut pack) = Pack::read_and_merge(std::slice::from_ref(&p), &attila, true, false, false) else { continue };
-            let Some(name) = pack.files().keys().find(|n| n.to_lowercase() == key).cloned() else { continue };
-            if let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&name).map(|f| f.encode(&None, false, false, true)) {
-                return Some(bytes);
-            }
-        }
-        None
-    };
+    // BOB's VFS for the water planes' models: the game's packs (the kit's `../../data`).
+    let models = wce_tile_io::attila::stage_b::pack_models(&kit.join("../../data"));
     let out = terrain_files(&project, kit, decimation_angle(kit), &stamps, &models).expect("stage B");
     println!("built in {:?}", t0.elapsed());
     for (name, ours) in out {

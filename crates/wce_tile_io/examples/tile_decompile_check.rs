@@ -17,6 +17,9 @@
 //!
 //! The decompiled project is also compiled again (`attila::compile`, stage A) and compared with the binary: byte for byte, and field by
 //! field within what tile.ted's text can carry (docs/plans/tile_roundtrip.md, step 4); the gate fails on anything beyond.
+//! `WCE_COMPILE_STAGE_B=1` compiles stage B too (the kit's raw_data, the game's packs for models) and counts its files identical to the
+//! binary's or not (evidence, not a gate: the packs come from CA's own pipeline, whose meshes and outline files differ from the kit's
+//! BOB); `WCE_STAGE_B_DUMP=DIR` writes both sides.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -359,10 +362,15 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             }
 
             let version_of = |n: &str| versions.get(n).copied().flatten();
+            // WCE_COMPILE_STAGE_B=1: stage B too (the kit's raw_data, the game's packs for models), its files compared with the binary's.
+            let stage_b = std::env::var_os("WCE_COMPILE_STAGE_B").is_some();
+            let raw_data = kit.join("raw_data");
+            let models = stage_b.then(|| models_of(&kit.join("../data")));
             let cctx = CompileContext {
                 building_levels: ctx.building_levels,
                 building_thresholds: ctx.building_thresholds,
                 marker_versions: Some(&version_of),
+                stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { raw_data: &raw_data, models: m }),
             };
             // WCE_COMPILE_KIT=1: compile the kit's raw tile instead (TEd's own project: what the export does with it; tiles whose kit is
             // not the shipped version differ, and nested groups add their text's rounding).
@@ -374,7 +382,36 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             } else {
                 None
             };
-            let (compiled, _) = compile(kit_project.as_ref().unwrap_or(&back), &cctx)?;
+            let (compiled, cnotes) = compile(kit_project.as_ref().unwrap_or(&back), &cctx)?;
+            for n in &cnotes.notes {
+                *local.losses.entry(format!("compile: {}", n.split(" (").next().unwrap_or(n))).or_default() += 1;
+            }
+
+            // Stage B's files, both tiles written by the binary writer, compared byte for byte.
+            if stage_b {
+                let (ours, _) = TileBinary.write(&compiled).map_err(|e| e.to_string())?;
+                let (theirs, _) = TileBinary.write(&binary).map_err(|e| e.to_string())?;
+                for f in STAGE_B_FILES {
+                    let (a, b) = (ours.folder.get(f).and_then(|b| b.bytes().ok()), theirs.folder.get(f).and_then(|b| b.bytes().ok()));
+                    // WCE_STAGE_B_DUMP=DIR: both sides of each stage-B file (ours.<name>, theirs.<name>).
+                    if let Ok(dir) = std::env::var("WCE_STAGE_B_DUMP") {
+                        let dir = PathBuf::from(dir).join(folder.replace('/', "_"));
+                        let _ = std::fs::create_dir_all(&dir);
+                        for (side, bytes) in [("ours", &a), ("theirs", &b)] {
+                            if let Some(bytes) = bytes {
+                                let _ = std::fs::write(dir.join(format!("{side}.{f}")), &bytes[..]);
+                            }
+                        }
+                    }
+
+                    let e = local.attr_same.entry(format!("compile stage B {f} (bytes)")).or_default();
+                    match (a, b) {
+                        (Some(a), Some(b)) if a == b => e.0 += 1,
+                        (_, None) => {}
+                        _ => e.1 += 1,
+                    }
+                }
+            }
             let docs = &compiled.documents;
             // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
             let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {
@@ -1218,6 +1255,28 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
     t.problems.extend(local.problems);
 }
+
+/// The game's packs as BOB's VFS for stage B's models: one lookup (and pack index) for the whole run.
+type Models = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
+
+fn models_of(data: &Path) -> &'static Models {
+    static MODELS: std::sync::OnceLock<Box<Models>> = std::sync::OnceLock::new();
+    MODELS.get_or_init(|| Box::new(wce_tile_io::attila::stage_b::pack_models(data))).as_ref()
+}
+
+/// The files stage B makes (`attila::stage_b`).
+const STAGE_B_FILES: [&str; 10] = [
+    "blend.dds",
+    "index.dds",
+    "normal.dds",
+    "ground_types.dds",
+    "tile.agf",
+    "outfield_mesh.rigid_model_v2",
+    "mesh.rigid_model_v2",
+    "hf_height_map.data",
+    "hf_water_map.data",
+    "terrain_outlines.xml",
+];
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
