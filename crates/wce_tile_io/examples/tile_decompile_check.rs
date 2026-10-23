@@ -115,7 +115,7 @@ fn xml_within(a: &Node, b: &Node, scale: f64) -> bool {
 
 /// The serde documents the compiler writes (stage A): the escalation BMDs and the civilian deployment list.
 fn compiled_serde(name: &str) -> bool {
-    name == "civilian_deployment.bin" || (name.starts_with("bmd_data_escalation") && name.ends_with(".bin"))
+    name == "civilian_deployment.bin" || name == "civilian_shelter.bin" || (name.starts_with("bmd_data_escalation") && name.ends_with(".bin"))
 }
 
 /// The escalation BMDs' XML twins.

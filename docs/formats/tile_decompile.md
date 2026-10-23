@@ -110,8 +110,8 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
 - Vegetation exclusion polygons: applied to the tree lists by BOB. Four tiles ship a `vegetation_exclusion.xml` bounding box that matches
   no kit polygon.
 - River splines: the river tiles ship the water surface (`hf_water_map.data`) only.
-- Civilian shelters are left out: `civilian_shelter.bin`'s capacities are not in tile.ted (BOB's stage; tiles without `CivilianShelter`s
-  get generated ones).
+- Civilian shelters: a `CivilianShelter` per record (target and position at y 0, the kit's colours), its capacity as
+  `max_shelter_capacity` unless u32::MAX (an attribute the kit's TEd does not know; the compiler reads it). An empty file is carried.
 
 ## The entry
 

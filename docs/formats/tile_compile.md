@@ -127,8 +127,17 @@ the kit's own order for western_city_b and eastern_city_b reproduce.
 
 rpfm_lib's `CivilianDeploymentFile` (version 1): the normal layers' `CivilianDeploymentZone`s (kind = `civilian_type`, size =
 `civilian_amount`, the polygon's points). Written when there are zones; 154 tiles ship it empty and 1,245 not at all, so the decompiler
-carries an empty one. `civilian_shelter.bin` is not TEd's: its capacities are not in tile.ted (`CivilianShelter`: a position and a
-target), so it belongs to BOB's stage.
+carries an empty one.
+
+## civilian_shelter.bin
+
+rpfm_lib's `CivilianShelterFile` (version 1): the normal layers' `CivilianShelter`s, each its target and its position as (x / 2,
+extent - z / 2) (rpfm's `area` min and max; the position from the world matrix, the target moved by its rotation), and a capacity:
+`max_shelter_capacity`, u32::MAX without one. The kit's TEd has no such attribute (EmpireUtility knows the name). Of the packs'
+24,070 shelters 91 % carry u32::MAX; the others come from CA's or TDD's own tools, so the decompiler writes the attribute when the file
+has a capacity. Written when there are shelters; an empty shipped file is carried by the project. BOB writes none.
+Checks: from the kit's raw tiles, the shipped files on 15 of 35 settlements (the first difference of 19 of the 20 others a capacity); from the
+decompiled projects, every shipped file of 36 settlement tiles (vanilla and TDD) byte for byte.
 
 Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
 text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.

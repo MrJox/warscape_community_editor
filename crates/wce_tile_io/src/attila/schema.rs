@@ -36,7 +36,7 @@ impl Schema for TedSchema {
 
             "add_boundary" | "add_polygon" | "alliance_id" | "closed" | "decal_generation_seed" | "deployment_zone_id" | "destruction_level"
             | "flatten" | "generation_seed" | "max_num_players" | "max_subdivisions" | "min_num_players" | "polygon_closed" | "rank_count"
-            | "recenter_polygon" | "select_all_points" | "version" | "vfx_generation_seed" => Kind::Int,
+            | "recenter_polygon" | "select_all_points" | "version" | "vfx_generation_seed" | "max_shelter_capacity" => Kind::Int,
 
             "alpha_fade" | "area" | "aspect_ratio" | "burn_amount" | "colour_min" | "colour_scale" | "dirt_level" | "DOF_blur_size"
             | "facing_direction" | "far_distance" | "flag_facing" | "flow_speed" | "foam_amount" | "focal_length" | "glow_amount"
