@@ -1169,7 +1169,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
 
     // The normal layers' capture locations (the escalation layers' are in their BMDs).
     if let Some(doc) = binary.document("capture_location_list.xml") {
-        items.extend(xml_captures(&doc.root).iter().map(|c| capture_node(c, extent_z)));
+        items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent_z)));
     }
 
     if binary.document("civilian_shelter.bin").is_some() {
@@ -1190,6 +1190,37 @@ struct CaptureLocation {
     max_players: i64,
     radius: f64,
     points: Vec<(f64, f64)>,
+
+    /// The indices of the buildings linked to it in its list (TEd: the buildings whose `capture_location` is its name).
+    links: Vec<usize>,
+}
+
+/// The name a decompiled capture location gets (its index in its list): the linked buildings' `capture_location`.
+fn capture_name(index: usize) -> String {
+    format!("capture_point_{}", index + 1)
+}
+
+/// The capture location each building of a list is linked to (by index), from the captures' links; a building linked twice keeps the
+/// first and is counted.
+fn building_captures(caps: &[CaptureLocation], losses: &mut Losses) -> std::collections::HashMap<usize, String> {
+    let mut of = std::collections::HashMap::new();
+    let mut twice = 0;
+    for (k, c) in caps.iter().enumerate() {
+        for &b in &c.links {
+            match of.entry(b) {
+                std::collections::hash_map::Entry::Occupied(_) => twice += 1,
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(capture_name(k));
+                }
+            }
+        }
+    }
+
+    if twice > 0 {
+        losses.note(format!("capture links: {twice} buildings linked to two capture locations (TEd links one)"));
+    }
+
+    of
 }
 
 /// Whether (x, z) is inside the polygon (even-odd rule).
@@ -1304,6 +1335,9 @@ fn bmd_captures(bmd: &Node) -> Vec<CaptureLocation> {
             max_players: loc.get("valid_for_max_num_players").and_then(Value::as_int).unwrap_or(8),
             radius: num(loc, "radius"),
             points: loc.child("location_points").map_or(vec![], |p| p.children.iter().map(|c| (num(c, "x"), num(c, "y"))).collect()),
+            links: loc
+                .child("building_links")
+                .map_or(vec![], |l| l.children.iter().filter_map(|c| c.get("building_index").and_then(Value::as_int)).map(|i| i as usize).collect()),
         })
         .collect()
 }
@@ -1328,6 +1362,7 @@ fn xml_captures(doc: &Node) -> Vec<CaptureLocation> {
             max_players: f(loc, "valid_for_max_num_players") as i64,
             radius: f(loc, "radius"),
             points: str_attr(loc, "capture_point_list").split(';').filter(|p| !p.trim().is_empty()).map(pair).collect(),
+            links: str_attr(loc, "building_list").split(';').filter_map(|i| i.trim().parse().ok()).collect(),
         })
         .collect()
 }
@@ -1335,7 +1370,7 @@ fn xml_captures(doc: &Node) -> Vec<CaptureLocation> {
 /// A capture location as TEd's CaptureLocationInstance with its boundary. A circle (a radius and one point): the instance at the centre,
 /// the flag at `flag_position` from it, the boundary TEd's circle of the radius doubled (as the kit has them). A polygon through the
 /// points: the instance at the flag.
-fn capture_node(c: &CaptureLocation, extent_z: f64) -> Node {
+fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
     let scene = |(x, z): (f64, f64)| (2.0 * x, 2.0 * (extent_z - z));
     let flag = scene(c.flag);
     let circle = c.radius > 0.0 && c.points.len() <= 1;
@@ -1344,7 +1379,7 @@ fn capture_node(c: &CaptureLocation, extent_z: f64) -> Node {
     let facing = (-c.facing.1).atan2(c.facing.0).rem_euclid(std::f64::consts::TAU);
     let mut n = instance(
         "CaptureLocationInstance",
-        "capture_point",
+        name,
         [r32(centre.0), 0.0, r32(centre.1)],
         [0.0; 3],
         vec![
@@ -1542,8 +1577,18 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
         let list = buildings(doc)?;
         let mut l = layer(&layer_name, export);
-        for b in &list {
-            l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
+        // The main list's buildings linked to the capture locations of capture_location_list.xml.
+        let linked = match binary.document("capture_location_list.xml") {
+            Some(c) if name == "building_list" => building_captures(&xml_captures(&c.root), &mut losses),
+            _ => Default::default(),
+        };
+        for (k, b) in list.iter().enumerate() {
+            let mut node = building_node(b, extent.1, ctx, &mut bl);
+            if let Some(c) = linked.get(&k) {
+                node.set("capture_location", s(c));
+            }
+
+            l.wrapped_mut("children").push(node);
             // The zones decide the main list's flags (the kit's zoned tiles); the other lists' are not theirs.
             if let Some(lite) = b.lite.filter(|_| name == "building_list") {
                 lite_of.push((2.0 * f64::from(b.position[0]), 2.0 * (extent.1 - f64::from(b.position[2])), lite));
@@ -1580,8 +1625,15 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let Some(doc) = binary.document(&format!("bmd_data_escalation{n}.bin")) else { continue };
         let items = |list: &str| doc.root.child(list).and_then(|l| l.child("markers")).map_or(&[][..], |m| &m.children[..]);
         let mut l = layer(&format!("Escalation {n}"), &format!("LayerExportType_Escalation{n}"));
-        for b in &bmd_buildings(&doc.root) {
-            l.wrapped_mut("children").push(building_node(b, extent.1, ctx, &mut bl));
+        let caps = bmd_captures(&doc.root);
+        let linked = building_captures(&caps, &mut losses);
+        for (k, b) in bmd_buildings(&doc.root).iter().enumerate() {
+            let mut node = building_node(b, extent.1, ctx, &mut bl);
+            if let Some(c) = linked.get(&k) {
+                node.set("capture_location", s(c));
+            }
+
+            l.wrapped_mut("children").push(node);
         }
 
         // The props and emitters are grouped by key in TEd's marker table order: the groups are placed in an insertion order that gives
@@ -1617,7 +1669,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             losses.note(format!("escalation props / emitters: no insertion order gives the marker table's order ({unordered} lists of bmd_data_escalation{n}.bin)"));
         }
 
-        l.wrapped_mut("children").extend(bmd_captures(&doc.root).iter().map(|c| capture_node(c, extent.1)));
+        l.wrapped_mut("children").extend(caps.iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent.1)));
         // No-go regions, zones and civilian deployment zones.
         if let Some(nt) = doc.root.child("non_terrain_outlines").and_then(|n| n.child("empire_outline")) {
             for o in &nt.children {
@@ -1859,7 +1911,7 @@ mod tests {
         list.children.push(l);
         let caps = xml_captures(&list);
         assert_eq!(caps.len(), 1);
-        let n = capture_node(&caps[0], 1024.0);
+        let n = capture_node(&caps[0], "capture_point_1", 1024.0);
         // The instance at the circle's centre, the flag at the list's position.
         let p = n.get("position").and_then(Value::as_vec3).unwrap();
         let f = n.get("flag_position").and_then(Value::as_vec3).unwrap();

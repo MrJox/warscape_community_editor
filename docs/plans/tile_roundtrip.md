@@ -248,8 +248,8 @@ heights and meshes; C is wired to the existing port behind a switch once its bug
   deployment, capture locations; the escalation BMDs with their XML twins and civilian_deployment.bin (TEd's garbage bytes counted
   apart; the BMDs' prop / emitter group order through a reconstructed insertion order). Tested on western_city_b/small, dwarven_city_b,
   eastern_port_constantinople, dunedain_city_a/medium, osgiliath, nordic_port_a/minor, farm_eastern, an encampment.
-  - Open: the capture locations' building links (TEd's rule not found; a 20 m approximation, compared apart); deployment clipping to the
-    playable area; `vegetation_exclusion.xml` (4 tiles).
+  - Capture building links: the buildings' `capture_location` names (user's hint; the kit's tiles give every binary's links).
+  - Open: deployment clipping to the playable area; `vegetation_exclusion.xml` (4 tiles).
   - Stage B owns `civilian_shelter.bin` (capacities not in tile.ted).
   - Next: stage B.
   - User (2026-10-23): no corpus runs until the plan is finished; check each piece on a few tiles (`--filter`).

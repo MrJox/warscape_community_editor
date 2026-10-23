@@ -94,7 +94,8 @@ move them. The tree list's `id`s are rpfm's (random), not data. Grass lists are 
 - **Capture locations**: the escalation layers' from their BMDs, the normal layers' from `capture_location_list.xml` (`position_x/y` the
   flag, `capture_point_list` the points `x,y;x,y...`, `flag_facing` a vector). A circle (a radius, one point): the instance at the
   centre, the flag at `flag_position`, the boundary TEd's 20-point circle of twice the radius. Otherwise a polygon through the points,
-  the instance at the flag. `flag_facing` = atan2(-y, x) mod 2 pi.
+  the instance at the flag. `flag_facing` = atan2(-y, x) mod 2 pi. Each is named `capture_point_<k>` (its place in its list), and the
+  buildings it links (`building_list`, a BMD's `building_links`) get that name as their `capture_location`.
 - **Escalation layers** (`bmd_data_escalation<n>.bin`, a layer `Escalation <n>` of `LayerExportType_Escalation<n>`, made even when the
   file is empty: TEd writes one per layer): buildings, props (a model with `allow_in_outfield` is a `water_plane`), particle emitters,
   capture locations, no-go regions, zones, civilian deployment zones. The props and emitters come grouped by key in `MARKER_TABLE`

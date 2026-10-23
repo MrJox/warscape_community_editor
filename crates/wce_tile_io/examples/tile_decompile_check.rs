@@ -166,7 +166,7 @@ fn mask_garbage(ours: &Node, theirs: &Node, masked: &mut Vec<String>) -> (Node, 
 }
 
 /// A document without its capture locations' building links (a BMD's `building_links`, a twin's `building_indices`, capture_location_list.xml's
-/// `building_list`), and the links in document order: TEd's linking rule is not known (docs/formats/tile_compile.md), so they are compared apart.
+/// `building_list`), and the links in document order, compared apart (the counts say which file's links differ).
 fn strip_links(n: &Node, links: &mut Vec<String>) -> Node {
     let mut out = n.clone();
     out.children.clear();
@@ -347,41 +347,6 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             *local.losses.entry(format!("definition [{kind}] {attrs} | {ent}")).or_default() += 1;
         }
 
-        // WCE_DECOMPILE_CAPTURE: each capture location of capture_location_list.xml with its linked buildings (key, distance from the
-        // centre) and the buildings within its radius that are not linked (for working out TEd's rule).
-        if std::env::var_os("WCE_DECOMPILE_CAPTURE").is_some()
-            && let (Some(c), Some(bl)) = (binary.document("capture_location_list.xml"), binary.document("building_list"))
-            && let Ok(list) = wce_tile_io::attila::tile_binary::buildings(bl)
-        {
-            let mut locs = vec![];
-            fn all<'a>(n: &'a Node, out: &mut Vec<&'a Node>) {
-                for c in &n.children {
-                    if c.class == "CAPTURE_LOCATION" {
-                        out.push(c);
-                    }
-                    all(c, out);
-                }
-            }
-            all(&c.root, &mut locs);
-            for l in locs {
-                let attr = |a: &str| l.get(a).and_then(Value::as_str).unwrap_or_default().to_owned();
-                let radius = attr("radius").parse::<f32>().unwrap_or(0.0);
-                let first = attr("capture_point_list").split(';').next().unwrap_or_default().split(',').map(|v| v.parse::<f32>().unwrap_or(0.0)).collect::<Vec<_>>();
-                let (cx, cz) = (first.first().copied().unwrap_or(0.0), first.get(1).copied().unwrap_or(0.0));
-                let linked = attr("building_list").split(';').filter_map(|i| i.parse::<usize>().ok()).collect::<Vec<_>>();
-                let dist = |b: &wce_tile_io::attila::building_list::BattlefieldBuilding| (b.position[0] - cx).hypot(b.position[2] - cz);
-                let cat = |k: &str| ctx.building_category.and_then(|f| f(k)).unwrap_or_default();
-                let shown = linked.iter().filter_map(|&i| list.get(i)).map(|b| format!("{} [{}] {:.1}", b.key, cat(&b.key), dist(b))).collect::<Vec<_>>();
-                let others = list.iter().enumerate().filter(|(i, b)| !linked.contains(i) && radius > 0.0 && dist(b) <= radius).map(|(_, b)| format!("{} [{}]", b.key, cat(&b.key))).collect::<Vec<_>>();
-                // The nearest buildings of the linked ones' categories that are not linked.
-                let cats = linked.iter().filter_map(|&i| list.get(i)).map(|b| cat(&b.key)).collect::<Vec<_>>();
-                let mut near = list.iter().enumerate().filter(|(i, b)| !linked.contains(i) && cats.contains(&cat(&b.key))).map(|(_, b)| (dist(b), b.key.clone())).collect::<Vec<_>>();
-                near.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let others = others.into_iter().chain(near.iter().take(2).map(|(d, k)| format!("nearest unlinked {k} {d:.1}"))).collect::<Vec<_>>();
-                local.problems.push(format!("{name}: capture {} r {radius}: linked {shown:?}; unlinked inside {}: {:?}", attr("database_key"), others.len(), others.iter().take(4).collect::<Vec<_>>()));
-            }
-        }
-
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
             // The binary's marker versions, so that an older file is compared field by field.
@@ -397,7 +362,6 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let cctx = CompileContext {
                 building_levels: ctx.building_levels,
                 building_thresholds: ctx.building_thresholds,
-                building_category: ctx.building_category,
                 marker_versions: Some(&version_of),
             };
             let (compiled, _) = compile(&back, &cctx)?;
@@ -421,8 +385,14 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     mask_garbage(&a, &b, &mut masked)
                 });
                 if (compiled_twin(&theirs.name) || theirs.name == "capture_location_list.xml") && pair.is_some() {
-                    let l = local.attr_same.entry(format!("compile {kind} capture building links (open: TEd's rule)")).or_default();
-                    if ours_links == theirs_links { l.0 += 1 } else { l.1 += 1 }
+                    let l = local.attr_same.entry(format!("compile {kind} capture building links")).or_default();
+                    if ours_links == theirs_links {
+                        l.0 += 1;
+                    } else {
+                        l.1 += 1;
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: {} capture links: ours {ours_links:?}, binary {theirs_links:?}", theirs.name));
+                    }
                 }
 
                 for m in masked.iter().collect::<std::collections::BTreeSet<_>>() {
@@ -490,14 +460,13 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 let (mut ours_links, mut theirs_links) = (vec![], vec![]);
                 let (a, b) = mask_garbage(&strip_links(&ours.root, &mut ours_links), &strip_links(&theirs.root, &mut theirs_links), &mut masked);
                 if ours_links.len() + theirs_links.len() > 0 {
-                    let l = local.attr_same.entry(format!("compile {kind} capture building links (open: TEd's rule)")).or_default();
+                    let l = local.attr_same.entry(format!("compile {kind} capture building links")).or_default();
                     if ours_links == theirs_links {
                         l.0 += 1;
                     } else {
                         l.1 += 1;
-                        if std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                            local.problems.push(format!("{name}: {} capture links: ours {ours_links:?}, binary {theirs_links:?}", theirs.name));
-                        }
+                        local.compile_beyond += 1;
+                        local.problems.push(format!("{name}: {} capture links: ours {ours_links:?}, binary {theirs_links:?}", theirs.name));
                     }
                 }
 
