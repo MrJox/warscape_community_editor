@@ -534,7 +534,7 @@ fn cut_go_outlines(field: &mut [bool], w: usize, h: usize, go: &[Vec<(f32, f32)>
     }
 }
 
-pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>]) -> Vec<u8> {
+pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>], mask: &[bool], cells: (usize, usize)) -> Vec<u8> {
     let mut field = no_go(heights, w, h, 2.0, 30.0);
     cut_go_outlines(&mut field, w, h, go);
     let field = blur(&field, w, h);
@@ -559,14 +559,16 @@ pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32
     s.simplify(1, 3.0, 4, true, false);
     s.simplify(1, 1.0, 4, true, true);
     // `FUN_100886f0`: an outline stays only when every point's subtile (`(int)(x x f32(1 / 256))`, the field's space) is
-    // `subtile_masked_valid`: inside the tile (and, on a masked tile, in the mask: not ported). Points on the far edges (2 (w - 1))
-    // fall in the subtile past the last, so outlines touching the right or bottom edge go.
-    let (cells_x, cells_y) = (((w - 1) / super::bob_tile::CELL) as i32, ((h - 1) / super::bob_tile::CELL) as i32);
+    // `subtile_masked_valid`: inside the tile, and in the mask (BOB passes the field's y, rows from the top, where the mask's rows
+    // count from the bottom). Points on the far edges (2 (w - 1)) fall in the subtile past the last, so outlines touching the right or
+    // bottom edge go.
+    // The tile's subtiles (the entry's size: with fewer than 128 samples per subtile the scale no longer matches, as in BOB).
+    let (cells_x, cells_y) = (cells.0 as i32, cells.1 as i32);
     let scale = 1.0f32 / (128.0 * 2.0);
     let valid = |o: &&Vec<(f32, f32)>| {
         o.iter().all(|&(x, y)| {
             let (cx, cy) = ((scale * x) as i32, (scale * y) as i32);
-            (0..cells_x).contains(&cx) && (0..cells_y).contains(&cy)
+            super::bob_tile::subtile_valid(mask, cells_x as usize, cells_y as usize, cx, cy)
         })
     };
     let mut out = String::from("<OUTLINE_LIST>\n");

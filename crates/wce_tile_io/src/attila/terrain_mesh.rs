@@ -30,13 +30,16 @@ pub struct Vertex {
 /// edge), row by row from z = 0: vertex `z * w + x` stands at (x, z) with the height of the field's row `h - 1 - z`, its normal
 /// [`calculate_normal`] there, and the alpha (`final_alpha.dds`, the [`super::bob_tile::influence`]) of row z: BOB reads that
 /// field unflipped (the influence's rows differ at the middle of a cell: 1 against 0.965 at row 64 of a 2 x 2 tile).
-pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strength: f32) -> Vec<Vertex> {
+pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strength: f32, density: usize) -> Vec<Vertex> {
+    // Metres per sample (`128 / density`, f32): x and z are in metres.
+    let metres = 128.0f32 / density as f32;
     let mut out = Vec::with_capacity(w * h);
     for z in 0..h {
         let row = h - 1 - z;
+        let mz = z as f32 * metres;
         for x in 0..w {
             let normal = calculate_normal(heights, w, h, x, row, strength);
-            out.push(Vertex { x: x as f32, h: heights[row * w + x], z: z as f32, normal, alpha: alpha[z * w + x], fringe: false });
+            out.push(Vertex { x: x as f32 * metres, h: heights[row * w + x], z: mz, normal, alpha: alpha[z * w + x], fringe: false });
         }
     }
 
@@ -57,7 +60,7 @@ pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[
             v.h -= 10.0;
             v.fringe = true;
             verts.push(v);
-            let (x, z) = (v.x as usize, v.z as usize);
+            let (x, z) = (t % w, t / w);
             let corner = (x == 0 || x == w - 1) && (z == 0 || z == h - 1);
             flags.push(if corner || (x % kind.modulus == 0 && z % kind.modulus == 0) { FRINGE_KEPT } else { FRINGE });
         }
@@ -73,6 +76,179 @@ pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[
     edge((0..w).map(|x| (h - 1) * w + x).collect(), &|t0, t1, b0, b1| [[t1, t0, b0], [t1, b0, b1]]);
     edge((0..h).map(|z| z * w).collect(), &|t0, t1, b0, b1| [[t0, b0, t1], [t1, b0, b1]]);
     edge((0..h).map(|z| z * w + w - 1).collect(), &|t0, t1, b0, b1| [[t0, t1, b0], [t1, b1, b0]]);
+}
+
+/// A tile's sample grid as `build_base_mesh` sees it: `w` x `h` samples, `t` samples per subtile (the variation's
+/// `raw_data_tri_density`, BOB's tile size), and the entry's mask (subtiles from the bottom row; empty without one).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Grid {
+    pub w: usize,
+    pub h: usize,
+    pub t: usize,
+    pub mask: Vec<bool>,
+}
+
+impl Grid {
+    pub fn cells(&self) -> (usize, usize) {
+        ((self.w - 1) / self.t, (self.h - 1) / self.t)
+    }
+
+    pub fn masked(&self) -> bool {
+        !self.mask.is_empty()
+    }
+
+    /// The entry's width and height in subtiles (the grid's when it has none).
+    pub fn cells_of_tile(&self, raw: &wce_tile_model::Tile) -> (usize, usize) {
+        let entry = raw.entry.as_ref().map(|e| &e.root);
+        let int = |k: &str| entry.and_then(|e| e.get(k)).and_then(|v| v.as_int()).map(|v| v as usize);
+        let (cw, ch) = self.cells();
+        (int("width").unwrap_or(cw), int("height").unwrap_or(ch))
+    }
+
+    /// `TILE::subtile_masked_valid(x, z)` (z up, as the grid's rows).
+    pub fn valid(&self, x: i64, z: i64) -> bool {
+        let (cw, ch) = self.cells();
+        super::bob_tile::subtile_valid(&self.mask, cw, ch, x.clamp(i32::MIN as i64, i32::MAX as i64) as i32, z.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+    }
+
+    /// The grid's step for a kind: the kind's, at most the grid's size and, masked, the subtile's.
+    pub fn step(&self, kind: MeshKind) -> usize {
+        let s = kind.step.min(self.w).min(self.h);
+        if self.masked() { s.min(self.t) } else { s }
+    }
+}
+
+/// [`grid_flags`] in general (`build_base_mesh`, step 1): a vertex is locked when the subtile of x - s, x + s (rounded down, z's own)
+/// or z - s, z + s is not valid, at the tile's corners, where x and z are both multiples of the kind's modulus, and on a masked tile
+/// when the subtile of x - s, x + s, z + s or z - s (divided, truncated) is not; and where the protection map says so.
+pub fn grid_flags_masked(g: &Grid, kind: MeshKind, protection: Option<(&[f32], usize, usize)>) -> Vec<u8> {
+    let (w, h, t) = (g.w as i64, g.h as i64, g.t as i64);
+    let s = g.step(kind) as i64;
+    let m = kind.modulus as i64;
+    let mut out = Vec::with_capacity(g.w * g.h);
+    for z in 0..h {
+        for x in 0..w {
+            let near = !g.valid((x - s).div_euclid(t), z / t)
+                || !g.valid((x + s).div_euclid(t), z / t)
+                || !g.valid(x / t, (z + s).div_euclid(t))
+                || !g.valid(x / t, (z - s).div_euclid(t));
+            let modulus = if near { 1 } else { m };
+            let corner = (x == 0 || x == w - 1) && (z == 0 || z == h - 1);
+            let mut free = !near && !corner && !(x % modulus == 0 && z % modulus == 0);
+            if g.masked() && free && !(g.valid((x - s) / t, z / t) && g.valid((x + s) / t, z / t) && g.valid(x / t, (z + s) / t) && g.valid(x / t, (z - s) / t)) {
+                free = false;
+            }
+
+            if let Some((p, pw, ph)) = protection
+                && z >= 1
+                && ((z - 1) as usize) < ph
+                && (x as usize) < pw
+                && p[(z as usize - 1) * pw + x as usize] > 0.5
+            {
+                free = false;
+            }
+
+            out.push(if free { FREE } else { LOCKED });
+        }
+    }
+
+    out
+}
+
+/// [`grid_triangles`] with the mask (`build_base_mesh`, step 2): a square is left out when its corner (x, z)'s subtile (metres / 128,
+/// truncated) is not valid and either (x + s, z)'s is not, in the same subtile column, or (x, z + s)'s is not, in the same column
+/// (those two clamped to the last subtile).
+pub fn grid_triangles_masked(g: &Grid, verts: &[Vertex], step: usize) -> Vec<[u32; 3]> {
+    let (w, h) = (g.w, g.h);
+    let (cw, ch) = g.cells();
+    let mut out = vec![];
+    let v = |x: usize, z: usize| (z * w + x) as u32;
+    let sub = |i: u32| {
+        let p = &verts[i as usize];
+        ((p.x * 0.0078125) as i64, (p.z * 0.0078125) as i64)
+    };
+    for z in (0..h - step).step_by(step) {
+        for x in (0..w - step).step_by(step) {
+            let (a, b, c, d) = (v(x, z), v(x, z + step), v(x + step, z), v(x + step, z + step));
+            if g.masked() {
+                let (ax, az) = sub(a);
+                let (mut bx, mut bz) = sub(b);
+                let (mut cx, mut cz) = sub(c);
+                let last = |v: &mut i64, n: usize| {
+                    if *v == n as i64 {
+                        *v = n as i64 - 1;
+                    }
+                };
+                last(&mut cx, cw);
+                last(&mut bx, cw);
+                last(&mut cz, ch);
+                last(&mut bz, ch);
+                if cx < cw as i64 && cz < ch as i64 && bx < cw as i64 && bz < ch as i64 {
+                    let (va, vc, vb) = (g.valid(ax, az), g.valid(cx, cz), g.valid(bx, bz));
+                    if !va && ((!vc && ax == cx) || (!vb && ax == bx)) {
+                        continue;
+                    }
+                }
+            }
+
+            out.push([a, b, c]);
+            out.push([b, d, c]);
+        }
+    }
+
+    out
+}
+
+/// A side of a subtile for the masked fringe: the neighbour's subtile, the grid vertices along the side and its triangle order.
+type FringeSide = (i64, i64, Vec<usize>, fn(u32, u32, u32, u32) -> [[u32; 3]; 2]);
+
+/// The fringe of a masked tile (`FUN_10017120`): per valid subtile (rows of subtiles from the bottom, x inner), per side whose
+/// neighbour is not valid (left, right, below, above), its T + 1 grid vertices along that side each pushed again as a top (the same
+/// vertex: BOB pushes the pointer twice; flag 3, moves along the edge) and a copy 10 m lower (flag 0), then per `step` two upright
+/// triangles of tops t and bottoms b: left (t j, t i, b i) (t j, b i, b j); right (t i, t j, b i) (b i, t j, b j); below (t j, b i,
+/// t i) (t j, b j, b i); above (t j, t i, b i) (b j, t j, b i).
+pub fn add_fringe_masked(g: &Grid, verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[u32; 3]>, step: usize) {
+    let (cw, ch) = g.cells();
+    let (w, t) = (g.w, g.t);
+    for cz in 0..ch as i64 {
+        for cx in 0..cw as i64 {
+            if !g.valid(cx, cz) {
+                continue;
+            }
+
+            let (x0, z0) = (cx as usize * t, cz as usize * t);
+            let sides: [FringeSide; 4] = [
+                (cx - 1, cz, (z0..=z0 + t).map(|z| z * w + x0).collect(), |ti, tj, bi, bj| [[tj, ti, bi], [tj, bi, bj]]),
+                (cx + 1, cz, (z0..=z0 + t).map(|z| z * w + x0 + t).collect(), |ti, tj, bi, bj| [[ti, tj, bi], [bi, tj, bj]]),
+                (cx, cz - 1, (x0..=x0 + t).map(|x| z0 * w + x).collect(), |ti, tj, bi, bj| [[tj, bi, ti], [tj, bj, bi]]),
+                (cx, cz + 1, (x0..=x0 + t).map(|x| (z0 + t) * w + x).collect(), |ti, tj, bi, bj| [[tj, ti, bi], [bj, tj, bi]]),
+            ];
+            for (nx, nz, tops, tri) in sides {
+                if g.valid(nx, nz) {
+                    continue;
+                }
+
+                let base = verts.len();
+                for &i in &tops {
+                    let top = verts[i];
+                    let mut bottom = top;
+                    bottom.h -= 10.0;
+                    bottom.fringe = true;
+                    verts.push(top);
+                    verts.push(bottom);
+                    flags.push(EDGE);
+                    flags.push(LOCKED);
+                }
+
+                for i in (0..t).step_by(step) {
+                    let (ti, tj) = ((base + 2 * i) as u32, (base + 2 * (i + step)) as u32);
+                    let [a, b] = tri(ti, tj, ti + 1, tj + 1);
+                    tris.push(a);
+                    tris.push(b);
+                }
+            }
+        }
+    }
 }
 
 /// Infield (`mesh.rigid_model_v2`) and outfield (`outfield_mesh.rigid_model_v2`) numbers of `build_base_mesh` for a battle tile:
@@ -403,14 +579,16 @@ pub fn protection_map(raw: &wce_tile_model::Tile) -> Option<(Vec<f32>, usize, us
 /// zeros (rows as `final_heights.dds`). Per triangle (a, b, c), every sample of its box in whole metres, widened by one below, gets
 /// the height interpolated at it when its barycentric weights are all within [-0.0001, 1.0001]; a later triangle overwrites. In f32,
 /// as BOB's SSE code orders it (one sample per metre: the variation's `raw_data_tri_density` is the tile size, 128).
-pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) -> Vec<f32> {
+pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize, density: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; w * h];
-    rasterise_into(&mut out, verts, tris, w, h);
+    rasterise_into(&mut out, verts, tris, w, h, density);
     out
 }
 
 /// [`rasterise`] into a field already filled (the water map's starts at -1000).
-pub fn rasterise_into(out: &mut [f32], verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize) {
+pub fn rasterise_into(out: &mut [f32], verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize, density: usize) {
+    // Metres to samples: 1 / (128 / density), f32 (a quarter for the mountains' 32).
+    let per_metre = 1.0f32 / (128.0f32 / density as f32);
     for t in tris {
         let [a, b, c] = t.map(|i| &verts[i as usize]);
         let xs = [a.x as i32, b.x as i32, c.x as i32];
@@ -442,12 +620,14 @@ pub fn rasterise_into(out: &mut [f32], verts: &[Vertex], tris: &[[u32; 3]], w: u
                     continue;
                 }
 
-                let (fx, fz) = (x as f32, pz);
+                // The sample: the metre scaled and truncated (`fistp` with chop; the row on the x87). Several metres share a sample
+                // when density < 128: the last written wins.
+                let (fx, fz) = (per_metre * x as f32, per_metre * pz);
                 if fx < 0.0 || fx >= w as f32 || fz < 0.0 || fz >= h as f32 {
                     continue;
                 }
 
-                let row = (h as f32 - fz - 1.0) as usize;
+                let row = ((h as f64 - f64::from(fz)) - 1.0) as usize;
                 out[row * w + fx as usize] = height;
             }
         }
@@ -882,32 +1062,50 @@ pub fn terrain_files(
     let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
     let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
     let n = HeightNumbers::of(raw);
-    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, n.scale, n.min_height, links);
+    let t = n.tri_density;
+    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links);
     super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
+    // BOB writes these two into the raw folder: the blended final heights and the influence (with the links).
+    let mut out = vec![
+        ("final_heights.dds".to_owned(), super::bob_tile::dds_r32f(&heights, w, h)),
+        ("final_alpha.dds".to_owned(), super::bob_tile::dds_r32f(&influence(t, (w - 1) / t, (h - 1) / t, links), w, h)),
+    ];
     // The vertices' alpha: the influence BOB's mesh pass builds (`FUN_10013a40` without the links, the extra ones still).
-    let alpha = influence(CELL, (w - 1) / CELL, (h - 1) / CELL, &links.without_links());
-    let base = grid_vertices(&heights, &alpha, w, h, n.normal_strength);
+    let alpha = influence(t, (w - 1) / t, (h - 1) / t, &links.without_links());
+    let base = grid_vertices(&heights, &alpha, w, h, n.normal_strength, t);
     let prot = protection_map(raw);
     let prot = prot.as_ref().map(|(p, pw, ph)| (p.as_slice(), *pw, *ph));
     let cos = cos_degrees(angle);
-    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / CELL));
-    let mut out = vec![];
-    for (name, kind) in [("outfield_mesh.rigid_model_v2", OUTFIELD), ("mesh.rigid_model_v2", INFIELD)] {
+    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t));
+    let g = Grid { w, h, t, mask: links.mask.clone() };
+    // The outfield's step: 1 << ((density == 128) + 3).
+    let outfield = MeshKind { step: if t == CELL { 16 } else { 8 }, ..OUTFIELD };
+    let spacing = (128 / t) as u32;
+    for (name, kind) in [("outfield_mesh.rigid_model_v2", outfield), ("mesh.rigid_model_v2", INFIELD)] {
         let mut verts = base.clone();
-        let mut flags = grid_flags(w, h, kind, prot);
-        let mut grid = grid_triangles(w, h, kind.step);
-        add_fringe(&mut verts, &mut flags, &mut grid, w, h, kind);
+        let (mut flags, mut grid);
+        if g.masked() {
+            let step = g.step(kind);
+            flags = grid_flags_masked(&g, kind, prot);
+            grid = grid_triangles_masked(&g, &verts, step);
+            add_fringe_masked(&g, &mut verts, &mut flags, &mut grid, step);
+        } else {
+            flags = grid_flags(w, h, kind, prot);
+            grid = grid_triangles(w, h, kind.step);
+            add_fringe(&mut verts, &mut flags, &mut grid, w, h, kind);
+        }
+
         let list = merge(&verts, &flags, &grid, cos);
         let is_surface = |t: &[u32; 3]| !t.iter().any(|&i| verts[i as usize].fringe);
         let surface = list.iter().filter(|t| is_surface(t)).copied().collect::<Vec<_>>();
         out.push((name.to_owned(), rmv2(&verts, &list, is_surface, ((w - 1) as u32, (h - 1) as u32), w as u32, &river)));
         if kind == INFIELD {
-            let mut field = rasterise(&verts, &surface, w, h);
+            let mut field = rasterise(&verts, &surface, w, h, t);
             for (mesh, m) in stamps {
                 rasterise_max_heights(mesh, m, &mut field, w, h);
             }
 
-            out.push(("hf_height_map.data".to_owned(), chmf(&field, w, h)));
+            out.push(("hf_height_map.data".to_owned(), chmf(&field, w, h, spacing)));
         }
     }
 
@@ -917,11 +1115,11 @@ pub fn terrain_files(
     if !river.triangles.is_empty() || !planes.is_empty() {
         let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
         let mut water = vec![-1000.0f32; w * h];
-        rasterise_into(&mut water, &verts, &river.triangles, w, h);
-        super::river::rasterise_water_planes(&mut water, w, h, &planes, models);
-        out.push(("hf_water_map.data".to_owned(), chmf(&water, w, h)));
+        rasterise_into(&mut water, &verts, &river.triangles, w, h, t);
+        super::river::rasterise_water_planes(&mut water, w, h, t, &planes, models);
+        out.push(("hf_water_map.data".to_owned(), chmf(&water, w, h, spacing)));
     }
 
-    out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h, &super::compile::go_outlines(raw))));
+    out.push(("terrain_outlines.xml".to_owned(), super::terrain_outlines::terrain_outlines(&heights, w, h, &super::compile::go_outlines(raw), &links.mask, g.cells_of_tile(raw))));
     Ok(out)
 }

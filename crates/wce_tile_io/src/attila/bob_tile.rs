@@ -179,6 +179,24 @@ pub const CELL: usize = 128;
 pub struct InfluenceLinks {
     pub links: Vec<(i32, i32)>,
     pub extra: Vec<(i32, i32)>,
+    /// The entry's `mask` (its subtiles row by row from the bottom, `true` valid); empty when the tile has none.
+    pub mask: Vec<bool>,
+}
+
+/// `TILE::subtile_masked_valid(x, y)` (y up): inside the tile, and in the mask when there is one (a mask of the wrong size makes every
+/// subtile invalid).
+pub fn subtile_valid(mask: &[bool], cw: usize, ch: usize, x: i32, y: i32) -> bool {
+    if x < 0 || y < 0 || x as usize >= cw || y as usize >= ch {
+        return false;
+    }
+
+    mask.is_empty() || (mask.len() == cw * ch && mask[y as usize * cw + x as usize])
+}
+
+/// The entry's mask (`mask='0011…'`), `true` where the subtile is valid.
+pub fn entry_mask(raw: &Tile) -> Vec<bool> {
+    let text = raw.entry.as_ref().and_then(|e| e.root.get("mask")).and_then(|v| v.as_str()).unwrap_or_default();
+    text.chars().map(|c| c == '1').collect()
 }
 
 impl InfluenceLinks {
@@ -187,7 +205,7 @@ impl InfluenceLinks {
         let Some(entry) = raw.entry.as_ref().map(|e| &e.root) else { return Self::default() };
         let own_set = entry.get("tile_set").and_then(|v| v.as_str()).unwrap_or_default();
         let self_tiling = self_tiling(entry, linking_tiles);
-        let mut out = Self::default();
+        let mut out = Self { mask: entry_mask(raw), ..Self::default() };
         for l in entry.wrapped("TILE_LINKS") {
             let (set, link) = link_of(l);
             if linking_tiles.get(set).is_none_or(|t| t.is_empty()) || !link.equals {
@@ -208,7 +226,7 @@ impl InfluenceLinks {
 
     /// The same without `links` (BOB's mesh pass asks `FUN_10013a40` for no links; the extra ones stay).
     pub fn without_links(&self) -> Self {
-        Self { links: vec![], extra: self.extra.clone() }
+        Self { links: vec![], extra: self.extra.clone(), mask: self.mask.clone() }
     }
 }
 
@@ -272,9 +290,9 @@ pub(crate) fn self_tiling(entry: &Node, linking_tiles: &std::collections::HashMa
 /// With `extra` links BOB builds a second map, without `links`: every side starts 0 and the extra links set sides and corners, filled
 /// in by [`extra_rules`]; the influence is the larger of the two.
 pub fn influence(k: usize, cw: usize, ch: usize, links: &InfluenceLinks) -> Vec<f32> {
-    let mut out = influence_pass(k, cw, ch, &links.links, None);
+    let mut out = influence_pass(k, cw, ch, &links.links, None, &links.mask);
     if !links.extra.is_empty() {
-        let other = influence_pass(k, cw, ch, &[], Some(&links.extra));
+        let other = influence_pass(k, cw, ch, &[], Some(&links.extra), &links.mask);
         for (a, b) in out.iter_mut().zip(other) {
             *a = a.max(b);
         }
@@ -323,7 +341,7 @@ fn extra_rules(s: &mut Sides, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: Option<&[(i32, i32)]>) -> Vec<f32> {
+fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: Option<&[(i32, i32)]>, mask: &[bool]) -> Vec<f32> {
     let half = (k as f32 + 0.5) * 0.5;
     let lerp = |s: usize, a: f32, b: f32| {
         if ((k + 1) as f32) * 0.5 > s as f32 {
@@ -343,8 +361,14 @@ fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: O
     for y in 0..h {
         for x in 0..w {
             let flag = |inside: bool| if inside { 1.0f32 } else { 0.0 };
-            let (xm, xp, ym, yp) = (x > 0, x + 1 < w, y > 0, y + 1 < h);
-            let mut s: Sides = [flag(xm), flag(xp), flag(ym), flag(yp), flag(xm && ym), flag(xp && ym), flag(xm && yp), flag(xp && yp)];
+            // `FUN_104bdde0`: the mask read with rows from the bottom; an invalid subtile writes nothing.
+            let valid = |cx: i32, cy: i32| subtile_valid(mask, cw, ch, cx, h - cy - 1);
+            if !valid(x, y) {
+                continue;
+            }
+
+            let v = |dx: i32, dy: i32| flag(valid(x + dx, y + dy));
+            let mut s: Sides = [v(-1, 0), v(1, 0), v(0, -1), v(0, 1), v(-1, -1), v(1, -1), v(-1, 1), v(1, 1)];
             for p in links.iter().map(invert).filter(|&p| outside(p)) {
                 for (side, at) in [(L, (x - 1, y)), (R, (x + 1, y)), (U, (x, y - 1)), (D, (x, y + 1))] {
                     if p == at {
@@ -400,14 +424,15 @@ fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: O
 
 /// BOB's final heights (`final_heights.dds`): the height map without its one-cell border, in metres (as [`normal_map`] reads them),
 /// times the tile's [`influence`]. With the size, `(w / 128 - 2) * 128 + 1` by the same of `h`.
-pub fn final_heights(heights: &[u16], w: usize, h: usize, scale: f32, min_height: f32, links: &InfluenceLinks) -> (Vec<f32>, usize, usize) {
-    let (cw, ch) = (w / CELL - 2, h / CELL - 2);
-    let (fw, fh) = (cw * CELL + 1, ch * CELL + 1);
-    let alpha = influence(CELL, cw, ch, links);
+pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, links: &InfluenceLinks) -> (Vec<f32>, usize, usize) {
+    let (t, scale, min_height) = (n.tri_density, n.scale, n.min_height);
+    let (cw, ch) = (w / t - 2, h / t - 2);
+    let (fw, fh) = (cw * t + 1, ch * t + 1);
+    let alpha = influence(t, cw, ch, links);
     let mut out = Vec::with_capacity(fw * fh);
     for y in 0..fh {
         for x in 0..fw {
-            let v = f32::from(heights[(y + CELL) * w + x + CELL]) * (1.0f32 / 65535.0) * scale + min_height;
+            let v = f32::from(heights[(y + t) * w + x + t]) * (1.0f32 / 65535.0) * scale + min_height;
             out.push(v * alpha[y * fw + x]);
         }
     }
@@ -422,7 +447,7 @@ pub fn final_heights(heights: &[u16], w: usize, h: usize, scale: f32, min_height
 ///
 /// BOB's heights are not [`final_heights`]: it rasterises the terrain mesh it decimated from them (ToolDataBuilderDll `FUN_1001bf20`),
 /// then raises the buildings' height meshes into it (`rasterise_max_heights`).
-pub fn chmf(heights: &[f32], w: usize, h: usize) -> Vec<u8> {
+pub fn chmf(heights: &[f32], w: usize, h: usize, spacing: u32) -> Vec<u8> {
     assert!((w - 1).is_multiple_of(16) && (h - 1).is_multiple_of(16), "the CHMF converter would pad {w} x {h}");
     let min = heights.iter().copied().fold(f32::MAX, f32::min);
     let max = heights.iter().copied().fold(f32::MIN, f32::max);
@@ -437,10 +462,23 @@ pub fn chmf(heights: &[f32], w: usize, h: usize) -> Vec<u8> {
         cells_y: 1,
         min,
         max,
-        spacing: 1,
+        spacing,
         regions: vec![ChmfRegion { rect: [0, 0, w as u32, h as u32], tag, offsets, data }],
     };
     file.write()
+}
+
+/// A DDS of f32 (D3DFMT_R32F, FourCC 0x72) without mips, as BOB writes `final_heights.dds` and `final_alpha.dds`: header flags 0,
+/// the pixel format's FourCC flag and a bit count of 32, nothing else.
+pub fn dds_r32f(values: &[f32], w: usize, h: usize) -> Vec<u8> {
+    let mut o = vec![0u8; 128];
+    o[..4].copy_from_slice(b"DDS ");
+    for (at, v) in [(4, 0x7c), (12, h as u32), (16, w as u32), (0x4c, 0x20), (0x50, 4), (0x54, 0x72), (0x58, 0x20)] {
+        o[at..at + 4].copy_from_slice(&u32::to_le_bytes(v));
+    }
+
+    o.extend(values.iter().flat_map(|v| v.to_le_bytes()));
+    o
 }
 
 /// A DDS of 8-bit luminance without mips, as `IMAGE::save_raw_to_file` writes `ground_types.dds`.
@@ -513,6 +551,8 @@ pub struct HeightNumbers {
     pub scale: f32,
     pub min_height: f32,
     pub normal_strength: f32,
+    /// `raw_data_tri_density`: the height map's samples per subtile (BOB's tile size; 128, the kit's mountains 32).
+    pub tri_density: usize,
 }
 
 impl HeightNumbers {
@@ -523,7 +563,8 @@ impl HeightNumbers {
             vs.children.iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref())
         });
         let num = |k: &str, d: f32| variation.and_then(|v| v.get(k)).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok()))).map_or(d, |v| v as f32);
-        Self { scale: num("scale", 1.0), min_height: num("min_height", 0.0), normal_strength: num("normal_strength", 1.0) }
+        let density = num("raw_data_tri_density", CELL as f32) as usize;
+        Self { scale: num("scale", 1.0), min_height: num("min_height", 0.0), normal_strength: num("normal_strength", 1.0), tri_density: density.max(1) }
     }
 }
 

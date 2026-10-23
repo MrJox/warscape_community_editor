@@ -371,7 +371,9 @@ fn crossing(x: i32, z: i32, a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> bool {
 /// row), each vertex `((r0 x + r1 y) + r2 z) + t w` per row, x and z halved into metres. Per triangle (idx1, idx2, idx0 as a, b, c),
 /// every whole sample of its truncated box widened by one that [`crossing`] keeps takes the height interpolated by the areas
 /// (`FUN_100140b0`'s sub-triangle cross products; a's weight rounded to f32, the sum on the x87), overwriting.
-pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, planes: &[(String, [f32; 16])], model: &dyn Fn(&str) -> Option<Vec<u8>>) {
+pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, density: usize, planes: &[(String, [f32; 16])], model: &dyn Fn(&str) -> Option<Vec<u8>>) {
+    // The sample of a metre: `(1 / (128 / density)) x m`, truncated.
+    let per_metre = 1.0f32 / (128.0f32 / density as f32);
     let u32_at = |b: &[u8], o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().expect("4 bytes")) as usize);
     let f32_at = |b: &[u8], o: usize| b.get(o..o + 4).map(|s| f32::from_le_bytes(s.try_into().expect("4 bytes")));
     for (key, m) in planes {
@@ -433,12 +435,12 @@ pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, planes: &[(
                     let ua = (cross(e1z * 0.0 - dz * 0.0, dz * e1x - dx * e1z, dx * 0.0 - e1x * 0.0) * f64::from(inv)) as f32;
                     let ub = cross(e0z * 0.0 - dz * 0.0, dz * e0x - dx * e0z, dx * 0.0 - e0x * 0.0) * f64::from(inv);
                     let height = ((f64::from(a[1]) * f64::from(ua) + f64::from(bv[1]) * ub) + f64::from(c[1]) * ((1.0 - f64::from(ua)) - ub)) as f32;
-                    // The terrain's tile size over its subtile size is 1: the sample is the field's.
-                    if fx < 0.0 || fx >= w as f32 || fz < 0.0 || fz >= h as f32 {
+                    let (sx, sz) = (per_metre * fx, per_metre * fz);
+                    if sx < 0.0 || sx >= w as f32 || sz < 0.0 || sz >= h as f32 {
                         continue;
                     }
 
-                    field[z as usize * w + x as usize] = height;
+                    field[sz as usize * w + sx as usize] = height;
                 }
             }
         }
