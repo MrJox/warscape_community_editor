@@ -34,6 +34,13 @@ fn main() {
             continue;
         }
 
+        if !name.ends_with(".rigid_model_v2") {
+            let diff = ours.iter().zip(&theirs).position(|(a, b)| a != b);
+            println!("{name}: {} ({} bytes ours, {} BOB's{})", if ours == theirs { "identical" } else { "differs" }, ours.len(), theirs.len(),
+                diff.map(|i| format!(", first difference at {i}")).unwrap_or_default());
+            continue;
+        }
+
         // BOB leaves the tail of each block's shader name (after `rigid_default\0`, block + 0x3e .. + 0x50) uninitialised.
         let masked = |b: &[u8]| {
             let mut out = b.to_vec();
