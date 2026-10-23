@@ -1310,6 +1310,37 @@ fn civilian_deployment(placed: &[Placed], extent_z: f32) -> Result<Option<Docume
     Ok(Some(Document { name: "civilian_deployment.bin".to_owned(), root: crate::serde_node::to_node("CIVILIAN_DEPLOYMENT", &file)? }))
 }
 
+/// `civilian_shelter.bin`: the `CivilianShelter`s of the normal layers (written when there are some), each its target and its
+/// position as (x / 2, extent - z / 2) (rpfm's `area` min and max) and its `max_shelter_capacity`, u32::MAX without one. The kit's TEd
+/// has no such attribute (EmpireUtility knows the name); 9 % of the packs' shelters carry a capacity from CA's or TDD's own tools.
+/// The position is the world one; the target goes along by the instance's world rotation.
+fn civilian_shelters(placed: &[Placed], extent_z: f32) -> Result<Option<Document>, String> {
+    let shelters = placed
+        .iter()
+        .filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "CivilianShelter")
+        .map(|p| {
+            let w = &p.world;
+            let local = vec3_of(p.node, "position").unwrap_or([0.0; 3]);
+            let target = vec3_of(p.node, "target").unwrap_or(local);
+            let d = [target[0] - local[0], target[1] - local[1], target[2] - local[2]];
+            let tx = w[3] + (w[0] * d[0] + w[1] * d[1] + w[2] * d[2]);
+            let tz = w[11] + (w[8] * d[0] + w[9] * d[1] + w[10] * d[2]);
+            let point = |x: f32, z: f32| (x / 2.0, extent_z - z / 2.0);
+            let ((ax, ay), (bx, by)) = (point(tx, tz), point(w[3], w[11]));
+            let capacity = p.node.get("max_shelter_capacity").and_then(|v| v.as_int().or_else(|| v.as_str().and_then(|t| t.trim().parse().ok())));
+            let capacity = capacity.and_then(|c| u32::try_from(c).ok()).unwrap_or(u32::MAX);
+            serde_json::json!({ "area": { "min_x": ax, "min_y": ay, "max_x": bx, "max_y": by }, "capacity": capacity })
+        })
+        .collect::<Vec<_>>();
+    if shelters.is_empty() {
+        return Ok(None);
+    }
+
+    let v = serde_json::json!({ "serialise_version": 1, "civilian_shelter_list": { "civilian_shelter_list": shelters } });
+    let file: rpfm_lib::files::fastbin_lists::CivilianShelterFile = serde_json::from_value(v).map_err(|e| format!("civilian_shelter.bin: {e}"))?;
+    Ok(Some(Document { name: "civilian_shelter.bin".to_owned(), root: crate::serde_node::to_node("CIVILIAN_SHELTER", &file)? }))
+}
+
 /// `bmd_data_escalation<n>.bin` (BMD version 6 unless told) and its XML twin: an escalation layer's buildings, props, particle emitters,
 /// capture locations (linking into its own buildings), no-go regions, zones and civilian deployment zones. TEd writes a file per
 /// escalation layer, empty or not.
@@ -1631,7 +1662,8 @@ pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
 
 /// A project's exported tile, as the model `attila.tile_binary` writes. Stage A (TEd's export): the building lists; the prop, particle
 /// emitter, point light, AI hint, separator and siege graph markers; definition.xml, the outline files, zones, deployment areas and
-/// capture locations (with their document styles); civilian_deployment.bin; the escalation BMDs and their XML twins. With
+/// capture locations (with their document styles); civilian_deployment.bin and civilian_shelter.bin; the escalation BMDs and their XML
+/// twins. With
 /// `ctx.stage_b`, stage B too ([`super::stage_b::stage_b_files`]).
 ///
 /// # Errors
@@ -1664,6 +1696,7 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     let main = capture_names(placed.iter().filter(|p| p.export == "LayerExportType_Normal"));
     xml.extend(capture_locations(&placed, extent_z, &main));
     docs.extend(civilian_deployment(&placed, extent_z)?);
+    docs.extend(civilian_shelters(&placed, extent_z)?);
     for (bin, twin) in escalation_bmds(&placed, extent_z, ctx, &mut notes)? {
         docs.push(bin);
         xml.push((twin, bmd_xml_style()));

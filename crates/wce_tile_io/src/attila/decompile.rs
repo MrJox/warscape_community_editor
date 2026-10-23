@@ -1179,8 +1179,31 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent_z)));
     }
 
-    if binary.document("civilian_shelter.bin").is_some() {
-        losses.note("civilian shelters: not decompiled (BOB generates them for tiles whose tile.ted has none)");
+    // Civilian shelters (civilian_shelter.bin): TEd's target and position; a capacity (CA's and TDD's tools only) as
+    // `max_shelter_capacity`, which the kit's TEd does not show but the compiler reads.
+    if let Some(d) = binary.document("civilian_shelter.bin") {
+        let mut list = vec![];
+        all(&d.root, "civilian_shelter_list", &mut list);
+        for item in list.iter().flat_map(|l| l.children.iter().filter(|c| c.class == "item")) {
+            let Some(area) = item.child("area") else { continue };
+            let at = |x: &str, y: &str| (2.0 * num(area, x), 2.0 * (extent_z - num(area, y)));
+            let ((tx, tz), (px, pz)) = (at("min_x", "min_y"), at("max_x", "max_y"));
+            let mut n = node("CivilianShelter", vec![("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]))]);
+            n.set("target", Value::Vec3([r32(tx), 0.0, r32(tz)]));
+            n.set("lf_offset", Value::Float(0.0));
+            n.set("colour_1", Value::Colour([0.0, 1.0, 0.0, 0.8]));
+            n.set("colour_2", Value::Colour([1.0, 0.0, 0.0, 0.8]));
+            n.set("position", Value::Vec3([r32(px), 0.0, r32(pz)]));
+            n.set("name", s("Civilian Shelter"));
+            n.set("surface_mode", s("MSM_LANDSCAPE"));
+            n.set("orientation", Value::Euler([0.0; 3]));
+            let capacity = num(item, "capacity");
+            if capacity < f64::from(u32::MAX) {
+                n.set("max_shelter_capacity", i(capacity as i64));
+            }
+
+            items.push(n);
+        }
     }
 
     *l.wrapped_mut("children") = items;
@@ -1701,11 +1724,17 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     }
 
     // TEd writes no markers file without records: an empty one (the legacy campaign river tiles') is carried along. So is an empty
-    // civilian_deployment.bin (154 tiles ship one, others none: the compiler writes it when there are zones).
+    // civilian_deployment.bin (154 tiles ship one, others none: the compiler writes it when there are zones) or civilian_shelter.bin
+    // (some of TDD's).
     let empty_civilians = |d: &wce_tile_model::Document| {
+        let list = match d.name.as_str() {
+            "civilian_deployment.bin" => "civilian_deployment_list",
+            "civilian_shelter.bin" => "civilian_shelter_list",
+            _ => return false,
+        };
         let mut l = vec![];
-        all(&d.root, "civilian_deployment_list", &mut l);
-        d.name == "civilian_deployment.bin" && !l.iter().any(|l| l.children.iter().any(|c| c.class == "item"))
+        all(&d.root, list, &mut l);
+        !l.iter().any(|l| l.children.iter().any(|c| c.class == "item"))
     };
     for doc in binary.documents.iter().filter(|d| (d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) || empty_civilians(d)) {
         let one = Tile { documents: vec![doc.clone()], ..Default::default() };
