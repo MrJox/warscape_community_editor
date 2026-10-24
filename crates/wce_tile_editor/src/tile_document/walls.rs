@@ -54,6 +54,9 @@ pub const PREVIEW_DELAY: Duration = Duration::from_millis(300);
 #[derive(Default)]
 pub(crate) struct WallPreview {
     bases: HashMap<String, Option<Arc<BuildingFiles>>>,
+
+    /// The buildings' frame extents (`Tile::frame_extent`), read once.
+    extents: std::cell::RefCell<HashMap<String, Option<(f64, f64)>>>,
     entities: HashMap<usize, Vec<EntityId>>,
     keys: HashMap<usize, Vec<String>>,
     pending: HashMap<usize, Instant>,
@@ -61,12 +64,14 @@ pub(crate) struct WallPreview {
 }
 
 /// A fort building's end a wall can attach to: the building element and the end, in scene units (its y is the level the building
-/// stands on).
+/// stands on); the building's x axis (x, z: the normal of its end faces) and its outer side (its -z axis).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Anchor {
     pub elem: usize,
     pub key: String,
     pub at: [f64; 3],
+    pub axis: [f64; 2],
+    pub outer: [f64; 2],
 }
 
 /// A wall's layout and what it was made from.
@@ -89,8 +94,28 @@ impl Tile {
         self.tscene().doc().elements().iter().any(|e| e.name == WALL_SPLINE)
     }
 
-    /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): the model's x extent at z = 0, through the instance's
-    /// transform. The models' bounds stand for the pieces' frames until the generator reads their logic files.
+    /// The x extent of a building's frame: its logic file's box (`<key>_tech.cs2.parsed`, the frame the vanilla walls join on), else its
+    /// model's bounds. Read once per key.
+    fn frame_extent(&self, key: &str) -> Option<(f64, f64)> {
+        if let Some(v) = self.wall_preview.extents.borrow().get(key) {
+            return *v;
+        }
+
+        let logic = self.files.as_deref().and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok());
+        let from_logic = logic.and_then(|b| wce_walls::logic::extent_x(&b).ok()).map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a);
+        let from_model = || self.building_model(key).filter(|m| m.ok && m.bmax.x > m.bmin.x).map(|m| (f64::from(m.bmin.x), f64::from(m.bmax.x)));
+        let v = from_logic.or_else(from_model);
+
+        // A model still loading is asked again later; a logic file's answer is kept.
+        if from_logic.is_some() || self.building_model(key).is_some_and(|m| m.resolved) {
+            self.wall_preview.extents.borrow_mut().insert(key.to_owned(), v);
+        }
+
+        v
+    }
+
+    /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): their frame's x extent at z = 0 ([`Tile::frame_extent`]),
+    /// through the instance's transform.
     pub fn wall_anchors(&self) -> Vec<Anchor> {
         let sc = self.tscene();
         let mut out = vec![];
@@ -101,11 +126,13 @@ impl Tile {
                 continue;
             }
 
-            let Some(m) = self.building_model(&key).filter(|m| m.ok && m.bmax.x > m.bmin.x) else { continue };
+            let Some((lo, hi)) = self.frame_extent(&key) else { continue };
             let w = world_transform(sc, e);
-            for x in [m.bmin.x, m.bmax.x] {
-                let p = w.position + w.rotation * wce_foundation::math::Double3::new(f64::from(x), 0.0, 0.0);
-                out.push(Anchor { elem: e, key: key.clone(), at: [p.x, w.position.y, p.z] });
+            let x_axis = w.rotation * Double3::new(1.0, 0.0, 0.0);
+            let outer = w.rotation * Double3::new(0.0, 0.0, -1.0);
+            for x in [lo, hi] {
+                let p = w.position + w.rotation * Double3::new(x, 0.0, 0.0);
+                out.push(Anchor { elem: e, key: key.clone(), at: [p.x, w.position.y, p.z], axis: [x_axis.x, x_axis.z], outer: [outer.x, outer.z] });
             }
         }
 
@@ -143,10 +170,33 @@ impl Tile {
             d(a).total_cmp(&d(b))
         }).cloned();
         let ends = [attached(points[0]), attached(points[points.len() - 1])];
-        let input = WallInput { points, sharp, flip, tolerance, ends: [ends[0].as_ref().map(|a| a.at[1]), ends[1].as_ref().map(|a| a.at[1])] };
+        let input = WallInput {
+            points,
+            sharp,
+            flip,
+            tolerance,
+            ends: [ends[0].as_ref().map(|a| a.at[1]), ends[1].as_ref().map(|a| a.at[1])],
+            end_planes: [ends[0].as_ref().map(|a| a.axis), ends[1].as_ref().map(|a| a.axis)],
+        };
+
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        Some(WallLayout { plan: solve(&input, profile, &ground), profile, ends })
+        let mut plan = solve(&input, profile, &ground);
+
+        // An attached end whose outer side is the other way from the building's: the wall's outer face would meet its inner one.
+        if let (Some(first), Some(last)) = (plan.samples.first().copied(), plan.samples.last().copied()) {
+            // The plan runs from the last point when flipped.
+            let (at_first, at_last) = if flip { (&ends[1], &ends[0]) } else { (&ends[0], &ends[1]) };
+            for (sm, a) in [(first, at_first), (last, at_last)] {
+                let Some(a) = a else { continue };
+                let wall_outer = [sm.dir[1], -sm.dir[0]];
+                if wall_outer[0] * a.outer[0] + wall_outer[1] * a.outer[1] < 0.0 {
+                    plan.warnings.push(format!("the end on {} has its outer side the other way from the building's: flip the wall", a.key));
+                }
+            }
+        }
+
+        Some(WallLayout { plan, profile, ends })
     }
 
     /// Where a wall's end goes when it is put at `world` (the document's world): on the nearest fort building end within [`SNAP`], else
@@ -289,7 +339,7 @@ impl Tile {
         let mut made = vec![];
         for (i, piece) in pieces(&layout.plan, layout.profile).into_iter().enumerate() {
             let key = format!("wce_preview_{elem}_{revision}_{i}");
-            let warp = PieceWarp { plan: &layout.plan, profile: layout.profile, piece, ground: &ground };
+            let warp = PieceWarp::new(&layout.plan, layout.profile, piece, &ground);
             match make_piece(&base, &key, &warp, false, Some(1)) {
                 Ok(files) => made.push((key, piece, files)),
                 Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),

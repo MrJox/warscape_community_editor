@@ -251,6 +251,19 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
      attached to) last changed, kept in `wce_vfs::generated` (files in memory every `Files` reads first) under keys that change with each
      remake, drawn as the wall's entities (a click selects the wall).
 3. **Bends and mitres:** the curve warp with subdivision, the corner shear, attachments to gates and bastions.
+   **Status (2026-10-24): done** (the curve warp and subdivision came with phase 2). As built:
+   - **Mitres** (`PieceWarp::new`): a piece at a section's end (a corner, or an attached end) is sheared along the wall by
+     `s' = s + z * shear`, the shear going from the start's value to the end's along the piece, so the end face lies on the corner's
+     bisector (normal: the sum of the two sections' directions; both pieces meet on it) or on the face of the building it is attached
+     to (normal: the building's x axis). Past its section's ends a piece goes on straight with the section's own end direction (taken
+     from its last unit, so the corner's averaging doesn't bend it). The shear is clamped to 4 per unit (a turn of about 150 degrees);
+     the solver warns about sharper corners. Unit test: at a right angle both pieces' end faces land on the bisector, point for point.
+   - **Exact ends**: a fort building's ends are its logic file's box (`<key>_tech.cs2.parsed`, the frame the vanilla walls join on),
+     read once per key; the models' bounds stay the fallback. An attached end whose outer side faces the other way from the building's
+     gets a warning (flip the wall).
+   - **Steps**: a step chain is kept inside its two runs (centred on their boundary, shifted when that would go past them): next to a
+     short attached run it used to start before the wall, which then began at the chain's middle level instead of the building's.
+     Still open (phase 4): on ground steeper than the steps can follow, two chains can overlap.
 4. **Steps:** splicing the step sections.
 5. **Export:** the pack, the DB rows, the compile reading generated buildings.
 6. **Kits:** the kit table for every culture; a check that every base straight generates (a Cargo example as a gate).

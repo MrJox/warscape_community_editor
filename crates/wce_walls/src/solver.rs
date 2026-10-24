@@ -38,6 +38,10 @@ pub struct WallInput {
 
     /// The ground level an attached end is held to (the gate's or bastion's), per end.
     pub ends: [Option<f64>; 2],
+
+    /// The face an attached end meets (the gate's or bastion's end): its normal (x, z), per end. The wall's end piece is sheared onto
+    /// it.
+    pub end_planes: [Option<[f64; 2]>; 2],
 }
 
 /// A point along the wall.
@@ -94,6 +98,9 @@ pub struct Plan {
 
     /// What the layout could not do as asked (steps that don't fit between their runs ...).
     pub warnings: Vec<String>,
+
+    /// The faces the ends meet (`WallInput::end_planes`, in the plan's direction).
+    pub end_planes: [Option<[f64; 2]>; 2],
 }
 
 impl Plan {
@@ -133,6 +140,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
             flip: false,
             tolerance: input.tolerance,
             ends: [input.ends[1], input.ends[0]],
+            end_planes: [input.end_planes[1], input.end_planes[0]],
         };
 
         // The corners name the points as the input does.
@@ -144,7 +152,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         return plan;
     }
 
-    let mut plan = Plan::default();
+    let mut plan = Plan { end_planes: input.end_planes, ..Plan::default() };
     if input.points.len() < 2 {
         return plan;
     }
@@ -166,6 +174,16 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
     let (samples, corner_s) = resample(&line);
     plan.length = samples.last().map_or(0.0, |s| s.0);
     plan.corners = corner_s.into_iter().filter(|&(_, i)| i != 0 && i + 1 != input.points.len()).collect();
+
+    // A mitre shears its pieces by tan(turn / 2) per unit across the wall: past about 150 degrees it is clamped.
+    for &(s, i) in &plan.corners {
+        let (a, b, c) = (input.points[i - 1], input.points[i], input.points[i + 1]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs().to_degrees();
+        if turn > 150.0 {
+            plan.warnings.push(format!("the corner at {s:.0} (point {i}) turns {turn:.0} degrees: its mitre is clamped, the pieces overlap"));
+        }
+    }
 
     // The outer foot and the ground there. The pieces' local +z is (-dz, dx) of their direction; the outer face is at `outer_face` on it.
     plan.samples = samples.iter().enumerate().map(|(i, &(s, c))| {
@@ -303,7 +321,7 @@ fn runs(samples: &[Sample], tolerance: f64, ends: [Option<f64>; 2]) -> Vec<Run> 
 }
 
 /// The step sections between runs: as many as the rise needs (each at most the base's rise), the base's run long, `step_gap` apart,
-/// centred on the boundary between the runs.
+/// centred on the boundary between the runs, shifted to stay inside them.
 fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
     let mut out = vec![];
     for (chain, w) in runs.windows(2).enumerate() {
@@ -312,11 +330,14 @@ fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Ste
         let count = (rise.abs() / profile.step_rise).ceil().max(1.0) as usize;
         let span = count as f64 * profile.step_run + (count - 1) as f64 * profile.step_gap;
         let boundary = (a.s.1 + b.s.0) / 2.0;
-        let mut s = boundary - span / 2.0;
         let room = (a.s.1 - a.s.0) / 2.0 + (b.s.1 - b.s.0) / 2.0;
         if span > room + 1e-9 {
             warnings.push(format!("at {boundary:.0}: {count} step section(s) for {rise:.1} need {span:.0} along the wall, the runs around leave {room:.0}"));
         }
+
+        // Centred on the boundary, but inside the two runs (so inside the wall: a short run at an attached end does not push the steps
+        // past the end, where the wall would start at the steps' level instead of the building's).
+        let mut s = (boundary - span / 2.0).clamp(a.s.0, (b.s.1 - span).max(a.s.0));
 
         for k in 0..count {
             let (from, to) = (a.level + rise * k as f64 / count as f64, a.level + rise * (k + 1) as f64 / count as f64);
@@ -416,6 +437,15 @@ mod tests {
         assert_eq!(plan.steps.len(), 3);
         assert!((plan.steps[2].to - 6.0).abs() < 1e-9);
         assert!(plan.steps.windows(2).all(|w| (w[1].s.0 - w[0].s.1 - eight().step_gap).abs() < 1e-9));
+    }
+
+    #[test]
+    fn steps_stay_inside_the_wall_next_to_a_short_attached_run() {
+        // The building is 3 below the ground: the first run is short, the chain after it must not start before the wall.
+        let input = WallInput { ends: [Some(0.0), None], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
+        let plan = solve(&input, eight(), &|_, _| 3.0);
+        assert!(plan.steps.iter().all(|st| st.s.0 >= 0.0 && st.s.1 <= plan.length + 1e-9), "{:?}", plan.steps);
+        assert!(plan.samples[0].level.abs() < 1e-9, "the wall starts at the building's level: {}", plan.samples[0].level);
     }
 
     #[test]

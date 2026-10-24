@@ -47,7 +47,7 @@ fn run() -> Result<(), String> {
 
         let make = || -> Result<Vec<BuildingFiles>, String> {
             ps.iter().enumerate().map(|(i, &piece)| {
-                let warp = PieceWarp { plan: &plan, profile: p, piece, ground: &ground };
+                let warp = PieceWarp::new(&plan, p, piece, &ground);
                 make_piece(&base, &format!("wce_check_{i}"), &warp, true, None)
             }).collect()
         };
