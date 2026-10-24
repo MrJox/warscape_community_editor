@@ -9,7 +9,6 @@
 //! match: the dump does not say which weather file the battle used, but its sun / sky / fog constants identify it. --emit writes the editor's
 //! own values in the dump's format (a dump every variable of that environment matches: the gate's self-check).
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use wce_d3d11::*;
@@ -103,8 +102,8 @@ fn run(args: &[String]) -> Result<i32, String> {
             .ok_or("no D3D11 device")?
     };
 
-    let game = Settings::load(&Settings::default_dir()).get("game_dir", Some("WCE_GAME")).ok_or("the game folder is not set (game_dir in wce.ini or WCE_GAME)")?;
-    let vfs = Arc::new(Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::ATTILA)).map_err(|e| e.to_string())?);
+    let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
+    let vfs = Arc::new(Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?);
     let read = |p: &str| vfs.read(p).map_err(|e| e.to_string());
     let mut cbs = ConstantBuffers::default();
     let mut lib = ShaderLibrary::new(&dev);

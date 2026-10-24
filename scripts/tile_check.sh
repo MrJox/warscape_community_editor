@@ -10,7 +10,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/tile_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
@@ -20,7 +20,7 @@ fail() { echo "FAILED: $*"; bad=1; }
 
 run_script() { # run_script <script name> <run> <tile dir> [second tile dir] -> $OUT/<name><run>/
     local name="$1" run="$2" tile="$3" tile2="${4:-}" dir="$OUT/$1$2"
-    rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/wce.ini" "$dir/settings/" 2>/dev/null
+    rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/settings.toml" "$dir/settings/" 2>/dev/null
     sed -e "s|%TILE2%|$([ -n "$tile2" ] && cygpath -m "$tile2")|g" -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
     WCE_SETTINGS_DIR="$(cygpath -w "$dir/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$dir/script.txt")" > "$dir/run.log" 2>&1
     local rc=$?

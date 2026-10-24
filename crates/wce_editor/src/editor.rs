@@ -14,6 +14,7 @@ use wce_editor_core::document_manager::DocumentManager;
 use wce_editor_core::selection::Selection;
 use wce_foundation::clock::Clock;
 use wce_foundation::settings::Settings;
+pub use wce_foundation::settings::DEFAULT_FRAME_CAP;
 use wce_foundation::{log, wce_prof};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::files::Files;
@@ -133,7 +134,7 @@ pub struct Editor {
     /// The app loop presents with it (command `vsync`, environment WCE_VSYNC=0).
     pub vsync: bool,
 
-    /// Frames per second an interactive session is held to (0: no limit; wce.ini `frame_cap`, environment WCE_FRAME_CAP). A laptop GPU
+    /// Frames per second an interactive session is held to (0: no limit; settings `frame_cap`, environment WCE_FRAME_CAP). A laptop GPU
     /// rendering the scene as fast as a fast display refreshes heats up and throttles itself to a fraction of its clock.
     frame_cap: u32,
     pub panels: Panels,
@@ -159,13 +160,10 @@ impl CommandHost for Editor {
     }
 }
 
-/// The frame cap of a new install.
-pub const DEFAULT_FRAME_CAP: u32 = 60;
-
 impl Editor {
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Self {
         let mut e = Self {
-            dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load(&Settings::default_dir()), vfs: None, renderer: None, scene: RenderScene::default(),
+            dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load_default(), vfs: None, renderer: None, scene: RenderScene::default(),
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, preview_doc: 0,
@@ -175,7 +173,7 @@ impl Editor {
             panel_data: PanelData::default(), images: Default::default(), input_origin: None, pending_shot: None,
         };
 
-        e.frame_cap = e.settings.get("frame_cap", Some("WCE_FRAME_CAP")).and_then(|v| v.trim().parse().ok()).unwrap_or(DEFAULT_FRAME_CAP);
+        e.frame_cap = e.settings.frame_cap();
         crate::commands::register_builtin(&mut e.commands);
         e
     }
@@ -184,11 +182,11 @@ impl Editor {
         self.frame_cap
     }
 
-    /// Sets the frame cap (0: no limit) and keeps it in wce.ini.
+    /// Sets the frame cap (0: no limit) and keeps it in the settings.
     pub fn set_frame_cap(&mut self, fps: u32) {
         self.frame_cap = fps;
-        self.settings.set("frame_cap", &fps.to_string());
-        let _ = self.settings.save();
+        self.settings.frame_cap = fps;
+        self.save_settings();
     }
 
     // ---- setup
@@ -256,8 +254,33 @@ impl Editor {
         self.renderer.is_some()
     }
 
+    /// The settings, to change them; `save_settings` writes them.
     pub fn settings(&mut self) -> &mut Settings {
         &mut self.settings
+    }
+
+    pub fn settings_ref(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Writes the settings file; a failure is logged.
+    pub fn save_settings(&mut self) {
+        if let Err(err) = self.settings.save() {
+            log::error(format!("Cannot write {}: {err}", self.settings.file().display()));
+        }
+    }
+
+    /// A tool's settings (its `[tools.<id>]` table), defaults where unset.
+    pub fn tool_settings<T: serde::de::DeserializeOwned + Default>(&self, id: &str) -> T {
+        self.settings.tool(id)
+    }
+
+    /// Changes a tool's settings and writes the file.
+    pub fn update_tool_settings<T: serde::de::DeserializeOwned + serde::Serialize + Default>(&mut self, id: &str, f: impl FnOnce(&mut T)) {
+        let mut value: T = self.settings.tool(id);
+        f(&mut value);
+        self.settings.set_tool(id, &value);
+        self.save_settings();
     }
 
     pub fn commands(&self) -> &CommandRegistry<Editor> {
@@ -301,24 +324,24 @@ impl Editor {
         self.tool_info.get(self.active_tool).map_or(&[], |t| t.opens.as_slice())
     }
 
-    /// The UI project folder (`ui_project` in wce.ini): saved layouts and the user's pictures live there.
+    /// The project folder (the current game's `project_dir` in the settings): the UI tool's saved layouts and the user's pictures live there.
     pub fn project_dir(&self) -> Option<PathBuf> {
-        self.settings.get("ui_project", None).map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()).map(PathBuf::from)
+        self.settings.project_dir()
     }
 
     /// What to mount: the game's release packs, the mod packs the user chose, and the loose folders above them. The launcher's list of
     /// enabled mods is not used.
-    fn vfs_config(&self, game_dir: String) -> Config {
-        let mut cfg = Config::new(PathBuf::from(game_dir), GameProfile::ATTILA);
+    fn vfs_config(&self, game_dir: PathBuf) -> Config {
+        let mut cfg = Config::new(game_dir, GameProfile::ATTILA);
         cfg.use_mods = false;
         cfg.mod_packs = Some(self.selected_mod_packs());
         cfg.overlay_folders = self.overlay_folders();
         cfg
     }
 
-    /// The mod packs the user chose (`mod_packs` in wce.ini, `;` separated file names in the data folder).
+    /// The mod packs the user chose (the current game's `mod_packs` in the settings: file names in the data folder).
     pub fn selected_mod_packs(&self) -> Vec<String> {
-        self.settings.get("mod_packs", Some("WCE_MOD_PACKS")).map(|s| s.split(';').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect()).unwrap_or_default()
+        self.settings.mod_packs()
     }
 
     /// Chooses the mod packs and mounts the files again.
@@ -327,15 +350,15 @@ impl Editor {
     ///
     /// The files cannot be mounted.
     pub fn set_mod_packs(&mut self, names: &[String]) -> Result<(), String> {
-        self.settings.set("mod_packs", &names.join(";"));
-        let _ = self.settings.save();
+        self.settings.game_mut().mod_packs = names.to_vec();
+        self.save_settings();
         self.remount_vfs()
     }
 
     /// The mod packs found in the game's data folder.
     pub fn available_mod_packs(&self) -> Vec<String> {
-        let Some(dir) = self.settings.get("game_dir", Some("WCE_GAME")) else { return vec![] };
-        GameProfile::ATTILA.available_mod_packs(Path::new(&dir))
+        let Some(dir) = self.settings.game_dir() else { return vec![] };
+        GameProfile::ATTILA.available_mod_packs(&dir)
     }
 
     /// The check list of mod packs (first run and File > Mod packs).
@@ -380,7 +403,7 @@ impl Editor {
 
         if gui::begin_popup_modal("Mod packs", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
             gui::text_wrapped("The editor reads the game's own (release) packs and, on top of them, only the mod packs ticked here. Your own loose skin folder is always read before all of them.");
-            let game = self.settings.get("game_dir", Some("WCE_GAME")).unwrap_or_default();
+            let game = self.settings.game_dir().map(|d| d.display().to_string()).unwrap_or_default();
             self.mod_pack_checks(&game);
             if gui::button("Apply") {
                 let names = self.checked_mod_packs();
@@ -404,13 +427,10 @@ impl Editor {
         }
     }
 
-    /// Loose folders read before every pack, highest priority first: the project folder, then `overlay_folders` (wce.ini, `;` separated).
+    /// Loose folders read before every pack, highest priority first: the project folder, then the current game's `overlay_folders`.
     fn overlay_folders(&self) -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = self.project_dir().into_iter().collect();
-        if let Some(o) = self.settings.get("overlay_folders", Some("WCE_OVERLAY")) {
-            v.extend(o.split(';').map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from));
-        }
-
+        v.extend(self.settings.overlay_folders());
         v
     }
 
@@ -420,7 +440,7 @@ impl Editor {
     ///
     /// The game folder is not set or cannot be read.
     pub fn remount_vfs(&mut self) -> Result<(), String> {
-        let dir = self.settings.get("game_dir", Some("WCE_GAME")).or_else(|| std::env::var("ATTILA_DIR").ok()).ok_or("the game folder is not set")?;
+        let dir = self.settings.game_dir().ok_or("the game folder is not set")?;
         let vfs = Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?;
         self.vfs = Some(Arc::new(vfs));
         self.images.clear();
@@ -429,8 +449,8 @@ impl Editor {
 
     /// Mounts the packs and creates the renderer. False (with a message in the log) when the game is not configured: the first-run dialog opens.
     pub fn start(&mut self) -> bool {
-        let game_dir = self.settings.get("game_dir", Some("WCE_GAME")).or_else(|| std::env::var("ATTILA_DIR").ok());
-        log::info(format!("Data paths: game={}", game_dir.as_deref().unwrap_or("(unset)")));
+        let game_dir = self.settings.game_dir();
+        log::info(format!("Data paths: game={}", game_dir.as_ref().map_or_else(|| "(unset)".to_owned(), |d| d.display().to_string())));
         let mounted = game_dir.ok_or_else(|| "the game folder is not set".to_owned()).and_then(|dir| {
             Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())
         });
@@ -464,8 +484,7 @@ impl Editor {
                 log::error(format!("Start failed: {e}"));
                 self.first_run_message = e;
                 if self.first_run_game.is_empty() {
-                    self.first_run_game = self.settings.get("game_dir", Some("WCE_GAME"))
-                        .or_else(|| detect_attila_folder().map(|p| p.display().to_string())).unwrap_or_default();
+                    self.first_run_game = self.settings.game_dir().or_else(detect_attila_folder).map(|p| p.display().to_string()).unwrap_or_default();
                 }
 
                 false
@@ -476,14 +495,14 @@ impl Editor {
     // ---- layouts
 
     pub fn layout_file(&self, tool_id: &str) -> PathBuf {
-        Settings::default_dir().join("layouts").join(format!("{tool_id}.ini"))
+        self.settings.paths().layouts_dir().join(format!("{tool_id}.ini"))
     }
 
-    /// Where "Save" writes loose files (under their in-pack path): output_dir in wce.ini, else <Documents>/AttilaWeatherEditor/out as the old
-    /// weather editor did.
+    /// Where "Save" writes loose files (under their in-pack path): `output_dir` in the settings, else <Documents>/AttilaWeatherEditor/out as
+    /// the old weather editor did.
     pub fn output_dir(&self) -> PathBuf {
-        if let Some(v) = self.settings.get("output_dir", Some("WCE_OUTPUT_DIR")) {
-            return PathBuf::from(v);
+        if let Some(v) = self.settings.output_dir() {
+            return v;
         }
 
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
@@ -491,9 +510,9 @@ impl Editor {
     }
 
     pub fn set_output_dir(&mut self, dir: &Path, persist: bool) {
-        self.settings.set("output_dir", &dir.display().to_string());
+        self.settings.output_dir = Some(dir.to_path_buf());
         if persist {
-            let _ = self.settings.save();
+            self.save_settings();
         }
     }
 
@@ -1309,16 +1328,16 @@ impl Editor {
         gui::end_menu_bar();
     }
 
-    /// Stores the game folder in wce.ini and mounts: what the first-run dialog's button does, also the `setup` command.
+    /// Stores the game folder in the settings and mounts: what the first-run dialog's button does, also the `setup` command.
     ///
     /// # Errors
     ///
     /// The packs can't be mounted.
     pub fn setup(&mut self, game_dir: &str) -> Result<String, String> {
-        self.settings.set("game_dir", game_dir);
+        self.settings.game_mut().dir = Some(PathBuf::from(game_dir));
         match self.settings.save() {
             Ok(()) => log::info(format!("Saved {}", self.settings.file().display())),
-            Err(_) => log::error(format!("Cannot write {}", self.settings.file().display())),
+            Err(err) => log::error(format!("Cannot write {}: {err}", self.settings.file().display())),
         }
 
         // The environment may still override game_dir.
@@ -1379,8 +1398,7 @@ impl Editor {
         gui::begin_disabled(!game_ok);
         if gui::button("Save and continue") {
             gui::close_current_popup();
-            let chosen = self.checked_mod_packs().join(";");
-            self.settings.set("mod_packs", &chosen);
+            self.settings.game_mut().mod_packs = self.checked_mod_packs();
             let game = self.first_run_game.clone();
             if let Err(msg) = self.setup(&game) {
                 self.first_run_message = msg;

@@ -31,7 +31,7 @@ use sdl3_sys::video::*;
 use wce_d3d11::*;
 use wce_editor::Editor;
 use wce_foundation::log;
-use wce_foundation::settings::Settings;
+use wce_foundation::settings::Paths;
 use wce_imgui::platform::Sdl3Platform;
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::gpu_adapter::choose_adapter;
@@ -181,14 +181,14 @@ fn parse_args(argv: &[String]) -> Options {
     o
 }
 
-/// Scripted runs echo the log to stderr; an interactive run keeps it in <settings folder>/last_run.log.
+/// Scripted runs echo the log to stderr; an interactive run keeps it in <log folder>/last_run.log.
 fn open_log(opt: &Options) {
     if !opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty() {
         log::echo_to_stderr(true);
         return;
     }
 
-    let path = Settings::default_dir().join("last_run.log");
+    let path = Paths::standard().log_dir().join("last_run.log");
     let opened = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| log::open_file(&path));
     if opened.is_err() {
         eprintln!("WCE could not create its interactive log at {}", path.display());

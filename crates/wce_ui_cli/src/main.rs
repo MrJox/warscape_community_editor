@@ -5,7 +5,7 @@
 //!   wce-ui script <file>               run lines of `<tool> --key value ...` in one session (# comments)
 //!   wce-ui tools                       list the tools and their arguments
 //!
-//! Global option: --game <folder> (default: wce.ini / WCE_GAME / ATTILA_DIR).
+//! Global option: --game <folder> (default: WCE_GAME, else the editor's settings).
 //! One-shot edits: `wce-ui set_entry --source x.xml --entry 3 --x 10 --save` opens, edits and saves back (a disk file) in one go.
 
 use std::io::{BufRead, BufReader};

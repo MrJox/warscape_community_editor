@@ -2,6 +2,7 @@
 
 mod commands;
 mod document;
+pub mod settings;
 mod tool;
 
 pub use document::{Source, UiDocument};

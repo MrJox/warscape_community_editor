@@ -6,7 +6,6 @@
 //! [512] arrays) that matches best and prints OK / DIFF per variable.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use wce_assets::vfx_constants::EmitterConstants;
 use wce_assets::weather_vfx::load_weather_vfx_from_vfs;
@@ -89,8 +88,8 @@ fn components(m: &Values, row: Option<&Row>) -> String {
 }
 
 fn run(args: &[String]) -> Result<i32, String> {
-    let game = Settings::load(&Settings::default_dir()).get("game_dir", Some("WCE_GAME")).ok_or("the game folder is not set (game_dir in wce.ini or WCE_GAME)")?;
-    let vfs = Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::ATTILA)).map_err(|e| e.to_string())?;
+    let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
+    let vfs = Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?;
     let w = load_weather_vfx_from_vfs(&vfs, &args[0])?;
     let d = &w.definition;
     println!(

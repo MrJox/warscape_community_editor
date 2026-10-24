@@ -11,13 +11,13 @@
 #  - wce.exe (scripts/ui_smoke.txt): the tool's edits, undo, previews, skins of your own, pictures and layouts that change on disk, export,
 #    and the pack the export wrote read back.
 #   scripts/ui_check.sh [out dir]      Environment: WCE_GAME, CARGO_TARGET_DIR (a SHORT path on Windows: MSBuild's 260 character limit breaks the SDL3 build
-#                                      in a deep folder), WCE_SETTINGS_DIR (a folder with wce.ini; default %LOCALAPPDATA%/awe)
+#                                      in a deep folder), WCE_SETTINGS_DIR (a folder with settings.toml; default %LOCALAPPDATA%/wce/config)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/ui_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 TARGET="${CARGO_TARGET_DIR:-C:/wt}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 bad=0
 fail() { echo "FAILED: $*"; bad=1; }
@@ -128,9 +128,9 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"js
 grep -q '"name":"ui_set_property"' "$C/mcp.log" && grep -q 'settlement_captured' "$C/mcp.log" || fail "mcp"
 
 echo "== wce.exe"
-D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/project/ui/skins/gate_skin"; cp "$SETTINGS_SRC/wce.ini" "$D/settings/" 2>/dev/null
+D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/project/ui/skins/gate_skin"; cp "$SETTINGS_SRC/settings.toml" "$D/settings/" 2>/dev/null
 # the settings of the machine decide which mod packs are chosen: none here, so that nothing but the game's release packs is read
-sed -i '/^mod_packs=/d' "$D/settings/wce.ini" 2>/dev/null
+sed -i '/^mod_packs = /d' "$D/settings/settings.toml" 2>/dev/null
 png "$D/fixtures/red.png" 255 0 0
 png "$D/fixtures/blue.png" 0 0 255
 png "$D/project/ui/skins/gate_skin/gate.png" 0 255 0

@@ -1,8 +1,8 @@
-# First run: no wce.ini and no environment settings, so the editor starts without the game; `setup` is what the dialog's button does.
+# First run: no settings.toml and no environment settings, so the editor starts without the game; `setup` is what the dialog's button does.
 assert_mounted 0
 assert_documents 0
 frames 3
-setup "%GAME%" "%RPFM%"
+setup "%GAME%"
 frames 4
 assert_mounted 1
 assert_documents 1

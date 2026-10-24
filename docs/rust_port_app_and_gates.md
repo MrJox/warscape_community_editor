@@ -78,8 +78,8 @@ run_ui.sh), `~/.cache/wce_cli/` (corpus manifests, C++ harnesses), `/tmp/wce_rs/
 ## 5. Running the C++ app for comparisons on Linux
 
 - rpfm_server 5.2 is needed (`/usr/bin/rpfm_server` is 5.1 and refused): `cargo build --release -p rpfm_server` in `~/Proyectos/rpfm`.
-- Use `WCE_SETTINGS_DIR=~/.cache/wce_cpp_settings` (a wce.ini with `game_dir` and `rpfm_dir=~/Proyectos/rpfm/target/release`) so the user's
-  own wce.ini stays untouched; `DXVK_WSI_DRIVER=SDL3`.
+- Use `WCE_SETTINGS_DIR=~/.cache/wce_cpp_settings` (a settings.toml with `[games.attila] dir = ...`) so the user's
+  own settings stay untouched; `DXVK_WSI_DRIVER=SDL3`.
 - Clean-rebuild the C++ tree before trusting a C++ failure. The server exits by itself after the session.
 
 ## 6. What the C++ tree is still needed for
@@ -98,4 +98,4 @@ run_ui.sh), `~/.cache/wce_cli/` (corpus manifests, C++ harnesses), `/tmp/wce_rs/
 - Interactive checks by hand on a scaled display: clicks in the 3D view and gizmo drags after the HiDPI change.
 - Decisions pending: whether command-line actions other than `--script` / `--shot` / `--capture` should keep the window interactive;
   whether DXVK should default to `DXVK_LOG_LEVEL=warn`.
-- Using the synthetic kit in the Tile tool needs `tile_kits=~/.cache/wce_tile/fx2/kit/raw_data` in wce.ini (it replaces the kit search).
+- Using the synthetic kit in the Tile tool needs `kits = ["~/.cache/wce_tile/fx2/kit/raw_data"]` in `[tools.tile]` of settings.toml (or `WCE_TILE_KITS`) (it replaces the kit search).

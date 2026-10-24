@@ -16,4 +16,4 @@ wce-ui: Total War UI layouts as XML, for people, scripts and Claude Code (MCP).
   wce-ui tools                               every tool and its arguments
 
 <source> is a path in the packs (ui/campaign ui/settlement_panel) or a file on disk.
---game <folder> sets the game folder (otherwise wce.ini, WCE_GAME or ATTILA_DIR).
+--game <folder> sets the game folder (otherwise WCE_GAME or the editor's settings).

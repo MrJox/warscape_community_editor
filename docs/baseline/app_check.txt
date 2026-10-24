@@ -1,6 +1,6 @@
 run 1: exit 0
 run 2: exit 0
-first run: ok (wce.ini written)
+first run: ok (settings.toml written)
 capture identical between runs
 shot identical between runs
 exit 0

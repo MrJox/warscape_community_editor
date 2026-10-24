@@ -2158,6 +2158,7 @@ dependencies = [
  "dear-imgui-rs",
  "dear-imgui-sys",
  "dear-imguizmo-sys",
+ "serde",
  "wce_d3d11",
  "wce_editor_core",
  "wce_foundation",
@@ -2191,7 +2192,10 @@ dependencies = [
 name = "wce_foundation"
 version = "0.1.0"
 dependencies = [
+ "directories",
+ "serde",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -2287,6 +2291,7 @@ version = "0.1.0"
 dependencies = [
  "rayon",
  "rpfm_lib",
+ "serde",
  "wce_editor",
  "wce_editor_core",
  "wce_formats",
@@ -2334,6 +2339,7 @@ name = "wce_ui_tool"
 version = "0.1.0"
 dependencies = [
  "dear-imgui-sys",
+ "serde",
  "wce_editor",
  "wce_editor_core",
  "wce_foundation",

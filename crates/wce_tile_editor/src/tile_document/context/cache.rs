@@ -20,7 +20,7 @@ const VERSION: u16 = 3;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {
-    wce_foundation::settings::Settings::default_dir().join("map_context")
+    wce_foundation::settings::Paths::standard().cache_dir().join("map_context")
 }
 
 /// Removes every cached template; returns how many there were.

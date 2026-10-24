@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::path::PathBuf;
 
+use crate::settings::{SETTINGS_ID, UiSettings};
+
 use dear_imgui_sys as sys;
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, Vec2, col32, v2};
@@ -1438,8 +1440,8 @@ linked by the component name '{}'", r.path, r.via));
         }
 
         std::fs::create_dir_all(PathBuf::from(f).join("ui").join("skins")).map_err(|er| format!("cannot create {f}: {er}"))?;
-        e.settings().set("ui_project", f);
-        let _ = e.settings().save();
+        e.settings().game_mut().project_dir = Some(PathBuf::from(f));
+        e.save_settings();
         e.remount_vfs()?;
         self.skins = None;
         self.missing.clear();
@@ -1471,8 +1473,7 @@ linked by the component name '{}'", r.path, r.via));
         }
 
         wce_ui_model::pack::write_pack_many(std::path::Path::new(pack), &files)?;
-        e.settings().set("ui_export_pack", pack);
-        let _ = e.settings().save();
+        e.update_tool_settings(SETTINGS_ID, |s: &mut UiSettings| s.export_pack = pack.to_owned());
         e.status(&format!("exported {} files to {pack}", files.len()), false);
         Ok(files.len())
     }
@@ -1657,7 +1658,7 @@ linked by the component name '{}'", r.path, r.via));
             self.export_popup = false;
             self.export_msg.clear();
             if self.export_path.is_empty() {
-                self.export_path = e.settings().get("ui_export_pack", None).filter(|p| !p.is_empty()).or_else(|| e.project_dir().map(|p| format!("{}.pack", p.display()))).unwrap_or_default();
+                self.export_path = Some(e.tool_settings::<UiSettings>(SETTINGS_ID).export_pack).filter(|p| !p.is_empty()).or_else(|| e.project_dir().map(|p| format!("{}.pack", p.display()))).unwrap_or_default();
             }
 
             gui::open_popup("Export mod pack");
@@ -1863,7 +1864,7 @@ linked by the component name '{}'", r.path, r.via));
             }
 
             if self.pack_path.is_empty() {
-                self.pack_path = e.settings().get("ui_mod_pack", None).unwrap_or_default();
+                self.pack_path = e.tool_settings::<UiSettings>(SETTINGS_ID).mod_pack;
             }
 
             gui::open_popup("Save into a mod pack");
@@ -1890,8 +1891,8 @@ linked by the component name '{}'", r.path, r.via));
                 });
                 match r {
                     Ok(()) => {
-                        e.settings().set("ui_mod_pack", &self.pack_path);
-                        let _ = e.settings().save();
+                        let pack = self.pack_path.clone();
+                        e.update_tool_settings(SETTINGS_ID, |s: &mut UiSettings| s.mod_pack = pack);
                         e.status(&format!("saved {} into {}", self.pack_inside, self.pack_path), false);
                         self.pack_message.clear();
                         gui::close_current_popup();

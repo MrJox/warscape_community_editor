@@ -2,9 +2,8 @@
 //! editor depends on: determinism, entity picking (meshes, terrain, overlays, locked and hidden layers), the interim terrain pass, the overlay
 //! pass (colour, depth test, selection outline, grid) and PNG capture. Port of `cli/render_check.cpp`.
 //!
-//!   cargo run --release -p wce_render --example render_check -- [environment path in the packs]      (the game folder: wce.ini or WCE_GAME)
+//!   cargo run --release -p wce_render --example render_check -- [environment path in the packs]      (the game folder: the settings or WCE_GAME)
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use wce_d3d11::*;
@@ -115,8 +114,8 @@ fn read(g: &Gpu, t: &RenderTarget) -> Pixels {
 
 fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
     let gpu = make_device().ok_or("no Direct3D 11 device")?;
-    let game = Settings::load(&Settings::default_dir()).get("game_dir", Some("WCE_GAME")).ok_or("the game folder is not set (game_dir in wce.ini or WCE_GAME)")?;
-    let vfs: Arc<Vfs> = Arc::new(Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::ATTILA)).map_err(|e| e.to_string())?);
+    let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
+    let vfs: Arc<Vfs> = Arc::new(Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?);
     let files: Arc<dyn Files> = vfs.clone();
     let env_doc = XmlDoc::parse(vfs.read(env_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let env = read_environment(&env_doc);

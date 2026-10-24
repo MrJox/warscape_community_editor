@@ -43,7 +43,7 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. Menu `UI`: add child, duplicate, delete, paint
 order, move into the previous sibling / out of the parent (the place on screen is kept), save into a mod pack, export XML.
 
-Saving: File > Save writes the binary layout as a loose file under the output folder (`output_dir` in wce.ini) at its in-pack path, or in place for
+Saving: File > Save writes the binary layout as a loose file under the output folder (`output_dir` in the settings) at its in-pack path, or in place for
 a file opened from disk. `UI > Save into a mod pack...` writes it into a `.pack` (created if missing). The game's own packs are never written.
 
 How a layout is drawn (checked against a game screenshot of the Custom Battle screen):
@@ -140,8 +140,8 @@ the skin has one, else from the default skin.
 ## Which packs are read
 
 Only the game's release packs (the extra packs and those in `manifest.txt`) and the mod packs you choose: at first start, or later in
-*File > Mod packs...*. The launcher's list of enabled mods is not used any more. The choice is `mod_packs=a.pack;b.pack` in `wce.ini`
-(`WCE_MOD_PACKS` for the command line). Advanced: `overlay_folders=` in `wce.ini` (or `WCE_OVERLAY`) adds more read-only loose folders; scripts use
+*File > Mod packs...*. The launcher's list of enabled mods is not used any more. The choice is the game's `mod_packs` in the settings
+(`WCE_MOD_PACKS` for the command line). Advanced: the game's `overlay_folders` in the settings (or `WCE_OVERLAY`) adds more read-only loose folders; scripts use
 `ui_new_skin <name>`, `ui_project <folder>` and `ui_export <pack>`.
 
 Where the names come from: `TWUI::Component`, `ComponentState` and `ComponentImageMetrics` (members and enums in `Attila.h`) and the loaders in the
@@ -186,7 +186,7 @@ wce-ui script edits.txt            # several tools in one session
 wce-ui tools                       # every tool and its arguments
 ```
 
-The game folder comes from `--game`, else `wce.ini` (`game_dir`, the editor's setting), `WCE_GAME`, or `ATTILA_DIR`. Packs are read in process
+The game folder comes from `--game`, else `WCE_GAME`, else the editor's settings. Packs are read in process
 through rpfm_lib (the same reader as the editor); no rpfm_server is needed. A component is named by its number in `tree`, by a path
 (`root/panel/button`) or by a unique name.
 

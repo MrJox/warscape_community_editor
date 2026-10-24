@@ -15,6 +15,7 @@ use wce_editor_core::document::Document;
 use wce_formats::tile_entry::TileEntry;
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::log;
+use wce_foundation::settings::env_value;
 use wce_foundation::math::{Float3, dot, length};
 use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
@@ -22,6 +23,8 @@ use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
 use wce_vfs::normalize;
+
+use crate::settings::{SETTINGS_ID, TileSettings};
 
 pub const POLYGON_TYPES: [&str; 5] =
     ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
@@ -278,19 +281,22 @@ impl TileTool {
         self.draw_pts.clear();
     }
 
-    /// The raw_data folders the tile browser lists: `tile_kits` in wce.ini (';' separated), else the assembly kits under game_dir.
+    /// The raw_data folders the tile browser lists: `$WCE_TILE_KITS` (';' separated), else the settings' `kits`, else the assembly kits in
+    /// the game folder.
     pub fn kit_roots(&self, e: &mut Editor) -> Vec<PathBuf> {
-        // The index of the kits' tile database entries keeps its rows in the settings folder between runs.
-        if let Some(dir) = e.settings().file().parent() {
-            TileIndex::set_cache_dir(&dir.join("tile_index"));
-        }
-
-        if let Some(kits) = e.settings().get("tile_kits", Some("WCE_TILE_KITS")) {
+        // The index of the kits' tile database entries keeps its rows in the cache folder between runs.
+        TileIndex::set_cache_dir(&e.settings_ref().paths().cache_dir().join("tile_index"));
+        if let Some(kits) = env_value("WCE_TILE_KITS") {
             return kits.split(';').filter(|k| !k.is_empty()).map(PathBuf::from).collect();
         }
 
+        let kits = e.tool_settings::<TileSettings>(SETTINGS_ID).kits;
+        if !kits.is_empty() {
+            return kits;
+        }
+
         let mut roots = vec![];
-        if let Some(game) = e.settings().get("game_dir", Some("WCE_GAME")) {
+        if let Some(game) = e.settings_ref().game_dir() {
             for kit in ["assembly_kit_battle_tilemap", "assembly_kit_campaign_tilemap"] {
                 let raw = Path::new(&game).join(kit).join("raw_data");
                 if raw.join("terrain").join("tiles").is_dir() {
@@ -302,7 +308,7 @@ impl TileTool {
         roots
     }
 
-    /// Shows or hides the sea at 0 m: the tile's plane and the map context's sea; kept in wce.ini for the next tiles.
+    /// Shows or hides the sea at 0 m: the tile's plane and the map context's sea; kept in the settings for the next tiles.
     pub fn set_show_sea(&mut self, e: &mut Editor, id: DocumentId, on: bool) {
         if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
             d.tile_mut().display_mut().show_sea = on;
@@ -310,8 +316,7 @@ impl TileTool {
         }
 
         self.context.show_sea(e, on);
-        e.settings().set(SHOW_SEA_KEY, if on { "1" } else { "0" });
-        let _ = e.settings().save();
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.show_sea = on);
     }
 
     /// Opens a tile by its database entry (an _tile_database/TILES/*.xml path, or a name like "assembly_kit/osgiliath_test" / the entry's
@@ -1209,7 +1214,7 @@ impl TileTool {
         }
 
         if self.browse_roots.is_empty() {
-            gui::text_wrapped("No assembly kit found. Set game_dir (the folder with assembly_kit_battle_tilemap) or tile_kits in wce.ini.");
+            gui::text_wrapped("No assembly kit found. Set the game folder (the one with assembly_kit_battle_tilemap) or the tile kits in Settings.");
             gui::end();
             return;
         }
@@ -1634,18 +1639,10 @@ pub(crate) fn matches_words(en: &wce_formats::tile_index::TileIndexEntry, words:
     words.iter().all(|w| hay.contains(&w.to_lowercase()))
 }
 
-/// wce.ini: the sea at 0 m shown (1, the default) or hidden (0).
-const SHOW_SEA_KEY: &str = "tile_show_sea";
-
-/// The instance type whose markers are the VFX boxes, and wce.ini's key for them: shown (1, the default) or hidden (0).
+/// The instance type whose markers are the VFX boxes.
 const VFX_TYPE: &str = "VFXInstance";
-const VFX_BOXES_KEY: &str = "tile_show_vfx_boxes";
 
-fn vfx_boxes_setting(e: &mut Editor) -> bool {
-    e.settings().get(VFX_BOXES_KEY, None).is_none_or(|v| v != "0")
-}
-
-/// Shows or hides the VFX boxes (the VFXInstance markers; the effects still play) of the open tile, and keeps it in wce.ini for the next
+/// Shows or hides the VFX boxes (the VFXInstance markers; the effects still play) of the open tile, and keeps it in the settings for the next
 /// tiles. The same switch as the type's eye in the Scene panel.
 pub fn set_vfx_boxes(e: &mut Editor, on: bool) {
     if let Some(d) = document(e) {
@@ -1659,25 +1656,16 @@ pub fn set_vfx_boxes(e: &mut Editor, on: bool) {
         t.display_changed();
     }
 
-    e.settings().set(VFX_BOXES_KEY, if on { "1" } else { "0" });
-    let _ = e.settings().save();
+    e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.show_vfx_boxes = on);
 }
 
-/// wce.ini: the battle wind the sea is drawn with (a key of `wind_levels_tables`).
-const SEA_STATE_KEY: &str = "tile_sea_state";
-
-/// Draws the sea with a battle wind's waves and whitecaps, and keeps it in wce.ini.
+/// Draws the sea with a battle wind's waves and whitecaps, and keeps it in the settings.
 pub fn set_sea_state(e: &mut Editor, key: &str) {
     if let Some(r) = e.renderer() {
         r.settings.sea_state = key.to_owned();
     }
 
-    e.settings().set(SEA_STATE_KEY, key);
-    let _ = e.settings().save();
-}
-
-fn show_sea_setting(e: &mut Editor) -> bool {
-    e.settings().get(SHOW_SEA_KEY, None).is_none_or(|v| v != "0")
+    e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.sea_state = key.to_owned());
 }
 
 impl Tool for TileTool {
@@ -1718,7 +1706,8 @@ impl Tool for TileTool {
         }
 
         e.viewport.orbit_mut().min_eye_height = -1e6;
-        if let Some(key) = e.settings().get(SEA_STATE_KEY, None)
+        let key = e.tool_settings::<TileSettings>(SETTINGS_ID).sea_state;
+        if !key.is_empty()
             && let Some(r) = e.renderer()
         {
             r.settings.sea_state = key;
@@ -2059,8 +2048,9 @@ impl Tool for TileTool {
         }
 
         let mut doc = TileDocument::new(project, e.files());
-        doc.tile_mut().display_mut().show_sea = show_sea_setting(e);
-        if !vfx_boxes_setting(e) {
+        let settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
+        doc.tile_mut().display_mut().show_sea = settings.show_sea;
+        if !settings.show_vfx_boxes {
             doc.tile_mut().display_mut().hidden_types.insert(VFX_TYPE.to_owned());
         }
         Ok(Box::new(doc))

@@ -203,7 +203,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("frame_cap", "frame_cap [fps | 0]", "the frame rate cap of interactive sessions (0: none), kept in wce.ini; no argument: log it", |e, a| {
+    c.add("frame_cap", "frame_cap [fps | 0]", "the frame rate cap of interactive sessions (0: none), kept in the settings; no argument: log it", |e, a| {
         match a.first() {
             None => ok(format!("frame cap {}", e.frame_cap())),
             Some(v) => match v.parse::<u32>() {
@@ -889,7 +889,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         fail(format!("no panel '{name}'"))
     });
 
-    c.add("setup", "setup <game folder>", "what the first-run dialog's button does: store the game folder in wce.ini and mount", |e, a| {
+    c.add("setup", "setup <game folder>", "what the first-run dialog's button does: store the game folder in the settings and mount", |e, a| {
         let Some(dir) = a.first() else { return fail("usage: setup <game folder>") };
         e.setup(dir).map_or_else(fail, ok)
     });
