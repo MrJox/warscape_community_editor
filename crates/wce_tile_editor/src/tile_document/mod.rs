@@ -28,6 +28,7 @@ mod preview;
 mod grass;
 mod vegetation;
 mod view;
+mod walls;
 
 use std::any::Any;
 use std::cell::{OnceCell, RefCell};
@@ -53,6 +54,7 @@ pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
 pub use self::index::style_of;
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
+pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
 
 /// What a new instance is made from (`TileDocument::create`): a point on the ground (world metres), or drawn points.
 #[derive(Clone, Debug, PartialEq)]

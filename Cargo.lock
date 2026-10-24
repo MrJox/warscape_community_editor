@@ -2263,6 +2263,7 @@ dependencies = [
  "wce_scene",
  "wce_tile",
  "wce_vfs",
+ "wce_walls",
 ]
 
 [[package]]

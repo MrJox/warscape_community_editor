@@ -25,6 +25,7 @@ use wce_tile::world_transform::world_transform;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
 
+use wce_tile::property_enums::WALL_BASE;
 use crate::tool::{HINTS, MODE_NAMES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
 
 /// An inspector that writes the rows it is given, with their values (for `tile_inspect`).
@@ -870,6 +871,43 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_spline_value(el, &points, attr, value, 0) { ok(format!("{attr} = {value} on {} points", points.len())) } else { fail("nothing changed") }
     });
 
+    c.add("wall_sharp", "wall_sharp <point index> on|off", "mark a point of the selected wall (WALL_SPLINE) as a corner (a mitre) or a smooth one", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else { return fail("usage: wall_sharp <point index> on|off") };
+        let Some(el) = el.filter(|&el| d.tile().is_wall(el)) else { return fail("no wall selected") };
+        if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
+    });
+
+    c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
+        let runs = l.plan.runs.iter().map(|r| format!("{:.0}..{:.0} at {:.2} (drift {:.2})", r.s.0, r.s.1, r.level, r.drift)).collect::<Vec<_>>().join(", ");
+        let steps = l.plan.steps.iter().map(|st| format!("{:.0}..{:.0} {:.2} -> {:.2}", st.s.0, st.s.1, st.from, st.to)).collect::<Vec<_>>().join(", ");
+        let corners = l.plan.corners.iter().map(|(s, i)| format!("point {i} at {s:.0}")).collect::<Vec<_>>().join(", ");
+        ok(format!("{}; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), l.plan.warnings.iter().map(|w| format!("; {w}")).collect::<String>()))
+    });
+
+    c.add("assert_wall", "assert_wall <corners> <steps> [start end: free|attached]", "test: the selected wall's layout has these many corners and step sections (and its ends are free or attached)", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
+        let want = |i: usize| a.get(i).and_then(|x| x.parse::<usize>().ok());
+        let (corners, steps) = (l.plan.corners.len(), l.plan.steps.len());
+        if want(0).is_some_and(|n| n != corners) || want(1).is_some_and(|n| n != steps) {
+            return fail(format!("{corners} corner(s), {steps} step section(s)"));
+        }
+
+        for (k, end) in l.ends.iter().enumerate() {
+            if let Some(w) = a.get(2 + k).filter(|w| (*w == "attached") != end.is_some()) {
+                return fail(format!("end {k} is {}, not {w}", if end.is_some() { "attached" } else { "free" }));
+            }
+        }
+
+        ok("")
+    });
+
     c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(name) = a.first() else { return fail("usage: new_layer <name>") };
@@ -960,8 +998,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         mouse(e, &args, "")
     });
 
-    c.add("draw_polygon", "draw_polygon <type> [hint]", "start drawing a polygon: click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
-        let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint]") };
+    c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WALL_SPLINE, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
+        let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {
             if let Err(err) = crate::create_panel::make_for_script(t, e, kind, "") {
                 return fail(err);
@@ -974,6 +1012,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             if let (Some(h), Some(d)) = (a.get(1).filter(|h| HINTS.contains(&h.as_str())), t.draft.as_mut()) {
                 d.attrs.insert("hint_type".to_owned(), h.clone());
+            }
+
+            if let (Some(b), Some(d)) = (a.get(1).filter(|b| WALL_BASE.iter().any(|(k, _)| *k == b.as_str())), t.draft.as_mut()) {
+                d.attrs.insert("wall_base".to_owned(), b.clone());
             }
 
             ok("")

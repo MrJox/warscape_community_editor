@@ -196,3 +196,23 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V3", "4v3"),
     ("EDZT_4V4", "4v4"),
 ];
+
+/// Not TEd's: the base walls a `WALL_SPLINE` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
+/// `wce_walls::profile::BASES`, in its order.
+pub const WALL_BASE: &[(&str, &str)] = &[
+    ("barbarian_fort_straight", "8 m: barbarian"),
+    ("eastern_fort_small_wall_straight", "8 m: eastern small wall"),
+    ("sassanid_fort_small_wall_straight", "8 m: sassanid small wall"),
+    ("western_fort_small_wall_straight", "8 m: western small wall"),
+    ("khazad_fort_wall_small_straight", "8 m: khazad (TDD)"),
+    ("mordor_fort_small_wall_straight", "8 m: mordor (TDD)"),
+    ("roman_fort_straight", "15 m: roman"),
+    ("eastern_fort_straight", "15 m: eastern"),
+    ("sassanid_fort_straight", "15 m: sassanid"),
+    ("greek_fort_straight", "15 m: greek"),
+    ("egyptian_fort_straight", "15 m: egyptian"),
+    ("persian_fort_straight", "15 m: persian"),
+    ("easterling_fort_straight", "15 m: easterling (TDD)"),
+    ("gondorean_fort_straight", "15 m: gondorean (TDD)"),
+    ("gondor_fort_straight", "15 m: gondor (TDD)"),
+];

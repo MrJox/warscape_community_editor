@@ -847,6 +847,12 @@ impl TedScene {
 
             "NOGO_REGION_POLYGON_INSTANCE" => set("line_colour", "argb(0.65,0.0,0.0,1.0)"),
             "SIEGE_AI_POLYGON_INSTANCE" => set("polygon_closed", "0"),
+            // Not TEd's: a procedural wall (docs/plans/procedural_walls.md).
+            "WALL_SPLINE" => {
+                for (k, v) in [("polygon_closed", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"), ("wall_base", "barbarian_fort_straight"), ("wall_tolerance", "0.5"), ("wall_flip", "false")] {
+                    set(k, v);
+                }
+            }
             _ => {}
         }
 

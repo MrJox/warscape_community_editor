@@ -20,13 +20,16 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{WALL_SPLINE, WallLayout, BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
-/// The polygon types `add_polygon` makes (the `add_polygon` command; the Create panel makes them with `create_with`).
-pub const POLYGON_TYPES: [&str; 5] =
-    ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
+/// The polygon types `add_polygon` makes (the `add_polygon` command; the Create panel makes them with `create_with`); the last is not
+/// TEd's: a procedural wall (docs/plans/procedural_walls.md).
+pub const POLYGON_TYPES: [&str; 6] = [
+    "AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE",
+    WALL_SPLINE,
+];
 
 pub const HINTS: [&str; 16] = [
     "AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
@@ -1951,6 +1954,28 @@ impl TileTool {
                 Some(pt) => gui::text(&format!("point {pt}: drag to move, Delete removes, shift+click edge inserts")),
                 None => gui::text_disabled("click a point handle to edit; shift+click near an edge inserts a point"),
             }
+
+            if d.tile().is_wall(s) {
+                self.draw_wall_rows(e, id, s);
+            }
+        }
+    }
+
+    /// The selected wall: its layout, and the selected point's corner mark.
+    fn draw_wall_rows(&mut self, e: &mut Editor, id: DocumentId, wall: usize) {
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        let Some(l) = d.tile().wall_layout(wall) else { return };
+        gui::text(&wall_summary(&l));
+        for w in &l.plan.warnings {
+            gui::text_colored([1.0, 0.6, 0.2, 1.0], w);
+        }
+
+        let Some(pt) = self.poly_point else { return };
+        let points = d.tile().tscene().polygon_points(wall);
+        let Some(&p) = points.get(pt) else { return };
+        let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+        if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
+            d.set_point_attribute(wall, pt, "sharp", wce_tile::properties::format_bool(sharp));
         }
     }
 
@@ -2731,4 +2756,13 @@ impl Tool for TileTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// A wall's layout in one line: base, length, corners, runs, steps, attached ends (scene units).
+pub fn wall_summary(l: &WallLayout) -> String {
+    let ends = l.ends.iter().map(|a| a.as_ref().map_or("free".to_owned(), |a| format!("on {}", a.key))).collect::<Vec<_>>();
+    format!(
+        "{} wall on {}: {:.0} long, {} corner(s), {} run(s), {} step section(s); ends {} / {}",
+        if l.profile.walkway > 10.0 { "15 m" } else { "8 m" }, l.profile.key, l.plan.length, l.plan.corners.len(), l.plan.runs.len(), l.plan.steps.len(), ends[0], ends[1],
+    )
 }

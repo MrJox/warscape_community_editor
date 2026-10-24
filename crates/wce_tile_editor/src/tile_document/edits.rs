@@ -258,6 +258,9 @@ impl Tile {
         }
 
         self.stroke_open = false;
+
+        // The walls' layouts follow the ground.
+        self.polygons_dirty |= self.has_walls();
     }
 
     fn height_modified(&self) -> bool {
@@ -461,6 +464,7 @@ impl TileDocument {
     }
 
     /// A polygon from world points in `layer` (`None`: the scene graph).
+    /// `hint`: an AI hint polygon's hint type, a wall's (`WALL_SPLINE`) base wall.
     ///
     /// # Errors
     ///
@@ -472,14 +476,32 @@ impl TileDocument {
 
         let t = self.tile();
         let layer = layer.or(t.tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a polygon to")?;
+
+        // A wall's ends go onto the fort buildings' ends near them.
+        let mut pts = pts.to_vec();
+        if kind == super::WALL_SPLINE {
+            let last = pts.len() - 1;
+            pts[0] = t.snap_wall_end(pts[0]);
+            pts[last] = t.snap_wall_end(pts[last]);
+        }
+
         let local = pts.iter().map(|&p| t.to_local(layer, p)).collect::<Vec<_>>();
         let mut extra = BTreeMap::new();
         if kind == "AI_HINT_POLYGON_INSTANCE" && !hint.is_empty() {
             extra.insert("hint_type".to_owned(), hint.to_owned());
         }
 
+        // A wall's `hint` is its base wall.
+        if kind == super::WALL_SPLINE && !hint.is_empty() {
+            extra.insert("wall_base".to_owned(), hint.to_owned());
+        }
+
         let mark = self.begin()?;
-        let name = if kind == "AI_HINT_POLYGON_INSTANCE" { "AI hint polygon" } else { "Polygon" };
+        let name = match kind {
+            "AI_HINT_POLYGON_INSTANCE" => "AI hint polygon",
+            super::WALL_SPLINE => "Wall",
+            _ => "Polygon",
+        };
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
         self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
         Ok(e)
@@ -517,6 +539,9 @@ impl TileDocument {
         let pts = t.tscene().polygon_points(elem);
         if op == "move" {
             let &p = pts.get(index).ok_or("no such point")?;
+
+            // A wall's end goes onto a fort building's end near it.
+            let world = if t.is_wall(elem) && (index == 0 || index + 1 == pts.len()) { t.snap_wall_end(world) } else { world };
             let before = t.tscene().point_position(p).unwrap_or_default();
             let after = t.to_local(elem, world);
             let (before_text, area_text) = (t.tscene().doc().get(p, "position"), t.tscene().doc().get(elem, "area"));
@@ -772,6 +797,19 @@ impl TileDocument {
 
         self.push_splice("Move to layer".to_owned(), mark, vec![item_of(elem)], vec![item_of(moved)]);
         Ok(true)
+    }
+
+    /// Sets an attribute of a polygon's point (a wall's `sharp`), the polygon staying selected.
+    pub fn set_point_attribute(&mut self, elem: usize, index: usize, attr: &str, value: &str) -> bool {
+        let Some(&p) = self.tile().tscene().polygon_points(elem).get(index) else { return false };
+        if self.tile().tscene().doc().get(p, attr).as_deref() == Some(value) {
+            return true;
+        }
+
+        let Ok(mark) = self.begin() else { return false };
+        self.tscene_mut().set_attr(p, attr, value);
+        self.push_splice(format!("Set point {attr}"), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        true
     }
 
     pub fn rename(&mut self, elem: usize, name: &str) -> bool {
@@ -1159,6 +1197,23 @@ impl TileDocument {
             ) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, true).position(c)
+            }
+
+            (super::WALL_SPLINE, Create::Line(pts)) => {
+                // A wall's ends go onto the fort buildings' ends near them.
+                let mut pts = pts.clone();
+                if let [first, .., last] = pts.as_mut_slice() {
+                    *first = t.snap_wall_end(*first);
+                    *last = t.snap_wall_end(*last);
+                }
+
+                let (c, points) = line(&pts)?;
+                let mut n = new_polygon(kind, points, false).position(c);
+                for (k, v) in super::walls::wall_defaults() {
+                    n.attrs.entry(k).or_insert(v);
+                }
+
+                n
             }
 
             ("AISeparatorInstance", Create::Line(pts)) => {

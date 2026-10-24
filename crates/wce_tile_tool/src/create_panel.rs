@@ -32,6 +32,9 @@ const FIXED: [(usize, &str, bool); 17] = [
 /// The roads, drawn like the rivers.
 const ROAD: (usize, &str, bool) = (9, "SEGMENTED_SPLINE_INSTANCE", true);
 
+/// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), drawn with the buildings.
+const WALL: (usize, &str, bool) = (0, wce_tile_editor::tile_document::WALL_SPLINE, true);
+
 /// The keyed types of the first categories.
 const KEYED: [(usize, &str); 5] = [(0, "BUILDING_INSTANCE"), (1, "VEGETATION_INSTANCE"), (2, "ProjectedDecalInstance"), (3, "SIMPLE_MESH_INSTANCE"), (4, "VFXInstance")];
 
@@ -160,7 +163,7 @@ impl TileTool {
             }
         }
 
-        for (category, kind, drawn) in FIXED.iter().chain([&ROAD]) {
+        for (category, kind, drawn) in FIXED.iter().chain([&ROAD, &WALL]) {
             let make = if *drawn { Make::Draw { kind: (*kind).to_owned() } } else { Make::Place { kind: (*kind).to_owned(), key: String::new() } };
             out.push(entry(*category, crate::entity_types::type_name(kind).to_owned(), make, kind));
         }
@@ -733,7 +736,7 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
-        kind if FIXED.iter().chain([&ROAD]).any(|(_, k, drawn)| *k == kind && *drawn) => Make::Draw { kind: kind.to_owned() },
+        kind if FIXED.iter().chain([&ROAD, &WALL]).any(|(_, k, drawn)| *k == kind && *drawn) => Make::Draw { kind: kind.to_owned() },
         kind if FIXED.iter().any(|(_, k, _)| *k == kind) || KEYED.iter().any(|(_, k)| *k == kind) => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
         kind => return Err(format!("{kind} can't be created here")),
     };
