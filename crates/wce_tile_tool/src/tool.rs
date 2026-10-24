@@ -1986,11 +1986,9 @@ impl TileTool {
         gui::text(&wall_summary(&l));
         let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
         let (doors, skipped) = d.tile().wall_doors(&l, &ps);
-        if !l.profile.door.is_empty() {
-            gui::text(&format!("{} piece(s), {} door section(s)", ps.len(), doors.len()));
-        }
-
-        for w in l.plan.warnings.iter().chain(&skipped) {
+        let (defences, defences_skipped) = wce_walls::pieces::defence_slots(&l.plan, l.profile);
+        gui::text(&format!("{} piece(s), {} door section(s), {} tower(s) / bastion(s)", ps.len(), doors.len(), defences.len()));
+        for w in l.plan.warnings.iter().chain(&skipped).chain(&defences_skipped) {
             gui::text_colored([1.0, 0.6, 0.2, 1.0], w);
         }
 

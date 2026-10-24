@@ -379,6 +379,21 @@ the game sees (0, 2, 3, 4).
   chains could squeeze the run between them to nothing. Now a chain stays between the middles of its two runs, a quarter of `min_run`
   from each (half a run of flat walkway between neighbouring steps). Test.
 
+## Spacings (user, 2026-10-24)
+
+Two attributes of the spline (Inspector rows; 0: none):
+
+- **`wall_access_every`** (default 200): the spacing of the pieces that take units up the wall, if the wall has them (15 m: the door
+  sections; 8 m walls have none, their bank is the way up). Replaces the fixed 200 (`pieces::door_pieces`).
+- **`wall_defence_every`** (default 0): the spacing of the towers and bastions, one group (`Profile::defences`, used in turn): 15 m, the
+  tower (`*_fort_tower_c_straight_with_extension`, gondor `gondor_fort_tower_c_straight`) then the bastion
+  (`*_fort_straight_with_solid_squared_bastion`, gondor `gondor_fort_bastion`); 8 m, the curved bastion (`*_curved_bastion`; the
+  watchtowers stand alone, not in a wall). For gameplay they are the game's pieces as they are (no terrain blending, not bent): a slot of
+  exactly the base's length at the wall's level, at `every / 2` then every `every`, on the nearest place within half the spacing that is
+  straight (4 degrees over its length), has no step, and keeps the wall's depth + 2 from corners and attached ends
+  (`pieces::defence_slots`); else skipped with a note. `Piece::rigid`: placed as instances of the game's keys on export (no generated
+  files, no copied rows), drawn from the game's meshes in the preview. Test: alternation, exact slots, origins, coverage, none on curves.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);

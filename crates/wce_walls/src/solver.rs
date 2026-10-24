@@ -44,6 +44,10 @@ pub struct WallInput {
     /// The face an attached end meets (the gate's or bastion's end): its normal (x, z), per end. The wall's end piece is sheared onto
     /// it.
     pub end_planes: [Option<[f64; 2]>; 2],
+
+    /// The spacing of the access pieces (15 m: the door sections) and of the towers and bastions along the wall; 0: none.
+    pub access_every: f64,
+    pub defence_every: f64,
 }
 
 /// A point along the wall.
@@ -109,6 +113,10 @@ pub struct Plan {
 
     /// The ends attached to nothing (closed with the base's caps), in the plan's direction.
     pub free_ends: [bool; 2],
+
+    /// `WallInput::access_every`, `defence_every`.
+    pub access_every: f64,
+    pub defence_every: f64,
 }
 
 impl Plan {
@@ -149,6 +157,8 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
             tolerance: input.tolerance,
             ends: [input.ends[1], input.ends[0]],
             end_planes: [input.end_planes[1], input.end_planes[0]],
+            access_every: input.access_every,
+            defence_every: input.defence_every,
         };
 
         // The corners name the points as the input does.
@@ -160,7 +170,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         return plan;
     }
 
-    let mut plan = Plan { end_planes: input.end_planes, free_ends: [input.ends[0].is_none(), input.ends[1].is_none()], ..Plan::default() };
+    let mut plan = Plan { end_planes: input.end_planes, free_ends: [input.ends[0].is_none(), input.ends[1].is_none()], access_every: input.access_every, defence_every: input.defence_every, ..Plan::default() };
     if input.points.len() < 2 {
         return plan;
     }
@@ -353,7 +363,7 @@ fn dir_at(samples: &[Sample], s: f64) -> [f64; 2] {
 }
 
 /// How much the direction turns between two distances (radians).
-fn turn_between(samples: &[Sample], a: f64, b: f64) -> f64 {
+pub fn turn_between(samples: &[Sample], a: f64, b: f64) -> f64 {
     let n = ((b - a) / STEP).ceil().max(1.0) as usize;
     let mut total = 0.0;
     let mut prev = dir_at(samples, a);

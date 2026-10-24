@@ -92,6 +92,7 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         wall: usize,
         layout: scene::WallLayout,
         pieces: Vec<Piece>,
+        rigid: Vec<Piece>,
         doors: Vec<usize>,
         keys: Vec<String>,
     }
@@ -103,11 +104,13 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
             continue;
         };
 
-        let ps = pieces(&layout.plan, layout.profile);
+        // The towers and bastions are the game's pieces, placed as they are; the rest is generated.
+        let (rigid, ps): (Vec<Piece>, Vec<Piece>) = pieces(&layout.plan, layout.profile).into_iter().partition(|p| p.rigid);
         let (doors, skipped) = scene::doors(scene, &layout, &ps, ground, &radius);
-        out.notes.extend(layout.plan.warnings.iter().chain(&skipped).map(|n| format!("wall {w} ({}): {n}", scene.name(wall))));
+        let defences_skipped = crate::pieces::defence_slots(&layout.plan, layout.profile).1;
+        out.notes.extend(layout.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|n| format!("wall {w} ({}): {n}", scene.name(wall))));
         let keys = (0..ps.len()).map(|i| format!("{prefix}_{w}_{i:02}")).collect();
-        planned.push(Planned { wall, layout, pieces: ps, doors, keys });
+        planned.push(Planned { wall, layout, pieces: ps, rigid, doors, keys });
     }
 
     // The rows of every piece's base under its key.
@@ -184,8 +187,9 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
             placed.push((key.clone(), piece));
         }
 
-        // The caps past free ends (8 m: the game's endcaps, as they are).
+        // The caps past free ends and the towers and bastions: the game's pieces, as they are.
         placed.extend(crate::pieces::cap_instances(&p.layout.plan, profile).into_iter().map(|(k, piece)| (k.to_owned(), piece)));
+        placed.extend(p.rigid.iter().filter_map(|piece| piece.base.map(|k| (k.to_owned(), *piece))));
         lowered.push((p.wall, placed));
     }
 

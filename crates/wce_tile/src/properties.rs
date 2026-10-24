@@ -238,6 +238,8 @@ const WALL: &[Prop] = &[
     p("wall_base", Kind::Enum(en::WALL_BASE)),
     p("wall_tolerance", Kind::Slider(0.0, 5.0)),
     p("wall_flip", Kind::Bool),
+    p("wall_access_every", Kind::Slider(0.0, 1000.0)),
+    p("wall_defence_every", Kind::Slider(0.0, 1000.0)),
 ];
 
 const AI_HINT: &[Prop] = polygon![
