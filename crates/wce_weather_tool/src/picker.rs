@@ -9,16 +9,13 @@ use std::path::Path;
 use rpfm_lib::files::asset_variation_db::{AssetVariationDb, VariationQuery};
 use rpfm_lib::files::{Decodeable, Encodeable};
 use wce_editor::editor::Editor;
-use wce_editor::gui;
+use wce_editor::{gui, theme};
 use wce_vfs::{Vfs, normalize};
 
 use crate::variation_editor::{VariationEditState, draw_variation_editor, variation};
 
 const VDB_BIN: &str = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
 const VDB_XML: &str = "warscape_asset_variation_db/warscape_asset_variation_db.xml";
-const DIM: [f32; 4] = [0.6, 0.6, 0.6, 1.0];
-const WARN: [f32; 4] = [0.9, 0.8, 0.4, 1.0];
-const BAD: [f32; 4] = [1.0, 0.45, 0.4, 1.0];
 
 /// A candidate environment file: its path as stored and how many values it allows (0 for an unconstrained variation).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,7 +333,7 @@ impl WeatherPicker {
         }
 
         if self.db.is_none() {
-            gui::text_colored(BAD, &format!("Cannot read the variation database: {}", self.error));
+            gui::text_colored(theme::error(), &format!("Cannot read the variation database: {}", self.error));
             if gui::button("Retry") {
                 self.loaded = false;
             }
@@ -386,9 +383,9 @@ impl WeatherPicker {
         }
 
         if dirty {
-            gui::text_colored(WARN, "edited, not saved");
+            gui::text_colored(theme::warning(), "edited, not saved");
         } else {
-            gui::text_colored(DIM, "unchanged");
+            gui::text_colored(theme::dim(), "unchanged");
         }
 
         gui::same_line();
@@ -416,9 +413,9 @@ impl WeatherPicker {
             }
         }
 
-        gui::text_colored(DIM, &format!("Saved to {}{}warscape_asset_variation_db{}", output_dir.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR));
+        gui::text_colored(theme::dim(), &format!("Saved to {}{}warscape_asset_variation_db{}", output_dir.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR));
         if !self.message.is_empty() {
-            gui::text_colored(WARN, &self.message.clone());
+            gui::text_colored(theme::warning(), &self.message.clone());
         }
 
         if !gui::begin_tab_bar("vdbtabs") {
@@ -460,20 +457,20 @@ impl WeatherPicker {
             }
         }
 
-        gui::text_colored(DIM, &format!("query bits 0x{:08X}", db.query_mask(&self.query)));
+        gui::text_colored(theme::dim(), &format!("query bits 0x{:08X}", db.query_mask(&self.query)));
         gui::separator();
 
         let total_values = db.value_count();
         let r = candidates_of(db, &self.query);
         if r.used_default_map {
             gui::text_colored(
-                WARN, &format!("Nothing matched map '{}', so the game asks again with map 'default_map'.", self.query.get("map").map_or("", String::as_str)),
+                theme::warning(), &format!("Nothing matched map '{}', so the game asks again with map 'default_map'.", self.query.get("map").map_or("", String::as_str)),
             );
         }
 
         let mut open = None;
         if r.candidates.is_empty() {
-            gui::text_colored(BAD, "The database has no environment file for these conditions.");
+            gui::text_colored(theme::error(), "The database has no environment file for these conditions.");
         } else {
             gui::text(&format!(
                 "{} candidate(s); the game picks one uniformly at random ({:.1}% each).", r.candidates.len(), 100.0 / r.candidates.len() as f64,
@@ -501,7 +498,7 @@ impl WeatherPicker {
                     gui::table_set_column_index(2);
                     match (owner, vfs.as_ref()) {
                         (Some(o), Some(vfs)) => gui::text(&vfs.packs()[o].name),
-                        _ => gui::text_colored(BAD, "missing in all packs"),
+                        _ => gui::text_colored(theme::error(), "missing in all packs"),
                     }
 
                     gui::table_set_column_index(3);
@@ -519,7 +516,7 @@ impl WeatherPicker {
         // Reverse lookup for the open document.
         gui::separator();
         if active_environment.is_empty() {
-            gui::text_colored(DIM, "Open an .environment file from the pack list to see the conditions under which the game picks it.");
+            gui::text_colored(theme::dim(), "Open an .environment file from the pack list to see the conditions under which the game picks it.");
         } else {
             gui::text(&format!("Open file: {active_environment}"));
             let mut found = 0;
@@ -546,7 +543,7 @@ impl WeatherPicker {
             }
 
             if found == 0 {
-                gui::text_colored(DIM, "No variation refers to this file: weather selection never picks it.");
+                gui::text_colored(theme::dim(), "No variation refers to this file: weather selection never picks it.");
             }
         }
 

@@ -335,7 +335,7 @@ pub fn outliner(e: &mut Editor) {
         if active {
             gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_CHECK_MARK));
         } else if modified {
-            gui::push_style_color(gui::COL_TEXT, gui::v4(1.0, 0.75, 0.3, 1.0));
+            gui::push_style_color(gui::COL_TEXT, crate::theme::v4(crate::theme::modified()));
         }
 
         let open = gui::collapsing_header(&format!("{title}###doc"), gui::TREE_DEFAULT_OPEN);
@@ -583,6 +583,7 @@ pub fn log(e: &mut Editor) {
     gui::separator();
     if gui::begin_child("##log", gui::v2(0.0, 0.0), 0, gui::WINDOW_HORIZONTAL_SCROLLBAR) {
         let at_bottom = gui::scroll_y() >= gui::scroll_max_y() - 4.0;
+        crate::theme::push_mono();
         for entry in log::entries() {
             let shown = match entry.level {
                 LogLevel::Info => st.show_info,
@@ -595,8 +596,8 @@ pub fn log(e: &mut Editor) {
             }
 
             let colour = match entry.level {
-                LogLevel::Error => gui::v4(1.0, 0.45, 0.4, 1.0),
-                LogLevel::Warning => gui::v4(1.0, 0.8, 0.4, 1.0),
+                LogLevel::Error => crate::theme::v4(crate::theme::error()),
+                LogLevel::Warning => crate::theme::v4(crate::theme::warning()),
                 LogLevel::Info => gui::style_color(gui::COL_TEXT),
             };
 
@@ -604,6 +605,8 @@ pub fn log(e: &mut Editor) {
             gui::text(&entry.text);
             gui::pop_style_color(1);
         }
+
+        crate::theme::pop_font();
 
         let now = log::sequence();
         if now != st.log_seen && at_bottom {

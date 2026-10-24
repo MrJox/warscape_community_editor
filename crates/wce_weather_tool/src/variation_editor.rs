@@ -4,11 +4,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rpfm_lib::files::asset_variation_db::{AssetVariationDb, Variation};
-use wce_editor::gui;
+use wce_editor::{gui, theme};
 use wce_vfs::{Vfs, normalize};
 
-const DIM: [f32; 4] = [0.6, 0.6, 0.6, 1.0];
-const BAD: [f32; 4] = [1.0, 0.45, 0.4, 1.0];
 
 #[derive(Clone, Debug, Default)]
 pub struct VariationEditState {
@@ -131,13 +129,13 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
             gui::pop_id();
         }
 
-        gui::text_colored(DIM, "Removing or adding a value moves the flag bits of later values; every variation keeps allowing the same values.");
+        gui::text_colored(theme::dim(), "Removing or adding a value moves the flag bits of later values; every variation keeps allowing the same values.");
         gui::tree_pop();
     }
 
     // ---- Variations
     if db.entries().is_empty() {
-        gui::text_colored(BAD, "The database has no entries.");
+        gui::text_colored(theme::error(), "The database has no entries.");
     } else {
         st.entry = st.entry.min(db.entries().len() - 1);
         if db.entries().len() > 1 {
@@ -182,7 +180,7 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
                 let mut buf = filename.clone();
                 let missing = vfs.is_some_and(|vfs| vfs.owner(&normalize(&filename)).is_none());
                 if missing {
-                    gui::push_style_color(gui::COL_FRAME_BG, gui::v4(0.45, 0.15, 0.15, 1.0));
+                    gui::push_style_color(gui::COL_FRAME_BG, theme::v4(theme::palette().error_bg));
                 }
 
                 gui::set_next_item_width(-1.0);
@@ -267,7 +265,7 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
                 changed = true;
             }
 
-            gui::text_colored(DIM, &format!("flags {flags} (0x{flags:08X})"));
+            gui::text_colored(theme::dim(), &format!("flags {flags} (0x{flags:08X})"));
             gui::same_line();
             let variations = db.entries_mut()[st.entry].variations_mut();
             if gui::small_button("Any (flags 0)") {
@@ -296,7 +294,7 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
     let problems = db.validate();
     if !problems.is_empty() {
         gui::separator();
-        gui::text_colored(BAD, &format!("{} problem(s) for the game:", problems.len()));
+        gui::text_colored(theme::error(), &format!("{} problem(s) for the game:", problems.len()));
         for p in &problems {
             gui::bullet_text(p);
         }

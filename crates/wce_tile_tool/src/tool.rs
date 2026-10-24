@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 use wce_editor::editor::Editor;
-use wce_editor::gui;
+use wce_editor::{gui, settings_window, theme};
 use wce_editor::steam_detect::file_dialog;
 use wce_editor::tool::{Tool, ViewportEvent, ViewportEventKind};
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
@@ -15,7 +15,7 @@ use wce_editor_core::document::Document;
 use wce_formats::tile_entry::TileEntry;
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::log;
-use wce_foundation::settings::env_value;
+use wce_foundation::settings::{Settings, env_value};
 use wce_foundation::math::{Float3, dot, length};
 use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
@@ -72,8 +72,6 @@ impl TileMode {
     }
 }
 
-const WARN: [f32; 4] = [1.0, 0.7, 0.3, 1.0];
-const BAD: [f32; 4] = [1.0, 0.45, 0.4, 1.0];
 
 /// A row of the Scene panel's flattened tree.
 #[derive(Clone, Debug)]
@@ -815,7 +813,7 @@ impl TileTool {
             gui::text(&file_name(&p.dir));
             gui::text_disabled(&p.dir.parent().map(file_name).unwrap_or_default());
             if !p.warning.is_empty() {
-                gui::text_colored(WARN, &p.warning);
+                gui::text_colored(theme::warning(), &p.warning);
             }
 
             gui::separator();
@@ -857,7 +855,7 @@ impl TileTool {
             let h = d.history();
             gui::text(&format!("undo {} / redo {}", h.position(), h.size() - h.position()));
             if !t.model_fallbacks().is_empty() {
-                gui::text_colored(WARN, &format!("{} building keys have no model (boxes), see the log", t.model_fallbacks().len()));
+                gui::text_colored(theme::warning(), &format!("{} building keys have no model (boxes), see the log", t.model_fallbacks().len()));
             }
 
             gui::separator();
@@ -1066,7 +1064,7 @@ impl TileTool {
             }
         }
         for f in &shader_failures {
-            gui::text_colored(BAD, &format!("game shader not loaded: {f}"));
+            gui::text_colored(theme::error(), &format!("game shader not loaded: {f}"));
         }
     }
 
@@ -1355,7 +1353,7 @@ impl TileTool {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let p = d.project();
         let Some(en) = &p.entry else {
-            gui::text_colored(WARN, "This tile has no database entry (it is not inside an assembly kit's raw_data/terrain/tiles/<kind>).");
+            gui::text_colored(theme::warning(), "This tile has no database entry (it is not inside an assembly kit's raw_data/terrain/tiles/<kind>).");
             return;
         };
 
@@ -1675,6 +1673,33 @@ impl Tool for TileTool {
 
     fn title(&self) -> &str {
         "Tile"
+    }
+
+    fn icon(&self) -> &str {
+        wce_editor::icons::MAP
+    }
+
+    fn has_settings(&self) -> bool {
+        true
+    }
+
+    fn draw_settings(&mut self, draft: &mut Settings) {
+        let mut s: TileSettings = draft.tool(SETTINGS_ID);
+        let before = s.clone();
+        settings_window::label("Tile kits");
+        settings_window::folder_list("kits", &mut s.kits);
+        settings_window::env_note("WCE_TILE_KITS");
+        settings_window::help("The raw_data folders the tile browser lists; none: the assembly kits in the game folder.");
+
+        gui::separator_text("New tiles");
+        gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
+        gui::checkbox("Show the sea at 0 m", &mut s.show_sea);
+        gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
+        gui::checkbox("Show the VFX boxes", &mut s.show_vfx_boxes);
+        settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
+        if s != before {
+            draft.set_tool(SETTINGS_ID, &s);
+        }
     }
 
     fn opens(&self) -> Vec<String> {

@@ -2119,7 +2119,6 @@ name = "wce_app"
 version = "0.1.0"
 dependencies = [
  "dear-imgui-rs",
- "dear-imgui-sys",
  "sdl3-sys",
  "wce_d3d11",
  "wce_editor",

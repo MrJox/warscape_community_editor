@@ -11,6 +11,7 @@ use crate::settings::{SETTINGS_ID, UiSettings};
 use dear_imgui_sys as sys;
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, Vec2, col32, v2};
+use wce_editor::theme;
 use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
@@ -1190,7 +1191,7 @@ linked by the component name '{}'", r.path, r.via));
         if self.xml.error.is_empty() {
             gui::text_disabled(&if self.xml.edited { format!("{n} bytes, editing (applies when you pause)") } else { format!("{n} bytes, in sync") });
         } else {
-            gui::text_colored([1.0, 0.45, 0.4, 1.0], &format!("not applied: {}", self.xml.error));
+            gui::text_colored(theme::error(), &format!("not applied: {}", self.xml.error));
         }
 
         if !self.xml.whole && sel.is_none() {
@@ -1626,13 +1627,13 @@ linked by the component name '{}'", r.path, r.via));
                 let in_packs = self.skins.as_ref().is_some_and(|l| l.iter().any(|s| s.name == n && s.packed));
                 if in_packs {
                     gui::push_text_wrap_pos(520.0);
-                    gui::text_colored([1.0, 0.8, 0.4, 1.0], "The game's packs already have a skin with this name. Your pictures replace the pack's pictures of the same name in the editor; pictures you do not provide still come from the pack.");
+                    gui::text_colored(theme::warning(), "The game's packs already have a skin with this name. Your pictures replace the pack's pictures of the same name in the editor; pictures you do not provide still come from the pack.");
                     gui::pop_text_wrap_pos();
                 }
             }
 
             if !self.new_skin_msg.is_empty() {
-                gui::text_colored([1.0, 0.6, 0.4, 1.0], &self.new_skin_msg);
+                gui::text_colored(theme::error(), &self.new_skin_msg);
             }
 
             if gui::button("Create") {
@@ -1877,7 +1878,7 @@ linked by the component name '{}'", r.path, r.via));
             gui::set_next_item_width(560.0);
             gui::input_text("Path inside", Some("ui/campaign ui/settlement_panel"), &mut self.pack_inside, 1024, 0);
             if !self.pack_message.is_empty() {
-                gui::text_colored([1.0, 0.6, 0.4, 1.0], &self.pack_message);
+                gui::text_colored(theme::error(), &self.pack_message);
             }
 
             if gui::button("Save") {
@@ -2142,7 +2143,7 @@ fn layer_row(rename: &mut Option<(usize, String, u8)>, f: &mut LayerFrame, ents:
                 };
 
                 let dl = gui::window_draw_list();
-                let col = col32(255, 200, 60, 255);
+                let col = theme::u32(theme::palette().highlight);
                 match place {
                     Place::Before => dl.line(v2(mn.x, mn.y), v2(mx.x, mn.y), col, 2.0),
                     Place::After => dl.line(v2(mn.x, mx.y), v2(mx.x, mx.y), col, 2.0),
@@ -2202,6 +2203,10 @@ impl Tool for UiTool {
 
     fn title(&self) -> &str {
         "UI"
+    }
+
+    fn icon(&self) -> &str {
+        wce_editor::icons::LAYOUT_PANEL_TOP
     }
 
     /// Layouts have no extension in the packs.

@@ -9,6 +9,16 @@ below), and `third_party/` only keeps the licence of a project whose format know
 |---|---|---|---|
 | etwng by Tomasz Wegrzanowski (taw), `ui/` converter; research credits in its README: alpaca and Cpecific | MIT | `third_party/etwng/LICENSE`; ported to Rust in `crates/wce_ui_format` (the version-by-version layout of the UI file formats, the XML conventions and the float formatting) | UI layouts (`Version0xx`, `.cml`, `.fc`, `.twui.images`) to XML and back |
 
+## Fonts (vendored)
+
+The one exception to "nothing is vendored": the UI's fonts are files in `crates/wce_editor/assets/fonts`, built into the binary
+(`include_bytes!`), each with its licence next to it.
+
+| Font | Version | Licence | Used for |
+|---|---|---|---|
+| Inter (Rasmus Andersson), `Inter-Regular.ttf` | 4.1 | SIL Open Font License 1.1 (`Inter-LICENSE.txt`) | the UI text |
+| Lucide icons, `lucide.ttf` (from the `lucide-static` npm package) | 1.61.0 | ISC (`lucide-LICENSE.txt`) | the icons merged into the UI font (`wce_editor::icons`) |
+
 ## Linux build dependencies (not vendored)
 
 The Linux build keeps the D3D11 renderer and runs it on a D3D11 implementation over Vulkan. `cmake/linux_deps.cmake` fetches and builds these at
@@ -22,7 +32,8 @@ configure time into `<build>/_deps` (nothing is committed or redistributed); `wc
 
 ## Rust dependencies
 
-The crates.io dependencies are listed in `Cargo.lock` (all MIT, Apache-2.0 or zlib licensed). Notable: rpfm_lib (MIT) for the packs and
+The crates.io dependencies are listed in `Cargo.lock` (all MIT, Apache-2.0 or zlib licensed). Notable: serde, toml and directories (MIT or
+Apache-2.0) for the settings file and the system's folders; rpfm_lib (MIT) for the packs and
 game formats, windows-core / windows-bindgen (MIT or Apache-2.0) for the D3D11 bindings, and libz-sys (MIT or Apache-2.0) building its bundled
 classic zlib (zlib licence) statically for the kit's PNG encoder. The UI uses dear-imgui-rs / dear-imgui-sys (MIT or Apache-2.0; they build
 Dear ImGui 1.92.9b docking and cimgui, MIT) and sdl3-sys (zlib licence), linked against the system SDL3 (the one DXVK-native presents through);

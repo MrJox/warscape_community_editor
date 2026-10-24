@@ -8,7 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use wce_editor::editor::Editor;
-use wce_editor::gui::{self, DrawList, Vec2, col32, v2};
+use wce_editor::gui::{self, DrawList, Vec2, v2};
+use wce_editor::theme;
 use wce_tile::ted_scene::TedScene;
 use wce_editor_core::document::Document;
 use wce_tile_editor::tile_document::TileDocument;
@@ -35,11 +36,11 @@ fn parent_layer(sc: &TedScene, e: usize) -> Option<usize> {
 
 fn icon_colour(on: bool, inherited_off: bool) -> u32 {
     if !on {
-        col32(95, 95, 95, 255)
+        theme::u32(theme::mix(theme::dim(), theme::palette_background(), 0.35))
     } else if inherited_off {
-        col32(150, 150, 150, 255)
+        theme::u32(theme::dim())
     } else {
-        col32(235, 235, 235, 255)
+        theme::u32(theme::text())
     }
 }
 
@@ -525,7 +526,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     };
 
                     // The indicator.
-                    let c = col32(255, 210, 60, 255);
+                    let c = theme::u32(theme::palette().highlight);
                     if zone == Zone::Into {
                         dl.rect(rmin, rmax, c, 2.0, 1.5);
                     } else {
@@ -600,7 +601,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             let x0 = p0.x + 4.0 + row.depth as f32 * 14.0;
             if row.layer && row.kids != 0 {
                 let c = v2(x0 + 5.0, cy);
-                let ac = col32(190, 190, 190, 255);
+                let ac = theme::u32(theme::mix(theme::text(), theme::dim(), 0.4));
                 if row.open {
                     dl.triangle_filled(v2(c.x - 4.0, c.y - 2.5), v2(c.x + 4.0, c.y - 2.5), v2(c.x, c.y + 3.5), ac);
                 } else {
@@ -615,11 +616,11 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             }
 
             let text_col = if !vis {
-                col32(110, 110, 110, 255)
+                theme::u32(theme::dim())
             } else if !act {
-                col32(170, 170, 150, 255)
+                theme::u32(theme::mix(theme::text(), theme::dim(), 0.5))
             } else {
-                col32(235, 235, 235, 255)
+                theme::u32(theme::text())
             };
 
             let mut tx = x0 + 16.0;

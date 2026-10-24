@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dear_imgui_rs::{ConfigFlags, Context};
-use dear_imgui_sys as sys;
 use sdl3_sys::events::*;
 use sdl3_sys::hints::{SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, SDL_SetHint};
 use sdl3_sys::init::{SDL_INIT_VIDEO, SDL_Init, SDL_Quit};
@@ -257,19 +256,15 @@ unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, I
     Some((swap?, dev?, ctx?))
 }
 
-/// Docking, keyboard navigation, the dark style, sizes for the display scale. No ini file: layouts are files per tool (see `Editor::save_layout`).
-fn init_imgui(dpi: f32) -> Context {
+/// Docking, keyboard navigation and the fonts; the editor applies the theme at the display's scale. No ini file: layouts are files per tool
+/// (see `Editor::save_layout`).
+fn init_imgui() -> Context {
     let mut imgui = Context::create();
     let flags = imgui.io().config_flags() | ConfigFlags::DOCKING_ENABLE | ConfigFlags::NAV_ENABLE_KEYBOARD;
     imgui.io_mut().set_config_flags(flags);
     imgui.set_ini_filename(None::<PathBuf>).ok();
     // SAFETY: the context was just created and is the current one.
-    unsafe {
-        sys::igStyleColorsDark(std::ptr::null_mut());
-        let style = sys::igGetStyle();
-        sys::ImGuiStyle_ScaleAllSizes(style, dpi);
-        (*style).FontScaleMain = dpi;
-    }
+    unsafe { wce_editor::theme::load_fonts() };
 
     imgui
 }
@@ -304,7 +299,7 @@ fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, img
 /// # Safety
 ///
 /// `window` is live; the device presents to it.
-unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context) -> i32 {
+unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context, dpi: f32) -> i32 {
     let mut exit_code = 0;
     // SAFETY: the window outlives the backend (the caller's contract).
     let mut platform = unsafe { Sdl3Platform::new(imgui, window) };
@@ -317,6 +312,7 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
     };
 
     let mut editor = Editor::new(dev, ctx);
+    editor.set_display_scale(dpi);
     for tool in tools::all_tools() {
         editor.add_tool(tool);
     }
@@ -501,8 +497,8 @@ fn main() {
             dpi = 1.0;
         }
 
-        let mut imgui = init_imgui(dpi);
-        let code = run_editor(&opt, window, &swap, &dev, &ctx, &mut imgui);
+        let mut imgui = init_imgui();
+        let code = run_editor(&opt, window, &swap, &dev, &ctx, &mut imgui, dpi);
 
         // The C++ app's order: the context, then the swap chain and the device (they present to the window), then the window.
         drop(imgui);
