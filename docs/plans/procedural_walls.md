@@ -24,6 +24,11 @@ the tile when the tile is exported. Siege battles must work on them: units on th
 - **The wall is not editable piece by piece.** Its spline and parameters are; the pieces are regenerated from them.
 - **Live preview while editing.** Buildings and the pack are generated only when the tile is exported to a pack: one pack per tile for now
   (configurable later). Later: a cache that shares pieces between walls that fit, for pack size.
+- **Steps on 15 m walls come from the stepped bastion's ramp** (`_straight_stepped_up/down_10m_square_bastion_a`: 10 m over about 12
+  m, inner side, z 5..9), scaled in y to the rise needed.
+- **Access on 15 m walls: a door section every 200 m** along the run, placed only where the units' landing at its ground end is walkable:
+  not in a no-go region and no hard collision in a 20 x 20 m square around it. Where it is not, that door section is skipped.
+- **First iteration: the 8 m and 15 m families.** TDD's Rohan and cliff walls later.
 - **Not in this iteration:** siege AI hints along the wall (a later SiegeAI generator), towers / bastions, terrain shaping, collapse
   animations.
 
@@ -75,8 +80,8 @@ Consequences:
 - **The generator works from a description of the base, not from the barbarian layout**: its frame, walkway height and width, outer face,
   pieces and levels, its way up (bank platforms, door pipes, ladder pipes) and its height-change source. A **profile** per family, read
   from the base's files where possible and checked by hand per kit.
-- **Access in 15 m and Rohan walls is spliced at intervals**: the door section of `_with_doors_a` (or the ladders of `_ladders`) every N
-  metres. The pipes' ground ends follow the terrain, their walkway ends the walkway.
+- **Access in 15 m and Rohan walls is spliced at intervals**: the door section of `_with_doors_a` (or the ladders of `_ladders`), see
+  the decisions. The pipes' ground ends follow the terrain, their walkway ends the walkway.
 - **The 8 m bank must still reach the ground** after the foot is stretched (the bank's lowest platform is at y = 4, z = 11.5; how units
   get from the ground onto it is not clear from the platforms alone: check in game on a vanilla 8 m wall).
 
@@ -97,8 +102,8 @@ compile needs no change except where it reads building files (below).
 ### The kit table: one profile per base
 
 Per base straight (see "The wall families"): its family profile (frame, walkway, outer face, pieces, levels), its way up (the bank, or the
-access section and its interval: `_with_doors_a`, `_ladders`), its height-change source (`_step_up_a` / `_step_down_a`, `_step_up`, or
-none: see "To confirm"), its endcaps (`_endcap_left` / `_right`) and bridging columns. Derived from the key's family
+access section and its interval: `_with_doors_a`, `_ladders`), its height-change source (`_step_up_a` / `_step_down_a`, the stepped bastions'
+ramps, `_step_up`), its endcaps (`_endcap_left` / `_right`) and bridging columns. Derived from the key's family
 (`<culture>_fort_straight`, `<culture>_fort_small_wall_straight`, ...), with a hand table for exceptions (TDD's kits).
 
 ### The solver: spline to runs and pieces
@@ -122,8 +127,12 @@ A **warp** maps the base's frame to the world: x is the arc length along the str
 - **Bend:** `p = C(x) + z * N(x) + (y + H(x)) * up`, with C the centre line, N its normal in the plane, H the walkway profile.
 - **Mitre:** near a sharp corner the warp shears x so the end face lies on the corner's bisector. The two pieces meet with no gap on the
   inner or outer side, and their platforms share the edge.
-- **Steps:** the step piece's step section (x 2..5 of `_step_up_a`) is spliced in: mesh, platforms, firing lines and collision, scaled in y
-  to the rise. Steps down use `_step_down_a`'s section.
+- **Steps:** the step piece's step section (8 m: x 2..5 of `_step_up_a`; 15 m: the stepped bastion's ramp) is spliced in: mesh,
+  platforms, firing lines and collision, scaled in y to the rise. Steps down use the `_down` piece's section. For the 15 m ramp, which
+  of the bastion's triangles belong to the ramp and the wall around it (and not the bastion) is to be worked out in phase 4.
+- **Access (15 m):** the door section of `_with_doors_a` spliced every 200 m where its landing is walkable (decisions). The doors' pipes:
+  the ground ends (y 0..0.5) on the terrain, the walkway ends on the walkway. The check reads the tile's no-go map and the hard
+  collision outlines of the buildings already placed (generated walls included).
 - **Foot:** above a split height the geometry is rigid with the walkway. Below it, the geometry is stretched so the buried bottom
   (y = -2) stays 2 m under the terrain at that x and z. The split comes from the base's ground contact, not a fixed y: the barbarian
   bank's inner edge (y = 4) must still meet the ground where units walk onto it. See "To confirm".
@@ -167,17 +176,11 @@ the game sees (0, 2, 3, 4).
 
 ## To confirm
 
-- **Steps on 15 m walls:** the kit has no step piece; the only height change is the stepped bastion (10 m at once, placed by hand). Options
-  in the user's hands: a step made by the generator (a short sheared section of the straight with a sloped walkway platform, about 40
-  degrees like the 8 m steps), a step built from the stepped bastion's ramp, or new step art.
-- **The access interval** of 15 m and Rohan walls: from the vanilla tiles (to measure), or a parameter of the wall.
-- **Which families in the first iteration:** 8 m and 15 m, with Rohan and the cliff wall when the profile allows.
-
 - **The 25 degree rule:** read here as "a vertex whose turn is under 25 degrees is drawn as a sharp corner unless marked smooth". It may
   have been meant the other way (a sharp turn becomes a corner). The user to confirm before phase 3.
 - **"The middle point of the outer face"**: read here as the ground measured along the outer face's base line, with each flat run held to
   the ground at its middle. The user to confirm before phase 1's height profile.
-- **How units get onto a wall** in each kit: the barbarian wall's inner bank, other kits' stairs and towers. If a kit's way up is inside
-  another building, the foot rule is enough; if it is the wall's own bank, the bank's lower edge must meet the terrain (phase 2).
+- **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
+  if it is the bank, its lower edge must meet the terrain after the foot is stretched (phase 2).
 - **Destruction granularity:** a piece of `k` copies breaches as one building (a longer breach). Accepted by "variable lengths";
   checked in game in phase 2.
