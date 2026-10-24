@@ -124,12 +124,21 @@ impl WeatherUi {
         AssetVariationDb::decode(&mut Cursor::new(bytes), &None).map_err(|err| format!("{PACKS_DB}: {err}"))
     }
 
-    /// The files the game picks under the filters that hold the search's words, and whether the game asked again with `default_map`.
-    pub(crate) fn matching(&self) -> (Vec<String>, bool) {
+    /// The files the game picks under the filters that hold the search's words, each once with the number of its variations (a file the
+    /// database lists twice, for different maps or climates, is picked twice as often), and whether the game asked again with `default_map`.
+    pub(crate) fn matching(&self) -> (Vec<(String, usize)>, bool) {
         let Some(env) = &self.env else { return (vec![], false) };
         let query = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
         let res = env.matches_listed_map("environment", &query);
-        let files = res.variations.iter().map(|v| v.filename().clone()).filter(|f| matches_words(f, &self.search)).collect();
+        let mut files: Vec<(String, usize)> = vec![];
+        for file in res.variations.iter().map(|v| v.filename()).filter(|f| matches_words(f, &self.search)) {
+            let key = normalize(file);
+            match files.iter_mut().find(|(f, _)| normalize(f) == key) {
+                Some((_, n)) => *n += 1,
+                None => files.push((file.clone(), 1)),
+            }
+        }
+
         (files, res.used_default_map)
     }
 
@@ -248,24 +257,36 @@ impl WeatherUi {
             gui::text_colored(theme::warning(), &format!("Nothing matched map '{map}', so the game asks again with map 'default_map'."));
         }
 
-        gui::text_disabled(&format!("{} files{}; the game picks one at random. Click one to light the tile with it.", files.len(), if self.search.trim().is_empty() { "" } else { " found" }));
+        let variations = files.iter().map(|(_, n)| n).sum::<usize>();
+        gui::text_disabled(&format!(
+            "{} files{} ({variations} variations); the game picks a variation at random. Click a file to light the tile with it.", files.len(),
+            if self.search.trim().is_empty() { "" } else { " found" },
+        ));
         gui::begin_child("envlist", gui::v2(0.0, 180.0), gui::CHILD_BORDERS, 0);
         let chosen = e.weather_preview().map(str::to_owned);
         let mut pick = None;
         let mut open = None;
-        for file in &files {
+        for (i, (file, n)) in files.iter().enumerate() {
+            gui::push_id_int(i as i32);
             let key = normalize(file);
-            if gui::selectable(file, chosen.as_deref() == Some(key.as_str()), 0) {
+            let label = if *n > 1 { format!("{file}  (x{n})") } else { file.clone() };
+            if gui::selectable(&label, chosen.as_deref() == Some(key.as_str()), 0) {
                 pick = Some(file.clone());
             }
 
-            if e.can_open(file) && gui::begin_popup_context_item(&format!("##ctx{file}")) {
+            if *n > 1 && gui::is_item_hovered() {
+                gui::set_tooltip(&format!("The database lists this file {n} times (for different maps or climates): the game picks it {n} times as often."));
+            }
+
+            if e.can_open(file) && gui::begin_popup_context_item("##ctx") {
                 if gui::menu_item("Open in its tool", None, false, true) {
                     open = Some(file.clone());
                 }
 
                 gui::end_popup();
             }
+
+            gui::pop_id();
         }
 
         gui::end_child();
