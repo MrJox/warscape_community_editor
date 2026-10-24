@@ -327,6 +327,11 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
 
     script += &opt.script_text;
     let batch = !opt.shot.is_empty() || !opt.capture_path.is_empty();
+
+    // A plain interactive start opens the tool of the last session; --tool, or anything scripted, starts as it says.
+    if opt.tool.is_empty() && opt.script_text.is_empty() && !batch {
+        editor.restore_last_tool();
+    }
     if !opt.capture_path.is_empty() {
         script += &format!("frames 2\ncapture {}x{} \"{}\" {}\nquit\n", opt.capture_w, opt.capture_h, opt.capture_path, opt.frames);
     } else if !opt.shot.is_empty() {

@@ -153,6 +153,9 @@ pub struct Editor {
 
     pub(crate) settings_window: crate::settings_window::SettingsWindow,
 
+    /// An interactive session: the active tool is kept in the settings (`restore_last_tool`).
+    remember_tool: bool,
+
     /// The display's scale the theme's sizes are multiplied by (`set_display_scale`).
     display_scale: f32,
 
@@ -189,7 +192,7 @@ impl Editor {
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
-            panel_data: PanelData::default(), settings_window: Default::default(), display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
+            panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
         e.frame_cap = e.settings.frame_cap();
@@ -596,12 +599,30 @@ impl Editor {
         }
     }
 
+    /// Starts in the tool the last interactive session was in, and keeps the active tool in the settings from now on (interactive runs; a
+    /// tool asked for on the command line or a scripted run starts as it says).
+    pub fn restore_last_tool(&mut self) {
+        self.remember_tool = true;
+        let last = self.settings.last_tool.clone();
+        if !last.is_empty() && !self.set_tool(&last) {
+            log::warn(format!("the last tool used, '{last}', is not in this build"));
+        }
+    }
+
     fn apply_tool_switch(&mut self) {
         match self.pending_tool.take() {
             Some(i) if i != self.active_tool && i < self.tools.len() => {
-                self.save_layout();
+                // A layout not loaded yet (the first frame) is not the tool's: the file keeps the saved one.
+                if self.layout_loaded {
+                    self.save_layout();
+                }
+
                 self.active_tool = i;
                 self.layout_loaded = false;
+                if self.remember_tool && self.settings.last_tool != self.tool_info[i].id {
+                    self.settings.last_tool.clone_from(&self.tool_info[i].id);
+                    self.save_settings();
+                }
             }
 
             _ => {}
