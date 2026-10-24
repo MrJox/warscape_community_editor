@@ -136,7 +136,7 @@ png "$D/fixtures/blue.png" 0 0 255
 png "$D/project/ui/skins/gate_skin/gate.png" 0 255 0
 "$W" --game "$GAME" set_entry "ui/campaign ui/messageicon" --entry 1 --x 222 --save --out "$D/fixtures/x222.bin" > /dev/null || fail "make the layout fixture"
 sed -e "s|%OUT%|$(cygpath -m "$D")|g" "$ROOT/scripts/ui_smoke.txt" > "$D/script.txt"
-CARGO_TARGET_DIR="$TARGET" cargo build --release -q -p wce_app || fail "build wce_app"
+CARGO_TARGET_DIR="$TARGET" cargo build --release -q -p wce_app --all-features || fail "build wce_app"
 WCE_SETTINGS_DIR="$(cygpath -w "$D/settings")" timeout 300 "$TARGET/release/wce.exe" --script "$(cygpath -w "$D/script.txt")" > "$D/run.log" 2>&1
 rc=$?; echo "wce.exe script: exit $rc"; [ $rc = 0 ] || { fail "script"; grep -E "error|FAILED" "$D/run.log" | head -5; }
 cmp -s "$D/before.xml" "$D/undone.xml" || fail "undo did not give back the same XML"

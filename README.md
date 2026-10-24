@@ -22,7 +22,6 @@ cargo build --release -p wce_app
 ```
 
 The binary lands at `$env:TEMP\wce-target\release\wce.exe`.
-elease\wce.exe`.
 
 ### Linux
 
@@ -41,6 +40,19 @@ cargo build --release -p wce_app
 
 The binary lands in `target/release/wce`. Settings live in `~/.config/wce/settings.toml`, caches in `~/.cache/wce` (see "Settings and first run" in `docs/editor.md`). The game is the Windows (Proton)
 install, found in the usual Steam folders. File dialogs use zenity or kdialog.
+
+### Editors
+
+Each editor is a Cargo feature of `wce_app`, so a release builds only the editors that work. The default features are the release's set:
+
+| Feature | Editor |
+|---|---|
+| `weather` | Weather and lighting |
+| `tile` | Battle and campaign tiles |
+| `ui` | UI layouts |
+| `placeholders` | The tabs of the editors still to come (unit, VFX, terrain, cinematic), off by default |
+
+`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts build with `--all-features`.
 
 ## Gates
 
