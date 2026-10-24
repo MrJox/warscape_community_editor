@@ -70,7 +70,7 @@ the deployment zones. What the game needs and how CA lays it out: docs/re/siege_
 - **Ports** (the town's perimeter within 40 units of the sea): the defender takes the sea within 400 units of the perimeter (and the
   harbour); the attacker gets the land (190 out of the perimeter, 20 short of the coast) and the sea (190 from the defender's water, 150
   offshore) as separate additive polygons. Up to 4 `AIH_DEFAULT_DEPLOYMENT_LINE`s in the defender's water, the deepest (up to 280 from
-  land) 220 apart, 250 long across the direction from the town, the town on their right (CA's sense). `AIH_BEACH_LANDING` along the
+  land) 220 apart, 250 long across the direction from the town, turned as CA's (cross(end - start, town - start) < 0 in x, z; the approach lines > 0). `AIH_BEACH_LANDING` along the
   coast where the ground 30 units inland stays under 8 m, inside the town too (the user), up to 5, the nearest the town first, at least
   60 long; an `AIH_BEACH_LANDING_FORT_APPROACH` 40 inland along each. Up to 3 entries on the quays (streets within 30 of the water,
   100 apart). The approach lines go on the attacker's zone's inner edge, at sea too.

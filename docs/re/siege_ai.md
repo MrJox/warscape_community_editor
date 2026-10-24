@@ -69,7 +69,7 @@ No ids: an edge's nodes come from geometry. Every vanilla instance has `add_boun
   line). Inside: one big area (3 camps) or a ring of areas (barbarian). Perimeter 2-13 out of the palisade; no separators, no-go or
   zones; 4 approach lines 375-540 out.
 - **Ports** (29): 4 `AIH_DEFAULT_DEPLOYMENT_LINE` (2 points, ~250 long) in deep water inside the defender's sea lobe (~280 offshore),
-  across the direction to the town, the town on their right (z down: cross(end - start, town - start) < 0, the approach lines the other
+  across the direction to the town, cross(end - start, town - start) < 0 in (x, z) (the approach lines the other
   way). 3-5 `AIH_BEACH_LANDING` along the 0 m line either side of the town; beside each an `AIH_BEACH_LANDING_FORT_APPROACH` (2 points,
   ~100 long, ~40 inland). The defender's zone takes a sea lobe off the town (200-500 out) and the harbour; the attacker gets a sea
   polygon (~150 offshore, ~200 from the lobe) and land polygons (~20 short of the coast, ~200 from the perimeter), no subtractive one.
