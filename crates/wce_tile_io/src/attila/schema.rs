@@ -2,7 +2,8 @@
 //! Assembly Kit (docs/formats/tile_ted.md, "Attribute kinds"). An attribute's kind follows its name in every class, except `position`
 //! (a `vector(...)` on instances, `x,y,z` on polygon points) and `scale` (a vector on decals and simple meshes, a number on trees and VFX).
 //! Integers that are counts, ids, seeds and command placeholders are `Int`; every other number is a float, written TEd's way, except
-//! `lf_offset`, the spline control points and the point positions, which TEd writes with `%g`.
+//! `lf_offset`, the spline control points and the point positions, which TEd writes with `%g`. Also the editor's own `WALL_SPLINE`
+//! (`wall_base`, `wall_tolerance`, `wall_flip`, its points' `sharp`; docs/plans/procedural_walls.md), which no kit file has.
 
 use wce_tile_model::Sym;
 
@@ -32,7 +33,7 @@ impl Schema for TedSchema {
             "ai_breachable" | "autoplay" | "burn" | "dockable" | "exportable" | "generated" | "head_bob" | "indestructible" | "is_generated"
             | "locked" | "orthographic" | "show_collision" | "smoothed" | "terrain_collision" | "tiled" | "toggleable" | "use_in_outfield"
             | "visible_inside_destruction_zone" | "visible_inside_snow_zone" | "visible_outside_destruction_zone" | "visible_outside_snow_zone"
-            | "weak_wall" => Kind::Bool,
+            | "weak_wall" | "wall_flip" | "sharp" => Kind::Bool,
 
             "add_boundary" | "add_polygon" | "alliance_id" | "closed" | "decal_generation_seed" | "deployment_zone_id" | "destruction_level"
             | "flatten" | "generation_seed" | "max_num_players" | "max_subdivisions" | "min_num_players" | "polygon_closed" | "rank_count"
@@ -42,12 +43,12 @@ impl Schema for TedSchema {
             | "facing_direction" | "far_distance" | "flag_facing" | "flow_speed" | "foam_amount" | "focal_length" | "glow_amount"
             | "ground_height" | "near_distance" | "opacity" | "orthographic_height" | "parallax_scale" | "radius" | "random_offset"
             | "rank_distance" | "roll" | "step_size" | "subdivision_length" | "terrain_offset" | "vertical_fov" | "width"
-            | "zone_skirt_distance" => FLOAT,
+            | "zone_skirt_distance" | "wall_tolerance" => FLOAT,
 
             "animation_type" | "building_tech_level" | "capture_location" | "civilian_amount" | "civilian_type" | "database_type"
             | "deployment_category" | "deployment_polygon_type" | "deployment_type" | "DOF_focus" | "export_type" | "falloff_type"
             | "hint_type" | "key" | "low_frequency_change_effect" | "movement_mode" | "name" | "new_polygon_type" | "polygon_shape"
-            | "purpose" | "season_mask" | "surface_mode" | "type" | "vfx" => Kind::Str,
+            | "purpose" | "season_mask" | "surface_mode" | "type" | "vfx" | "wall_base" => Kind::Str,
             _ => return None,
         })
     }

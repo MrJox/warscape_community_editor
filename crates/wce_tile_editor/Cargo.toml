@@ -16,6 +16,7 @@ wce_foundation = { path = "../wce_foundation" }
 wce_scene = { path = "../wce_scene" }
 wce_tile = { path = "../wce_tile" }
 wce_vfs = { path = "../wce_vfs" }
+wce_walls = { path = "../wce_walls" }
 
 [dev-dependencies]
 tempfile = "3"

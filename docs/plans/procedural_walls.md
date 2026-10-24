@@ -213,6 +213,22 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    compile's markers and terrain instead of CA's (the terrain fingerprint covers every building, though walls don't stamp it).
 1. **Model and editing:** the `WALL_SPLINE` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
    height profile drawn as lines (no meshes yet).
+   **Status (2026-10-24): done.** As built:
+   - **Storage:** `WALL_SPLINE` is stored like the polygons (`<points>` of `<point position="x,y,z"/>`, `polygon_closed="0"`) with
+     `wall_base`, `wall_tolerance`, `wall_flip` and the points' `sharp`, so the polygon tools (draw, handles, insert, remove, undo) edit
+     it and the TEd format reads and writes it with no unknown attribute (`attila::schema`; the round trip gate passes on a tile with a
+     wall); the compile ignores it (it picks elements by class).
+   - **Solver** (`wce_walls::solver`, pure, unit tested): corners = the ends, the marked points and the points under 25 degrees; between
+     them a centripetal Catmull-Rom, sampled every 0.5 scene units; the outer foot on the base's docking line (`wce_walls::profile`);
+     runs held to the ground at their middle while the ground stays within the tolerance (at least 4 units long); step sections of the
+     base's rise and run, chained `step_gap` apart, centred on the boundary between runs; warnings when they don't fit.
+   - **Attached ends:** not stored: an end is attached when it lies on a fort building's end (within 0.5 scene units), and is put there
+     when placed or moved within 8 (4 m in the editor). A building end is its model's x extent at z = 0 (the models' bounds stand in for
+     the pieces' frames; the logic files' boxes in phase 2). An attached end's run is at the building's level. A wall does not follow a
+     moved gate: its end is then free until moved back onto it.
+   - **Editor:** `WALL_SPLINE` in the polygon types (with a base wall combo), the layout drawn with the outline, the panel's summary and
+     "sharp corner" check box, the Inspector rows (`wce_tile::properties`), redrawn after terrain strokes, building moves and model
+     loads. Commands `wall_sharp`, `wall_info`, `assert_wall`; `scripts/tile_walls.txt` in `tile_check.sh`.
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the
    overlay.
 3. **Bends and mitres:** the curve warp with subdivision, the corner shear, attachments to gates and bastions.

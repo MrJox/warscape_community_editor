@@ -4,7 +4,8 @@
 #  - the saved tile.ted differs from the original in exactly the edited line, the saved height map only inside the brush;
 #  - the mouse and key paths work (scripts/tile_mouse.txt: click select, G grab, brush drag, polygon drawing, handle drag);
 #  - everything undone and saved equals the originals byte for byte;
-#  - save in place keeps a .bak, and undo + save puts the original bytes back.
+#  - save in place keeps a .bak, and undo + save puts the original bytes back;
+#  - procedural walls (scripts/tile_walls.txt): drawn, attached to a fort building's ends, corners, undo, saved.
 #   scripts/tile_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -81,6 +82,11 @@ for f in tile.ted height_map_0.png; do
 done
 # layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB)
 OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
+# procedural walls, phase 1: drawn, ends attached, corners, undo; the saved tile.wce keeps the wall and the undone corner mark is gone
+run_script tile_walls 1 "$DESERT"
+W="$OUT/tile_walls1/saved/tile.wce"
+[ "$(grep -c '<WALL_SPLINE' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
+
 run_script tile_layers 1 "$OSG"
 run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del
 cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"

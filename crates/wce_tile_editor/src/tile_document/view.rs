@@ -799,6 +799,9 @@ impl Tile {
         let lifted = points.into_iter().map(|p| Float3::new(p.x, p.y + 0.3, p.z)).collect::<Vec<_>>();
         let closed = closed && !spline;
         o.polygon_outline(&lifted, closed, st.color);
+        if self.is_wall(elem) {
+            self.wall_overlay(elem, &mut o);
+        }
         match self.outline_entity.get(&elem).copied().filter(|&e| scene.find(e).is_some()) {
             Some(e) => scene.update_payload(e, Payload::Overlay(o)),
             None => {
@@ -1010,6 +1013,11 @@ impl Tile {
 
         if self.tscene().type_of(elem) == "SplineRiverInstance" {
             self.water_dirty = true;
+        }
+
+        // A moved building can be what a wall's end is attached to.
+        if self.tscene().type_of(elem) == "BUILDING_INSTANCE" && self.has_walls() {
+            self.polygons_dirty = true;
         }
     }
 

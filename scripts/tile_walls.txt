@@ -1,0 +1,34 @@
+# Procedural walls, phase 1 (docs/plans/procedural_walls.md): a WALL_SPLINE drawn as a polygon of its own kind, its ends attached to a fort
+# building's ends (snapped when placed within 4 m), a point marked sharp and back with undo, an end moved onto another building end, and a
+# save that keeps the wall (tile_check.sh looks at the saved tile.wce). %TILE% is the kit tile terrain_rugged_hills_desert/1x1/aa.
+tile "%TILE%"
+frames 5
+
+# A vanilla 8 m straight to attach to: its ends are at x 60 and 70 (the model's x extent, 0 .. 20 scene units, is 10 m in the editor).
+add_building barbarian_fort_straight 60 60
+frames 60
+tile_model_bounds barbarian_fort_straight
+
+# The wall: its first point 1 m off the straight's far end goes onto it; the rest is open ground.
+add_polygon "WALL_SPLINE|barbarian_fort_straight|71,61;85,75;100,78;115,72"
+frames 2
+wall_info
+assert_wall 0 - attached free
+
+# A point marked sharp is a corner; undo makes it smooth again.
+wall_sharp 1 on
+frames 2
+assert_wall 1 - attached free
+undo
+frames 2
+assert_wall 0 - attached free
+
+# The last point moved within 4 m of the straight's near end goes onto it. The line now doubles back at point 2: its internal angle is
+# under 25 degrees, so it is a corner without being marked.
+polygon_point move 3 57 58
+frames 2
+wall_info
+assert_wall 1 - attached attached
+
+save_to "%OUT%/saved"
+quit

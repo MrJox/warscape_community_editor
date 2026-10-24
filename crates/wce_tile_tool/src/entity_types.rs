@@ -30,6 +30,7 @@ pub fn type_icon(ty: &str) -> &'static str {
         "AISeparatorInstance" => icons::SPLIT,
         "SplineRiverInstance" => icons::WAVES,
         "SEGMENTED_SPLINE_INSTANCE" => icons::SPLINE,
+        "WALL_SPLINE" => icons::BRICK_WALL,
         "LayerInstance" | "SCENE_GRAPH" => icons::LAYERS,
         "UserInstanceGroup" | "INSTANCE_GROUP" | "LAYER_INSTANCE_GROUP" => icons::BOXES,
         _ => icons::CIRCLE_HELP,
@@ -62,6 +63,7 @@ pub fn type_name(ty: &str) -> &'static str {
         "AISeparatorInstance" => "AI separator",
         "SplineRiverInstance" => "River",
         "SEGMENTED_SPLINE_INSTANCE" => "Road",
+        "WALL_SPLINE" => "Wall (procedural)",
         _ => "Other",
     }
 }

@@ -228,6 +228,18 @@ const SPLINE: &[Prop] = base3d![p("step_size", Kind::Slider(1.0, 100.0)), ro("se
 
 const POLYGON: &[Prop] = polygon![p("subdivision_length", Kind::Slider(0.0, 100.0)), p("max_subdivisions", Kind::Int(0, 100))];
 
+/// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), an open polyline whose points may be `sharp` (a corner). TEd does not
+/// know the class; the editor and the wall generator do.
+const WALL: &[Prop] = &[
+    p("flags", Kind::Flags),
+    p("position", Kind::Position),
+    p("line_colour", Kind::Colour),
+    p("selected_line_colour", Kind::Colour),
+    p("wall_base", Kind::Enum(en::WALL_BASE)),
+    p("wall_tolerance", Kind::Slider(0.0, 5.0)),
+    p("wall_flip", Kind::Bool),
+];
+
 const AI_HINT: &[Prop] = polygon![
     p("subdivision_length", Kind::Slider(0.0, 100.0)),
     p("max_subdivisions", Kind::Int(0, 100)),
@@ -277,6 +289,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "CivilianShelter" => TERRAIN_LINE,
         "SEGMENTED_SPLINE_INSTANCE" | "SplineRiverInstance" => SPLINE,
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
+        "WALL_SPLINE" => WALL,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
         "AISeparatorInstance" => SEPARATOR,

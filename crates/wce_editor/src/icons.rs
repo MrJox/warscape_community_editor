@@ -76,6 +76,7 @@ pub const LIGHTBULB: &str = "\u{e1c2}";
 pub const BRAIN: &str = "\u{e3c6}";
 pub const BAN: &str = "\u{e051}";
 pub const CASTLE: &str = "\u{e3e0}";
+pub const BRICK_WALL: &str = "\u{e581}";
 pub const SHRUB: &str = "\u{e2ee}";
 pub const LAND_PLOT: &str = "\u{e528}";
 pub const SWORDS: &str = "\u{e2b4}";

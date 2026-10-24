@@ -780,6 +780,9 @@ impl Tile {
         if any {
             self.grid_dirty.set(true);
             self.columns.dirty = true;
+
+            // The walls' ends attach to the fort buildings' ends, which the models' bounds give.
+            self.polygons_dirty |= self.has_walls();
         }
 
         if self.unresolved.is_empty() && any {
