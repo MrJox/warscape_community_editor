@@ -1387,9 +1387,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("tile_export_type", "tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3", "the export type of a layer", |e, a| {
         let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3") };
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3") };
         let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)).filter(|&el| d.tile().tscene().is_layer(el)) else { return fail("no such layer") };
         if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
+    });
+
+    c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
+        let Some(d) = document(e) else { return fail("no tile open") };
+        match d.generate_siege_ai() {
+            Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("
+  {w}")).collect::<String>())),
+            Err(err) => fail(&err),
+        }
     });
 
     c.add("tile_select_layer", "tile_select_layer <layer path | #elem>", "select a layer or an element in the scene tree", |e, a| {

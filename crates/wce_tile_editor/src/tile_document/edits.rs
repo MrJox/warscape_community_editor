@@ -897,7 +897,7 @@ impl TileDocument {
     }
 
     /// The moved elements keep their place in the world (their parents changed).
-    fn keep_worlds(&mut self, moved: &[usize], worlds: &[WorldTransform]) {
+    pub(super) fn keep_worlds(&mut self, moved: &[usize], worlds: &[WorldTransform]) {
         let sc = self.tscene_mut();
         for (&m, w) in moved.iter().zip(worlds) {
             if sc.position(m).is_some() {

@@ -591,6 +591,48 @@ impl TedScene {
         Ok(self.last_child(layer))
     }
 
+    /// An instance with an empty `<children>` (a siege AI node or edge, a deployment zone group), its attributes as
+    /// [`Self::add_instance`]'s, appended to the layer's children; returns its index. Text splices on the document.
+    ///
+    /// # Errors
+    ///
+    /// No such layer, or it has no children element.
+    pub fn add_container_instance(&mut self, layer: Option<usize>, tag: &str, attrs: &[(String, String)]) -> Result<usize> {
+        let layer = self.require_element(layer, "layer")?;
+        self.doc.bake_pending().map_err(xml_error)?;
+        let (at, ind) = self.append_point(layer, "layer has no children element")?;
+        let nl = self.newline().to_vec();
+        let mut snippet = ind.clone();
+        snippet.push(b'<');
+        snippet.extend_from_slice(tag.as_bytes());
+        let mut all = attrs.to_vec();
+        for (k, v) in [("position", "vector(0,0,0)"), ("orientation", "euler(0,0,0)")] {
+            if !all.iter().any(|(n, _)| n == k) {
+                all.push((k.to_owned(), v.to_owned()));
+            }
+        }
+
+        for (k, v) in &all {
+            snippet.push(b' ');
+            snippet.extend_from_slice(k.as_bytes());
+            snippet.extend_from_slice(b"=\"");
+            snippet.extend(encode_entities(v.as_bytes(), b'"'));
+            snippet.push(b'"');
+        }
+
+        snippet.push(b'>');
+        let close = format!("</{tag}>");
+        for part in [b"    <children>".as_slice(), b"    </children>", close.as_bytes()] {
+            snippet.extend_from_slice(&nl);
+            snippet.extend_from_slice(&ind);
+            snippet.extend_from_slice(part);
+        }
+
+        snippet.extend_from_slice(&nl);
+        self.doc.splice(at, 0, &snippet).map_err(xml_error)?;
+        Ok(self.last_child(layer))
+    }
+
     /// Moves the element (with its subtree) to the end of the layer's children; returns the new index.
     ///
     /// # Errors
