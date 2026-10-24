@@ -13,6 +13,12 @@ assert_tool tile
 assert_documents 2
 assert_layer_visible sample_map 0
 assert_layer_visible tile 1
+
+# a tile without a weather gets the first dry one; the default light for the reference capture
+expect_fail assert_preview none
+tile_weather none
+assert_preview none
+frames 3
 capture 640x360 "%OUT%/tile_default.png" 6
 
 # the tile's own weather: a file of the packs, read without the weather tool

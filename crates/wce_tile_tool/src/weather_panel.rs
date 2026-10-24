@@ -4,7 +4,7 @@
 //! `Editor::set_weather_preview`); when the Weather tool has the same file open, the tile follows its edits.
 //!
 //! Each tile keeps its choice and its filters in the settings (`[tools.tile] weathers`, by the tile's folder). A tile seen for the first time
-//! starts with the filters of its terrain look (climate, season) and the default light.
+//! starts with the filters of its terrain look (climate, season); a tile without a weather file gets the first dry one the filters allow.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -15,6 +15,7 @@ use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
+use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::TileDocument;
 use wce_vfs::normalize;
@@ -72,10 +73,39 @@ impl WeatherUi {
             TileWeather { file: String::new(), query }
         });
 
+        if self.choice.file.is_empty()
+            && let Some(file) = self.first_dry()
+        {
+            match self.set_file(e, &file) {
+                Ok(_) => log::info(format!("the tile's weather: {file} (the first dry one)")),
+                Err(m) => e.status(&format!("the tile's weather: {m}"), true),
+            }
+
+            return;
+        }
+
         let file = self.choice.file.clone();
         if let Err(m) = e.set_weather_preview(Some(&file).filter(|f| !f.is_empty()).map(String::as_str)) {
             e.status(&format!("the tile's weather: {m}"), true);
         }
+    }
+
+    /// The first dry weather under the tile's filters: the first file the game picks with precipitation `dry`, else the first file named dry,
+    /// else the first file (the search is not applied).
+    fn first_dry(&self) -> Option<String> {
+        let env = self.env.as_ref()?;
+        let query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let files = |query: &BTreeMap<String, String>| env.matches_listed_map("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
+        if let Some(dry) = self.value_of("precipitation", "dry") {
+            let mut q = query.clone();
+            q.insert("precipitation".to_owned(), dry);
+            if let Some(f) = files(&q).into_iter().next() {
+                return Some(f);
+            }
+        }
+
+        let all = files(&query);
+        all.iter().find(|f| f.to_lowercase().contains("dry")).or_else(|| all.first()).cloned()
     }
 
     /// The database's spelling of a value of a category (case-insensitive), if it has it.
