@@ -195,6 +195,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
 
     plan.runs = runs(&plan.samples, input.tolerance, input.ends);
     plan.steps = steps(&plan.runs, profile, &mut plan.warnings);
+    separate(&mut plan.steps, plan.length, &mut plan.warnings);
     for sm in &mut plan.samples {
         sm.level = level_at(&plan.runs, &plan.steps, sm.s);
     }
@@ -347,6 +348,37 @@ fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Ste
     }
 
     out
+}
+
+/// Chains of steps one after the other: a chain that starts before the previous one ends (ground climbing faster than the steps can
+/// follow) is moved on past it, and back from the wall's end if that takes it past (with a warning: its runs are shorter than its steps
+/// need).
+fn separate(steps: &mut [Step], length: f64, warnings: &mut Vec<String>) {
+    let chains = steps.iter().map(|st| st.chain).max().map_or(0, |c| c + 1);
+    let mut end_of_prev = f64::MIN;
+    for c in 0..chains {
+        let (lo, hi) = steps.iter().filter(|st| st.chain == c).fold((f64::MAX, f64::MIN), |(lo, hi), st| (lo.min(st.s.0), hi.max(st.s.1)));
+        if lo > hi {
+            continue;
+        }
+
+        let mut shift = (end_of_prev - lo).max(0.0);
+        if hi + shift > length {
+            shift = length - hi;
+        }
+
+        if shift.abs() > 1e-9 {
+            for st in steps.iter_mut().filter(|st| st.chain == c) {
+                st.s = (st.s.0 + shift, st.s.1 + shift);
+            }
+
+            if lo + shift < end_of_prev - 1e-6 {
+                warnings.push(format!("at {:.0}: the ground climbs faster than the steps can follow; step sections overlap", lo + shift));
+            }
+        }
+
+        end_of_prev = hi + shift;
+    }
 }
 
 /// The level at a distance: inside a chain of steps (from its first section's start to its last one's end), the ramp or, between two

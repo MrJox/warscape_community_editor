@@ -15,7 +15,7 @@ use wce_scene::render_scene::{EntityId, MeshInstance, Overlay, Payload, RenderSc
 use wce_tile::properties::parse_bool;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 use wce_walls::building::{BuildingFiles, folder};
-use wce_walls::pieces::{PieceWarp, make_piece, pieces};
+use wce_walls::pieces::{PieceWarp, StepFiles, make_piece, pieces};
 use wce_walls::profile::{Profile, profile};
 use wce_walls::solver::{Plan, WallInput, solve};
 
@@ -211,6 +211,50 @@ impl Tile {
         }
     }
 
+    /// Which pieces of a wall are door sections, and the doors skipped (see `wce_walls::pieces::door_pieces`): a landing is free when
+    /// none of its square is in a no-go region and no building stands in it.
+    pub fn wall_doors(&self, layout: &WallLayout, ps: &[wce_walls::pieces::Piece]) -> (Vec<usize>, Vec<String>) {
+        if layout.profile.door.is_empty() {
+            return (vec![], vec![]);
+        }
+
+        let u = self.unit();
+        let sc = self.tscene();
+        let nogo = sc.find_all("NOGO_REGION_POLYGON_INSTANCE").into_iter().filter(|&e| self.shown(e))
+            .map(|e| self.polygon_world_points(e).into_iter().map(|p| [f64::from(p.x) * u, f64::from(p.z) * u]).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let buildings = sc.find_all("BUILDING_INSTANCE").into_iter().filter(|&e| self.shown(e)).map(|e| {
+            let p = self.world_position(e);
+            ([f64::from(p.x) * u, f64::from(p.z) * u], f64::from(self.marker_radius(e)) * u)
+        }).collect::<Vec<_>>();
+
+        let landing_ok = |sq: &[[f64; 2]; 4]| {
+            let inside = |p: [f64; 2], poly: &[[f64; 2]]| {
+                let mut c = false;
+                for i in 0..poly.len() {
+                    let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                    if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+                        c = !c;
+                    }
+                }
+                c
+            };
+
+            // A 5 x 5 grid over the square.
+            let lerp = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            let grid = (0..5).flat_map(|i| (0..5).map(move |j| (f64::from(i) / 4.0, f64::from(j) / 4.0)))
+                .map(|(s, t)| lerp(lerp(sq[0], sq[1], s), lerp(sq[3], sq[2], s), t)).collect::<Vec<_>>();
+            let in_nogo = grid.iter().any(|&p| nogo.iter().any(|poly| inside(p, poly)));
+            let centre = lerp(lerp(sq[0], sq[1], 0.5), lerp(sq[3], sq[2], 0.5), 0.5);
+            let half = (sq[0][0] - sq[2][0]).hypot(sq[0][1] - sq[2][1]) / 2.0;
+            let blocked = buildings.iter().any(|&(p, r)| (p[0] - centre[0]).hypot(p[1] - centre[1]) < half + r * 0.5);
+            !in_nogo && !blocked
+        };
+
+        let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
+        wce_walls::pieces::door_pieces(&layout.plan, layout.profile, ps, &ground, &landing_ok)
+    }
+
     /// The lines of a wall's layout (the document's world): the outer foot on the ground (orange), the walkway (yellow), the step sections
     /// (red uprights at their ends), the corners (magenta uprights), the attached ends (green crosses).
     pub(crate) fn wall_overlay(&self, elem: usize, o: &mut Overlay) {
@@ -332,15 +376,25 @@ impl Tile {
 
         let Some(layout) = self.wall_layout(elem) else { return };
         let Some(base) = self.wall_base(layout.profile.key) else { return };
+        let (up, down) = (self.wall_base(layout.profile.step_up), self.wall_base(layout.profile.step_down));
+        let door = (!layout.profile.door.is_empty()).then(|| self.wall_base(layout.profile.door)).flatten();
+        let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
+        let ps = pieces(&layout.plan, layout.profile);
+        let doors = self.wall_doors(&layout, &ps);
         self.wall_preview.revision += 1;
         let revision = self.wall_preview.revision;
         let mut made = vec![];
-        for (i, piece) in pieces(&layout.plan, layout.profile).into_iter().enumerate() {
+        for (i, piece) in ps.into_iter().enumerate() {
             let key = format!("wce_preview_{elem}_{revision}_{i}");
             let warp = PieceWarp::new(&layout.plan, layout.profile, piece, &ground);
-            match make_piece(&base, &key, &warp, false, Some(1)) {
+            let from = match &door {
+                Some(d) if doors.0.contains(&i) => d,
+                _ => &base,
+            };
+
+            match make_piece(from, &key, &warp, steps, false, Some(1)) {
                 Ok(files) => made.push((key, piece, files)),
                 Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
             }

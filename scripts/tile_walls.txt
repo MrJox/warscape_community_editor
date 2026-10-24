@@ -30,5 +30,18 @@ frames 2
 wall_info
 assert_wall 1 - attached attached
 
+# A 15 m wall of 200 m (400 units) gets a door section at 100 and 300; with a no-go region over the second one's landing, one.
+add_polygon "WALL_SPLINE|roman_fort_straight|20,120;220,120"
+frames 2
+assert_wall_doors 2
+undo
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||158,125;172,125;172,140;158,140"
+add_polygon "WALL_SPLINE|roman_fort_straight|20,120;220,120"
+frames 2
+assert_wall_doors 1
+undo
+undo
+frames 2
+
 save_to "%OUT%/saved"
 quit

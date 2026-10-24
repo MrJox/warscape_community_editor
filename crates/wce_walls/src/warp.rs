@@ -10,6 +10,12 @@ pub trait Warp {
 
     /// How much a direction at a point turns about the vertical axis (radians; +x towards +z).
     fn yaw(&self, p: [f32; 3]) -> f32;
+
+    /// Where a point that stands on the ground goes: on the ground under where [`Warp::point`] puts it (a door's or a ladder's foot).
+    /// Without a ground, the same as [`Warp::point`].
+    fn ground_point(&self, p: [f32; 3]) -> [f32; 3] {
+        self.point(p)
+    }
 }
 
 /// The identity.

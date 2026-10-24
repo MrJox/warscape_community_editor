@@ -1966,7 +1966,13 @@ impl TileTool {
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         let Some(l) = d.tile().wall_layout(wall) else { return };
         gui::text(&wall_summary(&l));
-        for w in &l.plan.warnings {
+        let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
+        let (doors, skipped) = d.tile().wall_doors(&l, &ps);
+        if !l.profile.door.is_empty() {
+            gui::text(&format!("{} piece(s), {} door section(s)", ps.len(), doors.len()));
+        }
+
+        for w in l.plan.warnings.iter().chain(&skipped) {
             gui::text_colored([1.0, 0.6, 0.2, 1.0], w);
         }
 

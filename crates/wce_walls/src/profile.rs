@@ -43,6 +43,28 @@ pub struct Profile {
     /// than the piece's level (8 m: the buried 2 m under y = 0; 15 m: the bottom 2 m of the plinth, which stands on y = 0).
     pub foot: (f64, f64),
     pub bury: f64,
+
+    /// The culture's step pieces, going up and going down along +x.
+    pub step_up: &'static str,
+    pub step_down: &'static str,
+
+    /// The stair section of a step piece (its frame): the x range going up and going down, the walkway's height where it starts (up,
+    /// down), what of it is brought (z then y), and whether it replaces that much of the base over its length (8 m: the walkway and the
+    /// palisade; the bank behind stays the base's, which slopes over the step, as the step piece's own does) or is added to the base's
+    /// sloped wall (15 m: the bastion's wooden stair on the inner side).
+    pub slab_up: (f64, f64),
+    pub slab_down: (f64, f64),
+    pub slab_walk: (f64, f64),
+    pub slab_zy: Option<((f64, f64), (f64, f64))>,
+    pub step_replaces: bool,
+
+    /// Only what lies within this (y) of the stair's slope is brought (15 m: the treads and stringers, not the stair well's walls).
+    pub slab_band: Option<f64>,
+
+    /// The culture's door section (15 m: units go up through its doors; 8 m: none, the bank is the way up), and where its doors come
+    /// out on the ground (the pipes' ground ends, the piece's frame: x, z).
+    pub door: &'static str,
+    pub door_at: (f64, f64),
 }
 
 impl Profile {
@@ -64,6 +86,16 @@ const EIGHT: Profile = Profile {
     step_gap: 10.0,
     foot: (-2.0, 0.0),
     bury: 2.0,
+    step_up: "",
+    step_down: "",
+    slab_up: (2.0, 5.0),
+    slab_down: (2.0, 5.0),
+    slab_walk: (8.0, 13.0),
+    slab_zy: Some(((-3.5, 3.0), (-3.0, 16.0))),
+    step_replaces: true,
+    slab_band: None,
+    door: "",
+    door_at: (0.0, 0.0),
 };
 
 const FIFTEEN: Profile = Profile {
@@ -78,26 +110,36 @@ const FIFTEEN: Profile = Profile {
     step_gap: 8.0,
     foot: (0.0, 2.0),
     bury: 0.5,
+    step_up: "",
+    step_down: "",
+    slab_up: (-5.8, 6.2),
+    slab_down: (-6.2, 5.8),
+    slab_walk: (15.0, 25.0),
+    slab_zy: Some(((5.1, 8.9), (14.0, 26.5))),
+    step_replaces: false,
+    slab_band: Some(0.9),
+    door: "",
+    door_at: (0.0, 13.0),
 };
 
 /// The bases of the first iteration (the game's and TDD's straights of both families; their walkways and frames checked in the logic
 /// files, 2026-10-24), in the order the editor lists them.
 pub const BASES: [Profile; 15] = [
-    Profile { key: "barbarian_fort_straight", ..EIGHT },
-    Profile { key: "eastern_fort_small_wall_straight", ..EIGHT },
-    Profile { key: "sassanid_fort_small_wall_straight", ..EIGHT },
-    Profile { key: "western_fort_small_wall_straight", ..EIGHT },
-    Profile { key: "khazad_fort_wall_small_straight", ..EIGHT },
-    Profile { key: "mordor_fort_small_wall_straight", ..EIGHT },
-    Profile { key: "roman_fort_straight", ..FIFTEEN },
-    Profile { key: "eastern_fort_straight", ..FIFTEEN },
-    Profile { key: "sassanid_fort_straight", ..FIFTEEN },
-    Profile { key: "greek_fort_straight", ..FIFTEEN },
-    Profile { key: "egyptian_fort_straight", ..FIFTEEN },
-    Profile { key: "persian_fort_straight", ..FIFTEEN },
-    Profile { key: "easterling_fort_straight", ..FIFTEEN },
-    Profile { key: "gondorean_fort_straight", ..FIFTEEN },
-    Profile { key: "gondor_fort_straight", ..FIFTEEN },
+    Profile { key: "barbarian_fort_straight", step_up: "barbarian_fort_step_up_a", step_down: "barbarian_fort_step_down_a", ..EIGHT },
+    Profile { key: "eastern_fort_small_wall_straight", step_up: "eastern_fort_small_wall_step_up_a", step_down: "eastern_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "sassanid_fort_small_wall_straight", step_up: "sassanid_fort_small_wall_step_up_a", step_down: "sassanid_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "western_fort_small_wall_straight", step_up: "western_fort_small_wall_step_up_a", step_down: "western_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "khazad_fort_wall_small_straight", step_up: "khazad_fort_wall_small_step_up", step_down: "khazad_fort_wall_small_step_down", ..EIGHT },
+    Profile { key: "mordor_fort_small_wall_straight", step_up: "mordor_fort_small_wall_step_up_a", step_down: "mordor_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "roman_fort_straight", door: "roman_fort_straight_with_doors_a", step_up: "roman_fort_straight_stepped_up_10m_square_bastion_a", step_down: "roman_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "eastern_fort_straight", door: "eastern_fort_straight_with_doors_a", step_up: "eastern_fort_straight_stepped_up_10m_square_bastion_a", step_down: "eastern_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "sassanid_fort_straight", door: "sassanid_fort_straight_with_doors_a", step_up: "sassanid_fort_straight_stepped_up_10m_square_bastion_a", step_down: "sassanid_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "greek_fort_straight", door: "greek_fort_straight_with_doors_a", step_up: "greek_fort_straight_stepped_up_10m_square_bastion_a", step_down: "greek_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "egyptian_fort_straight", door: "egyptian_fort_straight_with_doors_a", step_up: "egyptian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "egyptian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "persian_fort_straight", door: "persian_fort_straight_with_doors_a", step_up: "persian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "persian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "easterling_fort_straight", door: "easterling_fort_straight_with_doors_a", step_up: "easterling_fort_straight_stepped_up_10m_square_bastion_a", step_down: "easterling_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "gondorean_fort_straight", door: "gondorean_fort_straight_with_doors_a", step_up: "gondorean_fort_straight_stepped_up_10m_square_bastion_a", step_down: "gondorean_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "gondor_fort_straight", door: "gondor_fort_straight_with_doors_a", step_up: "gondor_fort_straight_stepped_up_bastion_a", step_down: "gondor_fort_straight_stepped_down_bastion_a", ..FIFTEEN },
 ];
 
 /// A base by its key.
