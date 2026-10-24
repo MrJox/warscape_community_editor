@@ -5,11 +5,11 @@
 //! - **Centre line:** the points in order. A point is a corner when it is marked sharp or its internal angle is under
 //!   [`SHARP_ANGLE`]; between corners (and the ends) the line is a centripetal Catmull-Rom through the points. Sampled every [`STEP`].
 //! - **Outer foot:** the centre line moved to the base's outer face (its local -z side, or +z with `flip`); the ground is read there.
-//! - **Runs:** flat stretches of walkway. The first is at the ground at its start (or an attached end's level); a run goes on while the
-//!   ground stays within half the base's step rise of it (or `tolerance`, when larger); the next is the whole number of rises nearest
-//!   the ground there. Nothing is stretched vertically: levels only ever differ by whole steps.
-//! - **Steps:** between two runs, one step section per rise (the source's stair at its own size), chained `step_gap` apart, centred on
-//!   the boundary between the runs.
+//! - **Runs:** flat stretches of walkway, each at the ground at its middle, as long as the ground stays within `tolerance` of it and at
+//!   least the base's `min_run` long; an attached end's run is at the height it was given.
+//! - **Steps:** between two runs, as many stairs as the rise needs (each at most the base's `step_rise`, the rise shared equally), each as
+//!   long as its stair at its own slope or, when that is steeper than the base's `max_slope`, as the slope allows; chained `step_gap`
+//!   apart, centred on the boundary between the runs.
 
 use crate::profile::Profile;
 
@@ -195,7 +195,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         Sample { s, centre: c, dir, foot, ground: ground(foot[0], foot[1]), level: 0.0 }
     }).collect();
 
-    plan.runs = runs(&plan.samples, input.tolerance.max(profile.step_rise / 2.0), profile.step_rise, input.ends, &mut plan.warnings);
+    plan.runs = runs(&plan.samples, input.tolerance, profile.min_run.max(MIN_RUN), input.ends);
     plan.steps = steps(&plan.runs, profile, &mut plan.warnings);
     separate(&mut plan.steps, plan.length, &mut plan.warnings);
     for sm in &mut plan.samples {
@@ -278,43 +278,34 @@ fn direction(samples: &[(f64, [f64; 2])], i: usize) -> [f64; 2] {
     if l < 1e-12 { [1.0, 0.0] } else { [d[0] / l, d[1] / l] }
 }
 
-/// Flat runs at whole steps from each other: the first at the ground at its start (or the attached end's level), each grown while the
-/// ground stays within `drift` of it (runs shorter than [`MIN_RUN`] grow anyway), the next at the whole number of `rise` nearest the
-/// ground where it starts. A far end attached at a level no whole number of rises away is noted.
-fn runs(samples: &[Sample], drift: f64, rise: f64, ends: [Option<f64>; 2], warnings: &mut Vec<String>) -> Vec<Run> {
+/// Flat runs: each at the ground at its middle, grown while every sample under it is within `tolerance` or it is shorter than `min_run`.
+/// An attached end's run is at the given level instead.
+fn runs(samples: &[Sample], tolerance: f64, min_run: f64, ends: [Option<f64>; 2]) -> Vec<Run> {
     let n = samples.len();
-    let mut out: Vec<Run> = vec![];
+    let mut out = vec![];
     let mut i = 0;
-    let mut level = ends[0].unwrap_or(samples[0].ground);
     while i < n {
-        // The previous run ended because the ground left it by more than half a rise: the next is the nearest whole number of rises away.
-        if let Some(prev) = out.last() {
-            let d = samples[i].ground - prev.level;
-            let k = (d / rise).round();
-            level = prev.level + if k == 0.0 { d.signum() } else { k } * rise;
-        }
+        let fixed = if i == 0 { ends[0] } else { None };
+        let level_of = |j: usize| fixed.unwrap_or(samples[(i + j) / 2].ground);
+        let fits = |j: usize| {
+            let level = level_of(j);
+            samples[i..=j].iter().all(|sm| (sm.ground - level).abs() <= tolerance)
+        };
 
         let mut j = i;
-        while j + 1 < n && (samples[j + 1].s - samples[i].s < MIN_RUN || (samples[j + 1].ground - level).abs() <= drift) {
+        while j + 1 < n && (samples[j + 1].s - samples[i].s < min_run || fits(j + 1)) {
             j += 1;
         }
 
-        let off = samples[i..=j].iter().map(|sm| (sm.ground - level).abs()).fold(0.0, f64::max);
-        out.push(Run { s: (samples[i].s, samples[j].s), level, drift: off });
+        let level = level_of(j);
+        let drift = samples[i..=j].iter().map(|sm| (sm.ground - level).abs()).fold(0.0, f64::max);
+        out.push(Run { s: (samples[i].s, samples[j].s), level, drift });
         i = j + 1;
     }
 
-    // The far end attached: the last run must be at its level.
-    if let (Some(h), Some(last)) = (ends[1], out.last().copied()) {
-        let k = ((h - last.level) / rise).round();
-        if (h - last.level - k * rise).abs() > 1e-6 {
-            warnings.push(format!("the far end's building stands {:.2} off a whole step of the wall: the wall meets it {:.2} too {}", h - last.level - k * rise, (h - last.level - k * rise).abs(), if h > last.level + k * rise { "low" } else { "high" }));
-        }
-
-        if k != 0.0 {
-            let end = last.s.1;
-            out.push(Run { s: (end, end), level: last.level + k * rise, drift: 0.0 });
-        }
+    // The far end attached: its run is at the given level.
+    if let (Some(h), Some(last)) = (ends[1], out.last_mut()) {
+        last.level = h;
     }
 
     // Neighbouring runs at the same level are one.
@@ -332,15 +323,21 @@ fn runs(samples: &[Sample], drift: f64, rise: f64, ends: [Option<f64>; 2], warni
     merged
 }
 
-/// The step sections between runs: one per whole rise (the source's stair at its own size), the base's run long, `step_gap` apart,
-/// centred on the boundary between the runs, shifted to stay inside them.
+/// How long a step of `rise` is along the wall: its stair at its own slope, or longer when that is steeper than the wall may slope.
+pub fn step_length(profile: &Profile, rise: f64) -> f64 {
+    (profile.step_run * rise.abs() / profile.step_rise).max(rise.abs() / profile.max_slope)
+}
+
+/// The step sections between runs: as many as the rise needs (each at most the base's `step_rise`, the rise shared equally), each
+/// [`step_length`] long, `step_gap` apart, centred on the boundary between the runs, shifted to stay inside them.
 fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
     let mut out = vec![];
     for (chain, w) in runs.windows(2).enumerate() {
         let (a, b) = (w[0], w[1]);
         let rise = b.level - a.level;
-        let count = (rise.abs() / profile.step_rise).round().max(1.0) as usize;
-        let span = count as f64 * profile.step_run + (count - 1) as f64 * profile.step_gap;
+        let count = (rise.abs() / profile.step_rise - 1e-9).ceil().max(1.0) as usize;
+        let each = step_length(profile, rise / count as f64);
+        let span = count as f64 * each + (count - 1) as f64 * profile.step_gap;
         let boundary = (a.s.1 + b.s.0) / 2.0;
         let room = (a.s.1 - a.s.0) / 2.0 + (b.s.1 - b.s.0) / 2.0;
         if span > room + 1e-9 {
@@ -353,8 +350,8 @@ fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Ste
 
         for k in 0..count {
             let (from, to) = (a.level + rise * k as f64 / count as f64, a.level + rise * (k + 1) as f64 / count as f64);
-            out.push(Step { s: (s, s + profile.step_run), from, to, chain });
-            s += profile.step_run + profile.step_gap;
+            out.push(Step { s: (s, s + each), from, to, chain });
+            s += each + profile.step_gap;
         }
     }
 
@@ -453,43 +450,53 @@ mod tests {
     }
 
     #[test]
-    fn a_slope_is_climbed_by_whole_steps_and_the_walkway_stays_within_half_a_step() {
-        // 10 up over 200: four steps of exactly the base's rise.
+    fn a_slope_is_climbed_by_steps_and_the_walkway_stays_near_the_ground() {
         let input = wall(&[[0.0, 0.0], [200.0, 0.0]]);
         let ground = |x: f64, _: f64| x * 0.05;
         let plan = solve(&input, eight(), &ground);
-        assert_eq!(plan.steps.len(), 4, "{:?}", plan.steps);
-        assert!(plan.steps.iter().all(|s| ((s.to - s.from) - eight().step_rise).abs() < 1e-9));
+        assert!(!plan.steps.is_empty());
 
-        // Levels are whole steps apart; away from the steps the walkway is within half a step of the ground.
-        assert!(plan.runs.windows(2).all(|w| (((w[1].level - w[0].level) / eight().step_rise).fract()).abs() < 1e-9));
+        // Each step at most one stair, as long as its stair at its own slope (8 m: the wall follows the stair's slope).
+        for st in &plan.steps {
+            let r = (st.to - st.from).abs();
+            assert!(r <= eight().step_rise + 1e-9);
+            assert!(((st.s.1 - st.s.0) - eight().step_run * r / eight().step_rise).abs() < 1e-9);
+        }
+
+        // Away from the steps the walkway is within the tolerance of the ground (a run is at least min_run long, so a little more there).
         for sm in &plan.samples {
-            let near_step = plan.steps.iter().any(|st| sm.s >= st.s.0 - 2.0 && sm.s <= st.s.1 + 2.0);
+            let near_step = plan.steps.iter().any(|st| sm.s >= st.s.0 - 5.0 && sm.s <= st.s.1 + 5.0);
             if !near_step {
-                assert!((sm.level - sm.ground).abs() <= eight().step_rise / 2.0 + 0.1, "at {}: level {} ground {}", sm.s, sm.level, sm.ground);
+                assert!((sm.level - sm.ground).abs() <= 0.5 + 0.05 * eight().min_run, "at {}: level {} ground {}", sm.s, sm.level, sm.ground);
             }
         }
 
-        // The walkway only goes up; no pile-up of steps (a run between each two).
+        // The walkway only goes up; runs between steps no shorter than min_run (no pile-ups).
         assert!(plan.samples.windows(2).all(|w| w[1].level >= w[0].level - 1e-9));
-        assert!(plan.steps.windows(2).all(|w| w[1].s.0 > w[0].s.1 + 1.0));
+        assert!(plan.runs.iter().skip(1).take(plan.runs.len().saturating_sub(2)).all(|r| r.s.1 - r.s.0 >= eight().min_run - 1.0));
     }
 
     #[test]
-    fn a_gentle_slope_of_a_15_m_wall_takes_few_steps() {
-        // 8 up over 400: under one 10 m step's half on either side of one step, so one step at most.
+    fn a_15_m_wall_slopes_gently_over_its_steps() {
         let p = profile("roman_fort_straight").unwrap();
         let plan = solve(&wall(&[[0.0, 0.0], [400.0, 0.0]]), p, &|x, _| x * 0.02);
-        assert!(plan.steps.len() <= 1, "{:?}", plan.steps);
-        assert!(plan.steps.iter().all(|s| ((s.to - s.from) - 10.0).abs() < 1e-9));
+        assert!(!plan.steps.is_empty());
+        for st in &plan.steps {
+            let slope = (st.to - st.from).abs() / (st.s.1 - st.s.0);
+            assert!(slope <= p.max_slope + 1e-9, "{st:?}");
+        }
+
+        // No pile-up: the steps are apart.
+        assert!(plan.steps.windows(2).all(|w| w[1].s.0 >= w[0].s.1 - 1e-9));
     }
 
     #[test]
-    fn a_cliff_takes_chained_whole_steps() {
-        let ground = |x: f64, _: f64| if x < 100.0 { 0.0 } else { 5.0 };
+    fn a_cliff_takes_chained_stairs_no_higher_than_one_each() {
+        let ground = |x: f64, _: f64| if x < 100.0 { 0.0 } else { 6.0 };
         let plan = solve(&wall(&[[0.0, 0.0], [200.0, 0.0]]), eight(), &ground);
-        assert_eq!(plan.steps.len(), 2);
-        assert!((plan.steps[1].to - 5.0).abs() < 1e-9);
+        assert_eq!(plan.steps.len(), 3);
+        assert!((plan.steps[2].to - 6.0).abs() < 1e-9);
+        assert!(plan.steps.iter().all(|st| ((st.to - st.from) - 2.0).abs() < 1e-9));
         assert!(plan.steps.windows(2).all(|w| (w[1].s.0 - w[0].s.1 - eight().step_gap).abs() < 1e-9));
     }
 
@@ -504,17 +511,11 @@ mod tests {
 
     #[test]
     fn attached_ends_hold_their_level() {
-        // 2 and 4.5: a whole step apart; the ground in between at 3.
-        let input = WallInput { ends: [Some(2.0), Some(4.5)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
+        let input = WallInput { ends: [Some(2.0), Some(4.0)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
         let plan = solve(&input, eight(), &|_, _| 3.0);
         assert!((plan.samples[0].level - 2.0).abs() < 1e-9);
-        assert!((plan.samples.last().unwrap().level - 4.5).abs() < 1e-9);
-        assert_eq!(plan.steps.len(), 1);
-        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
-
-        // 4: not a whole step from 2: noted.
-        let input = WallInput { ends: [Some(2.0), Some(4.0)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
-        assert!(solve(&input, eight(), &|_, _| 3.0).warnings.iter().any(|w| w.contains("off a whole step")));
+        assert!((plan.samples.last().unwrap().level - 4.0).abs() < 1e-9);
+        assert!(!plan.steps.is_empty());
     }
 
     #[test]
