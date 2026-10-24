@@ -414,6 +414,18 @@ Two attributes of the spline (Inspector rows; 0: none):
   - **Still to do:** done in the example for now; the editor and export should do it for any wall once the SiegeAI work starts.
 - **Result:** `wall_pack_check` passed. Not yet checked in game.
 
+## Destroyed stairs (user, in game, 2026-10-24)
+
+- **What was seen:** with the 8 m stairs' neighbours destroyed, a stair stood alone with holes on both sides.
+- **Cause:** a stair section is spliced into its piece at every level, from the step piece's level of the same number or its last.
+  `barbarian_fort_step_up_a` and `_down_a` have only an intact and a damaged level, no rubble. So at the piece's destroyed level, the
+  rubble had the stair's band cut out, and the step piece's damaged, still-standing stair stood in that gap, with its walkable platforms.
+- **Fix:** a section goes only into the levels its step piece has (`make_piece`; per level in `logic::warp_logic_with`, where a
+  `Splice` now carries the band it `replaces`). At a level the step piece lacks, the piece is the base alone: its rubble runs through,
+  with its bridging columns at the ends.
+- **Check:** `wall_generate_check` makes every piece with a stair again without steps. The meshes and platforms must be the same at the
+  levels the step pieces lack, and different at the others. Passed for both families.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);

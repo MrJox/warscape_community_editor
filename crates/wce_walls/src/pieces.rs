@@ -619,7 +619,9 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
 }
 
 /// A piece made from the base's files under a new key: the standing meshes of every level warped, the collapses left out; with
-/// `logic`, the logic and zone files warped too (the preview needs only the meshes).
+/// `logic`, the logic and zone files warped too (the preview needs only the meshes). A step section goes into the levels its step piece
+/// has (the same level); a level it lacks keeps the base whole there: the step pieces have no rubble, and a stair standing in the
+/// rubble of a destroyed piece left a hole on each side of it.
 ///
 /// # Errors
 ///
@@ -627,7 +629,10 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
 pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: StepFiles, logic_too: bool, only_level: Option<u32>) -> Result<BuildingFiles, String> {
     let cuts = cuts_of(warp.plan, &warp.piece, warp.profile);
     let sections = steps_in(warp, steps);
-    let cut_out = if warp.profile.step_replaces { sections.iter().map(|s| s.drop).collect::<Vec<_>>() } else { vec![] };
+    let replaces = warp.profile.step_replaces;
+
+    // The levels each section's step piece has.
+    let levels = sections.iter().map(|sec| sec.files.files.keys().filter(|n| is_piece_mesh(n)).map(|n| level_of(n)).max().unwrap_or(0)).collect::<Vec<_>>();
     let zy = warp.profile.slab_zy.map(|((z0, z1), (y0, y1))| ((z0 as f32, z1 as f32), (y0 as f32, y1 as f32)));
     let shifted = warp.overhangs().into_iter().map(|dx| Shifted { inner: warp, dx }).collect::<Vec<_>>();
     let base_x = (warp.profile.x.0 as f32, warp.profile.x.1 as f32);
@@ -641,11 +646,14 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
                 continue;
             }
 
-            // The step sections go into the first piece's meshes (their own pieces' meshes at the same level, or their last).
+            // The step sections that have this level go into the first piece's meshes (their own pieces' meshes at the level, or their
+            // last for a piece of theirs with fewer levels), and are cut out of every piece's.
             let level = level_of(name);
             let first = name.contains("_piece01_");
+            let here = sections.iter().zip(&levels).filter(|&(_, &max)| level <= max).map(|(sec, _)| sec).collect::<Vec<_>>();
+            let cut_out = if replaces { here.iter().map(|sec| sec.drop).collect::<Vec<_>>() } else { vec![] };
             let mut parts = vec![];
-            for sec in sections.iter().filter(|_| first) {
+            for sec in here.iter().filter(|_| first) {
                 for (pname, pbytes) in sec.files.files.iter().filter(|(n, _)| is_piece_mesh(n)) {
                     let max = sec.files.files.keys().filter(|n| is_piece_mesh(n) && same_piece(n, pname)).map(|n| level_of(n)).max().unwrap_or(1);
                     if level_of(pname) == level.min(max) {
@@ -661,10 +669,11 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
         } else if *name == logic_name && logic_too {
             let own = bytes.clone();
             let mut splices = sections.iter().filter_map(|sec| {
-                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, per_piece: false })
+                let replaces = replaces.then_some(sec.drop);
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces, per_piece: false })
             }).collect::<Vec<_>>();
-            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, per_piece: true }));
-            *bytes = logic::warp_logic_with(bytes, warp, &cuts, &cut_out, zy, &splices)?.0;
+            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true }));
+            *bytes = logic::warp_logic_with(bytes, warp, &cuts, zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
         } else if !name.ends_with(".meta") {

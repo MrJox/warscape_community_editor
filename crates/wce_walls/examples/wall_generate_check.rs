@@ -1,7 +1,8 @@
 //! Phases 2-4 of docs/plans/procedural_walls.md: a fixed wall (an S curve with a sharp corner over a ground with a slope and a dip, both
 //! families: curves, a mitre, step sections, door sections) laid out and generated in full (every level's meshes, the logic and zone
 //! files), twice: the two runs must give the same bytes, every piece's firing lines must land on a platform strip, every door's foot
-//! must be on the ground, and every file must read back.
+//! must be on the ground, and every file must read back. A piece with a stair keeps it at the levels its step piece has, and at the
+//! others (the rubble: the step pieces have none) is the base alone, as made without steps.
 //!
 //!   cargo run --release -p wce_walls --example wall_generate_check -- <game folder> [--mods a.pack;b.pack]
 
@@ -14,7 +15,7 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
-use wce_walls::pieces::{PieceWarp, StepFiles, door_pieces, make_piece, pieces};
+use wce_walls::pieces::{PieceWarp, StepFiles, door_pieces, level_of, make_piece, pieces, step_ranges};
 use wce_walls::profile::profile;
 use wce_walls::solver::{WallInput, solve};
 
@@ -115,8 +116,37 @@ fn run() -> Result<(), String> {
                 }
             }
 
+            // A stair stands only where its step piece has the level: elsewhere the piece is the base alone.
+            let mut stair = String::new();
+            if !step_ranges(&plan, p, &piece).is_empty() && piece.base.is_none() && !doors.contains(&i) {
+                let levels = [&up, &down].iter().flat_map(|f| f.files.keys()).filter(|n| is_piece_mesh(n)).map(|n| level_of(n)).max().unwrap_or(0);
+                let warp = PieceWarp::new(&plan, p, piece, ground);
+                let bare = make_piece(&base, &format!("wce_check_{i}"), &warp, StepFiles { up: None, down: None }, true, None)?;
+                let destructs = |f: &BuildingFiles| -> Result<Vec<serde_json::Value>, String> {
+                    let l = Cs2Parsed::decode(&mut Cursor::new(&f.files[&f.logic_name()]), &None).map_err(|e| e.to_string())?;
+                    let v = serde_json::to_value(&l).map_err(|e| e.to_string())?;
+                    Ok(v["pieces"][0]["destructs"].as_array().cloned().unwrap_or_default())
+                };
+                let (with, without) = (destructs(b)?, destructs(&bare)?);
+                let mut wrong = 0;
+                // The sections go into the first piece's meshes, and into the logic when the step pieces have one.
+                for (name, data) in b.files.iter().filter(|(n, _)| is_piece_mesh(n) && n.contains("_piece01_")) {
+                    let same = bare.files.get(name) == Some(data);
+                    wrong += usize::from(same == (level_of(name) <= levels));
+                }
+
+                let step_logic = [&up, &down].iter().any(|f| f.files.contains_key(&f.logic_name()));
+                for (k, (a, z)) in with.iter().zip(&without).enumerate().filter(|_| step_logic) {
+                    let same = a["platforms"] == z["platforms"];
+                    wrong += usize::from(same == (k as u32 + 1 <= levels));
+                }
+
+                stair = format!(", a stair at levels 1..{levels} only: {}", if wrong == 0 { "yes" } else { "NO" });
+                orphans += wrong;
+            }
+
             let pc = ps[i];
-            println!("  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet, {} problems",
+            println!("  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet{stair}, {} problems",
                 pc.s.0, pc.s.1, pc.scale, b.files.len(), meshes, bytes / 1024, plats, lines, feet, orphans);
             bad += orphans;
         }
