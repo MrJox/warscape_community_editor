@@ -61,7 +61,8 @@ fn run() -> Result<(), String> {
         let make = || -> Result<Vec<BuildingFiles>, String> {
             ps.iter().enumerate().map(|(i, &piece)| {
                 let warp = PieceWarp::new(&plan, p, piece, ground);
-                let from = door.as_ref().filter(|_| doors.contains(&i)).unwrap_or(&base);
+                let own = piece.base.map(|k| BuildingFiles::read(&vfs, k)).transpose()?;
+                let from = own.as_ref().or(door.as_ref().filter(|_| doors.contains(&i))).unwrap_or(&base);
                 make_piece(from, &format!("wce_check_{i}"), &warp, steps, true, None)
             }).collect()
         };

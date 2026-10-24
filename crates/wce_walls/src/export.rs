@@ -111,7 +111,11 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
     }
 
     // The rows of every piece's base under its key.
-    let base_of = |p: &Planned, i: usize| if p.doors.contains(&i) { p.layout.profile.door } else { p.layout.profile.key };
+    let base_of = |p: &Planned, i: usize| match p.pieces[i].base {
+        Some(b) => b,
+        None if p.doors.contains(&i) => p.layout.profile.door,
+        None => p.layout.profile.key,
+    };
     let renames = planned.iter().flat_map(|p| p.keys.iter().enumerate().map(move |(i, k)| (base_of(p, i).to_owned(), k.clone()))).collect::<Vec<_>>();
     let rows = db::copy_rows(files, schema, &renames)?;
     out.tables = rows.tables;
@@ -130,7 +134,7 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         let profile = p.layout.profile;
         let (up, down) = (bases.get(profile.step_up), bases.get(profile.step_down));
         let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
-        for source in [profile.key, profile.door, profile.step_up, profile.step_down] {
+        for source in [profile.key, profile.door, profile.step_up, profile.step_down, profile.cap_start, profile.cap_end] {
             learn_codes(&mut bases, rows_of(files, schema, source).as_deref(), source, &mut codes);
         }
 
@@ -180,6 +184,8 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
             placed.push((key.clone(), piece));
         }
 
+        // The caps past free ends (8 m: the game's endcaps, as they are).
+        placed.extend(crate::pieces::cap_instances(&p.layout.plan, profile).into_iter().map(|(k, piece)| (k.to_owned(), piece)));
         lowered.push((p.wall, placed));
     }
 

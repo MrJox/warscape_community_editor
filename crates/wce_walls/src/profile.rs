@@ -48,6 +48,16 @@ pub struct Profile {
     /// The shortest flat run between two steps (no pile-ups).
     pub min_run: f64,
 
+    /// A climb of about this much over a short straight stretch is one whole step piece (15 m: the stepped bastion, 10 over its 20, as
+    /// vanilla); 0: never.
+    pub whole_rise: f64,
+
+    /// The pieces that close a free end: at the start and at the end. `cap_whole`: they are pieces of the wall's own slots (15 m: the
+    /// tower ends, a tower and the start of the walkway in 20), else small pieces placed past the ends as they are (8 m: the endcaps).
+    pub cap_start: &'static str,
+    pub cap_end: &'static str,
+    pub cap_whole: bool,
+
     /// The foot: below `foot.1` the mesh stretches so its bottom (`foot.0`) reaches `bury` under the terrain where the terrain is lower
     /// than the piece's level (8 m: the buried 2 m under y = 0; 15 m: the bottom 2 m of the plinth, which stands on y = 0).
     pub foot: (f64, f64),
@@ -94,6 +104,10 @@ const EIGHT: Profile = Profile {
     step_gap: 2.0,
     max_slope: 2.5 / 3.0,
     min_run: 10.0,
+    whole_rise: 0.0,
+    cap_start: "",
+    cap_end: "",
+    cap_whole: false,
     foot: (-2.0, 0.0),
     bury: 2.0,
     step_up: "",
@@ -120,6 +134,10 @@ const FIFTEEN: Profile = Profile {
     step_gap: 4.0,
     max_slope: 0.4,
     min_run: 20.0,
+    whole_rise: 10.0,
+    cap_start: "",
+    cap_end: "",
+    cap_whole: true,
     foot: (0.0, 2.0),
     bury: 0.5,
     step_up: "",
@@ -137,21 +155,21 @@ const FIFTEEN: Profile = Profile {
 /// The bases of the first iteration (the game's and TDD's straights of both families; their walkways and frames checked in the logic
 /// files, 2026-10-24), in the order the editor lists them.
 pub const BASES: [Profile; 15] = [
-    Profile { key: "barbarian_fort_straight", step_up: "barbarian_fort_step_up_a", step_down: "barbarian_fort_step_down_a", ..EIGHT },
-    Profile { key: "eastern_fort_small_wall_straight", step_up: "eastern_fort_small_wall_step_up_a", step_down: "eastern_fort_small_wall_step_down_a", ..EIGHT },
-    Profile { key: "sassanid_fort_small_wall_straight", step_up: "sassanid_fort_small_wall_step_up_a", step_down: "sassanid_fort_small_wall_step_down_a", ..EIGHT },
-    Profile { key: "western_fort_small_wall_straight", step_up: "western_fort_small_wall_step_up_a", step_down: "western_fort_small_wall_step_down_a", ..EIGHT },
-    Profile { key: "khazad_fort_wall_small_straight", step_up: "khazad_fort_wall_small_step_up", step_down: "khazad_fort_wall_small_step_down", ..EIGHT },
-    Profile { key: "mordor_fort_small_wall_straight", step_up: "mordor_fort_small_wall_step_up_a", step_down: "mordor_fort_small_wall_step_down_a", ..EIGHT },
-    Profile { key: "roman_fort_straight", door: "roman_fort_straight_with_doors_a", step_up: "roman_fort_straight_stepped_up_10m_square_bastion_a", step_down: "roman_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "eastern_fort_straight", door: "eastern_fort_straight_with_doors_a", step_up: "eastern_fort_straight_stepped_up_10m_square_bastion_a", step_down: "eastern_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "sassanid_fort_straight", door: "sassanid_fort_straight_with_doors_a", step_up: "sassanid_fort_straight_stepped_up_10m_square_bastion_a", step_down: "sassanid_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "greek_fort_straight", door: "greek_fort_straight_with_doors_a", step_up: "greek_fort_straight_stepped_up_10m_square_bastion_a", step_down: "greek_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "egyptian_fort_straight", door: "egyptian_fort_straight_with_doors_a", step_up: "egyptian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "egyptian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "persian_fort_straight", door: "persian_fort_straight_with_doors_a", step_up: "persian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "persian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "easterling_fort_straight", door: "easterling_fort_straight_with_doors_a", step_up: "easterling_fort_straight_stepped_up_10m_square_bastion_a", step_down: "easterling_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "gondorean_fort_straight", door: "gondorean_fort_straight_with_doors_a", step_up: "gondorean_fort_straight_stepped_up_10m_square_bastion_a", step_down: "gondorean_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
-    Profile { key: "gondor_fort_straight", door: "gondor_fort_straight_with_doors_a", step_up: "gondor_fort_straight_stepped_up_bastion_a", step_down: "gondor_fort_straight_stepped_down_bastion_a", ..FIFTEEN },
+    Profile { key: "barbarian_fort_straight", cap_start: "barbarian_fort_endcap_left", cap_end: "barbarian_fort_endcap_right", step_up: "barbarian_fort_step_up_a", step_down: "barbarian_fort_step_down_a", ..EIGHT },
+    Profile { key: "eastern_fort_small_wall_straight", cap_start: "eastern_fort_small_wall_endcap_left", cap_end: "eastern_fort_small_wall_endcap_right", step_up: "eastern_fort_small_wall_step_up_a", step_down: "eastern_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "sassanid_fort_small_wall_straight", cap_start: "sassanid_fort_small_wall_endcap_left", cap_end: "sassanid_fort_small_wall_endcap_right", step_up: "sassanid_fort_small_wall_step_up_a", step_down: "sassanid_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "western_fort_small_wall_straight", cap_start: "western_fort_small_wall_endcap_left", cap_end: "western_fort_small_wall_endcap_right", step_up: "western_fort_small_wall_step_up_a", step_down: "western_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "khazad_fort_wall_small_straight", cap_start: "khazad_fort_wall_small_endcap_left", cap_end: "khazad_fort_wall_small_endcap_right", step_up: "khazad_fort_wall_small_step_up", step_down: "khazad_fort_wall_small_step_down", ..EIGHT },
+    Profile { key: "mordor_fort_small_wall_straight", cap_start: "mordor_fort_small_wall_endcap_left", cap_end: "mordor_fort_small_wall_endcap_right", step_up: "mordor_fort_small_wall_step_up_a", step_down: "mordor_fort_small_wall_step_down_a", ..EIGHT },
+    Profile { key: "roman_fort_straight", cap_start: "roman_fort_tower_end_left", cap_end: "roman_fort_tower_end_right", door: "roman_fort_straight_with_doors_a", step_up: "roman_fort_straight_stepped_up_10m_square_bastion_a", step_down: "roman_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "eastern_fort_straight", cap_start: "eastern_fort_tower_end_left", cap_end: "eastern_fort_tower_end_right", door: "eastern_fort_straight_with_doors_a", step_up: "eastern_fort_straight_stepped_up_10m_square_bastion_a", step_down: "eastern_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "sassanid_fort_straight", cap_start: "sassanid_fort_tower_end_left", cap_end: "sassanid_fort_tower_end_right", door: "sassanid_fort_straight_with_doors_a", step_up: "sassanid_fort_straight_stepped_up_10m_square_bastion_a", step_down: "sassanid_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "greek_fort_straight", cap_start: "greek_fort_tower_end_left", cap_end: "greek_fort_tower_end_right", door: "greek_fort_straight_with_doors_a", step_up: "greek_fort_straight_stepped_up_10m_square_bastion_a", step_down: "greek_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "egyptian_fort_straight", cap_start: "egyptian_fort_tower_end_left", cap_end: "egyptian_fort_tower_end_right", door: "egyptian_fort_straight_with_doors_a", step_up: "egyptian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "egyptian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "persian_fort_straight", cap_start: "persian_fort_tower_end_left", cap_end: "persian_fort_tower_end_right", door: "persian_fort_straight_with_doors_a", step_up: "persian_fort_straight_stepped_up_10m_square_bastion_a", step_down: "persian_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "easterling_fort_straight", cap_start: "easterling_fort_tower_end_left", cap_end: "easterling_fort_tower_end_right", door: "easterling_fort_straight_with_doors_a", step_up: "easterling_fort_straight_stepped_up_10m_square_bastion_a", step_down: "easterling_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "gondorean_fort_straight", cap_start: "gondorean_fort_tower_end_left", cap_end: "gondorean_fort_tower_end_right", door: "gondorean_fort_straight_with_doors_a", step_up: "gondorean_fort_straight_stepped_up_10m_square_bastion_a", step_down: "gondorean_fort_straight_stepped_down_10m_square_bastion_a", ..FIFTEEN },
+    Profile { key: "gondor_fort_straight", cap_start: "gondor_fort_tower_end_left", cap_end: "gondor_fort_tower_end_right", door: "gondor_fort_straight_with_doors_a", step_up: "gondor_fort_straight_stepped_up_bastion_a", step_down: "gondor_fort_straight_stepped_down_bastion_a", ..FIFTEEN },
 ];
 
 /// A base by its key.

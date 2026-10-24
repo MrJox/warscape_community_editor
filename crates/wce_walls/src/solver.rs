@@ -85,6 +85,9 @@ pub struct Step {
 
     /// The boundary between runs it climbs (the steps of one boundary are a chain).
     pub chain: usize,
+
+    /// A whole step piece (15 m: the stepped bastion) instead of a stair: the walls's level under it is the lower one of its two.
+    pub whole: bool,
 }
 
 /// A wall's layout.
@@ -103,6 +106,9 @@ pub struct Plan {
 
     /// The faces the ends meet (`WallInput::end_planes`, in the plan's direction).
     pub end_planes: [Option<[f64; 2]>; 2],
+
+    /// The ends attached to nothing (closed with the base's caps), in the plan's direction.
+    pub free_ends: [bool; 2],
 }
 
 impl Plan {
@@ -154,7 +160,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         return plan;
     }
 
-    let mut plan = Plan { end_planes: input.end_planes, ..Plan::default() };
+    let mut plan = Plan { end_planes: input.end_planes, free_ends: [input.ends[0].is_none(), input.ends[1].is_none()], ..Plan::default() };
     if input.points.len() < 2 {
         return plan;
     }
@@ -196,7 +202,9 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
     }).collect();
 
     plan.runs = runs(&plan.samples, input.tolerance, profile.min_run.max(MIN_RUN), input.ends);
-    plan.steps = steps(&plan.runs, profile, &mut plan.warnings);
+    let corner_s = plan.corners.iter().map(|&(s, _)| s).collect::<Vec<_>>();
+    let fixed = [input.ends[0].is_some(), input.ends[1].is_some()];
+    plan.steps = steps(&mut plan.runs, &plan.samples, &corner_s, fixed, plan.length, profile, &mut plan.warnings);
     separate(&mut plan.steps, plan.length, &mut plan.warnings);
     for sm in &mut plan.samples {
         sm.level = level_at(&plan.runs, &plan.steps, sm.s);
@@ -328,12 +336,110 @@ pub fn step_length(profile: &Profile, rise: f64) -> f64 {
     (profile.step_run * rise.abs() / profile.step_rise).max(rise.abs() / profile.max_slope)
 }
 
-/// The step sections between runs: as many as the rise needs (each at most the base's `step_rise`, the rise shared equally), each
-/// [`step_length`] long, `step_gap` apart, centred on the boundary between the runs, shifted to stay inside them.
-fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
+/// A whole step is looked for over boundaries at most this far apart (the climb gathered into one bastion).
+pub const WHOLE_WINDOW: f64 = 40.0;
+
+/// A stretch is straight enough for a whole step when its direction turns at most this much over the step (radians, about 4 degrees).
+pub const STRAIGHT: f64 = 0.07;
+
+/// A stair placed on a curve that turns more than this over its length (radians, about 6 degrees) is penalised: steps go on the
+/// straightest place their runs allow.
+pub const CURVE: f64 = 0.1;
+
+/// The direction at a distance.
+fn dir_at(samples: &[Sample], s: f64) -> [f64; 2] {
+    let i = ((s / STEP).round().max(0.0) as usize).min(samples.len().saturating_sub(1));
+    samples.get(i).map_or([1.0, 0.0], |sm| sm.dir)
+}
+
+/// How much the direction turns between two distances (radians).
+fn turn_between(samples: &[Sample], a: f64, b: f64) -> f64 {
+    let n = ((b - a) / STEP).ceil().max(1.0) as usize;
+    let mut total = 0.0;
+    let mut prev = dir_at(samples, a);
+    for k in 1..=n {
+        let d = dir_at(samples, a + (b - a) * k as f64 / n as f64);
+        total += (prev[0] * d[1] - prev[1] * d[0]).atan2(prev[0] * d[0] + prev[1] * d[1]).abs();
+        prev = d;
+    }
+
+    total
+}
+
+/// The steps between runs. A climb of about `whole_rise` over boundaries at most [`WHOLE_WINDOW`] apart, on a straight stretch, is one
+/// whole step piece (exactly `whole_rise`; the runs between are merged and the next one takes its level). Otherwise, per boundary, as
+/// many stairs as the rise needs (each at most the base's `step_rise`, the rise shared equally), each [`step_length`] long, `step_gap`
+/// apart. A chain goes where its runs allow it, away from corners and attached ends (their mitres; by the wall's depth), the straightest
+/// place first, then the nearest to the boundary.
+fn steps(runs: &mut Vec<Run>, samples: &[Sample], corners: &[f64], fixed: [bool; 2], length: f64, profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
+    let margin = profile.depth.0.abs().max(profile.depth.1.abs()) + 2.0;
+    let mut blocked = corners.iter().map(|&c| (c - margin, c + margin)).collect::<Vec<_>>();
+    if fixed[0] {
+        blocked.push((f64::MIN, margin));
+    }
+
+    if fixed[1] {
+        blocked.push((length - margin, f64::MAX));
+    }
+
+    let free = |a: f64, b: f64| !blocked.iter().any(|&(x, y)| a < y && b > x);
+
+    // Whole steps first: they merge runs.
+    let mut wholes = vec![];
+    if profile.whole_rise > 0.0 {
+        let len = profile.length();
+        let mut i = 0;
+        while i + 1 < runs.len() {
+            let bnd = |k: usize, runs: &[Run]| (runs[k].s.1 + runs[k + 1].s.0) / 2.0;
+            let sign = (runs[i + 1].level - runs[i].level).signum();
+            let mut best: Option<(usize, f64)> = None;
+            for j in i..runs.len() - 1 {
+                let d = runs[j + 1].level - runs[j].level;
+                if d.signum() != sign || bnd(j, runs) - bnd(i, runs) > WHOLE_WINDOW {
+                    break;
+                }
+
+                let total = (runs[j + 1].level - runs[i].level).abs();
+                if total >= 0.7 * profile.whole_rise && total <= 1.3 * profile.whole_rise {
+                    // The straight place nearest the middle of the climb, inside its first and last runs.
+                    let mid = (bnd(i, runs) + bnd(j, runs)) / 2.0;
+                    let (lo, hi) = (runs[i].s.0, runs[j + 1].s.1 - len);
+                    let mut t = lo;
+                    let mut found: Option<f64> = None;
+                    while t <= hi {
+                        if free(t, t + len) && turn_between(samples, t, t + len) <= STRAIGHT && found.is_none_or(|f| (t + len / 2.0 - mid).abs() < (f + len / 2.0 - mid).abs()) {
+                            found = Some(t);
+                        }
+                        t += STEP;
+                    }
+
+                    if let Some(t) = found {
+                        best = Some((j, t));
+                    }
+                }
+            }
+
+            if let Some((j, t)) = best {
+                let to = runs[i].level + sign * profile.whole_rise;
+                runs[i].s.1 = t;
+                runs[j + 1].s.0 = t + len;
+                runs[j + 1].level = to;
+                runs.drain(i + 1..=j);
+                wholes.push((i, t));
+            }
+
+            i += 1;
+        }
+    }
+
     let mut out = vec![];
-    for (chain, w) in runs.windows(2).enumerate() {
-        let (a, b) = (w[0], w[1]);
+    for chain in 0..runs.len().saturating_sub(1) {
+        let (a, b) = (runs[chain], runs[chain + 1]);
+        if let Some(&(_, t)) = wholes.iter().find(|w| w.0 == chain) {
+            out.push(Step { s: (t, t + profile.length()), from: a.level, to: b.level, chain, whole: true });
+            continue;
+        }
+
         let rise = b.level - a.level;
         let count = (rise.abs() / profile.step_rise - 1e-9).ceil().max(1.0) as usize;
         let each = step_length(profile, rise / count as f64);
@@ -344,13 +450,26 @@ fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Ste
             warnings.push(format!("at {boundary:.0}: {count} step section(s) for {rise:.1} need {span:.0} along the wall, the runs around leave {room:.0}"));
         }
 
-        // Centred on the boundary, but inside the two runs (so inside the wall: a short run at an attached end does not push the steps
-        // past the end, where the wall would start at the steps' level instead of the building's).
-        let mut s = (boundary - span / 2.0).clamp(a.s.0, (b.s.1 - span).max(a.s.0));
+        // The place: inside the two runs, not on a corner or an attached end, the straightest, then the nearest to the boundary.
+        let (lo, hi) = (a.s.0, (b.s.1 - span).max(a.s.0));
+        let cost = |t: f64| 100.0 * (turn_between(samples, t, t + span) - CURVE).max(0.0) + (t + span / 2.0 - boundary).abs() * 0.01;
+        let mut t = lo;
+        let mut best: Option<f64> = None;
+        while t <= hi + 1e-9 {
+            if free(t, t + span) && best.is_none_or(|b| cost(t) < cost(b)) {
+                best = Some(t);
+            }
+            t += STEP;
+        }
+
+        let mut s = best.unwrap_or_else(|| {
+            warnings.push(format!("at {boundary:.0}: no place for the step(s) away from a corner or an attached end"));
+            (boundary - span / 2.0).clamp(a.s.0, (b.s.1 - span).max(a.s.0))
+        });
 
         for k in 0..count {
             let (from, to) = (a.level + rise * k as f64 / count as f64, a.level + rise * (k + 1) as f64 / count as f64);
-            out.push(Step { s: (s, s + each), from, to, chain });
+            out.push(Step { s: (s, s + each), from, to, chain, whole: false });
             s += each + profile.step_gap;
         }
     }
@@ -401,6 +520,11 @@ fn level_at(runs: &[Run], steps: &[Step], s: f64) -> f64 {
         }
 
         if let Some(st) = chain.iter().find(|st| s >= st.s.0 && s <= st.s.1) {
+            // A whole step piece stands on the lower level and climbs by itself.
+            if st.whole {
+                return st.from.min(st.to);
+            }
+
             return st.from + (st.to - st.from) * (s - st.s.0) / (st.s.1 - st.s.0).max(1e-9);
         }
 
@@ -488,6 +612,34 @@ mod tests {
 
         // No pile-up: the steps are apart.
         assert!(plan.steps.windows(2).all(|w| w[1].s.0 >= w[0].s.1 - 1e-9));
+    }
+
+    #[test]
+    fn a_15_m_wall_takes_a_whole_bastion_for_a_10_m_climb_on_a_straight() {
+        let p = profile("roman_fort_straight").unwrap();
+        let ground = |x: f64, _: f64| if x < 150.0 { 0.0 } else { 10.0 };
+        let plan = solve(&wall(&[[0.0, 0.0], [300.0, 0.0]]), p, &ground);
+        let whole = plan.steps.iter().filter(|st| st.whole).collect::<Vec<_>>();
+        assert_eq!(whole.len(), 1, "{:?}", plan.steps);
+        assert!(((whole[0].to - whole[0].from) - 10.0).abs() < 1e-9);
+        assert!(((whole[0].s.1 - whole[0].s.0) - 20.0).abs() < 1e-9);
+        assert!(plan.steps.iter().all(|st| st.whole));
+
+        // On a curve, stairs instead.
+        let curved = solve(&wall(&[[0.0, 0.0], [150.0, 60.0], [300.0, 0.0]]), p, &|x, _| if x < 150.0 { 0.0 } else { 10.0 });
+        assert!(curved.steps.iter().all(|st| !st.whole) || curved.steps.iter().filter(|st| st.whole).all(|st| turn_between(&curved.samples, st.s.0, st.s.1) <= STRAIGHT));
+    }
+
+    #[test]
+    fn steps_stay_away_from_corners() {
+        // A right angle at 60, the ground rising past it: the stairs go on either side, not over the corner.
+        let mut input = wall(&[[0.0, 0.0], [60.0, 0.0], [60.0, 120.0]]);
+        input.sharp[1] = true;
+        let plan = solve(&input, eight(), &|_, z| if z > 2.0 { 2.0 } else { 0.0 });
+        let margin = eight().depth.1.abs().max(eight().depth.0.abs()) + 2.0;
+        for st in &plan.steps {
+            assert!(st.s.1 <= 60.0 - margin + 1e-6 || st.s.0 >= 60.0 + margin - 1e-6, "{st:?} over the corner");
+        }
     }
 
     #[test]

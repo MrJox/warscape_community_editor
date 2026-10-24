@@ -243,9 +243,19 @@ impl Tile {
         let (up, down) = (self.wall_base(layout.profile.step_up), self.wall_base(layout.profile.step_down));
         let door = (!layout.profile.door.is_empty()).then(|| self.wall_base(layout.profile.door)).flatten();
         let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
+        let ps = pieces(&layout.plan, layout.profile);
+
+        // The pieces made from another building (whole steps, caps), and the caps placed as they are.
+        let caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile);
+        let mut own = HashMap::new();
+        for k in ps.iter().filter_map(|p| p.base).chain(caps.iter().map(|c| c.0)) {
+            if !own.contains_key(k) && let Some(b) = self.wall_base(k) {
+                own.insert(k, b);
+            }
+        }
+
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        let ps = pieces(&layout.plan, layout.profile);
         let doors = self.wall_doors(&layout, &ps);
         self.wall_preview.revision += 1;
         let revision = self.wall_preview.revision;
@@ -253,8 +263,9 @@ impl Tile {
         for (i, piece) in ps.into_iter().enumerate() {
             let key = format!("wce_preview_{elem}_{revision}_{i}");
             let warp = PieceWarp::new(&layout.plan, layout.profile, piece, &ground);
-            let from = match &door {
-                Some(d) if doors.0.contains(&i) => d,
+            let from = match (piece.base.and_then(|k| own.get(k)), &door) {
+                (Some(b), _) => b,
+                (None, Some(d)) if doors.0.contains(&i) => d,
                 _ => &base,
             };
 
@@ -279,6 +290,17 @@ impl Tile {
             }
 
             keys.push(key);
+        }
+
+        // The caps as they are: their intact meshes from the game's files.
+        for (key, piece) in caps {
+            let Some(files) = own.get(key) else { continue };
+            let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
+            let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
+            for name in files.files.keys().filter(|n| wce_walls::building::is_piece_mesh(n) && wce_walls::pieces::level_of(n) == 1) {
+                let model = format!("{}{name}", folder(key));
+                ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source));
+            }
         }
 
         self.wall_preview.entities.insert(elem, ids);

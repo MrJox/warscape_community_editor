@@ -37,6 +37,9 @@ pub struct Piece {
 
     /// The base's length is scaled by this along the wall.
     pub scale: f64,
+
+    /// The building it is made from instead of the wall's base: a whole step piece, a cap (`None`: the base, or a door section).
+    pub base: Option<&'static str>,
 }
 
 /// The pieces of a layout: between the ends and corners, `n` pieces of equal length, `n` the stretch's length over the base's, rounded
@@ -46,16 +49,75 @@ pub fn pieces(plan: &Plan, profile: &Profile) -> Vec<Piece> {
         return vec![];
     }
 
+    let len = profile.length();
+    let piece_at = |s0: f64, s1: f64, base: Option<&'static str>| {
+        let at = sample_at(plan, s0);
+        Piece { s: (s0, s1), origin: [at.centre[0], at.level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: (s1 - s0) / len, base }
+    };
+
     let mut out = vec![];
     for (a, b) in sections(plan) {
-        let len = b - a;
-        let n = (len / profile.length()).round().max(1.0) as usize;
-        let piece = len / n as f64;
-        for k in 0..n {
-            let s0 = a + piece * k as f64;
-            let at = sample_at(plan, s0);
-            out.push(Piece { s: (s0, s0 + piece), origin: [at.centre[0], at.level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: piece / profile.length() });
+        // The whole steps in the section are pieces of their own; the stretches around them are cut as near the base's length as divides
+        // them.
+        let mut parts: Vec<(f64, f64, Option<&'static str>)> = vec![];
+        let mut at = a;
+        for st in plan.steps.iter().filter(|st| st.whole && st.s.0 >= a - 1e-6 && st.s.1 <= b + 1e-6) {
+            parts.push((at, st.s.0, None));
+            parts.push((st.s.0, st.s.1, Some(if st.to > st.from { profile.step_up } else { profile.step_down })));
+            at = st.s.1;
         }
+
+        parts.push((at, b, None));
+        for (p0, p1, base) in parts {
+            let l = p1 - p0;
+            if l < 1e-6 {
+                continue;
+            }
+
+            if base.is_some() {
+                out.push(piece_at(p0, p1, base));
+                continue;
+            }
+
+            let n = (l / len).round().max(1.0) as usize;
+            let piece = l / n as f64;
+            for k in 0..n {
+                let s0 = p0 + piece * k as f64;
+                out.push(piece_at(s0, s0 + piece, None));
+            }
+        }
+    }
+
+    // Free ends closed by the base's own end pieces (15 m: the tower ends take the first and the last slots).
+    if profile.cap_whole && !out.is_empty() {
+        if plan.free_ends[0] && !profile.cap_start.is_empty() && out[0].base.is_none() {
+            out[0].base = Some(profile.cap_start);
+        }
+
+        let last = out.len() - 1;
+        if plan.free_ends[1] && !profile.cap_end.is_empty() && out[last].base.is_none() && (last > 0 || !plan.free_ends[0]) {
+            out[last].base = Some(profile.cap_end);
+        }
+    }
+
+    out
+}
+
+/// The caps placed past a wall's free ends as they are (8 m: the endcaps, 2.6 long, outside the wall's frame): their key and frame (the
+/// wall's start, or its end, on the centre line at the level there, along the wall).
+pub fn cap_instances(plan: &Plan, profile: &Profile) -> Vec<(&'static str, Piece)> {
+    if profile.cap_whole || plan.samples.len() < 2 {
+        return vec![];
+    }
+
+    let mut out = vec![];
+    for (k, key, s) in [(0, profile.cap_start, 0.0), (1, profile.cap_end, plan.length)] {
+        if !plan.free_ends[k] || key.is_empty() {
+            continue;
+        }
+
+        let at = sample_at(plan, s);
+        out.push((key, Piece { s: (s, s), origin: [at.centre[0], at.level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: 1.0, base: Some(key) }));
     }
 
     out
@@ -103,7 +165,7 @@ pub fn door_pieces(plan: &Plan, profile: &Profile, ps: &[Piece], ground: &dyn Fn
     while at < plan.length {
         let k = ps.iter().enumerate().min_by(|a, b| (((a.1.s.0 + a.1.s.1) / 2.0 - at).abs()).total_cmp(&(((b.1.s.0 + b.1.s.1) / 2.0 - at).abs()))).map(|(k, _)| k).expect("pieces");
         let p = ps[k];
-        let stepped = plan.steps.iter().any(|st| st.s.1 > p.s.0 && st.s.0 < p.s.1);
+        let stepped = plan.steps.iter().any(|st| st.s.1 > p.s.0 && st.s.0 < p.s.1) || p.base.is_some();
         let at_end = ends.iter().any(|&e| (e - p.s.0).abs() < 1e-6 || (e - p.s.1).abs() < 1e-6);
         let warp = PieceWarp::new(plan, profile, p, ground);
         let (dx, dz) = profile.door_at;
@@ -427,7 +489,7 @@ impl Warp for SlabWarp<'_> {
 pub fn step_ranges(plan: &Plan, profile: &Profile, piece: &Piece) -> Vec<(f32, f32)> {
     let scale = piece.scale.max(1e-9);
     let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
-    plan.steps.iter().filter(|st| st.s.1 > piece.s.0 && st.s.0 < piece.s.1).map(|st| (to_x(st.s.0.max(piece.s.0)), to_x(st.s.1.min(piece.s.1)))).collect()
+    plan.steps.iter().filter(|st| !st.whole && st.s.1 > piece.s.0 && st.s.0 < piece.s.1).map(|st| (to_x(st.s.0.max(piece.s.0)), to_x(st.s.1.min(piece.s.1)))).collect()
 }
 
 /// The step pieces a wall's steps come from (going up and going down); without one, its steps stay a slope of the base.
@@ -455,7 +517,7 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
     let scale = piece.scale.max(1e-9);
     let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
     let mut out = vec![];
-    for st in &plan.steps {
+    for st in plan.steps.iter().filter(|st| !st.whole) {
         let (a, b) = (st.s.0.max(piece.s.0), st.s.1.min(piece.s.1));
         if b - a < 1e-6 {
             continue;
