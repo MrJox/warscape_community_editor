@@ -104,6 +104,14 @@ pub fn warp_docking_lines_where(lines: &[DockingLine], warp: &dyn Warp, step: f3
                 continue;
             }
 
+            // Cut to the corner's planes.
+            let cut = crate::warp::clip_to(&[a, b], &warp.clip_planes(), false);
+            let [a, b] = match cut.as_slice() {
+                [a, .., b] if (b[0] - a[0]).hypot(b[2] - a[2]) > 1e-3 => [*a, *b],
+                _ => continue,
+            };
+            let mid = [(a[0] + b[0]) / 2.0, 0.0, (a[2] + b[2]) / 2.0];
+
             let (wa, wb) = (warp.point(a), warp.point(b));
             let number = out.iter().filter(|o| o.name.starts_with(&stem)).count() + 1;
             out.push(DockingLine {

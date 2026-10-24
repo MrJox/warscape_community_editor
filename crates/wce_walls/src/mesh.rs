@@ -87,6 +87,7 @@ fn warp_block(block: &mut rpfm_lib::files::rigidmodel::MeshBlock, warp: &dyn War
     let pivot = [pivot.x, pivot.y, pivot.z];
     let mesh = block.mesh_mut();
     slice_mesh(mesh, cuts, pivot[0])?;
+    clip_mesh(mesh, pivot, &warp.clip_planes())?;
     keep_triangles(mesh, pivot, keep);
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     for v in mesh.vertices_mut() {
@@ -181,6 +182,74 @@ fn slice_mesh(mesh: &mut Mesh, cuts: &Cuts, pivot_x: f32) -> Result<(), String> 
     *mesh.vertices_mut() = vertices;
     *mesh.indices_mut() = indices;
     Ok(())
+}
+
+/// A mesh's triangles cut to the half-planes (`a x + b z <= c` of the piece's frame, vertex + pivot); the parts outside left out.
+fn clip_mesh(mesh: &mut Mesh, pivot: [f32; 3], planes: &[[f32; 3]]) -> Result<(), String> {
+    if planes.is_empty() || !mesh.extra_indices().is_empty() {
+        return Ok(());
+    }
+
+    let side = |v: &Vertex, [a, b, c]: [f32; 3]| c - (a * (v.position().x + pivot[0]) + b * (v.position().z + pivot[2]));
+    let verts = mesh.vertices();
+    if verts.iter().all(|v| planes.iter().all(|&pl| side(v, pl) >= -1e-4)) {
+        return Ok(());
+    }
+
+    let mut vertices = verts.clone();
+    let mut indices = vec![];
+    for t in mesh.indices().chunks_exact(3) {
+        let tri = [&vertices[t[0] as usize], &vertices[t[1] as usize], &vertices[t[2] as usize]];
+        if tri.iter().all(|v| planes.iter().all(|&pl| side(v, pl) >= -1e-4)) {
+            indices.extend_from_slice(t);
+            continue;
+        }
+
+        let mut poly = tri.map(Clone::clone).to_vec();
+        for &pl in planes {
+            poly = clip_by(&poly, |v| side(v, pl));
+            if poly.len() < 3 {
+                break;
+            }
+        }
+
+        if poly.len() < 3 {
+            continue;
+        }
+
+        let base = vertices.len();
+        if base + poly.len() > usize::from(u16::MAX) {
+            return Err(format!("{}: too many vertices after clipping", mesh.name()));
+        }
+
+        vertices.extend(poly.iter().cloned());
+        for i in 1..poly.len() - 1 {
+            indices.extend_from_slice(&[base as u16, (base + i) as u16, (base + i + 1) as u16]);
+        }
+    }
+
+    let (vertices, indices) = compact(&vertices, &indices);
+    *mesh.vertices_mut() = vertices;
+    *mesh.indices_mut() = indices;
+    Ok(())
+}
+
+/// The part of a polygon where `side >= 0` (Sutherland-Hodgman, the vertices interpolated).
+fn clip_by(polygon: &[Vertex], side: impl Fn(&Vertex) -> f32) -> Vec<Vertex> {
+    let mut out = vec![];
+    for i in 0..polygon.len() {
+        let (a, b) = (&polygon[i], &polygon[(i + 1) % polygon.len()]);
+        let (sa, sb) = (side(a), side(b));
+        if sa >= 0.0 {
+            out.push(a.clone());
+        }
+
+        if (sa >= 0.0) != (sb >= 0.0) {
+            out.push(lerp(a, b, sa / (sa - sb)));
+        }
+    }
+
+    out
 }
 
 /// The vertices the triangles use, each once (the cuts make a copy of a vertex per slab; the triangles that were cut leave theirs unused).

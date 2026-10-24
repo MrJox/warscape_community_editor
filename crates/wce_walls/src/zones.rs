@@ -1,7 +1,7 @@
 //! A piece's zone file (`<key>_zone_tech.xml`: zone, go and no-go regions, each a polygon of `<point x y z/>`) under a warp. Each region
 //! gets points along its edges first; the rest of the text is kept as it is.
 
-use crate::warp::{Warp, subdivide};
+use crate::warp::{Warp, clip_to, subdivide};
 
 /// A zone file warped; long edges get a point at least every `step` metres.
 ///
@@ -22,7 +22,8 @@ pub fn warp_zones(text: &str, warp: &dyn Warp, step: f32) -> Result<String, Stri
 
         if !region.is_empty() {
             let eol = if line.ends_with("\r\n") { "\r\n" } else { "\n" };
-            for (p, _) in subdivide(&region, region.len() > 2, step) {
+            let cut = clip_to(&region, &warp.clip_planes(), region.len() > 2);
+            for (p, _) in subdivide(&cut, cut.len() > 2, step) {
                 let [x, y, z] = warp.point(p);
                 out.push_str(&format!("{indent}<point x=\"{x}\" y=\"{y}\" z=\"{z}\"/>{eol}"));
             }

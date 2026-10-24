@@ -31,8 +31,8 @@ pub struct Profile {
     /// The footprint across the wall (z), the outer side first.
     pub depth: (f64, f64),
 
-    /// The most one step section rises, and how long it is along the wall (the 8 m step piece's ramps: 2.5 over 3; the stepped bastion's
-    /// ramp: 10 over about 12).
+    /// What one step section rises (always exactly: nothing is stretched vertically), and how long it is along the wall (8 m: one stair of
+    /// the step piece, 2.5 over 3; 15 m: the whole stepped bastion, 10 over 20).
     pub step_rise: f64,
     pub step_run: f64,
 
@@ -48,10 +48,9 @@ pub struct Profile {
     pub step_up: &'static str,
     pub step_down: &'static str,
 
-    /// The stair section of a step piece (its frame): the x range going up and going down, the walkway's height where it starts (up,
-    /// down), what of it is brought (z then y), and whether it replaces that much of the base over its length (8 m: the walkway and the
-    /// palisade; the bank behind stays the base's, which slopes over the step, as the step piece's own does) or is added to the base's
-    /// sloped wall (15 m: the bastion's wooden stair on the inner side).
+    /// The step section of a step piece (its frame): the x range going up and going down, the walkway's height where it starts (up,
+    /// down), what of it is brought (z then y; none: its whole cross-section), and whether it replaces the base over its length (both
+    /// families: the step piece's own walls, bank and stair, authored to join the straight where they are flat) or is added to it.
     pub slab_up: (f64, f64),
     pub slab_down: (f64, f64),
     pub slab_walk: (f64, f64),
@@ -83,7 +82,7 @@ const EIGHT: Profile = Profile {
     depth: (-3.0, 12.0),
     step_rise: 2.5,
     step_run: 3.0,
-    step_gap: 10.0,
+    step_gap: 1.0,
     foot: (-2.0, 0.0),
     bury: 2.0,
     step_up: "",
@@ -91,7 +90,7 @@ const EIGHT: Profile = Profile {
     slab_up: (2.0, 5.0),
     slab_down: (2.0, 5.0),
     slab_walk: (8.0, 13.0),
-    slab_zy: Some(((-3.5, 3.0), (-3.0, 16.0))),
+    slab_zy: None,
     step_replaces: true,
     slab_band: None,
     door: "",
@@ -106,18 +105,18 @@ const FIFTEEN: Profile = Profile {
     outer_face: 0.0,
     depth: (-6.0, 16.0),
     step_rise: 10.0,
-    step_run: 12.0,
-    step_gap: 8.0,
+    step_run: 20.0,
+    step_gap: 0.0,
     foot: (0.0, 2.0),
     bury: 0.5,
     step_up: "",
     step_down: "",
-    slab_up: (-5.8, 6.2),
-    slab_down: (-6.2, 5.8),
+    slab_up: (-10.0, 10.0),
+    slab_down: (-10.0, 10.0),
     slab_walk: (15.0, 25.0),
-    slab_zy: Some(((5.1, 8.9), (14.0, 26.5))),
-    step_replaces: false,
-    slab_band: Some(0.9),
+    slab_zy: None,
+    step_replaces: true,
+    slab_band: None,
     door: "",
     door_at: (0.0, 13.0),
 };

@@ -16,8 +16,8 @@ the tile when the tile is exported. Siege battles must work on them: units on th
 - **The terrain is not touched**: the wall adapts to it.
 - **Gates and bastions are placed first** (as today); a wall runs between them. No generated towers or bastions in this iteration.
 - **A free end is closed with the kit's endcap.**
-- **Vertices are smooth or sharp**: smooth bends the wall along a curve; sharp is a mitred corner. A vertex whose internal angle is under
-  25 degrees (a turn over 155 degrees) is always sharp.
+- **Vertices are smooth or sharp**: smooth bends the wall along a curve; sharp is a mitred corner. A vertex whose internal angle is at
+  most 90 degrees (a right angle or sharper) is always sharp (user, review of 2026-10-24; first 25).
 - **Generated pieces have variable lengths** (vanilla has longer pieces too).
 - **Destruction levels are generated; collapse animations are not** (a piece swaps to its next level). Revisit later.
 - **The spline is a custom element of the tile model's scene.** TEd will not read it; that is accepted (the model is separate from the TEd
@@ -312,6 +312,22 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
 
 Each phase: a Cargo example that generates a fixed wall and compares it with a reference, and an in-game check for those that change what
 the game sees (0, 2, 3, 4).
+
+## Review (user, 2026-10-24, before the in-game test of phase 5)
+
+- **Steps: authored rises only.** Stretching geometry vertically (the 15 m wall sheared over each step, the 8 m stair rescaled to the
+  rise) gave inclined, misaligned textures, and 15 m walls piled stairs at one end (each ~1 m rise asked for a full 12-unit stair, so
+  the chains ran into each other). Now nothing is stretched vertically: runs are level and whole steps apart (a run goes on while the
+  ground stays within half a step of it, or the tolerance when larger; the next is the nearest whole number of steps), and a step section
+  is its source at its own size, its whole cross-section replacing the base over its length (8 m: one stair of the step piece, x 2..5,
+  2.5 up over 3, chained 1 apart; 15 m: the whole stepped bastion, 10 up over 20, like vanilla). The walkway can be half a step off the
+  ground between steps (1.25 m / 5 m). An attached far end that is not a whole number of steps from the run before it is noted.
+- **Corners: right angles and sharper**, and the joint aligned on both sides. The old mitre sheared the whole end of a piece onto the
+  bisector, which on the inner side pulled it backwards (at sharp corners past itself: the back of one piece over the front of the other).
+  Now a piece is stretched onto the bisector only on its outer side and cut by it on its inner side (`Warp::clip_planes`: the meshes'
+  triangles, the platforms, the collision outlines, the footprint, the zones, the docking lines and the pipes are clipped to the
+  section's end faces), so it never folds; the shear limit went from 4 to 10 per unit (an internal angle down to about 12 degrees).
+  Unit tests: the right angle's ends meet on the bisector on the outer side, the inner side is cut there, an acute corner doesn't fold.
 
 ## To confirm
 
