@@ -670,6 +670,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("element {found}"))
     });
 
+    c.add(
+        "tile_select_all", "tile_select_all <type> [key words]",
+        "select every instance of a type (BUILDING_INSTANCE, ...) whose key holds the words (and-ed; none: all of them)",
+        |e, a| {
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(ty) = a.first() else { return fail("usage: tile_select_all <type> [key words]") };
+            let words = a[1..].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+            let sc = d.tile().tscene();
+            let key = |el: usize| sc.doc().find_attr(el, "key").map(|at| String::from_utf8_lossy(sc.doc().attr_raw(el, at)).to_lowercase()).unwrap_or_default();
+            let found = d.tile().instances().iter().copied().filter(|&el| sc.type_of(el) == ty && words.iter().all(|w| key(el).contains(w))).collect::<Vec<_>>();
+            e.selection.clear();
+            for &el in &found {
+                e.selection.add(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
+            }
+
+            e.docs.set_active(id);
+            ok(format!("{} selected", found.len()))
+        },
+    );
+
     c.add("tile_move", "tile_move <dx m> <dz m>", "move the selected instance over the ground (keeps its height above the terrain)", |e, a| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
