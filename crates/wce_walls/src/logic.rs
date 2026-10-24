@@ -31,14 +31,18 @@ pub struct LogicNotes {
 }
 
 /// Another building's part brought into a piece (a step section): its logic file's platforms and firing lines over `x` of its frame
-/// (and inside `zy`, z then y, when given), warped by its own `warp`, added to the first piece's levels (the part's level of the same
-/// number, or its last).
+/// (and inside `zy`, z then y, when given), warped by its own `warp`, added to the first piece's levels that the part has (the part's
+/// level of the same number). A level the part lacks (a step piece has no rubble) gets nothing of it, and keeps the base whole.
 pub struct Splice<'a> {
     pub logic: &'a [u8],
     pub warp: &'a dyn Warp,
     pub x: (f32, f32),
     pub zy: Option<((f32, f32), (f32, f32))>,
     pub band: Option<(f32, f32, f32)>,
+
+    /// The base's x range (its frame) it replaces where it is brought: the base's platforms and firing lines there (inside the
+    /// `drop_zy` box) are left out.
+    pub replaces: Option<(f32, f32)>,
 
     /// Each of the part's pieces into the piece of the same number (a copy of the base itself), not only its first into the first.
     pub per_piece: bool,
@@ -57,23 +61,22 @@ impl Splice<'_> {
 ///
 /// The file doesn't read, or doesn't write back.
 pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>, LogicNotes), String> {
-    warp_logic_with(bytes, warp, cuts, &[], None, &[])
+    warp_logic_with(bytes, warp, cuts, None, &[])
 }
 
-/// [`warp_logic`] with step sections: the base's platforms and firing lines over the `drop` x ranges (of its frame, and inside `drop_zy`
-/// when given) left out, the splices' added.
+/// [`warp_logic`] with step sections: per level, the splices' platforms and firing lines added, the base's over what they replace (inside
+/// `drop_zy` when given) left out.
 ///
 /// # Errors
 ///
 /// A file doesn't read, or the result doesn't write back.
-pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, f32)], drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice]) -> Result<(Vec<u8>, LogicNotes), String> {
+pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice]) -> Result<(Vec<u8>, LogicNotes), String> {
     let step = cuts.step;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let mut notes = LogicNotes::default();
     let in_box = |p: [f32; 3]| drop_zy.is_none_or(|((z0, z1), (y0, y1))| p[2] >= z0 && p[2] <= z1 && p[1] >= y0 && p[1] <= y1);
     let planes = warp.clip_planes();
-    let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
 
     // The splices' levels (their first piece's destructs).
     let mut parts = vec![];
@@ -88,27 +91,29 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
         let piece_name = piece["name"].as_str().unwrap_or_default().to_owned();
         for (k, d) in array_mut(piece, "destructs").enumerate() {
             let name = d["name"].as_str().unwrap_or(&piece_name).to_owned();
-            let old = d["platforms"].as_array().cloned().unwrap_or_default();
-            let (mut platforms, strips) = platform_strips(&old, warp, cuts, &kept, 0, &mut notes);
-            let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
-            let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
-            for (sp, pieces) in splices.iter().zip(&parts) {
+            // The splices brought into this level: the ones that have it.
+            let here = splices.iter().zip(&parts).filter_map(|(sp, pieces)| {
                 let levels = match (sp.per_piece, piece_index) {
                     (true, i) => pieces.get(i),
                     (false, 0) => pieces.first(),
                     _ => None,
                 };
 
-                let Some(levels) = levels else { continue };
-                {
-                    let Some(sd) = levels.get(k).or(levels.last()) else { continue };
-                    let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
-                    let part_planes = sp.warp.clip_planes();
-                    let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
-                    let (more, s2) = platform_strips(sd["platforms"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
-                    platforms.extend(more);
-                    ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
-                }
+                levels.and_then(|l| l.get(k)).map(|sd| (sp, sd))
+            }).collect::<Vec<_>>();
+            let drop = here.iter().filter_map(|(sp, _)| sp.replaces).collect::<Vec<_>>();
+            let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
+            let old = d["platforms"].as_array().cloned().unwrap_or_default();
+            let (mut platforms, strips) = platform_strips(&old, warp, cuts, &kept, 0, &mut notes);
+            let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
+            let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
+            for (sp, sd) in here {
+                let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
+                let part_planes = sp.warp.clip_planes();
+                let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
+                let (more, s2) = platform_strips(sd["platforms"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
+                platforms.extend(more);
+                ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
             }
 
             d["platforms"] = Value::Array(platforms);
