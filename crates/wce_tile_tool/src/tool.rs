@@ -627,7 +627,7 @@ impl TileTool {
     }
 
     fn tool_overlay(&self, e: &Editor, d: &TileDocument) -> Overlay {
-        let mut o = Overlay { lines: vec![], triangles: vec![], depth_test: false, pickable: false };
+        let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
         if self.mode != TileMode::Select && self.terrain_hit && e.viewport.hovered {

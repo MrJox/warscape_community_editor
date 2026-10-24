@@ -1,7 +1,7 @@
 //! What a tile document shows: the terrain (and its ground look), the building models, the markers, polygon outlines, water, tile links and the
 //! highlight overlay, and the outline and descriptions of its items.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -893,6 +893,10 @@ impl Tile {
         self.dirty_type = vec![0; types];
         let h = Overlay { depth_test: false, pickable: false, ..Default::default() };
         self.overlay_entity = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(h), self.source(TERRAIN));
+        let mask = Overlay { pickable: false, selection_mask: true, ..Default::default() };
+        self.mask_entity = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(mask), self.source(TERRAIN));
+        self.last_mask = None;
+        self.meshed_for = (vec![], u64::MAX);
         self.markers_dirty = true;
         self.hidden_signature = u64::MAX;
         self.lod_eye = Float3::new(1e30, 1e30, 1e30);
@@ -1189,8 +1193,9 @@ impl Tile {
         }
     }
 
-    /// The highlight overlay: the selected instances (a box, the axes, the points of a polygon with `polygon_point` hot) and the active tool's
-    /// overlay.
+    /// The highlight overlay (the points of a selected polygon, with `polygon_point` hot, and the active tool's overlay) and the selection
+    /// outline's mask: the shapes of the selected markers (instances without meshes of their own). The renderer outlines the rest of the
+    /// selection from its meshes and overlays.
     pub fn set_highlight(&mut self, scene: &mut RenderScene, selected: &[usize], polygon_point: Option<usize>, handle_size: f32, tool_overlay: &Overlay) {
         wce_prof!("tile.set_highlight");
         self.flush_pieces(scene);
@@ -1198,20 +1203,31 @@ impl Tile {
             return;
         }
 
+        // The selected elements with meshes of their own: one pass over the scene, when the selection or the scene's structure changed.
+        if self.meshed_for.0 != selected || self.meshed_for.1 != scene.structure_revision() {
+            let wanted = selected.iter().map(|&e| self.source(item_of(e))).collect::<HashSet<_>>();
+            self.meshed = scene.entities().iter().filter(|en| matches!(en.payload, Payload::MeshInstance(_)) && wanted.contains(&en.source)).map(|en| en.source.item).collect();
+            self.meshed_for = (selected.to_vec(), scene.structure_revision());
+        }
+
         let mut h = Overlay { depth_test: false, pickable: false, ..Default::default() };
-        let (yellow, hot, white) = (overlay_colour(1.0, 1.0, 0.2, 1.0), overlay_colour(1.0, 0.9, 0.1, 1.0), overlay_colour(1.0, 1.0, 1.0, 1.0));
+        let mut mask = Overlay { pickable: false, selection_mask: true, ..Default::default() };
+        let (hot, white) = (overlay_colour(1.0, 0.9, 0.1, 1.0), overlay_colour(1.0, 1.0, 1.0, 1.0));
         for &e in selected {
             if !self.is_instance(e) {
                 continue;
             }
 
-            let p = self.world_position(e);
-            let r = self.marker_radius(e) / 0.75 * 0.5 * 1.2;
-            h.box_wire(Float3::new(p.x - r, p.y, p.z - r), Float3::new(p.x + r, p.y + 2.0 * r, p.z + r), yellow);
-            let a = 8.0f32.max(r * 1.5);
-            h.line(p, Float3::new(p.x + a, p.y, p.z), overlay_colour(1.0, 0.2, 0.2, 1.0));
-            h.line(p, Float3::new(p.x, p.y + a, p.z), overlay_colour(0.2, 1.0, 0.2, 1.0));
-            h.line(p, Float3::new(p.x, p.y, p.z + a), overlay_colour(0.3, 0.5, 1.0, 1.0));
+            // A marker as it is drawn (see `rebuild_marker_batch`): a box around the point, or a cross standing on it. A polygon's outline is
+            // an overlay of its own, which the renderer outlines.
+            if !self.is_polygon(e) && !self.meshed.contains(&item_of(e)) {
+                let p = self.world_position(e);
+                let st = if self.idx.valid { self.idx.style[self.idx.type_[e] as usize] } else { style_of(self.tscene().type_of(e)) };
+                let h2 = st.size * 0.5;
+                let (lo_y, hi_y) = if st.cross { (p.y, p.y + st.size) } else { (p.y - h2, p.y + h2) };
+                mask.box_solid(Float3::new(p.x - h2, lo_y, p.z - h2), Float3::new(p.x + h2, hi_y, p.z + h2), white);
+            }
+
             if self.is_polygon(e) {
                 for (i, q) in self.polygon_world_points(e).into_iter().enumerate() {
                     let (c, r) = (if Some(i) == polygon_point { hot } else { white }, handle_size);
@@ -1224,12 +1240,22 @@ impl Tile {
 
         h.lines.extend_from_slice(&tool_overlay.lines);
         h.triangles.extend_from_slice(&tool_overlay.triangles);
-        if self.last_highlight.as_ref().is_some_and(|l| bits_equal(&l.lines, &h.lines) && bits_equal(&l.triangles, &h.triangles)) {
-            return;
+
+        // Only what changed goes to the scene; the structure revision this moves does not make the meshed elements be looked up again.
+        let current = self.meshed_for.1 == scene.structure_revision();
+        if self.mask_entity != 0 && !self.last_mask.as_ref().is_some_and(|l| bits_equal(&l.triangles, &mask.triangles)) {
+            self.last_mask = Some(mask.clone());
+            scene.update_payload(self.mask_entity, Payload::Overlay(mask));
         }
 
-        self.last_highlight = Some(h.clone());
-        scene.update_payload(self.overlay_entity, Payload::Overlay(h));
+        if !self.last_highlight.as_ref().is_some_and(|l| bits_equal(&l.lines, &h.lines) && bits_equal(&l.triangles, &h.triangles)) {
+            self.last_highlight = Some(h.clone());
+            scene.update_payload(self.overlay_entity, Payload::Overlay(h));
+        }
+
+        if current {
+            self.meshed_for.1 = scene.structure_revision();
+        }
     }
 
     // ---- outline and descriptions

@@ -1,5 +1,10 @@
-//! The editor-side passes of the renderer: the overlay pass (scene overlays, grid, selection outlines) and entity picking. These are not game
-//! shaders: a minimal vertex-colour shader and an id shader, compiled from the source below.
+//! The editor-side passes of the renderer: the selection outline, the overlay pass (scene overlays, grid) and entity picking. These are not game
+//! shaders: a minimal vertex-colour shader, an id shader and the outline's mask and edge shaders, compiled from the source below.
+//!
+//! The selection outline: the selected meshes, terrain and overlays (and the overlays that only stand for selected items, `selection_mask`)
+//! are drawn into a mask at the target's size, every one in red and, against the scene's depth, the parts in front in green. A full-screen
+//! pass then colours the pixels outside the mask within `selection_outline_px` of it: solid where a visible part is near, faint where only
+//! hidden parts are.
 
 use wce_foundation::math::{Float3, Float4x4, look_at_lh, perspective_lh};
 use wce_foundation::wce_prof;
@@ -29,7 +34,40 @@ PickOut pick_vs(PickIn i) {
     return o;
 }
 uint pick_ps(PickOut i) : SV_Target { return i.id; }
+
+// The selection mask: the blend state's write mask picks the channel (red: the whole selection, green: its parts in front of the scene).
+float4 mask_ps() : SV_Target { return float4(1, 1, 0, 0); }
+
+// The outline over the target: a full-screen triangle; a pixel outside the mask within `radius` of it.
+cbuffer Outline : register(b1) { float4 colour; float radius; float hidden_alpha; float2 outline_pad; };
+Texture2D<float2> mask : register(t0);
+float4 outline_vs(uint v : SV_VertexID) : SV_Position {
+    float2 uv = float2((v << 1) & 2, v & 2);
+    return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+}
+float4 outline_ps(float4 pos : SV_Position) : SV_Target {
+    int2 p = int2(pos.xy);
+    if (mask.Load(int3(p, 0)).r > 0) discard;
+    int r = (int)ceil(radius);
+    float near_any = 0, near_visible = 0;
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            if (x * x + y * y > radius * radius + 0.5) continue;
+            float2 m = mask.Load(int3(p + int2(x, y), 0));
+            near_any = max(near_any, m.r);
+            near_visible = max(near_visible, m.g);
+        }
+    }
+    if (near_any == 0) discard;
+    return float4(colour.rgb, colour.a * (near_visible > 0 ? 1 : hidden_alpha));
+}
 "#;
+
+/// The outline's constants: the colour, the radius in pixels and the alpha of the hidden parts' outline, padded.
+const OUTLINE_CB: usize = 32;
+
+/// How strong the outline of the selection's hidden parts is.
+const HIDDEN_ALPHA: f32 = 0.35;
 
 /// The size of the frame constants: a matrix and the id, padded.
 const FRAME_CB: usize = 80;
@@ -71,6 +109,26 @@ pub(crate) struct EditorGpu {
     pick_inst_vb: Option<ID3D11Buffer>,
     pick_id_vb: Option<ID3D11Buffer>,
     pick_inst_capacity: usize,
+
+    // The selection outline.
+    mask_ps: Option<ID3D11PixelShader>,
+    outline_vs: Option<ID3D11VertexShader>,
+    outline_ps: Option<ID3D11PixelShader>,
+    outline_cb: Option<ID3D11Buffer>,
+    mask_bs_all: Option<ID3D11BlendState>,
+    mask_bs_visible: Option<ID3D11BlendState>,
+
+    /// The visible parts' draw, pulled towards the camera so that it does not fight the scene's own depth.
+    mask_rs_biased: Option<ID3D11RasterizerState>,
+    mask_tex: Option<ID3D11Texture2D>,
+    mask_rtv: Option<ID3D11RenderTargetView>,
+    mask_srv: Option<ID3D11ShaderResourceView>,
+    mask_w: u32,
+    mask_h: u32,
+    mask_inst_vb: Option<ID3D11Buffer>,
+    mask_inst_capacity: usize,
+    mask_vb: Option<ID3D11Buffer>,
+    mask_vb_capacity: usize,
 }
 
 fn overlay_bytes(v: &[OverlayVertex]) -> Vec<u8> {
@@ -101,6 +159,9 @@ impl Renderer {
         let ps = compile(EDITOR_HLSL, "editor_passes", "ovl_ps", "ps_5_0")?;
         let pvs = compile(EDITOR_HLSL, "editor_passes", "pick_vs", "vs_5_0")?;
         let pps = compile(EDITOR_HLSL, "editor_passes", "pick_ps", "ps_5_0")?;
+        let mps = compile(EDITOR_HLSL, "editor_passes", "mask_ps", "ps_5_0")?;
+        let ovs = compile(EDITOR_HLSL, "editor_passes", "outline_vs", "vs_5_0")?;
+        let ops = compile(EDITOR_HLSL, "editor_passes", "outline_ps", "ps_5_0")?;
         let oel = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, false)];
         let mut pel = vec![element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false)];
         for i in 1..=3 {
@@ -116,6 +177,16 @@ impl Renderer {
         e.pick_il = dev.create_input_layout(&pel, &pvs).ok();
         let pick_failed = e.pick_il.is_none();
         e.pick_ps = dev.create_pixel_shader(&pps).ok();
+        e.mask_ps = dev.create_pixel_shader(&mps).ok();
+        e.outline_vs = dev.create_vertex_shader(&ovs).ok();
+        e.outline_ps = dev.create_pixel_shader(&ops).ok();
+        e.outline_cb = dynamic_buffer(&dev, OUTLINE_CB, D3D11_BIND_CONSTANT_BUFFER);
+        let channel = |mask: u8| crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
+            BlendEnable: false.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ZERO, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
+            DestBlendAlpha: D3D11_BLEND_ZERO, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: mask,
+        });
+        e.mask_bs_all = channel(D3D11_COLOR_WRITE_ENABLE_RED as u8);
+        e.mask_bs_visible = channel(D3D11_COLOR_WRITE_ENABLE_GREEN as u8);
 
         e.ovl_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.pick_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
@@ -134,6 +205,7 @@ impl Renderer {
         dd.DepthFunc = D3D11_COMPARISON_LESS;
         e.pick_ds = dev.create_depth_stencil_state(&dd).ok();
         e.ovl_rs = dev.create_rasterizer_state(&rd).ok();
+        e.mask_rs_biased = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { DepthBias: -2000, SlopeScaledDepthBias: -2.0, ..rd }).ok();
 
         e.ready = true;
         if pick_failed {
@@ -167,7 +239,7 @@ impl Renderer {
         }
 
         // Four batches: lines / triangles, with and without the depth test. The scene's overlays are cached between frames; the grid and the
-        // selection outline are added per frame.
+        // selected lights' reach are added per frame.
         let scene_id = scene as *const RenderScene as usize;
         if self.editor.ovl_cache_scene != scene_id || self.editor.ovl_cache_rev != scene.revision() {
             wce_prof!("render.overlay_rebuild");
@@ -179,7 +251,7 @@ impl Renderer {
 
             for e in scene.entities() {
                 let Payload::Overlay(o) = &e.payload else { continue };
-                if !scene.drawable(e) {
+                if !scene.drawable(e) || o.selection_mask {
                     continue;
                 }
 
@@ -209,49 +281,18 @@ impl Renderer {
         }
 
         if !self.settings.selection.is_empty() {
+            // The outline (`pass_selection_outline`) shows the rest of the selection.
             let mut sel = Overlay::default();
-            let yellow = overlay_colour(1.0, 0.85, 0.2, 1.0);
+            let [r, g, b, a] = self.settings.selection_colour;
+            let yellow = overlay_colour(r, g, b, a);
             for &id in &self.settings.selection {
-                let Some(e) = scene.find(id) else { continue };
-                if !scene.drawable(e) {
-                    continue;
-                }
-
-                match &e.payload {
-                    Payload::Terrain(_) => {
-                        if let Some(b) = self.draw_lists.terrain_bounds.get(&id) {
-                            sel.box_wire_transformed(&b.world, b.bmin, b.bmax, yellow);
-                        }
-                    }
-
-                    Payload::MeshInstance(_) => {
-                        if let Some(&item) = self.draw_lists.item_of_entity.get(id as usize).filter(|&&item| item != NO_ITEM)
-                            && let Some((w, lo, hi)) = self.draw_lists.draws.item_box(item)
-                        {
-                            sel.box_wire_transformed(&w, lo, hi, yellow);
-                        }
-                    }
-
-                    Payload::Overlay(o) => {
-                        let (mut lo, mut hi) = (Float3::new(1e30, 1e30, 1e30), Float3::new(-1e30, -1e30, -1e30));
-                        for v in o.lines.iter().chain(&o.triangles) {
-                            lo = Float3::new(lo.x.min(v.p.x), lo.y.min(v.p.y), lo.z.min(v.p.z));
-                            hi = Float3::new(hi.x.max(v.p.x), hi.y.max(v.p.y), hi.z.max(v.p.z));
-                        }
-
-                        if lo.x <= hi.x {
-                            sel.box_wire_transformed(&e.world, lo, hi, yellow);
-                        }
-                    }
-
-                    // The light's reach.
-                    Payload::PointLight(l) => {
-                        let c = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
-                        let r = Float3::new(l.radius, l.radius, l.radius);
-                        sel.box_wire(c - r, c + r, yellow);
-                    }
-
-                    _ => {}
+                // The light's reach.
+                if let Some(e) = scene.find(id).filter(|e| scene.drawable(e))
+                    && let Payload::PointLight(l) = &e.payload
+                {
+                    let c = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
+                    let r = Float3::new(l.radius, l.radius, l.radius);
+                    sel.box_wire(c - r, c + r, yellow);
                 }
             }
 
@@ -305,6 +346,160 @@ impl Renderer {
             self.ctx.draw(count[b], first[b]);
         }
 
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_render_targets(&[], None);
+    }
+
+    /// The selection outline (see the module): the mask of the selected meshes, terrain and overlays, then its edge over the target.
+    pub(crate) fn pass_selection_outline(&mut self, scene: &RenderScene, target: &RenderTarget) {
+        if let Err(error) = self.create_editor_resources() {
+            self.error(error.0);
+            return;
+        }
+
+        // What goes into the mask: the selected entities (meshes and terrain through their draw sets, overlays as triangles and lines) and the
+        // overlays that stand for selected items.
+        let selected = self.settings.selection.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e))).collect::<std::collections::HashSet<_>>();
+        let (mut tris, mut lines) = (vec![], vec![]);
+        for e in scene.entities() {
+            let Payload::Overlay(o) = &e.payload else { continue };
+            if (o.selection_mask || selected.contains(&e.id)) && scene.drawable(e) {
+                tris.extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+                lines.extend(o.lines.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+            }
+        }
+
+        let meshes = selected.iter().any(|&id| scene.find(id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_) | Payload::Terrain(_))));
+        if !meshes && tris.is_empty() && lines.is_empty() {
+            return;
+        }
+
+        let (w, h) = (target.width(), target.height());
+        if self.editor.mask_w != w || self.editor.mask_h != h {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            };
+
+            let e = &mut self.editor;
+            e.mask_tex = self.dev.create_texture_2d(&desc, None).ok();
+            e.mask_rtv = e.mask_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
+            e.mask_srv = e.mask_tex.as_ref().and_then(|tex| self.dev.create_shader_resource_view(tex, None).ok());
+            (e.mask_w, e.mask_h) = (w, h);
+        }
+
+        let (Some(rtv), Some(srv), Some(cb), Some(ocb)) = (self.editor.mask_rtv.clone(), self.editor.mask_srv.clone(), self.editor.pick_cb.clone(), self.editor.outline_cb.clone()) else { return };
+
+        // The selected items of both draw sets, culled and gathered once for the two draws.
+        let vp_m = self.camera.main_view_proj;
+        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, ..Default::default() };
+        let (draws, terrain_draws) = (std::mem::take(&mut self.draw_lists.draws), std::mem::take(&mut self.draw_lists.terrain_draws));
+        // Per set: its visible list and where its instances start in `instances`.
+        let mut sets: Vec<(&crate::draw_set::DrawSet, Visible, u32)> = vec![];
+        let mut instances: Vec<RigidInstance> = vec![];
+        if meshes {
+            for set in [&draws, &terrain_draws] {
+                let mut vis = Visible::default();
+                set.cull(&view, &mut vis);
+                set.retain(&mut vis, |id| selected.contains(&id));
+                let n = vis.instances();
+                if n != 0 {
+                    let first = instances.len();
+                    instances.resize(first + n, RigidInstance::default());
+                    set.gather(&vis, &mut instances[first..], 1.0, [0.0; 3]);
+                    sets.push((set, vis, first as u32));
+                }
+            }
+        }
+
+        // Uploads: the gathered instances, the overlays' triangles then lines.
+        let n_tris = tris.len() as u32;
+        let n_lines = lines.len() as u32;
+        let ovl_bytes = [overlay_bytes(&tris), overlay_bytes(&lines)].concat();
+        if self.editor.mask_inst_capacity < instances.len() {
+            self.editor.mask_inst_capacity = (instances.len() * 2).max(1024);
+            self.editor.mask_inst_vb = dynamic_buffer(&self.dev, self.editor.mask_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+        }
+
+        if self.editor.mask_vb_capacity < ovl_bytes.len() {
+            self.editor.mask_vb_capacity = (ovl_bytes.len() * 2).max(4096 * OVERLAY_VERTEX);
+            self.editor.mask_vb = dynamic_buffer(&self.dev, self.editor.mask_vb_capacity, D3D11_BIND_VERTEX_BUFFER);
+        }
+
+        let inst_vb = self.editor.mask_inst_vb.clone().filter(|vb| instances.is_empty() || write_dynamic(&self.ctx, vb, &instances));
+        let ovl_vb = self.editor.mask_vb.clone().filter(|vb| ovl_bytes.is_empty() || write_dynamic(&self.ctx, vb, &ovl_bytes));
+        write_dynamic(&self.ctx, &cb, &frame_cb(&vp_m));
+
+        // The mask: everything in red without the depth test, then the parts in front of the scene in green.
+        self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
+        self.ctx.set_render_targets(&[Some(rtv)], self.gbuffer.dsv.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        let e = &self.editor;
+        for visible in [false, true] {
+            self.ctx.set_blend_state(if visible { e.mask_bs_visible.as_ref() } else { e.mask_bs_all.as_ref() });
+            self.ctx.set_depth_stencil_state(if visible { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
+            self.ctx.set_rasterizer_state(if visible { e.mask_rs_biased.as_ref() } else { e.ovl_rs.as_ref() });
+            self.ctx.ps_set_shader(e.mask_ps.as_ref());
+            if let Some(vb) = inst_vb.clone().filter(|_| !sets.is_empty()) {
+                self.ctx.set_input_layout(e.pick_il.as_ref());
+                self.ctx.vs_set_shader(e.pick_vs.as_ref());
+                self.ctx.vs_set_constant_buffers(0, std::slice::from_ref(&e.pick_cb));
+                self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+                // The layout's id stream (slot 2) is not read by the mask: the instances stand in for it.
+                let stride = size_of::<RigidInstance>() as u32;
+                self.ctx.set_vertex_buffers(1, &[Some(vb.clone()), Some(vb)], &[stride, stride], &[0, 0]);
+                for (set, vis, first) in &sets {
+                    for &b in &vis.active {
+                        let m = set.batch_mesh(b);
+                        let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
+                        self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);
+                        self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                        self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, first + vis.start[b as usize]);
+                    }
+                }
+            }
+
+            if let Some(vb) = ovl_vb.clone().filter(|_| n_tris + n_lines != 0) {
+                self.ctx.set_input_layout(e.ovl_il.as_ref());
+                self.ctx.vs_set_shader(e.ovl_vs.as_ref());
+                self.ctx.vs_set_constant_buffers(0, std::slice::from_ref(&e.pick_cb));
+                self.ctx.set_vertex_buffers(0, &[Some(vb)], &[OVERLAY_VERTEX as u32], &[0]);
+                if n_tris != 0 {
+                    self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    self.ctx.draw(n_tris, 0);
+                }
+
+                if n_lines != 0 {
+                    self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                    self.ctx.draw(n_lines, n_tris);
+                }
+            }
+        }
+
+        drop(sets);
+        self.draw_lists.draws = draws;
+        self.draw_lists.terrain_draws = terrain_draws;
+
+        // The edge over the target.
+        let mut consts = [0f32; OUTLINE_CB / 4];
+        consts[..4].copy_from_slice(&self.settings.selection_colour);
+        consts[4] = self.settings.selection_outline_px.max(1.0);
+        consts[5] = HIDDEN_ALPHA;
+        write_dynamic(&self.ctx, &ocb, &consts);
+        let e = &self.editor;
+        self.ctx.set_render_targets(&[target.rtv().cloned()], None);
+        self.ctx.set_blend_state(e.ovl_blend.as_ref());
+        self.ctx.set_depth_stencil_state(e.ovl_ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(e.ovl_rs.as_ref());
+        self.ctx.set_input_layout(None);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.vs_set_shader(e.outline_vs.as_ref());
+        self.ctx.ps_set_shader(e.outline_ps.as_ref());
+        self.ctx.ps_set_constant_buffers(1, &[Some(ocb)]);
+        self.ctx.ps_set_shader_resources(0, &[Some(srv)]);
+        self.ctx.draw(3, 0);
+        self.ctx.ps_set_shader_resources(0, &[None]);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_render_targets(&[], None);
     }

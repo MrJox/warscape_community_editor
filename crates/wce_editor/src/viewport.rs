@@ -240,6 +240,7 @@ impl Viewport {
 /// Renders the scene into the viewport's surface.
 fn render(e: &mut Editor, w: u32, h: u32) {
     wce_prof!("viewport.render");
+    let outline_style = e.selection_outline_style();
     let Some(r) = e.renderer.as_mut() else { return };
     if e.scene.environment.active.is_none() {
         // Nothing lights the scene yet: the default environment with the player's output settings.
@@ -250,6 +251,7 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     let vp = &mut e.viewport;
     r.settings.show_grid = vp.show_grid;
     r.settings.selection = e.selection.entities(&e.scene);
+    (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     e.clock.tick();
     r.settings.deterministic = e.clock.fixed_step();
     if !vp.target.resize(&e.dev, w, h) {
@@ -289,6 +291,7 @@ pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
 
 /// Offscreen: `frames` fixed-step frames of the scene at w x h, the last one written as PNG. No window is involved.
 pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool {
+    let outline_style = e.selection_outline_style();
     let Some(r) = e.renderer.as_mut() else { return false };
     if w < 16 || h < 16 {
         return false;
@@ -310,6 +313,7 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     r.restart_temporal();
     r.settings.show_grid = e.viewport.show_grid;
     r.settings.selection = e.selection.entities(&e.scene);
+    (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     for _ in 0..frames {
         clock.tick();
         let params = ViewParams { camera: e.viewport.camera(), time_s: clock.time() as f32 };

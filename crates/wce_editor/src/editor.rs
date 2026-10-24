@@ -206,6 +206,13 @@ impl Editor {
         self.applied_appearance = None;
     }
 
+    /// The selection outline's colour (the theme's highlight) and width: 2 px at 100 % (the display's scale, and the pixel density of a high
+    /// density window). Scripted runs keep 2 px, so that shots do not depend on the machine.
+    pub fn selection_outline_style(&self) -> ([f32; 4], f32) {
+        let density = if self.scripted_input() { 1.0 } else { self.display_scale * gui::io().DisplayFramebufferScale.x.max(1.0) };
+        (crate::theme::palette().highlight, 2.0 * density)
+    }
+
     pub fn frame_cap(&self) -> u32 {
         self.frame_cap
     }
