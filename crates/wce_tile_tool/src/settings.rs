@@ -1,7 +1,7 @@
 //! The Tile tool's settings: the `[tools.tile]` table.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +66,10 @@ pub struct TileSettings {
 
     /// The vegetation brush.
     pub veg_brush: VegBrush,
+
+    /// rpfm's Attila schema (a `schema_att.ron`), for the procedural walls' database rows; none: rpfm's own (`WCE_RPFM_SCHEMA` wins).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpfm_schema: Option<PathBuf>,
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -131,6 +135,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), rpfm_schema: None }
     }
 }

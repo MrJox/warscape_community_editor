@@ -288,6 +288,26 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
      `scripts/tile_walls.txt` adds the door count with and without a no-go over a landing (`assert_wall_doors`). With steps, a piece
      takes 130-200 ms to make (the stair's cuts).
 5. **Export:** the pack, the DB rows, the compile reading generated buildings.
+   **Status (2026-10-24): done.** As built (`wce_walls::export`, `wce_walls::scene`):
+   - **Shared scene code** (`wce_walls::scene`): walls, anchors, layouts, doors and lowering read a `TedScene`, for the editor and the
+     exporter alike (the editor's `walls.rs` calls it with its own frame extents and model radii).
+   - **Lowering** (`lower_walls`): every wall is laid out from the project's scene and height map; each piece is generated in full
+     (`make_piece`: every level, logic and zone files) from its base or the door section, and the wall is replaced, in a copy of the
+     scene, by a `BUILDING_INSTANCE` per piece in its layer (`TedScene::add_instance`; a placed fort wall's attributes: breachable,
+     dockable, `destruction_level` 0, freeform, the piece's frame as its transform). Keys: `wce_<tile>_<variation>_<wall>_<piece>`.
+   - **Rows:** the bases' rows copied under the keys (`db::copy_rows`, now over any `Files`: the first table file by path that has a row
+     wins; the game's and TDD's rows of the bases are the same). The `models_building` row's `EFLines` are rebuilt from the piece's
+     logic file (the action codes learnt by pairing each source's row and logic file by line name: base, door section, step pieces),
+     its `DockingLines` are the base's, warped, cut in lines of at most 5 units, none over the step sections.
+   - **Compile:** `workflow::save_exported_prepared` compiles the project with its files changed in memory (the lowered `tile.ted`; the
+     project on disk keeps its walls); the new keys take their bases' destruction levels and thresholds.
+   - **Pack:** `<out>/wce_<tile folder>.pack` with what the compile wrote for the tile, the tile database in effect with its entry, the
+     pieces' folders and the rows (`battlefield_buildings_tables`, `models_building_tables`). The editor's `save_exported` does all of it
+     for a tile with walls; it needs rpfm's Attila schema (`rpfm_schema` in the `[tools.tile]` settings or `WCE_RPFM_SCHEMA`, else rpfm's own place).
+   - **Check:** `cargo run --release -p wce_walls --example wall_pack_check -- <pack> <schema>`: every generated key has its meshes,
+     logic and zone files, both rows (its own logic file path, firing and docking lines) and one instance in the building list. On a
+     scratch Edoras with an 8 m wall of 7 pieces and a corner: all passed (118 firing lines, 4 docking lines each); the export took 16 s.
+   - **Not checked in game yet.**
 6. **Kits:** the kit table for every culture; a check that every base straight generates (a Cargo example as a gate).
 
 Each phase: a Cargo example that generates a fixed wall and compares it with a reference, and an in-game check for those that change what

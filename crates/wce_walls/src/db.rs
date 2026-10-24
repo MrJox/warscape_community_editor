@@ -11,7 +11,7 @@ use rpfm_lib::files::db::DB;
 use rpfm_lib::files::table::DecodedData;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
-use wce_vfs::Vfs;
+use wce_vfs::files::Files;
 
 /// The rows copied, per table (`<name>_tables`): a table with the source's definition and only the new rows.
 pub struct CopiedRows {
@@ -21,22 +21,21 @@ pub struct CopiedRows {
     pub sources: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Copies, for each `(base, new)` pair, the rows that name `base`. A row is taken from the table file of the highest priority pack only
-/// (rows are told apart by their `key` column, else their first).
+/// Copies, for each `(base, new)` pair, the rows that name `base`. A row is taken once, from the first table file (by path) that has it
+/// (rows are told apart by their `key` column, else their first): the game's and TDD's rows of the bases are the same (2026-10-24).
 ///
 /// # Errors
 ///
 /// A table that names a base doesn't decode.
-pub fn copy_rows(vfs: &Vfs, schema: &Schema, renames: &[(String, String)]) -> Result<CopiedRows, String> {
-    let mut paths = vfs.list("db/", "").into_iter().map(str::to_owned).collect::<Vec<_>>();
-    paths.sort_by_key(|p| vfs.owner(p));
+pub fn copy_rows(files: &dyn Files, schema: &Schema, renames: &[(String, String)]) -> Result<CopiedRows, String> {
+    let paths = files.list("db/", "");
 
     let needles = renames.iter().flat_map(|(base, _)| [base.as_bytes().to_vec(), utf16(base)]).collect::<Vec<_>>();
     let mut out = CopiedRows { tables: BTreeMap::new(), sources: BTreeMap::new() };
     let mut seen = BTreeSet::new();
     for path in paths {
         let Some(table) = path.strip_prefix("db/").and_then(|p| p.split('/').next()).map(str::to_owned) else { continue };
-        let bytes = vfs.read(&path).map_err(|e| e.to_string())?;
+        let bytes = files.read(&path)?;
         if !needles.iter().any(|n| contains(&bytes, n)) {
             continue;
         }
