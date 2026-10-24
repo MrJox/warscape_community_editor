@@ -158,7 +158,21 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
                 if let Some(b) = cell_mut(table, key, "DockingLines").and_then(bytes_mut) {
                     let old: Vec<DockingLine> = lines::read_docking_lines(b)?;
                     let keep = |x: f32| !cut_out.iter().any(|&(a, b)| x > a && x < b);
-                    *b = lines::write_docking_lines(&lines::warp_docking_lines_where(&old, &warp, DOCKING_STEP, &keep));
+                    let mut docking = lines::warp_docking_lines_where(&old, &warp, DOCKING_STEP, &keep);
+
+                    // The copies filling a corner's outer side dock too (cut at the corner like the piece).
+                    for dx in warp.overhangs() {
+                        let shifted = crate::warp::Shifted { inner: &warp, dx };
+                        docking.extend(lines::warp_docking_lines_where(&old, &shifted, DOCKING_STEP, &|_| true));
+                    }
+
+                    // Their names numbered again in order.
+                    for (n, l) in docking.iter_mut().enumerate() {
+                        let stem = l.name.rsplit_once("_line").map_or(l.name.clone(), |(s, _)| s.to_owned());
+                        l.name = format!("{stem}_line{:02}", n + 1);
+                    }
+
+                    *b = lines::write_docking_lines(&docking);
                 }
             }
 

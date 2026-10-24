@@ -329,6 +329,19 @@ the game sees (0, 2, 3, 4).
   section's end faces), so it never folds; the shear limit went from 4 to 10 per unit (an internal angle down to about 12 degrees).
   Unit tests: the right angle's ends meet on the bisector on the outer side, the inner side is cut there, an acute corner doesn't fold.
 
+## Review, second round (user, 2026-10-24)
+
+- **8 m corners with the bank outside the turn** were a big stretched wedge: the last piece was stretched up to 12 units along the wall
+  on its outer side to reach the bisector. Now nothing is stretched: the outer side is filled by copies of the base going on straight
+  past the piece's end (`PieceWarp::overhangs`, `warp::Shifted`: as many lengths as the face reaches across the wall's depth), cut by
+  the bisector like the inner side; meshes, platforms and firing lines of every piece of the base (`logic::Splice::per_piece`), and the
+  row's docking lines.
+- **Broken bank behind 8 m stairs**: the stair splice took the step piece's whole cross-section over 3 units of its 20, and its bank (shaped
+  over its whole length) matched neither side. Now only its walkway and palisade (z -3.5..3) come in; the straight's own bank stays,
+  sloped over the stair (grass).
+- **Steps** are an open question: the user's earlier complaint was not inclined textures but local warping where the stairs were. To
+  decide with the user.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
