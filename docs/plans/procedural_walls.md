@@ -414,6 +414,22 @@ Two attributes of the spline (Inspector rows; 0: none):
   - **Still to do:** done in the example for now; the editor and export should do it for any wall once the SiegeAI work starts.
 - **Result:** `wall_pack_check` passed. Not yet checked in game.
 
+## Docking (user, in game, 2026-10-24)
+
+- **What was seen:** in the whole-ring pack, ladders and towers docked, but units could not cross onto the walls.
+- **Likely cause:** that pack moved the walls (bulges up to 40 units) but none of the AI layout. The wall zones (`EFP_LOW_WALL`), the
+  siege AI wall edges and the fort perimeters stayed on the old line. The one-wall pack moves them with the wall: its compiled
+  `zones.xml` follows the new pieces.
+- **Checked and the same as vanilla:**
+  - **Placement:** the first piece starts on the gate's end, and the untouched walls' building-list records equal CA's (rotations
+    within float rounding).
+  - **Generated pieces:** the rows (fort_wall, dockable, breachable), the docking lines (the outer face, z -2.5, cut into 5-unit
+    pieces), the walkway platforms and the zone files are the base's, moved.
+  - **The gameplay height map** (`hf_height_map.data`, ours against CA's): within a few centimetres under most wall pieces, at most
+    0.6 m. Elsewhere in the tile, about 150,000 samples differ by 0.5 to 3 m: a fidelity question for the terrain compile.
+- **Still open:** if the one-wall pack also fails to dock, try a vanilla wall it doesn't touch. If that fails too, the cause is the
+  terrain compile, not the walls.
+
 ## Destroyed stairs (user, in game, 2026-10-24)
 
 - **What was seen:** with the 8 m stairs' neighbours destroyed, a stair stood alone with holes on both sides.
