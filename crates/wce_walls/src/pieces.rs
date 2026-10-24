@@ -14,7 +14,7 @@
 
 use crate::building::{BuildingFiles, is_piece_mesh};
 use crate::profile::Profile;
-use crate::solver::{Plan, STEP, Sample};
+use crate::solver::{Plan, STEP, Sample, wall_level};
 use crate::warp::{Cuts, Shifted, Warp};
 use crate::{logic, mesh, zones};
 
@@ -52,7 +52,8 @@ pub fn pieces(plan: &Plan, profile: &Profile) -> Vec<Piece> {
     let len = profile.length();
     let piece_at = |s0: f64, s1: f64, base: Option<&'static str>| {
         let at = sample_at(plan, s0);
-        Piece { s: (s0, s1), origin: [at.centre[0], at.level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: (s1 - s0) / len, base }
+        let level = wall_level(plan, (s0 + 1e-4).min((s0 + s1) / 2.0));
+        Piece { s: (s0, s1), origin: [at.centre[0], level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: (s1 - s0) / len, base }
     };
 
     let mut out = vec![];
@@ -88,36 +89,30 @@ pub fn pieces(plan: &Plan, profile: &Profile) -> Vec<Piece> {
         }
     }
 
-    // Free ends closed by the base's own end pieces (15 m: the tower ends take the first and the last slots).
-    if profile.cap_whole && !out.is_empty() {
-        if plan.free_ends[0] && !profile.cap_start.is_empty() && out[0].base.is_none() {
-            out[0].base = Some(profile.cap_start);
-        }
-
-        let last = out.len() - 1;
-        if plan.free_ends[1] && !profile.cap_end.is_empty() && out[last].base.is_none() && (last > 0 || !plan.free_ends[0]) {
-            out[last].base = Some(profile.cap_end);
-        }
-    }
-
     out
 }
 
-/// The caps placed past a wall's free ends as they are (8 m: the endcaps, 2.6 long, outside the wall's frame): their key and frame (the
-/// wall's start, or its end, on the centre line at the level there, along the wall).
+/// The caps placed past a wall's free ends as they are (the game's pieces, not bent nor fitted to the ground): their key and frame, along
+/// the wall's end direction, at the level of the wall's end, their joining x on the wall's end.
 pub fn cap_instances(plan: &Plan, profile: &Profile) -> Vec<(&'static str, Piece)> {
-    if profile.cap_whole || plan.samples.len() < 2 {
+    if plan.samples.len() < 2 {
         return vec![];
     }
 
+    let all = sections(plan);
+    let (Some(&first), Some(&last)) = (all.first(), all.last()) else { return vec![] };
     let mut out = vec![];
-    for (k, key, s) in [(0, profile.cap_start, 0.0), (1, profile.cap_end, plan.length)] {
+    for (k, key, s, join, section) in [(0, profile.cap_start, 0.0, profile.cap_join.0, first), (1, profile.cap_end, plan.length, profile.cap_join.1, last)] {
         if !plan.free_ends[k] || key.is_empty() {
             continue;
         }
 
+        let dirs = section_dirs(plan, section);
+        let d = if k == 0 { dirs.0 } else { dirs.1 };
         let at = sample_at(plan, s);
-        out.push((key, Piece { s: (s, s), origin: [at.centre[0], at.level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: 1.0, base: Some(key) }));
+        let level = wall_level(plan, if k == 0 { 1e-4 } else { plan.length - 1e-4 });
+        let origin = [at.centre[0] - d[0] * join, level, at.centre[1] - d[1] * join];
+        out.push((key, Piece { s: (s, s), origin, yaw: d[1].atan2(d[0]), scale: 1.0, base: Some(key) }));
     }
 
     out
@@ -332,21 +327,25 @@ impl<'a> PieceWarp<'a> {
     /// own near its ends); past them, straight on.
     pub(crate) fn along(&self, s: f64) -> ([f64; 2], [f64; 2], f64) {
         let (a, b) = self.section;
+
+        // The level exactly, from inside this piece (its neighbour's level, a whole step's, never leaks in at its ends).
+        let (p0, p1) = self.piece.s;
+        let level = |t: f64| wall_level(self.plan, t.clamp(p0 + 1e-4, (p1 - 1e-4).max(p0 + 1e-4)));
         if s < a {
             let at = sample_at(self.plan, a);
             let d = self.dirs.0;
-            return ([at.centre[0] + d[0] * (s - a), at.centre[1] + d[1] * (s - a)], d, at.level);
+            return ([at.centre[0] + d[0] * (s - a), at.centre[1] + d[1] * (s - a)], d, level(a));
         }
 
         if s > b {
             let at = sample_at(self.plan, b);
             let d = self.dirs.1;
-            return ([at.centre[0] + d[0] * (s - b), at.centre[1] + d[1] * (s - b)], d, at.level);
+            return ([at.centre[0] + d[0] * (s - b), at.centre[1] + d[1] * (s - b)], d, level(b));
         }
 
         let at = sample_at(self.plan, s);
         let dir = if s - a < 1.0 { self.dirs.0 } else if b - s < 1.0 { self.dirs.1 } else { at.dir };
-        (at.centre, dir, at.level)
+        (at.centre, dir, level(s))
     }
 
     /// A point of the base's frame in the scene.
@@ -699,6 +698,24 @@ mod tests {
         let past = [19.0, 8.0, 6.0];
         assert!(!crate::warp::inside(&a.clip_planes(), past), "{:?}", a.clip_planes());
         assert!(crate::warp::inside(&a.clip_planes(), [10.0, 8.0, 6.0]));
+    }
+
+    #[test]
+    fn the_wall_beside_a_stepped_bastion_stays_level_up_to_it() {
+        let p = profile("roman_fort_straight").unwrap();
+        let ground = |x: f64, _: f64| if x < 150.0 { 10.0 } else { 0.0 };
+        let input = WallInput { points: vec![[0.0, 0.0], [300.0, 0.0]], sharp: vec![false; 2], tolerance: 0.5, ..Default::default() };
+        let plan = solve(&input, p, &ground);
+        let ps = pieces(&plan, p);
+        let k = ps.iter().position(|q| q.base.is_some()).expect("a bastion");
+        assert!(k > 0 && k + 1 < ps.len());
+        let (before, after) = (PieceWarp::new(&plan, p, ps[k - 1], &ground), PieceWarp::new(&plan, p, ps[k + 1], &ground));
+
+        // The walkway (y 15) of the piece before stays at its run's level to its very end; the one after from its very start.
+        let top = |w: &PieceWarp, x: f64| w.scene([x, 15.0, 2.0])[1];
+        assert!((top(&before, 9.99) - top(&before, 0.0)).abs() < 1e-6, "{} vs {}", top(&before, 9.99), top(&before, 0.0));
+        assert!((top(&after, -9.99) - top(&after, 0.0)).abs() < 1e-6, "{} vs {}", top(&after, -9.99), top(&after, 0.0));
+        assert!((top(&before, 0.0) - top(&after, 0.0) - 10.0).abs() < 1e-6);
     }
 
     #[test]
