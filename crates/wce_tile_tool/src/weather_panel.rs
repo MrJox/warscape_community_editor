@@ -1,4 +1,5 @@
-//! The Tile panel's Weather section: which environment files the game picks for the tile (the kit's environment_map.xml under the filters),
+//! The Tile panel's Weather section: which environment files the game picks for the tile (the kit's environment_map.xml under the filters; for
+//! a tile outside a kit, like an exported one decompiled into the workspace, the packs' variation database),
 //! searchable by text, and the one that lights the tile. Nothing here needs the Weather tool: the file is read from the packs (see
 //! `Editor::set_weather_preview`); when the Weather tool has the same file open, the tile follows its edits.
 //!
@@ -6,8 +7,10 @@
 //! starts with the filters of its terrain look (climate, season) and the default light.
 
 use std::collections::BTreeMap;
+use std::io::Cursor;
 use std::path::Path;
 
+use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
@@ -18,6 +21,9 @@ use wce_vfs::normalize;
 
 use crate::settings::{SETTINGS_ID, TileSettings, TileWeather};
 
+/// The game's variation database in the packs (what the Weather tool's picker reads too).
+const PACKS_DB: &str = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
+
 /// The filters, as the panel labels them, and their categories in environment_map.xml.
 pub const FILTERS: [(&str, &str); 8] = [
     ("map", "map"), ("climate", "climate"), ("season", "season"), ("climate change", "climate_change_index"), ("precipitation", "precipitation"),
@@ -26,7 +32,7 @@ pub const FILTERS: [(&str, &str); 8] = [
 
 #[derive(Default)]
 pub(crate) struct WeatherUi {
-    /// The kit's environment_map.xml.
+    /// The kit's environment_map.xml, else the packs' variation database.
     env: Option<AssetVariationDb>,
     status: String,
 
@@ -52,7 +58,7 @@ impl WeatherUi {
         let dir = d.project().dir.clone();
         let look = d.tile().terrain_look().clone();
         self.tile = d.source_key();
-        self.load_environment_map(&dir);
+        self.load_database(e, &dir);
 
         let remembered = e.tool_settings::<TileSettings>(SETTINGS_ID).weathers.get(&self.tile).cloned();
         self.choice = remembered.unwrap_or_else(|| {
@@ -78,27 +84,44 @@ impl WeatherUi {
         values.into_iter().find(|v| v.eq_ignore_ascii_case(value))
     }
 
-    /// The kit's environment_map.xml: which environment file the game picks for this tile's map.
-    fn load_environment_map(&mut self, tile_dir: &Path) {
-        self.env = None;
-        let g = tile_dir.display().to_string().replace('\\', "/");
-        let Some(at) = g.find("/raw_data/") else {
-            self.status = "no raw_data folder in the tile path".to_owned();
-            return;
+    /// Which environment files the game picks: the kit's environment_map.xml when the tile is in a kit that has one, else the packs' variation
+    /// database (an exported tile decompiled into the workspace has no kit around it).
+    fn load_database(&mut self, e: &Editor, tile_dir: &Path) {
+        let kit = Self::kit_environment_map(tile_dir);
+        let (loaded, source) = match kit {
+            Some(Ok(db)) => (Ok(db), "the kit's environment_map.xml"),
+            Some(Err(err)) => (Err(err), "the kit's environment_map.xml"),
+            None => (Self::packs_database(e), "the packs' variation database"),
         };
 
-        let p = Path::new(&g[..at + 10]).join("warscape_asset_variation_db").join("environment_map.xml");
-        let loaded = std::fs::read(&p)
-            .map_err(|_| format!("cannot read {}", p.display()))
-            .and_then(|b| AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&b)).map_err(|err| err.to_string()));
         match loaded {
             Ok(db) => {
-                self.status = format!("{} environment files", db.entries().first().map_or(0, |entry| entry.variations().len()));
+                let files = db.entry("environment").map_or(0, |entry| entry.variations().len());
+                self.status = format!("{files} environment files ({source})");
                 self.env = Some(db);
             }
 
-            Err(err) => self.status = format!("environment_map.xml: {err}"),
+            Err(err) => {
+                self.status = format!("{source}: {err}");
+                self.env = None;
+            }
         }
+    }
+
+    /// The environment_map.xml of the kit around the tile; `None` when the tile is in no kit or the kit has none.
+    fn kit_environment_map(tile_dir: &Path) -> Option<Result<AssetVariationDb, String>> {
+        let g = tile_dir.display().to_string().replace('\\', "/");
+        let at = g.find("/raw_data/")?;
+        let p = Path::new(&g[..at + 10]).join("warscape_asset_variation_db").join("environment_map.xml");
+        let bytes = std::fs::read(&p).ok()?;
+        Some(AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&bytes)).map_err(|err| err.to_string()))
+    }
+
+    /// The variation database the game uses: the winning pack's .bin.
+    fn packs_database(e: &Editor) -> Result<AssetVariationDb, String> {
+        let vfs = e.vfs().ok_or("the game packs are not mounted")?;
+        let bytes = vfs.read(PACKS_DB).map_err(|err| format!("{PACKS_DB}: {err}"))?;
+        AssetVariationDb::decode(&mut Cursor::new(bytes), &None).map_err(|err| format!("{PACKS_DB}: {err}"))
     }
 
     /// The files the game picks under the filters that hold the search's words, and whether the game asked again with `default_map`.
