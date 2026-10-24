@@ -8,8 +8,9 @@
 //!   the terrain. The result is in the piece's own frame: its origin on the centre line at its start, at the level there, x along the
 //!   wall's direction there, so the meshes keep the base's size and precision.
 //!
-//! - **Step sections** ([`SlabWarp`]): the culture's step piece's stair section, brought in over the step's length, its rise made the
-//!   step's; it replaces the base there (8 m) or is added to the base's sloped wall (15 m: the bastion's wooden stair).
+//! - **Step sections** ([`SlabWarp`]): the start of the culture's step piece's stair, as much of it as the step rises (at its own slope
+//!   and size; lengthened along the wall when the step is longer), brought in over the step's length; it replaces the base's walkway and
+//!   palisade there (8 m: the base's bank stays, sloped) or is laid on the base's gently sloped walkway (15 m: the bastion's wooden stair).
 
 use crate::building::{BuildingFiles, is_piece_mesh};
 use crate::profile::Profile;
@@ -462,8 +463,13 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
 
         let up = st.to >= st.from;
         let Some(files) = (if up { sources.up } else { sources.down }) else { continue };
-        let (x, walk) = if up { (profile.slab_up, profile.slab_walk.0) } else { (profile.slab_down, profile.slab_walk.1) };
-        let own_rise = if up { profile.step_rise } else { -profile.step_rise };
+        let (full, walk) = if up { (profile.slab_up, profile.slab_walk.0) } else { (profile.slab_down, profile.slab_walk.1) };
+
+        // The start of the stair, as much of it as the step rises: its own slope and size (lengthened along the wall when the step is
+        // longer, never squashed in height).
+        let frac = ((st.to - st.from).abs() / profile.step_rise).min(1.0);
+        let x = (full.0, full.0 + (full.1 - full.0) * frac);
+        let own_rise = st.to - st.from;
         let len = st.s.1 - st.s.0;
         let to_part = |s: f64| (x.0 + (s - st.s.0) / len.max(1e-9) * (x.1 - x.0)) as f32;
         let walk_at = |px: f32| (walk + own_rise * ((f64::from(px) - x.0) / (x.1 - x.0).max(1e-9))) as f32;

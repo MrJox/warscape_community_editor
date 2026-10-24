@@ -31,13 +31,22 @@ pub struct Profile {
     /// The footprint across the wall (z), the outer side first.
     pub depth: (f64, f64),
 
-    /// What one step section rises (always exactly: nothing is stretched vertically), and how long it is along the wall (8 m: one stair of
-    /// the step piece, 2.5 over 3; 15 m: the whole stepped bastion, 10 over 20).
+    /// The most one stair rises, and its length along the wall at its own slope (8 m: one stair of the step piece, 2.5 over 3; 15 m: the
+    /// stepped bastion's wooden stair, 10 over 12). A step of a smaller rise uses the start of the stair, at its own slope and size (cut,
+    /// never squashed); larger rises chain stairs.
     pub step_rise: f64,
     pub step_run: f64,
 
-    /// Between two chained step sections, flat (the 8 m step piece has 10 between its two ramps).
+    /// Between two chained step sections, flat.
     pub step_gap: f64,
+
+    /// The steepest the wall itself may slope over a step (rise per unit along the wall): 8 m walls follow their stair's own slope (only
+    /// the grass bank slopes, the stair replaces the walkway and palisade); 15 m walls keep the stone gentle and the stair is lengthened
+    /// to it.
+    pub max_slope: f64,
+
+    /// The shortest flat run between two steps (no pile-ups).
+    pub min_run: f64,
 
     /// The foot: below `foot.1` the mesh stretches so its bottom (`foot.0`) reaches `bury` under the terrain where the terrain is lower
     /// than the piece's level (8 m: the buried 2 m under y = 0; 15 m: the bottom 2 m of the plinth, which stands on y = 0).
@@ -82,7 +91,9 @@ const EIGHT: Profile = Profile {
     depth: (-3.0, 12.0),
     step_rise: 2.5,
     step_run: 3.0,
-    step_gap: 1.0,
+    step_gap: 2.0,
+    max_slope: 2.5 / 3.0,
+    min_run: 10.0,
     foot: (-2.0, 0.0),
     bury: 2.0,
     step_up: "",
@@ -105,18 +116,20 @@ const FIFTEEN: Profile = Profile {
     outer_face: 0.0,
     depth: (-6.0, 16.0),
     step_rise: 10.0,
-    step_run: 20.0,
-    step_gap: 0.0,
+    step_run: 12.0,
+    step_gap: 4.0,
+    max_slope: 0.4,
+    min_run: 20.0,
     foot: (0.0, 2.0),
     bury: 0.5,
     step_up: "",
     step_down: "",
-    slab_up: (-10.0, 10.0),
-    slab_down: (-10.0, 10.0),
+    slab_up: (-5.8, 6.2),
+    slab_down: (-6.2, 5.8),
     slab_walk: (15.0, 25.0),
-    slab_zy: None,
-    step_replaces: true,
-    slab_band: None,
+    slab_zy: Some(((5.1, 8.9), (14.0, 26.5))),
+    step_replaces: false,
+    slab_band: Some(0.9),
     door: "",
     door_at: (0.0, 13.0),
 };

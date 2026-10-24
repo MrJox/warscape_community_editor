@@ -339,8 +339,18 @@ the game sees (0, 2, 3, 4).
 - **Broken bank behind 8 m stairs**: the stair splice took the step piece's whole cross-section over 3 units of its 20, and its bank (shaped
   over its whole length) matched neither side. Now only its walkway and palisade (z -3.5..3) come in; the straight's own bank stays,
   sloped over the stair (grass).
-- **Steps** are an open question: the user's earlier complaint was not inclined textures but local warping where the stairs were. To
-  decide with the user.
+- **Steps: option B** (user's choice; the earlier complaint was local warping at the stairs, not slope). The phase 4 warping came from the
+  stair being squashed to the rise (a 2.5 stair into ~1 m), from 15 m chains piling up (each small rise took a full stair), and from the
+  stair and the wall around it being sheared differently. Now:
+  - a step uses the start of its stair, as much of it as it rises, at its own slope and size: cut, never squashed (`steps_in`: the
+    stair's x range shortened to the rise's share of the stair's rise); a rise over one stair chains stairs, the rise shared equally;
+  - the wall slopes over a step at most `max_slope` (8 m: the stair's own slope, 2.5 / 3: only its grass bank slopes, the stair replaces
+    walkway and palisade; 15 m: 0.4, the stone ramping gently, the bastion's wooden stair laid on it, lengthened along the wall to the
+    ramp but never in height): `solver::step_length`;
+  - runs between steps are at least `min_run` long (8 m 10, 15 m 20 units): no pile-ups; levels any height again (runs at the ground
+    within the tolerance).
+  Points only move vertically on a slope, so verticals stay vertical (merlons, posts). Rendered on the desert hills: clean stairs on
+  both families; a thin dark sliver at the bottom edge of one 8 m stair remains to look at.
 
 ## To confirm
 
