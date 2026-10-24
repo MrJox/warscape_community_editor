@@ -48,8 +48,8 @@ From `models2.pack`, `rigidmodels/buildings/barbarian_fort_{straight,step_up_a,s
   15..18 to 13 m, flat 18..20; the ramps are about 40 degrees (2.5 m over 3 m) and the bank is cut into triangles that follow them. **The
   stairs are only visual**: the pathfinding surface is a slope.
 - **No pipes, no docking lines, docking points 0** in the logic files of all three (the docking lines are in the database, see "The
-  `models_building` row"). **ASSUMPTION**: pieces join because their platforms meet at the ends (x = 0 and x = 20). Check in game: a
-  generated run, units walking from one generated piece to the next and onto a vanilla gate.
+  `models_building` row"). Pieces join because their platforms meet at the ends (x = 0 and x = 20): confirmed in game (phase 0), units
+  walk from a bent piece onto vanilla neighbours.
 - **Firing lines (`ef_lines`)**: per metre a `HighWall` line on the walkway (0.5 m long, facing -z) and two `Overflow` lines (60 in the
   intact straight, 58 damaged, 0 destroyed).
 - **Collision outlines**: `hard01` (the palisade's footprint, a quad at z -1.8..-2.8; the damaged level's is ragged), `ground_ad` (a line at
@@ -189,8 +189,10 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    under new keys into a test pack: same files, a translated and slightly bent logic file, DB rows. Place them in a test tile and check in
    game: units walk onto them (the bank, the doors) and on to a vanilla neighbour, ladders and a tower dock, they breach. That settles the
    **ASSUMPTIONS** above before anything depends on them.
-   **Status (2026-10-24): the pack is made; in game (user, 2026-10-24) the copies and both bent runs load and look right on Edoras and
-   Dale. The gameplay checks below are next.** `cargo run --release -p wce_walls --example wall_spike --
+   **Status (2026-10-24): done.** In game (user, 2026-10-24, Edoras and Dale): the copies and both bent runs load, look right and work
+   (units on them and across the joints with vanilla pieces, breaching). So pieces join by their platforms meeting, and a generated
+   building's levels swap with no collapse. **Not tested: ladders and towers docking** (the bent pieces' split docking lines): it needs the
+   tile's siege AI set up, so it is checked with the SiegeAI generator. `cargo run --release -p wce_walls --example wall_spike --
    <game> <rpfm schema_att.ron> <out.pack> --mods <wce.ini's mod_packs>` writes `wce_spike_wall8_copy` / `_bent` and
    `wce_spike_wall15_copy` / `_bent` (bent 10 degrees about their start, no collapses) with their `battlefield_buildings` and
    `models_building` rows. In the editor (overlay of the pack's files, `terrain_rugged_hills_desert/1x1/aa`) a vanilla straight, the bent
