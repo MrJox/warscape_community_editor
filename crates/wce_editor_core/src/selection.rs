@@ -69,8 +69,16 @@ impl Selection {
         }
     }
 
-    /// The scene entities that show the selected items.
+    /// The scene entities that show the selected items, in the scene's order: one pass over the entities (the viewport asks every frame, and
+    /// a selection of hundreds of items looked up one by one cost milliseconds on a large tile).
     pub fn entities(&self, scene: &RenderScene) -> Vec<EntityId> {
-        self.items.iter().flat_map(|&r| scene.entities_of(r)).collect()
+        match self.items.as_slice() {
+            [] => vec![],
+            &[r] => scene.entities_of(r),
+            items => {
+                let wanted = items.iter().copied().collect::<std::collections::HashSet<_>>();
+                scene.entities().iter().filter(|e| wanted.contains(&e.source)).map(|e| e.id).collect()
+            }
+        }
     }
 }
