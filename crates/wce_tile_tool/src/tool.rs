@@ -1,11 +1,10 @@
 //! The tool: documents, the mouse and the keys in the viewport, the per-frame update, and the Tile and Tiles panels.
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 use wce_editor::editor::Editor;
 use wce_editor::{gui, settings_window, theme};
 use wce_editor::steam_detect::file_dialog;
@@ -22,7 +21,6 @@ use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
-use wce_vfs::normalize;
 
 use crate::settings::{SETTINGS_ID, TileSettings};
 
@@ -171,10 +169,8 @@ pub struct TileTool {
     /// The kit index's rows, shared as the packs' are (copied when the index changes).
     browse_kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
 
-    // Weather picker (data only: which .environment file the game picks for this map).
-    env: Option<AssetVariationDb>,
-    wq: BTreeMap<String, String>,
-    env_status: String,
+    /// The Weather section (which environment file lights the tile).
+    pub(crate) weather: crate::weather_panel::WeatherUi,
 
     /// The Map context section (the tiles around the open one).
     pub(crate) context: crate::context_panel::ContextUi,
@@ -197,9 +193,8 @@ impl Default for TileTool {
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
-            browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(), env: None,
-            wq: BTreeMap::from([("map".to_owned(), "default_map".to_owned())]), env_status: String::new(), context: Default::default(),
-            exported_game: None, browse_packs: None,
+            browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
+            weather: Default::default(), context: Default::default(), exported_game: None, browse_packs: None,
         }
     }
 }
@@ -392,9 +387,9 @@ impl TileTool {
     }
 
     /// The game's tile data for exported tiles (the packs' databases, buildings and models, the kit's vegetation parameters), read on first
-    /// use from the game folder (`game_dir`).
+    /// use from the game folder.
     fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
-        let dir = e.settings().get("game_dir", Some("WCE_GAME")).ok_or("no game folder (setup <game folder>)")?;
+        let dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
         if let Some(g) = self.exported_game.as_ref().filter(|g| g.dir == Path::new(&dir)) {
             return Ok(g.clone());
         }
@@ -465,9 +460,11 @@ impl TileTool {
         Ok(format!("{rows} tiles in the source"))
     }
 
-    /// Where opened exported tiles are decompiled to: `tile_workspace` in wce.ini, else `<settings folder>/tile_workspace`.
+    /// Where opened exported tiles are decompiled to: `$WCE_TILE_WORKSPACE`, else the settings' `workspace`, else `<data folder>/tile_workspace`.
     pub fn workspace_dir(e: &mut Editor) -> PathBuf {
-        e.settings().get("tile_workspace", Some("WCE_TILE_WORKSPACE")).map_or_else(|| wce_foundation::settings::Settings::default_dir().join("tile_workspace"), PathBuf::from)
+        env_value("WCE_TILE_WORKSPACE").map(PathBuf::from)
+            .or_else(|| e.tool_settings::<TileSettings>(SETTINGS_ID).workspace)
+            .unwrap_or_else(|| e.settings_ref().paths().data_dir().join("tile_workspace"))
     }
 
     /// Opens an exported tile: a folder on disk (`.../terrain/tiles/<kind>/.../<variation>`) or the packs' (`terrain/tiles/...`). It is
@@ -540,29 +537,6 @@ impl TileTool {
         let tile = Path::new(dir);
         let path = if tile.is_dir() { tile.join("tile.ted") } else { tile.to_path_buf() };
         e.open_path_from(self, &path.display().to_string(), false, true)
-    }
-
-    /// The kit's environment_map.xml: which environment file the game picks for this tile's map.
-    fn load_environment_map(&mut self, tile_dir: &Path) {
-        self.env = None;
-        let g = tile_dir.display().to_string().replace('\\', "/");
-        let Some(at) = g.find("/raw_data/") else {
-            self.env_status = "no raw_data folder in the tile path".to_owned();
-            return;
-        };
-
-        let p = Path::new(&g[..at + 10]).join("warscape_asset_variation_db").join("environment_map.xml");
-        let loaded = std::fs::read(&p)
-            .map_err(|_| format!("cannot read {}", p.display()))
-            .and_then(|b| AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&b)).map_err(|err| err.to_string()));
-        match loaded {
-            Ok(db) => {
-                self.env_status = format!("{} environment files", db.entries().first().map_or(0, |entry| entry.variations().len()));
-                self.env = Some(db);
-            }
-
-            Err(err) => self.env_status = format!("environment_map.xml: {err}"),
-        }
     }
 
     fn handle_size(e: &Editor) -> f32 {
@@ -937,7 +911,7 @@ impl TileTool {
         gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
-        self.draw_weather_panel(e);
+        self.weather.draw(e);
         if !self.status.is_empty() {
             gui::separator();
             gui::text_wrapped(&self.status);
@@ -1515,114 +1489,6 @@ impl TileTool {
         }
     }
 
-    fn draw_weather_panel(&mut self, e: &mut Editor) {
-        if !gui::collapsing_header("Weather / climate (which environment the game picks)", 0) {
-            return;
-        }
-
-        // "Preview this weather on this tile": any open .environment / .lighting file lights the tile, live while it is edited.
-        let now = e.weather_preview();
-        let shown = (now != 0).then(|| e.docs.find(now).map(|d| d.title())).flatten();
-        gui::set_next_item_width(300.0);
-        if gui::begin_combo("preview weather", shown.as_deref().unwrap_or("(none: default light)")) {
-            if gui::selectable("(none: default light)", shown.is_none(), 0) {
-                let _ = e.set_weather_preview(0);
-            }
-
-            for id in e.docs.order().to_vec() {
-                let Some(o) = e.docs.find(id).filter(|o| o.environment().is_some()) else { continue };
-                if gui::selectable(&format!("{}##pv{id}", o.title()), id == now, 0) {
-                    let _ = e.set_weather_preview(id);
-                }
-            }
-
-            gui::end_combo();
-        }
-
-        gui::text_disabled("Open a weather file (Assets, or the Weather tool) to list it here. Double-click a file below to open and preview it.");
-        let Some(env) = &self.env else {
-            gui::text_disabled(&self.env_status);
-            return;
-        };
-
-        for (label, category) in [
-            ("map", "map"), ("climate", "climate"), ("season", "season"), ("climate change", "climate_change_index"), ("precipitation", "precipitation"),
-            ("time of day", "time_of_day"), ("battle type", "battle_types"), ("snow attrition", "snow_attrition"),
-        ] {
-            let value = self.wq.entry(category.to_owned()).or_default();
-            let vals = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
-            if gui::begin_combo(label, if value.is_empty() { "(any)" } else { value }) {
-                if gui::selectable("(any)", value.is_empty(), 0) {
-                    value.clear();
-                }
-
-                for v in &vals {
-                    if gui::selectable(v, v == value, 0) {
-                        *value = v.clone();
-                    }
-                }
-
-                gui::end_combo();
-            }
-        }
-
-        let query = self.wq.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
-        let res = env.matches_listed_map("environment", &query);
-        let m = &res.variations;
-        gui::text(&format!(
-            "{} matching files{}, each picked with probability 1/{}", m.len(), if res.used_default_map { " (after the default_map retry)" } else { "" }, m.len().max(1),
-        ));
-        gui::begin_child("envlist", gui::v2(0.0, 140.0), gui::CHILD_BORDERS, 0);
-        let mut open = None;
-        for c in m {
-            let file = c.filename();
-            if gui::selectable(file, false, gui::SELECTABLE_ALLOW_DOUBLE_CLICK) && gui::is_mouse_double_clicked(0) {
-                open = Some(file.clone());
-            }
-        }
-
-        gui::end_child();
-        if let Some(file) = open {
-            let key = normalize(&file);
-
-            // The tile stays the document being edited.
-            let before = e.docs.active_id();
-            let mut found = e.docs.order().iter().copied().rfind(|&id| e.docs.find(id).is_some_and(|o| o.source_key() == key));
-            let mut msg = String::new();
-            if found.is_none() {
-                match e.open_path(&file, true, false) {
-                    Ok(m) => {
-                        msg = m;
-                        found = Some(e.docs.active_id());
-                    }
-
-                    Err(m) => msg = m,
-                }
-            }
-
-            let previewing = match found {
-                Some(id) => match e.set_weather_preview(id) {
-                    Ok(m) => {
-                        msg = m;
-                        true
-                    }
-
-                    Err(m) => {
-                        msg = m;
-                        false
-                    }
-                },
-
-                None => false,
-            };
-
-            if before != 0 {
-                e.docs.set_active(before);
-            }
-
-            e.status(&msg, !previewing);
-        }
-    }
 }
 
 /// A browser row matches when every word is in its location, file name, set or variation names, in any case.
@@ -1691,6 +1557,11 @@ impl Tool for TileTool {
         settings_window::env_note("WCE_TILE_KITS");
         settings_window::help("The raw_data folders the tile browser lists; none: the assembly kits in the game folder.");
 
+        let default_workspace = draft.paths().data_dir().join("tile_workspace").display().to_string();
+        settings_window::folder_field("Workspace", &mut s.workspace, &default_workspace);
+        settings_window::env_note("WCE_TILE_WORKSPACE");
+        settings_window::help("Exported tiles you open are decompiled here into TEd projects (your files: not a cache).");
+
         gui::separator_text("New tiles");
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the sea at 0 m", &mut s.show_sea);
@@ -1740,19 +1611,26 @@ impl Tool for TileTool {
     }
 
     fn update(&mut self, e: &mut Editor) {
-        let Some(id) = document_id(e) else { return };
+        let Some(id) = document_id(e) else {
+            // The last tile closed: its weather goes with it.
+            if self.camera_set_for != 0 {
+                self.camera_set_for = 0;
+                let _ = e.set_weather_preview(None);
+            }
 
-        // A new tile: frame it, and read the environment map of its kit.
+            return;
+        };
+
+        // A new tile: frame it, and light it with its weather.
         if self.camera_set_for != id {
             self.camera_set_for = id;
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
-            let dir = d.project().dir.clone();
             if !e.viewport.is_fly() {
                 e.viewport.orbit_mut().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32));
             }
 
-            self.load_environment_map(&dir);
+            self.weather.tile_changed(e, id);
             self.poly_point = None;
             self.drawing = false;
             self.grabbing = false;

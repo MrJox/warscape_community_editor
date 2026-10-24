@@ -19,7 +19,7 @@ and the Tile menu's "Open exported tile..." / "Save as exported tile").
 `terrain/tiles/<kind>/.../<variation>`) is read (`attila.tile_binary`), decompiled (docs/formats/tile_decompile.md) and written as a TEd
 project into the workspace, a kit-like tree: `<workspace>/raw_data/<folder>` and the entry in
 `<workspace>/raw_data/terrain/tiles/<kind>/_tile_database/TILES`, with the kit's `_settings.xml` next to it. The editor then opens it
-like a kit tile. The workspace is `tile_workspace` in wce.ini, else `<settings folder>/tile_workspace`. The decompile's notes go to the
+like a kit tile. The workspace is `workspace` in the settings' `[tools.tile]` (or `$WCE_TILE_WORKSPACE`), else `<data folder>/tile_workspace` (see "Settings and first run" in docs/editor.md). The decompile's notes go to the
 log.
 
 ## Saving

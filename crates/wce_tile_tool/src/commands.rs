@@ -313,7 +313,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "open_exported", "open_exported <exported tile folder | terrain/tiles/... in the packs> [workspace folder] [--fresh]",
-        "open an exported tile: decompile it into a TEd project in the workspace (tile_workspace in wce.ini) and open that; a pack tile \
+        "open an exported tile: decompile it into a TEd project in the workspace (the Tile settings' workspace) and open that; a pack tile \
          decompiled before opens the workspace's copy unless --fresh",
         |e, a| {
             let fresh = a.iter().any(|x| x == "--fresh");
@@ -1474,6 +1474,40 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.tile_mut().display_mut().show_water = w == "on";
         d.tile_mut().display_changed();
         ok("")
+    });
+
+    c.add(
+        "tile_weather", "tile_weather [file | none]",
+        "light the open tile with an environment file of the packs (none: the default light), kept for the tile in the settings; no file: log the files the game picks under the filters and the search",
+        |e, a| {
+            let file = a.first().cloned();
+            with_tile(e, |t, e| match file.as_deref() {
+                None => {
+                    let (files, _) = t.weather.matching();
+                    ok(format!("{} files:\n{}", files.len(), files.join("\n")))
+                }
+                Some("none") => t.weather.set_file(e, "").map_or_else(fail, ok),
+                Some(f) => t.weather.set_file(e, f).map_or_else(fail, ok),
+            })
+        },
+    );
+
+    c.add(
+        "tile_weather_filter", "tile_weather_filter <category> [value]",
+        "a filter of the open tile's weather list (an environment_map.xml category: map, climate, season, climate_change_index, precipitation, time_of_day, battle_types, snow_attrition); no value: any",
+        |e, a| {
+            let Some(category) = a.first().cloned() else { return fail("usage: tile_weather_filter <category> [value]") };
+            let value = a.get(1).cloned().unwrap_or_default();
+            with_tile(e, |t, e| t.weather.set_filter(e, &category, &value).map_or_else(fail, |()| ok("")))
+        },
+    );
+
+    c.add("tile_weather_search", "tile_weather_search [words]", "the words (and-ed) the files of the open tile's weather list must hold; none: every file", |e, a| {
+        let words = a.join(" ");
+        with_tile(e, |t, _| {
+            t.weather.set_search(&words);
+            ok("")
+        })
     });
 
     c.add("tile_sea", "tile_sea on|off", "show or hide the sea at 0 m (the tile's plane and the map context's sea; kept in the settings)", |e, a| {

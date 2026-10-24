@@ -97,7 +97,7 @@ if [ "$RENDER" = 1 ]; then
     run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
     run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
     run tile_entry_script env WCE_BIN="$WB" bash "$ROOT/scripts/tile_entry_run.sh" "$OUT/tile_entry_script"   # the tile tool opens tiles by entry, name, folder and tile.ted; assert_entry; the tile browser's rows
-    run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile and a weather file open at once, the weather previewed on the tile, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
+    run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile lit by a weather file of the packs, then that file open at once and edited live, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
     run render_check  ex wce_render render_check   # scene, picking, terrain, overlays and capture through a headless D3D11 device
 fi
 

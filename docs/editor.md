@@ -106,15 +106,15 @@ switches to that tool (`open_path(..., switch_tool = false)` does not); `activat
 
 | What | How |
 |---|---|
-| Preview this weather on this tile | An `.environment` / `.lighting` document says what it would light the scene with (`Document::environment`). `Editor::set_weather_preview(id)` (command `preview_weather <doc\|none>`, Outliner context menu, the combo in the Tile panel's Weather section, a double-click on a candidate of the tile's weather picker) lights the scene of every tool but the weather tool with it, live while the file is edited (`Editor::update_lighting`, after the tool's `update`). Without a preview the scene has the default light as before. The weather tool keeps lighting its own scene with the last active weather file (`Tool::lights_scene`). The preview ends when the document closes. |
+| A tile's weather | `Editor::set_weather_preview(path)` lights the scene of every tool but the weather tool with an `.environment` / `.lighting` file read from the packs, so no tool needs the Weather tool for it. While a document of the same file is open (the Weather tool's), the scene is lit by that document instead (`Document::environment`), live while it is edited (`Editor::update_lighting`, after the tool's `update`); closing it goes back to the file of the packs. Without a preview the scene has the default light. The weather tool keeps lighting its own scene with the last active weather file (`Tool::lights_scene`). The Tile tool owns the choice (`weather_panel.rs`): its Weather section lists the files the kit's environment_map.xml picks under the filters (map, climate, season, ...), searchable by words; a click lights the tile, the context menu opens the file in its tool when one is built in. Each tile remembers its file and filters in `[tools.tile] weathers` (by the tile's folder); a new tile starts with the climate and season of its terrain look and the default light. Commands: `tile_weather [file\|none]`, `tile_weather_filter <category> [value]`, `tile_weather_search [words]`. |
 | Stand-in scene | The weather tool's sample map is `stand_in()`; a tile is `shows_scene()`. The document manager hides the stand-in when the first tile opens and shows it again when the last one closes (your own eye toggles in between stay). The weather tool does not move the camera or make a sample map while a tile is open. |
 | Save All | File > Save all (Ctrl+Shift+S; the count of unsaved documents is in the label), the Outliner button, `save_all`: every modified document is saved in place by its own `save` (the weather file as a loose file under the output folder, the tile as `tile.ted` / `height_map_0.png` with a one-time `.bak`), each only in the edited spans. A failing document is reported and the others are still saved. |
 | Dirty markers | `*` after the title and the amber colour in the Outliner, in the File menu's Save all count and in the unsaved-changes prompt. |
 | Close prompts | File > Close document / Close all documents, the Outliner's *Close*, File > Quit and the window's close button ask when something is unsaved: **Save** (and close), **Discard** (close without saving), **Cancel**. If a save fails nothing closes and the prompt says why. Scripts: `close [doc] save\|discard`, `close_all save\|discard` (they fail with unsaved changes and no answer), `close_prompt`, `quit_prompt` open the prompt like the menu and `answer save\|discard\|cancel` answers it; `quit` leaves at once, as scripts expect. |
-| Outliner | The documents of all tools are listed together: `[Tool] title *`, the checkbox is the document's layer visibility (`layer_visible <doc> 0\|1`), the context menu has Save, Close, Edit in its tool, Preview / Stop previewing this weather, Show only this document, Show all documents. |
+| Outliner | The documents of all tools are listed together: `[Tool] title *`, the checkbox is the document's layer visibility (`layer_visible <doc> 0\|1`), the context menu has Save, Close, Edit in its tool, Show only this document, Show all documents; the document lighting the scene says "(weather preview)". |
 | Test commands | `expect_fail <command...>`, `documents`, `activate`, `assert_preview`, `assert_prompt none\|close\|quit [N]`, `assert_layer_visible`. |
 
-Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile and `med_sp_land_day_dry.environment` open at once, the weather previewed on the tile (the capture differs, follows an edit, equals the default light again with `preview_weather none` and after the document closed), one edit in each, the prompts
+Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile and `med_sp_land_day_dry.environment` open at once, the tile lit by the file of the packs, then by the open document (the capture differs, follows an edit, equals the default light again with `tile_weather none`, and the file of the packs lights it again after the document closed), one edit in each, the prompts
 (close and quit, cancel, discard), Save All, and then `scripts/span_diff.py` shows that the saved `.environment` differs from the pack file in exactly the one value, `tile.ted` in exactly one span inside one tag, every other file of the tile is untouched and the `.bak` is the original; two runs write the same bytes and captures.
 
 ## Layouts
@@ -130,10 +130,11 @@ ImGui runs with docking and no ini file. Each tool has its own layout file `<con
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | config (`settings.toml`, `layouts/`) | `~/.config/wce` | `%LOCALAPPDATA%\wce\config` | `~/Library/Application Support/wce` |
+| data, the user's files (`tile_workspace/`) | `~/.local/share/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
 | cache (`map_context/`, `tile_index/`) | `~/.cache/wce` | `%LOCALAPPDATA%\wce\cache` | `~/Library/Caches/wce` |
 | log (`last_run.log`) | `~/.local/state/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
 
-`$WCE_SETTINGS_DIR` puts everything in one folder instead (settings and log in it, caches in its `cache` folder): the scripts run with a throw-away copy that
+`$WCE_SETTINGS_DIR` puts everything in one folder instead (settings, data and log in it, caches in its `cache` folder): the scripts run with a throw-away copy that
 way. `$WCE_CACHE_DIR` moves the caches alone.
 
 `settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `output_dir`, `game` (the game being
@@ -150,6 +151,7 @@ file and is never written back:
 | output folder | `WCE_OUTPUT_DIR` |
 | frame cap | `WCE_FRAME_CAP` |
 | Tile: tile kits | `WCE_TILE_KITS` (`;` separated) |
+| Tile: workspace of decompiled tiles | `WCE_TILE_WORKSPACE` |
 
 Until the first release, a missing `settings.toml` is filled from the old `key=value` `wce.ini` (in the same folder, or in `~/.local/share/awe` /
 `%LOCALAPPDATA%\awe`) and its layouts are copied; the old folder is left alone (`settings/legacy.rs`, to be removed).

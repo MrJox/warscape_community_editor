@@ -8,5 +8,6 @@ pub mod context_panel;
 pub mod scene_panel;
 pub mod settings;
 pub mod tool;
+pub mod weather_panel;
 
 pub use tool::TileTool;

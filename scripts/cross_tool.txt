@@ -1,4 +1,5 @@
-# Cross-tool composition (Phase 7): a tile and a weather file open at once, the weather previewed on the tile, one edit in each, unsaved-changes prompts, Save All.
+# Cross-tool composition (Phase 7): a tile lit by a weather file of the packs (no weather document needed), then the same file open in the weather tool
+# lighting the tile live while it is edited, one edit in each document, unsaved-changes prompts, Save All.
 # Run by scripts/cross_tool_check.sh (%TILE% is a copy of a kit tile, %OUT% a folder for the captures and the loose files).
 output_dir "%OUT%/saved" temp
 
@@ -14,6 +15,17 @@ assert_layer_visible sample_map 0
 assert_layer_visible tile 1
 capture 640x360 "%OUT%/tile_default.png" 6
 
+# the tile's own weather: a file of the packs, read without the weather tool
+expect_fail tile_weather weather/charlemagne/no_such_file.environment
+assert_preview none
+tile_weather weather/charlemagne/med_sp_land_day_dry.environment
+assert_preview weather/charlemagne/med_sp_land_day_dry.environment
+frames 3
+assert_env sun_elevation 26
+tile_weather none
+assert_preview none
+frames 3
+
 # a weather file opens next to it (the weather tool takes over); back in the tile tool it is a document of the same editor
 open "weather/charlemagne/med_sp_land_day_dry.environment"
 frames 3
@@ -26,11 +38,10 @@ assert_tool tile
 documents
 expect_fail assert_env sun_elevation 26
 
-# Preview this weather on this tile: the tile is lit by the open environment, live while the file is edited
-expect_fail preview_weather tile
+# the same file open in the weather tool lights the tile live while it is edited
 assert_preview none
-preview_weather environment
-assert_preview environment
+tile_weather weather/charlemagne/med_sp_land_day_dry.environment
+assert_preview weather/charlemagne/med_sp_land_day_dry.environment
 frames 3
 assert_env sun_elevation 26
 capture 640x360 "%OUT%/tile_previewed.png" 6
@@ -40,11 +51,11 @@ frames 3
 assert_env sun_elevation 41
 assert_modified 1
 capture 640x360 "%OUT%/tile_edited_light.png" 6
-preview_weather none
+tile_weather none
 assert_preview none
 frames 3
 capture 640x360 "%OUT%/tile_none.png" 6
-preview_weather environment
+tile_weather weather/charlemagne/med_sp_land_day_dry.environment
 frames 3
 
 # one edit in the tile; every document knows its own state
@@ -90,19 +101,21 @@ assert_layer_visible tile 0
 layer_visible tile 1
 assert_layer_visible tile 1
 
-# the preview ends with the previewed document: close it with a discarded edit
-preview_weather none
+# closing the document (with a discarded edit) keeps the tile's weather: the file as the packs have it lights it again
+tile_weather none
 frames 3
 capture 640x360 "%OUT%/tile_moved_default.png" 6
-preview_weather environment
+tile_weather weather/charlemagne/med_sp_land_day_dry.environment
 frames 2
+assert_env sun_elevation 41
 activate environment
 edit_attr FOG fog_distance_start 0.8
 assert_modified 1
 close environment discard
 frames 3
 assert_documents 2
-assert_preview none
+assert_preview weather/charlemagne/med_sp_land_day_dry.environment
+assert_env sun_elevation 26
 capture 640x360 "%OUT%/tile_after_close.png" 6
 
 # the window's close button with an unsaved edit: the prompt, then discard (the tile on disk keeps what Save All wrote)

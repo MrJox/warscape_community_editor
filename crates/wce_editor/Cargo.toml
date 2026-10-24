@@ -12,6 +12,7 @@ dear-imguizmo-sys = "0.20"
 serde = "1"
 wce_d3d11 = { path = "../wce_d3d11" }
 wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
 wce_imgui = { path = "../wce_imgui" }
 wce_render = { path = "../wce_render" }

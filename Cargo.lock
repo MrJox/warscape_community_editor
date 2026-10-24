@@ -2160,6 +2160,7 @@ dependencies = [
  "serde",
  "wce_d3d11",
  "wce_editor_core",
+ "wce_formats",
  "wce_foundation",
  "wce_imgui",
  "wce_render",

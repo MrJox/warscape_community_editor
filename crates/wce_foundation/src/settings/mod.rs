@@ -38,13 +38,14 @@ fn env_list(name: &str) -> Option<Vec<String>> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Paths {
     config: PathBuf,
+    data: PathBuf,
     cache: PathBuf,
     logs: PathBuf,
 }
 
 impl Paths {
-    /// The system's folders for an app called "wce" (Linux: `~/.config/wce`, `~/.cache/wce`, `~/.local/state/wce`; Windows:
-    /// `%LOCALAPPDATA%\wce\config`, `...\cache`, `...\data`; macOS: `~/Library/Application Support/wce`, `~/Library/Caches/wce`), or
+    /// The system's folders for an app called "wce" (Linux: `~/.config/wce`, `~/.local/share/wce`, `~/.cache/wce`, `~/.local/state/wce`;
+    /// Windows: `%LOCALAPPDATA%\wce\config`, `...\data`, `...\cache`; macOS: `~/Library/Application Support/wce`, `~/Library/Caches/wce`), or
     /// everything under `$WCE_SETTINGS_DIR` (a portable or throw-away setup, see [`Self::in_dir`]). `$WCE_CACHE_DIR` moves the caches.
     pub fn standard() -> Self {
         let mut paths = match env_value("WCE_SETTINGS_DIR") {
@@ -52,6 +53,7 @@ impl Paths {
             None => match directories::ProjectDirs::from("", "", "wce") {
                 Some(p) => Self {
                     config: p.config_local_dir().to_path_buf(),
+                    data: p.data_local_dir().to_path_buf(),
                     cache: p.cache_dir().to_path_buf(),
                     logs: p.state_dir().unwrap_or_else(|| p.data_local_dir()).to_path_buf(),
                 },
@@ -68,14 +70,19 @@ impl Paths {
         paths
     }
 
-    /// Everything in one folder: the settings and the logs in it, the caches in its `cache` folder.
+    /// Everything in one folder: the settings, the user's files and the logs in it, the caches in its `cache` folder.
     pub fn in_dir(dir: &Path) -> Self {
-        Self { config: dir.to_path_buf(), cache: dir.join("cache"), logs: dir.to_path_buf() }
+        Self { config: dir.to_path_buf(), data: dir.to_path_buf(), cache: dir.join("cache"), logs: dir.to_path_buf() }
     }
 
     /// The folder of settings.toml and the tools' layouts.
     pub fn config_dir(&self) -> &Path {
         &self.config
+    }
+
+    /// The user's files the editor makes (the Tile tool's workspace of decompiled tiles): not to be deleted like a cache.
+    pub fn data_dir(&self) -> &Path {
+        &self.data
     }
 
     /// Files the editor can rebuild (indices, the map context's terrain).
