@@ -231,6 +231,25 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
      loads. Commands `wall_sharp`, `wall_info`, `assert_wall`; `scripts/tile_walls.txt` in `tile_check.sh`.
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the
    overlay.
+   **Status (2026-10-24): done.** As built:
+   - **Pieces** (`wce_walls::pieces`): between the ends and corners, a stretch is cut into `round(length / base length)` pieces (at least
+     one), one base each, scaled along x to fit (no multi-copy pieces: every piece is about the base's length, like the vanilla walls).
+   - **Warp** (`PieceWarp`): the base's x along the centre line by arc length, z across it, y over the layout's level; curves bend the
+     piece already (the general path warp; phase 3 adds the mitres). Step sections are, until phase 4, a shear of the mesh over the
+     ramp. Below the foot (`Profile::foot`: 8 m y -2..0, 15 m y 0..2) the mesh stretches so its bottom is `bury` (2 / 0.5) under lower
+     ground. The output is in the piece's own frame (origin on the centre line at its start, at the level there, x along the wall), so
+     the meshes keep the base's size and f16 precision.
+   - **Flip** lays the wall from its other end (a rotation of the pieces; a mirror would turn the meshes inside out).
+   - **Cuts** (`warp::Cuts`): triangles and platforms are cut along x as often as the tightest curve of the piece needs (a chord within
+     2 cm, 1 to 20 units apart) and at the step ramps' ends; the cut vertices are merged. A piece on a radius-40 S curve is 1.9 to 3
+     times its base (8 m: 1.6 to 2.6 MB against 0.85; 15 m: 2.3 to 3.7 against 1.3); straight pieces are about the base. Sharing pieces
+     between walls is the later cache step.
+   - **Full pieces** (`make_piece`): every level's standing meshes, the logic file and the zone file, collapses left out.
+     `cargo run --release -p wce_walls --example wall_generate_check -- <game> --mods <...>`: an S curve over a slope and a dip, both
+     families, generated twice (the same bytes), every firing line on a platform strip, every file reads back (35-75 ms per piece).
+   - **Preview** (`tile_document::walls`): the intact meshes of every piece, made 300 ms after the wall (or its ground, or what it is
+     attached to) last changed, kept in `wce_vfs::generated` (files in memory every `Files` reads first) under keys that change with each
+     remake, drawn as the wall's entities (a click selects the wall).
 3. **Bends and mitres:** the curve warp with subdivision, the corner shear, attachments to gates and bastions.
 4. **Steps:** splicing the step sections.
 5. **Export:** the pack, the DB rows, the compile reading generated buildings.

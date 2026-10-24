@@ -5,6 +5,7 @@
 //!   [`zones`]);
 //! - [`db`]: the base's database rows copied under the new key, with [`lines`]: the firing and docking lines the game keeps in them;
 //! - [`pack`]: the pack the generated buildings are written into;
+//! - [`pieces`]: a layout cut into pieces, each made from the base along the wall's path;
 //! - [`profile`]: what the generator knows of each base wall; [`solver`]: a wall's spline to its layout (centre line, corners, runs, steps).
 
 pub mod building;
@@ -13,6 +14,7 @@ pub mod lines;
 pub mod logic;
 pub mod mesh;
 pub mod pack;
+pub mod pieces;
 pub mod profile;
 pub mod solver;
 pub mod warp;

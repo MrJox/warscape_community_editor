@@ -15,7 +15,7 @@ use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, Encodeable};
 use serde_json::{Map, Value, json};
 
-use crate::warp::{Warp, newell, normalised, slice_along_x, subdivide, transform, turn};
+use crate::warp::{Cuts, Warp, newell, normalised, slice_along_x, subdivide, transform, turn};
 
 /// What warping a logic file did.
 #[derive(Clone, Debug, Default)]
@@ -30,12 +30,13 @@ pub struct LogicNotes {
     pub warnings: Vec<String>,
 }
 
-/// A logic file warped; long outlines get a point at least every `step` metres.
+/// A logic file warped; platforms are cut along x at `cuts`, long outlines get a point at least every `cuts.step`.
 ///
 /// # Errors
 ///
 /// The file doesn't read, or doesn't write back.
-pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, step: f32) -> Result<(Vec<u8>, LogicNotes), String> {
+pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>, LogicNotes), String> {
+    let step = cuts.step;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let mut notes = LogicNotes::default();
@@ -44,7 +45,7 @@ pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, step: f32) -> Result<(Vec<u8>, 
         let piece_name = piece["name"].as_str().unwrap_or_default().to_owned();
         for d in array_mut(piece, "destructs") {
             let name = d["name"].as_str().unwrap_or(&piece_name).to_owned();
-            let strips = warp_platforms(d, warp, step, &mut notes);
+            let strips = warp_platforms(d, warp, cuts, &mut notes);
             warp_lines(d, warp, &strips, &mut notes);
             for o in array_mut(d, "collision_outlines") {
                 warp_outline(&mut o["vertices"], warp, step);
@@ -128,14 +129,14 @@ struct Strip {
 }
 
 /// The platforms cut and warped; per original platform, its strips.
-fn warp_platforms(d: &mut Value, warp: &dyn Warp, step: f32, notes: &mut LogicNotes) -> Vec<Vec<Strip>> {
+fn warp_platforms(d: &mut Value, warp: &dyn Warp, cuts: &Cuts, notes: &mut LogicNotes) -> Vec<Vec<Strip>> {
     let old = d["platforms"].as_array().cloned().unwrap_or_default();
     let mut new = vec![];
     let mut strips = vec![];
     for p in &old {
         let points = outline(&p["vertices"]);
         let normal = p3(&p["normal"]);
-        let mut slabs = slice_along_x(&points, step);
+        let mut slabs = slice_along_x(&points, cuts);
         if slabs.is_empty() {
             slabs = vec![points.clone()];
         }

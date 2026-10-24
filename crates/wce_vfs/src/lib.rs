@@ -19,6 +19,7 @@ use rpfm_lib::games::supported_games::SupportedGames;
 pub use self::game_profile::{GameProfile, PackOrder, PackRef};
 
 pub mod files;
+pub mod generated;
 mod game_profile;
 
 /// Errors of the file system.

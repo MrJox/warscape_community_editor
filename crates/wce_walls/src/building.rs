@@ -38,6 +38,28 @@ impl BuildingFiles {
         Ok(Self { key: key.to_owned(), files })
     }
 
+    /// The folder of `key` through any of the editor's file sources.
+    ///
+    /// # Errors
+    ///
+    /// No file of the folder, or one doesn't read.
+    pub fn read_files(files: &dyn wce_vfs::files::Files, key: &str) -> Result<Self, String> {
+        let prefix = folder(key);
+        let mut out = BTreeMap::new();
+        for path in files.list(&prefix, "") {
+            let name = &path[prefix.len()..];
+            if !name.contains('/') {
+                out.insert(name.to_owned(), files.read(&path)?);
+            }
+        }
+
+        if out.is_empty() {
+            return Err(format!("no file under {prefix}"));
+        }
+
+        Ok(Self { key: key.to_owned(), files: out })
+    }
+
     /// The same files under another key: a file named after the key (`<key>_piece01_destruct01.rigid_model_v2`, `<key>_tech.cs2.parsed`)
     /// takes the new one. The contents are not changed: what they name (pieces, attached buildings) does not depend on the key.
     pub fn renamed(self, key: &str) -> Self {

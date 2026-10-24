@@ -6,14 +6,21 @@
 //! Units: the solver works in scene units (the models' units); the document's world is scene / unit on every axis, and the height map's
 //! metres are the scene's y.
 
-use wce_foundation::math::Float3;
-use wce_scene::render_scene::{Overlay, overlay_colour};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use wce_foundation::math::{Double3, Float3};
+use wce_scene::render_scene::{EntityId, MeshInstance, Overlay, Payload, RenderScene, overlay_colour};
 use wce_tile::properties::parse_bool;
-use wce_tile::world_transform::world_transform;
+use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
+use wce_walls::building::{BuildingFiles, folder};
+use wce_walls::pieces::{PieceWarp, make_piece, pieces};
 use wce_walls::profile::{Profile, profile};
 use wce_walls::solver::{Plan, WallInput, solve};
 
 use super::Tile;
+use super::index::matrix_of;
 
 /// The element name of a procedural wall.
 pub const WALL_SPLINE: &str = "WALL_SPLINE";
@@ -38,6 +45,20 @@ pub const ATTACH: f64 = 0.5;
 
 /// An end placed within this of a building's end is put on it (scene units).
 pub const SNAP: f64 = 8.0;
+
+/// How long a wall is left unchanged before its preview pieces are made again (dragging a point would otherwise remake them every frame).
+pub const PREVIEW_DELAY: Duration = Duration::from_millis(300);
+
+/// The preview pieces: each wall's entities and the files made for them (in `wce_vfs::generated`, under keys that change with every
+/// remake, so the model cache never shows an old one), the bases read once, the walls waiting to be remade.
+#[derive(Default)]
+pub(crate) struct WallPreview {
+    bases: HashMap<String, Option<Arc<BuildingFiles>>>,
+    entities: HashMap<usize, Vec<EntityId>>,
+    keys: HashMap<usize, Vec<String>>,
+    pending: HashMap<usize, Instant>,
+    revision: u64,
+}
 
 /// A fort building's end a wall can attach to: the building element and the end, in scene units (its y is the level the building
 /// stands on).
@@ -183,5 +204,116 @@ impl Tile {
             o.line(w(a.at[0], a.at[1] + 0.3, a.at[2] - r), w(a.at[0], a.at[1] + 0.3, a.at[2] + r), end);
             o.line(w(a.at[0], a.at[1], a.at[2]), w(a.at[0], a.at[1] + l.profile.walkway + 2.0, a.at[2]), end);
         }
+    }
+}
+
+impl Tile {
+    /// The wall changed (or its ground, or what it is attached to): its preview pieces are made again once it has been left alone for
+    /// [`PREVIEW_DELAY`].
+    pub(crate) fn wall_changed(&mut self, elem: usize) {
+        self.wall_preview.pending.insert(elem, Instant::now());
+    }
+
+    /// Every wall's preview is made again (the layer was cleared, or the ground changed).
+    pub(crate) fn walls_changed(&mut self) {
+        let walls = (0..self.tscene().doc().elements().len()).filter(|&e| self.is_wall(e)).collect::<Vec<_>>();
+        let now = Instant::now();
+        for e in walls {
+            self.wall_preview.pending.insert(e, now);
+        }
+    }
+
+    /// The preview entities are gone with the layer (and the walls' indices may have moved): every wall's preview is made again.
+    pub(crate) fn wall_preview_cleared(&mut self) {
+        self.wall_preview.entities.clear();
+        for key in self.wall_preview.keys.drain().flat_map(|(_, k)| k) {
+            wce_vfs::generated::remove_prefix(&folder(&key));
+        }
+
+        self.wall_preview.pending.clear();
+        self.walls_changed();
+    }
+
+    /// Per frame: makes again the previews of the walls left alone long enough.
+    pub(crate) fn update_wall_previews(&mut self, scene: &mut RenderScene) {
+        if self.wall_preview.pending.is_empty() || self.stroke_open {
+            return;
+        }
+
+        let now = Instant::now();
+        let due = self.wall_preview.pending.iter().filter(|(_, t)| now.duration_since(**t) >= PREVIEW_DELAY).map(|(e, _)| *e).collect::<Vec<_>>();
+        for e in due {
+            self.wall_preview.pending.remove(&e);
+            self.make_wall_preview(scene, e);
+        }
+    }
+
+    /// The base wall's files, read once.
+    fn wall_base(&mut self, key: &str) -> Option<Arc<BuildingFiles>> {
+        if let Some(b) = self.wall_preview.bases.get(key) {
+            return b.clone();
+        }
+
+        let read = self.files.as_deref().and_then(|f| match BuildingFiles::read_files(f, key) {
+            Ok(b) => Some(Arc::new(b)),
+            Err(err) => {
+                wce_foundation::log::warn(format!("wall preview: base {key}: {err}"));
+                None
+            }
+        });
+        self.wall_preview.bases.insert(key.to_owned(), read.clone());
+        read
+    }
+
+    /// The wall's preview pieces: its old ones removed, a piece per stretch of the layout made from the base (its intact meshes) and
+    /// drawn where it goes. A hidden wall (or one that is no longer a wall) has none.
+    fn make_wall_preview(&mut self, scene: &mut RenderScene, elem: usize) {
+        for id in self.wall_preview.entities.remove(&elem).unwrap_or_default() {
+            scene.remove(id);
+        }
+
+        for key in self.wall_preview.keys.remove(&elem).unwrap_or_default() {
+            wce_vfs::generated::remove_prefix(&folder(&key));
+        }
+
+        if !self.is_wall(elem) || !self.shown(elem) {
+            return;
+        }
+
+        let Some(layout) = self.wall_layout(elem) else { return };
+        let Some(base) = self.wall_base(layout.profile.key) else { return };
+        let u = self.unit();
+        let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
+        self.wall_preview.revision += 1;
+        let revision = self.wall_preview.revision;
+        let mut made = vec![];
+        for (i, piece) in pieces(&layout.plan, layout.profile).into_iter().enumerate() {
+            let key = format!("wce_preview_{elem}_{revision}_{i}");
+            let warp = PieceWarp { plan: &layout.plan, profile: layout.profile, piece, ground: &ground };
+            match make_piece(&base, &key, &warp, false, Some(1)) {
+                Ok(files) => made.push((key, piece, files)),
+                Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
+            }
+        }
+
+        let source = self.source(super::item_of(elem));
+        let mut ids = vec![];
+        let mut keys = vec![];
+        for (key, piece, files) in made {
+            let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
+            let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
+            for (path, bytes) in files.into_pack_files() {
+                let model = path.ends_with(".rigid_model_v2").then(|| path.clone());
+                wce_vfs::generated::put(&path, bytes);
+                if let Some(model) = model {
+                    ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source));
+                }
+            }
+
+            keys.push(key);
+        }
+
+        self.wall_preview.entities.insert(elem, ids);
+        self.wall_preview.keys.insert(elem, keys);
     }
 }
