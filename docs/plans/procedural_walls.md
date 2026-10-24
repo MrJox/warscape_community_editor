@@ -198,6 +198,13 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    x = -10), turned by the bend; the editor's orientation turns +x towards -z, so that is `orientation -10`.
    To check in game: units onto both bent pieces and across both joints (bank / doors), ladders and a tower on the bent pieces (the
    docking lines), a breach of a bent piece (its levels swap with no collapse), the copies behaving like the vanilla pieces.
+   The test maps: `cargo run --release -p wce_walls --example wall_test_maps -- <game> <wce_wall_spike.pack> <out.pack> <workspace>`
+   (with `XDG_CONFIG_HOME` at a folder whose `rpfm/schemas/schema_att.ron` rpfm_lib reads) decompiles `nordic_city_b/medium` (8 m) and
+   `western_city_b/medium` (15 m) from `tiles4.pack`, renames two of the base's instances in the ring to the copy, builds a run (vanilla
+   straight, bent piece, vanilla straight turned at its end) on free flat ground outside the ring, compiles, and packs the two tiles'
+   `building_list` with the spike pack. Only the building list: an unedited decompile and compile gives it back record for record (12 781
+   of 12 781), and the edited ones differ from CA's by exactly the two renamed and three added records; the other files would be our
+   compile's markers and terrain instead of CA's (the terrain fingerprint covers every building, though walls don't stamp it).
 1. **Model and editing:** the `WALL_SPLINE` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
    height profile drawn as lines (no meshes yet).
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the

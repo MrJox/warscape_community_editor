@@ -10,3 +10,8 @@ nalgebra = "0.35"
 rpfm_lib.workspace = true
 serde_json = "1"
 wce_vfs = { path = "../wce_vfs" }
+
+[dev-dependencies]
+wce_foundation = { path = "../wce_foundation" }
+wce_tile = { path = "../wce_tile" }
+wce_tile_io = { path = "../wce_tile_io" }
