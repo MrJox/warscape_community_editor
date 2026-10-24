@@ -763,7 +763,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "add_building", "add_building <key> [x m z m]",
-        "add a building (a copy of the selected or the first one, with this key) in the working layer, on the ground at x z when given",
+        "add a building (a copy of the selected or the first one, with this key) in the working layer, on the ground at x z when given; selects it",
         |e, a| {
             let el = primary(e);
             let Some(key) = a.first().cloned() else { return fail("usage: add_building <key> [x m z m]") };
@@ -771,7 +771,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let Some(d) = document(e) else { return no_tile() };
                 let at = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten().map(|(x, z)| Float3::new(x, d.tile().terrain_height(x, z), z));
                 let into = t.new_items_layer(d);
-                d.add_building_in(&key, el, at, Placement::Landscape, into).map_or_else(fail, |_| ok(format!("added {key}")))
+                match d.add_building_in(&key, el, at, Placement::Landscape, into) {
+                    Ok(added) => {
+                        select_elem(e, Some(added), false);
+                        ok(format!("added {key} as element {added}"))
+                    }
+                    Err(err) => fail(err),
+                }
             })
         },
     );
@@ -1648,9 +1654,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "tile_edit", "tile_edit <element> [piece <n>] <row> <value...>",
+        "tile_edit", "tile_edit <element | selected> [piece <n>] <row> <value...>",
         "edit one row of the Property Editor of an element (or of a building piece) as the panel would; the value is a number, true / false, text, `a,b,c`, a choice's number or name, or `Name=true` for check boxes", |e, a| {
-            let Some(el) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return fail("usage: tile_edit <element> [piece <n>] <row> <value...>") };
+            let selected = primary(e);
+            let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
+            let Some(el) = el else { return fail("usage: tile_edit <element | selected> [piece <n>] <row> <value...>") };
             let (item, rest) = match (a.get(1).map(String::as_str), a.get(2).and_then(|x| x.parse::<usize>().ok())) {
                 (Some("piece"), Some(k)) => (wce_tile_editor::tile_document::piece_item(el, k), &a[3..]),
                 _ => (wce_tile_editor::tile_document::item_of(el), &a[1..]),

@@ -73,7 +73,7 @@ with distance culling (vegetation 450 m, decals 300 m, others 3000 m, adjustable
 | Ctrl+Z / Ctrl+Y, Ctrl+S | shared (terrain strokes and instance edits share the document's one history) |
 | `Ctrl+D` duplicate, `Del` delete | same; `R` rotate is now **Ctrl+R** (Ctrl+Shift+R reverses) because `R` is the shared scale-gizmo key; step in the panel |
 | layers: right-click a layer (new layer, move selected here, rename, delete) | the **Scene** panel (below) |
-| building add by key | **Tile** panel: key + Add, `add_building <key> [x z]` |
+| building add by key | **Tile** panel: key + Add, `add_building <key> [x z]` (selects the new instance; `tile_edit selected ...` edits it) |
 | polygons / AI hints: draw, point handles, shift+click inserts, `Del` removes, hint combo, `area` recomputed | same (panel, mouse, Inspector's hint combo) |
 | weather picker (which environment the game picks for the map) | **weather chips** over the viewport (season, precipitation, time of day, climate; a value no file passes is greyed; a change lights the tile with the file lighting it if it still passes, else the first dry one without snow, else the first one); the file name opens the **Weather** panel (every filter, the searchable list of files); the pencil (`tile_weather_edit`) copies the file into the output folder and opens it in the Weather tool: the tile is lit by the copy and follows its edits, and Save writes it there (Cross-tool composition) |
 | inspector: position, euler, Drop to terrain, attributes | shared Inspector (position in scene units, euler in degrees, attributes read-only), Drop to terrain in the right-click and Edit menus |
