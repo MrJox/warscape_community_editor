@@ -189,7 +189,8 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    under new keys into a test pack: same files, a translated and slightly bent logic file, DB rows. Place them in a test tile and check in
    game: units walk onto them (the bank, the doors) and on to a vanilla neighbour, ladders and a tower dock, they breach. That settles the
    **ASSUMPTIONS** above before anything depends on them.
-   **Status (2026-10-24): the pack is made, the in-game check is the user's.** `cargo run --release -p wce_walls --example wall_spike --
+   **Status (2026-10-24): the pack is made; in game (user, 2026-10-24) the copies and both bent runs load and look right on Edoras and
+   Dale. The gameplay checks below are next.** `cargo run --release -p wce_walls --example wall_spike --
    <game> <rpfm schema_att.ron> <out.pack> --mods <wce.ini's mod_packs>` writes `wce_spike_wall8_copy` / `_bent` and
    `wce_spike_wall15_copy` / `_bent` (bent 10 degrees about their start, no collapses) with their `battlefield_buildings` and
    `models_building` rows. In the editor (overlay of the pack's files, `terrain_rugged_hills_desert/1x1/aa`) a vanilla straight, the bent
