@@ -80,7 +80,7 @@ pub fn check(l: &Layout) -> Report {
             continue;
         }
 
-        if edge.kind == EdgeKind::Wall {
+        if matches!(edge.kind, EdgeKind::Wall | EdgeKind::Palisade) {
             continue;
         }
 

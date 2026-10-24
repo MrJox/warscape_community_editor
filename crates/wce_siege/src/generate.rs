@@ -30,6 +30,24 @@ pub const PERIMETER_OUT: f64 = 12.0;
 /// A street longer than this gets areas along it (a guide: the AI takes long to walk long streets).
 pub const MAX_STREET: f64 = 300.0;
 
+/// A stretch of the perimeter at most this far from a wall edge is closed by the wall (CA's perimeter: ~14 out of the wall line, ours
+/// ~25); further, by a separator.
+const SEPARATOR_WALL: f64 = 35.0;
+
+/// A gate's wall line goes this far past its ends, to join the walkways either side.
+const GATE_OVERLAP: f64 = 8.0;
+
+/// Separators only where the walls run along at least this share of the perimeter (a walled town).
+const SEPARATOR_MIN_WALLED: f64 = 0.3;
+
+/// A town whose perimeter comes this close to the sea is a port.
+const PORT_REACH: f64 = 40.0;
+
+/// A port's quay entries: on streets at most this far from the water, at most this many, this far apart.
+const QUAY_REACH: f64 = 30.0;
+const MAX_QUAY_ENTRIES: usize = 3;
+const QUAY_APART: f64 = 100.0;
+
 /// Two nodes whose regions touch are joined by an area connection when its line is at most this long, else by a street.
 pub const MAX_CONNECTION: f64 = 40.0;
 
@@ -44,8 +62,12 @@ pub const DEFENDER_GUERRILLA_OUT: f64 = 150.0;
 pub const ATTACKER_OUT: f64 = 190.0;
 pub const ATTACKER_GUERRILLA_OUT: f64 = 70.0;
 
-/// The defender's zone takes in the sea up to this far from the perimeter.
-pub const DEFENDER_SEA: f64 = 600.0;
+/// The defender's zone takes in the sea up to this far from the perimeter (CA's: 200-500 from the coast).
+pub const DEFENDER_SEA: f64 = 400.0;
+
+/// In a port the attacker's land stops this short of the coast, its sea this far offshore (CA's: ~20, ~150).
+pub const ATTACKER_SHORE: f64 = 20.0;
+pub const ATTACKER_OFFSHORE: f64 = 150.0;
 
 /// The attacker's rectangle overhangs the map by this (CA draws past the edge; the export clips it).
 pub const OVERHANG: f64 = 100.0;
@@ -107,6 +129,22 @@ pub fn generate(input: &Input) -> Layout {
         walls[*c] = true;
     }
 
+    // An encampment's palisade: its runs are walls; its openings are shut for the settlement's outline (their entries open them again).
+    let runs = crate::palisade::runs(&input.palisade);
+    let openings = crate::palisade::openings(&runs);
+    for r in &runs {
+        for c in line_cells(&g, &r.line(), 1.5) {
+            walls[c] = true;
+        }
+    }
+
+    let mut shut = g.mask();
+    for o in &openings {
+        for c in line_cells(&g, &[o.a, o.b], 2.5) {
+            shut[c] = true;
+        }
+    }
+
     // The sea: the water joined to the map's edge (not ponds and fountains), unless the settlement is in it (a town on low ground
     // inland).
     let mut sea: Mask = match &input.sea {
@@ -122,12 +160,11 @@ pub fn generate(input: &Input) -> Layout {
         sea = g.mask();
     }
 
-    let has_sea = sea.iter().any(|&s| s);
 
     // ---- 1. The settlement and its perimeter: the first barrier that closes around the seed and every capture point near it (CA's
     // perimeters hold all of them), else the first that closes around the seed.
     let seed_point = settlement_seed(input);
-    let barrier0: Mask = (0..g.len()).map(|k| walls[k] || nogo[k] || sea[k]).collect();
+    let barrier0: Mask = (0..g.len()).map(|k| walls[k] || nogo[k] || sea[k] || shut[k]).collect();
     let capture_cells: Vec<usize> = input.captures.iter().filter(|c| dist(c.at, seed_point) <= MAX_CAPTURE_REACH).filter_map(|c| g.at(c.at)).collect();
     let (mut found, mut fallback) = (None, None);
     for (with_buildings, r) in ENCLOSURES {
@@ -137,7 +174,12 @@ pub fn generate(input: &Input) -> Layout {
         let outside = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
         let Some(seed) = nearest(&g, seed_point, |k| !raw[k] && !outside[k], 200.0) else { continue };
 
-        let all = capture_cells.iter().all(|&c| !outside[c]);
+        // Every capture point next to the inside (one in a block, a building or a tower on the wall: by the open ground next to it).
+        let inside = pockets(&g, &raw, &outside, seed, &[]);
+        let all = capture_cells.iter().all(|&c| {
+            let p = g.centre(c);
+            nearest(&g, p, |k| inside[k], 40.0).is_some() || nearest(&g, p, |k| !raw[k], 40.0).is_none()
+        });
         let candidate = (with_buildings, r, raw, barrier, outside, seed);
         if all {
             found = Some(candidate);
@@ -165,37 +207,8 @@ pub fn generate(input: &Input) -> Layout {
 
     // The free inside around the seed (the closed barrier only decides what is outside: the streets it filled are in), and what bounds
     // it: the fort pieces along it, the small no-go regions (blocks of houses) and buildings at its edge.
-    // Inner walls split it into pockets: those holding a capture point, and those across a wall (or a rock) from what is in, are in.
-    let not_out: Mask = (0..g.len()).map(|k| !outside[k] && !raw[k]).collect();
-    let (pocket, sizes) = g.components(&not_out);
-    let mut taken = vec![false; sizes.len()];
-    taken[pocket[seed]] = true;
-    for c in &input.captures {
-        if let Some(k) = g.at(c.at)
-            && pocket[k] != usize::MAX
-        {
-            taken[pocket[k]] = true;
-        }
-    }
-
-    loop {
-        let now: Mask = pocket.iter().map(|&p| p != usize::MAX && taken[p]).collect();
-        let near = g.dilate(&now, POCKET_GAP);
-        let mut more = false;
-        for k in 0..g.len() {
-            let p = pocket[k];
-            if p != usize::MAX && !taken[p] && near[k] && (sizes[p] as f64) * g.cell * g.cell >= 2000.0 {
-                taken[p] = true;
-                more = true;
-            }
-        }
-
-        if !more {
-            break;
-        }
-    }
-
-    let interior: Mask = pocket.iter().map(|&p| p != usize::MAX && taken[p]).collect();
+    let capture_at: Vec<usize> = input.captures.iter().filter_map(|c| g.at(c.at)).collect();
+    let interior = pockets(&g, &raw, &outside, seed, &capture_at);
     let near_interior = g.dilate(&interior, 4.0);
     let mut core = interior.clone();
     let mut bounding: Vec<Vec<usize>> = wall_cells.clone();
@@ -225,6 +238,10 @@ pub fn generate(input: &Input) -> Layout {
     };
 
     out.perimeter = outer_loop(&g, &region, 2.0);
+
+    // A port: the town reaches the sea (a coastal town further from it is laid out as an inland one, as CA's).
+    let dout = g.distance(&region);
+    let port = (0..g.len()).any(|k| sea[k] && dout[k] <= PORT_REACH);
     if out.perimeter.len() < 3 {
         out.warnings.push("the settlement's outline is empty".to_owned());
         return out;
@@ -235,6 +252,26 @@ pub fn generate(input: &Input) -> Layout {
     let mut free: Mask = (0..g.len()).map(|k| interior[k] && !blocked[k]).collect();
     free = g.dilate(&g.erode(&free, 3.0), 3.0).into_iter().zip(&free).map(|(a, &b)| a && b).collect();
     fill_small_holes(&g, &mut free, 300.0);
+
+    // Each palisade opening and the ground outside it (its entry's) are free, and a way out (the lines into it are kept).
+    let mut entry_ground: Vec<(P, Vec<usize>)> = vec![];
+    for o in &openings {
+        let along = [(o.b[0] - o.a[0]) / o.width.max(1e-9), (o.b[1] - o.a[1]) / o.width.max(1e-9)];
+        let (across, depth) = (o.width.clamp(24.0, 32.0) / 2.0, 10.0);
+        let c = [o.mid[0] + o.out[0] * (depth + 1.0), o.mid[1] + o.out[1] * (depth + 1.0)];
+        let corner = |a: f64, b: f64| [c[0] + along[0] * a + o.out[0] * b, c[1] + along[1] * a + o.out[1] * b];
+        let mut cells = g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
+        cells.extend(line_cells(&g, &[o.a, o.b], 3.0));
+        cells.extend(line_cells(&g, &[[o.mid[0] - o.out[0] * 8.0, o.mid[1] - o.out[1] * 8.0], o.mid], 4.0));
+        cells.retain(|&k| !blocked[k]);
+        for &k in &cells {
+            free[k] = true;
+        }
+
+        let ground = g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
+        entry_ground.push((c, ground));
+    }
+
     keep_large_parts(&g, &mut free, 1500.0, seed);
     let clearance = g.distance(&free.iter().map(|&s| !s).collect());
 
@@ -243,6 +280,14 @@ pub fn generate(input: &Input) -> Layout {
     if closed_r >= MIN_ENTRY_GAP / 2.0 {
         for k in 0..g.len() {
             if free[k] && N8.iter().any(|&d| g.step(k, d).is_some_and(|n| outside[n] && !blocked[n])) {
+                exits[k] = true;
+            }
+        }
+    }
+
+    for (_, outer) in &entry_ground {
+        for &k in outer {
+            if free[k] {
                 exits[k] = true;
             }
         }
@@ -262,6 +307,31 @@ pub fn generate(input: &Input) -> Layout {
 
     let snap = |p: P, within: f64| -> Option<usize> { nearest(&g, p, |k| skel[k], within) };
     let gates: Vec<&crate::WallPiece> = input.walls.iter().filter(|w| w.gate).collect();
+
+    // A port's quays: entries on the waterfront inside the town (CA's walled ports have them ~16 units from the water), a few, apart.
+    if port {
+        let to_sea = g.distance(&sea);
+        let mut quay: Vec<usize> = skel_cells.iter().copied().filter(|&k| to_sea[k] <= QUAY_REACH).collect();
+        quay.sort_by(|&a, &b| to_sea[a].total_cmp(&to_sea[b]));
+        let mut placed = 0;
+        for k in quay {
+            if placed < MAX_QUAY_ENTRIES && push_seed(&mut seeds, &g, k, NodeKind::Entry, QUAY_APART) {
+                placed += 1;
+            }
+        }
+    }
+
+    // An entry outside each palisade opening.
+    for (c, _) in &entry_ground {
+        match snap(*c, 16.0) {
+            Some(k) => {
+                push_seed(&mut seeds, &g, k, NodeKind::Entry, 30.0);
+            }
+            None => {
+                out.warnings.push(format!("no way through the palisade opening at ({:.0}, {:.0})", c[0], c[1]));
+            }
+        }
+    }
 
     // Captures (the gate ones are the gates' areas).
     let mut captures = input.captures.clone();
@@ -319,7 +389,7 @@ pub fn generate(input: &Input) -> Layout {
         if near_exit[k] {
             // Back from the edge along the skeleton.
             let k = walk_back(&g, &skel, k, 6);
-            push_seed(&mut seeds, &g, k, NodeKind::Entry, 20.0);
+            push_seed(&mut seeds, &g, k, NodeKind::Entry, 40.0);
         } else {
             push_seed(&mut seeds, &g, k, NodeKind::Area, 40.0);
         }
@@ -481,16 +551,184 @@ pub fn generate(input: &Input) -> Layout {
         out.edges.push(Edge { kind: EdgeKind::Wall, line: run, sides: vec![], nodes: None });
     }
 
-    if !input.walls.is_empty() && !out.edges.iter().any(|e| e.kind == EdgeKind::Wall) {
+    out.separators = separators(&out.perimeter, &out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| e.line.clone()).collect::<Vec<_>>());
+
+    // The ring closed: walls, separators and no-go regions keep the outside from the town (as in CA's tiles but one).
+    let wall_lines: Vec<&Vec<P>> = out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| &e.line).collect();
+    if !out.separators.is_empty() {
+        let mut ring = nogo.clone();
+        for l in wall_lines.into_iter().chain(&out.separators) {
+            for c in line_cells(&g, l, 2.0) {
+                ring[c] = true;
+            }
+        }
+
+        let pass: Mask = ring.iter().map(|&r| !r).collect();
+        let reached = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
+        if reached[seed] {
+            // Where: the stretches of the perimeter the outside comes through.
+            let mut lp = out.perimeter.clone();
+            lp.push(lp[0]);
+            let mut at: Vec<P> = vec![];
+            for p in resample(&lp, 5.0) {
+                if g.at(p).is_some_and(|k| reached[k]) && at.iter().all(|&q| dist(p, q) > 60.0) {
+                    at.push(p);
+                }
+            }
+
+            let list = at.iter().take(4).map(|p| format!("({:.0}, {:.0})", p[0], p[1])).collect::<Vec<_>>().join(", ");
+            out.warnings.push(format!("the walls, separators and no-go regions leave the ring around the town open (the perimeter near {list})"));
+        }
+    }
+
+    for r in runs.iter().filter(|r| r.pieces.len() >= 2) {
+        out.edges.push(Edge { kind: EdgeKind::Palisade, line: simplify(&r.line(), 0.5), sides: vec![], nodes: None });
+    }
+
+    if input.walls.iter().any(|w| !w.platforms.is_empty()) && !out.edges.iter().any(|e| e.kind == EdgeKind::Wall) {
         out.warnings.push("the settlement has fort pieces but none with a walkway along the perimeter: no wall edges".to_owned());
     }
 
     // ---- 7. Deployment zones and approach lines.
-    let dout = g.distance(&region);
-    deployment(&mut out, &g, &region, &dout, &sea, has_sea, input.bounds, seed);
-    approaches(&mut out, &g, &dout, &sea, &nogo, input.bounds, g.centre(seed));
-    if has_sea {
-        out.warnings.push("a port: the attacker's zone is the land only, the defender's takes in the sea next to the town".to_owned());
+    let town = g.centre(seed);
+    let zones = deployment(&mut out, &g, &region, &dout, &sea, port, input.bounds, seed);
+    approaches(&mut out, &g, &zones.attacker, &nogo, input.bounds, town);
+    if port && let Some(heights) = &input.sea {
+        let land: Mask = sea.iter().map(|&s| !s).collect();
+        let (to_land, to_sea) = (g.distance(&land), g.distance(&sea));
+        let lobe: Mask = (0..g.len()).map(|k| sea[k] && zones.defender[k]).collect();
+        out.deployment_lines = crate::ports::deployment_lines(&g, &lobe, &to_land, town);
+        (out.beaches, out.beach_approaches) = crate::ports::beaches(&g, &sea, &nogo, &dout, heights, &to_sea, town);
+        if out.deployment_lines.is_empty() {
+            out.warnings.push("a port without room for the defender's deployment lines at sea".to_owned());
+        }
+    }
+
+    out
+}
+
+/// The AI separators that close the ring where the walls don't (CA's: walls, separators and no-go regions close it in 47 of 48 walled
+/// tiles): each stretch of the perimeter further than `SEPARATOR_WALL` from every wall edge, from the wall line at one end to the wall
+/// line at the other. None without walls, or when the walls run along the whole perimeter.
+fn separators(perimeter: &[P], walls: &[Vec<P>]) -> Vec<Vec<P>> {
+    if walls.is_empty() || perimeter.len() < 3 {
+        return vec![];
+    }
+
+    let mut ring = perimeter.to_vec();
+    ring.push(perimeter[0]);
+    let mut samples = resample(&ring, 5.0);
+    samples.pop();
+    // By a wall: near a wall line, beside it (not off a run's end: the ring goes on past the end, a separator closes it).
+    let beside_wall = |p: P| {
+        let mut best = (f64::MAX, false);
+        for w in walls {
+            let last = w.len() - 1;
+            for (i, s) in w.windows(2).enumerate() {
+                let (a, b) = (s[0], s[1]);
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let l2 = dx * dx + dz * dz;
+                let t = if l2 > 0.0 { ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l2 } else { 0.0 };
+                let off_end = (i == 0 && t < 0.0) || (i + 1 == last && t > 1.0);
+                let d = crate::raster::seg_dist(p, a, b);
+                if d < best.0 {
+                    best = (d, off_end);
+                }
+            }
+        }
+
+        best.0 <= SEPARATOR_WALL && !best.1
+    };
+    let mut near: Vec<bool> = samples.iter().map(|&p| beside_wall(p)).collect();
+    let n = samples.len();
+    // Short stretches away from the walls are the walls' own bends (closed by them); then short wall bits between separators go.
+    flip_short(&mut near, false, 6);
+    flip_short(&mut near, true, 4);
+    // A town whose walls are not its outline (a minor town's citadel) has none, as CA's.
+    if (near.iter().filter(|&&x| x).count() as f64) < SEPARATOR_MIN_WALLED * n as f64 {
+        return vec![];
+    }
+
+    let Some(start) = near.iter().position(|&n| n) else { return vec![] };
+
+    // The nearest point on the wall lines.
+    let onto_wall = |p: P| {
+        let mut best = (f64::MAX, p);
+        for s in walls.iter().flat_map(|w| w.windows(2)) {
+            let (a, b) = (s[0], s[1]);
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let l2 = dx * dx + dz * dz;
+            let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+            let q = [a[0] + t * dx, a[1] + t * dz];
+            if dist(p, q) < best.0 {
+                best = (dist(p, q), q);
+            }
+        }
+
+        best.1
+    };
+
+    let mut out = vec![];
+    let mut i = 0;
+    while i < n {
+        let k = (start + i) % n;
+        if near[k] {
+            i += 1;
+            continue;
+        }
+
+        // A stretch away from the walls: from the last sample by a wall to the next one.
+        let mut line = vec![onto_wall(samples[(k + n - 1) % n])];
+        while i < n && !near[(start + i) % n] {
+            line.push(samples[(start + i) % n]);
+            i += 1;
+        }
+
+        line.push(onto_wall(samples[(start + i) % n]));
+        if line.windows(2).map(|w| dist(w[0], w[1])).sum::<f64>() >= 10.0 {
+            out.push(simplify(&line, 3.0));
+        }
+    }
+
+    out
+}
+
+/// Runs of `value` shorter than `max` in a ring of flags flipped.
+fn flip_short(flags: &mut [bool], value: bool, max: usize) {
+    let n = flags.len();
+    let Some(start) = flags.iter().position(|&f| f != value) else { return };
+    let mut i = 0;
+    while i < n {
+        let k = (start + i) % n;
+        if flags[k] != value {
+            i += 1;
+            continue;
+        }
+
+        let run: Vec<usize> = (i..n).map(|j| (start + j) % n).take_while(|&j| flags[j] == value).collect();
+        i += run.len();
+        if run.len() < max {
+            for j in run {
+                flags[j] = !value;
+            }
+        }
+    }
+}
+
+/// Points along the line at most `step` apart (its own points kept).
+fn resample(line: &[P], step: f64) -> Vec<P> {
+    let mut out = vec![];
+    for w in line.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let n = (dist(a, b) / step).ceil().max(1.0) as usize;
+        for i in 0..n {
+            let t = i as f64 / n as f64;
+            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        }
+    }
+
+    if let Some(&l) = line.last() {
+        out.push(l);
     }
 
     out
@@ -513,6 +751,41 @@ fn line_cells(g: &Grid, line: &[P], r: f64) -> Vec<usize> {
     }
 
     out
+}
+
+/// The settlement's free inside: the open pocket around the seed, and the pockets inner walls split from it: those holding one of
+/// `with` (capture points), and those across a wall or a rock (`POCKET_GAP`) from what is in, while there are more.
+fn pockets(g: &Grid, raw: &Mask, outside: &Mask, seed: usize, with: &[usize]) -> Mask {
+    let not_out: Mask = (0..g.len()).map(|k| !outside[k] && !raw[k]).collect();
+    let (pocket, sizes) = g.components(&not_out);
+    let mut taken = vec![false; sizes.len()];
+    if pocket[seed] == usize::MAX {
+        return g.mask();
+    }
+
+    taken[pocket[seed]] = true;
+    for &k in with {
+        if pocket[k] != usize::MAX {
+            taken[pocket[k]] = true;
+        }
+    }
+
+    loop {
+        let now: Mask = pocket.iter().map(|&p| p != usize::MAX && taken[p]).collect();
+        let near = g.dilate(&now, POCKET_GAP);
+        let mut more = false;
+        for k in 0..g.len() {
+            let p = pocket[k];
+            if p != usize::MAX && !taken[p] && near[k] && (sizes[p] as f64) * g.cell * g.cell >= 2000.0 {
+                taken[p] = true;
+                more = true;
+            }
+        }
+
+        if !more {
+            return pocket.iter().map(|&p| p != usize::MAX && taken[p]).collect();
+        }
+    }
 }
 
 /// Where the settlement is: the main capture point, else any, else the middle of the walls, else the map's.
@@ -1096,7 +1369,14 @@ fn wall_runs(input: &Input, g: &Grid, nogo: &Mask, region: &Mask) -> Vec<Vec<P>>
     let mut walk = g.mask();
     for w in &input.walls {
         if w.gate {
-            g.fill_line(&mut walk, &w.ends, 3.0);
+            // Past its ends a little, into the walkways either side.
+            let (a, b) = (w.ends[0], w.ends[1]);
+            let l = dist(a, b);
+            if l > 1e-6 {
+                let u = [(b[0] - a[0]) / l * GATE_OVERLAP, (b[1] - a[1]) / l * GATE_OVERLAP];
+                g.fill_line(&mut walk, &[[a[0] - u[0], a[1] - u[1]], [b[0] + u[0], b[1] + u[1]]], 3.0);
+            }
+
             continue;
         }
 
@@ -1139,7 +1419,7 @@ fn wall_runs(input: &Input, g: &Grid, nogo: &Mask, region: &Mask) -> Vec<Vec<P>>
 }
 
 /// Branches from an end to a fork shorter than `max` taken off the lines.
-fn remove_spurs(g: &Grid, skel: &mut Mask, max: f64) {
+pub(crate) fn remove_spurs(g: &Grid, skel: &mut Mask, max: f64) {
     for _ in 0..3 {
         let mut changed = false;
         let ends: Vec<usize> = (0..g.len()).filter(|&k| skel[k] && neighbours(g, skel, k) == 1).collect();
@@ -1186,7 +1466,7 @@ fn remove_spurs(g: &Grid, skel: &mut Mask, max: f64) {
 
 /// Lines one cell wide traced into polylines of cells: from each end (then around what is left, the loops), going on at a fork the way
 /// that turns least; pieces under 6 cells dropped.
-fn trace(g: &Grid, skel: &Mask) -> Vec<Vec<usize>> {
+pub(crate) fn trace(g: &Grid, skel: &Mask) -> Vec<Vec<usize>> {
     let mut seen = vec![false; g.len()];
     let mut out = vec![];
     let ends: Vec<usize> = (0..g.len()).filter(|&k| skel[k] && neighbours(g, skel, k) == 1).collect();
@@ -1228,16 +1508,22 @@ fn trace(g: &Grid, skel: &Mask) -> Vec<Vec<usize>> {
     out
 }
 
+/// The deployment zones as masks: where each alliance may deploy.
+struct Zones {
+    defender: Mask,
+    attacker: Mask,
+}
+
 /// Both alliances' zones (docs/plans/siege_ai.md, "Deployment zones").
 #[allow(clippy::too_many_arguments)]
-fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mask, has_sea: bool, bounds: (P, P), seed: usize) {
+fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mask, port: bool, bounds: (P, P), seed: usize) -> Zones {
     let (lo, hi) = bounds;
     let rect = vec![[lo[0] - OVERHANG, lo[1] - OVERHANG], [hi[0] + OVERHANG, lo[1] - OVERHANG], [hi[0] + OVERHANG, hi[1] + OVERHANG], [lo[0] - OVERHANG, hi[1] + OVERHANG]];
     let within = |r: f64| -> Mask { dout.iter().map(|&d| d <= r).collect() };
 
-    // The defender: the perimeter a little in (and the sea next to it).
+    // The defender: the perimeter a little in (and the sea off the town, the harbour in it).
     let mut def = g.erode(region, DEFENDER_IN);
-    if has_sea {
+    if port {
         let near: Mask = (0..g.len()).map(|k| sea[k] && dout[k] <= DEFENDER_SEA).collect();
         let joined: Mask = (0..g.len()).map(|k| near[k] || def[k] || (sea[k] && dout[k] <= DEFENDER_IN + 2.0 * g.cell)).collect();
         let (label, _) = g.components(&joined);
@@ -1249,61 +1535,76 @@ fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mas
     d.polygons.push((ZoneKind::GuerrillaAdditive, outer_loop(g, &within(DEFENDER_GUERRILLA_OUT), 3.0)));
     out.defender = d;
 
-    // The attacker: the whole map but the town and what is around it (and the sea).
+    // The attacker: the whole map but the town and the ground around it; in a port, the land (short of the coast) and the sea away
+    // from the defender's water and the shore, as separate polygons.
     let mut a = Deployment::default();
-    if has_sea {
-        let land: Mask = (0..g.len()).map(|k| !sea[k] && dout[k] > ATTACKER_OUT).collect();
-        let (label, sizes) = g.components(&land);
-        for (id, &size) in sizes.iter().enumerate() {
-            if (size as f64) * g.cell * g.cell < 20_000.0 {
-                continue;
-            }
+    let attacker: Mask = if port {
+        let land: Mask = sea.iter().map(|&s| !s).collect();
+        let (to_land, to_sea, to_def) = (g.distance(&land), g.distance(sea), g.distance(&def));
+        let on_land: Mask = (0..g.len()).map(|k| !sea[k] && dout[k] > ATTACKER_OUT && to_sea[k] >= ATTACKER_SHORE).collect();
+        let at_sea: Mask = (0..g.len()).map(|k| sea[k] && to_def[k] >= ATTACKER_OUT && to_land[k] >= ATTACKER_OFFSHORE).collect();
+        let mut zone = g.mask();
+        for part in [on_land, at_sea] {
+            let (label, sizes) = g.components(&part);
+            for (id, &size) in sizes.iter().enumerate() {
+                if (size as f64) * g.cell * g.cell < 20_000.0 {
+                    continue;
+                }
 
-            let part: Mask = label.iter().map(|&l| l == id).collect();
-            a.polygons.push((ZoneKind::Additive, outer_loop(g, &part, 3.0)));
-            // Its holes: the town, when the land goes all around it.
-            let filled = g.fill_holes(&part);
-            let holes: Mask = (0..g.len()).map(|k| filled[k] && !part[k]).collect();
-            let (hl, hs) = g.components(&holes);
-            for (h, &n) in hs.iter().enumerate() {
-                if (n as f64) * g.cell * g.cell >= 5_000.0 {
-                    let hole: Mask = hl.iter().map(|&l| l == h).collect();
-                    a.polygons.push((ZoneKind::Subtractive, outer_loop(g, &hole, 3.0)));
+                let piece: Mask = label.iter().map(|&l| l == id).collect();
+                a.polygons.push((ZoneKind::Additive, outer_loop(g, &piece, 3.0)));
+                // Its holes: the town, when the land goes all around it.
+                let filled = g.fill_holes(&piece);
+                let holes: Mask = (0..g.len()).map(|k| filled[k] && !piece[k]).collect();
+                let (hl, hs) = g.components(&holes);
+                for (h, &n) in hs.iter().enumerate() {
+                    if (n as f64) * g.cell * g.cell >= 5_000.0 {
+                        let hole: Mask = hl.iter().map(|&l| l == h).collect();
+                        a.polygons.push((ZoneKind::Subtractive, outer_loop(g, &hole, 3.0)));
+                    }
+                }
+
+                for (z, &p) in zone.iter_mut().zip(&piece) {
+                    *z |= p;
                 }
             }
         }
+
+        zone
     } else {
         a.polygons.push((ZoneKind::Additive, rect.clone()));
         a.polygons.push((ZoneKind::Subtractive, outer_loop(g, &within(ATTACKER_OUT), 3.0)));
-    }
+        dout.iter().map(|&d| d > ATTACKER_OUT).collect()
+    };
 
     a.polygons.push((ZoneKind::GuerrillaAdditive, rect));
     a.polygons.push((ZoneKind::GuerrillaSubtractive, outer_loop(g, &within(ATTACKER_GUERRILLA_OUT), 3.0)));
     a.polygons.retain(|(_, p)| p.len() >= 3);
     out.attacker = a;
+    Zones { defender: def, attacker }
 }
 
-/// Eight lines across the eight directions from the town, on the inner edge of the attacker's zone (inside it), on land, on the map.
-fn approaches(out: &mut Layout, g: &Grid, dout: &[f64], sea: &Mask, nogo: &Mask, bounds: (P, P), centre: P) {
+/// Eight lines across the eight directions from the town, just inside the attacker's zone's inner edge, on the map, off no-go; turned
+/// like CA's (the town on their left).
+fn approaches(out: &mut Layout, g: &Grid, attacker: &Mask, nogo: &Mask, bounds: (P, P), town: P) {
     let (lo, hi) = bounds;
     let good = |p: P| {
-        p[0] >= lo[0] + 20.0 && p[1] >= lo[1] + 20.0 && p[0] <= hi[0] - 20.0 && p[1] <= hi[1] - 20.0
-            && g.at(p).is_some_and(|k| dout[k] >= ATTACKER_OUT + 2.0 && !sea[k] && !nogo[k])
+        p[0] >= lo[0] + 20.0 && p[1] >= lo[1] + 20.0 && p[0] <= hi[0] - 20.0 && p[1] <= hi[1] - 20.0 && g.at(p).is_some_and(|k| attacker[k] && !nogo[k])
     };
 
     for i in 0..8 {
         let a = f64::from(i) * std::f64::consts::FRAC_PI_4;
         let u = [a.cos(), a.sin()];
         let t = [-u[1], u[0]];
-        // The first point out along the ray past the zone's edge.
+        // The first point out along the ray in the zone, a little further in.
         let mut r = 0.0;
         let mut q = None;
         while r < 4000.0 {
-            let p = [centre[0] + u[0] * r, centre[1] + u[1] * r];
+            let p = [town[0] + u[0] * r, town[1] + u[1] * r];
             match g.at(p) {
                 None => break,
-                Some(k) if dout[k] >= ATTACKER_OUT + 10.0 => {
-                    q = Some(r);
+                Some(k) if attacker[k] => {
+                    q = Some(r + 10.0);
                     break;
                 }
                 _ => {}
@@ -1312,11 +1613,12 @@ fn approaches(out: &mut Layout, g: &Grid, dout: &[f64], sea: &Mask, nogo: &Mask,
             r += 2.0;
         }
 
-        let Some(mut r) = q else { continue };
+        let Some(start) = q else { continue };
         let mut placed = None;
         'out: for half in [60.0, 30.0] {
+            let mut r = start;
             for _ in 0..15 {
-                let p = [centre[0] + u[0] * r, centre[1] + u[1] * r];
+                let p = [town[0] + u[0] * r, town[1] + u[1] * r];
                 let (e0, e1) = ([p[0] - t[0] * half, p[1] - t[1] * half], [p[0] + t[0] * half, p[1] + t[1] * half]);
                 if good(e0) && good(e1) && good(p) {
                     placed = Some([e0, e1]);
@@ -1325,12 +1627,10 @@ fn approaches(out: &mut Layout, g: &Grid, dout: &[f64], sea: &Mask, nogo: &Mask,
 
                 r += 10.0;
             }
-
-            r = q.unwrap_or(r);
         }
 
         if let Some(l) = placed {
-            out.approaches.push(l);
+            out.approaches.push(if crate::ports::winding(&l, town) > 0.0 { l } else { [l[1], l[0]] });
         }
     }
 
@@ -1372,6 +1672,7 @@ mod tests {
             obstacles: vec![block(333.0, 333.0, 485.0, 485.0), block(515.0, 333.0, 667.0, 485.0), block(333.0, 515.0, 485.0, 667.0), block(515.0, 515.0, 667.0, 667.0)],
             walls,
             captures: vec![Capture { at: [500.0, 500.0], major: true }],
+            palisade: vec![],
             sea: None,
         }
     }
@@ -1387,5 +1688,41 @@ mod tests {
         assert!(l.edges.iter().any(|e| e.kind == EdgeKind::Street));
         assert_eq!(l.edges.iter().filter(|e| e.kind == EdgeKind::Wall).count(), 1);
         assert!(l.approaches.len() >= 4);
+    }
+
+    /// A camp: a square palisade of side 200 (pieces every 10 along their z, 10 long towards -z, the camp on their +x), an opening of
+    /// 30 in the middle of each side.
+    fn camp() -> Input {
+        let mut input = Input { bounds: ([0.0, 0.0], [1000.0, 1000.0]), captures: vec![Capture { at: [500.0, 500.0], major: true }], ..Input::default() };
+        for side in 0..4 {
+            let (c, s) = (std::f64::consts::FRAC_PI_2 * f64::from(side)).sin_cos();
+            let (along, inward) = ([-c, s], [-s, -c]);
+            for k in -9..=9 {
+                if (-1..=1).contains(&k) {
+                    continue;
+                }
+
+                let t = f64::from(k) * 10.0;
+                let at = [500.0 + s * 100.0 + along[0] * t, 500.0 + c * 100.0 + along[1] * t];
+                let p = |a: f64, z: f64| [at[0] + inward[0] * a + along[0] * z, at[1] + inward[1] * a + along[1] * z];
+                input.walls.push(WallPiece { footprint: vec![vec![p(-0.5, 0.25), p(0.5, 0.25), p(0.5, -10.25), p(-0.5, -10.25)]], ends: [at, at], ..WallPiece::default() });
+                input.palisade.push(crate::PalisadePiece { at });
+            }
+        }
+
+        input
+    }
+
+    #[test]
+    fn camp_has_an_entry_at_each_opening() {
+        let l = generate(&camp());
+        eprintln!("{}
+{:?}", l.summary(), l.warnings);
+        assert_eq!(l.nodes.iter().filter(|n| n.kind == NodeKind::Entry).count(), 4);
+        assert_eq!(l.edges.iter().filter(|e| e.kind == EdgeKind::Palisade).count(), 4);
+        // Outside the palisade.
+        for n in l.nodes.iter().filter(|n| n.kind == NodeKind::Entry) {
+            assert!((n.centre[0] - 500.0).abs().max((n.centre[1] - 500.0).abs()) > 100.0, "{:?}", n.centre);
+        }
     }
 }

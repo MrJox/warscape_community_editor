@@ -10,13 +10,16 @@
 
 pub mod check;
 pub mod generate;
+pub mod palisade;
+pub mod ports;
 pub mod raster;
 pub mod svg;
 
 /// A point on the ground (x, z).
 pub type P = [f64; 2];
 
-/// Where the ground is under water, sampled on a grid: cell (i, j) covers x from x0 + i cell, z from z0 + j cell.
+/// The ground's height (metres, the sea at 0) on a grid: cell (i, j) covers x from x0 + i cell, z from z0 + j cell. Given for tiles with
+/// ground under the sea: the sea, the coast and its beaches come from it.
 #[derive(Clone, Debug, Default)]
 pub struct Sea {
     pub x0: f64,
@@ -24,14 +27,28 @@ pub struct Sea {
     pub cell: f64,
     pub w: usize,
     pub h: usize,
-    pub water: Vec<bool>,
+    pub height: Vec<f32>,
 }
 
 impl Sea {
-    pub fn at(&self, p: P) -> bool {
+    /// Ground lower than this is under water (the sea at 0 m; the quays stand just above it).
+    pub const WATER: f64 = -0.5;
+
+    /// The height at a point (the nearest sample; 0 off the grid).
+    pub fn height(&self, p: P) -> f64 {
         let (i, j) = (((p[0] - self.x0) / self.cell).floor(), ((p[1] - self.z0) / self.cell).floor());
-        i >= 0.0 && j >= 0.0 && (i as usize) < self.w && (j as usize) < self.h && self.water[j as usize * self.w + i as usize]
+        if i >= 0.0 && j >= 0.0 && (i as usize) < self.w && (j as usize) < self.h { f64::from(self.height[j as usize * self.w + i as usize]) } else { 0.0 }
     }
+
+    pub fn at(&self, p: P) -> bool {
+        self.height(p) < Self::WATER
+    }
+}
+
+/// A piece of an encampment's palisade: its place on the palisade's line (its origin).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PalisadePiece {
+    pub at: P,
 }
 
 /// What the generator reads from a tile.
@@ -49,7 +66,10 @@ pub struct Input {
     pub walls: Vec<WallPiece>,
     pub captures: Vec<Capture>,
 
-    /// Where the sea is (the terrain under 0 m, joined to the map's edge), `None` without one.
+    /// The pieces of an encampment's palisade (they are also in `walls`, for what they block).
+    pub palisade: Vec<PalisadePiece>,
+
+    /// The ground's heights where some are under the sea (the sea: under 0 m, joined to the map's edge), `None` without any.
     pub sea: Option<Sea>,
 }
 
@@ -101,6 +121,7 @@ pub enum EdgeKind {
     Street,
     AreaConnection,
     Wall,
+    Palisade,
 }
 
 impl EdgeKind {
@@ -110,6 +131,7 @@ impl EdgeKind {
             EdgeKind::Street => "SAET_STREET",
             EdgeKind::AreaConnection => "SAET_AREA_CONNECTION",
             EdgeKind::Wall => "SAET_WALL",
+            EdgeKind::Palisade => "SAET_PALISADE",
         }
     }
 }
@@ -174,6 +196,16 @@ pub struct Layout {
     /// `AIH_FORT_APPROACH` lines.
     pub approaches: Vec<[P; 2]>,
 
+    /// `PALT_FORT` AI separators (open lines).
+    pub separators: Vec<Vec<P>>,
+
+    /// A port's `AIH_DEFAULT_DEPLOYMENT_LINE`s (at sea, in the defender's zone).
+    pub deployment_lines: Vec<[P; 2]>,
+
+    /// A port's `AIH_BEACH_LANDING` lines (along the shore) and `AIH_BEACH_LANDING_FORT_APPROACH` lines (just inland of them).
+    pub beaches: Vec<Vec<P>>,
+    pub beach_approaches: Vec<[P; 2]>,
+
     /// alliance 1.
     pub defender: Deployment,
 
@@ -189,10 +221,15 @@ impl Layout {
     pub fn summary(&self) -> String {
         let count = |k: NodeKind| self.nodes.iter().filter(|n| n.kind == k).count();
         let edges = |k: EdgeKind| self.edges.iter().filter(|e| e.kind == k).count();
+        let port = if self.deployment_lines.is_empty() && self.beaches.is_empty() {
+            String::new()
+        } else {
+            format!("; {} deployment lines, {} beaches", self.deployment_lines.len(), self.beaches.len())
+        };
         format!(
-            "{} areas, {} intersections, {} entries; {} streets, {} area connections, {} wall edges; {} approach lines; {} warning(s)",
+            "{} areas, {} intersections, {} entries; {} streets, {} area connections, {} wall edges, {} palisade edges; {} separators; {} approach lines{port}; {} warning(s)",
             count(NodeKind::Area), count(NodeKind::Intersection), count(NodeKind::Entry), edges(EdgeKind::Street), edges(EdgeKind::AreaConnection),
-            edges(EdgeKind::Wall), self.approaches.len(), self.warnings.len(),
+            edges(EdgeKind::Wall), edges(EdgeKind::Palisade), self.separators.len(), self.approaches.len(), self.warnings.len(),
         )
     }
 }

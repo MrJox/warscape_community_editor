@@ -76,6 +76,7 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
             EdgeKind::Street => "fill:none;stroke:#000;stroke-width:1.2",
             EdgeKind::AreaConnection => "fill:none;stroke:#0bb;stroke-width:2",
             EdgeKind::Wall => "fill:none;stroke:#e00;stroke-width:2",
+            EdgeKind::Palisade => "fill:none;stroke:#850;stroke-width:2.5",
         };
         poly(&mut s, &e.line, false, style);
         for side in &e.sides {
@@ -83,8 +84,31 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
         }
     }
 
+    // Lines with an arrow at their end (they have a direction).
+    let line = |s: &mut String, l: &[P], colour: &str| {
+        poly(s, l, false, &format!("fill:none;stroke:{colour};stroke-width:2.5"));
+        if let Some(e) = l.last() {
+            let _ = writeln!(s, r#"<circle cx="{:.1}" cy="{:.1}" r="3" style="fill:{colour}"/>"#, (e[0] - lo[0]) * scale, (e[1] - lo[1]) * scale);
+        }
+    };
     for a in &layout.approaches {
-        poly(&mut s, a, false, "fill:none;stroke:#088;stroke-width:2.5");
+        line(&mut s, a, "#088");
+    }
+
+    for l in &layout.separators {
+        line(&mut s, l, "#880");
+    }
+
+    for l in &layout.deployment_lines {
+        line(&mut s, l, "#a0d");
+    }
+
+    for l in &layout.beaches {
+        line(&mut s, l, "#f80");
+    }
+
+    for l in &layout.beach_approaches {
+        line(&mut s, l, "#2b2");
     }
 
     for c in &input.captures {

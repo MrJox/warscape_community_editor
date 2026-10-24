@@ -61,6 +61,24 @@ No ids: an edge's nodes come from geometry. Every vanilla instance has `add_boun
   holds every node but some entries, every capture and the walls. A `PALT_FORT` separator often runs along it. 3-8 two-point
   `AIH_FORT_APPROACH` lines ~200 su outside it; ports add `AIH_DEFAULT_DEPLOYMENT_LINE` and the beach hints.
 
+## Encampments, ports, separators (measured)
+
+- **Encampments** (4): the palisade is `siege_barricade_wall_1_encampment` pieces, origins on the line 10 apart along their z; runs of
+  them with ~40-unit steps between (openings ~30 wide; 8, 4, 6, 6). One `SAET_PALISADE` per run through the origins (within 1 unit),
+  ending on the opening's node boundary. One entry per opening, outside the palisade (box 24-32 across, 14-31 deep, inner edge on the
+  line). Inside: one big area (3 camps) or a ring of areas (barbarian). Perimeter 2-13 out of the palisade; no separators, no-go or
+  zones; 4 approach lines 375-540 out.
+- **Ports** (29): 4 `AIH_DEFAULT_DEPLOYMENT_LINE` (2 points, ~250 long) in deep water inside the defender's sea lobe (~280 offshore),
+  across the direction to the town, the town on their right (z down: cross(end - start, town - start) < 0, the approach lines the other
+  way). 3-5 `AIH_BEACH_LANDING` along the 0 m line either side of the town; beside each an `AIH_BEACH_LANDING_FORT_APPROACH` (2 points,
+  ~100 long, ~40 inland). The defender's zone takes a sea lobe off the town (200-500 out) and the harbour; the attacker gets a sea
+  polygon (~150 offshore, ~200 from the lobe) and land polygons (~20 short of the coast, ~200 from the perimeter), no subtractive one.
+  Entries on the quays (~16 from the water) in walled ports.
+- **Separators** (`AISeparatorInstance`, `type` `PALT_FORT`, open polylines; 26 of 28 walled cities, 20 of 21 walled ports, no minor
+  town or camp): they run where the ring has no wall (25 % of the perimeter's length; walls 55 %, no-go only 13 %), from a wall run's
+  end (on its line within ~3 units) along the perimeter, through the no-go just outside the streets, over the harbour water in ports.
+  Walls + separators + no-go regions close the ring in 47 of 48 walled tiles (not Olbia). Their direction is mixed.
+
 ## Open
 
 - The ingest's spatial test (`FUN_116a06d0`); what an edge missing a node does at runtime; how the attack and defence tactics use the
