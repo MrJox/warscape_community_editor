@@ -884,7 +884,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Some(d) = document(e) else { return no_tile() };
         let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
         let runs = l.plan.runs.iter().map(|r| format!("{:.0}..{:.0} at {:.2} (drift {:.2})", r.s.0, r.s.1, r.level, r.drift)).collect::<Vec<_>>().join(", ");
-        let steps = l.plan.steps.iter().map(|st| format!("{:.0}..{:.0} {:.2} -> {:.2}", st.s.0, st.s.1, st.from, st.to)).collect::<Vec<_>>().join(", ");
+        let steps = l.plan.steps.iter().map(|st| format!("{:.0}..{:.0} {:.2} -> {:.2}{}", st.s.0, st.s.1, st.from, st.to, if st.whole { " (bastion)" } else { "" })).collect::<Vec<_>>().join(", ");
         let corners = l.plan.corners.iter().map(|(s, i)| format!("point {i} at {s:.0}")).collect::<Vec<_>>().join(", ");
         let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
         let (doors, skipped) = d.tile().wall_doors(&l, &ps);

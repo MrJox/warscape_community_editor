@@ -352,6 +352,21 @@ the game sees (0, 2, 3, 4).
   Points only move vertically on a slope, so verticals stay vertical (merlons, posts). Rendered on the desert hills: clean stairs on
   both families; a thin dark sliver at the bottom edge of one 8 m stair remains to look at.
 
+## Review, third round (user, 2026-10-24)
+
+- **Caps** were never made: a free end now gets the base's own end pieces (`Profile::cap_start` / `cap_end`). 8 m: the endcaps
+  (`*_endcap_left` / `_right`, 2.6 outside the wall's frame), placed past the ends as they are, vanilla instances (`pieces::cap_instances`;
+  previewed from the game's meshes, exported as instances of the game's keys). 15 m: the tower ends (`*_fort_tower_end_left` / `_right`,
+  a tower and the start of the walkway in a 20-unit slot) take the first and last slots and are generated like any piece (bent, foot to
+  the ground, rows copied).
+- **15 m whole steps**: a climb of about 10 (0.7 to 1.3 of `whole_rise`) over boundaries at most 40 apart, on a stretch that turns at
+  most 4 degrees over 20, is one stepped bastion (`*_stepped_up/down_10m_square_bastion_a`) as vanilla: exactly 10, its own piece of
+  20 (`Piece::base`), the wall's level under it the lower one (the bastion climbs by itself); the runs it spans are merged. On Dale's
+  slopes the straight walls take several in a row.
+- **Steps at corners and on curves**: a chain is placed inside its runs but not within the wall's depth + 2 of a corner or an attached
+  end (their mitres), the straightest place first (a penalty past 6 degrees of turn over its length), then the nearest to the boundary;
+  when no place is free it is centred as before and noted. The corner itself is flat, so the mitre and the overhang copies line up.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
