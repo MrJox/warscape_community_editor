@@ -9,6 +9,17 @@ license.workspace = true
 name = "wce"
 path = "src/main.rs"
 
+# One feature per editor, so that a release builds only the editors that work. The default set is the release's; scripts and gates build with
+# --all-features.
+[features]
+default = ["weather", "tile", "ui"]
+weather = ["dep:wce_weather_tool"]
+tile = ["dep:wce_tile_tool"]
+ui = ["dep:wce_ui_tool"]
+
+# The tabs of the editors still to come (unit, VFX, terrain, cinematic): only their plans, no features.
+placeholders = []
+
 [dependencies]
 dear-imgui-rs = "0.20"
 dear-imgui-sys = "0.20"
@@ -17,9 +28,9 @@ wce_editor = { path = "../wce_editor" }
 wce_foundation = { path = "../wce_foundation" }
 wce_imgui = { path = "../wce_imgui" }
 wce_render = { path = "../wce_render" }
-wce_tile_tool = { path = "../wce_tile_tool" }
-wce_ui_tool = { path = "../wce_ui_tool" }
-wce_weather_tool = { path = "../wce_weather_tool" }
+wce_tile_tool = { path = "../wce_tile_tool", optional = true }
+wce_ui_tool = { path = "../wce_ui_tool", optional = true }
+wce_weather_tool = { path = "../wce_weather_tool", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Build the same SDL3 version as sdl3-sys so Windows builds do not need a separate SDL SDK install.
