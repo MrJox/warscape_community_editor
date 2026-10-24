@@ -1,12 +1,39 @@
 //! The Tile tool's settings: the `[tools.tile]` table.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 /// The table's name.
 pub const SETTINGS_ID: &str = "tile";
+
+/// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
+pub const PACKS_SOURCE: &str = "packs";
+
+/// Recently opened tiles kept.
+pub const RECENT_KEEP: usize = 10;
+
+/// A tile of the Tiles panel: where it is listed and its database entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TileRef {
+    /// A kit's raw_data folder ([`source_of`]), or [`PACKS_SOURCE`].
+    pub source: String,
+
+    /// The entry's normalized location (`terrain/tiles/battle/...`).
+    pub key: String,
+
+    /// The variation folder opened (recent tiles); empty: the first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub variation: String,
+}
+
+/// A kit's raw_data folder as a [`TileRef`] source: lower case, `/` separators, no trailing one.
+pub fn source_of(raw_root: &Path) -> String {
+    let s = raw_root.display().to_string().replace('\\', "/").to_lowercase();
+    s.trim_end_matches('/').to_owned()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,6 +56,12 @@ pub struct TileSettings {
 
     /// Each tile's weather, by the tile's folder (lower case, `/` separators).
     pub weathers: BTreeMap<String, TileWeather>,
+
+    /// The tiles starred in the Tiles panel.
+    pub favourites: Vec<TileRef>,
+
+    /// The last tiles opened, the latest first (at most [`RECENT_KEEP`]).
+    pub recent: Vec<TileRef>,
 }
 
 /// The weather a tile is lit with and the filters of its list.
@@ -44,6 +77,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { kits: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new() }
+        Self { kits: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![] }
     }
 }

@@ -1476,6 +1476,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("tile_favourite", "tile_favourite <entry key>", "star a tile of the Tiles panel's source (its location: terrain/tiles/...), or take its star away", |e, a| {
+        let Some(key) = a.first().map(|k| wce_formats::tile_entry::normalize_location(k)) else { return fail("usage: tile_favourite <entry key>") };
+        with_tile(e, |t, e| {
+            let source = t.browse_source();
+            ok(if t.toggle_favourite(e, &source, &key) { format!("{key}: favourite") } else { format!("{key}: not a favourite") })
+        })
+    });
+
+    c.add("tile_marks", "tile_marks", "log the favourite and the recently opened tiles (source, key, variation)", |e, _| {
+        with_tile(e, |t, e| {
+            let (favourites, recent) = t.marks(e);
+            let line = |r: &crate::settings::TileRef| format!("  {}  {}{}\n", r.source, r.key, if r.variation.is_empty() { String::new() } else { format!("  ({})", r.variation) });
+            let text = format!("favourites:\n{}recent:\n{}", favourites.iter().map(line).collect::<String>(), recent.iter().map(line).collect::<String>());
+            wce_foundation::log::info(&text);
+            ok(text)
+        })
+    });
+
     c.add(
         "tile_weather", "tile_weather [file | none]",
         "light the open tile with an environment file of the packs (none: the default light), kept for the tile in the settings; no file: log the files the game picks under the filters and the search",
