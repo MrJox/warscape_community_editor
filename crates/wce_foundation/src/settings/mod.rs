@@ -153,6 +153,10 @@ pub struct Settings {
     /// Frames per second an interactive session is held to (0: no limit).
     pub frame_cap: u32,
 
+    /// The tool an interactive session was last in (its id): the next one starts in it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub last_tool: String,
+
     /// Where "Save" writes loose files (under their in-pack path); none: the editor's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<PathBuf>,
@@ -170,7 +174,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, output_dir: None, appearance: Appearance::default(),
+            version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, appearance: Appearance::default(),
             games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(),
         }
     }

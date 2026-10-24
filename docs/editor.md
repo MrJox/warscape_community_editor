@@ -121,7 +121,12 @@ Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile a
 
 ImGui runs with docking and no ini file. Each tool has its own layout file `<config folder>/layouts/<tool id>.ini` (see the folders below). Switching tools saves the leaving tool's layout and loads the entering one's; without a file the tool's `default_layout`
 (DockBuilder calls; the base class builds the standard one: outliner left, inspector right, assets/log/history below, viewport in the centre) is built. `layout save`,
-`layout reset`, File menu entries and saving on exit (not in batch runs) manage the files.
+`layout reset`, File menu entries and saving on exit (not in batch runs) manage the files. A layout that was never loaded (a switch before the first
+frame) is not saved over the tool's file.
+
+A plain interactive start opens the tool the last interactive session was in (`last_tool` in the settings, kept on every switch,
+`Editor::restore_last_tool`). `--tool <id>` starts in that tool instead and leaves `last_tool` alone, and so does any scripted run (`--script`,
+`--cmd`, `--open`, `--tile`, `--shot`, `--capture`), so that scripts start where they expect.
 
 ## Settings and first run
 
