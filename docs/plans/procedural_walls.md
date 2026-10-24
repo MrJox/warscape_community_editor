@@ -47,12 +47,38 @@ From `models2.pack`, `rigidmodels/buildings/barbarian_fort_{straight,step_up_a,s
   intact straight, 58 damaged, 0 destroyed).
 - **Collision outlines**: `hard01` (the palisade's footprint, a quad at z -1.8..-2.8; the damaged level's is ragged), `ground_ad` (a line at
   z = -2.5).
-- **`orange_thingies`**: per level a 2D outline in x/z equal to the hard footprint (vertex type 2). **ASSUMPTION**: the line ladders and
-  towers dock against. Check in game: ladders and a siege tower on a generated, bent piece.
+- **`orange_thingies`**: per level a 2D outline in x/z (vertex type 2). In the 8 m wall it equals the palisade's hard footprint; in the
+  15 m wall it is the whole footprint (z -2..10.5), so it is a footprint, not a docking strip. How ladders and towers find the wall is not
+  known (no docking data in any wall); check in game: ladders and a siege tower on a generated, bent piece.
 - **Levels:** intact (5 platforms), damaged (17), destroyed (28: the breach's rubble ramp; no collision, no firing lines). The destroyed
   level attaches `barbarian_fort_bridgingcolumn_right` at x = 0 and `_left` at x = 20 (`file_refs`); the intact one a `torch_ground_post`.
 - **Zones** (`zone_tech.xml`): one zone region, the footprint rectangle x -0.2..20.2, z -2..2.5.
 - **Writers exist**: rpfm_lib encodes `Cs2Parsed`, `RigidModel` and DB tables.
+
+## Findings: the wall families (user, and every straight of the game's and TDD's packs, 2026-10-24)
+
+The user: Attila has two kinds of walls, 8 m and 15 m; the 8 m ones have a ramp behind them, the 15 m ones hidden steps where units climb
+at regular intervals; the TDD files may have others. The straights' logic files agree:
+
+| Family | Bases | Frame | Walkway | Way up | Height changes | Levels |
+|---|---|---|---|---|---|---|
+| 8 m (earth bank + palisade) | `barbarian_fort_straight`, `{eastern,sassanid,western}_fort_small_wall_straight`, TDD `khazad_fort_wall_small_straight`, `mordor_fort_small_wall_straight` | x 0..20, one piece | y 8, z -2.4..2.3 | the bank's sloped platforms behind | `_step_up_a` / `_step_down_a` (5 m, two 2.5 m ramps) | 3 |
+| 15 m (stone) | `{roman,eastern,sassanid,greek,egyptian,persian}_fort_straight`, TDD `{easterling,gondorean,gondor}_fort_straight` | x -10..10; piece01 the wall, piece02 / piece03 the end strips of the walkway (x -10..-8 and 8..10, z 0.5..3, 2 levels) | y 15, z 0.5..9 | none in the straight: `_straight_with_doors_a` has 6 `WallDoorTeleport` pipes (inner door at the ground, z 13, to the walkway, z 6..8), the towers 6 more | only `_straight_stepped_up/down_10m_square_bastion_a`: a bastion with a 10 m ramp (15 to 25 m); no step piece | 3 (end strips 2) |
+| TDD Rohan (timber) | `rohan_wall_straight` (+ `_ladders`, `_ladders_attacker`, `_ladders_definitive`, `_bastion`, `_step_up`) | x -10..10, 4 m thick | y 10, z -2..2, 16 platforms of 5 x 1 m | `_ladders*`: 4-5 `SiegeLadder2` pipes (ground to walkway) | `_step_up` (10 to 15 m) | 1 (no destruction) |
+| TDD cliff | `persian_cliff_fort_straight` | x -10..10 | y 15, 2 platforms | ? | ? | 1, no firing lines |
+
+`gondor_fort_straight`'s frame is x -10.5..10.8 (pieces overlap their neighbours). The 15 m firing lines are of other types (`LowWall`,
+`Crenel{Left,Right}{Inner,Outer}`, `Overflow`). The way up is the gameplay part of each family: a generated run must keep it working.
+
+Consequences:
+
+- **The generator works from a description of the base, not from the barbarian layout**: its frame, walkway height and width, outer face,
+  pieces and levels, its way up (bank platforms, door pipes, ladder pipes) and its height-change source. A **profile** per family, read
+  from the base's files where possible and checked by hand per kit.
+- **Access in 15 m and Rohan walls is spliced at intervals**: the door section of `_with_doors_a` (or the ladders of `_ladders`) every N
+  metres. The pipes' ground ends follow the terrain, their walkway ends the walkway.
+- **The 8 m bank must still reach the ground** after the foot is stretched (the bank's lowest platform is at y = 4, z = 11.5; how units
+  get from the ground onto it is not clear from the platforms alone: check in game on a vanilla 8 m wall).
 
 ## Design
 
@@ -68,11 +94,12 @@ ignores it; checked to read back unchanged in `tile.semantic()`):
 Compiling a tile lowers each `WALL_SPLINE` into `BUILDING_INSTANCE`s of generated keys (stage A sees ordinary buildings), so the rest of the
 compile needs no change except where it reads building files (below).
 
-### The kit table
+### The kit table: one profile per base
 
-Per base straight: its step pieces (`*_step_up_a` / `_step_down_a`), its endcaps (`_endcap_left` / `_right`), its bridging columns.
-Derived from the key's family (`<culture>_fort_straight`, `<culture>_fort_small_wall_straight`, ...), with a hand table for exceptions.
-A base without a step piece can only be used on ground within the tolerance (the editor says so).
+Per base straight (see "The wall families"): its family profile (frame, walkway, outer face, pieces, levels), its way up (the bank, or the
+access section and its interval: `_with_doors_a`, `_ladders`), its height-change source (`_step_up_a` / `_step_down_a`, `_step_up`, or
+none: see "To confirm"), its endcaps (`_endcap_left` / `_right`) and bridging columns. Derived from the key's family
+(`<culture>_fort_straight`, `<culture>_fort_small_wall_straight`, ...), with a hand table for exceptions (TDD's kits).
 
 ### The solver: spline to runs and pieces
 
@@ -122,9 +149,10 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
 
 ## Phases
 
-0. **Spike: what siege needs** (before writing the generator). Copy `barbarian_fort_straight` under a new key into a test pack: same
-   files, a translated and slightly bent logic file, a DB row. Place it in a test tile and check in game: units walk onto it from a vanilla
-   neighbour, ladders and a tower dock, it breaches. That settles the two **ASSUMPTIONS** above before anything depends on them.
+0. **Spike: what siege needs** (before writing the generator). Copy `barbarian_fort_straight` and `roman_fort_straight_with_doors_a`
+   under new keys into a test pack: same files, a translated and slightly bent logic file, DB rows. Place them in a test tile and check in
+   game: units walk onto them (the bank, the doors) and on to a vanilla neighbour, ladders and a tower dock, they breach. That settles the
+   **ASSUMPTIONS** above before anything depends on them.
 1. **Model and editing:** the `WALL_SPLINE` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
    height profile drawn as lines (no meshes yet).
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the
@@ -138,6 +166,12 @@ Each phase: a Cargo example that generates a fixed wall and compares it with a r
 the game sees (0, 2, 3, 4).
 
 ## To confirm
+
+- **Steps on 15 m walls:** the kit has no step piece; the only height change is the stepped bastion (10 m at once, placed by hand). Options
+  in the user's hands: a step made by the generator (a short sheared section of the straight with a sloped walkway platform, about 40
+  degrees like the 8 m steps), a step built from the stepped bastion's ramp, or new step art.
+- **The access interval** of 15 m and Rohan walls: from the vanilla tiles (to measure), or a parameter of the wall.
+- **Which families in the first iteration:** 8 m and 15 m, with Rohan and the cliff wall when the profile allows.
 
 - **The 25 degree rule:** read here as "a vertex whose turn is under 25 degrees is drawn as a sharp corner unless marked smooth". It may
   have been meant the other way (a sharp turn becomes a corner). The user to confirm before phase 3.
