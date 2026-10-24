@@ -394,6 +394,22 @@ Two attributes of the spline (Inspector rows; 0: none):
   (`pieces::defence_slots`); else skipped with a note. `Piece::rigid`: placed as instances of the game's keys on export (no generated
   files, no copied rows), drawn from the game's meshes in the preview. Test: alternation, exact slots, origins, coverage, none on curves.
 
+## In-game test: Edoras rebuilt (user, 2026-10-24)
+
+`cargo run --release -p wce_walls --example wall_ring_test -- <game> <schema> <workspace> <out> --mods <TDD packs>`.
+- **The tile:** Edoras (TDD, level 2) with its whole ring rebuilt as 7 `WALL_SPLINE`s on barbarian_fort_straight. The 3 gates stay, and
+  6 of the walls' ends are attached to them. The other 69 pieces go: straights, bastions, steps, kinks, curves and endcaps.
+- **Height differences and curves added** (the ring stood on flat terraces):
+  - a 40-unit bulge over a 6 m hill raised outside;
+  - a 35-unit bulge over a 2 m hollow, then a sharp corner and a climb at the free end;
+  - a slight bow;
+  - the far-west climb from 5 to 15 m, which the old step pieces made;
+  - the north-east kinks, made smooth.
+- **Spacings:** towers and bastions every 120 units on the long runs.
+- **Tolerance:** 1 m. The old ring sits buried in the terraces' banks, which wave by about that much. At 0.5 m every wave became a step:
+  10 runs on 183 units at the north-west end.
+- **Result:** 57 generated pieces; `wall_pack_check` passed. Not yet checked in game.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
