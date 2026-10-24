@@ -105,14 +105,40 @@ pub fn subdivide(points: &[[f32; 3]], closed: bool, step: f32) -> Vec<([f32; 3],
     out
 }
 
-/// A convex polygon cut into slabs `step` metres wide along x (cuts at multiples of `step`). Slabs with no area are left out.
-pub fn slice_along_x(polygon: &[[f32; 3]], step: f32) -> Vec<Vec<[f32; 3]>> {
+/// Where long polygons and triangles are cut along x before a warp: at the multiples of `step`, and at positions of their own (where
+/// the warp bends: a step ramp's ends).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cuts {
+    pub step: f32,
+    pub at: Vec<f32>,
+}
+
+impl Cuts {
+    /// At the multiples of `step` only.
+    pub fn every(step: f32) -> Self {
+        Self { step, at: vec![] }
+    }
+
+    /// The slabs that cover `lo .. hi`: their bounds, in order (`lo`, the cuts strictly inside, `hi`).
+    pub fn bounds(&self, lo: f32, hi: f32) -> Vec<f32> {
+        let mut out = vec![lo];
+        let (first, last) = ((lo / self.step).floor() as i64 + 1, (hi / self.step).ceil() as i64);
+        out.extend((first..last).map(|k| k as f32 * self.step).filter(|&x| x > lo && x < hi));
+        out.extend(self.at.iter().copied().filter(|&x| x > lo && x < hi));
+        out.push(hi);
+        out.sort_by(f32::total_cmp);
+        out.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+        out
+    }
+}
+
+/// A convex polygon cut into slabs along x at `cuts`. Slabs with no area are left out.
+pub fn slice_along_x(polygon: &[[f32; 3]], cuts: &Cuts) -> Vec<Vec<[f32; 3]>> {
     let (lo, hi) = polygon.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
-    let first = (lo / step).floor() as i64;
-    let last = (hi / step).ceil() as i64;
+    let bounds = cuts.bounds(lo, hi);
     let mut out = vec![];
-    for k in first..last {
-        let (a, b) = (k as f32 * step, (k + 1) as f32 * step);
+    for w in bounds.windows(2) {
+        let (a, b) = (w[0], w[1]);
         let slab = clip(&clip(polygon, |p| p[0] - a), |p| b - p[0]);
         if slab.len() >= 3 && area(&slab) > 1e-4 {
             out.push(slab);
@@ -200,10 +226,17 @@ mod tests {
     #[test]
     fn slices_cover_the_polygon() {
         let quad = [[0.0, 8.0, -2.4], [20.0, 8.0, -2.4], [20.0, 8.0, 2.3], [0.0, 8.0, 2.3]];
-        let slabs = slice_along_x(&quad, 2.0);
+        let slabs = slice_along_x(&quad, &Cuts::every(2.0));
         assert_eq!(slabs.len(), 10);
         let total: f32 = slabs.iter().map(|s| area(s)).sum();
         assert!((total - area(&quad)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn cuts_are_the_multiples_and_the_extra_positions() {
+        let c = Cuts { step: 5.0, at: vec![7.5, 12.0] };
+        assert_eq!(c.bounds(0.0, 20.0), vec![0.0, 5.0, 7.5, 10.0, 12.0, 15.0, 20.0]);
+        assert_eq!(Cuts::every(20.0).bounds(0.0, 20.0), vec![0.0, 20.0]);
     }
 
     #[test]

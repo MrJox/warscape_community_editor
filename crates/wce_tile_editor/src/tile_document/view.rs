@@ -879,6 +879,7 @@ impl Tile {
         self.first_entity = vec![0; n];
         self.entity_count = vec![0; n];
         self.outline_entity.clear();
+        self.wall_preview_cleared();
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
         scene.reserve(pieces + self.instances.len() / 16 + 64);
@@ -1018,6 +1019,10 @@ impl Tile {
         // A moved building can be what a wall's end is attached to.
         if self.tscene().type_of(elem) == "BUILDING_INSTANCE" && self.has_walls() {
             self.polygons_dirty = true;
+        }
+
+        if self.is_wall(elem) {
+            self.wall_changed(elem);
         }
     }
 
@@ -1205,6 +1210,10 @@ impl Tile {
         if self.polygons_dirty {
             self.polygons_dirty = false;
             for e in self.instances.clone() {
+                if self.is_wall(e) {
+                    self.wall_changed(e);
+                }
+
                 if !self.is_polygon(e) || !self.shown(e) {
                     continue;
                 }
@@ -1217,6 +1226,8 @@ impl Tile {
                 }
             }
         }
+
+        self.update_wall_previews(scene);
     }
 
     /// The highlight overlay (the points of a selected polygon, with `polygon_point` hot, and the active tool's overlay) and the selection

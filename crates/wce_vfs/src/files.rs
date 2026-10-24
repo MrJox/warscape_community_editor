@@ -1,8 +1,9 @@
-//! Where the editor reads the game's files from: the packs, or (tools and comparisons) a folder with an extracted copy of them.
+//! Where the editor reads the game's files from: the packs, or (tools and comparisons) a folder with an extracted copy of them; files made in
+//! memory ([`crate::generated`]) first.
 
 use std::path::PathBuf;
 
-use crate::{Vfs, list_folder, normalize};
+use crate::{Vfs, generated, list_folder, normalize};
 
 /// The game's files, readable from any thread.
 pub trait Files: Send + Sync {
@@ -23,11 +24,15 @@ pub trait Files: Send + Sync {
 
 impl Files for Vfs {
     fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        if let Some(made) = generated::get(path) {
+            return Ok(made.as_ref().clone());
+        }
+
         Vfs::read(self, path).map_err(|error| error.to_string())
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.owner(path).is_some()
+        generated::get(path).is_some() || self.owner(path).is_some()
     }
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
@@ -41,12 +46,16 @@ pub struct FolderFiles(pub PathBuf);
 
 impl Files for FolderFiles {
     fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        if let Some(made) = generated::get(path) {
+            return Ok(made.as_ref().clone());
+        }
+
         let p = self.0.join(normalize(path));
         if p.exists() { std::fs::read(&p).map_err(|error| error.to_string()) } else { Err(format!("missing {path}")) }
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.0.join(normalize(path)).exists()
+        generated::get(path).is_some() || self.0.join(normalize(path)).exists()
     }
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {

@@ -38,6 +38,11 @@ pub struct Profile {
 
     /// Between two chained step sections, flat (the 8 m step piece has 10 between its two ramps).
     pub step_gap: f64,
+
+    /// The foot: below `foot.1` the mesh stretches so its bottom (`foot.0`) reaches `bury` under the terrain where the terrain is lower
+    /// than the piece's level (8 m: the buried 2 m under y = 0; 15 m: the bottom 2 m of the plinth, which stands on y = 0).
+    pub foot: (f64, f64),
+    pub bury: f64,
 }
 
 impl Profile {
@@ -57,6 +62,8 @@ const EIGHT: Profile = Profile {
     step_rise: 2.5,
     step_run: 3.0,
     step_gap: 10.0,
+    foot: (-2.0, 0.0),
+    bury: 2.0,
 };
 
 const FIFTEEN: Profile = Profile {
@@ -69,6 +76,8 @@ const FIFTEEN: Profile = Profile {
     step_rise: 10.0,
     step_run: 12.0,
     step_gap: 8.0,
+    foot: (0.0, 2.0),
+    bury: 0.5,
 };
 
 /// The bases of the first iteration (the game's and TDD's straights of both families; their walkways and frames checked in the logic

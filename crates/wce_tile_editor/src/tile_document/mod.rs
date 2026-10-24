@@ -356,6 +356,9 @@ pub struct Tile {
     pub(crate) fallbacks: Vec<String>,
     pub(crate) markers_dirty: bool,
     pub(crate) polygons_dirty: bool,
+
+    /// The procedural walls' preview pieces (`walls.rs`).
+    pub(crate) wall_preview: walls::WallPreview,
     pub(crate) hidden_signature: u64,
     pub(crate) lod_eye: Float3,
     pub(crate) grid: RefCell<PickGrid>,
@@ -546,7 +549,7 @@ impl TileDocument {
             id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, overlay_entity: 0, terrain_version: 1,
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
-            markers_dirty: true, polygons_dirty: false, hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
+            markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], columns: columns::ColumnState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),

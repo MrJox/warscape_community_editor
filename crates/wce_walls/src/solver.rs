@@ -29,7 +29,8 @@ pub struct WallInput {
     /// Per point, marked sharp (a corner). The ends are always corners.
     pub sharp: Vec<bool>,
 
-    /// The outer face on the other side (+z of the pieces' frame).
+    /// The outer face on the other side: the wall is laid from its last point to its first (a rotation of the pieces, not a mirror), so
+    /// distances along it start at the last point.
     pub flip: bool,
 
     /// How far the walkway's ground may drift from the ground before a step (scene units of height).
@@ -124,6 +125,25 @@ pub fn corners(points: &[[f64; 2]], sharp: &[bool]) -> Vec<bool> {
 
 /// Lays out a wall. `ground(x, z)` is the terrain's height.
 pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> f64) -> Plan {
+    if input.flip {
+        let n = input.points.len();
+        let reversed = WallInput {
+            points: input.points.iter().rev().copied().collect(),
+            sharp: (0..n).rev().map(|i| input.sharp.get(i).copied().unwrap_or(false)).collect(),
+            flip: false,
+            tolerance: input.tolerance,
+            ends: [input.ends[1], input.ends[0]],
+        };
+
+        // The corners name the points as the input does.
+        let mut plan = solve(&reversed, profile, ground);
+        for c in &mut plan.corners {
+            c.1 = n - 1 - c.1;
+        }
+
+        return plan;
+    }
+
     let mut plan = Plan::default();
     if input.points.len() < 2 {
         return plan;
@@ -148,10 +168,9 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
     plan.corners = corner_s.into_iter().filter(|&(_, i)| i != 0 && i + 1 != input.points.len()).collect();
 
     // The outer foot and the ground there. The pieces' local +z is (-dz, dx) of their direction; the outer face is at `outer_face` on it.
-    let side = if input.flip { -1.0 } else { 1.0 };
     plan.samples = samples.iter().enumerate().map(|(i, &(s, c))| {
         let dir = direction(&samples, i);
-        let z_axis = [-dir[1] * side, dir[0] * side];
+        let z_axis = [-dir[1], dir[0]];
         let foot = [c[0] + z_axis[0] * profile.outer_face, c[1] + z_axis[1] * profile.outer_face];
         Sample { s, centre: c, dir, foot, ground: ground(foot[0], foot[1]), level: 0.0 }
     }).collect();

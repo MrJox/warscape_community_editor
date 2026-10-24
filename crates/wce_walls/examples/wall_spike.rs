@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use rpfm_lib::schema::Schema;
 use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
-use wce_walls::warp::{Bend, Warp};
+use wce_walls::warp::{Bend, Cuts, Warp};
 use wce_walls::{db, lines, logic, mesh, pack, zones};
 
 /// Points are added to long outlines every this many metres before bending.
@@ -76,10 +76,10 @@ fn run() -> Result<(), String> {
                 if is_piece_mesh(name) {
                     let longest = mesh::longest_edge(bytes)?;
                     let same = mesh::round_trips(bytes)?;
-                    *bytes = mesh::warp_mesh(bytes, &warp, STEP)?;
+                    *bytes = mesh::warp_mesh(bytes, &warp, &Cuts::every(STEP))?;
                     println!("  {name}: round trip {same}, longest triangle edge along x {longest:.1} m -> {:.1} m", mesh::longest_edge(bytes)?);
                 } else if *name == logic_name {
-                    let (w, notes) = logic::warp_logic(bytes, &warp, STEP)?;
+                    let (w, notes) = logic::warp_logic(bytes, &warp, &Cuts::every(STEP))?;
                     *bytes = w;
                     println!("  {name}: platforms {} -> {}, firing lines off their strip {}", notes.platforms.0, notes.platforms.1, notes.orphan_lines);
                     for w in notes.warnings {

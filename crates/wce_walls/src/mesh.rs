@@ -1,6 +1,6 @@
 //! A piece's mesh (`.rigid_model_v2`) under a warp. A mesh's vertices are stored around its material's pivot (`v_pivot`, the centre of
 //! its box): the piece's frame, the logic file's, is vertex + pivot, and the meshes' boxes (`min_bb`, `max_bb`) are in it. Triangles
-//! are first cut into strips `step` metres wide along x of that frame (the walls are made of triangles up to 24 m long, which would bend
+//! are first cut into strips along x of that frame at `cuts` (the walls are made of triangles up to 24 m long, which would bend
 //! as chords), the new vertices interpolated from the old; then positions are warped, normals, tangents and bitangents turned, the boxes
 //! recomputed. The pivot, UVs and materials are kept.
 
@@ -11,21 +11,21 @@ use rpfm_lib::files::rigidmodel::{Mesh, RigidModel};
 use rpfm_lib::files::rigidmodel::vertices::Vertex;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
 
-use crate::warp::{Warp, turn3};
+use crate::warp::{Cuts, Warp, turn3};
 
-/// A mesh file warped, its triangles cut every `step` metres along x first.
+/// A mesh file warped, its triangles cut along x at `cuts` first.
 ///
 /// # Errors
 ///
 /// The file doesn't read or doesn't write back, or a mesh gets more vertices than its 16-bit indices can reach.
-pub fn warp_mesh(bytes: &[u8], warp: &dyn Warp, step: f32) -> Result<Vec<u8>, String> {
+pub fn warp_mesh(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<Vec<u8>, String> {
     let mut model = decode(bytes)?;
     for lod in model.lods_mut() {
         for block in lod.mesh_blocks_mut() {
             let pivot = block.material().v_pivot();
             let pivot = [pivot.x, pivot.y, pivot.z];
             let mesh = block.mesh_mut();
-            slice_mesh(mesh, step, pivot[0])?;
+            slice_mesh(mesh, cuts, pivot[0])?;
             let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
             for v in mesh.vertices_mut() {
                 let p = [v.position().x + pivot[0], v.position().y + pivot[1], v.position().z + pivot[2]];
@@ -55,9 +55,9 @@ pub fn warp_mesh(bytes: &[u8], warp: &dyn Warp, step: f32) -> Result<Vec<u8>, St
     encode(&mut model)
 }
 
-/// A mesh's triangles cut into strips `step` metres wide along x of the piece's frame (vertex x + `pivot_x`). A mesh with extra indices
-/// is left as it is (they are not understood).
-fn slice_mesh(mesh: &mut Mesh, step: f32, pivot_x: f32) -> Result<(), String> {
+/// A mesh's triangles cut into strips along x of the piece's frame (vertex x + `pivot_x`) at `cuts`. A mesh with extra indices is left
+/// as it is (they are not understood).
+fn slice_mesh(mesh: &mut Mesh, cuts: &Cuts, pivot_x: f32) -> Result<(), String> {
     if !mesh.extra_indices().is_empty() {
         return Ok(());
     }
@@ -67,15 +67,15 @@ fn slice_mesh(mesh: &mut Mesh, step: f32, pivot_x: f32) -> Result<(), String> {
     for t in mesh.indices().chunks_exact(3) {
         let tri = [&vertices[t[0] as usize], &vertices[t[1] as usize], &vertices[t[2] as usize]];
         let (lo, hi) = tri.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v.position().x + pivot_x), hi.max(v.position().x + pivot_x)));
-        let (first, last) = ((lo / step).floor() as i64, (hi / step).ceil() as i64);
-        if last - first <= 1 {
+        let bounds = cuts.bounds(lo, hi);
+        if bounds.len() <= 2 {
             indices.extend_from_slice(t);
             continue;
         }
 
         let polygon = tri.map(Clone::clone).to_vec();
-        for k in first..last {
-            let (a, b) = (k as f32 * step - pivot_x, (k + 1) as f32 * step - pivot_x);
+        for w in bounds.windows(2) {
+            let (a, b) = (w[0] - pivot_x, w[1] - pivot_x);
             let slab = clip(&clip(&polygon, a, true), b, false);
             if slab.len() < 3 {
                 continue;
@@ -93,10 +93,35 @@ fn slice_mesh(mesh: &mut Mesh, step: f32, pivot_x: f32) -> Result<(), String> {
         }
     }
 
-    // Vertices only the cut triangles used are left in (unreferenced); the format doesn't mind.
+    let (vertices, indices) = compact(&vertices, &indices);
     *mesh.vertices_mut() = vertices;
     *mesh.indices_mut() = indices;
     Ok(())
+}
+
+/// The vertices the triangles use, each once (the cuts make a copy of a vertex per slab; the triangles that were cut leave theirs unused).
+fn compact(vertices: &[Vertex], indices: &[u16]) -> (Vec<Vertex>, Vec<u16>) {
+    let key = |v: &Vertex| {
+        let mut k = Vec::with_capacity(24);
+        for x in [v.position().as_slice(), v.normal().as_slice(), v.tangent().as_slice(), v.bitangent().as_slice(), v.color().as_slice(), v.weights().as_slice()] {
+            k.extend(x.iter().map(|f| f.to_bits()));
+        }
+
+        k.extend(v.texture_coordinate().iter().chain(v.texture_coordinate2().iter()).map(|f| f.to_bits()));
+        k.extend(v.bone_indices().iter().map(|&b| u32::from(b)));
+        k
+    };
+
+    let mut seen = std::collections::HashMap::new();
+    let mut out = vec![];
+    let new = indices.iter().map(|&i| {
+        let v = &vertices[i as usize];
+        *seen.entry(key(v)).or_insert_with(|| {
+            out.push(v.clone());
+            (out.len() - 1) as u16
+        })
+    }).collect();
+    (out, new)
 }
 
 /// The part of a polygon on one side of the plane x = `at` (`keep_above`: x >= at).
@@ -220,7 +245,7 @@ mod tests {
         let mut mesh = Mesh::default();
         *mesh.vertices_mut() = vec![vertex(0.0, 0.0, -2.0, 0.0), vertex(20.0, 0.0, -2.0, 1.0), vertex(20.0, 8.0, -2.0, 1.0)];
         *mesh.indices_mut() = vec![0, 1, 2];
-        slice_mesh(&mut mesh, 1.0, 0.0).unwrap();
+        slice_mesh(&mut mesh, &Cuts::every(1.0), 0.0).unwrap();
 
         let v = mesh.vertices();
         let tris = mesh.indices().chunks_exact(3).collect::<Vec<_>>();
