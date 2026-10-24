@@ -888,8 +888,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let corners = l.plan.corners.iter().map(|(s, i)| format!("point {i} at {s:.0}")).collect::<Vec<_>>().join(", ");
         let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
         let (doors, skipped) = d.tile().wall_doors(&l, &ps);
-        ok(format!("{}; {} pieces, doors at pieces {doors:?}; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), ps.len(),
-            l.plan.warnings.iter().chain(&skipped).map(|w| format!("; {w}")).collect::<String>()))
+        let (defences, defences_skipped) = wce_walls::pieces::defence_slots(&l.plan, l.profile);
+        let defences = defences.iter().map(|(s, k)| format!("{k} at {s:.0}")).collect::<Vec<_>>().join(", ");
+        ok(format!("{}; {} pieces, doors at pieces {doors:?}; towers and bastions [{defences}]; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), ps.len(),
+            l.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|w| format!("; {w}")).collect::<String>()))
     });
 
     c.add("assert_wall", "assert_wall <corners> <steps> [start end: free|attached]", "test: the selected wall's layout has these many corners and step sections (and its ends are free or attached)", |e, a| {

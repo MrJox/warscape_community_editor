@@ -38,8 +38,12 @@ pub struct Piece {
     /// The base's length is scaled by this along the wall.
     pub scale: f64,
 
-    /// The building it is made from instead of the wall's base: a whole step piece, a cap (`None`: the base, or a door section).
+    /// The building it is made from instead of the wall's base: a whole step piece, a cap, a tower or bastion (`None`: the base, or a door
+    /// section).
     pub base: Option<&'static str>,
+
+    /// Placed as the game's piece, not generated (a tower or bastion): `origin` is then the game piece's own origin, along the wall.
+    pub rigid: bool,
 }
 
 /// The pieces of a layout: between the ends and corners, `n` pieces of equal length, `n` the stretch's length over the base's, rounded
@@ -53,25 +57,40 @@ pub fn pieces(plan: &Plan, profile: &Profile) -> Vec<Piece> {
     let piece_at = |s0: f64, s1: f64, base: Option<&'static str>| {
         let at = sample_at(plan, s0);
         let level = wall_level(plan, (s0 + 1e-4).min((s0 + s1) / 2.0));
-        Piece { s: (s0, s1), origin: [at.centre[0], level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: (s1 - s0) / len, base }
+        Piece { s: (s0, s1), origin: [at.centre[0], level, at.centre[1]], yaw: at.dir[1].atan2(at.dir[0]), scale: (s1 - s0) / len, base, rigid: false }
     };
 
+    let defences = defence_slots(plan, profile).0;
     let mut out = vec![];
     for (a, b) in sections(plan) {
-        // The whole steps in the section are pieces of their own; the stretches around them are cut as near the base's length as divides
-        // them.
-        let mut parts: Vec<(f64, f64, Option<&'static str>)> = vec![];
+        // The whole steps and the towers and bastions in the section are pieces of their own; the stretches around them are cut as near
+        // the base's length as divides them.
+        let mut fixed: Vec<(f64, f64, &'static str, bool)> = plan.steps.iter().filter(|st| st.whole && st.s.0 >= a - 1e-6 && st.s.1 <= b + 1e-6)
+            .map(|st| (st.s.0, st.s.1, if st.to > st.from { profile.step_up } else { profile.step_down }, false)).collect();
+        fixed.extend(defences.iter().filter(|d| d.0 >= a - 1e-6 && d.0 + len <= b + 1e-6).map(|d| (d.0, d.0 + len, d.1, true)));
+        fixed.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut parts: Vec<(f64, f64, Option<&'static str>, bool)> = vec![];
         let mut at = a;
-        for st in plan.steps.iter().filter(|st| st.whole && st.s.0 >= a - 1e-6 && st.s.1 <= b + 1e-6) {
-            parts.push((at, st.s.0, None));
-            parts.push((st.s.0, st.s.1, Some(if st.to > st.from { profile.step_up } else { profile.step_down })));
-            at = st.s.1;
+        for (s0, s1, key, rigid) in fixed {
+            parts.push((at, s0, None, false));
+            parts.push((s0, s1, Some(key), rigid));
+            at = s1;
         }
 
-        parts.push((at, b, None));
-        for (p0, p1, base) in parts {
+        parts.push((at, b, None, false));
+        for (p0, p1, base, rigid) in parts {
             let l = p1 - p0;
             if l < 1e-6 {
+                continue;
+            }
+
+            if rigid {
+                // The game's piece as it is: its own origin (x = 0 of its frame) on the straight, at the wall's level there.
+                let at = sample_at(plan, p0);
+                let level = wall_level(plan, p0 + len / 2.0);
+                let d = at.dir;
+                let origin = [at.centre[0] - d[0] * profile.x.0, level, at.centre[1] - d[1] * profile.x.0];
+                out.push(Piece { s: (p0, p1), origin, yaw: d[1].atan2(d[0]), scale: 1.0, base, rigid: true });
                 continue;
             }
 
@@ -112,7 +131,7 @@ pub fn cap_instances(plan: &Plan, profile: &Profile) -> Vec<(&'static str, Piece
         let at = sample_at(plan, s);
         let level = wall_level(plan, if k == 0 { 1e-4 } else { plan.length - 1e-4 });
         let origin = [at.centre[0] - d[0] * join, level, at.centre[1] - d[1] * join];
-        out.push((key, Piece { s: (s, s), origin, yaw: d[1].atan2(d[0]), scale: 1.0, base: Some(key) }));
+        out.push((key, Piece { s: (s, s), origin, yaw: d[1].atan2(d[0]), scale: 1.0, base: Some(key), rigid: true }));
     }
 
     out
@@ -140,13 +159,61 @@ pub fn cuts_of(plan: &Plan, piece: &Piece, profile: &Profile) -> Cuts {
     Cuts { step, at }
 }
 
-/// A door section every this many units along a 15 m wall (the first at half of it).
+/// The default spacing of the access pieces (15 m: the door sections) along a wall (the first at half of it).
 pub const DOOR_EVERY: f64 = 200.0;
+
+/// The towers and bastions of a wall: at `defence_every / 2`, then every `defence_every`, a slot of the base's length, on the straightest,
+/// level place nearest (within half the spacing): no step under it, straight (at most [`crate::solver::STRAIGHT`] of turn), away from
+/// corners and attached ends (the wall's depth + 2) and from the wall's ends, not over another. The culture's towers and bastions in
+/// turn. Returns the slots (start, key) and the places skipped, with why.
+pub fn defence_slots(plan: &Plan, profile: &Profile) -> (Vec<(f64, &'static str)>, Vec<String>) {
+    let (mut out, mut skipped) = (vec![], vec![]);
+    if plan.defence_every <= 0.0 || profile.defences.is_empty() || plan.samples.len() < 2 {
+        return (out, skipped);
+    }
+
+    let len = profile.length();
+    let margin = profile.depth.0.abs().max(profile.depth.1.abs()) + 2.0;
+    let all = sections(plan);
+    let usable = |t: f64| {
+        let in_section = all.iter().any(|&(a, b)| {
+            let lo = if a > 1e-6 || plan.end_planes[0].is_some() { a + margin } else { a + 1.0 };
+            let hi = if b < plan.length - 1e-6 || plan.end_planes[1].is_some() { b - margin } else { b - 1.0 };
+            t >= lo && t + len <= hi
+        });
+        let flat = !plan.steps.iter().any(|st| st.s.1 > t - 1.0 && st.s.0 < t + len + 1.0);
+        let straight = crate::solver::turn_between(&plan.samples, t, t + len) <= crate::solver::STRAIGHT;
+        in_section && flat && straight
+    };
+
+    let mut target = plan.defence_every / 2.0;
+    while target < plan.length {
+        let window = plan.defence_every / 2.0;
+        let mut best: Option<f64> = None;
+        let mut t = (target - window).max(0.0);
+        while t <= target + window - len {
+            let free = !out.iter().any(|&(o, _): &(f64, &str)| t < o + len && t + len > o);
+            if free && usable(t) && best.is_none_or(|b| (t + len / 2.0 - target).abs() < (b + len / 2.0 - target).abs()) {
+                best = Some(t);
+            }
+            t += STEP;
+        }
+
+        match best {
+            Some(t) => out.push((t, profile.defences[out.len() % profile.defences.len()])),
+            None => skipped.push(format!("no tower or bastion near {target:.0}: no straight, level stretch away from corners and steps there")),
+        }
+
+        target += plan.defence_every;
+    }
+
+    (out, skipped)
+}
 
 /// The square inside the wall where a door's units come down must be free: this wide (units), starting at the door.
 pub const LANDING: f64 = 20.0;
 
-/// The pieces that become door sections: for a base with one, the piece nearest `DOOR_EVERY / 2`, then every `DOOR_EVERY`, if it is
+/// The pieces that become door sections: for a base with one, the piece nearest `access_every / 2`, then every `access_every`, if it is
 /// a plain piece (no step section in it, not at a corner or an end) and `landing_ok` says the square in front of its doors is free
 /// (corners of the square, scene x z: units walk down there). Returns the chosen pieces and the skipped places, with why.
 pub fn door_pieces(plan: &Plan, profile: &Profile, ps: &[Piece], ground: &dyn Fn(f64, f64) -> f64, landing_ok: &dyn Fn(&[[f64; 2]; 4]) -> bool) -> (Vec<usize>, Vec<String>) {
@@ -155,8 +222,12 @@ pub fn door_pieces(plan: &Plan, profile: &Profile, ps: &[Piece], ground: &dyn Fn
         return (chosen, skipped);
     }
 
+    if plan.access_every <= 0.0 {
+        return (chosen, skipped);
+    }
+
     let ends = sections(plan).into_iter().flat_map(|(a, b)| [a, b]).collect::<Vec<_>>();
-    let mut at = DOOR_EVERY / 2.0;
+    let mut at = plan.access_every / 2.0;
     while at < plan.length {
         let k = ps.iter().enumerate().min_by(|a, b| (((a.1.s.0 + a.1.s.1) / 2.0 - at).abs()).total_cmp(&(((b.1.s.0 + b.1.s.1) / 2.0 - at).abs()))).map(|(k, _)| k).expect("pieces");
         let p = ps[k];
@@ -174,7 +245,7 @@ pub fn door_pieces(plan: &Plan, profile: &Profile, ps: &[Piece], ground: &dyn Fn
             chosen.push(k);
         }
 
-        at += DOOR_EVERY;
+        at += plan.access_every;
     }
 
     (chosen, skipped)
@@ -716,6 +787,36 @@ mod tests {
         assert!((top(&before, 9.99) - top(&before, 0.0)).abs() < 1e-6, "{} vs {}", top(&before, 9.99), top(&before, 0.0));
         assert!((top(&after, -9.99) - top(&after, 0.0)).abs() < 1e-6, "{} vs {}", top(&after, -9.99), top(&after, 0.0));
         assert!((top(&before, 0.0) - top(&after, 0.0) - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn towers_and_bastions_take_whole_slots_in_turn_on_straight_level_ground() {
+        let p = profile("roman_fort_straight").unwrap();
+        let ground = |_: f64, _: f64| 0.0;
+        let input = WallInput { points: vec![[0.0, 0.0], [400.0, 0.0]], sharp: vec![false; 2], tolerance: 0.5, defence_every: 100.0, ..Default::default() };
+        let plan = solve(&input, p, &ground);
+        let ps = pieces(&plan, p);
+        let rigid = ps.iter().filter(|q| q.rigid).collect::<Vec<_>>();
+        assert_eq!(rigid.len(), 4);
+        assert_eq!(rigid[0].base, Some("roman_fort_tower_c_straight_with_extension"));
+        assert_eq!(rigid[1].base, Some("roman_fort_straight_with_solid_squared_bastion"));
+        assert!(rigid.iter().all(|q| ((q.s.1 - q.s.0) - 20.0).abs() < 1e-9 && q.scale == 1.0));
+
+        // The game piece's origin is its frame's x = 0: 10 past the slot's start for a 15 m piece.
+        assert!((rigid[0].origin[0] - (rigid[0].s.0 + 10.0)).abs() < 1e-6);
+
+        // The pieces cover the wall without gaps or overlaps.
+        assert!(ps.windows(2).all(|w| (w[1].s.0 - w[0].s.1).abs() < 1e-6));
+        assert!((ps.last().unwrap().s.1 - plan.length).abs() < 1e-6);
+
+        // Off by default; none on a curve.
+        let none = solve(&WallInput { defence_every: 0.0, ..input.clone() }, p, &ground);
+        assert!(pieces(&none, p).iter().all(|q| !q.rigid));
+        let curved = WallInput { points: vec![[0.0, 0.0], [100.0, 40.0], [200.0, 0.0]], sharp: vec![false; 3], tolerance: 0.5, defence_every: 100.0, ..Default::default() };
+        let plan = solve(&curved, p, &ground);
+        for q in pieces(&plan, p).iter().filter(|q| q.rigid) {
+            assert!(crate::solver::turn_between(&plan.samples, q.s.0, q.s.1) <= crate::solver::STRAIGHT);
+        }
     }
 
     #[test]

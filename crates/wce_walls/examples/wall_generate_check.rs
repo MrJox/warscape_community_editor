@@ -50,9 +50,10 @@ fn run() -> Result<(), String> {
         let base = BuildingFiles::read(&vfs, key)?;
         let (up, down) = (BuildingFiles::read(&vfs, p.step_up)?, BuildingFiles::read(&vfs, p.step_down)?);
         let steps = StepFiles { up: Some(&up), down: Some(&down) };
-        let input = WallInput { points, sharp, tolerance: 0.5, ..Default::default() };
+        let input = WallInput { points, sharp, tolerance: 0.5, access_every: 200.0, defence_every: 120.0, ..Default::default() };
         let plan = solve(&input, p, ground);
-        let ps = pieces(&plan, p);
+        let (rigid, ps): (Vec<_>, Vec<_>) = pieces(&plan, p).into_iter().partition(|q| q.rigid);
+        println!("  towers and bastions: {:?}", rigid.iter().map(|q| (q.s.0.round(), q.base.unwrap_or_default())).collect::<Vec<_>>());
         println!("== {key}: {:.0} long, {} pieces, {} step section(s), {} warning(s)", plan.length, ps.len(), plan.steps.len(), plan.warnings.len());
 
         let door = (!p.door.is_empty()).then(|| BuildingFiles::read(&vfs, p.door)).transpose()?;

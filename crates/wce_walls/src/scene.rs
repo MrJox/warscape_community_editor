@@ -92,6 +92,7 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
     let profile = profile(&base).or_else(|| profile(DEFAULT_BASE))?;
     let tolerance = scene.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
     let flip = scene.doc().get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
+    let every = |attr: &str, default: f64| scene.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
     let (points, sharp) = wall_points(scene, elem);
     if points.len() < 2 {
         return None;
@@ -109,6 +110,8 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
         tolerance,
         ends: [ends[0].as_ref().map(|a| a.at[1]), ends[1].as_ref().map(|a| a.at[1])],
         end_planes: [ends[0].as_ref().map(|a| a.axis), ends[1].as_ref().map(|a| a.axis)],
+        access_every: every("wall_access_every", crate::pieces::DOOR_EVERY),
+        defence_every: every("wall_defence_every", 0.0),
     };
 
     let mut plan = solve(&input, profile, ground);

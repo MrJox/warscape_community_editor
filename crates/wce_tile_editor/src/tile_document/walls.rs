@@ -23,10 +23,11 @@ pub use wce_walls::scene::{Anchor, WALL_SPLINE, WallLayout};
 use wce_walls::scene::DEFAULT_BASE;
 
 /// A new wall's attributes (`TedScene::add_polygon` gives the same): an open polyline of the polygons' defaults, with the default base.
-pub const WALL_DEFAULTS: [(&str, &str); 13] = [
+pub const WALL_DEFAULTS: [(&str, &str); 15] = [
     ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
     ("polygon_closed", "0"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Wall"), ("polygon_shape", "PS_POLYGON"),
     ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"), ("wall_base", DEFAULT_BASE), ("wall_tolerance", "0.5"), ("wall_flip", "false"),
+    ("wall_access_every", "200"), ("wall_defence_every", "0"),
 ];
 
 /// [`WALL_DEFAULTS`] as attributes.
@@ -109,14 +110,15 @@ impl Tile {
     }
 
     /// Which pieces of a wall are door sections, and the doors skipped (`wce_walls::scene::doors`; a building's radius from its model).
-    pub fn wall_doors(&self, layout: &WallLayout, ps: &[wce_walls::pieces::Piece]) -> (Vec<usize>, Vec<String>) {
+    pub fn wall_doors(&self, layout: &WallLayout, all: &[wce_walls::pieces::Piece]) -> (Vec<usize>, Vec<String>) {
+        let ps = all.iter().copied().filter(|p| !p.rigid).collect::<Vec<_>>();
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
         let radius = |k: &str| self.building_model(k).filter(|m| m.ok).map_or(4.0, |m| {
             let e = m.bmax - m.bmin;
             0.5 * f64::from(e.x.max(e.z))
         });
-        wce_walls::scene::doors(self.tscene(), layout, ps, &ground, &radius)
+        wce_walls::scene::doors(self.tscene(), layout, &ps, &ground, &radius)
     }
 
     /// The lines of a wall's layout (the document's world): the outer foot on the ground (orange), the walkway (yellow), the step sections
@@ -243,10 +245,11 @@ impl Tile {
         let (up, down) = (self.wall_base(layout.profile.step_up), self.wall_base(layout.profile.step_down));
         let door = (!layout.profile.door.is_empty()).then(|| self.wall_base(layout.profile.door)).flatten();
         let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
-        let ps = pieces(&layout.plan, layout.profile);
+        let (rigid, ps): (Vec<_>, Vec<_>) = pieces(&layout.plan, layout.profile).into_iter().partition(|p| p.rigid);
 
-        // The pieces made from another building (whole steps, caps), and the caps placed as they are.
-        let caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile);
+        // The pieces made from another building (whole steps), and the game's pieces placed as they are (caps, towers, bastions).
+        let mut caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile);
+        caps.extend(rigid.into_iter().filter_map(|p| p.base.map(|k| (k, p))));
         let mut own = HashMap::new();
         for k in ps.iter().filter_map(|p| p.base).chain(caps.iter().map(|c| c.0)) {
             if !own.contains_key(k) && let Some(b) = self.wall_base(k) {
