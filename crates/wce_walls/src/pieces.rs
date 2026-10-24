@@ -359,6 +359,13 @@ impl Warp for SlabWarp<'_> {
     }
 }
 
+/// The x ranges (the base's frame) of the step sections that fall in a piece.
+pub fn step_ranges(plan: &Plan, profile: &Profile, piece: &Piece) -> Vec<(f32, f32)> {
+    let scale = piece.scale.max(1e-9);
+    let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
+    plan.steps.iter().filter(|st| st.s.1 > piece.s.0 && st.s.0 < piece.s.1).map(|st| (to_x(st.s.0.max(piece.s.0)), to_x(st.s.1.min(piece.s.1)))).collect()
+}
+
 /// The step pieces a wall's steps come from (going up and going down); without one, its steps stay a slope of the base.
 #[derive(Clone, Copy, Default)]
 pub struct StepFiles<'a> {

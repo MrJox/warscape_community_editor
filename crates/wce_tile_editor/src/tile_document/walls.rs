@@ -12,21 +12,15 @@ use std::time::{Duration, Instant};
 
 use wce_foundation::math::{Double3, Float3};
 use wce_scene::render_scene::{EntityId, MeshInstance, Overlay, Payload, RenderScene, overlay_colour};
-use wce_tile::properties::parse_bool;
-use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
+use wce_tile::world_transform::{WorldTransform, euler_matrix};
 use wce_walls::building::{BuildingFiles, folder};
 use wce_walls::pieces::{PieceWarp, StepFiles, make_piece, pieces};
-use wce_walls::profile::{Profile, profile};
-use wce_walls::solver::{Plan, WallInput, solve};
 
 use super::Tile;
 use super::index::matrix_of;
 
-/// The element name of a procedural wall.
-pub const WALL_SPLINE: &str = "WALL_SPLINE";
-
-/// The base a wall without (or with an unknown) `wall_base` uses.
-pub const DEFAULT_BASE: &str = "barbarian_fort_straight";
+pub use wce_walls::scene::{Anchor, WALL_SPLINE, WallLayout};
+use wce_walls::scene::DEFAULT_BASE;
 
 /// A new wall's attributes (`TedScene::add_polygon` gives the same): an open polyline of the polygons' defaults, with the default base.
 pub const WALL_DEFAULTS: [(&str, &str); 13] = [
@@ -39,9 +33,6 @@ pub const WALL_DEFAULTS: [(&str, &str); 13] = [
 pub fn wall_defaults() -> std::collections::BTreeMap<String, String> {
     WALL_DEFAULTS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
 }
-
-/// An end within this of a building's end is attached to it (scene units, horizontally).
-pub const ATTACH: f64 = 0.5;
 
 /// An end placed within this of a building's end is put on it (scene units).
 pub const SNAP: f64 = 8.0;
@@ -61,27 +52,6 @@ pub(crate) struct WallPreview {
     keys: HashMap<usize, Vec<String>>,
     pending: HashMap<usize, Instant>,
     revision: u64,
-}
-
-/// A fort building's end a wall can attach to: the building element and the end, in scene units (its y is the level the building
-/// stands on); the building's x axis (x, z: the normal of its end faces) and its outer side (its -z axis).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Anchor {
-    pub elem: usize,
-    pub key: String,
-    pub at: [f64; 3],
-    pub axis: [f64; 2],
-    pub outer: [f64; 2],
-}
-
-/// A wall's layout and what it was made from.
-#[derive(Clone, Debug)]
-pub struct WallLayout {
-    pub plan: Plan,
-    pub profile: &'static Profile,
-
-    /// The building end each end of the wall is attached to.
-    pub ends: [Option<Anchor>; 2],
 }
 
 impl Tile {
@@ -114,89 +84,16 @@ impl Tile {
         v
     }
 
-    /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): their frame's x extent at z = 0 ([`Tile::frame_extent`]),
-    /// through the instance's transform.
+    /// The ends of the fort buildings (`wce_walls::scene::anchors`), their frames from [`Tile::frame_extent`].
     pub fn wall_anchors(&self) -> Vec<Anchor> {
-        let sc = self.tscene();
-        let mut out = vec![];
-        for e in sc.find_all("BUILDING_INSTANCE") {
-            let key = sc.doc().get(e, "key").unwrap_or_default();
-            let lower = key.to_lowercase();
-            if !lower.contains("_fort_") || lower.starts_with("wce_") {
-                continue;
-            }
-
-            let Some((lo, hi)) = self.frame_extent(&key) else { continue };
-            let w = world_transform(sc, e);
-            let x_axis = w.rotation * Double3::new(1.0, 0.0, 0.0);
-            let outer = w.rotation * Double3::new(0.0, 0.0, -1.0);
-            for x in [lo, hi] {
-                let p = w.position + w.rotation * Double3::new(x, 0.0, 0.0);
-                out.push(Anchor { elem: e, key: key.clone(), at: [p.x, w.position.y, p.z], axis: [x_axis.x, x_axis.z], outer: [outer.x, outer.z] });
-            }
-        }
-
-        out
+        wce_walls::scene::anchors(self.tscene(), &|k| self.frame_extent(k))
     }
 
-    /// The wall's points in scene units (x, z) and their `sharp` marks.
-    fn wall_points(&self, elem: usize) -> (Vec<[f64; 2]>, Vec<bool>) {
-        let u = self.unit();
-        let sc = self.tscene();
-        let pts = self.polygon_world_points(elem).into_iter().map(|p| [f64::from(p.x) * u, f64::from(p.z) * u]).collect();
-        let sharp = sc.polygon_points(elem).into_iter().map(|p| sc.doc().get(p, "sharp").is_some_and(|v| parse_bool(&v))).collect();
-        (pts, sharp)
-    }
-
-    /// The wall's layout, `None` for an element that is not a wall or has fewer than 2 points.
+    /// The wall's layout (`wce_walls::scene::layout`), `None` for an element that is not a wall or has fewer than 2 points.
     pub fn wall_layout(&self, elem: usize) -> Option<WallLayout> {
-        if !self.is_wall(elem) {
-            return None;
-        }
-
-        let sc = self.tscene();
-        let base = sc.doc().get(elem, "wall_base").unwrap_or_default();
-        let profile = profile(&base).or_else(|| profile(DEFAULT_BASE))?;
-        let tolerance = sc.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
-        let flip = sc.doc().get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
-        let (points, sharp) = self.wall_points(elem);
-        if points.len() < 2 {
-            return None;
-        }
-
-        let anchors = self.wall_anchors();
-        let attached = |p: [f64; 2]| anchors.iter().filter(|a| (a.at[0] - p[0]).hypot(a.at[2] - p[1]) <= ATTACH).min_by(|a, b| {
-            let d = |x: &Anchor| (x.at[0] - p[0]).hypot(x.at[2] - p[1]);
-            d(a).total_cmp(&d(b))
-        }).cloned();
-        let ends = [attached(points[0]), attached(points[points.len() - 1])];
-        let input = WallInput {
-            points,
-            sharp,
-            flip,
-            tolerance,
-            ends: [ends[0].as_ref().map(|a| a.at[1]), ends[1].as_ref().map(|a| a.at[1])],
-            end_planes: [ends[0].as_ref().map(|a| a.axis), ends[1].as_ref().map(|a| a.axis)],
-        };
-
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        let mut plan = solve(&input, profile, &ground);
-
-        // An attached end whose outer side is the other way from the building's: the wall's outer face would meet its inner one.
-        if let (Some(first), Some(last)) = (plan.samples.first().copied(), plan.samples.last().copied()) {
-            // The plan runs from the last point when flipped.
-            let (at_first, at_last) = if flip { (&ends[1], &ends[0]) } else { (&ends[0], &ends[1]) };
-            for (sm, a) in [(first, at_first), (last, at_last)] {
-                let Some(a) = a else { continue };
-                let wall_outer = [sm.dir[1], -sm.dir[0]];
-                if wall_outer[0] * a.outer[0] + wall_outer[1] * a.outer[1] < 0.0 {
-                    plan.warnings.push(format!("the end on {} has its outer side the other way from the building's: flip the wall", a.key));
-                }
-            }
-        }
-
-        Some(WallLayout { plan, profile, ends })
+        wce_walls::scene::layout(self.tscene(), elem, &self.wall_anchors(), &ground)
     }
 
     /// Where a wall's end goes when it is put at `world` (the document's world): on the nearest fort building end within [`SNAP`], else
@@ -211,48 +108,15 @@ impl Tile {
         }
     }
 
-    /// Which pieces of a wall are door sections, and the doors skipped (see `wce_walls::pieces::door_pieces`): a landing is free when
-    /// none of its square is in a no-go region and no building stands in it.
+    /// Which pieces of a wall are door sections, and the doors skipped (`wce_walls::scene::doors`; a building's radius from its model).
     pub fn wall_doors(&self, layout: &WallLayout, ps: &[wce_walls::pieces::Piece]) -> (Vec<usize>, Vec<String>) {
-        if layout.profile.door.is_empty() {
-            return (vec![], vec![]);
-        }
-
         let u = self.unit();
-        let sc = self.tscene();
-        let nogo = sc.find_all("NOGO_REGION_POLYGON_INSTANCE").into_iter().filter(|&e| self.shown(e))
-            .map(|e| self.polygon_world_points(e).into_iter().map(|p| [f64::from(p.x) * u, f64::from(p.z) * u]).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
-        let buildings = sc.find_all("BUILDING_INSTANCE").into_iter().filter(|&e| self.shown(e)).map(|e| {
-            let p = self.world_position(e);
-            ([f64::from(p.x) * u, f64::from(p.z) * u], f64::from(self.marker_radius(e)) * u)
-        }).collect::<Vec<_>>();
-
-        let landing_ok = |sq: &[[f64; 2]; 4]| {
-            let inside = |p: [f64; 2], poly: &[[f64; 2]]| {
-                let mut c = false;
-                for i in 0..poly.len() {
-                    let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-                    if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
-                        c = !c;
-                    }
-                }
-                c
-            };
-
-            // A 5 x 5 grid over the square.
-            let lerp = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-            let grid = (0..5).flat_map(|i| (0..5).map(move |j| (f64::from(i) / 4.0, f64::from(j) / 4.0)))
-                .map(|(s, t)| lerp(lerp(sq[0], sq[1], s), lerp(sq[3], sq[2], s), t)).collect::<Vec<_>>();
-            let in_nogo = grid.iter().any(|&p| nogo.iter().any(|poly| inside(p, poly)));
-            let centre = lerp(lerp(sq[0], sq[1], 0.5), lerp(sq[3], sq[2], 0.5), 0.5);
-            let half = (sq[0][0] - sq[2][0]).hypot(sq[0][1] - sq[2][1]) / 2.0;
-            let blocked = buildings.iter().any(|&(p, r)| (p[0] - centre[0]).hypot(p[1] - centre[1]) < half + r * 0.5);
-            !in_nogo && !blocked
-        };
-
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        wce_walls::pieces::door_pieces(&layout.plan, layout.profile, ps, &ground, &landing_ok)
+        let radius = |k: &str| self.building_model(k).filter(|m| m.ok).map_or(4.0, |m| {
+            let e = m.bmax - m.bmin;
+            0.5 * f64::from(e.x.max(e.z))
+        });
+        wce_walls::scene::doors(self.tscene(), layout, ps, &ground, &radius)
     }
 
     /// The lines of a wall's layout (the document's world): the outer foot on the ground (orange), the walkway (yellow), the step sections

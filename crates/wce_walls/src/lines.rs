@@ -85,6 +85,12 @@ pub fn warp_ef_lines(lines: &[EfLine], warp: &dyn Warp) -> Vec<EfLine> {
 /// Docking lines warped: each cut into pieces of at most `step` metres, each a straight line between its warped ends facing out from
 /// its middle, named after the original (`..._line01`, `..._line02`, ... per piece and level, in order).
 pub fn warp_docking_lines(lines: &[DockingLine], warp: &dyn Warp, step: f32) -> Vec<DockingLine> {
+    warp_docking_lines_where(lines, warp, step, &|_| true)
+}
+
+/// [`warp_docking_lines`] keeping only the pieces whose middle (x of the base's frame) `keep` takes (no docking on a step section, as
+/// on CA's step pieces).
+pub fn warp_docking_lines_where(lines: &[DockingLine], warp: &dyn Warp, step: f32, keep: &dyn Fn(f32) -> bool) -> Vec<DockingLine> {
     let mut out: Vec<DockingLine> = vec![];
     for l in lines {
         let len = ((l.end[0] - l.start[0]).powi(2) + (l.end[1] - l.start[1]).powi(2)).sqrt();
@@ -94,6 +100,10 @@ pub fn warp_docking_lines(lines: &[DockingLine], warp: &dyn Warp, step: f32) -> 
         for k in 0..parts {
             let (a, b) = (at(k as f32 / parts as f32), at((k + 1) as f32 / parts as f32));
             let mid = at((k as f32 + 0.5) / parts as f32);
+            if !keep(mid[0]) {
+                continue;
+            }
+
             let (wa, wb) = (warp.point(a), warp.point(b));
             let number = out.iter().filter(|o| o.name.starts_with(&stem)).count() + 1;
             out.push(DockingLine {
@@ -106,6 +116,57 @@ pub fn warp_docking_lines(lines: &[DockingLine], warp: &dyn Warp, step: f32) -> 
     }
 
     out
+}
+
+/// The action codes of a building's firing lines (the row's numbers by the logic file's action names), pairing the row's `EFLines` and
+/// the logic file's `ef_lines` by name.
+///
+/// # Errors
+///
+/// The row's bytes or the logic file don't read.
+pub fn action_codes(row: &[u8], logic: &[u8], codes: &mut std::collections::HashMap<String, u32>) -> Result<(), String> {
+    let by_name = read_ef_lines(row)?.into_iter().map(|l| (l.name, l.action)).collect::<std::collections::HashMap<_, _>>();
+    for (name, action, ..) in logic_ef_lines(logic)? {
+        if let Some(&code) = by_name.get(&name) {
+            codes.entry(action).or_insert(code);
+        }
+    }
+
+    Ok(())
+}
+
+/// The firing lines of a logic file, every level: name, action name, start, end, direction.
+fn logic_ef_lines(logic: &[u8]) -> Result<Vec<(String, String, [f32; 3], [f32; 3], [f32; 3])>, String> {
+    use rpfm_lib::files::{Decodeable, cs2_parsed::Cs2Parsed};
+    let parsed = Cs2Parsed::decode(&mut std::io::Cursor::new(logic), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
+    let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+    let p3 = |v: &serde_json::Value| ["x", "y", "z"].map(|k| v[k].as_f64().unwrap_or(0.0) as f32);
+    Ok(v["pieces"].as_array().into_iter().flatten()
+        .flat_map(|p| p["destructs"].as_array().into_iter().flatten())
+        .flat_map(|d| d["ef_lines"].as_array().into_iter().flatten())
+        .map(|l| (l["name"].as_str().unwrap_or_default().to_owned(), l["action"].as_str().unwrap_or_default().to_owned(), p3(&l["start"]), p3(&l["end"]), p3(&l["direction"])))
+        .collect())
+}
+
+/// The `EFLines` of a logic file's firing lines (every level), their actions by `codes`, their directions unit vectors; with the count of
+/// lines left out for an action without a code.
+///
+/// # Errors
+///
+/// The logic file doesn't read.
+pub fn ef_lines_of(logic: &[u8], codes: &std::collections::HashMap<String, u32>) -> Result<(Vec<EfLine>, usize), String> {
+    let (mut out, mut unknown) = (vec![], 0);
+    for (name, action, start, end, d) in logic_ef_lines(logic)? {
+        let Some(&code) = codes.get(&action) else {
+            unknown += 1;
+            continue;
+        };
+
+        let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-9);
+        out.push(EfLine { name, action: code, start, end, direction: [d[0] / l, d[1] / l, d[2] / l] });
+    }
+
+    Ok((out, unknown))
 }
 
 struct Reader<'a> {

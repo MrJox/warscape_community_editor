@@ -832,7 +832,25 @@ impl TileTool {
         // The scene as the editor holds it (the prefab references with their contents), as TEd's.
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
-        let (scene, _) = wce_tile::project_files::to_ted(d.tile().tscene().save())?;
+        let text = d.tile().tscene().save();
+
+        // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
+        if d.tile().has_walls() {
+            let files = e.files().ok_or("no game files are mounted")?;
+            let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
+            let schema_path = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
+                .or_else(wce_tile_io::attila::game_data::default_schema_path)
+                .ok_or("the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)")?;
+            let schema = rpfm_lib::schema::Schema::load(&schema_path, None).map_err(|err| format!("{}: {err}", schema_path.display()))?;
+            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &dir, text, out)?;
+            for n in &notes {
+                log::info(format!("{}: {n}", saved.display()));
+            }
+
+            return Ok(format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", saved.display(), pack.display(), notes.len()));
+        }
+
+        let (scene, _) = wce_tile::project_files::to_ted(text)?;
         let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &dir, Some(scene), out)?;
         for n in &notes.notes {
             log::info(format!("{}: {n}", saved.display()));
