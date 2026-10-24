@@ -199,9 +199,12 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    To check in game: units onto both bent pieces and across both joints (bank / doors), ladders and a tower on the bent pieces (the
    docking lines), a breach of a bent piece (its levels swap with no collapse), the copies behaving like the vanilla pieces.
    The test maps: `cargo run --release -p wce_walls --example wall_test_maps -- <game> <wce_wall_spike.pack> <out.pack> <workspace>`
-   (with `XDG_CONFIG_HOME` at a folder whose `rpfm/schemas/schema_att.ron` rpfm_lib reads) decompiles `nordic_city_b/medium` (8 m) and
-   `western_city_b/medium` (15 m) from `tiles4.pack`, renames two of the base's instances in the ring to the copy, builds a run (vanilla
-   straight, bent piece, vanilla straight turned at its end) on free flat ground outside the ring, compiles, and packs the two tiles'
+   (with `XDG_CONFIG_HOME` at a folder whose `rpfm/schemas/schema_att.ron` rpfm_lib reads) decompiles Edoras (8 m) and Dale (15 m)
+   (`tdd_settlement_middle_men_cities/middle_men_city_{edoras,dale}/medium`, settlement level 2 for every TDD culture; TDD's presets
+   table replaces the game's, so the vanilla settlements can't be picked with TDD; `--vanilla`: `nordic_city_b/medium` and
+   `western_city_b/medium`, Uburzis / Vesontio at level 2 with a barbarian / Roman defender), renames two of the base's instances in the ring to the copy, builds a run (vanilla
+   straight, bent piece, vanilla straight turned at its end) on the flat ground nearest the ring that no building or tree (the tile's
+   tree lists) is within 10 m of, compiles, and packs the two tiles'
    `building_list` with the spike pack. Only the building list: an unedited decompile and compile gives it back record for record (12 781
    of 12 781), and the edited ones differ from CA's by exactly the two renamed and three added records; the other files would be our
    compile's markers and terrain instead of CA's (the terrain fingerprint covers every building, though walls don't stamp it).
