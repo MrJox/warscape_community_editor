@@ -461,11 +461,15 @@ pub struct Overlay {
 
     /// Picked in screen space (distance to a line, inside a triangle).
     pub pickable: bool,
+
+    /// Not shown: drawn only into the selection outline's mask. The shapes that stand for selected items without a mesh of their own (a
+    /// tile's markers), which the outline goes around like a selected mesh.
+    pub selection_mask: bool,
 }
 
 impl Default for Overlay {
     fn default() -> Self {
-        Self { lines: vec![], triangles: vec![], depth_test: true, pickable: true }
+        Self { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false }
     }
 }
 
@@ -478,6 +482,15 @@ impl Overlay {
 
     pub fn triangle(&mut self, a: Float3, b: Float3, c: Float3, rgba: u32) {
         self.triangles.extend([a, b, c].map(|p| OverlayVertex { p, rgba }));
+    }
+
+    /// A box's six faces as triangles.
+    pub fn box_solid(&mut self, lo: Float3, hi: Float3, rgba: u32) {
+        let c = |i: usize| Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
+        for [a, b, d, e] in [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]] {
+            self.triangle(c(a), c(b), c(d), rgba);
+            self.triangle(c(a), c(d), c(e), rgba);
+        }
     }
 
     pub fn box_wire(&mut self, lo: Float3, hi: Float3, rgba: u32) {

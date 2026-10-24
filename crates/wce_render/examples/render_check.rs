@@ -218,12 +218,12 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         let marks = scene.add_layer(2, "Overlays");
 
         // Above the peak: always visible.
-        let mut up = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true };
+        let mut up = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false };
         up.line(Float3::new(0.0, 41.0, 0.0), Float3::new(0.0, 110.0, 0.0), overlay_colour(1.0, 0.0, 1.0, 1.0));
         let up_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(up), SourceRef { doc: 2, item: 1 });
 
         // Inside the hill: hidden by the depth test, visible without it.
-        let mut buried = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true };
+        let mut buried = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false };
         buried.line(Float3::new(0.0, 2.0, 0.0), Float3::new(0.0, 30.0, 0.0), overlay_colour(0.0, 1.0, 0.0, 1.0));
         let buried_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(buried), SourceRef { doc: 2, item: 2 });
         scene.environment.active = Some(env.clone());
@@ -249,7 +249,8 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         // Selection outline, grid, depth-test off.
         r.settings.selection = vec![hill_id];
         render_frames(&mut r, &scene, &cam, &mut t, 1);
-        g.check(read(&gpu, &t).count_near_all([255, 217, 51], 4) > 20, "a selected entity is outlined");
+        let gold = r.settings.selection_colour.map(|c| (c * 255.0).round() as i32);
+        g.check(read(&gpu, &t).count_near_all([gold[0], gold[1], gold[2]], 4) > 20, "a selected entity is outlined");
         r.settings.selection.clear();
         r.settings.show_grid = true;
         render_frames(&mut r, &scene, &cam, &mut t, 1);

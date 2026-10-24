@@ -16,14 +16,6 @@ use crate::draw_set::{DrawSet, Frustum, View as DrawView, Visible};
 use crate::model_cache::{GpuMesh, GpuModel, RigidInstance, State, TEX_SLOTS, gpu_texture_name};
 use crate::shader_lib::GameShader;
 
-/// The world matrix and bounds of a terrain entity (the selection outline).
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct EntityBounds {
-    pub world: Float4x4,
-    pub bmin: Float3,
-    pub bmax: Float3,
-}
-
 /// An item index of an entity without a single item.
 pub(crate) const NO_ITEM: u32 = u32::MAX;
 
@@ -50,8 +42,6 @@ pub(crate) struct SceneDraws {
     /// their own (a brush stroke rebuilds only these, a few hundred items).
     pub draws: DrawSet,
     pub terrain_draws: DrawSet,
-
-    pub terrain_bounds: HashMap<EntityId, EntityBounds>,
 
     /// What the sets hold: entities and LOD 0 meshes, and the entities whose models are still loading.
     pub entities: usize,
@@ -235,7 +225,6 @@ impl Renderer {
         // A visible list names batches of the set it was culled from: a pass that culls nothing this frame (the G-buffer pass with no
         // items) must not leave the old one to the passes that read it after (the sea's model water).
         self.draw_lists.vis_terrain = Visible::default();
-        self.draw_lists.terrain_bounds.clear();
         self.draw_lists.terrain_entities = 0;
         self.draw_lists.terrain_meshes = 0;
         self.draw_lists.legacy_terrain.clear();
@@ -248,15 +237,11 @@ impl Renderer {
 
             self.draw_lists.legacy_terrain.insert(e.id);
             let Some(tg) = self.models.terrain(e.id, t) else { continue };
-            let mut eb = EntityBounds { world: e.world, bmin: Float3::new(1e30, 1e30, 1e30), bmax: Float3::new(-1e30, -1e30, -1e30) };
             for p in tg.patches.iter().filter(|p| !p.meshes.is_empty()) {
                 self.draw_lists.terrain_draws.add(p, &e.world, None, t.casts_shadow, t.lod, e.id);
                 self.draw_lists.terrain_meshes += 1;
-                eb.bmin = Float3::new(eb.bmin.x.min(p.bmin.x), eb.bmin.y.min(p.bmin.y), eb.bmin.z.min(p.bmin.z));
-                eb.bmax = Float3::new(eb.bmax.x.max(p.bmax.x), eb.bmax.y.max(p.bmax.y), eb.bmax.z.max(p.bmax.z));
             }
 
-            self.draw_lists.terrain_bounds.insert(e.id, eb);
             self.draw_lists.terrain_entities += 1;
         }
     }

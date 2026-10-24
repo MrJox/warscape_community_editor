@@ -208,6 +208,17 @@ ImGuizmo wants row-vector matrices (v * M, row-major); the engine's are column-v
 first selected item's pivot (`Document::item_transform`); the change since the last frame, `new * inverse(old)`, goes to `Document::transform_items` for every selected item with a gesture id,
 so a whole drag is one undo entry. Scale is accepted by the gizmo but a document may ignore it (the sample map does).
 
+## Selection outline
+
+The selection is drawn as an outline around its silhouette (`Renderer::pass_selection_outline`, an editor pass like picking, not a game
+shader): the selected meshes and terrain (through the draw sets, as the id pass draws them) and the selected overlays go into a mask at the
+viewport's size, once whole and once against the scene's depth; a full-screen pass colours the pixels within `selection_outline_px` of the mask,
+solid next to the visible parts and faint (35 %) next to the hidden ones. Colour and width come from the editor (`Editor::selection_outline_style`:
+the theme's highlight, 2 px times the display's scale; 2 px in scripted runs). An item without a mesh of its own is outlined from an overlay
+that is drawn only into the mask (`Overlay::selection_mask`): the Tile document puts the selected markers' shapes there (`set_highlight`),
+and keeps only a selected polygon's point handles in its visible highlight. A selected light keeps its reach box. With 672 wall pieces of the
+Ravenna tile selected a frame takes about 0.3 ms more (it took 7.6 ms more when the selection's entities were looked up item by item).
+
 ## Gates
 
 - `editor_check` (fast): command stack, documents and layers, selection, registry and script runner, cameras, inspector gestures, property paths. No GPU.
