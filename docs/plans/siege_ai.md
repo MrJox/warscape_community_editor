@@ -60,18 +60,40 @@ the deployment zones. What the game needs and how CA lays it out: docs/re/siege_
 - **The sea**: ground under -0.5 m joined to the map's edge; not when the settlement or a capture point is in it (inland towns on low
   ground).
 
+## Encampments, ports and separators (user, 2026-10-24, second round)
+
+- **Encampments:** the palisade is CA's `siege_barricade_wall_1_encampment` pieces (the city tiles' street barricades are other keys
+  and stay out). Pieces 10 units apart chain into runs; two run ends facing each other within 70 units are an opening (CA's: ~30 wide,
+  no gate building). Each run gets a `SAET_PALISADE` edge through its pieces, half a piece past its ends. The openings are shut for the
+  settlement's outline; outside each, a strip of ground (24-32 across, 20 deep) is made free and gets an entry node; the inside is the
+  normal street graph (the user's choice; 3 of CA's 4 camps have one big area instead).
+- **Ports** (the town's perimeter within 40 units of the sea): the defender takes the sea within 400 units of the perimeter (and the
+  harbour); the attacker gets the land (190 out of the perimeter, 20 short of the coast) and the sea (190 from the defender's water, 150
+  offshore) as separate additive polygons. Up to 4 `AIH_DEFAULT_DEPLOYMENT_LINE`s in the defender's water, the deepest (up to 280 from
+  land) 220 apart, 250 long across the direction from the town, the town on their right (CA's sense). `AIH_BEACH_LANDING` along the
+  coast where the ground 30 units inland stays under 8 m, inside the town too (the user), up to 5, the nearest the town first, at least
+  60 long; an `AIH_BEACH_LANDING_FORT_APPROACH` 40 inland along each. Up to 3 entries on the quays (streets within 30 of the water,
+  100 apart). The approach lines go on the attacker's zone's inner edge, at sea too.
+- **Separators** (the user: without them the ring is open and the AI fails): `PALT_FORT` `AISeparatorInstance`s along the perimeter
+  where no wall runs (further than 35 units from a wall edge, or off a wall run's end), from the wall line to the wall line, in towns
+  whose walls run along 30 % of the perimeter or more (minor towns' citadels have none, as CA's). A check warns when walls, separators
+  and no-go regions leave the ring open. Wall edges run 8 units past each gate's ends so the line goes through the gates.
+- Not done: wall area nodes (purpose unknown).
+
 ## Results on the kit (`siege_check`, 73 vanilla settlements and encampments)
 
 `cargo run --release -p wce_tile_editor --example siege_check -- <game> <out> <kit battle tiles>/settlement_* <...>/encampments` writes
 an SVG of ours and of CA's per tile, and also generates into the document and reads the layout back as the export would see it.
 - Every tile gets a layout. The checks' problems: 2 tiles whose main capture point is in no area (CA's own layouts have the same 2).
   CA's layouts break the rectangle rule in 34 tiles (an edge's end in no node's rectangle).
-- Warnings: 6 tiles with the street graph in parts (pockets with no gate between them), 27 closed over gaps (minor towns), 5 with fewer
-  than 3 approach lines (the map's edge), 3 gates with no street behind.
+- Encampments: an entry at every opening (8, 4, 6, 6 as CA's), a palisade edge per run (as CA's).
+- Ports: 4 deployment lines and 3-5 beaches where CA has them; also on 6 river or coastal towns CA left without (Ctesiphon,
+  Constantinople, Ravenna small, western_city_a minor, western_port_a medium): a river under 0 m joined to the map's edge looks like
+  sea. Separators: the same count as CA's in 44 tiles, within 1 in 16 more; the ring stays open in 1 (nordic_city_c medium).
+- Warnings: 9 tiles with the street graph in parts (pockets with no gate found between them), 23 closed over gaps (minor towns), 2 with
+  fewer than 3 approach lines (the map's edge), 3 gates with no street behind.
 - Every generated layout is what the document then exports, and its scene reads back.
-- About 1 s per tile (0.2 s reading the tile, 0.5-1 s generating).
-- **Not handled:** encampments (their palisades and palisade edges), `AIH_DEFAULT_DEPLOYMENT_LINE` and the beach hints of ports, wall
-  area nodes.
+- About 3 s per tile.
 
 ## Status
 
@@ -79,4 +101,5 @@ an SVG of ours and of CA's per tile, and also generates into the document and re
 - [x] Document side: input, output, the old layout out of export, one undo entry.
 - [x] UI: the button (Polygons / AI hints panel), `tile_generate_siege_ai`, Export type menu with Separate and Don't Export.
 - [x] Check example on the kit's vanilla settlements.
-- [ ] In game (the user).
+- [x] Encampments (palisade edges, entries), ports (zones, deployment lines, beaches, quay entries), separators.
+- [ ] In game (the user): Edoras, a port, an encampment.

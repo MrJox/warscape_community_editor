@@ -28,7 +28,7 @@ pub const OLD_LAYER: &str = "(OLD) SiegeAI Layout";
 const OFF: &str = "LayerExportType_Off";
 
 /// The hints that belong to the siege layout (the generator makes them).
-const LAYOUT_HINTS: [&str; 2] = ["AIH_FORT_PERIMETER", "AIH_FORT_APPROACH"];
+const LAYOUT_HINTS: [&str; 5] = ["AIH_FORT_PERIMETER", "AIH_FORT_APPROACH", "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_BEACH_LANDING", "AIH_BEACH_LANDING_FORT_APPROACH"];
 
 /// What the generator needs of a building's logic file (`<key>_tech.cs2.parsed`), in the building's frame.
 #[derive(Clone, Debug, Default)]
@@ -162,6 +162,7 @@ fn layout_item(scene: &TedScene, e: usize) -> bool {
     match scene.type_of(e) {
         "SiegeAINodeInstance" | "SiegeAIEdgeInstance" | "DeploymentZonePolygonInstanceGroup" => true,
         "AI_HINT_POLYGON_INSTANCE" => scene.doc().get(e, "hint_type").is_some_and(|h| LAYOUT_HINTS.contains(&h.as_str())),
+        "AISeparatorInstance" => scene.doc().get(e, "type").as_deref() == Some("PALT_FORT"),
         _ => false,
     }
 }
@@ -214,9 +215,23 @@ impl Tile {
                 continue;
             }
 
-            // The siege barricades stand across the streets (they are broken through, the graph runs over them).
+            // The siege barricades stand across the streets (they are broken through, the graph runs over them); an encampment's
+            // (`siege_barricade_wall_1_encampment`) are its palisade, on its line at their origin.
             let key = sc.doc().get(e, "key").unwrap_or_default();
-            if key.to_lowercase().contains("barricade") {
+            let lower = key.to_lowercase();
+            if lower.contains("barricade") {
+                if lower.contains("encampment") {
+                    let w = world_transform(sc, e);
+                    let at = [w.position.x, w.position.z];
+                    input.palisade.push(wce_siege::PalisadePiece { at });
+                    let hard = read(&key).map(|l| l.hard).unwrap_or_default();
+                    let footprint = hard.iter().map(|r| r.iter().map(|p| {
+                        let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
+                        [q.x, q.z]
+                    }).collect()).collect();
+                    input.walls.push(WallPiece { footprint, platforms: vec![], walkway: vec![], gate: false, ends: [at, at] });
+                }
+
                 continue;
             }
 
@@ -289,15 +304,15 @@ impl Tile {
             input.captures.push(Capture { at: [p.x, p.z], major: sc.doc().get(e, "type").as_deref() == Some("CLT_MAJOR") });
         }
 
-        // The sea: ground under 0 m, sampled every 4 units (the generator keeps the water joined to the map's edge).
-        let below = |x: f64, z: f64| self.project.height_at(x / u, z / u) < -0.5;
+        // Ground under the sea: the heights, sampled every 4 units (the generator keeps the water joined to the map's edge).
+        let height = |x: f64, z: f64| self.project.height_at(x / u, z / u);
         let (hx, hz) = (input.bounds.1[0], input.bounds.1[1]);
-        let any_sea = (0..=32).any(|i| (0..=32).any(|j| below(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0)));
+        let any_sea = (0..=32).any(|i| (0..=32).any(|j| height(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0) < wce_siege::Sea::WATER));
         if any_sea {
             let cell = 4.0;
             let (w, h) = ((hx / cell).ceil() as usize, (hz / cell).ceil() as usize);
-            let water = (0..w * h).map(|k| below(((k % w) as f64 + 0.5) * cell, ((k / w) as f64 + 0.5) * cell)).collect();
-            input.sea = Some(wce_siege::Sea { x0: 0.0, z0: 0.0, cell, w, h, water });
+            let heights = (0..w * h).map(|k| height(((k % w) as f64 + 0.5) * cell, ((k / w) as f64 + 0.5) * cell) as f32).collect();
+            input.sea = Some(wce_siege::Sea { x0: 0.0, z0: 0.0, cell, w, h, height: heights });
         }
 
         input
@@ -348,6 +363,7 @@ impl Tile {
             let kind = match sc.doc().get(e, "type").as_deref() {
                 Some("SAET_STREET") => wce_siege::EdgeKind::Street,
                 Some("SAET_AREA_CONNECTION") => wce_siege::EdgeKind::AreaConnection,
+                Some("SAET_PALISADE") => wce_siege::EdgeKind::Palisade,
                 _ => wce_siege::EdgeKind::Wall,
             };
             let ps = polys(e);
@@ -357,16 +373,20 @@ impl Tile {
         }
 
         for e in sc.find_all("AI_HINT_POLYGON_INSTANCE").into_iter().filter(|&e| exported(sc, e)) {
+            let p = world_points(e);
+            let two = || (p.len() >= 2).then(|| [p[0], p[p.len() - 1]]);
             match sc.doc().get(e, "hint_type").as_deref() {
-                Some("AIH_FORT_PERIMETER") => l.perimeter = world_points(e),
-                Some("AIH_FORT_APPROACH") => {
-                    let p = world_points(e);
-                    if p.len() >= 2 {
-                        l.approaches.push([p[0], p[p.len() - 1]]);
-                    }
-                }
+                Some("AIH_FORT_PERIMETER") => l.perimeter = p.clone(),
+                Some("AIH_FORT_APPROACH") => l.approaches.extend(two()),
+                Some("AIH_DEFAULT_DEPLOYMENT_LINE") => l.deployment_lines.extend(two()),
+                Some("AIH_BEACH_LANDING") => l.beaches.push(p.clone()),
+                Some("AIH_BEACH_LANDING_FORT_APPROACH") => l.beach_approaches.extend(two()),
                 _ => {}
             }
+        }
+
+        for e in sc.find_all("AISeparatorInstance").into_iter().filter(|&e| exported(sc, e) && layout_item(sc, e)) {
+            l.separators.push(world_points(e));
         }
 
         for e in sc.find_all("DeploymentZonePolygonInstanceGroup").into_iter().filter(|&e| exported(sc, e)) {
@@ -442,6 +462,10 @@ impl TileDocument {
         let edges: Vec<_> = layout.edges.iter().map(|e| (e.kind, pts3(&e.line, [0.0, 0.0]), e.sides.iter().map(|s| pts3(s, [0.0, 0.0])).collect::<Vec<_>>())).collect();
         let perimeter = pts3(&layout.perimeter, [0.0, 0.0]);
         let approaches: Vec<_> = layout.approaches.iter().map(|a| pts3(a, [0.0, 0.0])).collect();
+        let separators: Vec<_> = layout.separators.iter().map(|l| pts3(l, [0.0, 0.0])).collect();
+        let mut coast: Vec<(&str, Vec<Double3>)> = layout.deployment_lines.iter().map(|l| ("AIH_DEFAULT_DEPLOYMENT_LINE", pts3(l, [0.0, 0.0]))).collect();
+        coast.extend(layout.beaches.iter().map(|l| ("AIH_BEACH_LANDING", pts3(l, [0.0, 0.0]))));
+        coast.extend(layout.beach_approaches.iter().map(|l| ("AIH_BEACH_LANDING_FORT_APPROACH", pts3(l, [0.0, 0.0]))));
         let zones: Vec<_> = [(1, &layout.defender, "argb(0.0,0.0,1.0,0.7)"), (0, &layout.attacker, "argb(1.0,0.0,0.0,0.7)")]
             .into_iter()
             .map(|(alliance, d, colour)| (alliance, colour, d.polygons.iter().map(|(k, p)| (k.ted(), pts3(p, [0.0, 0.0]))).collect::<Vec<_>>()))
@@ -469,7 +493,8 @@ impl TileDocument {
             s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), s("lf_offset", "0"), s("add_boundary", "0"), s("type", ty), s("name", "Siege AI Edge"),
             s("surface_mode", "MSM_FREEFORM"),
         ];
-        for (kind, line, sides) in edges.iter().filter(|e| e.0 != wce_siege::EdgeKind::Wall) {
+        let on_walls = |k: wce_siege::EdgeKind| matches!(k, wce_siege::EdgeKind::Wall | wce_siege::EdgeKind::Palisade);
+        for (kind, line, sides) in edges.iter().filter(|e| !on_walls(e.0)) {
             let e = sc.add_container_instance(Some(streets), "SiegeAIEdgeInstance", &edge_attrs(kind.ted()))?;
             polygon(sc, e, "SIEGE_AI_POLYGON_INSTANCE", "Street", line, &[])?;
             for side in sides {
@@ -478,7 +503,7 @@ impl TileDocument {
         }
 
         let walls = sc.add_layer(Some(top), "Walls")?;
-        for (kind, line, _) in edges.iter().filter(|e| e.0 == wce_siege::EdgeKind::Wall) {
+        for (kind, line, _) in edges.iter().filter(|e| on_walls(e.0)) {
             let e = sc.add_container_instance(Some(walls), "SiegeAIEdgeInstance", &edge_attrs(kind.ted()))?;
             polygon(sc, e, "SIEGE_AI_POLYGON_INSTANCE", "Street", line, &[])?;
         }
@@ -487,6 +512,19 @@ impl TileDocument {
         polygon(sc, fort, "AI_HINT_POLYGON_INSTANCE", "AI hint polygon", &perimeter, &[("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")])?;
         for a in &approaches {
             polygon(sc, fort, "AI_HINT_POLYGON_INSTANCE", "AI hint polygon", a, &[("hint_type", "AIH_FORT_APPROACH")])?;
+        }
+
+        for l in &separators {
+            polygon(sc, fort, "AISeparatorInstance", "AI Separator", l, &[
+                ("type", "PALT_FORT"), ("polygon_closed", "0"), ("subdivision_length", "5"), ("max_subdivisions", "100"),
+            ])?;
+        }
+
+        if !coast.is_empty() {
+            let c = sc.add_layer(Some(top), "Coast")?;
+            for (hint, l) in &coast {
+                polygon(sc, c, "AI_HINT_POLYGON_INSTANCE", "AI hint polygon", l, &[("hint_type", hint)])?;
+            }
         }
 
         let deploy = sc.add_layer(Some(top), "Deployment_Zones")?;
