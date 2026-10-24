@@ -203,6 +203,18 @@ pub fn save_exported(game: &Game, project_dir: &Path, out: &Path) -> Result<(Pat
 ///
 /// As `save_exported`.
 pub fn save_exported_scene(game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, out: &Path) -> Result<(PathBuf, CompileNotes), String> {
+    save_exported_with(game, project_dir, scene, out, &|_| None)
+}
+
+/// [`save_exported_scene`] for a project with buildings the game's packs don't have yet (generated walls, docs/plans/procedural_walls.md):
+/// `base_of` names the building a key was made from, whose destruction levels and thresholds it has.
+///
+/// # Errors
+///
+/// As `save_exported`.
+pub fn save_exported_with(
+    game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, out: &Path, base_of: &(dyn Fn(&str) -> Option<String> + Sync),
+) -> Result<(PathBuf, CompileNotes), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, entry_with_location_mark, unmark_extracted};
 
     // An extracted tile goes back to its own name.
@@ -221,6 +233,11 @@ pub fn save_exported_scene(game: &Game, project_dir: &Path, scene: Option<Vec<u8
     let exists = |k: &str| game.packs.exists(k);
     let settings = kit_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
     let mut ctx: CompileContext = game.data.compile_context();
+    let (levels, thresholds) = (ctx.building_levels, ctx.building_thresholds);
+    let levels_or_base = |k: &str| levels.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
+    let thresholds_or_base = |k: &str| thresholds.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
+    ctx.building_levels = Some(&levels_or_base);
+    ctx.building_thresholds = Some(&thresholds_or_base);
     ctx.stage_b = Some(StageB { raw_data: &kit_raw, models: &models });
     ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC { params, grass: grass.as_ref(), settings: Some(&settings), model_exists: &exists });
     let (compiled, mut notes) = compile(&raw, &ctx)?;

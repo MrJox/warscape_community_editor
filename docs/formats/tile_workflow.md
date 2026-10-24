@@ -33,6 +33,10 @@ its path, so the mod's database must hold every tile. While a decompiled project
 `min_height`, `scale` and `raw_data_tri_density` (the decompiled entry's are its height map's range). Files already in the output folder
 that the compile did not write are noted, not removed.
 
+`save_exported_with(game, project folder, scene, out, base_of)` is the same for a project with buildings the game's packs don't have yet
+(generated walls, docs/plans/procedural_walls.md): `base_of` names the building a key was made from, whose destruction levels and
+thresholds the compile uses for it.
+
 ## Checks
 
 - `tile_workflow_check -- <game> <scratch> <tile folder>...`: open and save as the editor does, then the saved folder against the packs'
