@@ -4,7 +4,7 @@
 //! `Editor::set_weather_preview`); when the Weather tool has the same file open, the tile follows its edits.
 //!
 //! Each tile keeps its choice and its filters in the settings (`[tools.tile] weathers`, by the tile's folder). A tile seen for the first time
-//! starts with the filters of its terrain look (climate, season); a tile without a weather file gets the first dry one the filters allow.
+//! starts with the filters of its terrain look (climate, season); a tile without a weather file gets the first dry one without snow the filters allow.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -90,22 +90,28 @@ impl WeatherUi {
         }
     }
 
-    /// The first dry weather under the tile's filters: the first file the game picks with precipitation `dry`, else the first file named dry,
-    /// else the first file (the search is not applied).
+    /// The first dry weather without snow under the tile's filters: among the files the game picks with precipitation `dry` (else the files
+    /// named dry, else all of them), the first one not named snow, else the first one (the search is not applied).
     fn first_dry(&self) -> Option<String> {
         let env = self.env.as_ref()?;
         let query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
         let files = |query: &BTreeMap<String, String>| env.matches_listed_map("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
-        if let Some(dry) = self.value_of("precipitation", "dry") {
+        let named = |f: &String, word: &str| f.to_lowercase().contains(word);
+        let mut dry = self.value_of("precipitation", "dry").map(|value| {
             let mut q = query.clone();
-            q.insert("precipitation".to_owned(), dry);
-            if let Some(f) = files(&q).into_iter().next() {
-                return Some(f);
+            q.insert("precipitation".to_owned(), value);
+            files(&q)
+        }).unwrap_or_default();
+
+        if dry.is_empty() {
+            let all = files(&query);
+            dry = all.iter().filter(|f| named(f, "dry")).cloned().collect();
+            if dry.is_empty() {
+                dry = all;
             }
         }
 
-        let all = files(&query);
-        all.iter().find(|f| f.to_lowercase().contains("dry")).or_else(|| all.first()).cloned()
+        dry.iter().find(|f| !named(f, "snow")).or_else(|| dry.first()).cloned()
     }
 
     /// The database's spelling of a value of a category (case-insensitive), if it has it.
