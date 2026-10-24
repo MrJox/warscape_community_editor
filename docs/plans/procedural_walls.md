@@ -394,21 +394,25 @@ Two attributes of the spline (Inspector rows; 0: none):
   (`pieces::defence_slots`); else skipped with a note. `Piece::rigid`: placed as instances of the game's keys on export (no generated
   files, no copied rows), drawn from the game's meshes in the preview. Test: alternation, exact slots, origins, coverage, none on curves.
 
-## In-game test: Edoras rebuilt (user, 2026-10-24)
+## In-game test: one wall of Edoras (user, 2026-10-24)
 
-`cargo run --release -p wce_walls --example wall_ring_test -- <game> <schema> <workspace> <out> --mods <TDD packs>`.
-- **The tile:** Edoras (TDD, level 2) with its whole ring rebuilt as 7 `WALL_SPLINE`s on barbarian_fort_straight. The 3 gates stay, and
-  6 of the walls' ends are attached to them. The other 69 pieces go: straights, bastions, steps, kinks, curves and endcaps.
-- **Height differences and curves added** (the ring stood on flat terraces):
-  - a 40-unit bulge over a 6 m hill raised outside;
-  - a 35-unit bulge over a 2 m hollow, then a sharp corner and a climb at the free end;
-  - a slight bow;
-  - the far-west climb from 5 to 15 m, which the old step pieces made;
-  - the north-east kinks, made smooth.
-- **Spacings:** towers and bastions every 120 units on the long runs.
-- **Tolerance:** 1 m. The old ring sits buried in the terraces' banks, which wave by about that much. At 0.5 m every wave became a step:
-  10 runs on 183 units at the north-west end.
-- **Result:** 57 generated pieces; `wall_pack_check` passed. Not yet checked in game.
+`cargo run --release -p wce_walls --example wall_edoras_test -- <game> <schema> <workspace> <out> --mods <TDD packs>`.
+- **First try:** the whole ring was rebuilt (7 walls, 69 pieces removed). The user asked for less: rebuilding every wall at once makes it
+  likelier that the AI layout breaks.
+- **The tile:** Edoras (TDD, level 2), freshly decompiled. One wall is rebuilt: the south run from the west gate to the rock pile,
+  14 pieces (12 straights, the bastion by the gate, the endcap). A `WALL_SPLINE` on barbarian_fort_straight replaces it, attached to the
+  gate's end. It bulges 40 units out over a 6 m hill raised outside, and climbs 5 -> 11.5 -> 5 m.
+- **Tolerance:** 1 m. The old ring sits buried in the terraces' banks, which wave by about that much. At 0.5 m every wave became a step.
+- **Spacings:** towers and bastions every 120 units; 12 generated pieces.
+- **The AI layout follows the wall.** The polygons along the run's line get the same change: the siege AI's wall edge (`SAET_WALL`, its
+  centre line), the wall's battlefield zone (`EFP_LOW_WALL`, outer face to walkway), the fort perimeter hints (`AIH_FORT_PERIMETER`: the
+  band around the wall, and the outer one 10 units outside) and the defender's deployment zone.
+  - **Moved:** their points between the run's ends and within 15 units of its line, to the same place relative to the new wall (as far
+    along it, in proportion, and as far off it).
+  - **Bent:** their edges along the line (within 3 degrees of it) get points every 5 units.
+  - **Left alone:** what crosses the line or stands off it (streets, areas).
+  - **Still to do:** done in the example for now; the editor and export should do it for any wall once the SiegeAI work starts.
+- **Result:** `wall_pack_check` passed. Not yet checked in game.
 
 ## To confirm
 
