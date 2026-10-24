@@ -2359,6 +2359,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_walls"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "rpfm_lib",
+ "serde_json",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_weather"
 version = "0.1.0"
 dependencies = [

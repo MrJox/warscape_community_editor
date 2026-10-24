@@ -47,19 +47,44 @@ From `models2.pack`, `rigidmodels/buildings/barbarian_fort_{straight,step_up_a,s
   inner earth bank in four sloped strips down to y = 4 at z = 11.5. Step up: flat 0..2 at 8 m, a ramp 2..5 to 10.5 m, flat 5..15, a ramp
   15..18 to 13 m, flat 18..20; the ramps are about 40 degrees (2.5 m over 3 m) and the bank is cut into triangles that follow them. **The
   stairs are only visual**: the pathfinding surface is a slope.
-- **No pipes, no docking lines, docking points 0** in all three. **ASSUMPTION**: pieces join because their platforms meet at the ends
-  (x = 0 and x = 20). Check in game: a generated run, units walking from one generated piece to the next and onto a vanilla gate.
+- **No pipes, no docking lines, docking points 0** in the logic files of all three (the docking lines are in the database, see "The
+  `models_building` row"). **ASSUMPTION**: pieces join because their platforms meet at the ends (x = 0 and x = 20). Check in game: a
+  generated run, units walking from one generated piece to the next and onto a vanilla gate.
 - **Firing lines (`ef_lines`)**: per metre a `HighWall` line on the walkway (0.5 m long, facing -z) and two `Overflow` lines (60 in the
   intact straight, 58 damaged, 0 destroyed).
 - **Collision outlines**: `hard01` (the palisade's footprint, a quad at z -1.8..-2.8; the damaged level's is ragged), `ground_ad` (a line at
   z = -2.5).
 - **`orange_thingies`**: per level a 2D outline in x/z (vertex type 2). In the 8 m wall it equals the palisade's hard footprint; in the
-  15 m wall it is the whole footprint (z -2..10.5), so it is a footprint, not a docking strip. How ladders and towers find the wall is not
-  known (no docking data in any wall); check in game: ladders and a siege tower on a generated, bent piece.
+  15 m wall it is the whole footprint (z -2..10.5), so it is a footprint, not a docking strip.
 - **Levels:** intact (5 platforms), damaged (17), destroyed (28: the breach's rubble ramp; no collision, no firing lines). The destroyed
   level attaches `barbarian_fort_bridgingcolumn_right` at x = 0 and `_left` at x = 20 (`file_refs`); the intact one a `torch_ground_post`.
 - **Zones** (`zone_tech.xml`): one zone region, the footprint rectangle x -0.2..20.2, z -2..2.5.
-- **Writers exist**: rpfm_lib encodes `Cs2Parsed`, `RigidModel` and DB tables.
+- **Writers exist**: rpfm_lib encodes `Cs2Parsed`, `RigidModel` and DB tables; the base files of both families write back byte for byte
+  (meshes, and logic files through their serde form).
+
+### The meshes' frame (phase 0)
+
+A mesh's vertices are stored around its material's pivot (`v_pivot`, the centre of its box, e.g. (10.0, 3.6, 4.2) for the barbarian
+straight): the logic file's frame is vertex + pivot, and the meshes' `min_bb` / `max_bb` are in it. A warp works in that frame and keeps
+the pivot. The walls are made of long triangles (20 m along x for both straights, 24 m in the 15 m rubble): they are cut every metre
+before a bend, or a bent piece draws its faces as chords.
+
+### The `models_building` row (phase 0)
+
+The game's `models_building` row of a building is more than a name (columns `display_path`, `key`, `logic_file`, `unknown`, `EFLines`,
+`DockingLines`; the kit's table has other columns):
+
+- `logic_file`: `buildings\<key>\<key>_tech.cs2.parsed`, the logic file the game reads. A copy must point at its own.
+- `EFLines` (bytes): the firing lines again: u32 count, per line a name (u16 length, UTF-16), u32 action, start, end, direction (3 f32 each,
+  the direction a unit vector). The barbarian straight: 118 lines (60 intact, 58 damaged).
+- `DockingLines` (bytes): **where ladders and towers dock**: u32 count, per line a name, start, end and direction in x / z (2 f32 each,
+  facing out). A straight has one line along its outer face (barbarian: (19.93, -2.5) to (0.07, -2.5); 15 m: (10, 0) to (-10, 0)). CA's
+  curved pieces have a polyline of short lines (`barbarian_fort_curve_20m_radius` 6 of about 5 m, `_60m_radius` 3 of about 10 m, the kinks
+  4); **the step pieces have none**; gateways two tiny ones (0.26 m). A bent piece's line is cut into lines of at most 5 m
+  (`wce_walls::lines`).
+
+The rows of `barbarian_fort_straight` and `roman_fort_straight_with_doors_a` are the same in `data.pack` and TDD's main pack; TDD's
+`@tdd_dev_buildings` pack overrides `barbarian_fort_straight`'s files (one more platform in the damaged level) but not its row.
 
 ## Findings: the wall families (user, and every straight of the game's and TDD's packs, 2026-10-24)
 
@@ -142,8 +167,9 @@ A **warp** maps the base's frame to the world: x is the arc length along the str
 - **Per level** (intact, damaged, destroyed): the same warp on each level's mesh and logic. Collapse animations are dropped. Bridging columns
   are attached only at the piece's two ends (the copies' inner ones are dropped). Torches are kept per copy.
 - **Outputs per generated building:** `rigid_model_v2` per level (rpfm's `RigidModel`, materials and textures of the base unchanged), the
-  `_tech.cs2.parsed`, the `zone_tech.xml`, and rows in `battlefield_buildings` and `models_building` copied from the base with the new key
-  and model. Keys: `wce_<tile>_<wall>_<n>`. UVs are kept, so the foot's texture stretches where it is extended; accepted for now.
+  `_tech.cs2.parsed`, the `zone_tech.xml`, and rows in `battlefield_buildings` and `models_building` copied from the base with the new key,
+  model and logic file path, and the row's firing and docking lines warped like the logic file (no docking line on a step section, as
+  CA's step pieces). Keys: `wce_<tile>_<wall>_<n>`. UVs are kept, so the foot's texture stretches where it is extended; accepted for now.
 
 ### Preview in the editor
 
@@ -163,6 +189,15 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    under new keys into a test pack: same files, a translated and slightly bent logic file, DB rows. Place them in a test tile and check in
    game: units walk onto them (the bank, the doors) and on to a vanilla neighbour, ladders and a tower dock, they breach. That settles the
    **ASSUMPTIONS** above before anything depends on them.
+   **Status (2026-10-24): the pack is made, the in-game check is the user's.** `cargo run --release -p wce_walls --example wall_spike --
+   <game> <rpfm schema_att.ron> <out.pack> --mods <wce.ini's mod_packs>` writes `wce_spike_wall8_copy` / `_bent` and
+   `wce_spike_wall15_copy` / `_bent` (bent 10 degrees about their start, no collapses) with their `battlefield_buildings` and
+   `models_building` rows. In the editor (overlay of the pack's files, `terrain_rugged_hills_desert/1x1/aa`) a vanilla straight, the bent
+   piece and a vanilla straight turned at its end meet with no step, for both families. To place the next piece after a bent one: its start
+   is the bent piece's end, at (19.899, 1.741) in the bent piece's frame (barbarian, start at x = 0; the 15 m piece: (9.899, 1.741), start at
+   x = -10), turned by the bend; the editor's orientation turns +x towards -z, so that is `orientation -10`.
+   To check in game: units onto both bent pieces and across both joints (bank / doors), ladders and a tower on the bent pieces (the
+   docking lines), a breach of a bent piece (its levels swap with no collapse), the copies behaving like the vanilla pieces.
 1. **Model and editing:** the `WALL_SPLINE` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
    height profile drawn as lines (no meshes yet).
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the
