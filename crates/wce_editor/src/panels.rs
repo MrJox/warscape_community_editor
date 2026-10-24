@@ -316,7 +316,7 @@ pub fn outliner(e: &mut Editor) {
     let titles = e.tool_titles();
     for id in e.docs.order().to_vec() {
         let Some(d) = e.docs.find(id) else { continue };
-        let (doc_title, modified, can_save, lights) = (d.title(), d.modified(), d.can_save(), d.environment().is_some());
+        let (doc_title, modified, can_save) = (d.title(), d.modified(), d.can_save());
         gui::push_id_int(id as i32);
         let mut visible = e.docs.visible(&e.scene, id);
         if gui::checkbox("##vis", &mut visible) {
@@ -330,7 +330,7 @@ pub fn outliner(e: &mut Editor) {
         gui::same_line();
         let tool = e.docs.tool_of(id);
         let tag = titles.iter().find(|t| t.0 == tool).map(|t| format!("[{}] ", t.1)).unwrap_or_default();
-        let title = format!("{tag}{doc_title}{}{}", if modified { " *" } else { "" }, if id == e.weather_preview() { "  (weather preview)" } else { "" });
+        let title = format!("{tag}{doc_title}{}{}", if modified { " *" } else { "" }, if Some(id) == e.weather_preview_document() { "  (weather preview)" } else { "" });
         let active = id == e.docs.active_id();
         if active {
             gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_CHECK_MARK));
@@ -368,14 +368,6 @@ pub fn outliner(e: &mut Editor) {
             gui::separator();
             if gui::menu_item("Edit in its tool", None, false, !tool.is_empty()) {
                 e.set_tool(&tool);
-            }
-
-            if lights {
-                let previewing = id == e.weather_preview();
-                if gui::menu_item(if previewing { "Stop previewing this weather" } else { "Preview this weather on the scene" }, None, false, true) {
-                    let msg = e.set_weather_preview(if previewing { 0 } else { id }).unwrap_or_else(|m| m);
-                    e.status(&msg, false);
-                }
             }
 
             if e.docs.order().len() > 1 && gui::menu_item("Show only this document", None, false, true) {

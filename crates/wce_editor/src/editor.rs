@@ -19,8 +19,9 @@ use wce_foundation::{log, wce_prof};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::files::Files;
 use wce_render::renderer::Renderer;
+use wce_formats::xml_doc::XmlDoc;
 use wce_scene::camera::Camera;
-use wce_scene::environment::read_graphics_options;
+use wce_scene::environment::{EnvironmentParams, read_environment, read_graphics_options};
 use wce_scene::render_scene::{DocumentId, EnvironmentSlot, RenderScene};
 use wce_vfs::{Config, GameProfile, Vfs, normalize};
 
@@ -73,6 +74,15 @@ impl Default for Panels {
     }
 }
 
+/// A weather file lighting the scene outside the weather tool ("Preview this weather on this tile").
+pub(crate) struct WeatherPreview {
+    /// The file's path in the packs, normalized (a document's `source_key`).
+    path: String,
+
+    /// The file as the packs have it.
+    params: EnvironmentParams,
+}
+
 /// What the shell keeps of a tool while it is lent out.
 struct ToolInfo {
     id: String,
@@ -108,7 +118,7 @@ pub struct Editor {
     status: String,
     status_error: bool,
     first_run: bool,
-    pub(crate) preview_doc: DocumentId,
+    pub(crate) weather_preview: Option<WeatherPreview>,
     pub(crate) cam_mark: Option<Camera>,
     output_gamma: f32,
     output_brightness: f32,
@@ -175,7 +185,7 @@ impl Editor {
             dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load_default(), vfs: None, renderer: None, scene: RenderScene::default(),
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
-            layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, preview_doc: 0,
+            layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
@@ -699,6 +709,12 @@ impl Editor {
     /// # Errors
     ///
     /// No tool opens the file, or the tool can't.
+    /// True when a tool opens files like `path` (by its extension).
+    pub fn can_open(&self, path: &str) -> bool {
+        let ext = path.rfind('.').map(|d| path[d..].to_lowercase()).unwrap_or_default();
+        self.tool_info.iter().any(|t| t.opens.contains(&ext))
+    }
+
     pub fn open_path(&mut self, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
         self.open_path_with(None, path, from_packs, switch_tool)
     }
@@ -746,40 +762,54 @@ impl Editor {
 
     // ---- cross-tool composition
 
-    /// The scene is lit by the document the weather tool edits while the weather tool is active. In every other tool, `id` (an .environment or
-    /// .lighting document, 0 for none) lights it: "Preview this weather on this tile". The preview follows the document's edits live and ends
-    /// when it is closed.
+    /// The scene is lit by the document the weather tool edits while the weather tool is active. In every other tool, `path` (an .environment
+    /// file of the packs, `None` for the default light) lights it: "Preview this weather on this tile". The file is read from the packs; while a
+    /// document of the same file is open (the weather tool's), the preview is that document, live while it is edited.
     ///
     /// # Errors
     ///
-    /// No such document, or one that does not light the scene.
-    pub fn set_weather_preview(&mut self, id: DocumentId) -> Result<String, String> {
-        if id == 0 {
-            self.preview_doc = 0;
+    /// The packs are not mounted, or the file is not in them or is not an environment.
+    pub fn set_weather_preview(&mut self, path: Option<&str>) -> Result<String, String> {
+        let Some(path) = path.map(normalize).filter(|p| !p.is_empty()) else {
+            self.weather_preview = None;
             return Ok("weather preview off".to_owned());
+        };
+
+        if self.weather_preview.as_ref().is_some_and(|w| w.path == path) {
+            return Ok(format!("previewing {path}"));
         }
 
-        let d = self.docs.find(id).ok_or("no such document")?;
-        if d.environment().is_none() {
-            return Err(format!("{} does not light the scene", d.title()));
+        if !path.ends_with(".environment") && !path.ends_with(".lighting") {
+            return Err(format!("{path} is not an .environment or .lighting file"));
         }
 
-        self.preview_doc = id;
-        Ok(format!("previewing {}", d.title()))
+        let vfs = self.vfs.as_ref().ok_or("the game packs are not mounted")?;
+        let bytes = vfs.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let doc = XmlDoc::parse(bytes).map_err(|e| format!("{path}: {e}"))?;
+
+        self.weather_preview = Some(WeatherPreview { params: read_environment(&doc), path: path.clone() });
+        Ok(format!("previewing {path}"))
     }
 
-    pub fn weather_preview(&self) -> DocumentId {
-        self.preview_doc
+    /// The previewed weather file (normalized), if any.
+    pub fn weather_preview(&self) -> Option<&str> {
+        self.weather_preview.as_ref().map(|w| w.path.as_str())
     }
 
-    /// The scene's lighting outside the weather tool: the previewed weather document, else the default environment.
+    /// The open document of the previewed weather file, if there is one: the preview follows its edits.
+    pub fn weather_preview_document(&self) -> Option<DocumentId> {
+        let path = self.weather_preview()?;
+        self.docs.order().iter().copied().find(|&id| self.docs.find(id).is_some_and(|d| d.environment().is_some() && d.source_key() == path))
+    }
+
+    /// The scene's lighting outside the weather tool: the previewed weather (its open document if there is one), else the default environment.
     fn update_lighting(&mut self) {
         if self.with_tool_at(self.active_tool, |t, _| t.lights_scene()).unwrap_or(true) {
             return;
         }
 
-        let previewed = (self.preview_doc != 0).then(|| self.docs.find(self.preview_doc)).flatten();
-        match previewed.and_then(|d| d.environment().map(|p| (d.id(), p))) {
+        let live = self.weather_preview_document().and_then(|id| self.docs.find(id)).and_then(|d| d.environment().map(|p| (d.id(), p)));
+        match live.or_else(|| self.weather_preview.as_ref().map(|w| (0, w.params.clone()))) {
             Some((owner, mut p)) => {
                 p.output_gamma = self.output_gamma;
                 p.output_brightness = self.output_brightness;
@@ -790,14 +820,7 @@ impl Editor {
                 slot.owner = owner;
             }
 
-            None => {
-                // The previewed document was closed.
-                if self.preview_doc != 0 && previewed.is_none() {
-                    self.preview_doc = 0;
-                }
-
-                self.scene.environment = EnvironmentSlot::default();
-            }
+            None => self.scene.environment = EnvironmentSlot::default(),
         }
     }
 
@@ -806,9 +829,6 @@ impl Editor {
     /// Closes a document without asking (the selection drops its items too).
     pub fn close_document(&mut self, id: DocumentId) {
         self.selection.remove_document(id);
-        if id == self.preview_doc {
-            self.preview_doc = 0;
-        }
 
         self.docs.close(&mut self.scene, id);
     }

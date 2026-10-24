@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Cross-tool composition of wce.exe, scripted (scripts/cross_tool.txt) twice in throw-away settings and output folders: a kit tile and an .environment open at
-# once, the weather previewed on the tile, one edit in each document, the unsaved-changes prompts, Save All. Checks that
+# Cross-tool composition of wce.exe, scripted (scripts/cross_tool.txt) twice in throw-away settings and output folders: a kit tile lit by a weather file of
+# the packs, then the same .environment open at once, one edit in each document, the unsaved-changes prompts, Save All. Checks that
 #  - Save All changed exactly the two edited spans: the .environment differs from the pack file in the one attribute value, tile.ted from the original in the
 #    one moved building's position, every other file of the tile folder is untouched, and the .bak files are the originals;
-#  - the preview lights the tile (the capture differs), follows an edit of the file, ends with `preview_weather none` and with the closing of the document
-#    (the captures equal the ones without a preview);
+#  - the tile's weather lights the tile (the capture differs), follows an edit of the open file, ends with `tile_weather none` (the capture equals the
+#    one without it), and lights the tile with the pack's file again once the document is closed (the capture differs from the default light);
 #  - the two runs write the same bytes and the same captures.
 #   scripts/cross_tool_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
@@ -56,7 +56,7 @@ cmp -s "$SRC/tile.ted" "$T1/tile.ted.bak" && echo "tile.ted.bak is the original"
 cmp -s "$D1/tile_default.png" "$D1/tile_previewed.png" && fail "the previewed weather did not change the picture" || echo "the previewed weather lights the tile (the capture differs)"
 cmp -s "$D1/tile_previewed.png" "$D1/tile_edited_light.png" && fail "editing the previewed file did not change the picture" || echo "the preview follows the edits of the weather file"
 cmp -s "$D1/tile_default.png" "$D1/tile_none.png" && echo "preview off: the tile is lit by the default light again, bytes equal to before" || fail "preview off differs from the default light"
-cmp -s "$D1/tile_moved_default.png" "$D1/tile_after_close.png" && echo "closing the previewed document ends the preview" || fail "after closing the document the picture differs from the default light"
+cmp -s "$D1/tile_moved_default.png" "$D1/tile_after_close.png" && fail "after closing the document the tile lost its weather" || echo "closing the weather document keeps the tile's weather (the pack's file)"
 
 # both runs
 for f in tile_default.png tile_previewed.png tile_edited_light.png tile_none.png tile_moved_default.png tile_after_close.png "saved/$ENV_PATH"; do

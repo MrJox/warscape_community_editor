@@ -376,7 +376,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             s += &format!(
                 "{id}  {}  {}  {}{}{}{}{}\n", e.docs.tool_of(id), d.kind(), d.title(), if d.modified() { "  *" } else { "" },
                 if e.docs.visible(&e.scene, id) { "" } else { "  (hidden)" }, if id == e.docs.active_id() { "  <active>" } else { "" },
-                if id == e.preview_doc { "  <weather preview>" } else { "" },
+                if Some(id) == e.weather_preview_document() { "  <weather preview>" } else { "" },
             );
         }
 
@@ -405,26 +405,33 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "preview_weather", "preview_weather <environment document | none>",
-        "light the scene (in any tool but the weather tool) with an open .environment / .lighting document: 'Preview this weather on this tile'; it follows the document's edits",
-        |e, a| {
-            let Some(spec) = a.first() else { return fail("usage: preview_weather <document|none>") };
-            if spec == "none" {
-                return e.set_weather_preview(0).map_or_else(fail, ok);
+        "assert_env", "assert_env <field> <value>",
+        "test: the environment the viewport shows has this value (sun_elevation, sun_azimuth, fog_distance_start, has_sky, blend_t, sun_scale)", |e, a| {
+            if a.len() < 2 {
+                return fail("usage: assert_env <field> <value>");
             }
 
-            let Some(id) = resolve_doc(e, spec) else { return fail(format!("no document '{spec}'")) };
-            e.set_weather_preview(id).map_or_else(fail, ok)
+            let env = e.scene.environment.resolved();
+            let now = match a[0].as_str() {
+                "sun_elevation" => env.sun_elevation,
+                "sun_azimuth" => env.sun_azimuth,
+                "fog_distance_start" => env.fog_distance_start,
+                "has_sky" => f32::from(u8::from(env.has_sky)),
+                "sun_scale" => env.sun_scale,
+                "blend_t" => e.scene.environment.blend_t,
+                other => return fail(format!("unknown field '{other}'")),
+            };
+
+            let want = atof(&a[1]) as f32;
+            if (now - want).abs() < 1e-3 * want.abs().max(1.0) { ok("") } else { fail(format!("{} is {now:.6}", a[0])) }
         },
     );
 
-    c.add("assert_preview", "assert_preview <document | none>", "test: the weather preview is this document (or off)", |e, a| {
-        let Some(spec) = a.first() else { return fail("usage: assert_preview <document|none>") };
-        if spec == "none" {
-            return if e.preview_doc == 0 { ok("") } else { fail("a document is previewed") };
-        }
-
-        if resolve_doc(e, spec).is_some_and(|id| id == e.preview_doc) { ok("") } else { fail(format!("the preview is document {}", e.preview_doc)) }
+    c.add("assert_preview", "assert_preview <file | none>", "test: the weather preview is this file of the packs (or off)", |e, a| {
+        let Some(spec) = a.first() else { return fail("usage: assert_preview <file|none>") };
+        let now = e.weather_preview().unwrap_or("none").to_owned();
+        let want = if spec == "none" { "none".to_owned() } else { wce_vfs::normalize(spec) };
+        if now == want { ok("") } else { fail(format!("the preview is {now}")) }
     });
 
     c.add("save", "save [document]", "save a document (default the active one)", |e, a| {

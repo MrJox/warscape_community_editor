@@ -306,29 +306,6 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if have as u64 == n.parse::<u64>().unwrap_or(0) { ok("") } else { fail(format!("{have} elements")) }
     });
 
-    c.add(
-        "assert_env", "assert_env <field> <value>",
-        "test: the environment the viewport shows has this value (sun_elevation, sun_azimuth, fog_distance_start, has_sky, blend_t, sun_scale)", |e, a| {
-            if a.len() < 2 {
-                return fail("usage: assert_env <field> <value>");
-            }
-
-            let env = e.scene.environment.resolved();
-            let now = match a[0].as_str() {
-                "sun_elevation" => env.sun_elevation,
-                "sun_azimuth" => env.sun_azimuth,
-                "fog_distance_start" => env.fog_distance_start,
-                "has_sky" => f32::from(u8::from(env.has_sky)),
-                "sun_scale" => env.sun_scale,
-                "blend_t" => e.scene.environment.blend_t,
-                other => return fail(format!("unknown field '{other}'")),
-            };
-
-            let want = num(&a[1]) as f32;
-            if (now - want).abs() < 1e-3 * want.abs().max(1.0) { ok("") } else { fail(format!("{} is {}", a[0], f(now))) }
-        },
-    );
-
     c.add("diagnostics", "diagnostics <file.txt>", "write the renderer, wind and particle state (what weather_editor wrote next to every shot)", |e, a| {
         let Some(path) = a.first() else { return fail("usage: diagnostics <file.txt>") };
         with_weather(e, |t, e| {

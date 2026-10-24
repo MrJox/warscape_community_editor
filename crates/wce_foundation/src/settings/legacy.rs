@@ -54,6 +54,9 @@ pub(super) fn migrate(paths: &Paths) -> Option<Settings> {
             "tile_show_vfx_boxes" => {
                 tile.insert("show_vfx_boxes".to_owned(), flag.into());
             }
+            "tile_workspace" => {
+                tile.insert("workspace".to_owned(), value.into());
+            }
             "tile_sea_state" => {
                 tile.insert("sea_state".to_owned(), value.into());
             }

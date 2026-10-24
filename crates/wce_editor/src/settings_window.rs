@@ -440,7 +440,8 @@ impl Editor {
         let paths = self.settings_ref().paths().clone();
         gui::separator_text("Where the editor keeps its files");
         for (name, path) in [
-            ("Settings", paths.config_dir().to_path_buf()), ("Caches", paths.cache_dir().to_path_buf()), ("Log", paths.log_dir().to_path_buf()),
+            ("Settings", paths.config_dir().to_path_buf()), ("Your files", paths.data_dir().to_path_buf()), ("Caches", paths.cache_dir().to_path_buf()),
+            ("Log", paths.log_dir().to_path_buf()),
         ] {
             label(name);
             gui::text(&path.display().to_string());
