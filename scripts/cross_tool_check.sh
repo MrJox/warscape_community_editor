@@ -11,7 +11,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/cross_tool_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
@@ -23,7 +23,7 @@ bad=0
 fail() { echo "FAILED: $*"; bad=1; }
 
 for run in 1 2; do
-    dir="$OUT/run$run"; rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/wce.ini" "$dir/settings/" 2>/dev/null
+    dir="$OUT/run$run"; rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/settings.toml" "$dir/settings/" 2>/dev/null
     # a copy of the kit tile (with its tile database, as the editor expects it) that the script saves in place
     copy="$dir/kit/terrain/tiles/battle"
     mkdir -p "$copy/assembly_kit/khazad_wall_test" "$copy/_tile_database/TILES"

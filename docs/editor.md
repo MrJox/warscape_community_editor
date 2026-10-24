@@ -119,16 +119,44 @@ Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile a
 
 ## Layouts
 
-ImGui runs with docking and no ini file. Each tool has its own layout file `<settings folder>/layouts/<tool id>.ini` (the settings folder is
-`%LOCALAPPDATA%\awe` or `$WCE_SETTINGS_DIR`). Switching tools saves the leaving tool's layout and loads the entering one's; without a file the tool's `default_layout`
+ImGui runs with docking and no ini file. Each tool has its own layout file `<config folder>/layouts/<tool id>.ini` (see the folders below). Switching tools saves the leaving tool's layout and loads the entering one's; without a file the tool's `default_layout`
 (DockBuilder calls; the base class builds the standard one: outliner left, inspector right, assets/log/history below, viewport in the centre) is built. `layout save`,
 `layout reset`, File menu entries and saving on exit (not in batch runs) manage the files.
 
 ## Settings and first run
 
-`wce.ini` (see `docs/vfs.md`). When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it fills in the
-Steam library's Attila folder (registry `SteamPath` + `libraryfolders.vdf`) and a nearby RPFM folder, lets you browse, and **Save and continue** (command `setup`) writes `wce.ini`,
-mounts and starts the active tool.
+`wce_foundation::settings`. The editor keeps its files in the system's folders for an app called `wce`:
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| config (`settings.toml`, `layouts/`) | `~/.config/wce` | `%LOCALAPPDATA%\wce\config` | `~/Library/Application Support/wce` |
+| cache (`map_context/`, `tile_index/`) | `~/.cache/wce` | `%LOCALAPPDATA%\wce\cache` | `~/Library/Caches/wce` |
+| log (`last_run.log`) | `~/.local/state/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
+
+`$WCE_SETTINGS_DIR` puts everything in one folder instead (settings and log in it, caches in its `cache` folder): the scripts run with a throw-away copy that
+way. `$WCE_CACHE_DIR` moves the caches alone.
+
+`settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `output_dir`, `game` (the game being
+edited) and `[appearance]`; `[games.<id>]` holds a game's `dir`, `mod_packs`, `project_dir` and `overlay_folders`; `[tools.<id>]` is a tool's own table, which
+the tool reads and writes with its own serde type (`Editor::tool_settings`, `Editor::update_tool_settings`), so the shell knows nothing of it. Saves write a temporary
+file and rename it over the old one. A file that does not read is kept as `settings.toml.bad` and the defaults are used. An environment variable wins over the
+file and is never written back:
+
+| Setting | Environment |
+|---|---|
+| the game folder | `WCE_GAME` |
+| mod packs | `WCE_MOD_PACKS` (`;` separated) |
+| loose folders | `WCE_OVERLAY` (`;` separated) |
+| output folder | `WCE_OUTPUT_DIR` |
+| frame cap | `WCE_FRAME_CAP` |
+| Tile: tile kits | `WCE_TILE_KITS` (`;` separated) |
+
+Until the first release, a missing `settings.toml` is filled from the old `key=value` `wce.ini` (in the same folder, or in `~/.local/share/awe` /
+`%LOCALAPPDATA%\awe`) and its layouts are copied; the old folder is left alone (`settings/legacy.rs`, to be removed).
+
+When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it fills in the Steam library's Attila
+folder (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts and starts the
+active tool.
 
 `frame_cap` (View > Frame rate cap, command `frame_cap`, environment `WCE_FRAME_CAP`; default 60, 0 = none) holds an interactive session to that many frames per
 second: rendering the scene as fast as a fast laptop display refreshes kept the GPU at 100 % until it throttled itself (to 180 MHz of 3090 on the RTX 5070 Ti

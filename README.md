@@ -39,7 +39,7 @@ cmake -S . -B build -G Ninja
 cargo build --release -p wce_app
 ```
 
-The binary lands in `target/release/wce`. Settings live in `~/.local/share/awe` (`$XDG_DATA_HOME/awe`). The game is the Windows (Proton)
+The binary lands in `target/release/wce`. Settings live in `~/.config/wce/settings.toml`, caches in `~/.cache/wce` (see "Settings and first run" in `docs/editor.md`). The game is the Windows (Proton)
 install, found in the usual Steam folders. File dialogs use zenity or kdialog.
 
 ## Gates

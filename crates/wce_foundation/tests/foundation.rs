@@ -4,7 +4,7 @@ use wce_foundation::clock::Clock;
 use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::*;
 use wce_foundation::profile;
-use wce_foundation::settings::Settings;
+use wce_foundation::settings::{Paths, Settings};
 use wce_foundation::wce_prof;
 
 #[test]
@@ -51,18 +51,56 @@ fn log_ring() {
 #[test]
 fn settings_file() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("wce.ini"), "# comment\r\ngame_dir=/games/attila\r\nempty=\r\nno equals sign\r\nkey=a=b").unwrap();
-    let mut settings = Settings::load(dir.path());
-    assert_eq!(settings.get("game_dir", None).as_deref(), Some("/games/attila"));
-    assert_eq!(settings.get("key", None).as_deref(), Some("a=b"));
-    assert_eq!(settings.get("empty", None), None);
-    assert_eq!(settings.get("game_dir", Some("WCE_TEST_VARIABLE_THAT_IS_NOT_SET")).as_deref(), Some("/games/attila"));
+    let paths = Paths::in_dir(dir.path());
+    let mut settings = Settings::load(paths.clone());
+    assert_eq!(settings.frame_cap, 60);
+    assert_eq!(settings.game_dir(), None);
 
-    settings.set("cache_dir", "/tmp/cache");
+    settings.game_mut().dir = Some("/games/attila".into());
+    settings.game_mut().mod_packs = vec!["a.pack".to_owned(), "b.pack".to_owned()];
+    settings.frame_cap = 144;
+    settings.set_tool("tile", &ToolSettings { kits: vec!["/kit".to_owned()], show_sea: false });
     settings.save().unwrap();
-    let saved = std::fs::read_to_string(dir.path().join("wce.ini")).unwrap();
-    assert_eq!(saved, "cache_dir=/tmp/cache\nempty=\ngame_dir=/games/attila\nkey=a=b\n");
-    assert_eq!(Settings::load(dir.path()), settings);
+    assert!(!dir.path().join("settings.toml.tmp").exists());
+
+    let loaded = Settings::load(paths.clone());
+    assert_eq!(loaded, settings);
+    assert_eq!(loaded.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+    assert_eq!(loaded.mod_packs(), ["a.pack", "b.pack"]);
+    assert_eq!(loaded.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/kit".to_owned()], show_sea: false });
+    assert_eq!(loaded.tool::<ToolSettings>("none"), ToolSettings::default());
+
+    // A file that does not read is kept aside and gives the defaults.
+    std::fs::write(paths.settings_file(), "frame_cap = \"many\"").unwrap();
+    assert_eq!(Settings::load(paths.clone()).frame_cap, 60);
+    assert!(dir.path().join("settings.toml.bad").exists());
+}
+
+// TODO(pre-release): remove with the settings' `legacy` module.
+#[test]
+fn settings_from_the_old_ini() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("wce.ini"), "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("layouts")).unwrap();
+    let s = Settings::load(Paths::in_dir(dir.path()));
+    assert_eq!(s.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+    assert_eq!(s.mod_packs(), ["a.pack", "b.pack"]);
+    assert_eq!(s.frame_cap, 30);
+    assert_eq!(s.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/k1".to_owned(), "/k2".to_owned()], show_sea: false });
+    assert!(dir.path().join("settings.toml").is_file());
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct ToolSettings {
+    kits: Vec<String>,
+    show_sea: bool,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self { kits: vec![], show_sea: true }
+    }
 }
 
 #[test]

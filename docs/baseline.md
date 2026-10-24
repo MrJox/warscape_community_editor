@@ -116,7 +116,7 @@ re-baselined explicitly in its commit. The tile shot still comes from Tile Studi
 | Gate | Result |
 |---|---|
 | `editor_check` (fast) | all passed (command stack, documents, selection, registry, scripts, cameras, inspector gestures) |
-| `app_check` (render) | `wce.exe` runs `scripts/app_smoke.txt` twice (exit 0 both) and `scripts/app_firstrun.txt` once; `capture identical between runs`, `shot identical between runs`, `first run: ok (wce.ini written)` |
+| `app_check` (render) | `wce.exe` runs `scripts/app_smoke.txt` twice (exit 0 both) and `scripts/app_firstrun.txt` once; `capture identical between runs`, `shot identical between runs`, `first run: ok (settings.toml written)` |
 | `scripts/shots.sh` | the three weather shots byte-identical to `build/gates_base_p3/`; two `wce.exe --capture` references (`capture_dry_1280x720.png`, `capture_dry_800x600.png`) |
 
 **Capture references re-baselined.** The Phase 3 captures (`weather_editor --capture`) were taken with the default environment, because the legacy app only picks the active environment while it draws its UI. They are replaced by captures of

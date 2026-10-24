@@ -6,7 +6,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/weather_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}"
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 ENV_PATH=weather/charlemagne/med_sp_land_day_dry.environment
 CAND="${WCE_WEATHER_CANDIDATES:-2}"
 # The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
@@ -17,7 +17,7 @@ SRC="$(ls "$SETTINGS_SRC"/x/*/$ENV_PATH 2>/dev/null | head -1)"
 [ -n "$SRC" ] || { WCE_SETTINGS_DIR="$(cygpath -w "$SETTINGS_SRC")" "$BIN/wce.exe" --open $ENV_PATH --cmd quit >/dev/null 2>&1; SRC="$(ls "$SETTINGS_SRC"/x/*/$ENV_PATH | head -1)"; }
 ELEMENTS=$(grep -o '<[A-Za-z_]' "$SRC" | wc -l)
 for run in 1 2; do
-    dir="$OUT/settings$run"; rm -rf "$dir"; mkdir -p "$dir"; cp "$SETTINGS_SRC/wce.ini" "$dir/" 2>/dev/null
+    dir="$OUT/settings$run"; rm -rf "$dir"; mkdir -p "$dir"; cp "$SETTINGS_SRC/settings.toml" "$dir/" 2>/dev/null
     save="$OUT/saved$run"; rm -rf "$save"
     text="$(cat "$ROOT/scripts/weather_smoke.txt")"
     text="${text//%OUT%/$(cygpath -w "$save")}"; text="${text//%ELEMENTS_PLUS_1%/$((ELEMENTS + 1))}"; text="${text//%ELEMENTS%/$ELEMENTS}"; text="${text//%CANDIDATES%/$CAND}"

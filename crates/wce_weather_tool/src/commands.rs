@@ -227,7 +227,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("output_dir", "output_dir <folder>", "where Save writes loose files (stored in wce.ini unless 'temp' is added)", |e, a| {
+    c.add("output_dir", "output_dir <folder>", "where Save writes loose files (stored in the settings unless 'temp' is added)", |e, a| {
         let Some(dir) = a.first() else { return fail("usage: output_dir <folder> [temp]") };
         e.set_output_dir(&PathBuf::from(dir), !a.get(1).is_some_and(|x| x == "temp"));
         ok("")

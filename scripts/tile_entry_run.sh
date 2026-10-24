@@ -7,7 +7,7 @@ BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
-rm -rf "$OUT/run"; mkdir -p "$OUT/run/settings"; cp "${WCE_SETTINGS_DIR:-$LOCALAPPDATA/awe}/wce.ini" "$OUT/run/settings/" 2>/dev/null
+rm -rf "$OUT/run"; mkdir -p "$OUT/run/settings"; cp "${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}/settings.toml" "$OUT/run/settings/" 2>/dev/null
 sed -e "s|%KIT%|$KIT|g" -e "s|%OUT%|$(cygpath -m "$OUT/run")|g" "$ROOT/scripts/tile_entry.txt" > "$OUT/run/script.txt"
 WCE_SETTINGS_DIR="$(cygpath -w "$OUT/run/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/run/script.txt")" > "$OUT/run/run.log" 2>&1
 rc=$?

@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod context_panel;
 pub mod scene_panel;
+pub mod settings;
 pub mod tool;
 
 pub use tool::TileTool;

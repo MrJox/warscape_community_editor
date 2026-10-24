@@ -1,6 +1,6 @@
 //! Checks the battle weather selection data (warscape_asset_variation_db.bin / .xml). Port of `cli/variation_check.cpp`.
 //!
-//!   cargo run --release -p wce_weather --example variation_check        (the game folder: game_dir in wce.ini or WCE_GAME)
+//!   cargo run --release -p wce_weather --example variation_check        (the game folder: the settings or WCE_GAME)
 //!
 //! Gates, for every pack that holds the database (vanilla data.pack and the TDD weather pack ship both a .bin and an .xml):
 //!   * decode(bin) encodes to the .bin byte for byte;
@@ -16,7 +16,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
-use std::path::PathBuf;
 
 use rpfm_lib::files::asset_variation_db::{AssetVariationDb, Variation, VariationQuery};
 use rpfm_lib::files::{Decodeable, Encodeable};
@@ -223,8 +222,8 @@ fn check_editing(original: &AssetVariationDb) -> i32 {
 }
 
 fn run() -> Result<i32, String> {
-    let game = Settings::load(&Settings::default_dir()).get("game_dir", Some("WCE_GAME")).ok_or("the game folder is not set (game_dir in wce.ini or WCE_GAME)")?;
-    let vfs = Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::ATTILA)).map_err(|e| e.to_string())?;
+    let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
+    let vfs = Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?;
     let Some(owner) = vfs.owner(BIN) else {
         println!("{BIN} is in no pack");
         return Ok(1);

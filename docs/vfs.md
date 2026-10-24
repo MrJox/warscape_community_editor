@@ -39,17 +39,8 @@ The port is still fixed (45127, no option). The 2026-10-09 spike (RPFM 4.5, MCP)
 
 ## Settings
 
-No machine paths in code. `Vfs::default_config()` reads `%LOCALAPPDATA%\awe\wce.ini` (or `$WCE_SETTINGS_DIR`), `key=value` lines; an environment variable wins over the file:
-
-| Key | Environment | Meaning |
-|---|---|---|
-| `game_dir` | `WCE_GAME`, `ATTILA_DIR` | game folder (required) |
-| `rpfm_dir` | `WCE_RPFM_DIR` | folder with `rpfm_server(.exe)` (RPFM 5.2+) |
-| `rpfm_server_exe` | `WCE_RPFM_SERVER` | explicit exe path |
-| `rpfm_server_port`, `rpfm_server_autostart` | `WCE_RPFM_PORT`, `WCE_RPFM_AUTOSTART` | 45127, on |
-| `cache_dir` | `WCE_CACHE_DIR`, `AWE_CACHE` | index and extract caches; keep it short (rpfm writes nothing past MAX_PATH) |
-
-The Phase 4 first-run dialog writes this file.
+No machine paths in code. What gets mounted (the game folder, the mod packs, the loose folders) comes from the editor's settings, see
+"Settings and first run" in `docs/editor.md`.
 
 ## Gates
 

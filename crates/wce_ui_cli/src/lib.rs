@@ -81,10 +81,7 @@ fn is_ui_path(path: &str) -> bool {
 
 impl Session {
     pub fn new(game_dir: Option<PathBuf>) -> Self {
-        let game_dir = game_dir.or_else(|| {
-            let s = wce_foundation::settings::Settings::load(&wce_foundation::settings::Settings::default_dir());
-            s.get("game_dir", Some("WCE_GAME")).or_else(|| std::env::var("ATTILA_DIR").ok()).map(PathBuf::from)
-        });
+        let game_dir = game_dir.or_else(|| wce_foundation::settings::Settings::load_default().game_dir());
         Self { game_dir, vfs: None, fonts: FontLibrary::default(), docs: vec![], next_id: 1, images: HashMap::new(), relations: None }
     }
 

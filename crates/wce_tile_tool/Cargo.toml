@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true
+serde = { version = "1", features = ["derive"] }
 wce_editor = { path = "../wce_editor" }
 wce_editor_core = { path = "../wce_editor_core" }
 wce_formats = { path = "../wce_formats" }
