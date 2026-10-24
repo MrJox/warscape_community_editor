@@ -18,6 +18,13 @@
 //! (the streets, the areas) is left alone.
 //!
 //! The project is saved and exported with its wall (`save_exported_walls`), which gives the pack to install.
+//!
+//! Two variants split the test when something breaks in game (units could not cross from docked ladders and towers onto the walls):
+//! - `--variant terrain-only`: the hill alone, every wall as it was; the pack carries our compile of the terrain (every edit remakes it).
+//! - `--variant wall-only`: the wall and its AI layout alone, no hill; the tile's files are CA's but for those the wall changes (the
+//!   building list, the AI hints and polylines, the zones, the deployment areas).
+//!
+//! Each variant writes its own pack (`wce_edoras_<variant>.pack` in the out folder).
 
 use std::path::{Path, PathBuf};
 
@@ -69,10 +76,19 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let mods = args.iter().position(|a| a == "--mods").and_then(|i| args.get(i + 1)).cloned();
-    let positional = args.iter().enumerate().filter(|(i, a)| *a != "--mods" && (*i == 0 || args[i - 1] != "--mods")).map(|(_, a)| a.clone()).collect::<Vec<_>>();
+    let option = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let mods = option("--mods");
+    let variant = option("--variant").unwrap_or_else(|| "full".to_owned());
+    let positional = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--"))).map(|(_, a)| a.clone()).collect::<Vec<_>>();
     let [game_dir, schema, workspace, out] = positional.as_slice() else {
-        return Err("usage: wall_edoras_test <game folder> <rpfm schema_att.ron> <workspace folder> <out folder> [--mods a.pack;b.pack]".to_owned());
+        return Err("usage: wall_edoras_test <game folder> <rpfm schema_att.ron> <workspace folder> <out folder> [--mods a.pack;b.pack] [--variant full|terrain-only|wall-only]".to_owned());
+    };
+
+    let (hill, wall) = match variant.as_str() {
+        "full" => (true, true),
+        "terrain-only" => (true, false),
+        "wall-only" => (false, true),
+        other => return Err(format!("no variant {other}")),
     };
 
     let game = Game::load(Path::new(game_dir))?;
@@ -87,6 +103,68 @@ fn run() -> Result<(), String> {
     println!("decompiled into {} ({} losses noted)", project_dir.display(), losses.notes.len());
 
     let mut project = TileProject::open(&project_dir).map_err(|e| e.to_string())?;
+    // The hill first: the wall's layout (and the AI layout following it) is made on the ground it stands on.
+    if hill {
+        raise(&mut project, offset(&[GATE_END, FREE_END], 0.5, 40.0), 44.0, 6.0)?;
+    }
+
+    if wall {
+        rebuild_wall(&mut project, &vfs)?;
+    }
+
+    let (_, msg) = project.save(&project_dir, true, project.height_dirty)?;
+    println!("{msg}");
+
+    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, Path::new(out))?;
+    for n in &notes {
+        println!("export: {n}");
+    }
+
+    let named = Path::new(out).join(format!("wce_edoras_{variant}.pack"));
+    if hill {
+        std::fs::rename(&pack, &named).map_err(|e| format!("{}: {e}", named.display()))?;
+    } else {
+        // CA's tile but for what the wall changes.
+        let ours = pack_files(&pack)?;
+        let prefix = format!("{folder_path}/");
+        let mut files = ours.into_iter().filter(|(n, _)| !n.starts_with(&prefix) || WALL_FILES.iter().any(|w| n[prefix.len()..].eq_ignore_ascii_case(w))).collect::<Vec<_>>();
+        for (name, blob) in &exported.folder {
+            // Not TEd's twin of the building list (another mod's Edoras in `data` can add one).
+            if !WALL_FILES.iter().any(|w| name.eq_ignore_ascii_case(w)) && !name.eq_ignore_ascii_case("building_list.xml") {
+                files.push((format!("{prefix}{name}"), blob.bytes().map_err(|e| format!("{name}: {e}"))?.to_vec()));
+            }
+        }
+
+        wce_walls::pack::write_pack(&named, "attila", files, vec![])?;
+        std::fs::remove_file(&pack).map_err(|e| format!("{}: {e}", pack.display()))?;
+    }
+
+    println!("exported into {}; the pack: {}", dir.display(), named.display());
+    Ok(())
+}
+
+/// The tile's files a wall changes: the building list, the AI layout (the hints and the siege AI polylines), the zones and the deployment
+/// areas.
+const WALL_FILES: [&str; 5] = ["building_list", "ai_hint_polyline_list_marker.markers", "ai_hint_polyline_marker.markers", "zones.xml", "deployment_areas.xml"];
+
+/// The files of a pack (its tables too), as they are.
+fn pack_files(path: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use rpfm_lib::files::pack::Pack;
+    let games = rpfm_lib::games::supported_games::SupportedGames::default();
+    let attila = games.game("attila").ok_or("rpfm knows no attila")?;
+    let mut pack = Pack::read_and_merge(&[path.to_path_buf()], attila, true, false, false).map_err(|e| format!("{}: {e}", path.display()))?;
+    let names = pack.files().keys().cloned().collect::<Vec<_>>();
+    let mut out = vec![];
+    for n in names {
+        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { return Err(format!("{n}: no bytes")) };
+        out.push((n, bytes));
+    }
+
+    Ok(out)
+}
+
+/// The run west of the west gate replaced by a procedural wall, the AI layout along it following it.
+fn rebuild_wall(project: &mut TileProject, vfs: &Vfs) -> Result<(), String> {
     let unit = project.unit_scale;
 
     // The old run's pieces.
@@ -106,9 +184,7 @@ fn run() -> Result<(), String> {
         return Err(format!("expected the run's 14 pieces, found {}", names.len()));
     }
 
-    // The ground: a hill under the bulge.
     let points = bulged(GATE_END, FREE_END, &[(0.25, 22.0), (0.5, 40.0), (0.75, 22.0)]);
-    raise(&mut project, offset(&[GATE_END, FREE_END], 0.5, 40.0), 44.0, 6.0)?;
 
     // The wall, in the gate's layer, its first end on the gate.
     let extent = |key: &str| {
@@ -167,15 +243,6 @@ fn run() -> Result<(), String> {
         return Err("nothing of the AI layout runs along the wall".to_owned());
     }
 
-    let (_, msg) = project.save(&project_dir, true, project.height_dirty)?;
-    println!("{msg}");
-
-    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, Path::new(out))?;
-    for n in &notes {
-        println!("export: {n}");
-    }
-
-    println!("exported into {}; the pack: {}", dir.display(), pack.display());
     Ok(())
 }
 
@@ -342,10 +409,12 @@ fn nearest(ends: &[Anchor], p: [f64; 2]) -> Option<&Anchor> {
     ends.iter().filter(|a| d(a) <= SNAP).min_by(|a, b| d(a).total_cmp(&d(b)))
 }
 
-/// Raises a bell of ground (scene units), and moves every building standing on it by as much.
+/// Raises a bell of ground (scene units), and moves the buildings standing on it by as much, as the editor's brush does: those that sit
+/// on the landscape (`MSM_LANDSCAPE`), not the freeform ones (the walls).
 fn raise(project: &mut TileProject, at: [f64; 2], radius: f64, metres: f64) -> Result<(), String> {
     let unit = project.unit_scale;
-    let buildings = project.scene.find_all("BUILDING_INSTANCE");
+    let buildings = project.scene.find_all("BUILDING_INSTANCE").into_iter()
+        .filter(|&e| project.scene.doc().get(e, "surface_mode").is_some_and(|m| m == "MSM_LANDSCAPE")).collect::<Vec<_>>();
     let before = buildings.iter().map(|&e| {
         let p = world_transform(&project.scene, e).position;
         project.height_at(p.x / unit, p.z / unit)

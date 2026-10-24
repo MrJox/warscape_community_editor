@@ -183,7 +183,8 @@ pub fn made_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), Str
 }
 
 /// The files of a game's `data` folder as BOB's VFS sees them: the packs in name order, the first that holds a path (case aside) wins.
-/// The packs' file lists are indexed on first use.
+/// The packs this editor writes (`wce_*.pack`: exported tiles, procedural walls) are left out: one installed in `data` would otherwise
+/// come back as the game's own tile (its extra files mixed into the next decompile). The packs' file lists are indexed on first use.
 pub struct PackIndex {
     data: std::path::PathBuf,
     index: std::sync::OnceLock<std::collections::HashMap<String, (std::path::PathBuf, String)>>,
@@ -201,7 +202,9 @@ impl PackIndex {
     fn index(&self) -> &std::collections::HashMap<String, (std::path::PathBuf, String)> {
         use rpfm_lib::files::pack::Pack;
         self.index.get_or_init(|| {
-            let mut packs = std::fs::read_dir(&self.data).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
+            let ours = |p: &Path| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase().starts_with("wce_"));
+            let mut packs = std::fs::read_dir(&self.data).into_iter().flatten().flatten().map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "pack") && !ours(p)).collect::<Vec<_>>();
             packs.sort();
             let mut out = std::collections::HashMap::new();
             let Some(game) = Self::game() else { return out };

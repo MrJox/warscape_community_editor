@@ -416,19 +416,32 @@ Two attributes of the spline (Inspector rows; 0: none):
 
 ## Docking (user, in game, 2026-10-24)
 
-- **What was seen:** in the whole-ring pack, ladders and towers docked, but units could not cross onto the walls.
-- **Likely cause:** that pack moved the walls (bulges up to 40 units) but none of the AI layout. The wall zones (`EFP_LOW_WALL`), the
-  siege AI wall edges and the fort perimeters stayed on the old line. The one-wall pack moves them with the wall: its compiled
-  `zones.xml` follows the new pieces.
-- **Checked and the same as vanilla:**
-  - **Placement:** the first piece starts on the gate's end, and the untouched walls' building-list records equal CA's (rotations
-    within float rounding).
-  - **Generated pieces:** the rows (fort_wall, dockable, breachable), the docking lines (the outer face, z -2.5, cut into 5-unit
-    pieces), the walkway platforms and the zone files are the base's, moved.
-  - **The gameplay height map** (`hf_height_map.data`, ours against CA's): within a few centimetres under most wall pieces, at most
-    0.6 m. Elsewhere in the tile, about 150,000 samples differ by 0.5 to 3 m: a fidelity question for the terrain compile.
-- **Still open:** if the one-wall pack also fails to dock, try a vanilla wall it doesn't touch. If that fails too, the cause is the
-  terrain compile, not the walls.
+- **What was seen:** ladders and towers docked onto the generated walls, but units could not cross onto them. This happened with the
+  whole-ring pack, and again with the one-wall pack after its AI layout followed the wall.
+- **The user's experience:** this comes from wall pieces that are not properly aligned and connected in the altered section. Units can
+  walk on them and engines dock to them, but the game takes the docking as invalid. The exact rule was never known; aligning the pieces
+  fixes it.
+- **What was off** (`wall_joint_check`: every end of a generated piece against the nearest end of another piece):
+  - **Gate:** the first piece started on the gate's end but left it at **18.8 degrees**. The spline went straight for its first point;
+    the game's walls never turn at a joint, only inside a piece (kinks, curves).
+  - **Bastions:** the two met the generated pieces after them **0.23 and 0.36 units** apart and **0.8 and 1.2 degrees** off. A
+    bastion is a game piece, straight; it was laid along the direction at its start on a line that curves (the slot only had to turn
+    less than 4 degrees), so its far end left the line.
+  - Joints between generated pieces, and with the caps, were already exact.
+- **Fix** (`solver::straighten`): the solver chooses the towers and bastions (`Plan::defences`, kept for the pieces, the preview and the
+  export), then makes the centre line straight under each one, and leaves an attached end along the building's axis. Around each
+  straight stretch the line blends back into the spline over a base's length at most (half the way to the next one, within its section),
+  with a smoothstep, so place and direction stay continuous. A section's direction at an attached end is the axis itself. Every joint of
+  the altered section is now exact (24 of 24 ends; a unit test, `joints_with_the_games_pieces_are_exact`, fails without it).
+- **Also found:**
+  - An installed export (`wce_*.pack` in `data`) came back as the game's own tile in the next decompile (its extra files mixed in): the
+    game's packs are now read without them.
+  - The packs no longer carry `tile.agf` (BOB's list of the tile's buildings and files) nor `building_list.xml` (TEd's XML twin): CA's
+    packs never ship them.
+  - The example's hill moved two vanilla walls up 6 cm. The editor's brush carries only `MSM_LANDSCAPE` instances, and now so does the
+    example.
+- **Diagnostic variants** (`wall_edoras_test --variant`): `terrain-only` (the hill, our terrain compile, no wall changed) and
+  `wall-only` (the wall and its AI layout, no hill, CA's files for everything else).
 
 ## Destroyed stairs (user, in game, 2026-10-24)
 
