@@ -62,3 +62,4 @@ pub const IMAGE: &str = "\u{e0f6}";
 pub const SQUARE_PEN: &str = "\u{e172}";
 pub const ARROW_UP: &str = "\u{e04a}";
 pub const FOLDER_PLUS: &str = "\u{e0d9}";
+pub const STAR: &str = "\u{e176}";

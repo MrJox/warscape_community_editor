@@ -27,6 +27,9 @@ pub(crate) enum Page {
 pub(crate) struct SettingsWindow {
     /// The copy being edited; the window is open while there is one.
     pub(crate) draft: Option<Settings>,
+
+    /// The settings as the window found them: a tool's table the window did not change keeps what the tool wrote meanwhile.
+    opened: Option<Settings>,
     page: Page,
 
     /// Dear ImGui's style editor, to work on a theme.
@@ -161,6 +164,7 @@ impl Editor {
     /// Opens the Settings window (on a fresh copy of the settings) or closes it without applying.
     pub fn show_settings_window(&mut self, open: bool) {
         self.settings_window.draft = open.then(|| self.settings_ref().clone());
+        self.settings_window.opened = self.settings_window.draft.clone();
         self.mod_checks_reset();
     }
 
@@ -197,6 +201,14 @@ impl Editor {
             draft.game_mut().mod_packs = packs;
         }
 
+        // The tools' tables the window left alone are the live ones (a tool may have written its table while the window was open).
+        let opened = self.settings_window.opened.as_ref().map(|o| o.tools.clone()).unwrap_or_default();
+        for (id, live) in &self.settings_ref().tools {
+            if draft.tools.get(id) == opened.get(id) {
+                draft.tools.insert(id.clone(), live.clone());
+            }
+        }
+
         let before = std::mem::replace(self.settings(), draft);
         self.save_settings();
         self.set_frame_cap_live(self.settings_ref().frame_cap());
@@ -228,6 +240,7 @@ impl Editor {
         // The window goes on with what was applied.
         if self.settings_window.draft.is_some() {
             self.settings_window.draft = Some(self.settings_ref().clone());
+            self.settings_window.opened = self.settings_window.draft.clone();
         }
     }
 

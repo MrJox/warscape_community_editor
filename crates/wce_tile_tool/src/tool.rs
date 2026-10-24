@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, settings_window, theme};
+use wce_editor::{gui, icons, settings_window, theme};
 use wce_editor::steam_detect::file_dialog;
 use wce_editor::tool::{Tool, ViewportEvent, ViewportEventKind};
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
@@ -22,7 +22,7 @@ use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
 
-use crate::settings::{SETTINGS_ID, TileSettings};
+use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
 pub const POLYGON_TYPES: [&str; 5] =
     ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
@@ -169,6 +169,20 @@ pub struct TileTool {
     /// The kit index's rows, shared as the packs' are (copied when the index changes).
     browse_kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
 
+    /// The favourite and the recent tiles (the settings' lists: read on first use, written through), and a count of their changes.
+    browse_marks: Option<(Vec<TileRef>, Vec<TileRef>)>,
+    browse_marks_version: u64,
+
+    /// The listed favourites and recent tiles of the source, filtered as the list: rows of the source (and, for a recent one, the variation
+    /// opened), and the keys of the source's favourites (the stars of every row).
+    browse_fav_rows: Vec<usize>,
+    browse_recent_rows: Vec<(usize, String)>,
+    browse_fav_keys: HashSet<String>,
+
+    /// The raw_data folders of the workspaces exported tiles were opened into this session (besides the settings' one): their tiles are the
+    /// packs' in the recent tiles.
+    workspaces: HashSet<String>,
+
     /// The Weather section (which environment file lights the tile).
     pub(crate) weather: crate::weather_panel::WeatherUi,
 
@@ -194,6 +208,7 @@ impl Default for TileTool {
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
+            browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
             weather: Default::default(), context: Default::default(), exported_game: None, browse_packs: None,
         }
     }
@@ -299,6 +314,72 @@ impl TileTool {
         }
 
         roots
+    }
+
+    /// The Tiles panel's source as a [`TileRef`] source: the kit's raw_data folder, or the packs.
+    pub(crate) fn browse_source(&self) -> String {
+        match self.browse_roots.get(self.browse_kit) {
+            Some(root) => source_of(root),
+            None => PACKS_SOURCE.to_owned(),
+        }
+    }
+
+    /// The favourite and the recent tiles, read from the settings on first use.
+    pub(crate) fn marks(&mut self, e: &Editor) -> &(Vec<TileRef>, Vec<TileRef>) {
+        if self.browse_marks.is_none() {
+            let s = e.tool_settings::<TileSettings>(SETTINGS_ID);
+            self.browse_marks = Some((s.favourites, s.recent));
+        }
+
+        self.browse_marks.as_ref().expect("read above")
+    }
+
+    fn save_marks(&mut self, e: &mut Editor) {
+        let Some((favourites, recent)) = self.browse_marks.clone() else { return };
+        self.browse_marks_version += 1;
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
+            s.favourites = favourites;
+            s.recent = recent;
+        });
+    }
+
+    /// Stars a tile of a source in the Tiles panel, or takes its star away; true when it is a favourite now.
+    pub fn toggle_favourite(&mut self, e: &mut Editor, source: &str, key: &str) -> bool {
+        self.marks(e);
+        let (favourites, _) = self.browse_marks.as_mut().expect("read above");
+        let now = match favourites.iter().position(|r| r.source == source && r.key == key) {
+            Some(i) => {
+                favourites.remove(i);
+                false
+            }
+
+            None => {
+                favourites.push(TileRef { source: source.to_owned(), key: key.to_owned(), variation: String::new() });
+                true
+            }
+        };
+
+        self.save_marks(e);
+        now
+    }
+
+    /// Puts a tile that opened first in the recent tiles: its kit's source (the packs for an exported tile in the workspace), its entry and
+    /// the variation. A tile without an entry or a kit is not listed in the Tiles panel and is not kept.
+    fn note_recent(&mut self, e: &mut Editor, id: DocumentId) {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let p = d.project();
+        let (Some(entry), Some(raw_root)) = (&p.entry, &p.raw_root) else { return };
+        let key = wce_formats::tile_entry::normalize_location(&entry.location());
+        let variation = p.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let raw_root = source_of(raw_root);
+        let exported = raw_root == source_of(&Self::workspace_dir(e).join("raw_data")) || self.workspaces.contains(&raw_root);
+        let source = if exported { PACKS_SOURCE.to_owned() } else { raw_root };
+        self.marks(e);
+        let (_, recent) = self.browse_marks.as_mut().expect("read above");
+        recent.retain(|r| r.source != source || r.key != key);
+        recent.insert(0, TileRef { source, key, variation });
+        recent.truncate(RECENT_KEEP);
+        self.save_marks(e);
     }
 
     /// Shows or hides the sea at 0 m: the tile's plane and the map context's sea; kept in the settings for the next tiles.
@@ -476,6 +557,7 @@ impl TileTool {
     pub fn open_exported(&mut self, e: &mut Editor, target: &str, workspace: Option<&Path>, fresh: bool) -> Result<String, String> {
         use wce_tile_io::attila::workflow::{open_exported, tile_folder};
         let workspace = workspace.map_or_else(|| Self::workspace_dir(e), Path::to_path_buf);
+        self.workspaces.insert(source_of(&workspace.join("raw_data")));
 
         // A tile of the packs decompiled before opens from the workspace (with its edits), unless `fresh`.
         if !fresh && !Path::new(target).is_dir() {
@@ -1238,50 +1320,133 @@ impl TileTool {
             self.browse_kit_rows.clone()
         };
 
-        let key = format!("{}|{}|{}|{:p}", self.browse_kit, self.browse_kind, self.browse_filter, Arc::as_ptr(&source));
+        // The rows, the favourites and the recent tiles of the source, filtered alike (rebuilt when the source, a filter or the marks changed).
+        let src = self.browse_source();
+        self.marks(e);
+        let key = format!("{}|{}|{}|{:p}|{}", self.browse_kit, self.browse_kind, self.browse_filter, Arc::as_ptr(&source), self.browse_marks_version);
         if key != self.browse_rows_key {
             self.browse_rows_key = key;
             let words = self.browse_filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
-            self.browse_rows = source
-                .iter()
-                .enumerate()
-                .filter(|(_, en)| match self.browse_kind {
+            let kind = self.browse_kind;
+            let pass = |en: &wce_formats::tile_index::TileIndexEntry| {
+                let kind_ok = match kind {
                     1 => en.kind == "battle",
                     2 => en.kind == "campaign",
                     _ => true,
-                })
-                .filter(|(_, en)| matches_words(en, &words))
-                .map(|(i, _)| i)
-                .collect();
+                };
+
+                kind_ok && matches_words(en, &words)
+            };
+
+            self.browse_rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
+            let by_key: HashMap<&str, usize> = source.iter().enumerate().map(|(i, en)| (en.key.as_str(), i)).collect();
+            let (fav, recent) = self.browse_marks.as_ref().expect("read above");
+            let row = |r: &TileRef| (r.source == src).then(|| by_key.get(r.key.as_str()).copied()).flatten().filter(|&i| pass(&source[i]));
+            self.browse_fav_keys = fav.iter().filter(|r| r.source == src).map(|r| r.key.clone()).collect();
+            self.browse_fav_rows = fav.iter().filter_map(row).collect();
+            self.browse_recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
         }
 
-        gui::text_disabled(&format!("{} of {} tiles", self.browse_rows.len(), source.len()));
         let footer = gui::frame_height_with_spacing() * 4.5;
         let mut open = None;
+        let mut star = None;
         let entries = &source[..];
+        let filtered = !self.browse_filter.trim().is_empty();
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
-            let rows = &self.browse_rows;
             let selected_key = &mut self.browse_selected;
+            let favs = &self.browse_fav_keys;
+
+            // Favourites and recent tiles first: a double-click opens a favourite's first variation, a recent tile's variation opened.
+            let open_row = |en: &wce_formats::tile_index::TileIndexEntry, variation: &str| {
+                let name = if variation.is_empty() { en.variations.first().cloned().unwrap_or_default() } else { variation.to_owned() };
+                (en.xml.display().to_string(), variation.to_owned(), en.key.clone(), name)
+            };
+
+            let header = |id: &str, title: String| gui::tree_node_ex_id(id, gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &title);
+            if header("favourites", format!("{}  Favourites ({})", icons::STAR, self.browse_fav_rows.len())) {
+                if self.browse_fav_rows.is_empty() {
+                    gui::text_disabled(if filtered { "No favourite matches the filter." } else { "Click a tile's star to add it here." });
+                }
+
+                for (i, &r) in self.browse_fav_rows.iter().enumerate() {
+                    let en = &entries[r];
+                    gui::push_id_int(i as i32);
+                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "");
+                    if clicked {
+                        selected_key.clone_from(&en.key);
+                    }
+
+                    if double {
+                        open = Some(open_row(en, ""));
+                    }
+
+                    if starred {
+                        star = Some(en.key.clone());
+                    }
+
+                    gui::pop_id();
+                }
+
+                gui::tree_pop();
+            }
+
+            if header("recent", format!("{}  Recently opened ({})", icons::HISTORY, self.browse_recent_rows.len())) {
+                if self.browse_recent_rows.is_empty() {
+                    gui::text_disabled(if filtered { "No recent tile matches the filter." } else { "The last tiles you opened show here." });
+                }
+
+                for (i, (r, variation)) in self.browse_recent_rows.iter().enumerate() {
+                    let en = &entries[*r];
+                    gui::push_id_int(i as i32);
+                    let note = if variation.is_empty() { String::new() } else { format!("  ({variation})") };
+                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note);
+                    if clicked {
+                        selected_key.clone_from(&en.key);
+                    }
+
+                    if double {
+                        open = Some(open_row(en, variation));
+                    }
+
+                    if starred {
+                        star = Some(en.key.clone());
+                    }
+
+                    gui::pop_id();
+                }
+
+                gui::tree_pop();
+            }
+
+            let rows = &self.browse_rows;
+            gui::separator_text(&format!("All tiles ({} of {})", rows.len(), source.len()));
+            gui::push_id("all");
             gui::clipped(rows.len(), |i| {
                 let en = &entries[rows[i]];
                 gui::push_id_int(i as i32);
-                gui::color_swatch("##c", [en.red / 255.0, en.green / 255.0, en.blue / 255.0, 1.0], gui::v2(12.0, 12.0));
-                gui::same_line();
-                let prefix = format!("terrain/tiles/{}/", en.kind);
-                let shown = en.key.strip_prefix(&prefix).unwrap_or(&en.key);
-                let vars = if en.variations.len() > 1 { format!("  +{}v", en.variations.len()) } else { String::new() };
-                if gui::selectable(&format!("{shown}  {}x{}{vars}", en.width, en.height), *selected_key == en.key, gui::SELECTABLE_ALLOW_DOUBLE_CLICK) {
-                    *selected_key = en.key.clone();
-                    if gui::is_mouse_double_clicked(0) {
-                        open = Some((en.xml.display().to_string(), String::new(), en.key.clone(), en.variations.first().cloned().unwrap_or_default()));
-                    }
+                let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), "");
+                if clicked {
+                    selected_key.clone_from(&en.key);
+                }
+
+                if double {
+                    open = Some(open_row(en, ""));
+                }
+
+                if starred {
+                    star = Some(en.key.clone());
                 }
 
                 gui::pop_id();
             });
+            gui::pop_id();
         }
 
         gui::end_child();
+        if let Some(key) = star {
+            self.toggle_favourite(e, &src, &key);
+        }
+
         match self.browse_rows.iter().map(|&i| &entries[i]).find(|en| en.key == self.browse_selected) {
             Some(sel) => {
                 gui::text(&sel.name);
@@ -1492,6 +1657,29 @@ impl TileTool {
 }
 
 /// A browser row matches when every word is in its location, file name, set or variation names, in any case.
+/// A row of the Tiles panel: the tile's colour, its location, size and variations (and `note`), and its star on the right. Returns whether
+/// the row was clicked, double-clicked, and whether the star was.
+fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favourite: bool, note: &str) -> (bool, bool, bool) {
+    gui::color_swatch("##c", [en.red / 255.0, en.green / 255.0, en.blue / 255.0, 1.0], gui::v2(12.0, 12.0));
+    gui::same_line();
+    let prefix = format!("terrain/tiles/{}/", en.kind);
+    let shown = en.key.strip_prefix(&prefix).unwrap_or(&en.key);
+    let vars = if en.variations.len() > 1 { format!("  +{}v", en.variations.len()) } else { String::new() };
+    let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
+    let clicked = gui::selectable_sized(&format!("{shown}  {}x{}{vars}{note}", en.width, en.height), selected, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(width, 0.0));
+    let double = clicked && gui::is_mouse_double_clicked(0);
+    gui::same_line();
+    gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
+    gui::push_style_color(gui::COL_TEXT, theme::v4(if favourite { theme::palette().highlight } else { theme::mix(theme::dim(), theme::palette_background(), 0.4) }));
+    let starred = gui::small_button(&format!("{}##star", icons::STAR));
+    gui::pop_style_color(2);
+    if gui::is_item_hovered() {
+        gui::set_tooltip(if favourite { "Remove from the favourites" } else { "Add to the favourites" });
+    }
+
+    (clicked, double, starred)
+}
+
 pub(crate) fn matches_words(en: &wce_formats::tile_index::TileIndexEntry, words: &[String]) -> bool {
     let mut hay = format!("{} {} {}", en.key, en.name, en.tile_set);
     for v in &en.variations {
@@ -1547,6 +1735,12 @@ impl Tool for TileTool {
 
     fn has_settings(&self) -> bool {
         true
+    }
+
+    fn settings_applied(&mut self, _: &mut Editor) {
+        // The favourites and recent tiles are read again (the window writes the whole table).
+        self.browse_marks = None;
+        self.browse_marks_version += 1;
     }
 
     fn draw_settings(&mut self, draft: &mut Settings) {
@@ -1631,6 +1825,7 @@ impl Tool for TileTool {
             }
 
             self.weather.tile_changed(e, id);
+            self.note_recent(e, id);
             self.poly_point = None;
             self.drawing = false;
             self.grabbing = false;
