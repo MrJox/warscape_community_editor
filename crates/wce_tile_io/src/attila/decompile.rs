@@ -826,15 +826,31 @@ pub fn tree_key(model: &str) -> String {
     format!("{}.{}", species.to_lowercase(), variant.to_lowercase())
 }
 
-/// The trees of a FASTBIN tree list document as TEd's VEGETATION_INSTANCEs (the list's frame: x, z metres with z from the far edge, y in
-/// scene units; scale as the list's).
-fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
-    let mut out = vec![];
+/// Whether a list position (metres) is on BOB's generator grid at a density: the centre of a cell of 128 / density metres, as every
+/// generated object is (`x density / 128 - 0.5` whole, and the same for z, which counts from the far edge of a whole number of cells).
+pub fn on_generator_grid(x: f64, z: f64, density: u32) -> bool {
+    let whole = |v: f64| {
+        let g = v * f64::from(density) / 128.0 - 0.5;
+        (g - g.round()).abs() < 1e-4
+    };
+    whole(x) && whole(z)
+}
+
+/// The static trees of a FASTBIN tree list document as TEd's VEGETATION_INSTANCEs (the list's frame: x, z metres with z from the far
+/// edge, y in scene units; scale as the list's), and how many generated objects were left out: those on the generator's grid at
+/// `density` (BOB makes them from the seeds; an outfield_tents list's yurts, a climate's generated trees).
+fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
+    let (mut out, mut generated) = (vec![], 0);
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
         let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
         let flags = t.get("flags").and_then(Value::as_ints).unwrap_or_default();
         for (i, p) in pos.as_chunks::<3>().0.iter().enumerate() {
+            if on_generator_grid(p[0], p[2], density) {
+                generated += 1;
+                continue;
+            }
+
             let own = vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))];
             let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
             // The list's flag is BOB's `surface_mode == MSM_FREEFORM`.
@@ -846,7 +862,7 @@ fn tree_nodes(doc: &Node, extent_z: f64) -> Vec<Node> {
         }
     }
 
-    out
+    (out, generated)
 }
 
 // ---- logic: polygons, deployment, AI hints, the siege graph
@@ -1808,9 +1824,15 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     let vegetation = binary.documents.iter().any(|d| super::stage_c::kind_of(&d.name).is_some());
     if vegetation {
         let doc = lists.iter().find_map(|l| binary.document(l));
-        let trees = doc.map(|d| tree_nodes(&d.root, extent.1)).unwrap_or_default();
-        if let Some(doc) = doc.filter(|_| !trees.is_empty()) {
-            losses.note(format!("vegetation: {} trees of {} as explicit instances (the generation seeds are not in the binary)", trees.len(), doc.name));
+        // The generator ran at the database's density (the row's, before the height map's may replace it above).
+        let density = vi.map_or(128, |v| *row.variations()[v].raw_data_tri_density()).max(1);
+        let (trees, generated) = doc.map(|d| tree_nodes(&d.root, extent.1, density)).unwrap_or_default();
+        if let Some(doc) = doc.filter(|_| !trees.is_empty() || generated > 0) {
+            losses.note(format!(
+                "vegetation: {} static trees of {} as explicit instances; its {generated} generated objects left out (the generation seeds are not in the binary)",
+                trees.len(),
+                doc.name
+            ));
         }
 
         let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
@@ -1889,6 +1911,17 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_objects_sit_on_the_grid() {
+        // density 128: 1 m cells, centres at .5; z counts from the far edge.
+        assert!(on_generator_grid(10.5, 300.5, 128));
+        assert!(!on_generator_grid(10.5, 300.25, 128));
+        assert!(!on_generator_grid(36.131973, 33.204582, 128));
+        // density 32: 4 m cells, centres at 2, 6, 10 ...
+        assert!(on_generator_grid(6.0, 2.0, 32));
+        assert!(!on_generator_grid(6.5, 2.0, 32));
+    }
 
     #[test]
     fn lite_zones_keep_every_flag() {

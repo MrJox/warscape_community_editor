@@ -479,6 +479,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             // With WCE_STAGE_C_REGEN: the decompiled list's trees regenerated from the instances, as (model, x, y, z, scale byte, flag) against
             // the binary's: exact, and within 1 mm / the same byte.
             if regen_c {
+                let density = binary_density(&binary, folder, ctx);
                 let trees = |t: &wce_tile_model::Tile, name: &str| -> Vec<(String, [f64; 3], i64, i64)> {
                     let Some(d) = t.document(name) else { return vec![] };
                     d.root
@@ -491,6 +492,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             let fl = ty.get("flags").and_then(Value::as_ints).unwrap_or_default().to_vec();
                             (0..sc.len()).map(move |i| (key.clone(), [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]], (sc[i] * 127.0).round() as i64, fl[i]))
                         })
+                        // The static trees: the generated objects (on the generator's grid) are not decompiled.
+                        .filter(|t| !wce_tile_io::attila::decompile::on_generator_grid(t.1[0], t.1[2], density))
                         .collect()
                 };
                 for name in ["outfield_tents.tree_list.bin", "default.tree_list.bin"] {
@@ -513,10 +516,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         }
                     }
 
-                    let e = local.attr_same.entry(format!("stage C regenerated {name} trees: exact")).or_default();
+                    let e = local.attr_same.entry(format!("stage C regenerated {name} static trees: exact")).or_default();
                     e.0 += exact;
                     e.1 += theirs.len() - exact;
-                    let e = local.attr_same.entry(format!("stage C regenerated {name} trees: within 1 mm, same scale and flag")).or_default();
+                    let e = local.attr_same.entry(format!("stage C regenerated {name} static trees: within 1 mm, same scale and flag")).or_default();
                     e.0 += exact + near;
                     e.1 += theirs.len() - exact - near + ours.len();
                     break;
@@ -1393,6 +1396,18 @@ fn stage_c_of(raw_data: &Path, data: &Path) -> Option<wce_tile_io::attila::stage
     static EXISTS: std::sync::OnceLock<Exists> = std::sync::OnceLock::new();
     let exists = EXISTS.get_or_init(|| Box::new(move |p: &str| packs.exists(p)));
     Some(wce_tile_io::attila::stage_c::StageC { params, grass: grass.as_ref(), settings: Some(settings), model_exists: exists.as_ref() })
+}
+
+/// The database density of a tile folder's variation (the generator's grid), 128 when unknown.
+fn binary_density(_binary: &wce_tile_model::Tile, folder: &str, ctx: &Context) -> u32 {
+    let (location, variation) = split_location(folder);
+    wce_tile_io::attila::decompile::find_tile(ctx.databases, &location)
+        .and_then(|(d, i)| {
+            let row = &ctx.databases[d].tiles()[i];
+            row.variations().iter().find(|v| v.location().eq_ignore_ascii_case(&variation)).map(|v| *v.raw_data_tri_density())
+        })
+        .unwrap_or(128)
+        .max(1)
 }
 
 /// The files stage B makes (`attila::stage_b`).
