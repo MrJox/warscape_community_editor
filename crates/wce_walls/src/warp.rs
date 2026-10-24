@@ -24,6 +24,31 @@ pub trait Warp {
     }
 }
 
+/// Another warp with its source moved along x by `dx` first: a copy of the base placed one length (or more) past a piece's end, to fill
+/// the outer side of a mitred corner with real geometry instead of stretching the piece.
+pub struct Shifted<'a> {
+    pub inner: &'a dyn Warp,
+    pub dx: f32,
+}
+
+impl Warp for Shifted<'_> {
+    fn point(&self, p: [f32; 3]) -> [f32; 3] {
+        self.inner.point([p[0] + self.dx, p[1], p[2]])
+    }
+
+    fn yaw(&self, p: [f32; 3]) -> f32 {
+        self.inner.yaw([p[0] + self.dx, p[1], p[2]])
+    }
+
+    fn ground_point(&self, p: [f32; 3]) -> [f32; 3] {
+        self.inner.ground_point([p[0] + self.dx, p[1], p[2]])
+    }
+
+    fn clip_planes(&self) -> Vec<[f32; 3]> {
+        self.inner.clip_planes().into_iter().map(|[a, b, c]| [a, b, c - a * self.dx]).collect()
+    }
+}
+
 /// If a point is inside every half-plane (`a x + b z <= c`).
 pub fn inside(planes: &[[f32; 3]], p: [f32; 3]) -> bool {
     planes.iter().all(|&[a, b, c]| a * p[0] + b * p[2] <= c + 1e-4)

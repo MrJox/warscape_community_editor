@@ -39,6 +39,9 @@ pub struct Splice<'a> {
     pub x: (f32, f32),
     pub zy: Option<((f32, f32), (f32, f32))>,
     pub band: Option<(f32, f32, f32)>,
+
+    /// Each of the part's pieces into the piece of the same number (a copy of the base itself), not only its first into the first.
+    pub per_piece: bool,
 }
 
 impl Splice<'_> {
@@ -77,10 +80,10 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
     for sp in splices {
         let parsed = Cs2Parsed::decode(&mut Cursor::new(sp.logic), &None).map_err(|e| format!("cs2.parsed (step section): {e}"))?;
         let pv = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-        parts.push(pv["pieces"][0]["destructs"].as_array().cloned().unwrap_or_default());
+        parts.push(pv["pieces"].as_array().into_iter().flatten().map(|p| p["destructs"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>());
     }
 
-    let mut first_piece = true;
+    let mut piece_index = 0;
     for piece in array_mut(&mut v, "pieces") {
         let piece_name = piece["name"].as_str().unwrap_or_default().to_owned();
         for (k, d) in array_mut(piece, "destructs").enumerate() {
@@ -89,8 +92,15 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
             let (mut platforms, strips) = platform_strips(&old, warp, cuts, &kept, 0, &mut notes);
             let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
             let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
-            if first_piece {
-                for (sp, levels) in splices.iter().zip(&parts) {
+            for (sp, pieces) in splices.iter().zip(&parts) {
+                let levels = match (sp.per_piece, piece_index) {
+                    (true, i) => pieces.get(i),
+                    (false, 0) => pieces.first(),
+                    _ => None,
+                };
+
+                let Some(levels) = levels else { continue };
+                {
                     let Some(sd) = levels.get(k).or(levels.last()) else { continue };
                     let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
                     let part_planes = sp.warp.clip_planes();
@@ -149,7 +159,7 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
             warp_box(&mut d["bounding_box"], warp, step);
         }
 
-        first_piece = false;
+        piece_index += 1;
     }
 
     warp_box(&mut v["bounding_box"], warp, step);

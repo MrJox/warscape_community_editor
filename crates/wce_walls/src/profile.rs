@@ -90,7 +90,7 @@ const EIGHT: Profile = Profile {
     slab_up: (2.0, 5.0),
     slab_down: (2.0, 5.0),
     slab_walk: (8.0, 13.0),
-    slab_zy: None,
+    slab_zy: Some(((-3.5, 3.0), (-3.0, 16.0))),
     step_replaces: true,
     slab_band: None,
     door: "",

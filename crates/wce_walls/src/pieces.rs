@@ -14,7 +14,7 @@
 use crate::building::{BuildingFiles, is_piece_mesh};
 use crate::profile::Profile;
 use crate::solver::{Plan, STEP, Sample};
-use crate::warp::{Cuts, Warp};
+use crate::warp::{Cuts, Shifted, Warp};
 use crate::{logic, mesh, zones};
 
 /// The finest cut spacing (what the curve needs is clamped to it).
@@ -234,15 +234,35 @@ impl<'a> PieceWarp<'a> {
         self.shears
     }
 
-    /// The distance along the wall of a point of the base's frame. A piece at a face is stretched to it where the face lies past the
-    /// piece's end (the corner's outer side): only lengthened, never folded back. Where the face lies before the piece's end (the inner
-    /// side) the piece is cut by it instead ([`Warp::clip_planes`]).
-    fn s_of(&self, x: f64, z: f64) -> f64 {
-        let s = self.piece.s.0 + (x - self.profile.x.0) * self.piece.scale;
-        let w = ((s - self.piece.s.0) / (self.piece.s.1 - self.piece.s.0).max(1e-9)).clamp(0.0, 1.0);
-        let start = if self.stretched.0 { (z * self.shears.0).min(0.0) } else { 0.0 };
-        let end = if self.stretched.1 { (z * self.shears.1).max(0.0) } else { 0.0 };
-        s + start * (1.0 - w) + end * w
+    /// The distance along the wall of a point of the base's frame: nothing is stretched. At a corner the inner side is cut by the face
+    /// ([`Warp::clip_planes`]); the outer side, past the piece's end, is filled by copies of the base going on straight ([`overhangs`]),
+    /// cut by the same face.
+    fn s_of(&self, x: f64, _z: f64) -> f64 {
+        self.piece.s.0 + (x - self.profile.x.0) * self.piece.scale
+    }
+
+    /// The shifts (along x of the base's frame) of the copies of the base that fill the outer side of this piece's mitred ends: past its
+    /// end for a face there, before its start for one there, as many lengths as the face reaches across the wall's depth.
+    pub fn overhangs(&self) -> Vec<f32> {
+        let (len, depth) = (self.profile.length(), self.profile.depth.0.abs().max(self.profile.depth.1.abs()));
+        let count = |sh: f64| ((sh.abs() * depth / (len * self.piece.scale.max(1e-9))).ceil() as usize).max(1);
+        let mut out = vec![];
+        if self.stretched.1 && self.has_face(1) {
+            out.extend((1..=count(self.shears.1)).map(|k| (k as f64 * len) as f32));
+        }
+
+        if self.stretched.0 && self.has_face(0) {
+            out.extend((1..=count(self.shears.0)).map(|k| -(k as f64 * len) as f32));
+        }
+
+        out
+    }
+
+    /// If the section has a face at its start (0) or end (1): a corner, or an attached end.
+    fn has_face(&self, k: usize) -> bool {
+        let all = sections(self.plan);
+        let i = all.iter().position(|&s| s == self.section).unwrap_or(0);
+        if k == 0 { i > 0 || self.plan.end_planes[0].is_some() } else { i + 1 < all.len() || self.plan.end_planes[1].is_some() }
     }
 
     /// The centre line, its direction and the level at a distance: within the section, the layout (its direction held to the section's
@@ -309,16 +329,11 @@ impl Warp for PieceWarp<'_> {
     }
 
     /// The section's end faces (a corner's bisector, an attached end's face) in the base's frame: keep `s(x) - sh z` within the section's
-    /// ends (on the outer side the stretch puts the piece's end right on the face, so the plane cuts nothing there).
+    /// ends.
     fn clip_planes(&self) -> Vec<[f32; 3]> {
         let (scale, x0) = (self.piece.scale, self.profile.x.0);
         let mut out = vec![];
-        let has_face = |k: usize| {
-            let all = sections(self.plan);
-            let i = all.iter().position(|&s| s == self.section).unwrap_or(0);
-            if k == 0 { i > 0 || self.plan.end_planes[0].is_some() } else { i + 1 < all.len() || self.plan.end_planes[1].is_some() }
-        };
-
+        let has_face = |k: usize| self.has_face(k);
         if has_face(0) {
             let d0 = self.section.0 - self.piece.s.0;
             out.push([-scale as f32, self.shears.0 as f32, (-(d0 + scale * x0)) as f32]);
@@ -476,6 +491,8 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
     let sections = steps_in(warp, steps);
     let cut_out = if warp.profile.step_replaces { sections.iter().map(|s| s.drop).collect::<Vec<_>>() } else { vec![] };
     let zy = warp.profile.slab_zy.map(|((z0, z1), (y0, y1))| ((z0 as f32, z1 as f32), (y0 as f32, y1 as f32)));
+    let shifted = warp.overhangs().into_iter().map(|dx| Shifted { inner: warp, dx }).collect::<Vec<_>>();
+    let base_x = (warp.profile.x.0 as f32, warp.profile.x.1 as f32);
     let mut b = base.clone().renamed(key).without_collapses();
     let (logic_name, zones_name) = (b.logic_name(), b.zones_name());
     let mut drop = vec![];
@@ -499,11 +516,16 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
                 }
             }
 
+            // The copies of this mesh filling a mitred corner's outer side.
+            let own = bytes.clone();
+            parts.extend(shifted.iter().map(|w| mesh::MeshSplice { mesh: &own, warp: w, x: base_x, zy: None, band: None }));
             *bytes = mesh::warp_mesh_with(bytes, warp, &cuts, &cut_out, zy, &parts)?;
         } else if *name == logic_name && logic_too {
-            let splices = sections.iter().filter_map(|sec| {
-                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band })
+            let own = bytes.clone();
+            let mut splices = sections.iter().filter_map(|sec| {
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, per_piece: false })
             }).collect::<Vec<_>>();
+            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, per_piece: true }));
             *bytes = logic::warp_logic_with(bytes, warp, &cuts, &cut_out, zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
@@ -582,11 +604,17 @@ mod tests {
 
         // The direction turns from +x to +z: the bisector through (40, 0) is the line x - 40 = -z... a point of the end face of the first
         // piece and the same point of the start face of the second land on it, at the same place.
-        // The outer side (z < 0 for this left turn) is stretched onto the bisector: both pieces' ends land on it at the same place.
-        for z in [-2.5, -1.0, 0.0] {
-            let (pa, pb) = (a.scene([20.0, 8.0, z]), b.scene([0.0, 8.0, z]));
-            assert!((pa[0] - pb[0]).abs() < 1e-6 && (pa[2] - pb[2]).abs() < 1e-6, "z {z}: {pa:?} vs {pb:?}");
-            assert!(((pa[0] - 40.0) + (pa[2] - 0.0)).abs() < 1e-6, "z {z}: {pa:?} is not on the bisector");
+        // The outer side (z < 0 for this left turn) is filled by a copy past the end, kept up to the bisector: a point there is inside
+        // the planes, one past the bisector is not; both pieces have a copy on their side of it.
+        assert_eq!(a.overhangs(), vec![20.0]);
+        assert_eq!(b.overhangs(), vec![-20.0]);
+        assert!(crate::warp::inside(&a.clip_planes(), [21.0, 8.0, -2.0]));
+        assert!(!crate::warp::inside(&a.clip_planes(), [23.0, 8.0, -2.0]));
+
+        // Nothing is stretched: the piece's end is where its frame ends, on every z.
+        for z in [-2.5, 0.0, 6.0] {
+            let pa = a.scene([20.0, 8.0, z]);
+            assert!((pa[0] - 40.0).abs() < 1e-6, "z {z}: {pa:?}");
         }
 
         // An acute corner (internal 30 degrees) does not fold: along the inner side the piece only moves forward.
