@@ -1,0 +1,8 @@
+[package]
+name = "wce_siege"
+description = "A settlement's siege AI layout generated from its walls, no-go regions and buildings: the street graph, wall edges, fort perimeter, approach lines and deployment zones (docs/plans/siege_ai.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

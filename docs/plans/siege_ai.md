@@ -44,9 +44,39 @@ the deployment zones. What the game needs and how CA lays it out: docs/re/siege_
 - **`wce_tile_editor` `tile_document/siege.rs`:** the input from the document (no-go, buildings and their logic files, walls, captures,
   the heights), the layout written into the layer (nodes and deployment groups are instances with polygon children).
 
+## What the tile gives the generator (measured on the kit, 2026-10-24)
+
+- **Obstacles are the buildings' hard collision outlines**, not their `orange_thingies`: those are what a building stands on, and the
+  plazas, temple floors and roads have them (taken as obstacles they covered CA's areas). Buildings without hard outlines (garden walls,
+  decorations) block nothing. The siege barricades are left out: they stand across the streets, CA's graph runs over them.
+- **Fort pieces** have firing positions on a wall (`ef_lines` actions `Crenel*`, `HighWall`, `LowWall`) or a gate (`gates`); raised
+  buildings (platforms 3+ units up) touching them (towers, corners) are part of the fort. Docking lines are not in the logic files (they
+  are in `models_building`).
+- **Wall edges** run along the middle of the fort pieces' platforms (their union thinned to lines), straight through gates. That gives
+  the walkway's middle without knowing the piece: 4.75 units to the city side on the 15 m walls, about 0 on the 8 m ones, as CA's lines.
+- **The settlement** is the inside of the walls and no-go regions around the main capture point and every capture point within 1000
+  units (CA's perimeters hold them all), with the pockets inner walls make. Closing the barrier is only to tell what is outside: the
+  streets it fills stay in.
+- **The sea**: ground under -0.5 m joined to the map's edge; not when the settlement or a capture point is in it (inland towns on low
+  ground).
+
+## Results on the kit (`siege_check`, 73 vanilla settlements and encampments)
+
+`cargo run --release -p wce_tile_editor --example siege_check -- <game> <out> <kit battle tiles>/settlement_* <...>/encampments` writes
+an SVG of ours and of CA's per tile, and also generates into the document and reads the layout back as the export would see it.
+- Every tile gets a layout. The checks' problems: 2 tiles whose main capture point is in no area (CA's own layouts have the same 2).
+  CA's layouts break the rectangle rule in 34 tiles (an edge's end in no node's rectangle).
+- Warnings: 6 tiles with the street graph in parts (pockets with no gate between them), 27 closed over gaps (minor towns), 5 with fewer
+  than 3 approach lines (the map's edge), 3 gates with no street behind.
+- Every generated layout is what the document then exports, and its scene reads back.
+- About 1 s per tile (0.2 s reading the tile, 0.5-1 s generating).
+- **Not handled:** encampments (their palisades and palisade edges), `AIH_DEFAULT_DEPLOYMENT_LINE` and the beach hints of ports, wall
+  area nodes.
+
 ## Status
 
-- [ ] `wce_siege`: raster tools, generator, checker.
-- [ ] Document side: input, output, the old layout out of export, undo.
-- [ ] UI: button, Export type menu.
-- [ ] Check example on the kit's vanilla settlements.
+- [x] `wce_siege`: raster tools, generator, checker, SVG.
+- [x] Document side: input, output, the old layout out of export, one undo entry.
+- [x] UI: the button (Polygons / AI hints panel), `tile_generate_siege_ai`, Export type menu with Separate and Don't Export.
+- [x] Check example on the kit's vanilla settlements.
+- [ ] In game (the user).

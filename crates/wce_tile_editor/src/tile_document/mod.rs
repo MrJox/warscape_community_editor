@@ -25,6 +25,7 @@ mod index;
 pub mod kit;
 mod pick;
 mod preview;
+pub mod siege;
 mod grass;
 mod vegetation;
 mod view;

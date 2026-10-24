@@ -2237,6 +2237,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_siege"
+version = "0.1.0"
+
+[[package]]
 name = "wce_tile"
 version = "0.1.0"
 dependencies = [
@@ -2261,6 +2265,7 @@ dependencies = [
  "wce_formats",
  "wce_foundation",
  "wce_scene",
+ "wce_siege",
  "wce_tile",
  "wce_vfs",
  "wce_walls",

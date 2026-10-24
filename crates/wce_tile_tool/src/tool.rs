@@ -20,6 +20,7 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
+use wce_tile_editor::tile_document::siege::AUTOGEN_LAYER;
 use wce_tile_editor::tile_document::{WALL_SPLINE, WallLayout, BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
@@ -1087,6 +1088,24 @@ impl TileTool {
         }
 
         self.grab_elem = None;
+    }
+
+    /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
+    pub fn generate_siege_ai(&mut self, e: &mut Editor) {
+        let Some(d) = document(e) else { return };
+        self.status = match d.generate_siege_ai() {
+            Ok(l) => {
+                for w in &l.warnings {
+                    log::warn(format!("Generate SiegeAI: {w}"));
+                }
+
+                format!("SiegeAI generated: {}{}", l.summary(), if l.warnings.is_empty() { "" } else { " (the warnings are in the log)" })
+            }
+            Err(err) => {
+                log::warn(format!("Generate SiegeAI: {err}"));
+                format!("Generate SiegeAI failed: {err}")
+            }
+        };
     }
 
     fn handle_keys(&mut self, e: &mut Editor) {
@@ -2356,6 +2375,15 @@ impl Tool for TileTool {
 
         if gui::is_item_hovered() {
             gui::set_tooltip("Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.");
+        }
+
+        gui::separator();
+        if gui::menu_item("Generate SiegeAI", None, false, document(e).is_some()) {
+            self.generate_siege_ai(e);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("The street graph, wall edges, fort perimeter, approach lines and deployment zones, into '{AUTOGEN_LAYER}'; the old layout stops being exported (docs/plans/siege_ai.md)."));
         }
 
         gui::separator();
