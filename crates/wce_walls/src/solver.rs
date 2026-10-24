@@ -5,17 +5,19 @@
 //! - **Centre line:** the points in order. A point is a corner when it is marked sharp or its internal angle is under
 //!   [`SHARP_ANGLE`]; between corners (and the ends) the line is a centripetal Catmull-Rom through the points. Sampled every [`STEP`].
 //! - **Outer foot:** the centre line moved to the base's outer face (its local -z side, or +z with `flip`); the ground is read there.
-//! - **Runs:** flat stretches of walkway, each at the ground at its middle, as long as the ground stays within `tolerance` of it; an
-//!   attached end's run is at the height it was given.
-//! - **Steps:** between two runs, step sections of the base's run, each rising at most the base's rise, centred on the boundary.
+//! - **Runs:** flat stretches of walkway. The first is at the ground at its start (or an attached end's level); a run goes on while the
+//!   ground stays within half the base's step rise of it (or `tolerance`, when larger); the next is the whole number of rises nearest
+//!   the ground there. Nothing is stretched vertically: levels only ever differ by whole steps.
+//! - **Steps:** between two runs, one step section per rise (the source's stair at its own size), chained `step_gap` apart, centred on
+//!   the boundary between the runs.
 
 use crate::profile::Profile;
 
 /// Samples along the wall, in scene units.
 pub const STEP: f64 = 0.5;
 
-/// A point whose internal angle is under this (degrees) is a corner even when it is not marked sharp (a turn over 155 degrees).
-pub const SHARP_ANGLE: f64 = 25.0;
+/// A point whose internal angle is at most this (degrees) is a corner even when it is not marked sharp (a right angle or sharper).
+pub const SHARP_ANGLE: f64 = 90.0;
 
 /// The shortest run (scene units): shorter stretches of uneven ground are taken as one run with the drift they have.
 pub const MIN_RUN: f64 = 4.0;
@@ -110,7 +112,7 @@ impl Plan {
     }
 }
 
-/// Which points are corners: the ends, the points marked sharp, and the points whose internal angle is under [`SHARP_ANGLE`].
+/// Which points are corners: the ends, the points marked sharp, and the points whose internal angle is at most [`SHARP_ANGLE`].
 pub fn corners(points: &[[f64; 2]], sharp: &[bool]) -> Vec<bool> {
     let n = points.len();
     (0..n).map(|i| {
@@ -126,7 +128,7 @@ pub fn corners(points: &[[f64; 2]], sharp: &[bool]) -> Vec<bool> {
         }
 
         let cos = ((u[0] * v[0] + u[1] * v[1]) / (lu * lv)).clamp(-1.0, 1.0);
-        cos.acos().to_degrees() < SHARP_ANGLE
+        cos.acos().to_degrees() <= SHARP_ANGLE + 1e-6
     }).collect()
 }
 
@@ -175,12 +177,12 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
     plan.length = samples.last().map_or(0.0, |s| s.0);
     plan.corners = corner_s.into_iter().filter(|&(_, i)| i != 0 && i + 1 != input.points.len()).collect();
 
-    // A mitre shears its pieces by tan(turn / 2) per unit across the wall: past about 150 degrees it is clamped.
+    // A mitre shears its pieces by tan(turn / 2) per unit across the wall: past about 168 degrees it is clamped (`pieces::MAX_SHEAR`).
     for &(s, i) in &plan.corners {
         let (a, b, c) = (input.points[i - 1], input.points[i], input.points[i + 1]);
         let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
         let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs().to_degrees();
-        if turn > 150.0 {
+        if turn > 168.0 {
             plan.warnings.push(format!("the corner at {s:.0} (point {i}) turns {turn:.0} degrees: its mitre is clamped, the pieces overlap"));
         }
     }
@@ -193,7 +195,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         Sample { s, centre: c, dir, foot, ground: ground(foot[0], foot[1]), level: 0.0 }
     }).collect();
 
-    plan.runs = runs(&plan.samples, input.tolerance, input.ends);
+    plan.runs = runs(&plan.samples, input.tolerance.max(profile.step_rise / 2.0), profile.step_rise, input.ends, &mut plan.warnings);
     plan.steps = steps(&plan.runs, profile, &mut plan.warnings);
     separate(&mut plan.steps, plan.length, &mut plan.warnings);
     for sm in &mut plan.samples {
@@ -276,34 +278,43 @@ fn direction(samples: &[(f64, [f64; 2])], i: usize) -> [f64; 2] {
     if l < 1e-12 { [1.0, 0.0] } else { [d[0] / l, d[1] / l] }
 }
 
-/// Flat runs: each at the ground at its middle, grown while every sample under it is within `tolerance` (or is shorter than
-/// [`MIN_RUN`]). An attached end's run is at the given level instead.
-fn runs(samples: &[Sample], tolerance: f64, ends: [Option<f64>; 2]) -> Vec<Run> {
+/// Flat runs at whole steps from each other: the first at the ground at its start (or the attached end's level), each grown while the
+/// ground stays within `drift` of it (runs shorter than [`MIN_RUN`] grow anyway), the next at the whole number of `rise` nearest the
+/// ground where it starts. A far end attached at a level no whole number of rises away is noted.
+fn runs(samples: &[Sample], drift: f64, rise: f64, ends: [Option<f64>; 2], warnings: &mut Vec<String>) -> Vec<Run> {
     let n = samples.len();
-    let mut out = vec![];
+    let mut out: Vec<Run> = vec![];
     let mut i = 0;
+    let mut level = ends[0].unwrap_or(samples[0].ground);
     while i < n {
-        let fixed = if i == 0 { ends[0] } else { None };
-        let level_of = |j: usize| fixed.unwrap_or(samples[(i + j) / 2].ground);
-        let fits = |j: usize| {
-            let level = level_of(j);
-            samples[i..=j].iter().all(|sm| (sm.ground - level).abs() <= tolerance)
-        };
+        // The previous run ended because the ground left it by more than half a rise: the next is the nearest whole number of rises away.
+        if let Some(prev) = out.last() {
+            let d = samples[i].ground - prev.level;
+            let k = (d / rise).round();
+            level = prev.level + if k == 0.0 { d.signum() } else { k } * rise;
+        }
 
         let mut j = i;
-        while j + 1 < n && (samples[j + 1].s - samples[i].s < MIN_RUN || fits(j + 1)) {
+        while j + 1 < n && (samples[j + 1].s - samples[i].s < MIN_RUN || (samples[j + 1].ground - level).abs() <= drift) {
             j += 1;
         }
 
-        let level = level_of(j);
-        let drift = samples[i..=j].iter().map(|sm| (sm.ground - level).abs()).fold(0.0, f64::max);
-        out.push(Run { s: (samples[i].s, samples[j].s), level, drift });
+        let off = samples[i..=j].iter().map(|sm| (sm.ground - level).abs()).fold(0.0, f64::max);
+        out.push(Run { s: (samples[i].s, samples[j].s), level, drift: off });
         i = j + 1;
     }
 
-    // The far end attached: its run is at the given level.
-    if let (Some(h), Some(last)) = (ends[1], out.last_mut()) {
-        last.level = h;
+    // The far end attached: the last run must be at its level.
+    if let (Some(h), Some(last)) = (ends[1], out.last().copied()) {
+        let k = ((h - last.level) / rise).round();
+        if (h - last.level - k * rise).abs() > 1e-6 {
+            warnings.push(format!("the far end's building stands {:.2} off a whole step of the wall: the wall meets it {:.2} too {}", h - last.level - k * rise, (h - last.level - k * rise).abs(), if h > last.level + k * rise { "low" } else { "high" }));
+        }
+
+        if k != 0.0 {
+            let end = last.s.1;
+            out.push(Run { s: (end, end), level: last.level + k * rise, drift: 0.0 });
+        }
     }
 
     // Neighbouring runs at the same level are one.
@@ -321,14 +332,14 @@ fn runs(samples: &[Sample], tolerance: f64, ends: [Option<f64>; 2]) -> Vec<Run> 
     merged
 }
 
-/// The step sections between runs: as many as the rise needs (each at most the base's rise), the base's run long, `step_gap` apart,
+/// The step sections between runs: one per whole rise (the source's stair at its own size), the base's run long, `step_gap` apart,
 /// centred on the boundary between the runs, shifted to stay inside them.
 fn steps(runs: &[Run], profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
     let mut out = vec![];
     for (chain, w) in runs.windows(2).enumerate() {
         let (a, b) = (w[0], w[1]);
         let rise = b.level - a.level;
-        let count = (rise.abs() / profile.step_rise).ceil().max(1.0) as usize;
+        let count = (rise.abs() / profile.step_rise).round().max(1.0) as usize;
         let span = count as f64 * profile.step_run + (count - 1) as f64 * profile.step_gap;
         let boundary = (a.s.1 + b.s.0) / 2.0;
         let room = (a.s.1 - a.s.0) / 2.0 + (b.s.1 - b.s.0) / 2.0;
@@ -442,32 +453,43 @@ mod tests {
     }
 
     #[test]
-    fn a_slope_is_climbed_by_steps_and_the_walkway_stays_near_the_ground() {
-        // 10 up over 200: steps every ~ 2 * tolerance of rise.
+    fn a_slope_is_climbed_by_whole_steps_and_the_walkway_stays_within_half_a_step() {
+        // 10 up over 200: four steps of exactly the base's rise.
         let input = wall(&[[0.0, 0.0], [200.0, 0.0]]);
         let ground = |x: f64, _: f64| x * 0.05;
         let plan = solve(&input, eight(), &ground);
-        assert!(plan.steps.len() >= 8, "{} steps", plan.steps.len());
-        assert!(plan.steps.iter().all(|s| (s.to - s.from).abs() <= eight().step_rise + 1e-9));
+        assert_eq!(plan.steps.len(), 4, "{:?}", plan.steps);
+        assert!(plan.steps.iter().all(|s| ((s.to - s.from) - eight().step_rise).abs() < 1e-9));
 
-        // Away from the steps the level is within the tolerance (plus one sample's slope) of the ground.
+        // Levels are whole steps apart; away from the steps the walkway is within half a step of the ground.
+        assert!(plan.runs.windows(2).all(|w| (((w[1].level - w[0].level) / eight().step_rise).fract()).abs() < 1e-9));
         for sm in &plan.samples {
-            let on_step = plan.steps.iter().any(|st| sm.s >= st.s.0 - 1.0 && sm.s <= st.s.1 + 1.0);
-            if !on_step {
-                assert!((sm.level - sm.ground).abs() <= 0.5 + 0.05, "at {}: level {} ground {}", sm.s, sm.level, sm.ground);
+            let near_step = plan.steps.iter().any(|st| sm.s >= st.s.0 - 2.0 && sm.s <= st.s.1 + 2.0);
+            if !near_step {
+                assert!((sm.level - sm.ground).abs() <= eight().step_rise / 2.0 + 0.1, "at {}: level {} ground {}", sm.s, sm.level, sm.ground);
             }
         }
 
-        // The walkway only goes up.
+        // The walkway only goes up; no pile-up of steps (a run between each two).
         assert!(plan.samples.windows(2).all(|w| w[1].level >= w[0].level - 1e-9));
+        assert!(plan.steps.windows(2).all(|w| w[1].s.0 > w[0].s.1 + 1.0));
     }
 
     #[test]
-    fn a_cliff_takes_chained_steps_no_higher_than_the_base_allows() {
-        let ground = |x: f64, _: f64| if x < 100.0 { 0.0 } else { 6.0 };
+    fn a_gentle_slope_of_a_15_m_wall_takes_few_steps() {
+        // 8 up over 400: under one 10 m step's half on either side of one step, so one step at most.
+        let p = profile("roman_fort_straight").unwrap();
+        let plan = solve(&wall(&[[0.0, 0.0], [400.0, 0.0]]), p, &|x, _| x * 0.02);
+        assert!(plan.steps.len() <= 1, "{:?}", plan.steps);
+        assert!(plan.steps.iter().all(|s| ((s.to - s.from) - 10.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn a_cliff_takes_chained_whole_steps() {
+        let ground = |x: f64, _: f64| if x < 100.0 { 0.0 } else { 5.0 };
         let plan = solve(&wall(&[[0.0, 0.0], [200.0, 0.0]]), eight(), &ground);
-        assert_eq!(plan.steps.len(), 3);
-        assert!((plan.steps[2].to - 6.0).abs() < 1e-9);
+        assert_eq!(plan.steps.len(), 2);
+        assert!((plan.steps[1].to - 5.0).abs() < 1e-9);
         assert!(plan.steps.windows(2).all(|w| (w[1].s.0 - w[0].s.1 - eight().step_gap).abs() < 1e-9));
     }
 
@@ -482,32 +504,36 @@ mod tests {
 
     #[test]
     fn attached_ends_hold_their_level() {
-        let input = WallInput { ends: [Some(2.0), Some(4.0)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
+        // 2 and 4.5: a whole step apart; the ground in between at 3.
+        let input = WallInput { ends: [Some(2.0), Some(4.5)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
         let plan = solve(&input, eight(), &|_, _| 3.0);
         assert!((plan.samples[0].level - 2.0).abs() < 1e-9);
-        assert!((plan.samples.last().unwrap().level - 4.0).abs() < 1e-9);
-        assert!(!plan.steps.is_empty());
+        assert!((plan.samples.last().unwrap().level - 4.5).abs() < 1e-9);
+        assert_eq!(plan.steps.len(), 1);
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+        // 4: not a whole step from 2: noted.
+        let input = WallInput { ends: [Some(2.0), Some(4.0)], ..wall(&[[0.0, 0.0], [100.0, 0.0]]) };
+        assert!(solve(&input, eight(), &|_, _| 3.0).warnings.iter().any(|w| w.contains("off a whole step")));
     }
 
     #[test]
     fn corners_are_the_marked_points_and_the_sharp_turns() {
-        // 90 degrees: not a corner unless marked; 20 degrees internal: a corner.
-        let pts = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 32.0]];
-        let c = corners(&pts, &[false; 4]);
-        assert_eq!(c, vec![true, false, false, true]);
-        let pts2 = [[0.0, 0.0], [50.0, 0.0], [0.0, 18.0]];
-        assert_eq!(corners(&pts2, &[false; 3]), vec![true, true, true]);
-        assert_eq!(corners(&pts, &[false, true, false, false]), vec![true, true, false, true]);
+        // A right angle and sharper: corners; a gentler turn (135 internal): a curve unless marked.
+        let pts = [[0.0, 0.0], [50.0, 0.0], [100.0, 50.0], [100.0, 100.0], [60.0, 120.0]];
+        assert_eq!(corners(&pts, &[false; 5]), vec![true, false, false, false, true]);
+        let right = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]];
+        assert_eq!(corners(&right, &[false; 3]), vec![true, true, true]);
+        let acute = [[0.0, 0.0], [50.0, 0.0], [0.0, 18.0]];
+        assert_eq!(corners(&acute, &[false; 3]), vec![true, true, true]);
+        assert_eq!(corners(&pts, &[false, true, false, false, false]), vec![true, true, false, false, true]);
 
-        // A marked corner keeps the line through its point with a kink; a smooth point bends it.
-        let mut input = wall(&[[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]);
-        input.sharp[1] = true;
-        let plan = solve(&input, eight(), &|_, _| 0.0);
+        // A corner keeps the line through its point with a kink; a smooth point bends it.
+        let plan = solve(&wall(&right), eight(), &|_, _| 0.0);
         assert_eq!(plan.corners.len(), 1);
         assert!((plan.corners[0].0 - 50.0).abs() < 1e-6);
         assert!((plan.length - 100.0).abs() < 1e-6);
-        let smooth = solve(&wall(&[[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]), eight(), &|_, _| 0.0);
+        let smooth = solve(&wall(&[[0.0, 0.0], [50.0, 0.0], [100.0, 50.0]]), eight(), &|_, _| 0.0);
         assert!(smooth.corners.is_empty());
-        assert!(smooth.length > 100.0, "the curve overshoots the corner: {}", smooth.length);
     }
 }

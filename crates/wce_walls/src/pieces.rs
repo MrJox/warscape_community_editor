@@ -142,8 +142,9 @@ pub fn sample_at(plan: &Plan, s: f64) -> Sample {
     }
 }
 
-/// The most a mitre shears per unit across the wall (a turn of about 151 degrees); sharper ones are clamped and noted.
-pub const MAX_SHEAR: f64 = 4.0;
+/// The most a mitre shears per unit across the wall: a turn of about 168 degrees (an internal angle of 12); sharper ones are clamped and
+/// noted. The outer side is only stretched and the inner side cut, so a large shear doesn't fold the piece.
+pub const MAX_SHEAR: f64 = 10.0;
 
 /// The stretches between the ends and corners (distances along the wall).
 pub fn sections(plan: &Plan) -> Vec<(f64, f64)> {
@@ -189,6 +190,9 @@ pub struct PieceWarp<'a> {
     section: (f64, f64),
     dirs: ([f64; 2], [f64; 2]),
     shears: (f64, f64),
+
+    /// The piece is at the section's start, end (and stretched to the face there on its outer side).
+    stretched: (bool, bool),
 }
 
 impl<'a> PieceWarp<'a> {
@@ -218,27 +222,27 @@ impl<'a> PieceWarp<'a> {
             plan.end_planes[1]
         };
 
-        // Only the pieces at a section's ends are sheared.
-        let at_start = (piece.s.0 - section.0).abs() < 1e-6;
-        let at_end = (piece.s.1 - section.1).abs() < 1e-6;
-        let shears = (
-            start_face.filter(|_| at_start).map_or(0.0, |m| shear(dirs.0, m)),
-            end_face.filter(|_| at_end).map_or(0.0, |m| shear(dirs.1, m)),
-        );
-
-        Self { plan, profile, piece, ground, section, dirs, shears }
+        // The faces of the section's ends, as shears (`s' = s + z * shear` on the face): every piece of the section is cut by them where
+        // they cross it; the pieces at the ends are also stretched to them on their outer side.
+        let shears = (start_face.map_or(0.0, |m| shear(dirs.0, m)), end_face.map_or(0.0, |m| shear(dirs.1, m)));
+        let stretched = ((piece.s.0 - section.0).abs() < 1e-6, (piece.s.1 - section.1).abs() < 1e-6);
+        Self { plan, profile, piece, ground, section, dirs, shears, stretched }
     }
 
-    /// The shears at the piece's start and end (`s' = s + z * shear`).
+    /// The faces' shears at the section's start and end (`s' = s + z * shear` on the face).
     pub fn shears(&self) -> (f64, f64) {
         self.shears
     }
 
-    /// The distance along the wall of a point of the base's frame (sheared at the mitred ends).
+    /// The distance along the wall of a point of the base's frame. A piece at a face is stretched to it where the face lies past the
+    /// piece's end (the corner's outer side): only lengthened, never folded back. Where the face lies before the piece's end (the inner
+    /// side) the piece is cut by it instead ([`Warp::clip_planes`]).
     fn s_of(&self, x: f64, z: f64) -> f64 {
         let s = self.piece.s.0 + (x - self.profile.x.0) * self.piece.scale;
         let w = ((s - self.piece.s.0) / (self.piece.s.1 - self.piece.s.0).max(1e-9)).clamp(0.0, 1.0);
-        s + z * (self.shears.0 * (1.0 - w) + self.shears.1 * w)
+        let start = if self.stretched.0 { (z * self.shears.0).min(0.0) } else { 0.0 };
+        let end = if self.stretched.1 { (z * self.shears.1).max(0.0) } else { 0.0 };
+        s + start * (1.0 - w) + end * w
     }
 
     /// The centre line, its direction and the level at a distance: within the section, the layout (its direction held to the section's
@@ -303,6 +307,30 @@ impl Warp for PieceWarp<'_> {
         q[1] = (self.ground)(q[0], q[2]);
         self.local(q).map(|v| v as f32)
     }
+
+    /// The section's end faces (a corner's bisector, an attached end's face) in the base's frame: keep `s(x) - sh z` within the section's
+    /// ends (on the outer side the stretch puts the piece's end right on the face, so the plane cuts nothing there).
+    fn clip_planes(&self) -> Vec<[f32; 3]> {
+        let (scale, x0) = (self.piece.scale, self.profile.x.0);
+        let mut out = vec![];
+        let has_face = |k: usize| {
+            let all = sections(self.plan);
+            let i = all.iter().position(|&s| s == self.section).unwrap_or(0);
+            if k == 0 { i > 0 || self.plan.end_planes[0].is_some() } else { i + 1 < all.len() || self.plan.end_planes[1].is_some() }
+        };
+
+        if has_face(0) {
+            let d0 = self.section.0 - self.piece.s.0;
+            out.push([-scale as f32, self.shears.0 as f32, (-(d0 + scale * x0)) as f32]);
+        }
+
+        if has_face(1) {
+            let d1 = self.section.1 - self.piece.s.0;
+            out.push([scale as f32, -self.shears.1 as f32, (d1 + scale * x0) as f32]);
+        }
+
+        out
+    }
 }
 
 /// A step section of a step piece onto its place in a piece: its x range onto the step's distances, z across the wall as the piece, y
@@ -349,6 +377,26 @@ impl SlabWarp<'_> {
 impl Warp for SlabWarp<'_> {
     fn point(&self, p: [f32; 3]) -> [f32; 3] {
         self.inner.local(self.scene(p.map(f64::from))).map(|v| v as f32)
+    }
+
+    /// The piece's faces, in the step piece's frame (its x range maps onto the step's distances).
+    fn clip_planes(&self) -> Vec<[f32; 3]> {
+        let p = self.inner;
+        let len = (self.x.1 - self.x.0).max(1e-9);
+        let k = (self.s.1 - self.s.0) / len;
+        let mut out = vec![];
+        let all = sections(p.plan);
+        let i = all.iter().position(|&s| s == p.section).unwrap_or(0);
+        if i > 0 || p.plan.end_planes[0].is_some() {
+            // s(x) = s.0 + (x - x.0) k >= section.0 + sh z
+            out.push([-k as f32, p.shears.0 as f32, (-(p.section.0 - self.s.0 + k * self.x.0)) as f32]);
+        }
+
+        if i + 1 < all.len() || p.plan.end_planes[1].is_some() {
+            out.push([k as f32, -p.shears.1 as f32, (p.section.1 - self.s.0 + k * self.x.0) as f32]);
+        }
+
+        out
     }
 
     fn yaw(&self, [x, ..]: [f32; 3]) -> f32 {
@@ -534,15 +582,27 @@ mod tests {
 
         // The direction turns from +x to +z: the bisector through (40, 0) is the line x - 40 = -z... a point of the end face of the first
         // piece and the same point of the start face of the second land on it, at the same place.
-        for z in [-2.5, 0.0, 6.0, 11.0] {
+        // The outer side (z < 0 for this left turn) is stretched onto the bisector: both pieces' ends land on it at the same place.
+        for z in [-2.5, -1.0, 0.0] {
             let (pa, pb) = (a.scene([20.0, 8.0, z]), b.scene([0.0, 8.0, z]));
             assert!((pa[0] - pb[0]).abs() < 1e-6 && (pa[2] - pb[2]).abs() < 1e-6, "z {z}: {pa:?} vs {pb:?}");
             assert!(((pa[0] - 40.0) + (pa[2] - 0.0)).abs() < 1e-6, "z {z}: {pa:?} is not on the bisector");
         }
 
-        // The ends away from the corner are not sheared.
-        assert_eq!(a.shears().0, 0.0);
-        assert_eq!(b.shears().1, 0.0);
+        // An acute corner (internal 30 degrees) does not fold: along the inner side the piece only moves forward.
+        let acute = WallInput { points: vec![[0.0, 0.0], [60.0, 0.0], [8.0, 30.0]], sharp: vec![false, true, false], tolerance: 0.5, ..Default::default() };
+        let plan = solve(&acute, p, &ground);
+        let ps = pieces(&plan, p);
+        let last = PieceWarp::new(&plan, p, ps[2], &ground);
+        for z in [-12.0, -2.5, 0.0, 6.0, 11.0] {
+            let xs = (0..=20).map(|x| last.scene([f64::from(x), 8.0, z])).collect::<Vec<_>>();
+            assert!(xs.windows(2).all(|w| w[1][0] >= w[0][0] - 1e-9), "z {z} folds: {xs:?}");
+        }
+
+        // The cut planes of both pieces are the bisector: a point of the inner side past it is cut from both.
+        let past = [19.0, 8.0, 6.0];
+        assert!(!crate::warp::inside(&a.clip_planes(), past), "{:?}", a.clip_planes());
+        assert!(crate::warp::inside(&a.clip_planes(), [10.0, 8.0, 6.0]));
     }
 
     #[test]

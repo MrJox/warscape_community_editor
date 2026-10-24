@@ -15,7 +15,7 @@ use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, Encodeable};
 use serde_json::{Map, Value, json};
 
-use crate::warp::{Cuts, Warp, newell, normalised, slice_along_x, subdivide, transform, turn};
+use crate::warp::{Cuts, Warp, clip_to, inside, newell, normalised, slice_along_x, subdivide, transform, turn};
 
 /// What warping a logic file did.
 #[derive(Clone, Debug, Default)]
@@ -69,7 +69,8 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let mut notes = LogicNotes::default();
     let in_box = |p: [f32; 3]| drop_zy.is_none_or(|((z0, z1), (y0, y1))| p[2] >= z0 && p[2] <= z1 && p[1] >= y0 && p[1] <= y1);
-    let kept = |p: [f32; 3]| !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
+    let planes = warp.clip_planes();
+    let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
 
     // The splices' levels (their first piece's destructs).
     let mut parts = vec![];
@@ -92,7 +93,8 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
                 for (sp, levels) in splices.iter().zip(&parts) {
                     let Some(sd) = levels.get(k).or(levels.last()) else { continue };
                     let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
-                    let holds = |p: [f32; 3]| sp.holds(p);
+                    let part_planes = sp.warp.clip_planes();
+                    let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
                     let (more, s2) = platform_strips(sd["platforms"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
                     platforms.extend(more);
                     ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
@@ -102,11 +104,16 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32,
             d["platforms"] = Value::Array(platforms);
             d["ef_lines"] = Value::Array(ef);
             for o in array_mut(d, "collision_outlines") {
-                warp_outline(&mut o["vertices"], warp, step);
+                warp_outline(&mut o["vertices"], warp, step, &planes);
             }
 
             for ring in array_mut(d, "orange_thingies") {
-                warp_footprint(ring, warp, step);
+                warp_footprint(ring, warp, step, &planes);
+            }
+
+            // Pipes cut off by a corner are left out.
+            if let Some(pipes) = d.get_mut("pipes").and_then(Value::as_array_mut) {
+                pipes.retain(|pipe| pipe["line"]["outline"].as_array().into_iter().flatten().all(|q| inside(&planes, p3(q))));
             }
 
             // A pipe's points at the ground (a door's or a ladder's foot, under 1 unit up) go onto the terrain.
@@ -194,10 +201,13 @@ fn platform_strips(old: &[Value], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f
     for p in old {
         let points = outline(&p["vertices"]);
         let normal = p3(&p["normal"]);
+        let planes = warp.clip_planes();
         let mut slabs = slice_along_x(&points, cuts);
         if slabs.is_empty() {
             slabs = vec![points.clone()];
         }
+
+        let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
 
         let mut mine = vec![];
         for s in slabs {
@@ -271,21 +281,24 @@ fn gap(s: &Strip, x: f32) -> f32 {
 }
 
 /// A 3D outline (`{"outline": [...]}`) with points along its edges, warped; closed when it has more than two points.
-fn warp_outline(o: &mut Value, warp: &dyn Warp, step: f32) {
+fn warp_outline(o: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 3]]) {
     let points = outline(o);
     let closed = points.len() > 2;
+    let points = clip_to(&points, planes, closed);
     let out = subdivide(&points, closed, step).into_iter().map(|(p, _)| point3(warp.point(p))).collect::<Vec<_>>();
     o["outline"] = Value::Array(out);
 }
 
 /// A footprint ring (`[{"vertex": {x, y}, "vertex_type"}]`, y being z) with points along its edges, warped; an added point takes the type
 /// of the point that starts its edge.
-fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32) {
+fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 3]]) {
     let Some(old) = ring.as_array().cloned() else { return };
     let points = old.iter().map(|v| { let p = p2(&v["vertex"]); [p[0], 0.0, p[1]] }).collect::<Vec<_>>();
+    let points = clip_to(&points, planes, points.len() > 2);
+    let kind = old.first().cloned().unwrap_or(Value::Null);
     let out = subdivide(&points, points.len() > 2, step).into_iter().map(|(p, from)| {
         let q = warp.point(p);
-        let mut v = old[from].clone();
+        let mut v = old.get(from).cloned().unwrap_or_else(|| kind.clone());
         v["vertex"] = json!({ "x": q[0], "y": q[2] });
         v
     }).collect();

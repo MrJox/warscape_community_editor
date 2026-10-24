@@ -16,6 +16,49 @@ pub trait Warp {
     fn ground_point(&self, p: [f32; 3]) -> [f32; 3] {
         self.point(p)
     }
+
+    /// The half-planes of the source's frame what is kept must lie in (`a x + b z <= c`): where a mitred corner or an attached end cuts
+    /// the piece. None by default.
+    fn clip_planes(&self) -> Vec<[f32; 3]> {
+        vec![]
+    }
+}
+
+/// If a point is inside every half-plane (`a x + b z <= c`).
+pub fn inside(planes: &[[f32; 3]], p: [f32; 3]) -> bool {
+    planes.iter().all(|&[a, b, c]| a * p[0] + b * p[2] <= c + 1e-4)
+}
+
+/// A polygon cut to the half-planes (closed: Sutherland-Hodgman; open, a polyline: its parts inside, joined).
+pub fn clip_to(points: &[[f32; 3]], planes: &[[f32; 3]], closed: bool) -> Vec<[f32; 3]> {
+    let mut out = points.to_vec();
+    for &[a, b, c] in planes {
+        let side = |p: &[f32; 3]| c - (a * p[0] + b * p[2]);
+        if out.iter().all(|p| side(p) >= -1e-4) {
+            continue;
+        }
+
+        if closed {
+            out = clip(&out, side);
+        } else {
+            let mut kept = vec![];
+            for i in 0..out.len() {
+                let p = out[i];
+                if side(&p) >= 0.0 {
+                    kept.push(p);
+                }
+
+                if let Some(&q) = out.get(i + 1) && (side(&p) >= 0.0) != (side(&q) >= 0.0) {
+                    let (sp, sq) = (side(&p), side(&q));
+                    kept.push(lerp(p, q, sp / (sp - sq)));
+                }
+            }
+
+            out = kept;
+        }
+    }
+
+    out
 }
 
 /// The identity.
