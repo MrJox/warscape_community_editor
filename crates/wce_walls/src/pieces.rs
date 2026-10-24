@@ -8,7 +8,8 @@
 //!   the terrain. The result is in the piece's own frame: its origin on the centre line at its start, at the level there, x along the
 //!   wall's direction there, so the meshes keep the base's size and precision.
 //!
-//! Step sections are ramps of the mesh until phase 4.
+//! - **Step sections** ([`SlabWarp`]): the culture's step piece's stair section, brought in over the step's length, its rise made the
+//!   step's; it replaces the base there (8 m) or is added to the base's sloped wall (15 m: the bastion's wooden stair).
 
 use crate::building::{BuildingFiles, is_piece_mesh};
 use crate::profile::Profile;
@@ -79,6 +80,46 @@ pub fn cuts_of(plan: &Plan, piece: &Piece, profile: &Profile) -> Cuts {
     let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
     let at = plan.steps.iter().flat_map(|st| [st.s.0, st.s.1]).filter(|&s| s > piece.s.0 && s < piece.s.1).map(to_x).collect();
     Cuts { step, at }
+}
+
+/// A door section every this many units along a 15 m wall (the first at half of it).
+pub const DOOR_EVERY: f64 = 200.0;
+
+/// The square inside the wall where a door's units come down must be free: this wide (units), starting at the door.
+pub const LANDING: f64 = 20.0;
+
+/// The pieces that become door sections: for a base with one, the piece nearest `DOOR_EVERY / 2`, then every `DOOR_EVERY`, if it is
+/// a plain piece (no step section in it, not at a corner or an end) and `landing_ok` says the square in front of its doors is free
+/// (corners of the square, scene x z: units walk down there). Returns the chosen pieces and the skipped places, with why.
+pub fn door_pieces(plan: &Plan, profile: &Profile, ps: &[Piece], ground: &dyn Fn(f64, f64) -> f64, landing_ok: &dyn Fn(&[[f64; 2]; 4]) -> bool) -> (Vec<usize>, Vec<String>) {
+    let (mut chosen, mut skipped) = (vec![], vec![]);
+    if profile.door.is_empty() || ps.is_empty() {
+        return (chosen, skipped);
+    }
+
+    let ends = sections(plan).into_iter().flat_map(|(a, b)| [a, b]).collect::<Vec<_>>();
+    let mut at = DOOR_EVERY / 2.0;
+    while at < plan.length {
+        let k = ps.iter().enumerate().min_by(|a, b| (((a.1.s.0 + a.1.s.1) / 2.0 - at).abs()).total_cmp(&(((b.1.s.0 + b.1.s.1) / 2.0 - at).abs()))).map(|(k, _)| k).expect("pieces");
+        let p = ps[k];
+        let stepped = plan.steps.iter().any(|st| st.s.1 > p.s.0 && st.s.0 < p.s.1);
+        let at_end = ends.iter().any(|&e| (e - p.s.0).abs() < 1e-6 || (e - p.s.1).abs() < 1e-6);
+        let warp = PieceWarp::new(plan, profile, p, ground);
+        let (dx, dz) = profile.door_at;
+        let square = [[dx - LANDING / 2.0, dz], [dx + LANDING / 2.0, dz], [dx + LANDING / 2.0, dz + LANDING], [dx - LANDING / 2.0, dz + LANDING]]
+            .map(|[x, z]| { let q = warp.scene([x, 0.0, z]); [q[0], q[2]] });
+        if stepped || at_end {
+            skipped.push(format!("no door at {at:.0}: the piece there {}", if stepped { "has a step section" } else { "is at a corner or an end" }));
+        } else if !landing_ok(&square) {
+            skipped.push(format!("no door at {at:.0}: the ground inside the wall there is not free (no-go, or another building)"));
+        } else if !chosen.contains(&k) {
+            chosen.push(k);
+        }
+
+        at += DOOR_EVERY;
+    }
+
+    (chosen, skipped)
 }
 
 /// The layout at a distance, interpolated between its samples.
@@ -202,7 +243,7 @@ impl<'a> PieceWarp<'a> {
 
     /// The centre line, its direction and the level at a distance: within the section, the layout (its direction held to the section's
     /// own near its ends); past them, straight on.
-    fn along(&self, s: f64) -> ([f64; 2], [f64; 2], f64) {
+    pub(crate) fn along(&self, s: f64) -> ([f64; 2], [f64; 2], f64) {
         let (a, b) = self.section;
         if s < a {
             let at = sample_at(self.plan, a);
@@ -256,6 +297,117 @@ impl Warp for PieceWarp<'_> {
         let (_, dir, _) = self.along(self.s_of(f64::from(x), f64::from(z)));
         (dir[1].atan2(dir[0]) - self.piece.yaw) as f32
     }
+
+    fn ground_point(&self, p: [f32; 3]) -> [f32; 3] {
+        let mut q = self.scene(p.map(f64::from));
+        q[1] = (self.ground)(q[0], q[2]);
+        self.local(q).map(|v| v as f32)
+    }
+}
+
+/// A step section of a step piece onto its place in a piece: its x range onto the step's distances, z across the wall as the piece, y
+/// shifted so its walkway starts at the level before the step and rises (or falls) by the step's rise instead of its own; below the
+/// foot stretched down to lower ground like the piece. In the piece's frame.
+pub struct SlabWarp<'a> {
+    pub inner: &'a PieceWarp<'a>,
+
+    /// The section's x range in the step piece's frame, and the walkway's height where it starts there.
+    pub x: (f64, f64),
+    pub walk: f64,
+
+    /// Its own rise (signed: + going up along +x).
+    pub own_rise: f64,
+
+    /// The step it makes: its distances along the wall and its levels.
+    pub s: (f64, f64),
+    pub from: f64,
+    pub to: f64,
+}
+
+impl SlabWarp<'_> {
+    fn scene(&self, [x, y, z]: [f64; 3]) -> [f64; 3] {
+        let len = (self.x.1 - self.x.0).max(1e-9);
+        let t = ((x - self.x.0) / len).clamp(0.0, 1.0);
+        let s = self.s.0 + (x - self.x.0) / len * (self.s.1 - self.s.0);
+        let (c, dir, _) = self.inner.along(s);
+        let z_axis = [-dir[1], dir[0]];
+        let (wx, wz) = (c[0] + z_axis[0] * z, c[1] + z_axis[1] * z);
+        let p = self.inner.profile;
+        let off = self.from - self.walk + p.walkway + ((self.to - self.from) - self.own_rise) * t;
+        let (bottom, split) = p.foot;
+        let wy = if y >= split || split <= bottom {
+            y + off
+        } else {
+            let target = ((self.inner.ground)(wx, wz) - p.bury).min(off + bottom);
+            target + (off + split - target) * (y - bottom) / (split - bottom)
+        };
+
+        [wx, wy, wz]
+    }
+}
+
+impl Warp for SlabWarp<'_> {
+    fn point(&self, p: [f32; 3]) -> [f32; 3] {
+        self.inner.local(self.scene(p.map(f64::from))).map(|v| v as f32)
+    }
+
+    fn yaw(&self, [x, ..]: [f32; 3]) -> f32 {
+        let len = (self.x.1 - self.x.0).max(1e-9);
+        let s = self.s.0 + (f64::from(x) - self.x.0) / len * (self.s.1 - self.s.0);
+        let (_, dir, _) = self.inner.along(s);
+        (dir[1].atan2(dir[0]) - self.inner.piece.yaw) as f32
+    }
+}
+
+/// The step pieces a wall's steps come from (going up and going down); without one, its steps stay a slope of the base.
+#[derive(Clone, Copy, Default)]
+pub struct StepFiles<'a> {
+    pub up: Option<&'a BuildingFiles>,
+    pub down: Option<&'a BuildingFiles>,
+}
+
+/// One step section inside a piece: where it lies (the base's frame, to cut the base out), what of the step piece is brought (its
+/// frame), and how.
+struct InPiece<'a> {
+    drop: (f32, f32),
+    part: (f32, f32),
+    files: &'a BuildingFiles,
+    warp: SlabWarp<'a>,
+
+    /// The stair's slope over `part` (y at its two ends) and how near it what is brought lies.
+    band: Option<(f32, f32, f32)>,
+}
+
+/// The step sections that fall in a piece (each clipped to the piece; a section across two pieces is brought in two halves).
+fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<'a>> {
+    let (plan, profile, piece) = (warp.plan, warp.profile, warp.piece);
+    let scale = piece.scale.max(1e-9);
+    let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
+    let mut out = vec![];
+    for st in &plan.steps {
+        let (a, b) = (st.s.0.max(piece.s.0), st.s.1.min(piece.s.1));
+        if b - a < 1e-6 {
+            continue;
+        }
+
+        let up = st.to >= st.from;
+        let Some(files) = (if up { sources.up } else { sources.down }) else { continue };
+        let (x, walk) = if up { (profile.slab_up, profile.slab_walk.0) } else { (profile.slab_down, profile.slab_walk.1) };
+        let own_rise = if up { profile.step_rise } else { -profile.step_rise };
+        let len = st.s.1 - st.s.0;
+        let to_part = |s: f64| (x.0 + (s - st.s.0) / len.max(1e-9) * (x.1 - x.0)) as f32;
+        let walk_at = |px: f32| (walk + own_rise * ((f64::from(px) - x.0) / (x.1 - x.0).max(1e-9))) as f32;
+        let part = (to_part(a), to_part(b));
+        out.push(InPiece {
+            drop: (to_x(a), to_x(b)),
+            part,
+            files,
+            warp: SlabWarp { inner: warp, x, walk, own_rise, s: st.s, from: st.from, to: st.to },
+            band: profile.slab_band.map(|h| (walk_at(part.0), walk_at(part.1), h as f32)),
+        });
+    }
+
+    out
 }
 
 /// A piece made from the base's files under a new key: the standing meshes of every level warped, the collapses left out; with
@@ -264,8 +416,11 @@ impl Warp for PieceWarp<'_> {
 /// # Errors
 ///
 /// A file of the base doesn't read or write back.
-pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, logic_too: bool, only_level: Option<u32>) -> Result<BuildingFiles, String> {
+pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: StepFiles, logic_too: bool, only_level: Option<u32>) -> Result<BuildingFiles, String> {
     let cuts = cuts_of(warp.plan, &warp.piece, warp.profile);
+    let sections = steps_in(warp, steps);
+    let cut_out = if warp.profile.step_replaces { sections.iter().map(|s| s.drop).collect::<Vec<_>>() } else { vec![] };
+    let zy = warp.profile.slab_zy.map(|((z0, z1), (y0, y1))| ((z0 as f32, z1 as f32), (y0 as f32, y1 as f32)));
     let mut b = base.clone().renamed(key).without_collapses();
     let (logic_name, zones_name) = (b.logic_name(), b.zones_name());
     let mut drop = vec![];
@@ -276,9 +431,25 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, logic_too: 
                 continue;
             }
 
-            *bytes = mesh::warp_mesh(bytes, warp, &cuts)?;
+            // The step sections go into the first piece's meshes (their own pieces' meshes at the same level, or their last).
+            let level = level_of(name);
+            let first = name.contains("_piece01_");
+            let mut parts = vec![];
+            for sec in sections.iter().filter(|_| first) {
+                for (pname, pbytes) in sec.files.files.iter().filter(|(n, _)| is_piece_mesh(n)) {
+                    let max = sec.files.files.keys().filter(|n| is_piece_mesh(n) && same_piece(n, pname)).map(|n| level_of(n)).max().unwrap_or(1);
+                    if level_of(pname) == level.min(max) {
+                        parts.push(mesh::MeshSplice { mesh: pbytes, warp: &sec.warp, x: sec.part, zy, band: sec.band });
+                    }
+                }
+            }
+
+            *bytes = mesh::warp_mesh_with(bytes, warp, &cuts, &cut_out, zy, &parts)?;
         } else if *name == logic_name && logic_too {
-            *bytes = logic::warp_logic(bytes, warp, &cuts)?.0;
+            let splices = sections.iter().filter_map(|sec| {
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band })
+            }).collect::<Vec<_>>();
+            *bytes = logic::warp_logic_with(bytes, warp, &cuts, &cut_out, zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -291,6 +462,12 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, logic_too: 
     }
 
     Ok(b)
+}
+
+/// If two piece files are of the same piece (`..._pieceNN_...`).
+fn same_piece(a: &str, b: &str) -> bool {
+    let piece = |n: &str| n.find("_piece").map(|at| n[at..].chars().take(8).collect::<String>());
+    piece(a) == piece(b)
 }
 
 /// The level of a piece file (`..._destructNN...`: NN, 1 the intact one).

@@ -886,7 +886,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let runs = l.plan.runs.iter().map(|r| format!("{:.0}..{:.0} at {:.2} (drift {:.2})", r.s.0, r.s.1, r.level, r.drift)).collect::<Vec<_>>().join(", ");
         let steps = l.plan.steps.iter().map(|st| format!("{:.0}..{:.0} {:.2} -> {:.2}", st.s.0, st.s.1, st.from, st.to)).collect::<Vec<_>>().join(", ");
         let corners = l.plan.corners.iter().map(|(s, i)| format!("point {i} at {s:.0}")).collect::<Vec<_>>().join(", ");
-        ok(format!("{}; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), l.plan.warnings.iter().map(|w| format!("; {w}")).collect::<String>()))
+        let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
+        let (doors, skipped) = d.tile().wall_doors(&l, &ps);
+        ok(format!("{}; {} pieces, doors at pieces {doors:?}; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), ps.len(),
+            l.plan.warnings.iter().chain(&skipped).map(|w| format!("; {w}")).collect::<String>()))
     });
 
     c.add("assert_wall", "assert_wall <corners> <steps> [start end: free|attached]", "test: the selected wall's layout has these many corners and step sections (and its ends are free or attached)", |e, a| {
@@ -906,6 +909,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
 
         ok("")
+    });
+
+    c.add("assert_wall_doors", "assert_wall_doors <n>", "test: the selected wall has n door sections", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
+        let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
+        let (doors, _) = d.tile().wall_doors(&l, &ps);
+        if a.first().and_then(|x| x.parse::<usize>().ok()) == Some(doors.len()) { ok("") } else { fail(format!("{} door section(s)", doors.len())) }
     });
 
     c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {

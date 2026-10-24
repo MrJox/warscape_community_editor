@@ -1,6 +1,7 @@
-//! Phase 2 of docs/plans/procedural_walls.md: a fixed wall (an S curve over a ground with a slope and a dip, both families) laid out and
-//! generated in full (every level's meshes, the logic and zone files), twice: the two runs must give the same bytes, every piece's firing
-//! lines must land on a platform strip, and every file must read back.
+//! Phases 2-4 of docs/plans/procedural_walls.md: a fixed wall (an S curve with a sharp corner over a ground with a slope and a dip, both
+//! families: curves, a mitre, step sections, door sections) laid out and generated in full (every level's meshes, the logic and zone
+//! files), twice: the two runs must give the same bytes, every piece's firing lines must land on a platform strip, every door's foot
+//! must be on the ground, and every file must read back.
 //!
 //!   cargo run --release -p wce_walls --example wall_generate_check -- <game folder> [--mods a.pack;b.pack]
 
@@ -13,7 +14,7 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
-use wce_walls::pieces::{PieceWarp, make_piece, pieces};
+use wce_walls::pieces::{PieceWarp, StepFiles, door_pieces, make_piece, pieces};
 use wce_walls::profile::profile;
 use wce_walls::solver::{WallInput, solve};
 
@@ -37,18 +38,31 @@ fn run() -> Result<(), String> {
     let vfs = Vfs::mount(&config).map_err(|e| e.to_string())?;
 
     let mut bad = 0;
-    for key in ["barbarian_fort_straight", "roman_fort_straight"] {
+    let flat = |_: f64, z: f64| 1.0 + 0.002 * z;
+    let cases: [(&str, Vec<[f64; 2]>, Vec<bool>, &dyn Fn(f64, f64) -> f64); 3] = [
+        ("barbarian_fort_straight", vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]], vec![false, false, true, false, false], &ground),
+        ("roman_fort_straight", vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]], vec![false, false, true, false, false], &ground),
+        ("roman_fort_straight", vec![[0.0, 0.0], [400.0, 0.0]], vec![false, false], &flat),
+    ];
+
+    for (key, points, sharp, ground) in cases {
         let p = profile(key).ok_or("no profile")?;
         let base = BuildingFiles::read(&vfs, key)?;
-        let input = WallInput { points: vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0]], sharp: vec![false; 4], tolerance: 0.5, ..Default::default() };
-        let plan = solve(&input, p, &ground);
+        let (up, down) = (BuildingFiles::read(&vfs, p.step_up)?, BuildingFiles::read(&vfs, p.step_down)?);
+        let steps = StepFiles { up: Some(&up), down: Some(&down) };
+        let input = WallInput { points, sharp, tolerance: 0.5, ..Default::default() };
+        let plan = solve(&input, p, ground);
         let ps = pieces(&plan, p);
         println!("== {key}: {:.0} long, {} pieces, {} step section(s), {} warning(s)", plan.length, ps.len(), plan.steps.len(), plan.warnings.len());
 
+        let door = (!p.door.is_empty()).then(|| BuildingFiles::read(&vfs, p.door)).transpose()?;
+        let (doors, _) = door_pieces(&plan, p, &ps, ground, &|_| true);
+        println!("  door sections at pieces {doors:?}");
         let make = || -> Result<Vec<BuildingFiles>, String> {
             ps.iter().enumerate().map(|(i, &piece)| {
-                let warp = PieceWarp::new(&plan, p, piece, &ground);
-                make_piece(&base, &format!("wce_check_{i}"), &warp, true, None)
+                let warp = PieceWarp::new(&plan, p, piece, ground);
+                let from = door.as_ref().filter(|_| doors.contains(&i)).unwrap_or(&base);
+                make_piece(from, &format!("wce_check_{i}"), &warp, steps, true, None)
             }).collect()
         };
 
@@ -73,10 +87,26 @@ fn run() -> Result<(), String> {
             let logic = b.files.get(&b.logic_name()).ok_or("no logic file")?;
             let parsed = Cs2Parsed::decode(&mut Cursor::new(logic), &None).map_err(|e| format!("logic: {e}"))?;
             let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-            let (mut plats, mut lines, mut orphans) = (0, 0, 0);
+            let (mut plats, mut lines, mut orphans, mut feet) = (0, 0, 0, 0);
+            let piece = ps[i];
+            let (s, c) = piece.yaw.sin_cos();
             for d in v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().into_iter().flatten()) {
                 let n = d["platforms"].as_array().map_or(0, Vec::len);
                 plats += n;
+
+                // A door's foot (a pipe's lowest point) must be on the ground.
+                for pipe in d["pipes"].as_array().into_iter().flatten() {
+                    let pts = pipe["line"]["outline"].as_array().cloned().unwrap_or_default();
+                    let low = pts.iter().min_by(|a, b| a["y"].as_f64().unwrap_or(0.0).total_cmp(&b["y"].as_f64().unwrap_or(0.0)));
+                    if let Some(q) = low {
+                        let (lx, ly, lz) = (q["x"].as_f64().unwrap_or(0.0), q["y"].as_f64().unwrap_or(0.0), q["z"].as_f64().unwrap_or(0.0));
+                        let (wx, wz) = (piece.origin[0] + lx * c - lz * s, piece.origin[2] + lx * s + lz * c);
+                        if (piece.origin[1] + ly - ground(wx, wz)).abs() > 0.01 {
+                            orphans += 1;
+                        }
+                        feet += 1;
+                    }
+                }
                 for l in d["ef_lines"].as_array().into_iter().flatten() {
                     lines += 1;
                     orphans += usize::from(l["parent_index"].as_u64().is_none_or(|k| k as usize >= n));
@@ -84,8 +114,8 @@ fn run() -> Result<(), String> {
             }
 
             let pc = ps[i];
-            println!("  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} off a platform",
-                pc.s.0, pc.s.1, pc.scale, b.files.len(), meshes, bytes / 1024, plats, lines, orphans);
+            println!("  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet, {} problems",
+                pc.s.0, pc.s.1, pc.scale, b.files.len(), meshes, bytes / 1024, plats, lines, feet, orphans);
             bad += orphans;
         }
     }

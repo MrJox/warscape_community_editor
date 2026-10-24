@@ -265,6 +265,28 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
      short attached run it used to start before the wall, which then began at the chain's middle level instead of the building's.
      Still open (phase 4): on ground steeper than the steps can follow, two chains can overlap.
 4. **Steps:** splicing the step sections.
+   **Status (2026-10-24): done.** As built (the user chose, for 15 m walls, the bastion's stair over a sloped wall):
+   - **Sources** (`Profile`): every base names its culture's step pieces (`*_step_up_a` / `_step_down_a`, the stepped bastions), the x
+     range of their stair (8 m: 2..5, the first ramp; 15 m: the bastion's ramp, -5.8..6.2 up and -6.2..5.8 down), the walkway's height
+     where it starts, and what of it is brought: 8 m, the walkway and the palisade (z -3.5..3, which replace the base's there; the base's
+     bank stays and slopes over the step, as the step piece's own does: the step piece's bank has another cross-section, and cutting the
+     base's open showed its inside); 15 m, the wooden stair only (z 5.1..8.9, within 0.9 of its slope: without that limit the stair
+     well's stone walls came along as wedges), added on the base's walkway, whose wall slopes over the step.
+   - **Splice** (`SlabWarp`, `mesh::warp_mesh_with`, `logic::warp_logic_with`): the stair's x range onto the step's distances, its rise
+     made the step's (its y shifted so it starts at the level before and ends at the level after), z across as the piece, the foot as
+     the piece's; its meshes' blocks (their materials kept), platforms and firing lines added to the piece's first piece at each level
+     (the step piece's level of the same number, or its last). A step across two pieces is brought in two halves.
+   - **Steep ground:** chains of steps that would overlap are moved on one after the other (and back from the wall's end), with a
+     warning when they still overlap.
+   - **Doors** (15 m; `pieces::door_pieces`): a door section (`<culture>_fort_straight_with_doors_a`) at 100, then every 200 units, on
+     the piece nearest, if it is a plain piece (no step, not at a corner or an end) and the 20 x 20 square inside the wall in front of
+     its doors is free: no point of a 5 x 5 grid in a shown no-go polygon, no shown building within (its marker radius); else skipped,
+     the panel and `wall_info` say why. The doors' pipes' feet (points under 1 unit) are put on the terrain (`Warp::ground_point`).
+     Units: the scene's (the models'), so 200 and 20 are in the units the vanilla walls are 20 long in.
+   - **Checks:** `wall_generate_check` has three cases (an S curve with a sharp corner over a slope and a dip, both families; a flat
+     15 m wall of 400 with two doors): deterministic, firing lines on platforms, every door's foot on the ground (24 of 24);
+     `scripts/tile_walls.txt` adds the door count with and without a no-go over a landing (`assert_wall_doors`). With steps, a piece
+     takes 130-200 ms to make (the stair's cuts).
 5. **Export:** the pack, the DB rows, the compile reading generated buildings.
 6. **Kits:** the kit table for every culture; a check that every base straight generates (a Cargo example as a gate).
 

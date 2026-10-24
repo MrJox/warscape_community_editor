@@ -30,23 +30,77 @@ pub struct LogicNotes {
     pub warnings: Vec<String>,
 }
 
+/// Another building's part brought into a piece (a step section): its logic file's platforms and firing lines over `x` of its frame
+/// (and inside `zy`, z then y, when given), warped by its own `warp`, added to the first piece's levels (the part's level of the same
+/// number, or its last).
+pub struct Splice<'a> {
+    pub logic: &'a [u8],
+    pub warp: &'a dyn Warp,
+    pub x: (f32, f32),
+    pub zy: Option<((f32, f32), (f32, f32))>,
+    pub band: Option<(f32, f32, f32)>,
+}
+
+impl Splice<'_> {
+    /// If a point of the part's frame is in what is brought.
+    pub fn holds(&self, p: [f32; 3]) -> bool {
+        crate::mesh::splice_holds(p, self.x, self.zy, self.band)
+    }
+}
+
 /// A logic file warped; platforms are cut along x at `cuts`, long outlines get a point at least every `cuts.step`.
 ///
 /// # Errors
 ///
 /// The file doesn't read, or doesn't write back.
 pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>, LogicNotes), String> {
+    warp_logic_with(bytes, warp, cuts, &[], None, &[])
+}
+
+/// [`warp_logic`] with step sections: the base's platforms and firing lines over the `drop` x ranges (of its frame, and inside `drop_zy`
+/// when given) left out, the splices' added.
+///
+/// # Errors
+///
+/// A file doesn't read, or the result doesn't write back.
+pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, f32)], drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice]) -> Result<(Vec<u8>, LogicNotes), String> {
     let step = cuts.step;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let mut notes = LogicNotes::default();
+    let in_box = |p: [f32; 3]| drop_zy.is_none_or(|((z0, z1), (y0, y1))| p[2] >= z0 && p[2] <= z1 && p[1] >= y0 && p[1] <= y1);
+    let kept = |p: [f32; 3]| !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
 
+    // The splices' levels (their first piece's destructs).
+    let mut parts = vec![];
+    for sp in splices {
+        let parsed = Cs2Parsed::decode(&mut Cursor::new(sp.logic), &None).map_err(|e| format!("cs2.parsed (step section): {e}"))?;
+        let pv = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+        parts.push(pv["pieces"][0]["destructs"].as_array().cloned().unwrap_or_default());
+    }
+
+    let mut first_piece = true;
     for piece in array_mut(&mut v, "pieces") {
         let piece_name = piece["name"].as_str().unwrap_or_default().to_owned();
-        for d in array_mut(piece, "destructs") {
+        for (k, d) in array_mut(piece, "destructs").enumerate() {
             let name = d["name"].as_str().unwrap_or(&piece_name).to_owned();
-            let strips = warp_platforms(d, warp, cuts, &mut notes);
-            warp_lines(d, warp, &strips, &mut notes);
+            let old = d["platforms"].as_array().cloned().unwrap_or_default();
+            let (mut platforms, strips) = platform_strips(&old, warp, cuts, &kept, 0, &mut notes);
+            let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
+            let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
+            if first_piece {
+                for (sp, levels) in splices.iter().zip(&parts) {
+                    let Some(sd) = levels.get(k).or(levels.last()) else { continue };
+                    let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
+                    let holds = |p: [f32; 3]| sp.holds(p);
+                    let (more, s2) = platform_strips(sd["platforms"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
+                    platforms.extend(more);
+                    ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
+                }
+            }
+
+            d["platforms"] = Value::Array(platforms);
+            d["ef_lines"] = Value::Array(ef);
             for o in array_mut(d, "collision_outlines") {
                 warp_outline(&mut o["vertices"], warp, step);
             }
@@ -55,9 +109,11 @@ pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>
                 warp_footprint(ring, warp, step);
             }
 
+            // A pipe's points at the ground (a door's or a ladder's foot, under 1 unit up) go onto the terrain.
             for pipe in array_mut(d, "pipes") {
                 for p in array_mut(&mut pipe["line"], "outline") {
-                    set_p3(p, warp.point(p3(p)));
+                    let q = p3(p);
+                    set_p3(p, if q[1] < 1.0 { warp.ground_point(q) } else { warp.point(q) });
                 }
             }
 
@@ -85,6 +141,8 @@ pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>
 
             warp_box(&mut d["bounding_box"], warp, step);
         }
+
+        first_piece = false;
     }
 
     warp_box(&mut v["bounding_box"], warp, step);
@@ -128,12 +186,12 @@ struct Strip {
     x: (f32, f32),
 }
 
-/// The platforms cut and warped; per original platform, its strips.
-fn warp_platforms(d: &mut Value, warp: &dyn Warp, cuts: &Cuts, notes: &mut LogicNotes) -> Vec<Vec<Strip>> {
-    let old = d["platforms"].as_array().cloned().unwrap_or_default();
+/// Platforms cut along x and warped, the strips whose middle `keep` refuses left out; per original platform, its strips (indices from
+/// `offset`).
+fn platform_strips(old: &[Value], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool, offset: usize, notes: &mut LogicNotes) -> (Vec<Value>, Vec<Vec<Strip>>) {
     let mut new = vec![];
     let mut strips = vec![];
-    for p in &old {
+    for p in old {
         let points = outline(&p["vertices"]);
         let normal = p3(&p["normal"]);
         let mut slabs = slice_along_x(&points, cuts);
@@ -143,17 +201,23 @@ fn warp_platforms(d: &mut Value, warp: &dyn Warp, cuts: &Cuts, notes: &mut Logic
 
         let mut mine = vec![];
         for s in slabs {
+            let n = s.len() as f32;
+            let mid = s.iter().fold([0.0; 3], |m, q| [m[0] + q[0] / n, m[1] + q[1] / n, m[2] + q[2] / n]);
+            if !keep(mid) {
+                continue;
+            }
+
             let x = s.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q[0]), hi.max(q[0])));
             let w = s.iter().map(|&q| warp.point(q)).collect::<Vec<_>>();
-            let mut n = normalised(newell(&w));
-            if n[0] * normal[0] + n[1] * normal[1] + n[2] * normal[2] < 0.0 {
-                n = [-n[0], -n[1], -n[2]];
+            let mut nn = normalised(newell(&w));
+            if nn[0] * normal[0] + nn[1] * normal[1] + nn[2] * normal[2] < 0.0 {
+                nn = [-nn[0], -nn[1], -nn[2]];
             }
 
             let mut q = p.clone();
             q["vertices"] = json!({ "outline": w.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
-            q["normal"] = point3(n);
-            mine.push(Strip { index: new.len(), x });
+            q["normal"] = point3(nn);
+            mine.push(Strip { index: offset + new.len(), x });
             new.push(q);
         }
 
@@ -162,21 +226,19 @@ fn warp_platforms(d: &mut Value, warp: &dyn Warp, cuts: &Cuts, notes: &mut Logic
 
     notes.platforms.0 += old.len();
     notes.platforms.1 += new.len();
-    d["platforms"] = Value::Array(new);
-    strips
+    (new, strips)
 }
 
-/// The firing lines moved and turned, on the strip of their platform that is under them.
-fn warp_lines(d: &mut Value, warp: &dyn Warp, strips: &[Vec<Strip>], notes: &mut LogicNotes) {
-    for l in array_mut(d, "ef_lines") {
+/// Firing lines moved and turned, on the strip of their platform that is under them; those whose middle `keep` refuses, or whose
+/// platform kept no strip, left out.
+fn place_lines(old: &[Value], warp: &dyn Warp, strips: &[Vec<Strip>], keep: &dyn Fn([f32; 3]) -> bool, notes: &mut LogicNotes) -> Vec<Value> {
+    let mut out = vec![];
+    for l in old {
         let (s, e) = (p3(&l["start"]), p3(&l["end"]));
         let mid = [(s[0] + e[0]) / 2.0, (s[1] + e[1]) / 2.0, (s[2] + e[2]) / 2.0];
-        let a = warp.yaw(mid);
-        set_p3(&mut l["start"], warp.point(s));
-        set_p3(&mut l["end"], warp.point(e));
-        let dir = p3(&l["direction"]);
-        let t = turn([dir[0], dir[2]], a);
-        set_p3(&mut l["direction"], [t[0], dir[1], t[1]]);
+        if !keep(mid) {
+            continue;
+        }
 
         let parent = l["parent_index"].as_u64().unwrap_or(0) as usize;
         let Some(mine) = strips.get(parent).filter(|m| !m.is_empty()) else {
@@ -189,8 +251,19 @@ fn warp_lines(d: &mut Value, warp: &dyn Warp, strips: &[Vec<Strip>], notes: &mut
             notes.orphan_lines += 1;
             mine.iter().min_by(|a, b| gap(a, mid[0]).total_cmp(&gap(b, mid[0]))).expect("not empty")
         });
-        l["parent_index"] = json!(strip.index);
+
+        let a = warp.yaw(mid);
+        let mut q = l.clone();
+        set_p3(&mut q["start"], warp.point(s));
+        set_p3(&mut q["end"], warp.point(e));
+        let dir = p3(&l["direction"]);
+        let t = turn([dir[0], dir[2]], a);
+        set_p3(&mut q["direction"], [t[0], dir[1], t[1]]);
+        q["parent_index"] = json!(strip.index);
+        out.push(q);
     }
+
+    out
 }
 
 fn gap(s: &Strip, x: f32) -> f32 {

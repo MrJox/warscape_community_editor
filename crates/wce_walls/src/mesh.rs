@@ -19,40 +19,124 @@ use crate::warp::{Cuts, Warp, turn3};
 ///
 /// The file doesn't read or doesn't write back, or a mesh gets more vertices than its 16-bit indices can reach.
 pub fn warp_mesh(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<Vec<u8>, String> {
+    warp_mesh_with(bytes, warp, cuts, &[], None, &[])
+}
+
+/// Another building's part brought into a piece's mesh (a step section): the triangles of its mesh over `x` of its frame (and inside
+/// `zy`, z then y, when given), warped by its own `warp`. Its blocks keep their materials.
+pub struct MeshSplice<'a> {
+    pub mesh: &'a [u8],
+    pub warp: &'a dyn Warp,
+    pub x: (f32, f32),
+    pub zy: Option<((f32, f32), (f32, f32))>,
+
+    /// Only what lies within `band.2` (y) of the line from `(x.0, band.0)` to `(x.1, band.1)`: a stair without the walls around it.
+    pub band: Option<(f32, f32, f32)>,
+}
+
+/// If a point of a part's frame is in what a splice brings: over `x`, inside `zy`, near the `band` line.
+pub fn splice_holds(c: [f32; 3], x: (f32, f32), zy: Option<((f32, f32), (f32, f32))>, band: Option<(f32, f32, f32)>) -> bool {
+    let near = |(y0, y1, half): (f32, f32, f32)| {
+        let t = ((c[0] - x.0) / (x.1 - x.0).max(1e-6)).clamp(0.0, 1.0);
+        (c[1] - (y0 + (y1 - y0) * t)).abs() <= half
+    };
+
+    c[0] >= x.0 - 1e-3 && c[0] <= x.1 + 1e-3 && zy.is_none_or(|((z0, z1), (y0, y1))| c[2] >= z0 && c[2] <= z1 && c[1] >= y0 && c[1] <= y1) && band.is_none_or(near)
+}
+
+/// [`warp_mesh`] with step sections: the base's triangles over the `drop` x ranges (of its frame, and inside `drop_zy` when given) left
+/// out, the splices' blocks added to each level of detail (the part's level of the same number, or its last).
+///
+/// # Errors
+///
+/// A file doesn't read, or the result doesn't write back.
+pub fn warp_mesh_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, f32)], drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[MeshSplice]) -> Result<Vec<u8>, String> {
     let mut model = decode(bytes)?;
+    let in_box = |c: [f32; 3]| drop_zy.is_none_or(|((z0, z1), (y0, y1))| c[2] >= z0 && c[2] <= z1 && c[1] >= y0 && c[1] <= y1);
+    let kept = |c: [f32; 3]| !(in_box(c) && drop.iter().any(|&(a, b)| c[0] > a && c[0] < b));
     for lod in model.lods_mut() {
         for block in lod.mesh_blocks_mut() {
-            let pivot = block.material().v_pivot();
-            let pivot = [pivot.x, pivot.y, pivot.z];
-            let mesh = block.mesh_mut();
-            slice_mesh(mesh, cuts, pivot[0])?;
-            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-            for v in mesh.vertices_mut() {
-                let p = [v.position().x + pivot[0], v.position().y + pivot[1], v.position().z + pivot[2]];
-                let a = warp.yaw(p);
-                let q = warp.point(p);
-                let pos = v.position_mut();
-                (pos.x, pos.y, pos.z) = (q[0] - pivot[0], q[1] - pivot[1], q[2] - pivot[2]);
-                for i in 0..3 {
-                    lo[i] = lo[i].min(q[i]);
-                    hi[i] = hi[i].max(q[i]);
+            warp_block(block, warp, cuts, &kept)?;
+        }
+    }
+
+    for sp in splices {
+        let part = decode(sp.mesh)?;
+        let part_cuts = Cuts { step: cuts.step, at: vec![sp.x.0, sp.x.1] };
+        let holds = |c: [f32; 3]| splice_holds(c, sp.x, sp.zy, sp.band);
+
+        let n = model.lods().len();
+        for (k, lod) in model.lods_mut().iter_mut().enumerate().take(n) {
+            let Some(from) = part.lods().get(k).or(part.lods().last()) else { continue };
+            for block in from.mesh_blocks() {
+                let mut b = block.clone();
+                warp_block(&mut b, sp.warp, &part_cuts, &holds)?;
+                if !b.mesh().indices().is_empty() {
+                    lod.mesh_blocks_mut().push(b);
                 }
-
-                turned(v.normal_mut(), a);
-                turned(v.tangent_mut(), a);
-                turned(v.bitangent_mut(), a);
-            }
-
-            if lo[0] <= hi[0] {
-                let min = mesh.min_bb_mut();
-                (min.x, min.y, min.z) = (lo[0], lo[1], lo[2]);
-                let max = mesh.max_bb_mut();
-                (max.x, max.y, max.z) = (hi[0], hi[1], hi[2]);
             }
         }
     }
 
     encode(&mut model)
+}
+
+/// A block cut at `cuts`, the triangles whose centre (the piece's frame) `keep` refuses left out, warped.
+fn warp_block(block: &mut rpfm_lib::files::rigidmodel::MeshBlock, warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool) -> Result<(), String> {
+    let pivot = block.material().v_pivot();
+    let pivot = [pivot.x, pivot.y, pivot.z];
+    let mesh = block.mesh_mut();
+    slice_mesh(mesh, cuts, pivot[0])?;
+    keep_triangles(mesh, pivot, keep);
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices_mut() {
+        let p = [v.position().x + pivot[0], v.position().y + pivot[1], v.position().z + pivot[2]];
+        let a = warp.yaw(p);
+        let q = warp.point(p);
+        let pos = v.position_mut();
+        (pos.x, pos.y, pos.z) = (q[0] - pivot[0], q[1] - pivot[1], q[2] - pivot[2]);
+        for i in 0..3 {
+            lo[i] = lo[i].min(q[i]);
+            hi[i] = hi[i].max(q[i]);
+        }
+
+        turned(v.normal_mut(), a);
+        turned(v.tangent_mut(), a);
+        turned(v.bitangent_mut(), a);
+    }
+
+    if lo[0] <= hi[0] {
+        let min = mesh.min_bb_mut();
+        (min.x, min.y, min.z) = (lo[0], lo[1], lo[2]);
+        let max = mesh.max_bb_mut();
+        (max.x, max.y, max.z) = (hi[0], hi[1], hi[2]);
+    }
+
+    Ok(())
+}
+
+/// The triangles whose centre (vertex + pivot) `keep` takes, the vertices they use (all of them when it takes every triangle).
+fn keep_triangles(mesh: &mut Mesh, pivot: [f32; 3], keep: &dyn Fn([f32; 3]) -> bool) {
+    if !mesh.extra_indices().is_empty() {
+        return;
+    }
+
+    let v = mesh.vertices();
+    let centre = |t: &[u16]| {
+        let p = |i: u16| { let q = v[i as usize].position(); [q.x + pivot[0], q.y + pivot[1], q.z + pivot[2]] };
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0]
+    };
+
+    let tris = mesh.indices().chunks_exact(3).collect::<Vec<_>>();
+    if tris.iter().all(|t| keep(centre(t))) {
+        return;
+    }
+
+    let indices = tris.into_iter().filter(|t| keep(centre(t))).flatten().copied().collect::<Vec<_>>();
+    let (vertices, indices) = compact(mesh.vertices(), &indices);
+    *mesh.vertices_mut() = vertices;
+    *mesh.indices_mut() = indices;
 }
 
 /// A mesh's triangles cut into strips along x of the piece's frame (vertex x + `pivot_x`) at `cuts`. A mesh with extra indices is left
