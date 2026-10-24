@@ -40,6 +40,11 @@ pub fn end() {
     call!(sys::igEnd())
 }
 
+/// Dear ImGui's style editor, on the live style.
+pub fn show_style_editor() {
+    call!(sys::igShowStyleEditor(std::ptr::null_mut()))
+}
+
 pub fn begin_child(id: &str, size: Vec2, child_flags: i32, window_flags: i32) -> bool {
     let n = cs(id);
     call!(sys::igBeginChild_Str(n.as_ptr(), size, child_flags, window_flags))
@@ -882,7 +887,7 @@ pub use sys::{
     ImGuiTableFlags_BordersInnerV as TABLE_BORDERS_INNER_V, ImGuiKey_Delete as KEY_DELETE, ImGuiKey_G as KEY_G, ImGuiKey_Enter as KEY_ENTER, ImGuiKey_KeypadEnter as KEY_KEYPAD_ENTER,
     ImGuiKey_F2 as KEY_F2, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
     ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
-    ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
+    ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_Appearing as COND_APPEARING, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
     ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
     ImGuiKey_S as KEY_S, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z, ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK,

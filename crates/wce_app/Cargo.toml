@@ -22,7 +22,6 @@ placeholders = []
 
 [dependencies]
 dear-imgui-rs = "0.20"
-dear-imgui-sys = "0.20"
 wce_d3d11 = { path = "../wce_d3d11" }
 wce_editor = { path = "../wce_editor" }
 wce_foundation = { path = "../wce_foundation" }

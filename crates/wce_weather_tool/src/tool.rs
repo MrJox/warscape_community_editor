@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
-use wce_editor::gui;
+use wce_editor::{gui, theme};
 use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
@@ -52,9 +52,7 @@ pub fn view_of(n: i32) -> View {
     VIEWS[n.clamp(0, 10) as usize].0
 }
 
-const MODIFIED: [f32; 4] = [1.0, 0.75, 0.3, 1.0];
 const MOD: [f32; 4] = [0.55, 0.85, 1.0, 1.0];
-const DIM: [f32; 4] = [0.6, 0.6, 0.6, 1.0];
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
@@ -240,7 +238,7 @@ impl WeatherTool {
             self.listing_dirty = false;
         }
 
-        gui::text_colored(DIM, &format!("{} files", self.listing.len()));
+        gui::text_colored(theme::dim(), &format!("{} files", self.listing.len()));
         gui::begin_child("list", gui::v2(0.0, 0.0), 0, 0);
         let mut open = None;
         let listing = &self.listing;
@@ -307,7 +305,7 @@ impl WeatherTool {
         }
 
         let env_title = find_xml(e, self.env_doc).map(|x| x.title());
-        gui::text_colored(DIM, &format!("environment: {}", env_title.as_deref().unwrap_or("(none open: the default dry day)")));
+        gui::text_colored(theme::dim(), &format!("environment: {}", env_title.as_deref().unwrap_or("(none open: the default dry day)")));
 
         // Cross-fade: second environment + slider.
         gui::set_next_item_width(260.0);
@@ -338,7 +336,7 @@ impl WeatherTool {
         }
 
         if !errors.is_empty() {
-            gui::text_colored([1.0, 0.45, 0.4, 1.0], "render errors (hover)");
+            gui::text_colored(theme::error(), "render errors (hover)");
             if gui::is_item_hovered() {
                 gui::set_tooltip(&errors.iter().map(|e| format!("{e}\n")).collect::<String>());
             }
@@ -359,7 +357,7 @@ impl WeatherTool {
         if find_xml(e, id).is_some() {
             self.draw_document(e, id);
         } else {
-            gui::text_colored(DIM, "Open a file from the Files list, or File > Open file.");
+            gui::text_colored(theme::dim(), "Open a file from the Files list, or File > Open file.");
         }
 
         gui::end();
@@ -370,9 +368,9 @@ impl WeatherTool {
         {
             let Some(d) = e.docs.find_as_mut::<XmlFileDocument>(id) else { return };
             let src = d.source().clone();
-            gui::text_colored(DIM, &if src.vfs_path.is_empty() { src.disk.display().to_string() } else { src.vfs_path.clone() });
+            gui::text_colored(theme::dim(), &if src.vfs_path.is_empty() { src.disk.display().to_string() } else { src.vfs_path.clone() });
             gui::same_line();
-            gui::text_colored(DIM, &format!("  [{}]", src.label));
+            gui::text_colored(theme::dim(), &format!("  [{}]", src.label));
             if gui::button("Save") {
                 save = true;
             }
@@ -388,7 +386,7 @@ impl WeatherTool {
             gui::set_next_item_width(220.0);
             gui::input_text("##af", Some("filter attributes"), &mut self.attr_filter, 128, 0);
             gui::same_line();
-            gui::text_colored(DIM, &format!("-> {}", d.default_save_path().display()));
+            gui::text_colored(theme::dim(), &format!("-> {}", d.default_save_path().display()));
         }
 
         if gui::begin_tab_bar("views") {
@@ -427,7 +425,7 @@ impl WeatherTool {
         gui::push_id_int(e as i32);
         let any_mod = (0..el.attrs.len()).any(|a| d.xml().attr_modified(e, a));
         if any_mod {
-            gui::push_style_color(gui::COL_TEXT, gui::v4(MODIFIED[0], MODIFIED[1], MODIFIED[2], MODIFIED[3]));
+            gui::push_style_color(gui::COL_TEXT, theme::v4(theme::modified()));
         }
 
         let mut flags = if el.parent.is_none() { gui::TREE_DEFAULT_OPEN } else { 0 };
@@ -561,7 +559,7 @@ impl WeatherTool {
         gui::table_next_row();
         gui::table_next_column();
         if modified {
-            gui::push_style_color(gui::COL_TEXT, gui::v4(MODIFIED[0], MODIFIED[1], MODIFIED[2], MODIFIED[3]));
+            gui::push_style_color(gui::COL_TEXT, theme::v4(theme::modified()));
         }
 
         gui::align_text_to_frame_padding();
@@ -666,13 +664,13 @@ fn edit_array<const N: usize>(f: &mut [f32], edit: impl FnOnce(&mut [f32; N]) ->
 fn draw_changes(d: &XmlFileDocument) {
     let xml = d.xml();
     if !xml.modified() {
-        gui::text_colored(DIM, "No changes.");
+        gui::text_colored(theme::dim(), "No changes.");
         return;
     }
 
     if xml.structural_edits() > 0 {
         gui::text_colored(
-            MODIFIED,
+            theme::modified(),
             &format!("{} structural edit(s): elements or attributes added, removed or moved. Attribute changes below are relative to the last of them.", xml.structural_edits()),
         );
     }
@@ -707,6 +705,10 @@ impl Tool for WeatherTool {
 
     fn title(&self) -> &str {
         "Weather"
+    }
+
+    fn icon(&self) -> &str {
+        wce_editor::icons::CLOUD_SUN
     }
 
     fn opens(&self) -> Vec<String> {
@@ -942,11 +944,11 @@ impl Tool for WeatherTool {
         }
 
         for n in &notes {
-            gui::text_colored([0.9, 0.8, 0.4, 1.0], n);
+            gui::text_colored(theme::warning(), n);
         }
 
         for err in &errors {
-            gui::text_colored([1.0, 0.4, 0.4, 1.0], err);
+            gui::text_colored(theme::error(), err);
         }
 
         gui::end_menu();

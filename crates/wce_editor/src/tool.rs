@@ -8,6 +8,7 @@ use std::any::Any;
 
 use wce_editor_core::command_registry::CommandRegistry;
 use wce_editor_core::document::Document;
+use wce_foundation::settings::Settings;
 use wce_scene::render_scene::{EntityId, SourceRef};
 
 use crate::editor::Editor;
@@ -71,6 +72,11 @@ pub trait Tool: Any {
     /// "weather", "tile", ...
     fn id(&self) -> &str;
     fn title(&self) -> &str;
+
+    /// The tool's icon in the switcher (one of `icons`); none by default.
+    fn icon(&self) -> &str {
+        ""
+    }
 
     /// File extensions (with the dot, lower case) this tool opens from the packs or from disk; the asset browser filters by them.
     fn opens(&self) -> Vec<String> {
@@ -141,6 +147,22 @@ pub trait Tool: Any {
         Err(format!("{} does not open {path}", self.title()))
     }
 
+    /// True when the tool has a page in the Settings window (`draw_settings`).
+    fn has_settings(&self) -> bool {
+        false
+    }
+
+    /// The tool's page in the Settings window. It edits `draft`, the window's copy of the settings (the tool's table: `Settings::tool` and
+    /// `Settings::set_tool`); OK or Apply put it in place and call `settings_applied`.
+    fn draw_settings(&mut self, draft: &mut Settings) {
+        let _ = draft;
+    }
+
+    /// The settings window applied new settings: take up what changed.
+    fn settings_applied(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
@@ -149,12 +171,13 @@ pub trait Tool: Any {
 pub struct PlaceholderTool {
     id: String,
     title: String,
+    icon: &'static str,
     plan: String,
 }
 
 impl PlaceholderTool {
-    pub fn new(id: &str, title: &str, plan: &str) -> Self {
-        Self { id: id.to_owned(), title: title.to_owned(), plan: plan.to_owned() }
+    pub fn new(id: &str, title: &str, icon: &'static str, plan: &str) -> Self {
+        Self { id: id.to_owned(), title: title.to_owned(), icon, plan: plan.to_owned() }
     }
 }
 
@@ -165,6 +188,10 @@ impl Tool for PlaceholderTool {
 
     fn title(&self) -> &str {
         &self.title
+    }
+
+    fn icon(&self) -> &str {
+        self.icon
     }
 
     fn draw_panels(&mut self, _: &mut Editor) {

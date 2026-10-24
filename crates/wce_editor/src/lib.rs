@@ -5,10 +5,13 @@ pub mod commands;
 pub mod coords;
 pub mod editor;
 pub mod gui;
+pub mod icons;
 pub mod images;
 pub mod panels;
 pub mod perf;
+pub mod settings_window;
 pub mod steam_detect;
+pub mod theme;
 pub mod tool;
 pub mod viewport;
 

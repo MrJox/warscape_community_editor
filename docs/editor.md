@@ -154,6 +154,21 @@ file and is never written back:
 Until the first release, a missing `settings.toml` is filled from the old `key=value` `wce.ini` (in the same folder, or in `~/.local/share/awe` /
 `%LOCALAPPDATA%\awe`) and its layouts are copied; the old folder is left alone (`settings/legacy.rs`, to be removed).
 
+**File > Settings...** (command `settings open [page] | close | apply`, `settings_window.rs`) edits every setting on pages (General, Game,
+Appearance, one per tool with settings, Folders) on a copy of the settings: OK and Apply put it in place, write the file and pass on what changed (the
+frame cap at once; other mod packs or loose folders remount the packs; a new game folder is used from the next start); Cancel drops it. A field an
+environment variable overrides says so. A tool adds its page with `Tool::has_settings` / `draw_settings` (on the copy, its own table) and hears of
+applied settings in `settings_applied`.
+
+### Appearance
+
+`theme.rs`: the UI font is Inter with Lucide's icons merged in (`icons.rs` names them; the private use area is taken out of Inter, which has glyphs
+of its own there), and Dear ImGui's vector font is the monospace one (the log). Themes: `dark` (the default: neutral greys, one blue accent, soft
+corners), `light`, and `imgui` (Dear ImGui's own dark style); `[appearance] theme` and `font_size` pick them. The style is built again between frames
+when the appearance changes, so the Settings window shows a change at once. Panels take the colours with a meaning (error, warning, modified,
+success, highlight, the dim text) from `theme` instead of fixed values, so that every theme keeps them readable; what is drawn over the 3D view keeps
+its own colours. Appearance > "Dear ImGui's style editor" edits the live style, to work on a theme.
+
 When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it fills in the Steam library's Attila
 folder (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts and starts the
 active tool.

@@ -24,7 +24,7 @@ use wce_scene::environment::read_graphics_options;
 use wce_scene::render_scene::{DocumentId, EnvironmentSlot, RenderScene};
 use wce_vfs::{Config, GameProfile, Vfs, normalize};
 
-use crate::gui;
+use crate::{gui, icons};
 use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
 use crate::steam_detect::{detect_attila_folder, file_dialog, pick_folder};
@@ -77,6 +77,7 @@ impl Default for Panels {
 struct ToolInfo {
     id: String,
     title: String,
+    icon: String,
     opens: Vec<String>,
 }
 
@@ -140,6 +141,14 @@ pub struct Editor {
     pub panels: Panels,
     pub(crate) panel_data: PanelData,
 
+    pub(crate) settings_window: crate::settings_window::SettingsWindow,
+
+    /// The display's scale the theme's sizes are multiplied by (`set_display_scale`).
+    display_scale: f32,
+
+    /// The appearance the style was built from: `pre_frame` builds it again when the settings' differs.
+    applied_appearance: Option<wce_foundation::settings::Appearance>,
+
     /// Pictures tools draw with (see `images`).
     pub images: crate::images::ImageTextures,
 
@@ -170,12 +179,18 @@ impl Editor {
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
-            panel_data: PanelData::default(), images: Default::default(), input_origin: None, pending_shot: None,
+            panel_data: PanelData::default(), settings_window: Default::default(), display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
         e.frame_cap = e.settings.frame_cap();
         crate::commands::register_builtin(&mut e.commands);
         e
+    }
+
+    /// The display's scale (1 for a high pixel density window, whose fonts Dear ImGui already rasterizes at its density).
+    pub fn set_display_scale(&mut self, dpi: f32) {
+        self.display_scale = dpi;
+        self.applied_appearance = None;
     }
 
     pub fn frame_cap(&self) -> u32 {
@@ -189,11 +204,16 @@ impl Editor {
         self.save_settings();
     }
 
+    /// Sets the frame cap of this session only.
+    pub(crate) fn set_frame_cap_live(&mut self, fps: u32) {
+        self.frame_cap = fps;
+    }
+
     // ---- setup
 
     pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
         tool.register_commands(&mut self.commands);
-        self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), opens: tool.opens() });
+        self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens() });
         self.tools.push(Some(tool));
     }
 
@@ -308,6 +328,10 @@ impl Editor {
         self.exit_code = exit_code;
     }
 
+    pub fn tool_count(&self) -> usize {
+        self.tools.len()
+    }
+
     pub fn tool_ids(&self) -> Vec<String> {
         self.tool_info.iter().map(|t| t.id.clone()).collect()
     }
@@ -363,6 +387,22 @@ impl Editor {
 
     /// The check list of mod packs (first run and File > Mod packs).
     fn mod_pack_checks(&mut self, game: &str) {
+        self.mod_pack_checks_at(game, gui::cursor_pos_x());
+    }
+
+    /// Builds the check list again from the settings the next time it is drawn.
+    pub(crate) fn mod_checks_reset(&mut self) {
+        self.mod_checks_for.clear();
+    }
+
+    /// The ticked mod packs, if the check list is the one of `game`.
+    pub(crate) fn mod_checks_for_game(&self, game: &Option<PathBuf>) -> Option<Vec<String>> {
+        let game = game.as_ref().map(|g| g.display().to_string()).unwrap_or_default();
+        (!self.mod_checks_for.is_empty() && self.mod_checks_for == game).then(|| self.checked_mod_packs())
+    }
+
+    /// The check list at a cursor x (`game`: the game folder whose data folder is listed).
+    pub(crate) fn mod_pack_checks_at(&mut self, game: &str, x: f32) {
         if self.mod_checks_for != game {
             self.mod_checks_for = game.to_owned();
             let chosen = self.selected_mod_packs();
@@ -376,6 +416,7 @@ impl Editor {
             self.mod_checks = names.into_iter().map(|n| (chosen.iter().any(|c| c.eq_ignore_ascii_case(&n)), n)).collect();
         }
 
+        gui::set_cursor_pos_x(x);
         if self.mod_checks.is_empty() {
             gui::text_disabled("No mod packs found in the game's data folder.");
             return;
@@ -501,10 +542,11 @@ impl Editor {
     /// Where "Save" writes loose files (under their in-pack path): `output_dir` in the settings, else <Documents>/AttilaWeatherEditor/out as
     /// the old weather editor did.
     pub fn output_dir(&self) -> PathBuf {
-        if let Some(v) = self.settings.output_dir() {
-            return v;
-        }
+        self.settings.output_dir().unwrap_or_else(|| self.default_output_dir())
+    }
 
+    /// The output folder when the settings name none.
+    pub fn default_output_dir(&self) -> PathBuf {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
         home.join("Documents").join("AttilaWeatherEditor").join("out")
     }
@@ -620,6 +662,13 @@ impl Editor {
     /// Before Dear ImGui's frame: releases the keys of the `key` command and applies a pending tool switch (its layout file).
     pub fn pre_frame(&mut self) {
         self.release_test_keys();
+        if self.applied_appearance.as_ref() != Some(self.shown_appearance()) {
+            let appearance = self.shown_appearance().clone();
+            // SAFETY: the shell calls pre_frame outside a frame, on the current context.
+            unsafe { crate::theme::apply(&appearance, self.display_scale) };
+            self.applied_appearance = Some(appearance);
+        }
+
         if self.tools.is_empty() {
             return;
         }
@@ -900,7 +949,7 @@ impl Editor {
         }
 
         if !self.prompt_error.is_empty() {
-            gui::text_colored([1.0, 0.45, 0.4, 1.0], &self.prompt_error.clone());
+            gui::text_colored(crate::theme::error(), &self.prompt_error.clone());
         }
 
         gui::spacing();
@@ -995,6 +1044,7 @@ impl Editor {
 
         gui::end();
         self.draw_mods_popup();
+        self.draw_settings_window();
         if self.first_run {
             self.draw_first_run();
             return;
@@ -1102,14 +1152,15 @@ impl Editor {
                 gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
             }
 
-            let mut label = self.tool_info[i].title.clone();
-            if i < 9 {
-                label += &format!("  Ctrl+{}", i + 1);
-            }
-
+            let info = &self.tool_info[i];
+            let label = if info.icon.is_empty() { info.title.clone() } else { format!("{}  {}", info.icon, info.title) };
             if gui::button(&format!("{label}##tool{i}")) {
                 let id = self.tool_info[i].id.clone();
                 self.set_tool(&id);
+            }
+
+            if i < 9 && gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{}  (Ctrl+{})", self.tool_info[i].title, i + 1));
             }
 
             if active {
@@ -1121,14 +1172,14 @@ impl Editor {
 
         gui::text_disabled("|");
         gui::same_line();
-        for (g, name) in ["None", "Move", "Rotate", "Scale"].iter().enumerate() {
+        for (g, (icon, name)) in [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")].iter().enumerate() {
             let mode = crate::viewport::GizmoMode::from_index(g);
             let on = self.viewport.gizmo == mode;
             if on {
                 gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
             }
 
-            if gui::small_button(name) {
+            if gui::small_button(&format!("{icon}  {name}")) {
                 self.viewport.gizmo = mode;
             }
 
@@ -1141,7 +1192,7 @@ impl Editor {
 
         gui::text_disabled("|");
         gui::same_line();
-        gui::push_style_color(gui::COL_TEXT, if self.status_error { gui::v4(1.0, 0.45, 0.4, 1.0) } else { gui::style_color(gui::COL_TEXT_DISABLED) });
+        gui::push_style_color(gui::COL_TEXT, if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) });
         gui::text(&self.status.clone());
         gui::pop_style_color(1);
         gui::separator();
@@ -1169,11 +1220,11 @@ impl Editor {
         let active = self.docs.active_id();
         let (can_save, modified, has_doc) = self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified(), true));
         if gui::begin_menu("File") {
-            if gui::menu_item("Open from the game packs...", None, false, true) {
+            if gui::menu_item(&format!("{}  Open from the game packs...", icons::PACKAGE), None, false, true) {
                 self.panels.assets = true;
             }
 
-            if gui::menu_item("Open file...", None, false, true)
+            if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
                 && let Some(p) = file_dialog(false, &self.output_dir().join("x"), &self.open_filters())
             {
                 match self.open_path(&p.display().to_string(), false, true) {
@@ -1182,15 +1233,15 @@ impl Editor {
                 }
             }
 
-            if gui::menu_item("Mod packs...", None, false, true) {
+            if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {
                 self.mods_popup = true;
             }
 
-            if gui::menu_item("Save", Some("Ctrl+S"), false, can_save && modified) {
+            if gui::menu_item(&format!("{}  Save", icons::SAVE), Some("Ctrl+S"), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
 
-            if gui::menu_item("Save as...", None, false, can_save) {
+            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
                 let title = self.docs.active().map(|d| d.title()).unwrap_or_default();
                 if let Some(p) = file_dialog(true, &self.output_dir().join(title), &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
@@ -1206,12 +1257,12 @@ impl Editor {
             }
 
             let unsaved = self.docs.unsaved().len();
-            let label = if unsaved != 0 { format!("Save all ({unsaved})") } else { "Save all".to_owned() };
+            let label = if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
             if gui::menu_item(&label, Some("Ctrl+Shift+S"), false, unsaved > 0) {
                 let _ = CommandRegistry::run(self, "save_all");
             }
 
-            if gui::menu_item("Close document", None, false, has_doc) {
+            if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
             }
 
@@ -1219,12 +1270,12 @@ impl Editor {
                 self.ask_close_all();
             }
 
-            if gui::menu_item("Remount packs", None, false, true) {
+            if gui::menu_item(&format!("{}  Remount packs", icons::REFRESH_CW), None, false, true) {
                 let _ = CommandRegistry::run(self, "remount");
             }
 
             gui::separator();
-            if gui::menu_item("Save layout", None, false, true) {
+            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
                 self.save_layout();
             }
 
@@ -1233,7 +1284,12 @@ impl Editor {
             }
 
             gui::separator();
-            if gui::menu_item("Quit", None, false, true) {
+            if gui::menu_item(&format!("{}  Settings...", icons::SETTINGS), None, false, true) {
+                self.show_settings_window(true);
+            }
+
+            gui::separator();
+            if gui::menu_item(&format!("{}  Quit", icons::LOG_OUT), None, false, true) {
                 self.ask_quit();
             }
 
@@ -1244,13 +1300,13 @@ impl Editor {
             let h = self.docs.active().map(|d| (d.history().can_undo(), d.history().can_redo(), d.history().position()));
             let name = |i: usize| self.docs.active().map(|d| d.history().name(i)).unwrap_or_default();
             let undo = match h {
-                Some((true, _, p)) => format!("Undo {}", name(p - 1)),
-                _ => "Undo".to_owned(),
+                Some((true, _, p)) => format!("{}  Undo {}", icons::UNDO_2, name(p - 1)),
+                _ => format!("{}  Undo", icons::UNDO_2),
             };
 
             let redo = match h {
-                Some((_, true, p)) => format!("Redo {}", name(p)),
-                _ => "Redo".to_owned(),
+                Some((_, true, p)) => format!("{}  Redo {}", icons::REDO_2, name(p)),
+                _ => format!("{}  Redo", icons::REDO_2),
             };
 
             if gui::menu_item(&undo, Some("Ctrl+Z"), false, h.is_some_and(|h| h.0)) {
@@ -1285,7 +1341,7 @@ impl Editor {
                 self.viewport.use_fly();
             }
 
-            if gui::menu_item("Focus selection", Some("F"), false, !self.selection.is_empty()) {
+            if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), Some("F"), false, !self.selection.is_empty()) {
                 self.focus_selection();
             }
 
@@ -1298,7 +1354,7 @@ impl Editor {
 
             gui::menu_item_toggle("Snap", &mut self.viewport.snap);
             gui::separator();
-            if gui::begin_menu("Frame rate cap") {
+            if gui::begin_menu(&format!("{}  Frame rate cap", icons::GAUGE)) {
                 for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {
                     if gui::menu_item(label, None, self.frame_cap == fps, true) {
                         self.set_frame_cap(fps);
@@ -1313,7 +1369,7 @@ impl Editor {
 
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
         if gui::begin_menu("Help") {
-            gui::menu_item_toggle("Commands", &mut self.panels.commands);
+            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::end_menu();
         }
 
@@ -1378,7 +1434,7 @@ impl Editor {
         gui::same_line();
         let game_ok = !self.first_run_game.is_empty() && Path::new(&self.first_run_game).join("data").exists();
         if !game_ok {
-            gui::text_colored([1.0, 0.5, 0.4, 1.0], "no data folder in the game folder");
+            gui::text_colored(crate::theme::error(), "no data folder in the game folder");
         }
 
         if !self.first_run_message.is_empty() {

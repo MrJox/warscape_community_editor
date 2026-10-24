@@ -889,6 +889,33 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         fail(format!("no panel '{name}'"))
     });
 
+    c.add(
+        "settings", "settings open [page] | close | apply",
+        "the Settings window: open it (on a copy of the settings) at a page (general, game, appearance, folders, a tool's id), close it without applying, or apply it",
+        |e, a| {
+        match a.first().map(String::as_str) {
+            Some("open") => {
+                if !e.settings_window_open() {
+                    e.show_settings_window(true);
+                }
+
+                if let Some(page) = a.get(1)
+                    && !e.show_settings_page(page)
+                {
+                    return fail(format!("no settings page '{page}'"));
+                }
+            }
+
+            Some("close") => e.show_settings_window(false),
+            Some("apply") if e.settings_window_open() => e.apply_settings_window(),
+            Some("apply") => return fail("the Settings window is not open"),
+            _ => return fail("usage: settings open [page] | close | apply"),
+        }
+
+        ok("")
+    },
+    );
+
     c.add("setup", "setup <game folder>", "what the first-run dialog's button does: store the game folder in the settings and mount", |e, a| {
         let Some(dir) = a.first() else { return fail("usage: setup <game folder>") };
         e.setup(dir).map_or_else(fail, ok)
