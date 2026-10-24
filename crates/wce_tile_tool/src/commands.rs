@@ -1484,7 +1484,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             with_tile(e, |t, e| match file.as_deref() {
                 None => {
                     let (files, _) = t.weather.matching();
-                    ok(format!("{} files:\n{}", files.len(), files.join("\n")))
+                    let lines = files.iter().map(|(f, n)| if *n > 1 { format!("{f}  (x{n})") } else { f.clone() }).collect::<Vec<_>>();
+                    ok(format!("{} files:\n{}", files.len(), lines.join("\n")))
                 }
                 Some("none") => t.weather.set_file(e, "").map_or_else(fail, ok),
                 Some(f) => t.weather.set_file(e, f).map_or_else(fail, ok),
