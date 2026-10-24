@@ -450,8 +450,14 @@ fn steps(runs: &mut Vec<Run>, samples: &[Sample], corners: &[f64], fixed: [bool;
             warnings.push(format!("at {boundary:.0}: {count} step section(s) for {rise:.1} need {span:.0} along the wall, the runs around leave {room:.0}"));
         }
 
-        // The place: inside the two runs, not on a corner or an attached end, the straightest, then the nearest to the boundary.
-        let (lo, hi) = (a.s.0, (b.s.1 - span).max(a.s.0));
+        // The place: from the middle of the run before to the middle of the run after (the first and the last run: their ends), keeping
+        // a quarter of `min_run` flat on each side so neighbouring steps never meet; not on a corner or an attached end; the straightest,
+        // then the nearest to the boundary.
+        let q = profile.min_run / 4.0;
+        let n = runs.len();
+        let lo = if chain == 0 { a.s.0 } else { (a.s.0 + a.s.1) / 2.0 + q };
+        let hi_end = if chain + 2 == n { b.s.1 } else { (b.s.0 + b.s.1) / 2.0 - q };
+        let (lo, hi) = if hi_end - span >= lo { (lo, hi_end - span) } else { (a.s.0, (b.s.1 - span).max(a.s.0)) };
         let cost = |t: f64| 100.0 * (turn_between(samples, t, t + span) - CURVE).max(0.0) + (t + span / 2.0 - boundary).abs() * 0.01;
         let mut t = lo;
         let mut best: Option<f64> = None;
@@ -506,6 +512,11 @@ fn separate(steps: &mut [Step], length: f64, warnings: &mut Vec<String>) {
 
         end_of_prev = hi + shift;
     }
+}
+
+/// The level at a distance, exactly (not interpolated between samples: a whole step's level jumps at its ends).
+pub fn wall_level(plan: &Plan, s: f64) -> f64 {
+    level_at(&plan.runs, &plan.steps, s)
 }
 
 /// The level at a distance: inside a chain of steps (from its first section's start to its last one's end), the ramp or, between two
@@ -639,6 +650,17 @@ mod tests {
         let margin = eight().depth.1.abs().max(eight().depth.0.abs()) + 2.0;
         for st in &plan.steps {
             assert!(st.s.1 <= 60.0 - margin + 1e-6 || st.s.0 >= 60.0 + margin - 1e-6, "{st:?} over the corner");
+        }
+    }
+
+    #[test]
+    fn neighbouring_steps_keep_flat_walkway_between_them() {
+        // A dip: down then up; the walkway between the two steps stays flat for at least half a run.
+        let p = profile("roman_fort_straight").unwrap();
+        let ground = |x: f64, _: f64| if (100.0..130.0).contains(&x) { -4.0 } else { 0.0 };
+        let plan = solve(&wall(&[[0.0, 0.0], [300.0, 0.0]]), p, &ground);
+        for w in plan.steps.windows(2).filter(|w| w[0].chain != w[1].chain) {
+            assert!(w[1].s.0 - w[0].s.1 >= p.min_run / 2.0 - 1e-6, "{:?}", plan.steps);
         }
     }
 

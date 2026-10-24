@@ -52,11 +52,12 @@ pub struct Profile {
     /// vanilla); 0: never.
     pub whole_rise: f64,
 
-    /// The pieces that close a free end: at the start and at the end. `cap_whole`: they are pieces of the wall's own slots (15 m: the
-    /// tower ends, a tower and the start of the walkway in 20), else small pieces placed past the ends as they are (8 m: the endcaps).
+    /// The pieces that close a free end, at the start and at the end: the game's own, placed past the ends as they are (not bent nor
+    /// fitted to the ground), their joining x (the end of their walkway that meets the wall) on the wall's end. 8 m: the endcaps (2.6,
+    /// joining at 0); 15 m: the tower ends (a tower and the start of a walkway, joining at 10 and -10).
     pub cap_start: &'static str,
     pub cap_end: &'static str,
-    pub cap_whole: bool,
+    pub cap_join: (f64, f64),
 
     /// The foot: below `foot.1` the mesh stretches so its bottom (`foot.0`) reaches `bury` under the terrain where the terrain is lower
     /// than the piece's level (8 m: the buried 2 m under y = 0; 15 m: the bottom 2 m of the plinth, which stands on y = 0).
@@ -107,7 +108,7 @@ const EIGHT: Profile = Profile {
     whole_rise: 0.0,
     cap_start: "",
     cap_end: "",
-    cap_whole: false,
+    cap_join: (0.0, 0.0),
     foot: (-2.0, 0.0),
     bury: 2.0,
     step_up: "",
@@ -137,7 +138,7 @@ const FIFTEEN: Profile = Profile {
     whole_rise: 10.0,
     cap_start: "",
     cap_end: "",
-    cap_whole: true,
+    cap_join: (10.0, -10.0),
     foot: (0.0, 2.0),
     bury: 0.5,
     step_up: "",

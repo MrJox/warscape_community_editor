@@ -367,6 +367,18 @@ the game sees (0, 2, 3, 4).
   end (their mitres), the straightest place first (a penalty past 6 degrees of turn over its length), then the nearest to the boundary;
   when no place is free it is centred as before and noted. The corner itself is flat, so the mitre and the overhang copies line up.
 
+## Review, fourth round (user, 2026-10-24)
+
+- **Caps are the game's pieces as they are** (not bent, not fitted to the ground), joined to the wall's end: their joining x
+  (`Profile::cap_join`: 8 m endcaps 0, 15 m tower ends 10 / -10, the end of their walkway) on the wall's end, along the end's direction,
+  at the end's level. The 15 m tower ends no longer take a slot of the wall.
+- **Slanted faces beside stepped bastions**: a piece's level was interpolated between samples, so the half unit next to a bastion took
+  the bastion's level (a 10 m slope). The warp now reads the level exactly (`solver::wall_level`), from inside the piece (clamped to its
+  own distances), and pieces' origins too. Test: the walkway beside a bastion stays level up to it.
+- **Troughs between steps** (a step down and a step up meeting): a chain could take any place inside its two runs, so two neighbouring
+  chains could squeeze the run between them to nothing. Now a chain stays between the middles of its two runs, a quarter of `min_run`
+  from each (half a run of flat walkway between neighbouring steps). Test.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
