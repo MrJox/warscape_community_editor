@@ -10,6 +10,10 @@
 //! - **Steps:** between two runs, as many stairs as the rise needs (each at most the base's `step_rise`, the rise shared equally), each as
 //!   long as its stair at its own slope or, when that is steeper than the base's `max_slope`, as the slope allows; chained `step_gap`
 //!   apart, centred on the boundary between the runs.
+//! - **Joints with the game's pieces:** the towers and bastions are chosen (`pieces::find_defence_slots`), then the centre line is made
+//!   straight under them and leaves an attached end along the building's axis ([`straighten`]): every joint with a game's piece is then
+//!   exact in place and direction, as the game's own walls are (in game, a joint off by a fraction of a unit or a degree let ladders and
+//!   towers dock while units could not cross onto the wall).
 
 use crate::profile::Profile;
 
@@ -117,6 +121,10 @@ pub struct Plan {
     /// `WallInput::access_every`, `defence_every`.
     pub access_every: f64,
     pub defence_every: f64,
+
+    /// The towers and bastions (their start along the wall, and key), and the places skipped with why.
+    pub defences: Vec<(f64, &'static str)>,
+    pub defences_skipped: Vec<String>,
 }
 
 impl Plan {
@@ -220,7 +228,116 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         sm.level = level_at(&plan.runs, &plan.steps, sm.s);
     }
 
+    let (defences, skipped) = crate::pieces::find_defence_slots(&plan, profile);
+    plan.defences = defences;
+    plan.defences_skipped = skipped;
+    straighten(&mut plan, profile, ground);
     plan
+}
+
+/// A straight stretch of the centre line: from, to, the line's point at `from`, its direction.
+type Straight = (f64, f64, [f64; 2], [f64; 2]);
+
+/// The centre line made straight where a game's piece joins it: over each tower or bastion (the line through its start along the
+/// direction there, so its far end meets the next piece exactly), and at an attached end (the line leaves along the building's axis,
+/// the normal of the face it meets: the joint is straight, as every joint of the game's walls). Around each, the line blends back into
+/// the spline (the straight line's continuation, weighted by a smoothstep, so place and direction are continuous) over a base's length
+/// at most, half the way to the next such stretch at most, and within its section (not across a corner). The samples' directions, outer
+/// feet and ground follow; the runs and steps are kept (the line moves a fraction of a unit).
+fn straighten(plan: &mut Plan, profile: &Profile, ground: &dyn Fn(f64, f64) -> f64) {
+    let n = plan.samples.len();
+    if n < 2 {
+        return;
+    }
+
+    let len = profile.length();
+    let unit = |v: [f64; 2]| {
+        let l = v[0].hypot(v[1]).max(1e-12);
+        [v[0] / l, v[1] / l]
+    };
+
+    let outward = |m: [f64; 2], d: [f64; 2]| {
+        let m = unit(m);
+        if m[0] * d[0] + m[1] * d[1] < 0.0 { [-m[0], -m[1]] } else { m }
+    };
+
+    let (first, last) = (plan.samples[0], plan.samples[n - 1]);
+    let mut fixed: Vec<Straight> = vec![];
+    if let Some(m) = plan.end_planes[0] {
+        fixed.push((0.0, 0.0, first.centre, outward(m, first.dir)));
+    }
+
+    for &(p0, _) in &plan.defences {
+        let at = crate::pieces::sample_at(plan, p0);
+        fixed.push((p0, p0 + len, at.centre, at.dir));
+    }
+
+    if let Some(m) = plan.end_planes[1] {
+        fixed.push((plan.length, plan.length, last.centre, outward(m, last.dir)));
+    }
+
+    if fixed.is_empty() {
+        return;
+    }
+
+    fixed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let sections = crate::pieces::sections(plan);
+    let section_of = |s: f64| sections.iter().copied().find(|&(a, b)| s >= a - 1e-9 && s <= b + 1e-9).unwrap_or((0.0, plan.length));
+    let smooth = |t: f64| {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+
+    let on = |f: &Straight, s: f64| [f.2[0] + f.3[0] * (s - f.0), f.2[1] + f.3[1] * (s - f.0)];
+    let old = plan.samples.clone();
+    let mut straight = vec![false; n];
+    for (i, sm) in plan.samples.iter_mut().enumerate() {
+        let s = old[i].s;
+        if let Some(f) = fixed.iter().find(|f| s >= f.0 - 1e-9 && s <= f.1 + 1e-9) {
+            sm.centre = on(f, s);
+            sm.dir = f.3;
+            straight[i] = true;
+            continue;
+        }
+
+        let (a, b) = section_of(s);
+        let c = old[i].centre;
+        let mut pull = [0.0, 0.0];
+
+        // The stretch before: its line going on.
+        if let Some(f) = fixed.iter().rev().find(|f| f.1 <= s && f.1 >= a - 1e-9) {
+            let next = fixed.iter().find(|g| g.0 > f.1 + 1e-9).map_or(b, |g| g.0.min(b));
+            let reach = len.min((next - f.1) / 2.0).min(b - f.1);
+            if reach > 1e-6 && s - f.1 < reach {
+                let (w, p) = (1.0 - smooth((s - f.1) / reach), on(f, s));
+                pull = [pull[0] + w * (p[0] - c[0]), pull[1] + w * (p[1] - c[1])];
+            }
+        }
+
+        // The stretch after: its line coming back.
+        if let Some(g) = fixed.iter().find(|g| g.0 >= s && g.0 <= b + 1e-9) {
+            let prev = fixed.iter().rev().find(|f| f.1 < g.0 - 1e-9).map_or(a, |f| f.1.max(a));
+            let reach = len.min((g.0 - prev) / 2.0).min(g.0 - a);
+            if reach > 1e-6 && g.0 - s < reach {
+                let (w, p) = (1.0 - smooth((g.0 - s) / reach), on(g, s));
+                pull = [pull[0] + w * (p[0] - c[0]), pull[1] + w * (p[1] - c[1])];
+            }
+        }
+
+        sm.centre = [c[0] + pull[0], c[1] + pull[1]];
+    }
+
+    let centres = plan.samples.iter().map(|sm| sm.centre).collect::<Vec<_>>();
+    for (i, sm) in plan.samples.iter_mut().enumerate() {
+        if !straight[i] {
+            let (p, q) = (centres[i.saturating_sub(1)], centres[(i + 1).min(n - 1)]);
+            sm.dir = unit([q[0] - p[0], q[1] - p[1]]);
+        }
+
+        let z_axis = [-sm.dir[1], sm.dir[0]];
+        sm.foot = [sm.centre[0] + z_axis[0] * profile.outer_face, sm.centre[1] + z_axis[1] * profile.outer_face];
+        sm.ground = ground(sm.foot[0], sm.foot[1]);
+    }
 }
 
 /// A centripetal Catmull-Rom through the points, `per` samples per segment (the ends extended by reflection).

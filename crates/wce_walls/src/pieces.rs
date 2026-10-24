@@ -165,8 +165,9 @@ pub const DOOR_EVERY: f64 = 200.0;
 /// The towers and bastions of a wall: at `defence_every / 2`, then every `defence_every`, a slot of the base's length, on the straightest,
 /// level place nearest (within half the spacing): no step under it, straight (at most [`crate::solver::STRAIGHT`] of turn), away from
 /// corners and attached ends (the wall's depth + 2) and from the wall's ends, not over another. The culture's towers and bastions in
-/// turn. Returns the slots (start, key) and the places skipped, with why.
-pub fn defence_slots(plan: &Plan, profile: &Profile) -> (Vec<(f64, &'static str)>, Vec<String>) {
+/// turn. Returns the slots (start, key) and the places skipped, with why. The solver keeps them in the plan ([`defence_slots`]) and makes
+/// the line straight under them.
+pub(crate) fn find_defence_slots(plan: &Plan, profile: &Profile) -> (Vec<(f64, &'static str)>, Vec<String>) {
     let (mut out, mut skipped) = (vec![], vec![]);
     if plan.defence_every <= 0.0 || profile.defences.is_empty() || plan.samples.len() < 2 {
         return (out, skipped);
@@ -208,6 +209,11 @@ pub fn defence_slots(plan: &Plan, profile: &Profile) -> (Vec<(f64, &'static str)
     }
 
     (out, skipped)
+}
+
+/// The towers and bastions of a wall's plan ([`find_defence_slots`], chosen by the solver), and the places skipped.
+pub fn defence_slots(plan: &Plan, _profile: &Profile) -> (Vec<(f64, &'static str)>, Vec<String>) {
+    (plan.defences.clone(), plan.defences_skipped.clone())
 }
 
 /// The square inside the wall where a door's units come down must be free: this wide (units), starting at the door.
@@ -292,8 +298,12 @@ fn section_dirs(plan: &Plan, (a, b): (f64, f64)) -> ([f64; 2], [f64; 2]) {
         [dx / l, dz / l]
     };
 
+    // At an attached end, the building's axis (the solver's line leaves along it: the joint is straight).
     let span = (b - a).min(1.0);
-    (d(a, a + span), d(b - span, b))
+    let n = plan.samples.len();
+    let start = if a < 1e-9 && plan.end_planes[0].is_some() { plan.samples[0].dir } else { d(a, a + span) };
+    let end = if b > plan.length - 1e-9 && plan.end_planes[1].is_some() { plan.samples[n - 1].dir } else { d(b - span, b) };
+    (start, end)
 }
 
 /// How much a section's end is sheared along the wall per unit across it (`s' = s + z * shear`) so the end face lies on the plane of
@@ -737,6 +747,56 @@ mod tests {
 
         let s = w.scene([0.0, 8.0, -2.5]);
         assert!((s[0] - 10.0).abs() < 1e-6 && (s[1] - 11.0).abs() < 1e-6 && (s[2] - 2.5).abs() < 1e-6, "{s:?}");
+    }
+
+    /// Every joint with a game's piece is exact, as between the game's own pieces: a wall attached to a building at an angle leaves it
+    /// along its axis, and the bastions on a curve meet the pieces on both sides in place and direction (in game, joints off by a
+    /// fraction of a unit or a degree let ladders and towers dock while units could not cross onto the wall).
+    #[test]
+    fn joints_with_the_games_pieces_are_exact() {
+        let ground = |_: f64, _: f64| 0.0;
+        let p = profile("barbarian_fort_straight").unwrap();
+        let axis = [20f64.to_radians().cos(), 20f64.to_radians().sin()];
+        let points = vec![[0.0, 0.0], [70.0, -10.0], [150.0, 15.0], [230.0, -5.0], [300.0, 10.0]];
+        let input = WallInput {
+            sharp: vec![false; points.len()],
+            points,
+            tolerance: 0.5,
+            ends: [Some(0.0), None],
+            end_planes: [Some(axis), None],
+            defence_every: 90.0,
+            ..Default::default()
+        };
+        let plan = solve(&input, p, &ground);
+        let ps = pieces(&plan, p);
+        let (x0, x1) = p.x;
+        let len = x1 - x0;
+        let angle = |a: f64, b: f64| (a - b + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+        let end_of = |q: Piece, at: f64| {
+            let w = PieceWarp::new(&plan, p, q, &ground);
+            let c = w.scene([at, 0.0, 0.0]);
+            ([c[0], c[2]], q.yaw + f64::from(w.yaw([at as f32, 0.0, 0.0])))
+        };
+
+        // The first piece leaves the building along its axis.
+        assert!(angle(ps[0].yaw, axis[1].atan2(axis[0])).abs() < 1e-9, "first piece yaw {}", ps[0].yaw.to_degrees());
+        let (_, start_yaw) = end_of(ps[0], x0);
+        assert!(angle(start_yaw, ps[0].yaw).abs() < 1e-6, "its content starts at {}", start_yaw.to_degrees());
+
+        let rigid = ps.iter().filter(|q| q.rigid).copied().collect::<Vec<_>>();
+        assert!(rigid.len() >= 2, "{} bastions", rigid.len());
+        for r in rigid {
+            let (dir, start) = ([r.yaw.cos(), r.yaw.sin()], [r.origin[0] + r.yaw.cos() * x0, r.origin[2] + r.yaw.sin() * x0]);
+            let end = [start[0] + dir[0] * len, start[1] + dir[1] * len];
+            let before = ps.iter().find(|q| (q.s.1 - r.s.0).abs() < 1e-6).copied().expect("a piece before");
+            let after = ps.iter().find(|q| (q.s.0 - r.s.1).abs() < 1e-6).copied().expect("a piece after");
+            for (q, at, joint) in [(before, x1, start), (after, x0, end)] {
+                let (c, yaw) = end_of(q, at);
+                let d = (c[0] - joint[0]).hypot(c[1] - joint[1]);
+                assert!(d < 1e-3, "bastion at {:.0}: the piece next to it is {d:.4} off", r.s.0);
+                assert!(angle(yaw, r.yaw).abs() < 1e-3, "bastion at {:.0}: the piece next to it turns {:.3} degrees", r.s.0, angle(yaw, r.yaw).to_degrees());
+            }
+        }
     }
 
     #[test]

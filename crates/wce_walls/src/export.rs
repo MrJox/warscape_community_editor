@@ -265,7 +265,7 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
 
     // The pack: the tile's exported files, the tile database, the pieces, the rows.
     let mut pack_files = vec![];
-    for (rel, bytes) in files_below(&dir)? {
+    for (rel, bytes) in files_below(&dir)?.into_iter().filter(|(rel, _)| !NOT_SHIPPED.iter().any(|n| rel.eq_ignore_ascii_case(n))) {
         pack_files.push((format!("{folder}/{rel}"), bytes));
     }
 
@@ -282,6 +282,10 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
     notes.push(format!("{walls} wall piece(s) generated"));
     Ok((pack, dir, notes))
 }
+
+/// What the compile writes that the game's packs never ship: BOB's list of the tile's buildings and files (`tile.agf`), and TEd's XML
+/// twin of the building list.
+const NOT_SHIPPED: [&str; 2] = ["tile.agf", "building_list.xml"];
 
 /// Every file below a folder, by its path relative to it.
 fn files_below(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
