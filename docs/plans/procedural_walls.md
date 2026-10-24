@@ -11,12 +11,13 @@ the tile when the tile is exported. Siege battles must work on them: units on th
 - **The walkway keeps the base piece's height over the ground** (siege equipment must dock). Steps come when the drift passes a tolerance
   (default 0.5 m, per wall); a step rises what is needed, up to the culture's step piece's rise; steep ground chains steps. To revisit after
   gameplay tests.
-- **The ground** is the terrain height at the wall's base, measured at the middle point of the outer face.
+- **The ground** is the terrain height at the wall's base, measured along the outer face's base line; each flat run of the walkway is
+  held to the ground at its middle.
 - **The terrain is not touched**: the wall adapts to it.
 - **Gates and bastions are placed first** (as today); a wall runs between them. No generated towers or bastions in this iteration.
 - **A free end is closed with the kit's endcap.**
-- **Vertices are smooth or sharp**: smooth bends the wall along a curve; sharp is a mitred corner. Turns under 25 degrees are sharp
-  (see "To confirm").
+- **Vertices are smooth or sharp**: smooth bends the wall along a curve; sharp is a mitred corner. A vertex whose internal angle is under
+  25 degrees (a turn over 155 degrees) is always sharp.
 - **Generated pieces have variable lengths** (vanilla has longer pieces too).
 - **Destruction levels are generated; collapse animations are not** (a piece swaps to its next level). Revisit later.
 - **The spline is a custom element of the tile model's scene.** TEd will not read it; that is accepted (the model is separate from the TEd
@@ -176,10 +177,6 @@ the game sees (0, 2, 3, 4).
 
 ## To confirm
 
-- **The 25 degree rule:** read here as "a vertex whose turn is under 25 degrees is drawn as a sharp corner unless marked smooth". It may
-  have been meant the other way (a sharp turn becomes a corner). The user to confirm before phase 3.
-- **"The middle point of the outer face"**: read here as the ground measured along the outer face's base line, with each flat run held to
-  the ground at its middle. The user to confirm before phase 1's height profile.
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);
   if it is the bank, its lower edge must meet the terrain after the foot is stretched (phase 2).
 - **Destruction granularity:** a piece of `k` copies breaches as one building (a longer breach). Accepted by "variable lengths";
