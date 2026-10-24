@@ -82,7 +82,10 @@ texture group names from the ground types (per group, the type it carries most, 
 
 The trees of one tree list (`Context::tree_list`; default `outfield_tents.tree_list.bin`, then `default.tree_list.bin`) become explicit
 `VEGETATION_INSTANCE`s in a "Decompiled vegetation" layer, in the buildings' frame: the seeds are not in the binary, so regenerating would
-move them. A tree whose list flag is 0 gets `surface_mode` MSM_LANDSCAPE (BOB's flag is MSM_FREEFORM). The layer also holds a
+move them. Only its static trees: the generated objects stand at the centres of the generator's cells (128 / density metres, the
+database row's density; `on_generator_grid`) and are left out, as the outfield_tents list's yurts (2,687 on
+tdd_settlement_middle_men_ports/middle_men_port_a/minor, which otherwise stood all over the field) or a climate's generated trees; the
+static trees are the same in every list (4,285 there). A tree whose list flag is 0 gets `surface_mode` MSM_LANDSCAPE (BOB's flag is MSM_FREEFORM). The layer also holds a
 `VegetationExclusionPolygonInstance` over the whole tile (a metre past each edge): BOB keeps only the static trees inside an exclusion
 polygon and generates nothing there, so an edited project exports exactly its instances. The tree list's `id`s are rpfm's (random), not
 data.
