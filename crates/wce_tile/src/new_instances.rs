@@ -6,8 +6,32 @@ use std::collections::BTreeMap;
 
 use wce_foundation::math::Double3;
 
-use crate::instance_templates::template;
+use crate::instance_templates::InstanceTemplate;
 use crate::ted_scene::format_number;
+
+/// The element of a procedural wall (docs/plans/procedural_walls.md): not TEd's, so named as tile.wce's convention asks
+/// (`project_files`).
+pub const WALL_SPLINE: &str = "WceWallSpline";
+
+/// The defaults of the editor's own types, which the kit has none of (`instance_templates` is generated from its tiles): a procedural
+/// wall is an open polyline with the polygons' attributes and its own.
+pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[InstanceTemplate {
+    kind: WALL_SPLINE,
+    attrs: &[
+        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
+        ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Wall"),
+        ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
+        ("wall_base", "barbarian_fort_straight"), ("wall_tolerance", "0.5"), ("wall_flip", "false"), ("wall_access_every", "200"),
+        ("wall_defence_every", "0"),
+    ],
+    wrappers: &["points"],
+    point_attrs: &[("position", "0,0,0")],
+}];
+
+/// The defaults of a type: the kit's, else the editor's own.
+pub fn template(kind: &str) -> Option<&'static InstanceTemplate> {
+    crate::instance_templates::template(kind).or_else(|| EDITOR_TEMPLATES.iter().find(|t| t.kind == kind))
+}
 
 /// A point of a polygon or a spline: its local position and attributes other than the template's (`controlIn`, `width`, ...).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -145,6 +169,15 @@ pub fn element_text(n: &NewInstance) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_wall_is_written_with_its_points_and_defaults() {
+        let mut n = NewInstance::new(WALL_SPLINE).position(Double3::new(1.0, 0.0, 2.0)).attr("wall_base", "roman_fort_straight");
+        n.points = vec![NewPoint::at(Double3::new(-5.0, 0.0, 0.0)), NewPoint::at(Double3::new(5.0, 0.0, 0.0))];
+        let text = String::from_utf8(element_text(&n).unwrap()).unwrap();
+        assert!(text.starts_with("<WceWallSpline flags=") && text.contains("wall_base=\"roman_fort_straight\"") && text.contains("wall_tolerance=\"0.5\""), "{text}");
+        assert!(text.contains("<points>") && text.matches("<point ").count() == 2 && text.ends_with("</WceWallSpline>\n"), "{text}");
+    }
 
     #[test]
     fn a_new_instance_is_written_in_teds_layout() {

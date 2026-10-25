@@ -1208,12 +1208,7 @@ impl TileDocument {
                 }
 
                 let (c, points) = line(&pts)?;
-                let mut n = new_polygon(kind, points, false).position(c);
-                for (k, v) in super::walls::wall_defaults() {
-                    n.attrs.entry(k).or_insert(v);
-                }
-
-                n
+                new_polygon(kind, points, false).position(c)
             }
 
             ("AISeparatorInstance", Create::Line(pts)) => {

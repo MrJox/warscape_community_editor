@@ -20,21 +20,6 @@ use super::Tile;
 use super::index::matrix_of;
 
 pub use wce_walls::scene::{Anchor, WALL_SPLINE, WallLayout};
-use wce_walls::scene::DEFAULT_BASE;
-
-/// A new wall's attributes (`TedScene::add_polygon` gives the same): an open polyline of the polygons' defaults, with the default base.
-pub const WALL_DEFAULTS: [(&str, &str); 15] = [
-    ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
-    ("polygon_closed", "0"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Wall"), ("polygon_shape", "PS_POLYGON"),
-    ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"), ("wall_base", DEFAULT_BASE), ("wall_tolerance", "0.5"), ("wall_flip", "false"),
-    ("wall_access_every", "200"), ("wall_defence_every", "0"),
-];
-
-/// [`WALL_DEFAULTS`] as attributes.
-pub fn wall_defaults() -> std::collections::BTreeMap<String, String> {
-    WALL_DEFAULTS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
-}
-
 /// An end placed within this of a building's end is put on it (scene units).
 pub const SNAP: f64 = 8.0;
 
