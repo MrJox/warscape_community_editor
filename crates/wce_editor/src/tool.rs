@@ -28,6 +28,9 @@ pub enum ViewportEventKind {
     /// Every frame the cursor is over the viewport.
     #[default]
     Hover,
+
+    /// A right click (no drag): what is under the cursor is in `hit` / `hit_source`.
+    ContextMenu,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -100,6 +103,16 @@ pub trait Tool: Any {
 
     /// Extra menus of the tool (inside the menu bar), every frame while it is active.
     fn draw_menus(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// Buttons of the tool in the toolbar, after the gizmo's.
+    fn toolbar(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// Items of the tool at the end of the Edit menu.
+    fn edit_menu(&mut self, editor: &mut Editor) {
         let _ = editor;
     }
 

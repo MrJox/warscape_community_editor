@@ -3,6 +3,7 @@
 //! map, per-type visibility and distance culling. Everything goes through the shared selection, gizmo, undo stacks and overlay pass; every
 //! action is a command too (`commands`), so scripts and menus use the same code.
 
+pub mod actions;
 pub mod commands;
 pub mod create_panel;
 pub mod context_panel;

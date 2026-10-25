@@ -1283,6 +1283,7 @@ impl Editor {
             gui::same_line();
         }
 
+        self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
         gui::text_disabled("|");
         gui::same_line();
         gui::push_style_color(gui::COL_TEXT, if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) });
@@ -1414,6 +1415,8 @@ impl Editor {
             if gui::menu_item("Select none", None, false, !self.selection.is_empty()) {
                 self.selection.clear();
             }
+
+            self.with_tool_at(self.active_tool, |t, e| t.edit_menu(e));
 
             gui::end_menu();
         }

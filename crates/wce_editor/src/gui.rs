@@ -345,8 +345,12 @@ pub fn end_menu_bar() {
 }
 
 pub fn begin_menu(label: &str) -> bool {
+    begin_menu_enabled(label, true)
+}
+
+pub fn begin_menu_enabled(label: &str, enabled: bool) -> bool {
     let c = cs(label);
-    call!(sys::igBeginMenu(c.as_ptr(), true))
+    call!(sys::igBeginMenu(c.as_ptr(), enabled))
 }
 
 pub fn end_menu() {
