@@ -33,8 +33,8 @@ nearest layer above it with an export type says (`LayerExportType_Normal`: the t
 | `SiegeAINodeInstance` | 1,632 | yes (Create: click; with a 20 m square area) | properties | box marker | siege AI nodes |
 | `SiegeAIEdgeInstance` | 2,419 | yes (Create: draw one boundary; the second is 10 m to its right) | properties | box marker (no line between its nodes) | siege AI edges |
 | `AISeparatorInstance` | 108 | yes (Create: draw) | properties, points | outline | AI separators |
-| `SplineRiverInstance` | 254 | no | properties (no spline editor) | the river (game shaders) | no: the export reads TEd's `river_spline<n>.xml`, which the editor does not write |
-| `SEGMENTED_SPLINE_INSTANCE` (roads) | 4 | no | properties (no spline editor) | box marker | no |
+| `SplineRiverInstance` | 254 | yes (Create: draw) | properties, points, handles, point values | the river (game shaders) and its curve | through `river_spline<n>.xml`, written on save for each river that changed |
+| `SEGMENTED_SPLINE_INSTANCE` (roads) | 4 | yes (Create: draw) | properties, points, handles, point values | its curve | no (a TEd painting guide) |
 | `LayerInstance` | 2,841 | yes (New layer, Ctrl+G) | name, export type | (a layer) | decides the export, see above |
 | `UserInstanceGroup` | 2,444,458 | no | properties | (a group) | its contents |
 | `INSTANCE_GROUP` | 575 | no | properties | (a group) | its contents |
@@ -45,9 +45,9 @@ spline's points), `children`, `camera`, and the modules (`Vegetation`, `Grass`, 
 
 ## What is missing
 
-- Creating rivers and roads (the spline editor, next). Every other type is made by the Tile panel's Create section (`TileDocument::create`)
-  with the kit's defaults: the most common value of each attribute over the kit's tiles (`scripts/re/instance_defaults.py` ->
-  `instance_templates.py` -> `wce_tile::instance_templates`), keys typed as text.
+- Every type is made by the Tile panel's Create section (`TileDocument::create`) with the kit's defaults: the most common value of each
+  attribute over the kit's tiles (`scripts/re/instance_defaults.py` -> `instance_templates.py` -> `wce_tile::instance_templates`), keys typed
+  as text.
 - A siege AI edge does not refer to nodes: edges and nodes are exported on their own, each with its boundary polylines.
-- A spline editor (rivers and roads), and writing `river_spline<n>.xml` so that an edited river is exported.
-- Drawing a civilian shelter's target and a siege AI edge's two nodes; roads.
+- Painting along a road (TEd's Spline Road splat) needs reverse engineering first.
+- Drawing a civilian shelter's target and a siege AI edge's two nodes.

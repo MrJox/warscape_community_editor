@@ -788,8 +788,16 @@ impl Tile {
     fn rebuild_polygon(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
         let mut o = Overlay { pickable: false, ..Default::default() };
         let st = if self.idx.valid { self.idx.style[self.idx.type_[elem] as usize] } else { style_of(self.tscene().type_of(elem)) };
-        let closed = self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
-        let lifted = self.polygon_world_points(elem).into_iter().map(|p| Float3::new(p.x, p.y + 0.3, p.z)).collect::<Vec<_>>();
+        let spline = wce_tile::splines::is_spline(self.tscene().type_of(elem));
+        let closed = if spline {
+            self.tscene().doc().get(elem, "closed").is_some_and(|v| v == "1")
+        } else {
+            self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0")
+        };
+
+        let points = if spline { self.spline_world_curve(elem) } else { self.polygon_world_points(elem) };
+        let lifted = points.into_iter().map(|p| Float3::new(p.x, p.y + 0.3, p.z)).collect::<Vec<_>>();
+        let closed = closed && !spline;
         o.polygon_outline(&lifted, closed, st.color);
         match self.outline_entity.get(&elem).copied().filter(|&e| scene.find(e).is_some()) {
             Some(e) => scene.update_payload(e, Payload::Overlay(o)),
@@ -992,6 +1000,10 @@ impl Tile {
 
         if self.is_polygon(elem) && self.display.show_polygons && self.shown(elem) {
             self.rebuild_polygon(scene, self.layer, elem);
+        }
+
+        if self.tscene().type_of(elem) == "SplineRiverInstance" {
+            self.water_dirty = true;
         }
     }
 
@@ -1235,6 +1247,23 @@ impl Tile {
                     h.line(Float3::new(q.x, q.y + 0.4, q.z - r), Float3::new(q.x, q.y + 0.4, q.z + r), c);
                     h.line(q, Float3::new(q.x, q.y + r * 1.5, q.z), c);
                 }
+
+                // A spline's handles: a line from the point, a small diamond at the end.
+                if wce_tile::splines::is_spline(self.tscene().type_of(e)) {
+                    let points = self.polygon_world_points(e);
+                    let handle = overlay_colour(0.4, 0.8, 1.0, 1.0);
+                    for (q, (hin, hout)) in points.into_iter().zip(self.spline_world_handles(e)) {
+                        for k in [hin, hout].into_iter().flatten() {
+                            let (q, k) = (Float3::new(q.x, q.y + 0.4, q.z), Float3::new(k.x, q.y + 0.4, k.z));
+                            let r = handle_size * 0.6;
+                            h.line(q, k, handle);
+                            h.line(Float3::new(k.x - r, k.y, k.z), Float3::new(k.x, k.y, k.z - r), handle);
+                            h.line(Float3::new(k.x, k.y, k.z - r), Float3::new(k.x + r, k.y, k.z), handle);
+                            h.line(Float3::new(k.x + r, k.y, k.z), Float3::new(k.x, k.y, k.z + r), handle);
+                            h.line(Float3::new(k.x, k.y, k.z + r), Float3::new(k.x - r, k.y, k.z), handle);
+                        }
+                    }
+                }
             }
         }
 
@@ -1328,6 +1357,31 @@ impl Tile {
     }
 
     /// World positions of the points of a polygon.
+    /// A spline's curve in the world (metres), sampled.
+    pub fn spline_world_curve(&self, elem: usize) -> Vec<Float3> {
+        let pts = wce_tile::splines::read(self.tscene(), elem);
+        let closed = self.tscene().doc().get(elem, "closed").is_some_and(|v| v == "1");
+        self.local_to_world(elem, &wce_tile::splines::curve(&pts, closed, 16))
+    }
+
+    /// A spline's handles in the world (metres): each point's `controlIn` and `controlOut`, `None` where no segment uses it.
+    pub fn spline_world_handles(&self, elem: usize) -> Vec<(Option<Float3>, Option<Float3>)> {
+        let pts = wce_tile::splines::read(self.tscene(), elem);
+        let n = pts.len();
+        let ins = self.local_to_world(elem, &pts.iter().map(|p| p.control_in).collect::<Vec<_>>());
+        let outs = self.local_to_world(elem, &pts.iter().map(|p| p.control_out).collect::<Vec<_>>());
+        (0..n).map(|i| ((i > 0).then(|| ins[i]), (i + 1 < n).then(|| outs[i]))).collect()
+    }
+
+    fn local_to_world(&self, elem: usize, local: &[Double3]) -> Vec<Float3> {
+        let w = world_transform(self.tscene(), elem);
+        let u = self.unit();
+        local.iter().map(|&v| {
+            let p = w.position + w.rotation * v;
+            Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
+        }).collect()
+    }
+
     pub fn polygon_world_points(&self, elem: usize) -> Vec<Float3> {
         let w = world_transform(self.tscene(), elem);
         let u = self.unit();

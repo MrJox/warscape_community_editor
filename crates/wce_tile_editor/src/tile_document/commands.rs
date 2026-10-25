@@ -163,6 +163,67 @@ impl Command<Tile> for TedPointCommand {
     }
 }
 
+/// Attributes of points of one polygon or spline (a spline point's position and handles, its width ...); the steps of one gesture merge.
+pub(crate) struct TedPointAttrsCommand {
+    pub name: String,
+    pub elem: usize,
+
+    /// (point index, attribute, text before, text after)
+    pub steps: Vec<(usize, String, String, String)>,
+    pub gesture: u64,
+}
+
+impl TedPointAttrsCommand {
+    fn put(&self, t: &mut Tile, after: bool) {
+        let sc = &mut t.project.scene;
+        let points = sc.polygon_points(self.elem);
+        for (i, attr, old, new) in &self.steps {
+            if let Some(&p) = points.get(*i) {
+                sc.set_attr(p, attr, if after { new } else { old });
+            }
+        }
+    }
+}
+
+impl Command<Tile> for TedPointAttrsCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.put(t, true);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        self.put(t, false);
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ ((self.elem as u64) << 20) } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0 || a.1 != b.1) {
+            return false;
+        }
+
+        for (mine, theirs) in self.steps.iter_mut().zip(&n.steps) {
+            mine.3.clone_from(&theirs.3);
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![item_of(self.elem)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// A structural edit changes element indices; its undo record is the list of text splices it made (a few hundred bytes, not a copy of the
 /// document). The scene already holds the result when the command is pushed.
 pub(crate) struct TedSpliceCommand {

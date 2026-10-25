@@ -21,7 +21,7 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, PlacementItem, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointCommand, TedSpliceCommand};
+use super::commands::{BrushStepCommand, PlacementItem, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -481,6 +481,10 @@ impl TileDocument {
     /// Not a polygon, no such point, or an unknown operation.
     pub fn polygon_point(&mut self, elem: usize, op: &str, index: usize, world: Float3, gesture: u64) -> Result<(), String> {
         let t = self.tile();
+        if self.is_spline(elem) {
+            return self.spline_point(elem, op, index, world, gesture);
+        }
+
         if !t.is_polygon(elem) {
             return Err("not a polygon".to_owned());
         }
@@ -519,6 +523,185 @@ impl TileDocument {
 
             _ => Err(format!("unknown point operation '{op}'")),
         }
+    }
+
+    // ---- splines (wce_tile::splines): rivers and roads
+
+    pub fn is_spline(&self, elem: usize) -> bool {
+        let sc = self.tile().tscene();
+        elem < sc.doc().elements().len() && wce_tile::splines::is_spline(sc.type_of(elem))
+    }
+
+    /// A spline point edit, `world` the cursor:
+    /// - `move`: the point, its handles with it;
+    /// - `in` / `out`: its `controlIn` / `controlOut`, at the point's height, the other handle mirrored;
+    /// - `insert`: a new point after `index` (after the last one: the spline grows), its handles made from its neighbours;
+    /// - `prepend`: a new first point;
+    /// - `remove`: the point (a spline keeps 2).
+    ///
+    /// The handles no segment uses (the first point's `controlIn`, the last one's `controlOut`) stay `0,0,0`, as TEd writes them.
+    ///
+    /// # Errors
+    ///
+    /// Not a spline, no such point, or an unknown operation.
+    pub fn spline_point(&mut self, elem: usize, op: &str, index: usize, world: Float3, gesture: u64) -> Result<(), String> {
+        use wce_tile::new_instances::point_text;
+        use wce_tile::splines::{auto_handles, mirror, read};
+
+        if !self.is_spline(elem) {
+            return Err("not a spline".to_owned());
+        }
+
+        let t = self.tile();
+        let sc = t.tscene();
+        let pts = read(sc, elem);
+        let n = pts.len();
+        let elems = sc.polygon_points(elem);
+        if index >= n.max(1) {
+            return Err("no such point".to_owned());
+        }
+
+        let local = t.to_local(elem, world);
+        let text = |i: usize, attr: &str| sc.doc().get(elems[i], attr).unwrap_or_default();
+        let step = |i: usize, attr: &str, v: Double3| (i, attr.to_owned(), text(i, attr), point_text(v));
+        let (first, last) = (index == 0, index + 1 == n);
+        let attrs = match op {
+            "move" => {
+                let p = pts[index];
+                let d = local - p.position;
+                let mut steps = vec![step(index, "position", local)];
+                if !first {
+                    steps.push(step(index, "controlIn", p.control_in + d));
+                }
+
+                if !last {
+                    steps.push(step(index, "controlOut", p.control_out + d));
+                }
+
+                Some(("Move spline point", steps))
+            }
+
+            "in" | "out" => {
+                let p = pts[index];
+                let h = Double3::new(local.x, p.position.y, local.z);
+                let (this, other, used) = if op == "in" { ("controlIn", "controlOut", !last) } else { ("controlOut", "controlIn", !first) };
+                if (op == "in" && first) || (op == "out" && last) {
+                    return Err("an end's outer handle is not used".to_owned());
+                }
+
+                let mut steps = vec![step(index, this, h)];
+                if used {
+                    steps.push(step(index, other, mirror(p.position, h)));
+                }
+
+                Some(("Move spline handle", steps))
+            }
+
+            _ => None,
+        };
+
+        if let Some((name, steps)) = attrs {
+            let steps = steps.into_iter().filter(|s| s.2 != s.3).collect::<Vec<_>>();
+            if !steps.is_empty() {
+                self.history.push(Box::new(TedPointAttrsCommand { name: name.to_owned(), elem, steps, gesture }));
+            }
+
+            return Ok(());
+        }
+
+        let set = |sc: &mut TedScene, i: usize, attr: &str, v: Double3| {
+            let p = sc.polygon_points(elem)[i];
+            sc.set_attr(p, attr, &point_text(v));
+        };
+
+        let mark = self.begin()?;
+        let result = match op {
+            "insert" => {
+                let mut positions = pts.iter().map(|p| p.position).collect::<Vec<_>>();
+                positions.insert(index + 1, local);
+                let (cin, cout) = auto_handles(&positions, index + 1);
+                let sc = self.tscene_mut();
+                sc.insert_polygon_point(elem, index, local)?;
+                set(sc, index + 1, "controlIn", cin);
+                set(sc, index + 1, "controlOut", cout);
+                if last {
+                    // The old end is inside now: its outer handle mirrors its inner one (or is made, for a spline of one point).
+                    let p = pts[index];
+                    let out = if n > 1 { mirror(p.position, p.control_in) } else { auto_handles(&positions, index).1 };
+                    set(sc, index, "controlOut", out);
+                }
+
+                Ok("Insert spline point")
+            }
+
+            "prepend" => {
+                let mut positions = pts.iter().map(|p| p.position).collect::<Vec<_>>();
+                positions.insert(0, local);
+                let (_, cout) = auto_handles(&positions, 0);
+                let p = pts[0];
+                let sc = self.tscene_mut();
+
+                // The copy after the first point keeps its values; the first one becomes the new point.
+                sc.insert_polygon_point(elem, 0, p.position)?;
+                set(sc, 0, "position", local);
+                set(sc, 0, "controlIn", Double3::ZERO);
+                set(sc, 0, "controlOut", cout);
+                let cin = if n > 1 { mirror(p.position, p.control_out) } else { auto_handles(&positions, 1).0 };
+                set(sc, 1, "controlIn", cin);
+                Ok("Insert spline point")
+            }
+
+            "remove" => {
+                let sc = self.tscene_mut();
+                if sc.remove_polygon_point(elem, index)? {
+                    if first {
+                        set(sc, 0, "controlIn", Double3::ZERO);
+                    } else if last {
+                        set(sc, index - 1, "controlOut", Double3::ZERO);
+                    }
+
+                    Ok("Remove spline point")
+                } else {
+                    Err("a spline needs at least 2 points".to_owned())
+                }
+            }
+
+            _ => Err(format!("unknown point operation '{op}'")),
+        };
+
+        match result {
+            Ok(name) => {
+                self.push_splice(name.to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+                Ok(())
+            }
+
+            Err(err) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(err)
+            }
+        }
+    }
+
+    /// A value of spline points (`width`, `foam_amount`, `alpha_fade`, `flow_speed`, `terrain_offset`): one undo entry, the steps of one
+    /// gesture merge.
+    pub fn set_spline_value(&mut self, elem: usize, points: &[usize], attr: &str, value: &str, gesture: u64) -> bool {
+        if !self.is_spline(elem) {
+            return false;
+        }
+
+        let sc = self.tile().tscene();
+        let elems = sc.polygon_points(elem);
+        let steps = points.iter().filter_map(|&i| {
+            let before = sc.doc().get(*elems.get(i)?, attr).unwrap_or_default();
+            Some((i, attr.to_owned(), before, value.to_owned()))
+        }).collect::<Vec<_>>();
+        if steps.is_empty() {
+            return false;
+        }
+
+        self.history.push(Box::new(TedPointAttrsCommand { name: format!("Set {attr}"), elem, steps, gesture }));
+        true
     }
 
     /// # Errors
@@ -1012,6 +1195,24 @@ impl TileDocument {
                     n.children.push(element_text(&polygon("SIEGE_AI_POLYGON_INSTANCE", b, false))?);
                 }
 
+                n
+            }
+
+            ("SplineRiverInstance" | "SEGMENTED_SPLINE_INSTANCE", Create::Line(pts)) => {
+                // TEd's layout: the instance at the first point, the points from it.
+                if pts.len() < 2 {
+                    return Err("draw at least 2 points".to_owned());
+                }
+
+                let at = local(pts[0]);
+                let positions = pts.iter().map(|&p| local(p) - at).collect::<Vec<_>>();
+                let mut n = NewInstance::new(kind).position(at).attr("lf_offset", wce_tile::ted_scene::format_ted_number(at.y));
+                n.points = wce_tile::splines::new_points(&positions).into_iter().map(|p| {
+                    let mut q = NewPoint::at(p.position);
+                    q.attrs.insert("controlIn".to_owned(), wce_tile::new_instances::point_text(p.control_in));
+                    q.attrs.insert("controlOut".to_owned(), wce_tile::new_instances::point_text(p.control_out));
+                    q
+                }).collect();
                 n
             }
 

@@ -824,11 +824,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("polygon_point", "polygon_point move|insert|remove <index> <x m> <z m>", "edit a point of the selected polygon (insert: after the index)", |e, a| {
+    c.add(
+        "polygon_point", "polygon_point move|insert|remove|in|out|prepend <index> <x m> <z m>",
+        "edit a point of the selected polygon or spline (insert: after the index; a spline's in / out: its handles, prepend: a new first point)", |e, a| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let Some(idx) = a.get(1).and_then(|x| number(x)).filter(|_| a.len() >= 2) else {
-            return fail("usage: polygon_point move|insert|remove <index> <x m> <z m>");
+            return fail("usage: polygon_point move|insert|remove|in|out|prepend <index> <x m> <z m>");
         };
 
         let (x, z) = if a.len() >= 4 { (number(&a[2]).unwrap_or(0.0), number(&a[3]).unwrap_or(0.0)) } else { (0.0, 0.0) };
@@ -836,6 +838,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Ok(idx) = usize::try_from(idx as i64) else { return fail("no such point") };
         let p = Float3::new(x, d.tile().terrain_height(x, z), z);
         d.polygon_point(el, &a[0], idx, p, 0).map_or_else(fail, |()| ok(""))
+    });
+
+    c.add("spline_value", "spline_value <attribute> <value> [point index|all]", "a value of the selected river's or road's points (width, foam_amount, alpha_fade, flow_speed, terrain_offset)", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let (Some(attr), Some(value)) = (a.first(), a.get(1).filter(|v| number(v).is_some())) else {
+            return fail("usage: spline_value <attribute> <value> [point index|all]");
+        };
+
+        let Some(el) = el.filter(|&s| d.is_spline(s)) else { return fail("no river or road selected") };
+        let n = d.tile().tscene().polygon_points(el).len();
+        let points = match a.get(2).map(String::as_str) {
+            None | Some("all") => (0..n).collect::<Vec<_>>(),
+            Some(i) => match i.parse::<usize>() {
+                Ok(i) if i < n => vec![i],
+                _ => return fail("no such point"),
+            },
+        };
+
+        if d.set_spline_value(el, &points, attr, value, 0) { ok(format!("{attr} = {value} on {} points", points.len())) } else { fail("nothing changed") }
     });
 
     c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {

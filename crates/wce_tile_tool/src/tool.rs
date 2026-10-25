@@ -29,14 +29,15 @@ pub const POLYGON_TYPES: [&str; 5] =
 
 /// What the Create section makes (`TileDocument::create`, or `add_polygon` for the polygon types it had first): the type, whether it is placed
 /// with a click (true) or drawn, and what its key is called (none: no key).
-pub const CREATE_TYPES: [(&str, bool, Option<&str>); 20] = [
+pub const CREATE_TYPES: [(&str, bool, Option<&str>); 22] = [
     ("POINT_LIGHT_INSTANCE", true, None), ("VFXInstance", true, Some("effect (vfx)")), ("ProjectedDecalInstance", true, Some("decal model")),
     ("SIMPLE_MESH_INSTANCE", true, Some("model")), ("VEGETATION_INSTANCE", true, Some("tree (species.variant)")), ("CivilianShelter", true, None),
     ("CaptureLocationInstance", true, None), ("SiegeAINodeInstance", true, None), ("DeploymentZonePolygonInstanceGroup", true, None),
     ("AI_HINT_POLYGON_INSTANCE", false, None), ("NOGO_REGION_POLYGON_INSTANCE", false, None), ("GO_REGION_POLYGON_INSTANCE", false, None),
     ("VegetationExclusionPolygonInstance", false, None), ("SIEGE_AI_POLYGON_INSTANCE", false, None), ("ZONE_POLYGON_INSTANCE", false, None),
     ("CivilianDeploymentZone", false, None), ("LiteBuildingZone", false, None), ("AISeparatorInstance", false, None),
-    ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", false, None), ("SiegeAIEdgeInstance", false, None),
+    ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", false, None), ("SiegeAIEdgeInstance", false, None), ("SplineRiverInstance", false, None),
+    ("SEGMENTED_SPLINE_INSTANCE", false, None),
 ];
 
 pub const HINTS: [&str; 16] = [
@@ -169,6 +170,13 @@ pub struct TileTool {
     grab_history: usize,
     pub(crate) grab_gesture: u64,
     poly_point: Option<usize>,
+
+    /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
+    spline_handle: Option<bool>,
+
+    /// The spline values panel edits every point, not only the selected one; the gesture of the value being dragged.
+    spline_all: bool,
+    value_gesture: u64,
     point_drag: bool,
     point_gesture: u64,
     pub(crate) drawing: bool,
@@ -243,7 +251,7 @@ impl Default for TileTool {
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None, prefab_filter: String::new(),
             prefab_selected: String::new(), prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
-            grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
+            grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
@@ -1799,15 +1807,54 @@ impl TileTool {
     }
 
     /// The selected polygon's points and area.
-    fn show_selected_polygon(&self, e: &mut Editor, id: DocumentId) {
+    fn show_selected_polygon(&mut self, e: &mut Editor, id: DocumentId) {
         let sel = primary(e);
-        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        if let Some(s) = sel.filter(|&s| d.is_spline(s)) {
+            self.show_selected_spline(d, s);
+            return;
+        }
+
         if let Some(s) = sel.filter(|&s| d.tile().is_polygon(s)) {
             let sc = d.tile().tscene();
             gui::text(&format!("selected: {} points, area {:.1}", sc.polygon_points(s).len(), sc.polygon_area(s)));
             match self.poly_point {
                 Some(pt) => gui::text(&format!("point {pt}: drag to move, Delete removes, shift+click edge inserts")),
                 None => gui::text_disabled("click a point handle to edit; shift+click near an edge inserts a point"),
+            }
+        }
+    }
+
+    /// A river's or road's points: how to edit them, and the values of the selected point (or of all of them).
+    fn show_selected_spline(&mut self, d: &mut TileDocument, s: usize) {
+        let sc = d.tile().tscene();
+        let points = sc.polygon_points(s);
+        gui::text(&format!("selected: {} points", points.len()));
+        match self.poly_point.filter(|&p| p < points.len()) {
+            Some(pt) => gui::text(&format!("point {pt}: drag it or its blue handles, Delete removes, shift+click inserts (beyond an end: grows)")),
+            None => gui::text_disabled("click a point to edit it; drag the blue handles to bend; shift+click inserts a point"),
+        }
+
+        gui::checkbox("all points", &mut self.spline_all);
+        let Some(shown) = (if self.spline_all { Some(0) } else { self.poly_point.filter(|&p| p < points.len()) }) else { return };
+        let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![shown] };
+        let kind = sc.type_of(s).to_owned();
+        let Some(t) = wce_tile::instance_templates::template(&kind) else { return };
+        for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
+            let sc = d.tile().tscene();
+            let mut v = sc.doc().get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+            let speed = if matches!(attr, "width" | "terrain_offset") { 0.1 } else { 0.01 };
+            let changed = gui::drag_float(attr, &mut v, speed, 0.0, 0.0, "%g");
+            if gui::is_item_activated() {
+                self.value_gesture = d.next_gesture();
+            }
+
+            if changed {
+                d.set_spline_value(s, &targets, attr, &wce_tile::ted_scene::format_general(f64::from(v)), self.value_gesture);
+            }
+
+            if gui::is_item_deactivated() {
+                d.history_mut().break_merge();
             }
         }
     }
@@ -2168,6 +2215,35 @@ impl Tool for TileTool {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
                 let pts = d.tile().polygon_world_points(sel);
+                let spline = d.is_spline(sel);
+                let near = |c: Float3| {
+                    let t = dot(c - o, dir);
+                    (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
+                };
+
+                // A spline's handles (drawn at their point's height) before its points.
+                if spline {
+                    let mut best = None;
+                    let mut best_t = 1e30f32;
+                    for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
+                        for (h, out) in [(hin, false), (hout, true)] {
+                            if let Some(t) = h.and_then(|h| near(Float3::new(h.x, pts[i].y + 0.4, h.z))).filter(|&t| t < best_t) {
+                                best_t = t;
+                                best = Some((i, out));
+                            }
+                        }
+                    }
+
+                    if let Some((i, out)) = best {
+                        self.poly_point = Some(i);
+                        self.spline_handle = Some(out);
+                        self.point_drag = true;
+                        self.point_gesture = d.next_gesture();
+                        return true;
+                    }
+                }
+
+                self.spline_handle = None;
                 let mut best = None;
                 let mut best_t = 1e30f32;
                 for (i, &c) in pts.iter().enumerate() {
@@ -2191,8 +2267,14 @@ impl Tool for TileTool {
                 }
 
                 if ev.shift && self.terrain_hit {
-                    let closed = d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0");
+                    let closed = if spline {
+                        d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
+                    } else {
+                        d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
+                    };
+
                     let mut at = 0;
+                    let mut at_t = 0.5;
                     let mut bd = 1e30f32;
                     let cur = self.cursor;
                     for i in 0..pts.len() {
@@ -2209,11 +2291,19 @@ impl Tool for TileTool {
                         if dd < bd {
                             bd = dd;
                             at = i;
+                            at_t = t;
                         }
                     }
 
-                    if d.polygon_point(sel, "insert", at, cur, 0).is_ok() {
-                        self.poly_point = Some(at + 1);
+                    // Beyond an end of an open spline, it grows there.
+                    let (op, index, new_point) = match (spline && !closed, at_t) {
+                        (true, t) if t <= 0.0 && at == 0 => ("prepend", 0, 0),
+                        (true, t) if t >= 1.0 && at + 2 == pts.len() => ("insert", at + 1, at + 2),
+                        _ => ("insert", at, at + 1),
+                    };
+
+                    if d.polygon_point(sel, op, index, cur, 0).is_ok() {
+                        self.poly_point = Some(new_point);
                         self.status = "point inserted".to_owned();
                     }
 
@@ -2238,7 +2328,9 @@ impl Tool for TileTool {
                     if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
                         let sc = d.tile().tscene();
                         let pts = sc.polygon_points(sel);
-                        if let Some(&point) = pts.get(pt) {
+                        if let Some(out) = self.spline_handle {
+                            let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, self.point_gesture);
+                        } else if let Some(&point) = pts.get(pt) {
                             let before = sc.point_position(point).unwrap_or_default();
                             let after = d.tile().to_local(sel, self.cursor);
                             if before != after {
