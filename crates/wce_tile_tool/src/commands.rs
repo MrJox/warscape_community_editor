@@ -1001,7 +1001,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.duplicate_layer(el).map_or_else(fail, |_| ok(""))
     });
 
-    c.add("tile_export_type", "tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3", "the export type of a layer", |e, a| {
+    c.add("tile_export_type", "tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3", "the export type of a layer", |e, a| {
         let sel = selected(e);
         let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_export_type <layer path> Normal|Escalation1|Escalation2|Escalation3") };
         let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)).filter(|&el| d.tile().tscene().is_layer(el)) else { return fail("no such layer") };
