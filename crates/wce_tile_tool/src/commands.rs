@@ -2529,6 +2529,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "minimap", "minimap [colour|height|none | siege|deployment|camera on|off | zoom <k> [x z] | goto <x> <z>]",
+        "the Minimap panel: its base picture, its layers, its zoom (and centre, metres); goto moves the camera as a click on it does", |e, a| {
+            with_tile(e, |t, e| t.minimap.command(e, a).map_or_else(fail, ok))
+        },
+    );
+
     c.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         if let Some(w) = a.first() {

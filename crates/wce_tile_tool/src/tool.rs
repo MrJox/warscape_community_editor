@@ -581,6 +581,9 @@ pub struct TileTool {
     /// The Weather section (which environment file lights the tile).
     pub(crate) weather: crate::weather_panel::WeatherUi,
 
+    /// The Minimap panel.
+    pub(crate) minimap: crate::minimap_panel::MinimapUi,
+
     /// The Map context section (the tiles around the open one).
     pub(crate) context: crate::context_panel::ContextUi,
 
@@ -610,7 +613,7 @@ impl Default for TileTool {
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
-            weather: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
+            weather: Default::default(), minimap: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
         }
     }
 }
@@ -3126,6 +3129,7 @@ impl Tool for TileTool {
         let (left, center) = gui::dock_builder_split(dockspace, gui::DIR_LEFT, 0.22);
         let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.30);
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.18);
+        let (right_bottom, right) = gui::dock_builder_split(right, gui::DIR_DOWN, 0.38);
         gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Tiles", left);
         gui::dock_builder_dock_window("Create", left);
@@ -3134,6 +3138,7 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Weather", right);
+        gui::dock_builder_dock_window("Minimap", right_bottom);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
@@ -3297,6 +3302,11 @@ impl Tool for TileTool {
         {
             wce_foundation::wce_prof!("tile.panel.weather");
             self.draw_weather_panel(e);
+        }
+
+        {
+            wce_foundation::wce_prof!("tile.panel.minimap");
+            self.minimap.draw_panel(e, self.right_dock);
         }
 
         wce_foundation::wce_prof!("tile.panel.create");

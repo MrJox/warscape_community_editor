@@ -2328,6 +2328,7 @@ dependencies = [
  "wce_foundation",
  "wce_render",
  "wce_scene",
+ "wce_siege",
  "wce_tile",
  "wce_tile_editor",
  "wce_tile_io",

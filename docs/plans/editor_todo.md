@@ -4,15 +4,8 @@ Editor-wide ideas, noted for later (user, 2026-10-24). Status (2026-10-26): all 
 
 ## Minimap with views
 
-A minimap of the open tile, with views to switch between. One of them is the siege AI view drawn by `wce_siege::svg` (the
-`siege_check` example's pictures):
-- the no-go regions, buildings' hard outlines and fort pieces;
-- the nodes' rectangles and Boundaries;
-- the streets with their sides, the area connections, the wall and palisade edges;
-- the perimeter, separators, approach lines, the port lines and beaches;
-- both deployment zones.
-
-Other views to decide (plain top-down, height, ground types, ...).
+Done (2026-10-25): the Tile tool's Minimap panel (docs/editor.md, "Minimap"): the colour, height or no base, with the siege AI, the deployment
+zones and the camera as layers. Other views to decide later (ground types and protection are there through the Ground section's view).
 
 ## Save: log the siege AI's problems
 

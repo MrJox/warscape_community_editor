@@ -5,8 +5,9 @@
 //!
 //! Scene units throughout; the scene's y is the height map's metres.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
@@ -182,18 +183,18 @@ impl Tile {
     /// The generator's input: the no-go regions, the buildings (what blocks of them; the fort pieces' footprints, platforms and gates, from
     /// their logic files), the procedural walls, the captures, the sea; what is not exported left out.
     pub fn siege_input(&self) -> Input {
+        self.siege_input_with(true)
+    }
+
+    /// The input, the sea's heights only with `sea` (the generator's; what draws the layout has no use for them).
+    pub(crate) fn siege_input_with(&self, sea: bool) -> Input {
         let sc = self.tscene();
         let u = self.unit();
         let mut input = Input { bounds: ([0.0, 0.0], [self.project.extent_x() * u, self.project.extent_z() * u]), ..Input::default() };
-        let skip = |e: usize| !exported(sc, e) || top_layer(sc, AUTOGEN_LAYER).is_some_and(|l| sc.is_descendant(e, l));
+        let autogen = top_layer(sc, AUTOGEN_LAYER);
+        let skip = |e: usize| !exported(sc, e) || autogen.is_some_and(|l| sc.is_descendant(e, l));
 
-        let world_points = |e: usize| -> Vec<P> {
-            let w = world_transform(sc, e);
-            sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
-                let p = w.position + w.rotation * v;
-                [p.x, p.z]
-            }).collect()
-        };
+        let world_points = |e: usize| world_points(sc, e);
 
         for e in sc.find_all("NOGO_REGION_POLYGON_INSTANCE") {
             if !skip(e) {
@@ -201,11 +202,14 @@ impl Tile {
             }
         }
 
-        let mut logic: HashMap<String, Option<LogicSummary>> = HashMap::new();
-        let mut read = |key: &str| -> Option<LogicSummary> {
-            logic.entry(key.to_owned()).or_insert_with(|| {
+        let read = |key: &str| -> Option<Arc<LogicSummary>> {
+            if let Some(l) = self.logic_summaries.borrow().get(key) {
+                return l.clone();
+            }
+
+            self.logic_summaries.borrow_mut().entry(key.to_owned()).or_insert_with(|| {
                 let bytes = self.files.as_deref()?.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
-                logic_summary(&bytes)
+                logic_summary(&bytes).map(Arc::new)
             }).clone()
         };
 
@@ -224,7 +228,7 @@ impl Tile {
                     let w = world_transform(sc, e);
                     let at = [w.position.x, w.position.z];
                     input.palisade.push(wce_siege::PalisadePiece { at });
-                    let hard = read(&key).map(|l| l.hard).unwrap_or_default();
+                    let hard = read(&key).map(|l| l.hard.clone()).unwrap_or_default();
                     let footprint = hard.iter().map(|r| r.iter().map(|p| {
                         let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
                         [q.x, q.z]
@@ -307,7 +311,7 @@ impl Tile {
         // Ground under the sea: the heights, sampled every 4 units (the generator keeps the water joined to the map's edge).
         let height = |x: f64, z: f64| self.project.height_at(x / u, z / u);
         let (hx, hz) = (input.bounds.1[0], input.bounds.1[1]);
-        let any_sea = (0..=32).any(|i| (0..=32).any(|j| height(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0) < wce_siege::Sea::WATER));
+        let any_sea = sea && (0..=32).any(|i| (0..=32).any(|j| height(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0) < wce_siege::Sea::WATER));
         if any_sea {
             let cell = 4.0;
             let (w, h) = ((hx / cell).ceil() as usize, (hz / cell).ceil() as usize);
@@ -477,26 +481,8 @@ impl Tile {
     /// The siege layout the tile exports now (CA's, or a generated one): nodes, edges, the perimeter, the approaches, the deployment zones.
     pub fn current_siege_layout(&self) -> Layout {
         let sc = self.tscene();
-        let world_points = |e: usize| -> Vec<P> {
-            let w = world_transform(sc, e);
-            sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
-                let p = w.position + w.rotation * v;
-                [p.x, p.z]
-            }).collect()
-        };
-
-        // The polygons under an instance: their name (a siege polygon's) or deployment type, and their points.
-        let polys = |e: usize| -> Vec<(String, Vec<P>)> {
-            let mut out = vec![];
-            for k in ["SIEGE_AI_POLYGON_INSTANCE", "DEPLOYMENT_ZONE_POLYGON_INSTANCE"] {
-                for c in sc.find_all(k).into_iter().filter(|&c| sc.is_descendant(c, e)) {
-                    let tag = if k == "SIEGE_AI_POLYGON_INSTANCE" { sc.name(c) } else { sc.doc().get(c, "deployment_polygon_type").unwrap_or_default() };
-                    out.push((tag, world_points(c)));
-                }
-            }
-
-            out
-        };
+        let world_points = |e: usize| world_points(sc, e);
+        let polys = |e: usize| polys(sc, e);
 
         let mut l = Layout::default();
         for e in sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)) {
@@ -543,15 +529,8 @@ impl Tile {
             l.separators.push(world_points(e));
         }
 
-        for e in sc.find_all("DeploymentZonePolygonInstanceGroup").into_iter().filter(|&e| exported(sc, e)) {
-            let zone = |t: &str| match t {
-                "DZPT_SUBSTRACTIVE" => wce_siege::ZoneKind::Subtractive,
-                "DZPT_GUERRILLA_EXCLUSION_ADDITIVE" => wce_siege::ZoneKind::GuerrillaAdditive,
-                "DZPT_GUERRILLA_EXCLUSION_SUBTRACTIVE" => wce_siege::ZoneKind::GuerrillaSubtractive,
-                _ => wce_siege::ZoneKind::Additive,
-            };
-            let d = wce_siege::Deployment { polygons: polys(e).into_iter().map(|(t, p)| (zone(&t), p)).collect() };
-            if sc.doc().get(e, "alliance_id").as_deref() == Some("1") {
+        for (alliance, d) in self.deployment_zones() {
+            if alliance == "1" {
                 l.defender = d;
             } else {
                 l.attacker = d;
@@ -560,6 +539,52 @@ impl Tile {
 
         l
     }
+
+    /// Every exported deployment zone group of the tile: its `alliance_id` and its polygons, in document order (the siege layout keeps the
+    /// last one of each alliance).
+    pub fn deployment_zones(&self) -> Vec<(String, wce_siege::Deployment)> {
+        let sc = self.tscene();
+        let zone = |t: &str| match t {
+            "DZPT_SUBSTRACTIVE" => wce_siege::ZoneKind::Subtractive,
+            "DZPT_GUERRILLA_EXCLUSION_ADDITIVE" => wce_siege::ZoneKind::GuerrillaAdditive,
+            "DZPT_GUERRILLA_EXCLUSION_SUBTRACTIVE" => wce_siege::ZoneKind::GuerrillaSubtractive,
+            _ => wce_siege::ZoneKind::Additive,
+        };
+
+        sc.find_all("DeploymentZonePolygonInstanceGroup").into_iter().filter(|&e| exported(sc, e)).map(|e| {
+            let d = wce_siege::Deployment { polygons: polys(sc, e).into_iter().map(|(t, p)| (zone(&t), p)).collect() };
+            (sc.doc().get(e, "alliance_id").unwrap_or_default(), d)
+        }).collect()
+    }
+}
+
+/// A polygon's points on the ground (x, z), scene units.
+fn world_points(sc: &TedScene, e: usize) -> Vec<P> {
+    let w = world_transform(sc, e);
+    sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
+        let p = w.position + w.rotation * v;
+        [p.x, p.z]
+    }).collect()
+}
+
+/// The polygons under an instance: their name (a siege polygon's) or deployment type, and their points.
+fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
+    // Its subtree only (a search of the whole document per instance was most of the time on a big tile).
+    let els = sc.doc().elements();
+    let (mut siege, mut zones) = (vec![], vec![]);
+    let mut stack: Vec<usize> = els[e].children.iter().rev().copied().collect();
+    while let Some(c) = stack.pop() {
+        match els[c].name.as_str() {
+            "SIEGE_AI_POLYGON_INSTANCE" => siege.push((sc.name(c), world_points(sc, c))),
+            "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => zones.push((sc.doc().get(c, "deployment_polygon_type").unwrap_or_default(), world_points(sc, c))),
+            _ => {}
+        }
+
+        stack.extend(els[c].children.iter().rev());
+    }
+
+    siege.extend(zones);
+    siege
 }
 
 impl TileDocument {
