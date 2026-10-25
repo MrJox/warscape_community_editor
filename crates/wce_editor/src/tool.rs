@@ -128,6 +128,12 @@ pub trait Tool: Any {
         false
     }
 
+    /// What the tool holds that no document saves (a new vegetation set not saved yet, say), one line each: quitting asks first and lists it
+    /// as lost.
+    fn unsaved_work(&self) -> Vec<String> {
+        vec![]
+    }
+
     /// True when the event was handled (the default click-to-select is then skipped).
     fn viewport_input(&mut self, editor: &mut Editor, event: &ViewportEvent) -> bool {
         let _ = (editor, event);

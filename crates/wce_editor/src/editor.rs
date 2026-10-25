@@ -127,6 +127,9 @@ pub struct Editor {
     output_brightness: f32,
     prompt: PromptKind,
     prompt_docs: Vec<DocumentId>,
+
+    /// The quit prompt's work held by the tools that no document saves (`Tool::unsaved_work`).
+    prompt_work: Vec<String>,
     prompt_close: Vec<DocumentId>,
     prompt_error: String,
     mouse_queue: VecDeque<MouseState>,
@@ -192,7 +195,7 @@ impl Editor {
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
+            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
@@ -930,10 +933,16 @@ impl Editor {
         self.prompt_close = all;
     }
 
-    /// The `quit` command leaves at once, as scripts expect; this one asks about unsaved changes.
+    /// The tools' work that no document saves (`Tool::unsaved_work`).
+    fn tools_unsaved_work(&self) -> Vec<String> {
+        self.tools.iter().flatten().flat_map(|t| t.unsaved_work()).collect()
+    }
+
+    /// The `quit` command leaves at once, as scripts expect; this one asks about unsaved changes (and the tools' unsaved work).
     pub fn ask_quit(&mut self) {
         self.prompt_docs = self.docs.unsaved();
-        if self.prompt_docs.is_empty() {
+        self.prompt_work = self.tools_unsaved_work();
+        if self.prompt_docs.is_empty() && self.prompt_work.is_empty() {
             self.request_quit(0);
             return;
         }
@@ -945,7 +954,7 @@ impl Editor {
 
     /// The window's close button: true when the prompt took over (there are unsaved changes), false to let the window close.
     pub fn window_close_requested(&mut self) -> bool {
-        if self.docs.unsaved().is_empty() {
+        if self.docs.unsaved().is_empty() && self.tools_unsaved_work().is_empty() {
             return false;
         }
 
@@ -1010,6 +1019,7 @@ impl Editor {
         }
 
         self.prompt_docs.clear();
+        self.prompt_work.clear();
         self.prompt_close.clear();
         Ok(message)
     }
@@ -1028,10 +1038,22 @@ impl Editor {
             return;
         }
 
-        gui::text(if quit { "These documents have unsaved changes:" } else { "This document has unsaved changes:" });
+        let docs = !self.prompt_docs.is_empty();
+        if docs {
+            gui::text(if quit { "These documents have unsaved changes:" } else { "This document has unsaved changes:" });
+        }
+
         for &id in &self.prompt_docs {
             if let Some(d) = self.docs.find(id) {
                 gui::bullet_text(&format!("{}  ({})", d.title(), d.kind()));
+            }
+        }
+
+        // The tools' work: saving the documents does not keep it.
+        if quit && !self.prompt_work.is_empty() {
+            gui::text("Not saved anywhere yet (lost on quitting):");
+            for w in &self.prompt_work {
+                gui::bullet_text(w);
             }
         }
 
@@ -1040,12 +1062,15 @@ impl Editor {
         }
 
         gui::spacing();
-        if gui::button(if quit { "Save all and quit" } else { "Save and close" }) {
-            let _ = self.answer_prompt(Answer::Save);
+        if docs {
+            if gui::button(if quit { "Save all and quit" } else { "Save and close" }) {
+                let _ = self.answer_prompt(Answer::Save);
+            }
+
+            gui::same_line();
         }
 
-        gui::same_line();
-        if gui::button(if quit { "Quit without saving" } else { "Discard changes" }) {
+        if gui::button(if !docs { "Quit anyway" } else if quit { "Quit without saving" } else { "Discard changes" }) {
             let _ = self.answer_prompt(Answer::Discard);
         }
 
