@@ -163,6 +163,12 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// The editor switched to another game: drop what belongs to the old one. Its documents are closed already; once the new game's
+    /// files are mounted every tool is activated again.
+    fn game_changed(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
     /// The tool became the active one (open a default document, set the camera, ...).
     fn activated(&mut self, editor: &mut Editor) {
         let _ = editor;

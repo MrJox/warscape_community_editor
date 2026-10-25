@@ -195,9 +195,9 @@ impl UiDocument {
         self.model().clone().to_bytes()
     }
 
-    /// Writes the layout into a mod pack under its in-pack path (`inside`), creating the pack if needed.
-    pub fn save_to_pack(&self, pack: &std::path::Path, inside: &str) -> Result<(), String> {
-        wce_ui_model::pack::write_pack(pack, &wce_vfs::normalize(inside), &self.bytes()?)
+    /// Writes the layout into a mod pack of `game` under its in-pack path (`inside`), creating the pack if needed.
+    pub fn save_to_pack(&self, game: &wce_vfs::GameProfile, pack: &std::path::Path, inside: &str) -> Result<(), String> {
+        wce_ui_model::pack::write_pack(game, pack, &wce_vfs::normalize(inside), &self.bytes()?)
     }
 
     fn label(e: &Entry) -> String {

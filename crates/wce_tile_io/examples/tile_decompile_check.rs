@@ -1439,7 +1439,7 @@ fn main() {
 
     // The game's tile data (the databases, the buildings' destruction levels, categories and thresholds), then the packs again for their
     // tile folders.
-    let data = wce_tile_io::attila::game_data::GameData::load(&game.join("data"), wce_tile_io::attila::game_data::default_schema_path().as_deref()).expect("data");
+    let data = wce_tile_io::attila::game_data::GameData::load(&wce_foundation::game::GameProfile::ATTILA, &game.join("data"), wce_tile_io::attila::game_data::default_schema_path(&wce_foundation::game::GameProfile::ATTILA).as_deref()).expect("data");
     for w in &data.warnings {
         eprintln!("{w}");
     }

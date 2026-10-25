@@ -1475,7 +1475,7 @@ linked by the component name '{}'", r.path, r.via));
             return Err("the project folder has no files yet".into());
         }
 
-        wce_ui_model::pack::write_pack_many(std::path::Path::new(pack), &files)?;
+        wce_ui_model::pack::write_pack_many(e.game(), std::path::Path::new(pack), &files)?;
         e.update_tool_settings(SETTINGS_ID, |s: &mut UiSettings| s.export_pack = pack.to_owned());
         e.status(&format!("exported {} files to {pack}", files.len()), false);
         Ok(files.len())
@@ -1872,13 +1872,14 @@ linked by the component name '{}'", r.path, r.via));
             }
 
             if gui::button("Save") {
+                let game = e.game();
                 let r = active_doc(e).ok_or_else(|| "no UI layout is open".to_owned()).and_then(|id| {
                     let d = ui_doc_ref(e, id).ok_or("no UI layout is open")?;
                     if !self.pack_path.to_lowercase().ends_with(".pack") {
                         return Err("the pack file must end in .pack".to_owned());
                     }
 
-                    d.save_to_pack(std::path::Path::new(&self.pack_path), &self.pack_inside)
+                    d.save_to_pack(game, std::path::Path::new(&self.pack_path), &self.pack_inside)
                 });
                 match r {
                     Ok(()) => {

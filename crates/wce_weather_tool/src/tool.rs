@@ -27,7 +27,6 @@ use wce_weather::xml_file_document::{Op, Source, XmlFileDocument};
 use crate::picker::WeatherPicker;
 
 /// The environment the sandbox lit the sample map with before an environment document is open: what the gates use.
-const DEFAULT_ENVIRONMENT: &str = "weather/charlemagne/med_sp_land_day_dry.environment";
 
 struct Category {
     label: &'static str,
@@ -748,13 +747,18 @@ impl Tool for WeatherTool {
         true
     }
 
+    fn game_changed(&mut self, _: &mut Editor) {
+        let picker = std::mem::take(&mut self.picker).for_another_game();
+        *self = Self { picker, ..Self::default() };
+    }
+
     fn activated(&mut self, e: &mut Editor) {
         let Some(vfs) = e.vfs().cloned() else { return };
-        let go = read_graphics_options();
+        let go = read_graphics_options(e.game());
         self.output_gamma = go.gamma;
         self.output_brightness = go.brightness;
         if !self.default_env_loaded {
-            match vfs.read(DEFAULT_ENVIRONMENT).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) {
+            match vfs.read(e.game().default_environment).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) {
                 Ok(doc) => {
                     self.default_env = read_environment(&doc);
                     self.default_env_loaded = true;

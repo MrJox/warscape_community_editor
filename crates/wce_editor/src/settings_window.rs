@@ -7,7 +7,7 @@ use wce_foundation::log;
 use wce_foundation::settings::{Settings, env_value};
 
 use crate::editor::Editor;
-use crate::steam_detect::{detect_attila_folder, pick_folder};
+use crate::steam_detect::{detect_game_folder, pick_folder};
 use crate::{gui, icons, theme};
 
 /// A page of the window.
@@ -213,6 +213,20 @@ impl Editor {
         self.save_settings();
         self.set_frame_cap_live(self.settings_ref().frame_cap());
 
+        // Another game: the switch closes the documents and mounts it (or opens the first-run dialog).
+        if before.game != self.settings_ref().game {
+            let key = std::mem::replace(&mut self.settings().game, before.game.clone());
+            if let Err(m) = self.switch_game(&key) {
+                self.status(&m, true);
+            }
+
+            for i in 0..self.tool_count() {
+                self.with_tool_at(i, |t, e| t.settings_applied(e));
+            }
+
+            return;
+        }
+
         let now = self.settings_ref();
         let game_changed = before.game_dir() != now.game_dir();
         let files_changed = before.mod_packs() != now.mod_packs() || before.overlay_folders() != now.overlay_folders() || before.loose_dir() != now.loose_dir();
@@ -366,7 +380,22 @@ impl Editor {
 
     fn draw_game_page(&mut self) {
         let Some(d) = self.settings_window.draft.as_mut() else { return };
-        gui::separator_text("Total War: Attila");
+        let game = d.game_profile();
+        label("Game");
+        gui::set_next_item_width(300.0);
+        if gui::begin_combo("##game", game.display_name) {
+            for g in wce_vfs::GameProfile::ALL {
+                if gui::selectable(g.display_name, g.key == game.key, 0) {
+                    d.game = g.key.to_owned();
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        help("The game being edited. Applying another one closes the open documents and reads that game's packs.");
+        let game = d.game_profile();
+        gui::separator_text(game.display_name);
         let mut dir = d.game_mut().dir.clone();
         if folder_field("Game folder", &mut dir, "the folder with the game's data folder") {
             d.game_mut().dir = dir;
@@ -374,14 +403,14 @@ impl Editor {
 
         gui::set_cursor_pos_x(LABEL_WIDTH);
         if gui::button(&format!("{}  Detect", icons::SEARCH))
-            && let Some(g) = detect_attila_folder()
+            && let Some(g) = detect_game_folder(game)
         {
             d.game_mut().dir = Some(g);
         }
 
         env_note("WCE_GAME");
         let game = d.game_dir();
-        if game.as_ref().is_some_and(|g| !g.join("data").is_dir()) {
+        if game.as_ref().is_some_and(|g| !g.join(d.game_profile().data_dir).is_dir()) {
             gui::set_cursor_pos_x(LABEL_WIDTH);
             gui::text_colored(theme::error(), &format!("{}  no data folder in the game folder", icons::CIRCLE_X));
         }

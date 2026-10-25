@@ -28,7 +28,7 @@ use wce_vfs::{Config, GameProfile, Vfs, normalize};
 use crate::{gui, icons};
 use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
-use crate::steam_detect::{detect_attila_folder, file_dialog, pick_folder};
+use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
 use crate::tool::Tool;
 use crate::viewport::Viewport;
 
@@ -138,6 +138,9 @@ pub struct Editor {
     prompt_work: Vec<String>,
     prompt_close: Vec<DocumentId>,
     prompt_error: String,
+
+    /// The game the close prompt switches to once the documents are closed.
+    prompt_game: Option<&'static GameProfile>,
     mouse_queue: VecDeque<MouseState>,
     pub(crate) mouse_cur: MouseState,
     mouse_active: bool,
@@ -201,7 +204,7 @@ impl Editor {
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(),
+            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
@@ -353,6 +356,60 @@ impl Editor {
         &self.ctx
     }
 
+    /// The game being edited.
+    pub fn game(&self) -> &'static GameProfile {
+        self.settings.game_profile()
+    }
+
+    /// Switches to another game: closes every document (the unsaved-changes prompt asks first if one has changes), then mounts the
+    /// game's packs and creates the renderer again. A game that is not set up yet opens the first-run dialog.
+    ///
+    /// # Errors
+    ///
+    /// The editor doesn't support the game.
+    pub fn switch_game(&mut self, key: &str) -> Result<(), String> {
+        let game = GameProfile::by_key(key).ok_or_else(|| format!("the editor doesn't support the game '{key}'"))?;
+        if game.key == self.game().key && self.is_mounted() {
+            return Ok(());
+        }
+
+        let all = self.docs.order().to_vec();
+        self.prompt_docs = self.docs.unsaved();
+        if self.prompt_docs.is_empty() {
+            for id in all {
+                self.close_document(id);
+            }
+
+            self.enter_game(game);
+            return Ok(());
+        }
+
+        self.prompt = PromptKind::Close;
+        self.prompt_error.clear();
+        self.prompt_close = all;
+        self.prompt_game = Some(game);
+        Ok(())
+    }
+
+    /// Makes `game` the current one (its documents closed already): the tools drop what was the old game's, then the game's files are
+    /// mounted and the tools activated.
+    fn enter_game(&mut self, game: &'static GameProfile) {
+        self.settings.game = game.key.to_owned();
+        self.save_settings();
+        self.mod_checks_reset();
+        self.images.clear();
+        for i in 0..self.tools.len() {
+            self.with_tool_at(i, |t, e| t.game_changed(e));
+        }
+
+        self.first_run_game.clear();
+        self.first_run_message.clear();
+        if self.start() {
+            self.activate_all_tools();
+            self.status(&format!("{}: {}", game.display_name, self.status_text().to_owned()), false);
+        }
+    }
+
     pub fn vfs(&self) -> Option<&Arc<Vfs>> {
         self.vfs.as_ref()
     }
@@ -457,7 +514,7 @@ impl Editor {
     /// What to mount: the game's release packs, the mod packs the user chose, and the loose folders above them. The launcher's list of
     /// enabled mods is not used.
     fn vfs_config(&self, game_dir: PathBuf) -> Config {
-        let mut cfg = Config::new(game_dir, GameProfile::ATTILA);
+        let mut cfg = Config::new(game_dir, self.game().clone());
         cfg.use_mods = false;
         cfg.mod_packs = Some(self.selected_mod_packs());
         cfg.overlay_folders = self.overlay_folders();
@@ -483,7 +540,7 @@ impl Editor {
     /// The mod packs found in the game's data folder.
     pub fn available_mod_packs(&self) -> Vec<String> {
         let Some(dir) = self.settings.game_dir() else { return vec![] };
-        GameProfile::ATTILA.available_mod_packs(&dir)
+        self.game().available_mod_packs(&dir)
     }
 
     /// The check list of mod packs (first run and File > Mod packs).
@@ -507,7 +564,7 @@ impl Editor {
         if self.mod_checks_for != game {
             self.mod_checks_for = game.to_owned();
             let chosen = self.selected_mod_packs();
-            let mut names = GameProfile::ATTILA.available_mod_packs(Path::new(game));
+            let mut names = self.game().available_mod_packs(Path::new(game));
             for c in &chosen {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(c)) {
                     names.push(c.clone());
@@ -603,7 +660,7 @@ impl Editor {
             Ok((vfs, renderer))
         }) {
             Ok((vfs, mut renderer)) => {
-                let go = read_graphics_options();
+                let go = read_graphics_options(self.game());
                 renderer.settings.apply_graphics_options(&go);
                 self.output_gamma = go.gamma;
                 self.output_brightness = go.brightness;
@@ -626,7 +683,7 @@ impl Editor {
                 log::error(format!("Start failed: {e}"));
                 self.first_run_message = e;
                 if self.first_run_game.is_empty() {
-                    self.first_run_game = self.settings.game_dir().or_else(detect_attila_folder).map(|p| p.display().to_string()).unwrap_or_default();
+                    self.first_run_game = self.settings.game_dir().or_else(|| detect_game_folder(self.game())).map(|p| p.display().to_string()).unwrap_or_default();
                 }
 
                 false
@@ -641,7 +698,7 @@ impl Editor {
     }
 
     /// Where "Save" writes loose files (under their in-pack path): `output_dir` in the settings, else <Documents>/AttilaWeatherEditor/out as
-    /// the old weather editor did.
+    /// the old weather editor did for Attila, <Documents>/WCE/<game>/out for the other games.
     pub fn output_dir(&self) -> PathBuf {
         self.settings.output_dir().unwrap_or_else(|| self.default_output_dir())
     }
@@ -676,7 +733,10 @@ impl Editor {
     /// The output folder when the settings name none.
     pub fn default_output_dir(&self) -> PathBuf {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
-        home.join("Documents").join("AttilaWeatherEditor").join("out")
+        match self.game().key {
+            "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
+            key => home.join("Documents").join("WCE").join(key).join("out"),
+        }
     }
 
     pub fn set_output_dir(&mut self, dir: &Path, persist: bool) {
@@ -1064,6 +1124,7 @@ impl Editor {
         let message = match a {
             Answer::Cancel => {
                 self.prompt = PromptKind::None;
+                self.prompt_game = None;
                 return Ok("cancelled".to_owned());
             }
 
@@ -1092,6 +1153,10 @@ impl Editor {
         if kind == PromptKind::Close {
             for id in std::mem::take(&mut self.prompt_close) {
                 self.close_document(id);
+            }
+
+            if let Some(game) = self.prompt_game.take() {
+                self.enter_game(game);
             }
         } else {
             self.request_quit(0);
@@ -1432,6 +1497,19 @@ impl Editor {
                 }
             }
 
+            if gui::begin_menu(&format!("{}  Game", icons::SWORDS)) {
+                let current = self.game().key;
+                for game in GameProfile::ALL {
+                    if gui::menu_item(game.display_name, None, game.key == current, true)
+                        && let Err(m) = self.switch_game(game.key)
+                    {
+                        self.status(&m, true);
+                    }
+                }
+
+                gui::end_menu();
+            }
+
             if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {
                 self.mods_popup = true;
             }
@@ -1620,6 +1698,24 @@ impl Editor {
         Ok(format!("mounted {} packs", self.vfs.as_ref().map_or(0, |v| v.packs().len())))
     }
 
+    /// The first-run dialog's choice of game: choosing one shows its folder (the settings', else the one found in the Steam libraries).
+    fn game_combo(&mut self) {
+        let current = self.game();
+        gui::set_next_item_width(470.0);
+        if gui::begin_combo("Game", current.display_name) {
+            for game in GameProfile::ALL {
+                if gui::selectable(game.display_name, game.key == current.key, 0) && game.key != current.key {
+                    self.settings.game = game.key.to_owned();
+                    self.first_run_message.clear();
+                    self.mod_checks_reset();
+                    self.first_run_game = self.settings.game_dir().or_else(|| detect_game_folder(game)).map(|p| p.display().to_string()).unwrap_or_default();
+                }
+            }
+
+            gui::end_combo();
+        }
+    }
+
     fn draw_first_run(&mut self) {
         gui::open_popup("First run");
         let vp = gui::main_viewport();
@@ -1629,19 +1725,21 @@ impl Editor {
             return;
         }
 
-        gui::text_wrapped("Warscape Community Editor needs Total War: Attila. Nothing from the game is copied: files are read from your installation.");
+        let game = self.game();
+        gui::text_wrapped(&format!("Warscape Community Editor needs {}. Nothing from the game is copied: files are read from your installation.", game.display_name));
+        self.game_combo();
         gui::spacing();
         gui::set_next_item_width(470.0);
         gui::input_text("Game folder", None, &mut self.first_run_game, 1024, 0);
         gui::same_line();
         if gui::button("Browse##Game folder")
-            && let Some(p) = pick_folder("Total War Attila folder")
+            && let Some(p) = pick_folder(&format!("{} folder", game.display_name))
         {
             self.first_run_game = p.display().to_string();
         }
 
         if gui::button("Detect")
-            && let Some(g) = detect_attila_folder()
+            && let Some(g) = detect_game_folder(self.game())
         {
             self.first_run_game = g.display().to_string();
         }

@@ -1,6 +1,8 @@
 //! Lists the game's pack files under a prefix (with their sizes), or writes one out.
 //!
 //!   cargo run --release -p wce_vfs --example vfs_ls -- <game dir> <prefix> [--extract <path> <out file>]
+//!
+//! `$WCE_GAME_KEY` chooses the game (`rome_2`; Attila by default).
 
 use std::path::PathBuf;
 
@@ -13,7 +15,7 @@ fn main() {
         std::process::exit(2);
     };
 
-    let vfs = Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::ATTILA)).expect("game files");
+    let vfs = Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::from_env().clone())).expect("game files");
     if let Some(i) = a.iter().position(|v| v == "--extract") {
         let (Some(path), Some(out)) = (a.get(i + 1), a.get(i + 2)) else { return };
         let bytes = vfs.read(path).expect("a pack file");

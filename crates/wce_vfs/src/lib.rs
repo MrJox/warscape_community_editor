@@ -4,7 +4,10 @@
 //!
 //! 0. loose overlay folders (an Assembly Kit's `raw_data`, for instance), in the order given;
 //! 1. the enabled mods, in the order of the launcher's `used_mods.txt` (first listed wins);
-//! 2. the vanilla packs: the profile's extra DLC packs, then the ones in `data/manifest.txt`.
+//! 2. the vanilla packs: the patch packs, then the rest (see [`GameProfile::pack_order_with`]).
+//!
+//! An empty file in a pack removes the file from the packs below it (the patch packs remove files that way): the path is not listed
+//! and can't be read, unless a pack above has it again.
 //!
 //! Packs are read with rpfm_lib, lazily: their file data stays on disk until a file is read. Paths are compared lower-case and with
 //! forward slashes; each pack keeps its own spelling for reading.
@@ -16,11 +19,11 @@ use std::sync::Mutex;
 use rpfm_lib::files::pack::Pack as RpfmPack;
 use rpfm_lib::games::supported_games::SupportedGames;
 
-pub use self::game_profile::{GameProfile, PackOrder, PackRef};
+pub use wce_foundation::game::{GameFeatures, GameProfile, PackOrder, PackRef, VanillaPacks};
 
 pub mod files;
 pub mod generated;
-mod game_profile;
+pub mod mod_pack;
 
 /// Errors of the file system.
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +89,9 @@ pub struct Pack {
     pub loose: bool,
 }
 
+/// The pack index of a path an empty file removed, while mounting.
+const REMOVED: usize = usize::MAX;
+
 /// How a mounted pack is read.
 enum Source {
     Folder,
@@ -94,6 +100,7 @@ enum Source {
 
 /// The game's file system.
 pub struct Vfs {
+    profile: GameProfile,
     packs: Vec<Pack>,
     sources: Vec<Source>,
     missing_mods: Vec<String>,
@@ -124,6 +131,7 @@ impl Vfs {
         let game = games.game(config.profile.key).ok_or_else(|| VfsError::UnknownGame(config.profile.key.to_owned()))?;
 
         let mut vfs = Self {
+            profile: config.profile.clone(),
             packs: vec![],
             sources: vec![],
             missing_mods: vec![],
@@ -135,7 +143,7 @@ impl Vfs {
         for folder in &config.overlay_folders {
             let name = folder.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
             let paths = list_folder(folder);
-            vfs.add(Pack { name, path: folder.clone(), is_mod: false, loose: true }, Source::Folder, paths);
+            vfs.add(Pack { name, path: folder.clone(), is_mod: false, loose: true }, Source::Folder, paths, vec![]);
         }
 
         let order = match &config.mod_packs {
@@ -146,16 +154,24 @@ impl Vfs {
         for pack_ref in order.packs {
             let pack = RpfmPack::read_and_merge(std::slice::from_ref(&pack_ref.path), game, true, false, false)
                 .map_err(|error| VfsError::Pack(pack_ref.path.clone(), error.to_string()))?;
-            let paths = pack.files().keys().cloned().collect();
-            vfs.add(Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false }, Source::Pack(Box::new(Mutex::new(pack))), paths);
+            let (paths, removed) = pack.files().iter().map(|(path, file)| (path.clone(), file.stored_size() == Some(0))).partition::<Vec<_>, _>(|(_, empty)| !empty);
+            let paths = paths.into_iter().map(|(path, _)| path).collect();
+            let removed = removed.into_iter().map(|(path, _)| path).collect();
+            vfs.add(Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false }, Source::Pack(Box::new(Mutex::new(pack))), paths, removed);
         }
 
+        vfs.files.retain(|_, pack| *pack != REMOVED);
         Ok(vfs)
     }
 
-    /// Indexes a mounted pack or folder, with lower priority than the ones before it.
-    fn add(&mut self, pack: Pack, source: Source, paths: Vec<String>) {
+    /// Indexes a mounted pack or folder, with lower priority than the ones before it. `removed` are its empty files: the paths it removes
+    /// from the packs below it.
+    fn add(&mut self, pack: Pack, source: Source, paths: Vec<String>, removed: Vec<String>) {
         let index = self.packs.len();
+        for path in removed {
+            self.files.entry(normalize(&path)).or_insert(REMOVED);
+        }
+
         let mut spelling = HashMap::new();
         for path in paths {
             let normalized = normalize(&path);
@@ -169,6 +185,11 @@ impl Vfs {
         self.packs.push(pack);
         self.sources.push(source);
         self.spelling.push(spelling);
+    }
+
+    /// The game the packs are of.
+    pub fn profile(&self) -> &GameProfile {
+        &self.profile
     }
 
     /// The mounted packs and folders, highest priority first.

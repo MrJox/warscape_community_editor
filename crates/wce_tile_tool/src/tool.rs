@@ -2905,6 +2905,16 @@ impl Tool for TileTool {
         "tile"
     }
 
+    fn game_changed(&mut self, e: &mut Editor) {
+        // Everything but the tool's choices belongs to the old game: the map context, the browser's kits and packs, the prefabs.
+        self.context.clear(e);
+        let old = std::mem::take(self);
+        *self = Self {
+            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, angle_step: old.angle_step, left_dock: old.left_dock,
+            right_dock: old.right_dock, ..Self::default()
+        };
+    }
+
     fn title(&self) -> &str {
         "Tile"
     }
@@ -3809,7 +3819,7 @@ fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
 fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
     let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
     wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
-        .or_else(wce_tile_io::attila::game_data::default_schema_path)
+        .or_else(|| wce_tile_io::attila::game_data::default_schema_path(e.game()))
         .ok_or_else(|| "the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)".to_owned())
 }
 

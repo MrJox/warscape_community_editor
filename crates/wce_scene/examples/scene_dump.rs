@@ -147,7 +147,7 @@ fn main() {
         prev = e;
     }
 
-    let o = read_graphics_options();
+    let o = read_graphics_options(&wce_foundation::game::GameProfile::ATTILA);
     println!("options {} {} {} {} {} {} {}", b(o.gamma), b(o.brightness), i32::from(o.vignette), i32::from(o.ssao), i32::from(o.distortion), o.depth_of_field, o.shadow_quality);
     println!("overlay {:08x} {:08x}", overlay_colour(0.25, 0.5, 1.2, 1.0), overlay_colour(-1.0, 0.999, 0.5, 0.5));
 }
