@@ -16,7 +16,8 @@
 //! ```
 //!
 //! Contents that differ by more than values (an element added, taken away or of another kind) are not a reference's: such a reference keeps
-//! its own contents in the file.
+//! its own contents in the file. The height of what stands on the terrain (Landscape: Above, and the points of such a polygon) is not
+//! compared: it is the terrain's wherever a copy is, so a reference gets its prefab's and keeps no override of it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -39,6 +40,40 @@ pub struct Override {
 
     /// The value (decoded).
     pub value: String,
+}
+
+/// Whether each element stands on the terrain (Landscape: Above): its `surface_mode`, else its parent's (a polygon's point), not past a
+/// group or a `children` element. Such an element's height is the terrain's under it, wherever the copy is: it is not compared
+/// (`same_value`), and a prefab's is what a reference gets.
+fn landscape_flags(doc: &XmlDoc) -> Vec<bool> {
+    let els = doc.elements();
+    let mut out = vec![false; els.len()];
+
+    // Parents come before their children in the table.
+    for (e, el) in els.iter().enumerate() {
+        out[e] = match doc.get(e, "surface_mode") {
+            Some(m) => m == "MSM_LANDSCAPE",
+            None => el.parent.is_some_and(|p| out[p] && els[p].name != "children" && els[p].name != "UserInstanceGroup"),
+        };
+    }
+
+    out
+}
+
+/// A position without its height (`vector(x,y,z)` or `x,y,z`), to compare those standing on the terrain by.
+fn without_height(raw: &[u8]) -> Option<Vec<u8>> {
+    let (pre, inner, post): (&[u8], &[u8], &[u8]) = match raw.strip_prefix(b"vector(").and_then(|r| r.strip_suffix(b")")) {
+        Some(inner) => (b"vector(", inner, b")"),
+        None => (b"", raw, b""),
+    };
+
+    let parts = inner.split(|&c| c == b',').collect::<Vec<_>>();
+    (parts.len() == 3).then(|| [pre, parts[0], b",*,", parts[2], post].concat())
+}
+
+/// Whether two raw values of an attribute are the same; a position of an element on the terrain is compared without its height.
+fn same_value(attr: &str, landscape: bool, a: &[u8], b: &[u8]) -> bool {
+    a == b || (landscape && attr == "position" && without_height(a).is_some_and(|x| without_height(b) == Some(x)))
 }
 
 /// Reads a contents text (elements at the top, at any column) as one document under a root element.
@@ -81,6 +116,7 @@ fn at_path(doc: &XmlDoc, path: &[usize]) -> Option<usize> {
 pub fn overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
     let (cur, base) = (wrapped(current)?, wrapped(base)?);
     let (ce, be) = (cur.elements(), base.elements());
+    let on_terrain = landscape_flags(&base);
     let mut out = vec![];
     let mut stack = vec![(*cur.roots().first().ok_or("no contents")?, *base.roots().first().ok_or("no contents")?)];
     while let Some((c, b)) = stack.pop() {
@@ -91,7 +127,7 @@ pub fn overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
 
         for (i, a) in ce[c].attrs.iter().enumerate() {
             let raw = cur.attr_raw(c, i);
-            if base.find_attr(b, &a.name).is_none_or(|j| base.attr_raw(b, j) != raw) {
+            if base.find_attr(b, &a.name).is_none_or(|j| !same_value(&a.name, on_terrain[b], base.attr_raw(b, j), raw)) {
                 out.push(Override { path: path_of(&cur, c), element: ce[c].name.clone(), attr: a.name.clone(), value: String::from_utf8_lossy(&decode_entities(raw)).into_owned() });
             }
         }
@@ -163,6 +199,7 @@ pub type Differences = Vec<(String, Option<String>)>;
 #[derive(Debug)]
 pub struct BaseContents {
     doc: XmlDoc,
+    on_terrain: Vec<bool>,
 }
 
 impl BaseContents {
@@ -170,7 +207,9 @@ impl BaseContents {
     ///
     /// The contents do not read.
     pub fn parse(children: &[u8]) -> Result<Self, String> {
-        Ok(Self { doc: wrapped(children)? })
+        let doc = wrapped(children)?;
+        let on_terrain = landscape_flags(&doc);
+        Ok(Self { doc, on_terrain })
     }
 
     /// The attributes of an element of a reference's contents (`current`'s `elem`, at `path` in them) that differ from the prefab's element
@@ -185,7 +224,7 @@ impl BaseContents {
 
         Some(c.attrs.iter().enumerate().filter_map(|(i, a)| {
             let base = self.doc.find_attr(b, &a.name);
-            if base.is_some_and(|j| self.doc.attr_raw(b, j) == current.attr_raw(elem, i)) {
+            if base.is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(elem, i))) {
                 return None;
             }
 
@@ -217,6 +256,7 @@ pub fn path_in(doc: &XmlDoc, reference: usize, elem: usize) -> Option<Vec<usize>
 fn element_hashes(doc: &XmlDoc) -> Vec<u64> {
     let els = doc.elements();
     let mut out = vec![0u64; els.len()];
+    let on_terrain = landscape_flags(doc);
 
     // Children come after their parent in the table: from the last one, every child is hashed before its parent.
     for e in (0..els.len()).rev() {
@@ -224,7 +264,11 @@ fn element_hashes(doc: &XmlDoc) -> Vec<u64> {
         els[e].name.hash(&mut h);
         for (i, a) in els[e].attrs.iter().enumerate() {
             a.name.hash(&mut h);
-            doc.attr_raw(e, i).hash(&mut h);
+            let raw = doc.attr_raw(e, i);
+            match (on_terrain[e] && a.name == "position").then(|| without_height(raw)).flatten() {
+                Some(flat) => flat.hash(&mut h),
+                None => raw.hash(&mut h),
+            }
         }
 
         for &c in &els[e].children {
@@ -365,6 +409,21 @@ mod tests {
         let stale = Override { path: vec![1], element: "BUILDING_INSTANCE".into(), attr: "scale".into(), value: "2".into() };
         let (same, lost) = apply(BASE.as_bytes(), std::slice::from_ref(&stale)).unwrap();
         assert_eq!((same, lost), (BASE.as_bytes().to_vec(), vec![stale]));
+    }
+
+    #[test]
+    fn the_height_of_what_stands_on_the_terrain_is_not_compared() {
+        let base = "<BUILDING_INSTANCE position=\"vector(1,0.5,2)\" surface_mode=\"MSM_LANDSCAPE\"/>\n<BUILDING_INSTANCE position=\"vector(3,0.5,4)\" surface_mode=\"MSM_FREEFORM\"/>\n<VegetationExclusionPolygonInstance surface_mode=\"MSM_LANDSCAPE\">\n    <point position=\"5,1,6\"/>\n</VegetationExclusionPolygonInstance>\n";
+        let copy = base.replace("vector(1,0.5,2)", "vector(1,7,2)").replace("5,1,6", "5,-3,6");
+        assert_eq!(overrides(copy.as_bytes(), base.as_bytes()).unwrap(), vec![], "landscape heights are the terrain's");
+
+        let moved = copy.replace("vector(1,7,2)", "vector(1.5,7,2)").replace("vector(3,0.5,4)", "vector(3,0.6,4)");
+        assert_eq!(overrides(moved.as_bytes(), base.as_bytes()).unwrap().iter().map(|o| o.path.clone()).collect::<Vec<_>>(), vec![vec![0], vec![1]], "x/z, and a freeform height, count");
+
+        let index = ContentIndex::new([("p", base.as_bytes().to_vec())]);
+        let tile = format!("<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"p\">\n<children>\n{copy}</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n");
+        let scene = TedScene::parse_any(tile.into_bytes()).unwrap();
+        assert_eq!(recognise(&scene, &index, &|_| true).copies.len(), 1);
     }
 
     #[test]
