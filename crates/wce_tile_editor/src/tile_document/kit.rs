@@ -116,17 +116,44 @@ impl TileDocument {
     }
 
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder without the extracted mark,
-    /// with its database entry (the location without the mark). Files it replaces get a `.bak`.
+    /// with its database entry (the location without the mark). Files it replaces get a `.bak`. The procedural walls need `walls`: they are
+    /// written as their pieces (`wce_walls::export::walls_for_kit`), and a tile without walls takes its old pieces out of the pack.
     ///
     /// # Errors
     ///
-    /// The tile is not in a kit's layout, or a file can't be written.
-    pub fn save_for_kit(&mut self, kit_raw: &Path) -> Result<String, String> {
+    /// The tile is not in a kit's layout, it has walls and no `walls` sources, a wall can't be made, or a file can't be written.
+    pub fn save_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>) -> Result<String, String> {
         self.end_stroke();
         let folder = tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
         let folder = unmark_extracted(&folder);
         let target = kit_raw.join(&folder);
-        let (msg, report) = self.project().save_for_kit(&target)?;
+        let text = self.tile().tscene().save();
+        let (msg, report) = match walls {
+            Some(w) if self.tile().has_walls() => {
+                let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data)?;
+                for line in &notes {
+                    wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
+                }
+
+                let polyfill = format!("{n} procedural wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
+                self.project().save_for_kit_scene(&target, scene, vec![polyfill])?
+            }
+
+            None if self.tile().has_walls() => {
+                return Err(format!("the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})", wce_walls::pack::PROC_PACK));
+            }
+
+            w => {
+                // No walls (any more): the tile's old pieces leave the pack.
+                if let Some(w) = w {
+                    let prefix = wce_walls::export::key_prefix(&folder);
+                    wce_walls::pack::replace_in_proc_pack(&w.data.join(wce_walls::pack::PROC_PACK), "attila", &prefix, vec![], vec![])?;
+                }
+
+                self.project().save_for_kit_scene(&target, text, vec![])?
+            }
+        };
+
         for line in report.polyfilled.iter().chain(&report.dropped) {
             wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
         }
@@ -137,6 +164,49 @@ impl TileDocument {
 
         Ok(msg)
     }
+
+    /// The procedural walls of the tile as text, each with the layer path it is in (to put back with [`Self::restore_walls`]).
+    pub fn wall_texts(&self) -> Vec<(String, Vec<u8>)> {
+        let sc = self.tile().tscene();
+        wce_walls::scene::walls(sc).into_iter().map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
+    }
+
+    /// Import from Assembly Kit of a tile whose project has walls: the layer of their pieces (`wce_walls::export::KIT_LAYER`) goes and the
+    /// walls are put back, each in its layer (the scene graph when it is no longer there); one undo entry. Returns how many were put back.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no scene graph, or the text can't be spliced.
+    pub fn restore_walls(&mut self, walls: &[(String, Vec<u8>)]) -> Result<usize, String> {
+        let sc = self.tile().tscene();
+        let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
+        let pieces = sc.children(graph).into_iter().filter(|&c| sc.is_layer(c) && sc.name(c) == wce_walls::export::KIT_LAYER).collect::<Vec<_>>();
+        if walls.is_empty() && pieces.is_empty() {
+            return Ok(0);
+        }
+
+        let mark = self.begin()?;
+        for &l in pieces.iter().rev() {
+            self.tscene_mut().remove(l)?;
+        }
+
+        for (layer, text) in walls {
+            let into = self.tile().find_layer(layer).unwrap_or(graph);
+            self.tscene_mut().insert_element_text(into, text)?;
+        }
+
+        self.push_splice("Restore the procedural walls".to_owned(), mark, vec![], vec![]);
+        Ok(walls.len())
+    }
+}
+
+/// What the procedural walls need to be written for TEd: the game's files (the base pieces, their rows), rpfm's schema, and the game's
+/// data folder (where `wce_walls::pack::PROC_PACK` goes).
+#[derive(Clone, Copy)]
+pub struct WallSources<'a> {
+    pub files: &'a dyn wce_vfs::files::Files,
+    pub schema: &'a rpfm_lib::schema::Schema,
+    pub data: &'a Path,
 }
 
 /// An extracted tile's database entry (written by the decompile) marked: its file renamed and its location with the mark.

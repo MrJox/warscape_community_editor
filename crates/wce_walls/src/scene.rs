@@ -180,13 +180,16 @@ const INSTANCE_ATTRS: [(&str, &str); 15] = [
 ];
 
 /// Replaces a wall by the buildings of its pieces: a `BUILDING_INSTANCE` per piece (key, the piece's frame as its world transform) in
-/// the wall's layer, the wall removed. Returns the new elements' count.
+/// the wall's layer, or in the top layer named `into` (made when there is none), the wall removed. Returns the new elements' count.
 ///
 /// # Errors
 ///
 /// The wall's layer has no children element, or the text can't be spliced.
-pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)]) -> Result<usize, String> {
-    let layer = scene.doc().elements()[wall].parent.and_then(|c| scene.doc().elements()[c].parent).or(scene.scene_graph()).ok_or("the wall is in no layer")?;
+pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into: Option<&str>) -> Result<usize, String> {
+    let layer = match into {
+        Some(name) => top_layer(scene, name)?,
+        None => scene.doc().elements()[wall].parent.and_then(|c| scene.doc().elements()[c].parent).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
+    };
     let name = scene.name(wall);
     for (key, piece) in placed {
         let mut attrs = INSTANCE_ATTRS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
@@ -197,6 +200,20 @@ pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)]) -> R
         set_world_rotation(scene, e, &euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)));
     }
 
+    // The layer comes after the wall (it is made at the end): its index stays.
     scene.remove(wall)?;
     Ok(placed.len())
+}
+
+/// The layer of this name right under the scene graph, made at its end when there is none.
+///
+/// # Errors
+///
+/// The scene has no scene graph, or the text can't be spliced.
+pub fn top_layer(scene: &mut TedScene, name: &str) -> Result<usize, String> {
+    let graph = scene.scene_graph().ok_or("the scene has no SCENE_GRAPH")?;
+    match scene.children(graph).into_iter().find(|&c| scene.is_layer(c) && scene.name(c) == name) {
+        Some(l) => Ok(l),
+        None => scene.add_layer(Some(graph), name),
+    }
 }

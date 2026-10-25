@@ -49,7 +49,7 @@ fn run() -> Result<(), String> {
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = project.scene.clone();
-    let lowered = wce_walls::export::lower_walls(&mut scene, &ground, &vfs, &schema, PREFIX)?;
+    let lowered = wce_walls::export::lower_walls(&mut scene, &ground, &vfs, &schema, PREFIX, None)?;
     let generated = lowered.files.into_iter().filter(|(n, _)| n.ends_with("_tech.cs2.parsed")).collect::<std::collections::HashMap<_, _>>();
 
     // The generated pieces' columns.
