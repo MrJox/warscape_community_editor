@@ -50,6 +50,7 @@ struct Doc {
 
 pub struct Session {
     game_dir: Option<PathBuf>,
+    game: &'static GameProfile,
     vfs: Option<Rc<Vfs>>,
     fonts: FontLibrary,
     docs: Vec<(String, Doc)>,
@@ -81,14 +82,15 @@ fn is_ui_path(path: &str) -> bool {
 
 impl Session {
     pub fn new(game_dir: Option<PathBuf>) -> Self {
-        let game_dir = game_dir.or_else(|| wce_foundation::settings::Settings::load_default().game_dir());
-        Self { game_dir, vfs: None, fonts: FontLibrary::default(), docs: vec![], next_id: 1, images: HashMap::new(), relations: None }
+        let settings = wce_foundation::settings::Settings::load_default();
+        let game_dir = game_dir.or_else(|| settings.game_dir());
+        Self { game_dir, game: settings.game_profile(), vfs: None, fonts: FontLibrary::default(), docs: vec![], next_id: 1, images: HashMap::new(), relations: None }
     }
 
     fn vfs(&mut self) -> Result<&Vfs, String> {
         if self.vfs.is_none() {
             let dir = self.game_dir.clone().ok_or("the game folder is not set: pass --game <folder>, set WCE_GAME, or run the editor once")?;
-            let mut cfg = Config::new(dir, GameProfile::ATTILA);
+            let mut cfg = Config::new(dir, self.game.clone());
             if let Ok(o) = std::env::var("WCE_OVERLAY") {
                 cfg.overlay_folders = o.split(';').map(str::trim).filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
             }
@@ -674,7 +676,7 @@ impl Session {
                             _ => return Err("'path' (where the file goes inside the pack) is required for a layout that did not come from the packs".into()),
                         },
                     };
-                    wce_ui_model::pack::write_pack(Path::new(pack), &inside, &data)?;
+                    wce_ui_model::pack::write_pack(self.game, Path::new(pack), &inside, &data)?;
                     self.doc_mut(&id)?.dirty = false;
                     return Ok(Reply::text(format!("saved {} bytes as {inside} in {pack}", data.len())));
                 }

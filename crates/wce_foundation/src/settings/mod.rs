@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::game::GameProfile;
 use crate::log;
 
 /// The settings file's name in the config folder.
@@ -29,9 +30,10 @@ pub fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// rpfm's Attila schema where rpfm keeps it: its config folder (`%APPDATA%\FrodoWazEre\rpfm\config` on Windows, `~/.config/rpfm` on Linux,
-/// `~/Library/Application Support/com.FrodoWazEre.rpfm` on macOS) or the older `<config>/rpfm` layout, then `schemas/schema_att.ron`.
-pub fn default_rpfm_schema_path() -> Option<PathBuf> {
+/// rpfm's schema of a game where rpfm keeps it: its config folder (`%APPDATA%\FrodoWazEre\rpfm\config` on Windows, `~/.config/rpfm` on
+/// Linux, `~/Library/Application Support/com.FrodoWazEre.rpfm` on macOS) or the older `<config>/rpfm` layout, then `schemas/<the game's
+/// schema>` (like `schema_att.ron`).
+pub fn default_rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathBuf> {
     let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
     let home = var("HOME").or_else(|| var("USERPROFILE"));
     let config = var("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|h| h.join(".config")));
@@ -43,7 +45,7 @@ pub fn default_rpfm_schema_path() -> Option<PathBuf> {
 
     folders.extend(config.map(|c| c.join("rpfm")));
     folders.extend(home.map(|h| h.join("Library/Application Support/com.FrodoWazEre.rpfm")));
-    folders.into_iter().map(|f| f.join("schemas/schema_att.ron")).find(|p| p.is_file())
+    folders.into_iter().map(|f| f.join("schemas").join(game.rpfm_schema)).find(|p| p.is_file())
 }
 
 /// A `;` separated list from the environment.
@@ -305,6 +307,11 @@ impl Settings {
     }
 
     // ---- the current game, with the environment's overrides
+
+    /// The current game's profile (Attila for a key the editor doesn't support).
+    pub fn game_profile(&self) -> &'static GameProfile {
+        GameProfile::by_key_or_default(&self.game)
+    }
 
     /// The current game's table, created if missing.
     pub fn game_mut(&mut self) -> &mut GameSettings {

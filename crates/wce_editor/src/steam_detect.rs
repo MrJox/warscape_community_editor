@@ -1,8 +1,10 @@
-//! First-run helpers: find an installed Total War: Attila through Steam; file and folder dialogs (zenity or kdialog on Linux, the Windows
+//! First-run helpers: find an installed game through Steam; file and folder dialogs (zenity or kdialog on Linux, the Windows
 //! dialogs through PowerShell on Windows). The C++ editor also looked for an RPFM folder: the packs are read in-process now.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use wce_vfs::GameProfile;
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
@@ -63,9 +65,9 @@ pub fn steam_library_folders() -> Vec<PathBuf> {
     out
 }
 
-/// <library>/steamapps/common/Total War Attila with data/data.pack.
-pub fn detect_attila_folder() -> Option<PathBuf> {
-    steam_library_folders().into_iter().map(|lib| lib.join("steamapps").join("common").join("Total War Attila")).find(|g| g.join("data").join("data.pack").exists())
+/// The game's folder in a Steam library: <library>/steamapps/common/<the game's folder> with data/data.pack.
+pub fn detect_game_folder(game: &GameProfile) -> Option<PathBuf> {
+    steam_library_folders().into_iter().map(|lib| lib.join("steamapps").join("common").join(game.steam_folder)).find(|g| g.join(game.data_dir).join("data.pack").exists())
 }
 
 /// The program `name` on $PATH.

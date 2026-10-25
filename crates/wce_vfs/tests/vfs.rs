@@ -65,3 +65,55 @@ fn mounting_needs_the_game_folder() {
     assert!(Vfs::mount(&Config::new(Path::new("/does/not/exist"), GameProfile::ATTILA)).is_err());
     assert_eq!(normalize("Data\\Fxc/A.FXC"), "data/fxc/a.fxc");
 }
+
+/// The first bytes of a pack of a type (`PFHFileType`: 1 release, 2 patch).
+fn pack_header(kind: u8) -> String {
+    String::from_utf8(vec![b'P', b'F', b'H', b'4', kind, 0, 0, 0]).unwrap()
+}
+
+#[test]
+fn patch_packs_come_before_the_release_packs() {
+    let (release, patch) = (pack_header(1), pack_header(2));
+    let game = game_folder(&[
+        ("data/data.pack", &release), ("data/data_rome2.pack", &patch), ("data/tiles.pack", &release), ("data/tiles_rome2.pack", &patch),
+        ("data/my_mod.pack", &pack_header(3)),
+    ]);
+
+    let order = GameProfile::ROME_2.pack_order_with(game.path(), &["my_mod.pack".to_owned()]);
+    let names = order.packs.iter().map(|pack| pack.name.as_str()).collect::<Vec<_>>();
+    assert_eq!(names, ["my_mod.pack", "data_rome2.pack", "tiles_rome2.pack", "data.pack", "tiles.pack"]);
+    assert_eq!(GameProfile::ROME_2.available_mod_packs(game.path()), ["my_mod.pack"]);
+}
+
+#[test]
+fn an_empty_file_removes_the_file_of_the_packs_below() {
+    use rpfm_lib::files::pack::Pack;
+    use rpfm_lib::files::{Container, FileType, RFile};
+    use rpfm_lib::games::pfh_file_type::PFHFileType;
+    use rpfm_lib::games::supported_games::SupportedGames;
+
+    let game = game_folder(&[]);
+    let games = SupportedGames::default();
+    let info = games.game(GameProfile::ROME_2.key).unwrap();
+    let write = |name: &str, kind: PFHFileType, files: &[(&str, &[u8])]| {
+        let mut pack = Pack::new_with_name_and_version(name, info.pfh_version_by_file_type(kind));
+        pack.set_pfh_file_type(kind);
+        for (path, data) in files {
+            pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, path)).unwrap();
+        }
+
+        fs::create_dir_all(game.path().join("data")).unwrap();
+        pack.save(Some(&game.path().join("data").join(name)), info, &None).unwrap();
+    };
+
+    write("data.pack", PFHFileType::Release, &[("fxc/a.fxc", b"old"), ("fxc/b.fxc", b"kept"), ("fxc/c.fxc", b"old")]);
+    write("data_rome2.pack", PFHFileType::Patch, &[("fxc/a.fxc", b""), ("fxc/c.fxc", b"new")]);
+
+    let vfs = Vfs::mount(&Config::new(game.path(), GameProfile::ROME_2)).unwrap();
+    assert_eq!(vfs.profile().key, "rome_2");
+    assert_eq!(vfs.packs().iter().map(|pack| pack.name.as_str()).collect::<Vec<_>>(), ["data_rome2.pack", "data.pack"]);
+    assert!(vfs.read("fxc/a.fxc").is_err());
+    assert_eq!(vfs.list("fxc/", ".fxc"), ["fxc/b.fxc", "fxc/c.fxc"]);
+    assert_eq!(vfs.read("fxc/c.fxc").unwrap(), b"new");
+    assert_eq!(vfs.read_from(1, "fxc/a.fxc").unwrap(), b"old");
+}

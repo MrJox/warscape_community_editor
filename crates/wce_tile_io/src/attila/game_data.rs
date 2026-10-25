@@ -11,6 +11,7 @@ use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
+use wce_foundation::game::GameProfile;
 
 use super::decompile::{Context, destruction_levels};
 
@@ -31,9 +32,9 @@ pub struct GameData {
     pub warnings: Vec<String>,
 }
 
-/// rpfm's Attila schema where rpfm keeps it (`~/.config/rpfm/schemas/schema_att.ron`; on Windows under `%APPDATA%`).
-pub fn default_schema_path() -> Option<PathBuf> {
-    wce_foundation::settings::default_rpfm_schema_path()
+/// rpfm's schema of a game where rpfm keeps it (`wce_foundation::settings::default_rpfm_schema_path`).
+pub fn default_schema_path(game: &GameProfile) -> Option<PathBuf> {
+    wce_foundation::settings::default_rpfm_schema_path(game)
 }
 
 /// What [`GameData::load`] takes from one pack, in the pack's order.
@@ -129,15 +130,15 @@ impl PackPart {
 }
 
 impl GameData {
-    /// Reads every pack of a game's `data` folder (in name order); `schema` is rpfm's Attila schema for the db tables (without it the
-    /// buildings' categories and thresholds are not known).
+    /// Reads every pack of a game's `data` folder (in name order); `schema` is rpfm's schema of the game for the db tables (without it
+    /// the buildings' categories and thresholds are not known).
     ///
     /// # Errors
     ///
     /// The folder cannot be listed.
-    pub fn load(data: &Path, schema: Option<&Path>) -> Result<Self, String> {
+    pub fn load(game: &GameProfile, data: &Path, schema: Option<&Path>) -> Result<Self, String> {
         let games = rpfm_lib::games::supported_games::SupportedGames::default();
-        let attila = games.game("attila").ok_or("rpfm knows no attila")?;
+        let attila = games.game(game.key).ok_or_else(|| format!("rpfm knows no {}", game.key))?;
         let mut packs = std::fs::read_dir(data)
             .map_err(|e| format!("{}: {e}", data.display()))?
             .flatten()

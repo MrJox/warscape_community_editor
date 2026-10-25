@@ -169,7 +169,7 @@ impl Thumbnails {
             let Some(vfs) = e.vfs().cloned() else { return self.cancel() };
             match Renderer::new(e.device(), e.context(), vfs) {
                 Ok(mut r) => {
-                    r.settings.apply_graphics_options(&read_graphics_options());
+                    r.settings.apply_graphics_options(&read_graphics_options(e.game()));
                     r.settings.deterministic = true;
                     self.renderer = Some(r);
                 }

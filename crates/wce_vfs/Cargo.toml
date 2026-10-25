@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true
+wce_foundation = { path = "../wce_foundation" }
 thiserror = "2"
 
 [dev-dependencies]

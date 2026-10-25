@@ -10,6 +10,7 @@ use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
 use wce_tile::vegetation::{GenerationParams, grass::GrassParams};
 use wce_tile_model::Blob;
+use wce_foundation::game::GameProfile;
 
 use super::compile::{CompileContext, CompileNotes, compile};
 use super::decompile::{Losses, decompile};
@@ -38,7 +39,8 @@ impl Game {
     ///
     /// The `data` folder can't be listed.
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let data = GameData::load(&dir.join("data"), super::game_data::default_schema_path().as_deref())?;
+        let game = &GameProfile::ATTILA;
+        let data = GameData::load(game, &dir.join(game.data_dir), super::game_data::default_schema_path(game).as_deref())?;
         let mut warnings = data.warnings.clone();
         let vegetation = match super::stage_c::kit_params(&dir.join("assembly_kit/raw_data")) {
             Ok(v) => Some(v),

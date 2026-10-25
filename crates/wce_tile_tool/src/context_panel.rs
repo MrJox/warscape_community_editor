@@ -28,7 +28,6 @@ const APPLY_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
 
 /// The campaign battle map of the game's files.
 pub const GAME_MAP: &str = "campaign (game files)";
-const GAME_DIR: &str = "terrain/battles/main_attila_map";
 
 pub enum Job {
     Map(String, Result<(Arc<PlacedMap>, Option<BattleLocations>), String>),
@@ -36,6 +35,8 @@ pub enum Job {
 }
 
 pub struct ContextUi {
+    /// The folder of the game's campaign battle map in the packs (the current game's).
+    pub game_dir: &'static str,
     pub shown: bool,
     pub maps: Vec<String>,
     pub map: i32,
@@ -92,7 +93,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
@@ -115,11 +116,12 @@ pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabas
     Ok(db)
 }
 
-/// Reads a map (slow for the kit's campaign map: BOB's fill of 2032 x 1437 cells takes about a minute).
-pub fn load_map(name: &str, raw: &Path, db: &TileDatabase, files: Option<&dyn Files>) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
+/// Reads a map (slow for the kit's campaign map: BOB's fill of 2032 x 1437 cells takes about a minute). `game_dir` is the folder of the
+/// game's campaign battle map in the packs.
+pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files: Option<&dyn Files>) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
     if name == GAME_MAP {
         let files = files.ok_or("no game files")?;
-        let read = |n: &str| files.read(&format!("{GAME_DIR}/{n}"));
+        let read = |n: &str| files.read(&format!("{game_dir}/{n}"));
         let index = read("tile_map.index")?;
         let tiles = read("tile_map.tiles")?;
         let lf = read("lf_height_map.dds").ok();
@@ -162,7 +164,7 @@ impl ContextUi {
 
         self.maps_for = raw.to_path_buf();
         self.maps.clear();
-        if files.is_some_and(|f| f.exists(&format!("{GAME_DIR}/tile_map.tiles"))) {
+        if files.is_some_and(|f| f.exists(&format!("{}/tile_map.tiles", self.game_dir))) {
             self.maps.push(GAME_MAP.to_owned());
         }
 
@@ -183,10 +185,11 @@ impl ContextUi {
 
         let (tx, rx) = channel();
         let raw = raw.to_path_buf();
+        let game_dir = self.game_dir;
         self.busy = format!("reading {name}...");
         self.rx = Some(rx);
         std::thread::spawn(move || {
-            let r = load_map(&name, &raw, &db, files.as_deref());
+            let r = load_map(&name, game_dir, &raw, &db, files.as_deref());
             let _ = tx.send(Job::Map(name, r));
         });
     }
@@ -384,7 +387,7 @@ impl ContextUi {
     /// The map's folder in the kit (its season maps).
     fn map_dir(&self, raw: &Path) -> Option<PathBuf> {
         let (name, _, _) = self.loaded.as_ref()?;
-        let folder = if name == GAME_MAP { GAME_DIR.rsplit('/').next().unwrap_or_default() } else { name.as_str() };
+        let folder = if name == GAME_MAP { self.game_dir.rsplit('/').next().unwrap_or_default() } else { name.as_str() };
         Some(raw.join("terrain/battles").join(folder))
     }
 
@@ -612,6 +615,7 @@ impl ContextUi {
         };
 
         let files = e.files();
+        self.game_dir = e.game().campaign_battle_map;
         self.refresh_maps(&raw, files.as_deref());
         let mut changed = false;
         if gui::checkbox("show the tiles around it", &mut self.shown) {

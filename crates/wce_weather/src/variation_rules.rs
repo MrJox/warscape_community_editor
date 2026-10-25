@@ -153,8 +153,8 @@ pub struct GameFacts {
 }
 
 impl GameFacts {
-    /// Reads the battle tile database and the climate change phase tables the packs give the game; the tables need rpfm's Attila schema
-    /// (`WCE_RPFM_SCHEMA`, else where rpfm keeps it).
+    /// Reads the battle tile database and the climate change phase tables the packs give the game; the tables need rpfm's schema of the
+    /// game (`WCE_RPFM_SCHEMA`, else where rpfm keeps it).
     pub fn read(vfs: &Vfs) -> Self {
         let mut facts = Self::default();
         match vfs.read(BATTLE_TILE_DATABASE).map_err(|e| e.to_string()).and_then(|bytes| battle_climates(&bytes)) {
@@ -162,7 +162,7 @@ impl GameFacts {
             Err(e) => facts.notes.push(format!("{BATTLE_TILE_DATABASE} was not read ({e}): climates are not checked against it.")),
         }
 
-        let schema = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(std::path::PathBuf::from).or_else(wce_foundation::settings::default_rpfm_schema_path);
+        let schema = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(std::path::PathBuf::from).or_else(|| wce_foundation::settings::default_rpfm_schema_path(vfs.profile()));
         let phases = schema.ok_or_else(|| "no rpfm schema (WCE_RPFM_SCHEMA)".to_owned()).and_then(|path| {
             let schema = Schema::load(&path, None).map_err(|e| format!("{}: {e}", path.display()))?;
             let tables = vfs.list(&format!("db/{CLIMATE_PHASES_TABLE}/"), "").into_iter().filter_map(|p| vfs.read(p).ok()).collect::<Vec<_>>();

@@ -136,6 +136,11 @@ pub struct WeatherPicker {
 }
 
 impl WeatherPicker {
+    /// A picker for another game: shown or not as this one, with the overrides of the command line; the database loads again.
+    pub fn for_another_game(self) -> Self {
+        Self { open: self.open, overrides: self.overrides, ..Self::default() }
+    }
+
     /// Run once after the database loaded.
     pub fn set_script(&mut self, s: &str) {
         self.script = s.to_owned();

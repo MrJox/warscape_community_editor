@@ -373,6 +373,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
                 let files = e.files();
                 let ui = &mut t.context;
+                ui.game_dir = e.game().campaign_battle_map;
                 ui.refresh_maps(&raw, files.as_deref());
                 let want = if name == "campaign" { GAME_MAP.to_owned() } else { name.clone() };
                 let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}; maps: {}", ui.maps.join(", "))) };
@@ -383,7 +384,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                         Err(err) => return fail(err),
                     };
 
-                    match load_map(&want, &raw, &db, files.as_deref()) {
+                    match load_map(&want, ui.game_dir, &raw, &db, files.as_deref()) {
                         Ok((m, l)) => ui.loaded = Some((want.clone(), m, l)),
                         Err(err) => return fail(err),
                     }
@@ -443,6 +444,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
             let files = e.files();
             let ui = &mut t.context;
+            ui.game_dir = e.game().campaign_battle_map;
             ui.refresh_maps(&raw, files.as_deref());
             let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
             let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}")) };

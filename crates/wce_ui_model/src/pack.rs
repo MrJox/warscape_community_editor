@@ -2,42 +2,14 @@
 
 use std::path::Path;
 
-use rpfm_lib::files::pack::Pack;
-use rpfm_lib::files::{Container, FileType, RFile};
-use rpfm_lib::games::pfh_file_type::PFHFileType;
-use rpfm_lib::games::supported_games::SupportedGames;
+use wce_vfs::GameProfile;
 
-/// Puts a file into a mod pack, creating the pack if it does not exist.
-pub fn write_pack(pack_path: &Path, inside: &str, data: &[u8]) -> Result<(), String> {
-        let games = SupportedGames::default();
-    let game = games.game("attila").ok_or("rpfm does not know attila")?;
-    let mut pack = if pack_path.exists() {
-        Pack::read_and_merge(std::slice::from_ref(&pack_path.to_path_buf()), game, false, false, false).map_err(|e| e.to_string())?
-    } else {
-        let name = pack_path.file_name().and_then(|n| n.to_str()).unwrap_or("mod.pack");
-        let mut p = Pack::new_with_name_and_version(name, game.pfh_version_by_file_type(PFHFileType::Mod));
-        p.set_pfh_file_type(PFHFileType::Mod);
-        p
-    };
-    let file = RFile::new_from_vec(data, FileType::Unknown, 0, inside);
-    pack.insert(file).map_err(|e| e.to_string())?;
-    pack.save(Some(pack_path), game, &None).map_err(|e| e.to_string())
+/// Puts a file into a mod pack of `game`, creating the pack if it does not exist.
+pub fn write_pack(game: &GameProfile, pack_path: &Path, inside: &str, data: &[u8]) -> Result<(), String> {
+    wce_vfs::mod_pack::write_file(game, pack_path, inside, data)
 }
 
-/// Writes a new mod pack (an existing file at `pack_path` is replaced) holding `files`: (path inside the pack, bytes).
-pub fn write_pack_many(pack_path: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
-    let games = SupportedGames::default();
-    let game = games.game("attila").ok_or("rpfm does not know attila")?;
-    let name = pack_path.file_name().and_then(|n| n.to_str()).unwrap_or("mod.pack");
-    let mut pack = Pack::new_with_name_and_version(name, game.pfh_version_by_file_type(PFHFileType::Mod));
-    pack.set_pfh_file_type(PFHFileType::Mod);
-    for (inside, data) in files {
-        pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
-    }
-
-    if let Some(parent) = pack_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    pack.save(Some(pack_path), game, &None).map_err(|e| e.to_string())
+/// Writes a new mod pack of `game` (an existing file at `pack_path` is replaced) holding `files`: (path inside the pack, bytes).
+pub fn write_pack_many(game: &GameProfile, pack_path: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
+    wce_vfs::mod_pack::write_new(game, pack_path, files)
 }

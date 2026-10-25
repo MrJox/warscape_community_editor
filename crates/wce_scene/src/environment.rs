@@ -10,6 +10,7 @@ use wce_formats::c_num::strtod;
 use wce_formats::env_value::{EnvValue, ValueKind, parse_value};
 use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::math::{Float3, Float4x4, normalize};
+use wce_foundation::game::GameProfile;
 
 use crate::clouds::{CloudPlane, read_cloud_planes};
 use crate::half::f32_to_f16;
@@ -446,20 +447,21 @@ impl Default for GraphicsOptions {
     }
 }
 
-/// The game's preferences file. On Linux the game runs under Proton: its `%APPDATA%` is in the prefix of app 325610 (the default
+/// The game's preferences file. On Linux the game runs under Proton: its `%APPDATA%` is in the prefix of the game's app (the default
 /// Steam library), unless `$APPDATA` points elsewhere.
-fn preferences_path() -> Option<PathBuf> {
+fn preferences_path(game: &GameProfile) -> Option<PathBuf> {
     let appdata = std::env::var("APPDATA").ok();
     let roaming = if cfg!(windows) {
         PathBuf::from(appdata?)
     } else {
         match appdata {
             Some(appdata) => PathBuf::from(appdata),
-            None => PathBuf::from(std::env::var("HOME").ok()?).join(".local/share/Steam/steamapps/compatdata/325610/pfx/drive_c/users/steamuser/AppData/Roaming"),
+            None => PathBuf::from(std::env::var("HOME").ok()?)
+                .join(format!(".local/share/Steam/steamapps/compatdata/{}/pfx/drive_c/users/steamuser/AppData/Roaming", game.steam_app_id)),
         }
     };
 
-    Some(roaming.join("The Creative Assembly").join("Attila").join("scripts").join("preferences.script.txt"))
+    Some(roaming.join("The Creative Assembly").join(game.appdata_folder).join("scripts").join("preferences.script.txt"))
 }
 
 /// Reads the graphics options from a preferences text (`key value;` lines).
@@ -486,17 +488,17 @@ pub fn parse_graphics_options(text: &str) -> GraphicsOptions {
     o
 }
 
-/// The player's graphics options; the defaults when the game's preferences can't be read.
-pub fn read_graphics_options() -> GraphicsOptions {
-    preferences_path()
+/// The player's graphics options in a game; the defaults when the game's preferences can't be read.
+pub fn read_graphics_options(game: &GameProfile) -> GraphicsOptions {
+    preferences_path(game)
         .and_then(|path| std::fs::read(path).ok())
         .map(|bytes| parse_graphics_options(&String::from_utf8_lossy(&bytes)))
         .unwrap_or_default()
 }
 
-/// The output gamma and brightness of the graphics options.
-pub fn read_output_settings() -> (f32, f32) {
-    let o = read_graphics_options();
+/// The output gamma and brightness of the graphics options in a game.
+pub fn read_output_settings(game: &GameProfile) -> (f32, f32) {
+    let o = read_graphics_options(game);
     (o.gamma, o.brightness)
 }
 

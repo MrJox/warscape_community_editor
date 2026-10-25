@@ -616,6 +616,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("ui_save_pack", "ui_save_pack <pack> [path inside]", "Writes the layout into a mod pack", |e, a| {
         let Some(pack) = a.first() else { return fail("usage: ui_save_pack <pack> [path inside]") };
+        let game = e.game();
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
         let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
         let inside = a.get(1).cloned().unwrap_or_else(|| doc.source.vfs_path.clone());
@@ -623,7 +624,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             return fail("say where the file goes inside the pack");
         }
 
-        match doc.save_to_pack(Path::new(pack), &inside) {
+        match doc.save_to_pack(game, Path::new(pack), &inside) {
             Ok(()) => ok(format!("saved {inside} into {pack}")),
             Err(m) => fail(m),
         }
