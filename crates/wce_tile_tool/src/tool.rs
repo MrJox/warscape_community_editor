@@ -156,6 +156,10 @@ pub struct TileTool {
     /// The selection came from a click on a Scene tree row this frame: an item of a copy picked there opens the copy.
     pub(crate) tree_picked: bool,
 
+    /// The Scene tree's override marks: each reference's overridden items (`TileDocument::overridden_items`), found when a row of it is
+    /// drawn, for the (tile, history, library) they were found for.
+    pub(crate) override_rows: ((DocumentId, usize, usize, u64), HashMap<usize, HashSet<usize>>),
+
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
 
@@ -267,6 +271,9 @@ pub struct TileTool {
 
     /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
     browse_focus_frames: u8,
+
+    /// Frames left to bring the Scene tree to the front (a tile opened).
+    pub(crate) scene_focus_frames: u8,
     browse_kit: usize,
     browse_kind: i32,
 
@@ -320,11 +327,11 @@ impl Default for TileTool {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -2160,6 +2167,10 @@ impl Tool for TileTool {
             self.stroke_active = false;
             self.mode = TileMode::Select;
             self.context.tile_changed(e, id);
+
+            // The Scene tree in front, not the Tiles list.
+            self.browse_focus_frames = 0;
+            self.scene_focus_frames = 3;
         }
 
         drop_gone_from_selection(e);

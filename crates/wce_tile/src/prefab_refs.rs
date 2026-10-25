@@ -262,6 +262,17 @@ pub fn path_in(doc: &XmlDoc, reference: usize, elem: usize) -> Option<Vec<usize>
     Some(path)
 }
 
+/// The element at a path in a reference's contents (`path_in` the other way).
+pub fn element_at(doc: &XmlDoc, reference: usize, path: &[usize]) -> Option<usize> {
+    let els = doc.elements();
+    let mut e = *els[reference].children.iter().find(|&&c| els[c].name == "children")?;
+    for &i in path {
+        e = *els[e].children.get(i)?;
+    }
+
+    Some(e)
+}
+
 // ---- copies
 
 /// The prefabs' contents by key (case aside), to compare the groups named after one with.

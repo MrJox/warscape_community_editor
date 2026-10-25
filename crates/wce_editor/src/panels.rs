@@ -83,8 +83,11 @@ impl Inspector for ImGuiInspector {
         self.marks = marks;
     }
 
-    fn button(&mut self, field: &str, label: &str) -> bool {
-        gui::small_button(&format!("{label}{}", self.id(field)))
+    fn button(&mut self, field: &str, label: &str, enabled: bool) -> bool {
+        gui::begin_disabled(!enabled);
+        let clicked = gui::small_button(&format!("{label}{}", self.id(field)));
+        gui::end_disabled();
+        clicked && enabled
     }
 
     fn section(&mut self, title: &str) {

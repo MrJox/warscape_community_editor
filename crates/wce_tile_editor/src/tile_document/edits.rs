@@ -1344,6 +1344,18 @@ impl TileDocument {
         Some((key, diffs))
     }
 
+    /// The items of a prefab reference that override values of the prefab's (once each, in document order); empty when none do, or its
+    /// contents differ by more than values.
+    pub fn overridden_items(&self, reference: usize) -> Vec<usize> {
+        let Some(key) = self.prefab_key(reference) else { return vec![] };
+        let Some(base) = self.project().prefab_base.as_ref().and_then(|src| (src.0)(&key)) else { return vec![] };
+        let sc = self.tile().tscene();
+        let Ok(ovs) = wce_tile::prefab_refs::overrides(&sc.children_text(reference), &base) else { return vec![] };
+        let mut out = ovs.iter().filter_map(|o| wce_tile::prefab_refs::element_at(sc.doc(), reference, &o.path)).collect::<Vec<_>>();
+        out.dedup();
+        out
+    }
+
     /// How many values a prefab reference's contents override; `None` when they differ by more than values (or there is no prefab).
     pub fn override_count(&mut self, reference: usize) -> Option<usize> {
         let key = self.prefab_key(reference).filter(|_| self.is_prefab_reference(reference))?;
@@ -1376,22 +1388,24 @@ impl TileDocument {
     }
 
     /// The Inspector's rows of a prefab reference's overrides: on one of its items, the values it overrides (marked) and reverting them; on
-    /// the reference, how many and reverting them all.
+    /// the reference, how many and reverting them all. The revert buttons are always there, greyed out when there is nothing to revert.
     fn override_rows(&mut self, e: usize, ins: &mut dyn Inspector) {
         if self.is_prefab_reference(e) {
             let key = self.prefab_key(e).unwrap_or_default();
             ins.text("prefab", "prefab", &key);
-            match self.override_count(e) {
+            let count = self.override_count(e);
+            match count {
                 Some(0) => ins.text("overrides", "overrides", "none"),
                 Some(n) => {
                     ins.mark_fields(vec![("overrides".to_owned(), "Values of its items that are not the prefab's".to_owned())]);
                     ins.text("overrides", "overrides", &format!("{n} value(s) in its items"));
-                    if ins.button("revert_all", "Revert all overrides") {
-                        self.revert_overrides(e);
-                    }
                 }
 
                 None => ins.text("overrides", "overrides", "its items differ by more than values (kept as they are)"),
+            }
+
+            if ins.button("revert_all", "Revert all overrides", count.is_some_and(|n| n > 0)) {
+                self.revert_overrides(e);
             }
 
             return;
@@ -1399,13 +1413,9 @@ impl TileDocument {
 
         let Some((key, diffs)) = self.overrides_of(e) else { return };
         ins.text("prefab", "in the prefab", &key);
-        if diffs.is_empty() {
-            ins.text("overrides", "overrides", "none");
-            return;
-        }
-
-        ins.text("overrides", "overrides", &format!("{} (marked)", diffs.len()));
-        if ins.button("revert", "Revert to the prefab's values") {
+        ins.text("overrides", "overrides", &if diffs.is_empty() { "none".to_owned() } else { format!("{} (marked)", diffs.len()) });
+        let revertible = diffs.iter().any(|(_, v)| v.is_some());
+        if ins.button("revert", "Revert to the prefab's values", revertible) {
             self.revert_overrides(e);
         }
 
@@ -1416,8 +1426,10 @@ impl TileDocument {
             };
 
             (a, note)
-        }).collect();
-        ins.mark_fields(marks);
+        }).collect::<Vec<_>>();
+        if !marks.is_empty() {
+            ins.mark_fields(marks);
+        }
     }
 
     /// Makes instance groups references to prefabs (each with its key; the copies `prefab_refs::recognise` found), one undo entry. Returns
