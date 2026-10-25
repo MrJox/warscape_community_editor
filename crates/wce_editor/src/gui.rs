@@ -958,6 +958,7 @@ pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
 pub const KEY_DOWN_ARROW: i32 = sys::ImGuiKey_DownArrow;
 pub const WINDOW_NO_NAV: i32 = sys::ImGuiWindowFlags_NoNav;
+pub const SELECTABLE_NO_AUTO_CLOSE: i32 = sys::ImGuiSelectableFlags_NoAutoClosePopups;
 pub const WINDOW_NO_NAV_INPUTS: i32 = sys::ImGuiWindowFlags_NoNavInputs;
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
