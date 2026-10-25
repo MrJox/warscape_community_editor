@@ -143,7 +143,9 @@ impl TileTool {
         draft.yaw = 0.0;
         let text = d.draft_text(&draft)?;
         let text = with_root_attr(&text, "scale", &wce_tile::ted_scene::format_number(f64::from(p.scale)));
-        Some(turned(&self.apply_placement_modes(d, text), p.yaw))
+        // Tilted (Follow surface) to the terrain at its own point: the mouse has moved on since.
+        let normal = crate::placement_modes::terrain_normal(d, p.at.x, p.at.z);
+        Some(turned(&self.apply_placement_modes_on(text, normal), p.yaw))
     }
 
     /// The stroke ends: its trees go into the working layer (one undo entry), or the trees it took away go.

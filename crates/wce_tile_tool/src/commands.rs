@@ -1179,6 +1179,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))
     });
 
+    c.add("veg_paint", "veg_paint <x m> <z m> [<x m> <z m>]...", "one stroke of the vegetation brush through ground points (a dab at each): its trees go into the working layer", |e, a| {
+        let pts = a.chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
+        if pts.is_empty() || a.len() % 2 != 0 || pts.iter().any(|p| p.0.is_none() || p.1.is_none()) {
+            return fail("usage: veg_paint <x m> <z m> [<x m> <z m>]...");
+        }
+
+        with_tile(e, |t, e| {
+            if !t.painting_trees(e) {
+                return fail("not painting trees (start placing a tree with the brush on)");
+            }
+
+            for (i, (x, z)) in pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).enumerate() {
+                let Some(d) = document(e) else { return no_tile() };
+                t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+                if i == 0 {
+                    t.begin_stroke(e, false);
+                } else {
+                    t.dab(e);
+                }
+            }
+
+            ok(t.end_stroke_veg(e))
+        })
+    });
+
     c.add("veg_erase", "veg_erase <x m> <z m>", "the vegetation brush's taking away (Ctrl + drag) once at a ground point: the manual trees in its circle go", |e, a| {
         let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: veg_erase <x m> <z m>") };
         with_tile(e, |t, e| {
