@@ -675,12 +675,18 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             input.up = gui::is_key_down(gui::KEY_E);
             input.down = gui::is_key_down(gui::KEY_Q);
             input.fast = shift;
+
+            // Flying is not a click.
+            if input.forward || input.back || input.left || input.right || input.up || input.down {
+                e.viewport.right_press = None;
+            }
         }
     }
 
     e.viewport.controller().update(&input);
 
-    // ---- a right click (press and release without moving; a right drag turns the camera): the tool's context menu
+    // ---- a right click (a short press and release without moving or flying; a right drag turns the camera, WASD flies): the tool's context
+    // menu
     if hovered && gui::is_mouse_clicked(1) {
         e.viewport.right_press = Some((mouse_x, mouse_y));
     }
@@ -690,6 +696,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         && has_tool
         && hovered
         && (mouse_x - px).hypot(mouse_y - py) < 4.0
+        && io.MouseDownDurationPrev[1] < 0.5
     {
         let mut ev = event(ViewportEventKind::ContextMenu);
         ev.hit = pick(e, ev.x, ev.y);
