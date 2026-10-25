@@ -76,14 +76,17 @@ impl TileTool {
             return Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z));
         }
 
-        let t = d.tile();
-        let (x, z) = (self.cursor.x, self.cursor.z);
-        let h = |x: f32, z: f32| f64::from(t.terrain_height(x, z));
-        Double3::new(h(x - 0.5, z) - h(x + 0.5, z), 1.0, h(x, z - 0.5) - h(x, z + 0.5))
+        terrain_normal(d, self.cursor.x, self.cursor.z)
     }
 
-    /// A text to place (an instance's, a prefab's group) with the modes applied: its surface mode, the editor's marks, the tilt.
+    /// A text to place (an instance's, a prefab's group) with the modes applied: its surface mode, the editor's marks, the tilt (to the
+    /// surface under the mouse).
     pub(crate) fn apply_placement_modes(&self, d: &TileDocument, text: Vec<u8>) -> Vec<u8> {
+        self.apply_placement_modes_on(text, self.surface_normal(d))
+    }
+
+    /// The same, tilted to a given surface normal (a painted tree: the terrain's at its own point, not at the mouse).
+    pub(crate) fn apply_placement_modes_on(&self, text: Vec<u8>, normal: Double3) -> Vec<u8> {
         let (surface, rotation) = self.modes.unwrap_or_default();
         let mode = if surface == SurfaceMode::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" };
         let mut text = with_root_attr(&text, "surface_mode", mode);
@@ -92,7 +95,7 @@ impl TileTool {
         }
 
         if rotation == RotationMode::Surface {
-            text = with_root_attr(&tilted(&text, self.surface_normal(d)), "wce_rotation", "surface");
+            text = with_root_attr(&tilted(&text, normal), "wce_rotation", "surface");
         }
 
         text
@@ -185,4 +188,11 @@ impl TileTool {
             self.surface_px = None;
         }
     }
+}
+
+/// The terrain's normal at a ground point (from the heights half a metre around it; not normalised).
+pub(crate) fn terrain_normal(d: &TileDocument, x: f32, z: f32) -> Double3 {
+    let t = d.tile();
+    let h = |x: f32, z: f32| f64::from(t.terrain_height(x, z));
+    Double3::new(h(x - 0.5, z) - h(x + 0.5, z), 1.0, h(x, z - 0.5) - h(x, z + 0.5))
 }
