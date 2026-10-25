@@ -186,6 +186,9 @@ pub struct TileTool {
     /// The dock node of the Tiles panel (where the Create panel goes the first time).
     pub(crate) left_dock: Option<gui::ImGuiID>,
 
+    /// The dock node of the Tile panel (where the Weather panel goes the first time).
+    pub(crate) right_dock: Option<gui::ImGuiID>,
+
     /// The keys of each type, per tile.
     catalogues: HashMap<(DocumentId, String), Arc<Vec<String>>>,
 
@@ -261,7 +264,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -954,6 +957,8 @@ impl TileTool {
             return;
         }
 
+        self.right_dock = Some(gui::window_dock_id());
+
         let Some(id) = document_id(e) else {
             gui::text_wrapped("No tile open. File > Open file... (a tile.ted), Tile > Open tile..., or --tile <folder>.");
             gui::end();
@@ -1074,7 +1079,6 @@ impl TileTool {
         gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
-        self.weather.draw(e);
         if !self.status.is_empty() {
             gui::separator();
             gui::text_wrapped(&self.status);
@@ -1332,6 +1336,27 @@ impl TileTool {
         if let Some(el) = pick {
             e.selection.set(d.ref_of(el));
         }
+    }
+
+    /// The Weather panel: which environment the game picks for the tile (every filter and file); the usual filters are chips over the viewport.
+    fn draw_weather_panel(&mut self, e: &mut Editor) {
+        gui::set_next_window_size(gui::v2(420.0, 420.0), gui::COND_FIRST_USE_EVER);
+        if let Some(dock) = self.right_dock.filter(|&d| d != 0) {
+            gui::set_next_window_dock_id(dock, gui::COND_FIRST_USE_EVER);
+        }
+
+        if !gui::begin("Weather", None, 0) {
+            gui::end();
+            return;
+        }
+
+        if document(e).is_some() {
+            self.weather.draw(e);
+        } else {
+            gui::text_disabled("Open a tile first.");
+        }
+
+        gui::end();
     }
 
     /// The tile browser: the entries of the kit's tile database (an index, not a scan), a swatch of the tile's colour, its size and
@@ -1887,6 +1912,7 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
+        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
@@ -2005,6 +2031,11 @@ impl Tool for TileTool {
         {
             wce_foundation::wce_prof!("tile.panel.tiles");
             self.draw_browser_panel(e);
+        }
+
+        {
+            wce_foundation::wce_prof!("tile.panel.weather");
+            self.draw_weather_panel(e);
         }
 
         wce_foundation::wce_prof!("tile.panel.create");
@@ -2301,6 +2332,23 @@ impl Tool for TileTool {
                 true
             }
         }
+    }
+
+    fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        if document(e).is_none() || size.x < 200.0 {
+            return;
+        }
+
+        // The weather chips at the top left of the image, under the compass.
+        let top = if e.viewport.show_compass { 58.0 } else { 8.0 };
+        gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + top));
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+        if gui::begin_child("##weatherchips", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+            self.weather.draw_chips(e);
+        }
+
+        gui::end_child();
+        gui::pop_style_color(1);
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {

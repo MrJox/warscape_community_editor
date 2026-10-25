@@ -515,6 +515,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         crate::coords::draw(origin, size, &e.viewport.coords_lines(&e.scene));
     }
 
+    // The tool's widgets over the image (the tile's weather chips).
+    e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
+
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
     let fly = e.viewport.fly_active;
 

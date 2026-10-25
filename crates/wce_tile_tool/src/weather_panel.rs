@@ -31,6 +31,10 @@ pub const FILTERS: [(&str, &str); 8] = [
     ("time of day", "time_of_day"), ("battle type", "battle_types"), ("snow attrition", "snow_attrition"),
 ];
 
+/// The chips over the viewport: icon, category, what it is.
+const CHIPS: [(&str, &str, &str); 4] =
+    [(icons::LEAF, "season", "season"), (icons::CLOUD_RAIN, "precipitation", "precipitation"), (icons::CLOCK, "time_of_day", "time of day"), (icons::GLOBE, "climate", "climate")];
+
 #[derive(Default)]
 pub(crate) struct WeatherUi {
     /// The kit's environment_map.xml, else the packs' variation database.
@@ -227,11 +231,8 @@ impl WeatherUi {
         search.clone_into(&mut self.search);
     }
 
+    /// The Weather panel: the light, every filter, the files they let through (searchable); a click lights the tile with one.
     pub(crate) fn draw(&mut self, e: &mut Editor) {
-        if !gui::collapsing_header("Weather / climate (which environment the game picks)", 0) {
-            return;
-        }
-
         // The light: the chosen file, followed live while the Weather tool edits it.
         let live = e.weather_preview_document().and_then(|id| e.docs.find(id)).map(|d| d.modified());
         let lit_by = e.weather_preview().map_or_else(|| "the default light".to_owned(), str::to_owned);
@@ -335,6 +336,118 @@ impl WeatherUi {
                 Ok(m) => e.status(&m, false),
                 Err(m) => e.status(&m, true),
             }
+        }
+    }
+
+    /// Sets a filter from a chip and lights the tile with a file it lets through: the one lighting it if it still passes, else (precipitation
+    /// any) the first dry one without snow, else the first one.
+    fn chip_changed(&mut self, e: &mut Editor, category: &str, value: &str) {
+        if let Err(m) = self.set_filter(e, category, value) {
+            e.status(&m, true);
+            return;
+        }
+
+        let (files, _) = self.matching();
+        let current = e.weather_preview().map(str::to_owned);
+        if current.as_deref().is_some_and(|c| files.iter().any(|(f, _)| normalize(f) == c)) {
+            return;
+        }
+
+        let precipitation = self.choice.query.get("precipitation").is_some_and(|v| !v.is_empty());
+        let pick = if precipitation { None } else { self.first_dry() }.or_else(|| files.first().map(|(f, _)| f.clone()));
+        match pick {
+            Some(file) => self.apply(e, &file),
+            None => e.status(&format!("no weather file for {category} {value} on this map"), true),
+        }
+    }
+
+    /// Whether some file passes the filters with `category` set to `value`.
+    fn passes(&self, category: &str, value: &str) -> bool {
+        let Some(env) = &self.env else { return false };
+        let mut query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        if value.is_empty() {
+            query.remove(category);
+        } else {
+            query.insert(category.to_owned(), value.to_owned());
+        }
+
+        !env.matches_listed_map("environment", &query).variations.is_empty()
+    }
+
+    /// The weather chips over the viewport: season, precipitation, time of day and climate (a value no file passes is greyed), then the file
+    /// lighting the tile (a click opens the Weather panel) and a pencil that edits it in the Weather tool (a copy in the output folder, which
+    /// the tile follows).
+    pub(crate) fn draw_chips(&mut self, e: &mut Editor) {
+        let Some(env) = &self.env else { return };
+        let mut changed = None;
+        for (icon, category, label) in CHIPS {
+            let value = self.choice.query.get(category).cloned().unwrap_or_default();
+            let values = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
+            if gui::small_button(&format!("{icon} {}##chip{category}", if value.is_empty() { "any" } else { &value })) {
+                gui::open_popup(&format!("chip{category}"));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(label);
+            }
+
+            gui::same_line();
+            if gui::begin_popup(&format!("chip{category}")) {
+                gui::text_disabled(label);
+                if gui::selectable("any", value.is_empty(), 0) {
+                    changed = Some((category, String::new()));
+                }
+
+                for v in &values {
+                    let ok = self.passes(category, v);
+                    gui::begin_disabled(!ok);
+                    if gui::selectable(v, *v == value, 0) {
+                        changed = Some((category, v.clone()));
+                    }
+
+                    gui::end_disabled();
+                }
+
+                gui::end_popup();
+            }
+        }
+
+        let file = e.weather_preview().map(str::to_owned);
+        let shown = file.as_deref().map_or("default light".to_owned(), |f| f.rsplit('/').next().unwrap_or(f).to_owned());
+        if gui::small_button(&format!("{shown}##weatherfile")) {
+            e.pending_focus = Some("Weather".to_owned());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light")));
+        }
+
+        if let Some(f) = file {
+            gui::same_line();
+            if gui::small_button(&format!("{}##editweather", icons::PENCIL)) {
+                self.edit(e, &f);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Edit it in the Weather tool: a copy in the output folder, which the tile follows (and keeps)");
+            }
+        }
+
+        if let Some((category, value)) = changed {
+            self.chip_changed(e, category, &value);
+        }
+    }
+
+    /// Opens the weather file in the Weather tool: copied into the output folder first (unless it is there), where its edits are saved; the
+    /// tile is lit by that copy and follows its edits.
+    pub(crate) fn edit(&mut self, e: &mut Editor, file: &str) {
+        let result = e.copy_to_output(file).and_then(|copy| {
+            e.open_path(file, true, true).map(|m| format!("{m} (a copy in {})", copy.display()))
+        });
+
+        match result {
+            Ok(m) => e.status(&m, false),
+            Err(m) => e.status(&m, true),
         }
     }
 
