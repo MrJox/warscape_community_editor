@@ -20,7 +20,6 @@
 //! compared: it is the terrain's wherever a copy is, so a reference gets its prefab's and keeps no override of it.
 
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 use wce_formats::xml_doc::{XmlDoc, decode_entities, encode_entities};
 
@@ -60,20 +59,32 @@ fn landscape_flags(doc: &XmlDoc) -> Vec<bool> {
     out
 }
 
-/// A position without its height (`vector(x,y,z)` or `x,y,z`), to compare those standing on the terrain by.
-fn without_height(raw: &[u8]) -> Option<Vec<u8>> {
-    let (pre, inner, post): (&[u8], &[u8], &[u8]) = match raw.strip_prefix(b"vector(").and_then(|r| r.strip_suffix(b")")) {
-        Some(inner) => (b"vector(", inner, b")"),
-        None => (b"", raw, b""),
-    };
+/// How far apart (in the file's units) two positions may be across (x and z) and be the same: TEd's copies of a prefab drift by
+/// that much (about 1 hundredth at the median over the kit's copies).
+pub const POSITION_TOLERANCE: f64 = 0.05;
 
-    let parts = inner.split(|&c| c == b',').collect::<Vec<_>>();
-    (parts.len() == 3).then(|| [pre, parts[0], b",*,", parts[2], post].concat())
+/// A position's three numbers (`vector(x,y,z)` or `x,y,z`).
+fn position_numbers(raw: &[u8]) -> Option<[f64; 3]> {
+    let inner = raw.strip_prefix(b"vector(").and_then(|r| r.strip_suffix(b")")).unwrap_or(raw);
+    let text = std::str::from_utf8(inner).ok()?;
+    let mut it = text.split(',').map(|v| v.trim().parse::<f64>().ok());
+    let v = [it.next()??, it.next()??, it.next()??];
+    it.next().is_none().then_some(v)
 }
 
-/// Whether two raw values of an attribute are the same; a position of an element on the terrain is compared without its height.
+/// Whether two raw values of an attribute are the same. Positions are the same across (x, z) within `POSITION_TOLERANCE`; the height of
+/// what stands on the terrain (`landscape`, the prefab's element) is not compared, any other's must be equal.
 fn same_value(attr: &str, landscape: bool, a: &[u8], b: &[u8]) -> bool {
-    a == b || (landscape && attr == "position" && without_height(a).is_some_and(|x| without_height(b) == Some(x)))
+    if a == b {
+        return true;
+    }
+
+    if attr != "position" {
+        return false;
+    }
+
+    let (Some(p), Some(q)) = (position_numbers(a), position_numbers(b)) else { return false };
+    (p[0] - q[0]).abs() <= POSITION_TOLERANCE && (p[2] - q[2]).abs() <= POSITION_TOLERANCE && (landscape || p[1] == q[1])
 }
 
 /// Reads a contents text (elements at the top, at any column) as one document under a root element.
@@ -250,88 +261,80 @@ pub fn path_in(doc: &XmlDoc, reference: usize, elem: usize) -> Option<Vec<usize>
     Some(path)
 }
 
-// ---- exact copies
+// ---- copies
 
-/// The hashes of elements: their name, their attributes (names and values, in order) and their elements, whatever the spacing between.
-fn element_hashes(doc: &XmlDoc) -> Vec<u64> {
-    let els = doc.elements();
-    let mut out = vec![0u64; els.len()];
-    let on_terrain = landscape_flags(doc);
-
-    // Children come after their parent in the table: from the last one, every child is hashed before its parent.
-    for e in (0..els.len()).rev() {
-        let mut h = DefaultHasher::new();
-        els[e].name.hash(&mut h);
-        for (i, a) in els[e].attrs.iter().enumerate() {
-            a.name.hash(&mut h);
-            let raw = doc.attr_raw(e, i);
-            match (on_terrain[e] && a.name == "position").then(|| without_height(raw)).flatten() {
-                Some(flat) => flat.hash(&mut h),
-                None => raw.hash(&mut h),
-            }
-        }
-
-        for &c in &els[e].children {
-            out[c].hash(&mut h);
-        }
-
-        out[e] = h.finish();
-    }
-
-    out
-}
-
-/// The hash of a list of elements (a group's contents), from theirs.
-fn list_hash(hashes: impl Iterator<Item = u64>) -> u64 {
-    let mut h = DefaultHasher::new();
-    for x in hashes {
-        x.hash(&mut h);
-    }
-
-    h.finish()
-}
-
-/// The prefabs by the hash of their contents (the keys of the prefabs with those very contents), to find a group's prefab by its own.
-#[derive(Clone, Debug, Default)]
+/// The prefabs' contents by key (case aside), to compare the groups named after one with.
+#[derive(Debug, Default)]
 pub struct ContentIndex {
-    by_hash: HashMap<u64, Vec<String>>,
+    by_key: HashMap<String, (String, BaseContents)>,
 }
 
 impl ContentIndex {
     /// From each prefab's key and contents (as a copy holds them: the references in them filled in). Empty contents are left out.
     pub fn new<'a>(prefabs: impl IntoIterator<Item = (&'a str, Vec<u8>)>) -> Self {
-        let mut by_hash: HashMap<u64, Vec<String>> = HashMap::new();
+        let mut by_key = HashMap::new();
         for (key, contents) in prefabs {
-            let Ok(doc) = wrapped(&contents) else { continue };
-            let Some(&root) = doc.roots().first() else { continue };
-            if doc.elements()[root].children.is_empty() {
+            let Ok(base) = BaseContents::parse(&contents) else { continue };
+            if base.doc.roots().first().is_none_or(|&r| base.doc.elements()[r].children.is_empty()) {
                 continue;
             }
 
-            let hashes = element_hashes(&doc);
-            by_hash.entry(list_hash(doc.elements()[root].children.iter().map(|&c| hashes[c]))).or_default().push(key.to_owned());
+            by_key.entry(key.to_lowercase()).or_insert((key.to_owned(), base));
         }
 
-        Self { by_hash }
+        Self { by_key }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_hash.is_empty()
+        self.by_key.is_empty()
+    }
+}
+
+impl BaseContents {
+    /// Whether a group's contents (`current`'s `children` element) are the prefab's: the same elements, attributes and values, as
+    /// `same_value` compares them.
+    fn same_as(&self, current: &XmlDoc, children: usize) -> bool {
+        let (ce, be) = (current.elements(), self.doc.elements());
+        let Some(&root) = self.doc.roots().first() else { return false };
+        let mut stack = vec![(children, root)];
+        while let Some((c, b)) = stack.pop() {
+            if ce[c].children.len() != be[b].children.len() {
+                return false;
+            }
+
+            // The contents' tops (`children` and the root) have no attributes to compare.
+            if c != children {
+                if ce[c].name != be[b].name || ce[c].attrs.len() != be[b].attrs.len() {
+                    return false;
+                }
+
+                let same = ce[c].attrs.iter().enumerate().all(|(i, a)| {
+                    self.doc.find_attr(b, &a.name).is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(c, i)))
+                });
+                if !same {
+                    return false;
+                }
+            }
+
+            stack.extend(ce[c].children.iter().copied().zip(be[b].children.iter().copied()));
+        }
+
+        true
     }
 }
 
 /// What turning a tile's groups into references found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Recognised {
-    /// The instance groups that are exact copies of a prefab, and its key (outermost ones only; not the references there are already).
+    /// The instance groups that are copies of a prefab, and its key (outermost ones only; not the references there are already).
     pub copies: Vec<(usize, String)>,
 
     /// Groups named after a prefab whose contents differ from it (left as they are).
     pub named_but_different: usize,
 }
 
-/// The instance groups of a scene named after a prefab (its key, case aside) whose contents are exactly that prefab's (`index`), outermost
-/// first: a group inside one found, or inside a reference, is part of it.
+/// The instance groups of a scene named after a prefab (its key, case aside) whose contents are that prefab's (`BaseContents::same_as`),
+/// outermost first: a group inside one found, or inside a reference, is part of it.
 pub fn recognise(scene: &TedScene, index: &ContentIndex, named: &dyn Fn(&str) -> bool) -> Recognised {
     let mut out = Recognised::default();
     if index.is_empty() {
@@ -340,17 +343,11 @@ pub fn recognise(scene: &TedScene, index: &ContentIndex, named: &dyn Fn(&str) ->
 
     let doc = scene.doc();
     let els = doc.elements();
-    let hashes = element_hashes(doc);
     let is_ref = |e: usize| doc.get(e, crate::project_files::PREFAB_ATTR).is_some_and(|k| !k.is_empty());
     let mut taken: Vec<bool> = vec![false; els.len()];
     for (g, el) in els.iter().enumerate() {
         // Inside a reference or a copy found: part of it (the parent comes first in the table, so it is marked already).
-        if el.parent.is_some_and(|p| taken[p]) {
-            taken[g] = true;
-            continue;
-        }
-
-        if is_ref(g) {
+        if el.parent.is_some_and(|p| taken[p]) || is_ref(g) {
             taken[g] = true;
             continue;
         }
@@ -365,15 +362,14 @@ pub fn recognise(scene: &TedScene, index: &ContentIndex, named: &dyn Fn(&str) ->
         }
 
         let name = doc.get(g, "name").unwrap_or_default();
-        let same = index.by_hash.get(&list_hash(els[ch].children.iter().map(|&c| hashes[c]))).and_then(|keys| keys.iter().find(|k| k.eq_ignore_ascii_case(&name)));
-        match same {
-            Some(key) => {
+        match index.by_key.get(&name.to_lowercase()) {
+            Some((key, base)) if base.same_as(doc, ch) => {
                 out.copies.push((g, key.clone()));
                 taken[g] = true;
             }
 
-            None if named(&name) => out.named_but_different += 1,
-            None => {}
+            _ if named(&name) => out.named_but_different += 1,
+            _ => {}
         }
     }
 
@@ -419,6 +415,9 @@ mod tests {
 
         let moved = copy.replace("vector(1,7,2)", "vector(1.5,7,2)").replace("vector(3,0.5,4)", "vector(3,0.6,4)");
         assert_eq!(overrides(moved.as_bytes(), base.as_bytes()).unwrap().iter().map(|o| o.path.clone()).collect::<Vec<_>>(), vec![vec![0], vec![1]], "x/z, and a freeform height, count");
+
+        let drift = copy.replace("vector(3,0.5,4)", "vector(3.02,0.5,3.97)");
+        assert_eq!(overrides(drift.as_bytes(), base.as_bytes()).unwrap(), vec![], "a drift of hundredths across is no override");
 
         let index = ContentIndex::new([("p", base.as_bytes().to_vec())]);
         let tile = format!("<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"p\">\n<children>\n{copy}</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n");
