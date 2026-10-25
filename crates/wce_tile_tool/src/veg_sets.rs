@@ -115,11 +115,8 @@ impl TileTool {
         gui::end_popup();
     }
 
-    /// The set in use, in the Inspector: its trees, their weights and scale ranges, add and remove; saved at once.
-    pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
-        let Some(mut set) = self.veg_set.clone() else { return };
-        let before = set.clone();
-        ins.section(&format!("Vegetation set {}", set.name));
+    /// The rows of a set's trees: weight, own scale range, remove; and a key to add. Returns the set as edited.
+    fn edit_set_entries(&mut self, e: &mut Editor, ins: &mut dyn Inspector, mut set: VegetationSet) -> VegetationSet {
         let mut remove = None;
         for (i, en) in set.entries.iter_mut().enumerate() {
             gui::push_id_int(i as i32);
@@ -147,7 +144,7 @@ impl TileTool {
             set.entries.remove(i);
         }
 
-        // Another tree: its key (a tree of the game's files).
+        // Another tree: its key (a tree of the game's files; Ctrl + click in the Create panel adds one too).
         let mut key = std::mem::take(&mut self.new_set_key);
         ins.edit_string("new_key", "add a tree (species.variant)", &mut key);
         let known = self.catalogue(e, "VEGETATION_INSTANCE").iter().any(|k| *k == key.trim());
@@ -159,15 +156,112 @@ impl TileTool {
 
         gui::end_disabled();
         self.new_set_key = key;
-        if set != before {
-            match set.save() {
-                Ok(()) => {
-                    self.veg_set = Some(set);
-                    self.rescan_vegetation_sets();
-                }
+        set
+    }
 
-                Err(err) => self.status = err,
+    /// The set in use, in the Inspector: its trees, their weights and scale ranges, add and remove; a saved one is saved at once, the new
+    /// one (not saved yet) follows.
+    pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
+        let Some(set) = self.veg_set.clone() else { return };
+        let before = set.clone();
+        let new = set.path.as_os_str().is_empty();
+        ins.section(&if new { "New vegetation set (not saved)".to_owned() } else { format!("Vegetation set {}", set.name) });
+        let set = self.edit_set_entries(e, ins, set);
+        if set == before {
+            return;
+        }
+
+        if new {
+            self.scratch_set = Some(set.clone());
+            self.veg_set = Some(set);
+            return;
+        }
+
+        match set.save() {
+            Ok(()) => {
+                self.veg_set = Some(set);
+                self.rescan_vegetation_sets();
+            }
+
+            Err(err) => self.status = err,
+        }
+    }
+
+    /// Adds trees to the new set (Ctrl + click in the Create panel): a key, or every tree of a set; one there already weighs one more.
+    pub(crate) fn add_to_new_set(&mut self, keys: &[SetEntry]) {
+        let set = self.scratch_set.get_or_insert_with(VegetationSet::default);
+        for k in keys {
+            match set.entries.iter_mut().find(|en| en.key == k.key) {
+                Some(en) => en.weight += k.weight,
+                None => set.entries.push(k.clone()),
             }
         }
+
+        self.status = format!("the new vegetation set has {} kind(s) of tree (the Inspector)", set.entries.len());
+    }
+
+    /// The new set (not saved), in the Inspector while nothing is being placed: its trees, a name to save it with, using it, dropping it.
+    pub(crate) fn inspect_new_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
+        let Some(set) = self.scratch_set.clone() else { return };
+        if let Some(d) = document(e) {
+            ins.begin(wce_editor_core::document::Document::id(d), u64::MAX - 11);
+        }
+
+        ins.section("New vegetation set (not saved)");
+        let set = self.edit_set_entries(e, ins, set);
+        let mut name = std::mem::take(&mut self.scratch_name);
+        ins.edit_string("set_name", "name", &mut name);
+        gui::begin_disabled(name.trim().is_empty() || set.entries.is_empty());
+        let save = gui::small_button(&format!("{}  Save", icons::SAVE));
+        gui::end_disabled();
+        gui::same_line();
+        gui::begin_disabled(set.entries.is_empty());
+        let use_it = gui::small_button(&format!("{}  Place / paint with it", icons::TREES));
+        gui::end_disabled();
+        gui::same_line();
+        let drop = gui::small_button(&format!("{}  Discard", icons::X));
+        gui::separator();
+        self.scratch_name = name;
+        self.scratch_set = Some(set.clone());
+
+        if save {
+            self.status = self.save_new_set(e).unwrap_or_else(|err| err);
+        } else if use_it {
+            self.start_new_set(e);
+        } else if drop {
+            self.scratch_set = None;
+            self.scratch_name.clear();
+        }
+    }
+
+    /// Saves the new set under its name, in the projects' sets.
+    ///
+    /// # Errors
+    ///
+    /// No name or trees, a set of that name already, or the file can't be written.
+    pub fn save_new_set(&mut self, e: &mut Editor) -> Result<String, String> {
+        let name = self.scratch_name.trim().to_owned();
+        if name.is_empty() || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+            return Err("give the set a file name".to_owned());
+        }
+
+        let mut set = self.scratch_set.clone().filter(|s| !s.entries.is_empty()).ok_or("the new set has no trees")?;
+        if self.vegetation_sets(e).iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+            return Err(format!("a vegetation set '{name}' already exists"));
+        }
+
+        set.name.clone_from(&name);
+        set.path = Self::sets_folder(e).join(format!("{name}.wce"));
+        set.save()?;
+        self.scratch_set = None;
+        self.scratch_name.clear();
+        self.rescan_vegetation_sets();
+        Ok(format!("vegetation set {name} saved ({})", set.path.display()))
+    }
+
+    /// Places or paints with the new set (not saved).
+    pub(crate) fn start_new_set(&mut self, e: &mut Editor) {
+        let en = crate::create_panel::Entry::new_set_entry();
+        self.start_making(e, &en);
     }
 }
