@@ -622,8 +622,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         let edited_copy = tool.edited_copy(d);
         let lib = tool.prefabs.clone();
         let prefab_of = |el: usize| -> Option<String> {
-            let sc = d.tile().tscene();
-            (sc.type_of(el) == "UserInstanceGroup").then(|| lib.as_ref().and_then(|l| l.get(&sc.name(el)).map(|p| p.key.clone()))).flatten()
+            d.prefab_key(el).and_then(|k| lib.as_ref().and_then(|l| l.get(&k).map(|p| p.key.clone())))
         };
         let t = d.tile();
         let sc = t.tscene();

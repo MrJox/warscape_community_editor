@@ -491,6 +491,10 @@ fn prefab_copies_are_placed_and_updated_together() {
     let graph = d.tile().tscene().scene_graph().unwrap();
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
     let g = d.group_instances(&[b], graph, "rocks").unwrap();
+
+    // Only references are copies: a group just named after the prefab is not one.
+    assert!(d.prefab_copies("rocks").is_empty());
+    assert!(d.make_prefab_reference(g, "rocks"));
     let group_text = d.element_text(g);
     let children = d.children_text(g);
     assert!(group_text.starts_with(b"<UserInstanceGroup ") && children.starts_with(b"<BUILDING_INSTANCE "));
@@ -510,7 +514,7 @@ fn prefab_copies_are_placed_and_updated_together() {
     let copies = d.prefab_copies("rocks");
     assert_eq!(d.set_groups_children(&copies, &new_children, "Update rocks").unwrap(), 0);
 
-    for _ in 0..3 {
+    for _ in 0..5 {
         d.history_mut().undo();
     }
 

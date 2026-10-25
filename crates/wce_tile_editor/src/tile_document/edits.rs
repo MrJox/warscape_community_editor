@@ -1245,25 +1245,22 @@ impl TileDocument {
 
     // ---- prefabs (wce_tile::prefabs): a copy is an instance group named after the prefab's key
 
-    /// The copies of a prefab in the tile: its instance groups named the prefab's key (case aside), in document order.
+    /// The copies of a prefab in the tile: the references to it (case aside), in document order.
     pub fn prefab_copies(&self, key: &str) -> Vec<usize> {
         let sc = self.tile().tscene();
         sc.find_all("UserInstanceGroup").into_iter().filter(|&g| self.prefab_key(g).is_some_and(|k| k.eq_ignore_ascii_case(key))).collect()
     }
 
-    /// The prefab an instance group is a copy of: its reference (`wce_prefab`), else its name (a group TEd copied is named after the
-    /// prefab's key; whether there is such a prefab is the caller's to check).
+    /// The prefab an instance group is a reference to (`wce_prefab`). A group that is only named after a prefab is a plain group: the
+    /// ones TEd copied become references when the tile opens from the Assembly Kit, or with `prefab_refs::recognise` (whether there is such
+    /// a prefab is the caller's to check).
     pub fn prefab_key(&self, group: usize) -> Option<String> {
         let sc = self.tile().tscene();
         if sc.type_of(group) != "UserInstanceGroup" {
             return None;
         }
 
-        match sc.doc().get(group, wce_tile::project_files::PREFAB_ATTR) {
-            Some(k) if !k.is_empty() => Some(k),
-            Some(_) => None,
-            None => Some(sc.name(group)),
-        }
+        sc.doc().get(group, wce_tile::project_files::PREFAB_ATTR).filter(|k| !k.is_empty())
     }
 
     /// Whether an instance group is a reference to a prefab (placed by the editor), not a copy TEd made.
