@@ -146,7 +146,7 @@ pub fn scan(root: &Path) -> Vec<VegetationSet> {
         }
     }
 
-    out.sort_by(|a, b| (a.folder.to_lowercase(), a.name.to_lowercase()).cmp(&(b.folder.to_lowercase(), b.name.to_lowercase())));
+    out.sort_by_cached_key(|a| (a.folder.to_lowercase(), a.name.to_lowercase()));
     out
 }
 
