@@ -1550,6 +1550,38 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "tile_type", "tile_type <type> on|off|only | tile_type all",
+        "the Scene panel's type toggles: list and show a type or not (a view setting), show only that type, or show every type",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let types = d.tile().type_counts().keys().cloned().collect::<Vec<_>>();
+            let t = d.tile_mut();
+            match (a.first().map(String::as_str), a.get(1).map(String::as_str)) {
+                (Some("all"), None) => t.display_mut().hidden_types.clear(),
+                (Some(ty), Some(how @ ("on" | "off" | "only"))) => {
+                    if !types.iter().any(|x| x == ty) {
+                        return fail(format!("no {ty} on this tile; types: {}", types.join(", ")));
+                    }
+
+                    match how {
+                        "on" => {
+                            t.display_mut().hidden_types.remove(ty);
+                        }
+                        "off" => {
+                            t.display_mut().hidden_types.insert(ty.to_owned());
+                        }
+                        _ => t.display_mut().hidden_types = types.iter().filter(|x| *x != ty).cloned().collect(),
+                    }
+                }
+                _ => return fail("usage: tile_type <type> on|off|only | tile_type all"),
+            }
+
+            t.display_changed();
+            ok("")
+        },
+    );
+
     c.add("tile_sea", "tile_sea on|off", "show or hide the sea at 0 m (the tile's plane and the map context's sea; kept in the settings)", |e, a| {
         let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_sea on|off") };
         let Some(id) = crate::tool::document_id(e) else { return no_tile() };
