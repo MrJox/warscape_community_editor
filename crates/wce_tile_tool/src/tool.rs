@@ -328,8 +328,25 @@ pub fn document(e: &mut Editor) -> Option<&mut TileDocument> {
 /// The selected elements of the tile (not the terrain).
 pub fn selected(e: &Editor) -> Vec<usize> {
     let Some(id) = document_id(e) else { return vec![] };
-    // A piece of a building stands for its building (the viewport shows the building's box).
-    e.selection.items().iter().filter(|r| r.doc == id && r.item != TERRAIN).filter_map(|r| elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e))).collect()
+    let count = e.docs.find_as::<TileDocument>(id).map_or(0, |d| d.tile().tscene().doc().elements().len());
+
+    // A piece of a building stands for its building (the viewport shows the building's box); an element that is gone (removed, undone) is
+    // not selected.
+    e.selection.items().iter().filter(|r| r.doc == id && r.item != TERRAIN).filter_map(|r| elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e))).filter(|&el| el < count).collect()
+}
+
+/// Takes what is gone (removed, undone: its index is past the tile's elements) out of the editor's selection.
+pub(crate) fn drop_gone_from_selection(e: &mut Editor) {
+    let Some(id) = document_id(e) else { return };
+    let count = e.docs.find_as::<TileDocument>(id).map_or(0, |d| d.tile().tscene().doc().elements().len());
+    let gone = |r: &SourceRef| r.doc == id && r.item != TERRAIN && elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e)).is_some_and(|el| el >= count);
+    if e.selection.items().iter().any(gone) {
+        let keep = e.selection.items().iter().filter(|r| !gone(r)).copied().collect::<Vec<_>>();
+        e.selection.clear();
+        for r in keep {
+            e.selection.add(r);
+        }
+    }
 }
 
 /// The first selected instance element.
@@ -2110,6 +2127,7 @@ impl Tool for TileTool {
             self.context.tile_changed(e, id);
         }
 
+        drop_gone_from_selection(e);
         self.select_whole_prefabs(e);
         self.context.poll(e, id);
         e.viewport.north = self.context.north();
@@ -2166,6 +2184,7 @@ impl Tool for TileTool {
     }
 
     fn draw_panels(&mut self, e: &mut Editor) {
+        drop_gone_from_selection(e);
         self.handle_keys(e);
         {
             wce_foundation::wce_prof!("tile.panel.tile");

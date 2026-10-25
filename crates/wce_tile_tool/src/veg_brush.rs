@@ -151,6 +151,9 @@ impl TileTool {
             let n = elems.len();
             if n != 0 {
                 d.remove_items(&elems);
+
+                // What was selected may be gone, and the rest moved: nothing is.
+                e.selection.clear();
             }
 
             return format!("{n} tree(s) taken away");
