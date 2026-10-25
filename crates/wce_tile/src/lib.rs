@@ -15,4 +15,5 @@ pub mod property_enums;
 pub mod ted_scene;
 pub mod tile_project;
 pub mod vegetation;
+pub mod vegetation_sets;
 pub mod world_transform;

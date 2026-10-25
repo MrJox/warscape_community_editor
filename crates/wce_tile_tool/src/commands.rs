@@ -1144,6 +1144,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("veg_set_new", "veg_set_new <name>", "a new vegetation set from the selected trees (each kind weighted by how many there are)", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: veg_set_new <name>") };
+        with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
+    });
+
+    c.add("veg_set", "veg_set <name>", "place or paint the trees of a vegetation set (as its Create panel entry)", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: veg_set <name>") };
+        with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))
+    });
+
     c.add("start_making", "start_making <type | building | prefab> [key]", "start placing or drawing something, as a click in the Create panel does (the mouse places it)", |e, a| {
         let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
         let key = a.get(1).cloned().unwrap_or_default();

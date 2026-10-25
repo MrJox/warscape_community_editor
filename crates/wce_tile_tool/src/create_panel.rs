@@ -46,6 +46,9 @@ pub enum Make {
 
     /// A prefab, by its key.
     Prefab { key: String },
+
+    /// A vegetation set, by its name (its trees placed or painted, a key picked by the weights for each).
+    VegSet { name: String },
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +68,7 @@ impl Entry {
             Make::Place { kind, key } => format!("{kind}|{key}"),
             Make::Draw { kind } => format!("{kind}|"),
             Make::Prefab { key } => format!("prefab|{key}"),
+            Make::VegSet { name } => format!("vegset|{name}"),
         }
     }
 
@@ -72,12 +76,13 @@ impl Entry {
         match &self.make {
             Make::Place { kind, .. } | Make::Draw { kind } => crate::entity_types::type_icon(kind),
             Make::Prefab { .. } => icons::COMPONENT,
+            Make::VegSet { .. } => icons::TREES,
         }
     }
 }
 
 /// What the entries were made for: the tile and the prefab library's version.
-type EntriesStamp = (DocumentId, u64);
+type EntriesStamp = (DocumentId, u64, u64);
 
 /// What the Create panel shows: the entries (made again for another tile or another prefab library), its filter, the rows it let through,
 /// the favourites and recent entries (the settings' lists, read once), and the Shift+A popup's filter.
@@ -114,7 +119,7 @@ impl TileTool {
     /// The entries of the open tile (with the prefab library).
     fn create_entries(&mut self, e: &mut Editor) -> Arc<Vec<Entry>> {
         let Some(id) = document(e).map(|d| d.id()) else { return Arc::default() };
-        let stamp = (id, self.prefab_version);
+        let stamp = (id, self.prefab_version, self.veg_sets_version);
         if let Some((s, entries)) = &self.create.entries
             && *s == stamp
         {
@@ -126,6 +131,13 @@ impl TileTool {
             let search = format!("{label} {extra}").to_lowercase();
             Entry { category, label, make, search }
         };
+
+        // The vegetation sets, at the top of the vegetation.
+        for set in self.vegetation_sets(e).iter() {
+            let label = if set.folder.is_empty() { format!("set: {}", set.name) } else { format!("set: {}   {}", set.name, set.folder) };
+            let keys = set.entries.iter().map(|en| en.key.as_str()).collect::<Vec<_>>().join(" ");
+            out.push(entry(1, label, Make::VegSet { name: set.name.clone() }, &format!("vegetation set {keys}")));
+        }
 
         for (category, kind) in KEYED {
             for key in self.catalogue(e, kind).iter() {
@@ -187,8 +199,25 @@ impl TileTool {
         self.drawing = false;
         self.draw_pts.clear();
         self.placing = None;
+        self.veg_set = None;
         self.making = Some(en.label.clone());
         match &en.make {
+            Make::VegSet { name } => {
+                let set = self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned();
+                let Some(set) = set.filter(|s| !s.entries.is_empty()) else {
+                    self.status = format!("the vegetation set {name} has no trees");
+                    self.making = None;
+                    return;
+                };
+
+                let kind = "VEGETATION_INSTANCE";
+                let mut d = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
+                d.key = set.pick(self.random.unit()).map(|en| en.key.clone()).unwrap_or_default();
+                self.draft = Some(d);
+                self.veg_set = Some(set);
+                self.placing = Some(crate::tool::Placing::Draft);
+            }
+
             Make::Place { kind, key } => {
                 let mut d = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, key));
                 d.key.clone_from(key);
@@ -217,6 +246,7 @@ impl TileTool {
 
     /// Stops placing or drawing.
     pub fn stop_making(&mut self) {
+        self.veg_set = None;
         self.placing = None;
         self.drawing = false;
         self.draw_pts.clear();
@@ -287,7 +317,16 @@ impl TileTool {
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
         let (at, on_terrain) = if self.preview_forced { (at, true) } else { self.place_point() };
-        d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"))
+        let placed = d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"));
+
+        // From a vegetation set: the next one is another of its trees.
+        if let (Some(set), Some(draft)) = (self.veg_set.as_ref(), self.draft.as_mut())
+            && let Some(en) = set.pick(self.random.unit())
+        {
+            draft.key.clone_from(&en.key);
+        }
+
+        placed
     }
 
     /// Finishes a drawn type with the drawn points.
@@ -343,9 +382,13 @@ impl TileTool {
             return true;
         }
 
-        // The brush's settings first while it paints trees.
+        // The brush's settings first while it paints trees; the set in use.
         if self.painting_trees(e) {
             self.inspect_veg_brush(e, ins);
+        }
+
+        if self.veg_set.is_some() {
+            self.inspect_veg_set(e, ins);
         }
 
         let Some(mut draft) = self.draft.clone() else { return false };
@@ -439,6 +482,11 @@ impl TileTool {
             }
 
             gui::separator();
+        }
+
+        // A set from the selected trees.
+        if self.trees_selected(e) && gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
+            self.request_new_vegetation_set();
         }
 
         gui::set_next_item_width(-1.0);
@@ -634,6 +682,17 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
 
     let label = if key.is_empty() { crate::entity_types::type_name(what).to_owned() } else { key.to_owned() };
     let en = Entry { category: 0, label, make, search: String::new() };
+    t.start_making(e, &en);
+    Ok(())
+}
+
+/// Places or paints a vegetation set from a script, as its Create panel entry does.
+pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Result<(), String> {
+    if !t.vegetation_sets(e).iter().any(|s| s.name == name) {
+        return Err(format!("no vegetation set '{name}'"));
+    }
+
+    let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, search: String::new() };
     t.start_making(e, &en);
     Ok(())
 }
