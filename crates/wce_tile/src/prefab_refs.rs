@@ -286,8 +286,8 @@ pub struct Recognised {
     pub named_but_different: usize,
 }
 
-/// The instance groups of a scene whose contents are exactly a prefab's (`index`), outermost first: a group inside one found, or inside a
-/// reference, is part of it. When several prefabs have those contents, the one the group is named after, else the first.
+/// The instance groups of a scene named after a prefab (its key, case aside) whose contents are exactly that prefab's (`index`), outermost
+/// first: a group inside one found, or inside a reference, is part of it.
 pub fn recognise(scene: &TedScene, index: &ContentIndex, named: &dyn Fn(&str) -> bool) -> Recognised {
     let mut out = Recognised::default();
     if index.is_empty() {
@@ -321,9 +321,9 @@ pub fn recognise(scene: &TedScene, index: &ContentIndex, named: &dyn Fn(&str) ->
         }
 
         let name = doc.get(g, "name").unwrap_or_default();
-        match index.by_hash.get(&list_hash(els[ch].children.iter().map(|&c| hashes[c]))) {
-            Some(keys) => {
-                let key = keys.iter().find(|k| k.eq_ignore_ascii_case(&name)).unwrap_or(&keys[0]);
+        let same = index.by_hash.get(&list_hash(els[ch].children.iter().map(|&c| hashes[c]))).and_then(|keys| keys.iter().find(|k| k.eq_ignore_ascii_case(&name)));
+        match same {
+            Some(key) => {
                 out.copies.push((g, key.clone()));
                 taken[g] = true;
             }
@@ -372,13 +372,13 @@ mod tests {
         let index = ContentIndex::new([("rocks", BASE.as_bytes().to_vec()), ("inner", b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\"/>\n".to_vec())]);
         let indented = BASE.lines().map(|l| format!("                {l}\n")).collect::<String>();
         let tile = format!(
-            "<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"copy\" position=\"vector(9,9,9)\">\n<children>\n{indented}</children>\n</UserInstanceGroup>\n<UserInstanceGroup name=\"rocks\">\n<children>\n<BUILDING_INSTANCE position=\"vector(5,0,0)\" key=\"rock\"/>\n</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n"
+            "<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"ROCKS\" position=\"vector(9,9,9)\">\n<children>\n{indented}</children>\n</UserInstanceGroup>\n<UserInstanceGroup name=\"other\" position=\"vector(9,9,9)\">\n<children>\n{indented}</children>\n</UserInstanceGroup>\n<UserInstanceGroup name=\"rocks\">\n<children>\n<BUILDING_INSTANCE position=\"vector(5,0,0)\" key=\"rock\"/>\n</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n"
         );
         let scene = TedScene::parse_any(tile.into_bytes()).unwrap();
         let found = recognise(&scene, &index, &|n| n == "rocks");
-        assert_eq!(found.copies.len(), 1, "the inner group is part of the copy: {found:?}");
+        assert_eq!(found.copies.len(), 1, "the inner group is part of the copy, and the same contents under another name are not one: {found:?}");
         assert_eq!(found.copies[0].1, "rocks");
-        assert_eq!(scene.name(found.copies[0].0), "copy");
+        assert_eq!(scene.name(found.copies[0].0), "ROCKS");
         assert_eq!(found.named_but_different, 1);
     }
 }
