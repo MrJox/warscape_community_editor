@@ -99,7 +99,7 @@ fn run() -> Result<(), String> {
 
     let folder_path = format!("terrain/tiles/battle/{TILE}");
     let exported = game.exported_from_packs(&folder_path)?;
-    let (project_dir, losses) = open_exported(&game, &exported, &folder_path, Path::new(workspace))?;
+    let (project_dir, losses) = open_exported(&game, &exported, &folder_path, Path::new(workspace), false)?;
     println!("decompiled into {} ({} losses noted)", project_dir.display(), losses.notes.len());
 
     let mut project = TileProject::open(&project_dir).map_err(|e| e.to_string())?;
@@ -115,7 +115,7 @@ fn run() -> Result<(), String> {
     let (_, msg) = project.save(&project_dir, true, project.height_dirty)?;
     println!("{msg}");
 
-    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, Path::new(out))?;
+    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, project.scene.save(), Path::new(out))?;
     for n in &notes {
         println!("export: {n}");
     }
