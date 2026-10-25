@@ -157,3 +157,17 @@ pub fn mark_extracted_entry(entry_xml: &Path) -> Result<PathBuf, String> {
     wce_formats::tile_index::TileIndex::forget_shared();
     Ok(target)
 }
+
+impl TileDocument {
+    /// The manual trees the game will not have: those outside every vegetation exclusion polygon, which BOB leaves out
+    /// (`wce_tile::vegetation::trees_outside_exclusions`).
+    pub fn trees_outside_exclusions(&self) -> Vec<usize> {
+        wce_tile::vegetation::trees_outside_exclusions(self.tile().tscene())
+    }
+
+    /// The warning about them, if there are any.
+    pub fn exclusion_warning(&self) -> Option<String> {
+        let n = self.trees_outside_exclusions().len();
+        (n != 0).then(|| format!("{n} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out (Tile panel > Problems)"))
+    }
+}

@@ -1513,7 +1513,17 @@ impl TileDocument {
             self.history.mark_saved();
         }
 
-        Ok(if wrote { format!("{msg}({})", out.display()) } else { msg })
+        let msg = if wrote { format!("{msg}({})", out.display()) } else { msg };
+
+        // What the game will not have, said at every save.
+        Ok(match self.exclusion_warning() {
+            Some(w) => {
+                wce_foundation::log::warn(format!("{}: {w}", self.title()));
+                format!("WARNING: {w}. {msg}")
+            }
+
+            None => msg,
+        })
     }
 
     // ---- inspector and gizmo

@@ -658,6 +658,10 @@ impl Document for TileDocument {
         self.tile().structure_version
     }
 
+    fn save_message(&self) -> Option<String> {
+        Some(self.tile().last_message.clone())
+    }
+
     fn save_wanted(&self) -> bool {
         !self.is_project()
     }

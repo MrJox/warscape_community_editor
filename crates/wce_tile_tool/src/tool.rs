@@ -189,6 +189,9 @@ pub struct TileTool {
     /// The viewport's right-click menu opens on the next frame.
     pub(crate) context_menu: bool,
 
+    /// The Problems section's trees, and the (tile, history, structure) they were found for.
+    problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
+
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
 
@@ -276,7 +279,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -1155,6 +1158,8 @@ impl TileTool {
         gui::separator();
         self.draw_links_section(e, id);
         gui::separator();
+        self.draw_problems_section(e, id);
+        gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
         if !self.status.is_empty() {
@@ -1324,6 +1329,46 @@ impl TileTool {
 
         if let (Some(t), false) = (look_at, fly) {
             e.viewport.orbit_mut().set_orbit(0.8, 0.9, 350.0, t);
+        }
+    }
+
+    /// Problems: what the export or the game will not take. The manual trees outside every vegetation exclusion polygon (BOB leaves them
+    /// out), counted again after each edit; a click selects one and frames it.
+    fn draw_problems_section(&mut self, e: &mut Editor, id: DocumentId) {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let stamp = (id, d.history().version(), d.tile().structure_version());
+        if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) {
+            self.problems = Some((stamp, d.trees_outside_exclusions()));
+        }
+
+        let trees = self.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+        let title = if trees.is_empty() { "Problems (none)###problems".to_owned() } else { format!("{}  Problems ({})###problems", icons::TRIANGLE_ALERT, trees.len()) };
+        if !gui::collapsing_header(&title, 0) {
+            return;
+        }
+
+        if trees.is_empty() {
+            gui::text_disabled("Nothing the game would leave out.");
+            return;
+        }
+
+        gui::text_wrapped(&format!("{} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out. Put them inside one (or draw one around them).", trees.len()));
+        let mut pick = None;
+        let sc = d.tile().tscene();
+        for &el in trees.iter().take(200) {
+            let p = d.tile().world_position(el);
+            if gui::selectable(&format!("{}  {}  ({:.0}, {:.0})##problem{el}", icons::TREE_PINE, sc.doc().get(el, "key").unwrap_or_default(), p.x, p.z), false, 0) {
+                pick = Some(el);
+            }
+        }
+
+        if trees.len() > 200 {
+            gui::text_disabled(&format!("... {} more", trees.len() - 200));
+        }
+
+        if let Some(el) = pick {
+            e.selection.set(SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
+            let _ = wce_editor_core::command_registry::CommandRegistry::run(e, "focus");
         }
     }
 
@@ -2511,6 +2556,10 @@ impl Tool for TileTool {
 
         let mut doc = TileDocument::new(project, e.files());
         doc.set_projects_root(Some(projects));
+        if let Some(w) = doc.exclusion_warning() {
+            log::error(format!("{}: {w}", doc.title()));
+        }
+
         let settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
         doc.tile_mut().display_mut().show_sea = settings.show_sea;
         if !settings.show_vfx_boxes {
