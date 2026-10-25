@@ -57,6 +57,11 @@ impl BuildingDb {
         self.categories.get(key).map(String::as_str)
     }
 
+    /// Every building key of the tables.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.categories.keys().map(String::as_str)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.categories.is_empty()
     }

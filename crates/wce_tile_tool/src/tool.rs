@@ -46,6 +46,22 @@ pub const HINTS: [&str; 16] = [
     "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
 ];
 
+/// How many instance groups of a tile have each name (lower case).
+pub(crate) type PrefabCounts = Arc<HashMap<String, usize>>;
+
+/// What clicks on the terrain place, with a preview under the mouse until then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Placing {
+    /// The Create section's type.
+    Create,
+
+    /// A building of the Placement section's key.
+    Building,
+
+    /// A prefab of the library.
+    Prefab(String),
+}
+
 /// What the left mouse button does in the viewport.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TileMode {
@@ -102,7 +118,7 @@ pub struct TileTool {
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
     angle_step: f32,
-    building_key: String,
+    pub(crate) building_key: String,
 
     // Placement: the mode of new buildings, the off-terrain report of the Tile panel.
     new_placement: Placement,
@@ -141,6 +157,9 @@ pub struct TileTool {
     pub(crate) prefab_edit: Option<(DocumentId, String, String)>,
     pub(crate) prefab_filter: String,
     pub(crate) prefab_selected: String,
+
+    /// The Prefabs panel's copy counts and the (tile, structure version) they were counted for.
+    pub(crate) prefab_counts: Option<((DocumentId, u64), PrefabCounts)>,
 
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
@@ -183,10 +202,21 @@ pub struct TileTool {
     draw_pts: Vec<Float3>,
     pub(crate) new_poly_type: usize,
 
-    /// The Create section: the type (an index of CREATE_TYPES), its key, and whether clicks on the terrain place it now.
+    /// The Create section: the type (an index of CREATE_TYPES) and its key; what clicks on the terrain place now.
     pub(crate) new_kind: usize,
     pub(crate) new_key: String,
-    pub(crate) placing: bool,
+    pub(crate) placing: Option<Placing>,
+
+    /// The key pickers (Create section, buildings) and the keys of each type, per tile.
+    key_picker: crate::key_picker::KeyPicker,
+    building_picker: crate::key_picker::KeyPicker,
+    catalogues: HashMap<(DocumentId, String), Arc<Vec<String>>>,
+
+    /// The text of the prefab being placed (read once per placing).
+    placing_prefab_text: Option<(String, Vec<u8>)>,
+
+    /// The preview is shown at `cursor` without the mouse over the viewport (`place_preview`, for scripts).
+    pub(crate) preview_forced: bool,
     pub(crate) new_hint: usize,
     camera_set_for: DocumentId,
 
@@ -249,10 +279,10 @@ impl Default for TileTool {
             building_key: String::new(), new_placement: Placement::Landscape, off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None, prefab_filter: String::new(),
-            prefab_selected: String::new(), prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
+            prefab_selected: String::new(), prefab_counts: None, prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
+            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: None, key_picker: Default::default(), building_picker: Default::default(), catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -378,6 +408,75 @@ impl TileTool {
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
         let at = Float3::new(at.x, d.tile().terrain_height(at.x, at.z), at.z);
         d.create(kind, into, &Create::Point(at), &key).map(|_| format!("added {kind}"))
+    }
+
+    /// Places a building of the Placement section's key at a point on the ground (in the working layer; the selected building is the
+    /// template of its other attributes).
+    pub fn place_building(&mut self, e: &mut Editor, at: Float3) -> Result<String, String> {
+        let key = self.building_key.trim().to_owned();
+        let template = primary(e);
+        let d = document(e).ok_or("no tile open")?;
+        let into = self.new_items_layer(d);
+        d.add_building_in(&key, template, Some(at), self.new_placement, into).map(|_| format!("added {key}"))
+    }
+
+    /// The keys of a type in the open tile's files (read once per tile).
+    pub(crate) fn catalogue(&mut self, e: &mut Editor, kind: &str) -> Arc<Vec<String>> {
+        let Some(d) = document(e) else { return Arc::default() };
+        self.catalogues.entry((d.id(), kind.to_owned())).or_insert_with(|| Arc::new(d.tile().key_catalogue(kind))).clone()
+    }
+
+    /// A button that starts placing `what` (or stops it, lit while placing). Returns whether it was clicked.
+    pub(crate) fn place_button(&mut self, what: Placing) -> bool {
+        let on = self.placing.as_ref() == Some(&what);
+        if on {
+            gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+        }
+
+        // The label changes and several of these share a window: the id is the kind of thing placed.
+        let id = match &what {
+            Placing::Create => "create",
+            Placing::Building => "building",
+            Placing::Prefab(_) => "prefab",
+        };
+
+        let label = if on { "Placing: click the terrain (Esc stops)" } else { "Place (click the terrain)" };
+        let clicked = gui::button(&format!("{label}###place_{id}"));
+        if on {
+            gui::pop_style_color(1);
+        }
+
+        if clicked {
+            self.placing = if on { None } else { Some(what) };
+        }
+
+        clicked
+    }
+
+    /// The text of what a click places now, for the preview under the mouse.
+    fn placing_text(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
+        match self.placing.clone()? {
+            Placing::Create => {
+                let (kind, _, _) = CREATE_TYPES[self.new_kind];
+                document(e)?.point_instance_text(kind, self.new_key.trim())
+            }
+
+            Placing::Building => {
+                let key = self.building_key.trim();
+                let mode = if self.new_placement == Placement::Freeform { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" };
+                (!key.is_empty()).then(|| format!("<BUILDING_INSTANCE key=\"{key}\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\" surface_mode=\"{mode}\"/>\n").into_bytes())
+            }
+
+            Placing::Prefab(key) => {
+                if self.placing_prefab_text.as_ref().is_none_or(|(k, _)| *k != key) {
+                    let lib = self.prefab_library(e);
+                    let text = lib.get(&key).and_then(|p| wce_tile::prefabs::load(&p.path).ok()).map(|p| p.group_text).unwrap_or_default();
+                    self.placing_prefab_text = Some((key, text));
+                }
+
+                self.placing_prefab_text.as_ref().map(|(_, t)| t.clone()).filter(|t| !t.is_empty())
+            }
+        }
     }
 
     /// Picks the Create section's type by name.
@@ -906,8 +1005,8 @@ impl TileTool {
             } else if self.drawing {
                 self.drawing = false;
                 self.draw_pts.clear();
-            } else if self.placing {
-                self.placing = false;
+            } else if self.placing.is_some() {
+                self.placing = None;
             } else if self.mode != TileMode::Select {
                 self.mode = TileMode::Select;
             }
@@ -1054,7 +1153,14 @@ impl TileTool {
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
         gui::set_next_item_width(90.0);
         gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
-        gui::input_text("building key", None, &mut self.building_key, 128, 0);
+        let keys = self.catalogue(e, "BUILDING_INSTANCE");
+        if keys.is_empty() {
+            gui::set_next_item_width(260.0);
+            gui::input_text("building key", None, &mut self.building_key, 128, 0);
+        } else {
+            self.building_picker.combo("building key", &mut self.building_key, &keys, 260.0);
+        }
+
         gui::same_line();
         let mut np = i32::from(self.new_placement == Placement::Freeform);
         gui::set_next_item_width(120.0);
@@ -1067,15 +1173,10 @@ impl TileTool {
         }
 
         gui::same_line();
+        gui::begin_disabled(self.building_key.trim().is_empty());
+        self.place_button(Placing::Building);
+        gui::end_disabled();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        if gui::button("Add") {
-            let at = self.terrain_hit.then_some(self.cursor);
-            let into = self.new_items_layer(d);
-            self.status = match d.add_building_in(&self.building_key, sel, at, self.new_placement, into) {
-                Ok(_) => format!("added {}", self.building_key),
-                Err(err) => err,
-            };
-        }
 
         gui::begin_disabled(sel.is_none());
         let grab = gui::button("Grab on ground (G)");
@@ -1736,7 +1837,7 @@ impl TileTool {
                 if gui::selectable(&format!("{}  {t}   ({how})", crate::entity_types::type_icon(t)), i == self.new_kind, 0) {
                     self.new_kind = i;
                     self.new_key.clear();
-                    self.placing = false;
+                    self.placing = None;
                 }
             }
 
@@ -1747,30 +1848,33 @@ impl TileTool {
             let default = wce_tile::instance_templates::template(kind)
                 .and_then(|t| t.attrs.iter().find(|(k, _)| *k == if kind == "VFXInstance" { "vfx" } else { "key" }).map(|(_, v)| v.to_string()))
                 .unwrap_or_default();
-            gui::set_next_item_width(300.0);
-            gui::input_text(label, Some(&default), &mut self.new_key, 256, 0);
+            let keys = self.catalogue(e, kind);
+            if keys.is_empty() {
+                gui::set_next_item_width(300.0);
+                gui::input_text(label, Some(&default), &mut self.new_key, 256, 0);
+            } else {
+                self.key_picker.combo(label, &mut self.new_key, &keys, 300.0);
+                if self.new_key.is_empty() {
+                    gui::same_line();
+                    gui::text_disabled(&format!("(default {default})"));
+                }
+            }
         }
 
         gui::text_disabled(&format!("into the working layer ({})", document(e).and_then(|d| self.working_layer_of(d).map(|l| Self::layer_label(d, l))).unwrap_or_else(|| "the root".to_owned())));
         if placed {
-            if self.placing {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
-
-            if gui::button(if self.placing { "Placing: click the terrain (Esc stops)" } else { "Place (click the terrain)" }) {
-                self.placing = !self.placing;
+            if self.place_button(Placing::Create) {
                 self.drawing = false;
-            }
-
-            if self.placing {
-                gui::pop_style_color(1);
             }
 
             self.show_selected_polygon(e, id);
             return;
         }
 
-        self.placing = false;
+        if self.placing == Some(Placing::Create) {
+            self.placing = None;
+        }
+
         if kind == "AI_HINT_POLYGON_INSTANCE" {
             gui::set_next_item_width(260.0);
             if gui::begin_combo("hint", HINTS[self.new_hint]) {
@@ -2090,16 +2194,31 @@ impl Tool for TileTool {
         let handle = Self::handle_size(e);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let overlay = self.tool_overlay(e, d);
+        let preview = if self.terrain_hit && (e.viewport.hovered || self.preview_forced) { self.placing_text(e) } else { None };
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_view(&mut e.scene, eye);
+        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), self.cursor);
         d.tile_mut().set_highlight(&mut e.scene, &sel, self.poly_point, handle, &overlay);
     }
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.handle_keys(e);
-        self.draw_tile_panel(e);
-        crate::scene_panel::draw_layers_panel(self, e);
-        self.draw_browser_panel(e);
+        {
+            wce_foundation::wce_prof!("tile.panel.tile");
+            self.draw_tile_panel(e);
+        }
+
+        {
+            wce_foundation::wce_prof!("tile.panel.scene");
+            crate::scene_panel::draw_layers_panel(self, e);
+        }
+
+        {
+            wce_foundation::wce_prof!("tile.panel.tiles");
+            self.draw_browser_panel(e);
+        }
+
+        wce_foundation::wce_prof!("tile.panel.prefabs");
         self.draw_prefab_panel(e);
     }
 
@@ -2191,9 +2310,14 @@ impl Tool for TileTool {
                     return true;
                 }
 
-                if self.placing {
+                if let Some(placing) = self.placing.clone() {
                     if self.terrain_hit {
-                        self.status = self.place_new(e, self.cursor).unwrap_or_else(|err| err);
+                        self.status = match placing {
+                            Placing::Create => self.place_new(e, self.cursor),
+                            Placing::Building => self.place_building(e, self.cursor),
+                            Placing::Prefab(key) => self.place_prefab(e, &key, self.cursor),
+                        }
+                        .unwrap_or_else(|err| err);
                     }
 
                     return true;
@@ -2394,7 +2518,7 @@ impl Tool for TileTool {
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
-        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing
+        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some()
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

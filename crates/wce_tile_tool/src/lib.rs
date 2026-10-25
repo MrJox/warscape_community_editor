@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod context_panel;
 pub mod entity_types;
+pub mod key_picker;
 pub mod prefab_panel;
 pub mod scene_panel;
 pub mod settings;

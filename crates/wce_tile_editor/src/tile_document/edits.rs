@@ -1087,15 +1087,11 @@ impl TileDocument {
     ///
     /// A type that can't be made this way, too few points, or no such layer.
     pub fn create(&mut self, kind: &str, into: usize, shape: &Create, key: &str) -> Result<usize, String> {
-        use wce_tile::new_instances::{NewInstance, NewPoint, circle_points, element_text, polygon_area, vector};
+        use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
 
         let t = self.tile();
         let unit = t.unit();
         let local = |p: Float3| t.to_local(into, Float3::new(p.x, p.y, p.z));
-        let square = |half_m: f64| {
-            let h = half_m * unit;
-            vec![Double3::new(-h, 0.0, -h), Double3::new(h, 0.0, -h), Double3::new(h, 0.0, h), Double3::new(-h, 0.0, h)]
-        };
 
         // A drawn shape: its centre (the element's position) and the points around it.
         let line = |pts: &[Float3]| -> Result<(Double3, Vec<Double3>), String> {
@@ -1108,75 +1104,27 @@ impl TileDocument {
             Ok((c, local.into_iter().map(|p| p - c).collect()))
         };
 
-        let polygon = |kind: &str, points: Vec<Double3>, closed: bool| {
-            let mut n = NewInstance::new(kind).attr("area", wce_tile::ted_scene::format_ted_number(polygon_area(&points)));
-            if !closed {
-                n = n.attr("polygon_closed", "0");
-            }
-
-            n.points = points.into_iter().map(NewPoint::at).collect();
-            n
-        };
-
         let into_type = t.tscene().type_of(into).to_owned();
         let element = match (kind, shape) {
-            ("ProjectedDecalInstance" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE", Create::Point(p)) => {
-                let mut n = NewInstance::new(kind).position(local(*p));
-                if !key.is_empty() {
-                    n = n.attr("key", key);
-                }
-
-                n
-            }
-
-            ("VFXInstance", Create::Point(p)) => {
-                let n = NewInstance::new(kind).position(local(*p));
-                if key.is_empty() { n } else { n.attr("vfx", key) }
-            }
-
-            ("POINT_LIGHT_INSTANCE", Create::Point(p)) => NewInstance::new(kind).position(local(*p)),
-            ("CivilianShelter", Create::Point(p)) => {
-                let at = local(*p);
-                NewInstance::new(kind).position(at).attr("target", vector(at + Double3::new(0.0, 0.0, 10.0 * unit)))
-            }
-
-            ("CaptureLocationInstance", Create::Point(p)) => {
-                let boundary = polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_ted_number(20.0 * unit));
-                let mut n = NewInstance::new(kind).position(local(*p));
-                n.children.push(element_text(&boundary)?);
-                n
-            }
-
-            ("SiegeAINodeInstance", Create::Point(p)) => {
-                let mut n = NewInstance::new(kind).position(local(*p));
-                n.children.push(element_text(&polygon("SIEGE_AI_POLYGON_INSTANCE", square(10.0), true).attr("polygon_closed", "1"))?);
-                n
-            }
-
-            ("DeploymentZonePolygonInstanceGroup", Create::Point(p)) => {
-                let mut n = NewInstance::new(kind).position(local(*p));
-                n.children.push(element_text(&polygon("DEPLOYMENT_ZONE_POLYGON_INSTANCE", square(32.0), true))?);
-                n
-            }
-
+            (_, Create::Point(p)) => point_instance(kind, local(*p), key, unit)?,
             ("ZONE_POLYGON_INSTANCE" | "CivilianDeploymentZone" | "LiteBuildingZone", Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
-                polygon(kind, points, true).position(c)
+                new_polygon(kind, points, true).position(c)
             }
 
             ("AISeparatorInstance", Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
-                polygon(kind, points, false).position(c)
+                new_polygon(kind, points, false).position(c)
             }
 
             ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
                 if into_type == "DeploymentZonePolygonInstanceGroup" {
-                    polygon(kind, points, true).position(c)
+                    new_polygon(kind, points, true).position(c)
                 } else {
                     // A new group around it.
                     let mut g = NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c);
-                    g.children.push(element_text(&polygon(kind, points, true))?);
+                    g.children.push(element_text(&new_polygon(kind, points, true))?);
                     g
                 }
             }
@@ -1192,7 +1140,7 @@ impl TileDocument {
                 let other = points.iter().map(|&p| p + off).collect::<Vec<_>>();
                 let mut n = NewInstance::new(kind).position(c);
                 for b in [points, other] {
-                    n.children.push(element_text(&polygon("SIEGE_AI_POLYGON_INSTANCE", b, false))?);
+                    n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", b, false))?);
                 }
 
                 n
@@ -1216,7 +1164,6 @@ impl TileDocument {
                 n
             }
 
-            (_, Create::Point(_)) => return Err(format!("{kind} is drawn, not placed")),
             (_, Create::Line(_)) => return Err(format!("{kind} is placed, not drawn")),
         };
 
@@ -1234,6 +1181,12 @@ impl TileDocument {
                 Err(err)
             }
         }
+    }
+
+    /// The text of what a click of the Create section places (a type placed by a click, at the origin), for the preview.
+    pub fn point_instance_text(&self, kind: &str, key: &str) -> Option<Vec<u8>> {
+        let n = point_instance(kind, Double3::ZERO, key, self.tile().unit()).ok()?;
+        wce_tile::new_instances::element_text(&n).ok()
     }
 
     // ---- prefabs (wce_tile::prefabs): a copy is an instance group named after the prefab's key
@@ -2029,4 +1982,62 @@ impl Tile {
     pub fn item_flag(&self, item: u64, flag: &str) -> bool {
         elem_of(item).is_none_or(|e| item == TERRAIN || self.own_flag(e, flag))
     }
+}
+
+/// A polygon of TEd's shape: its area, open or closed, its points.
+fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_instances::NewInstance {
+    use wce_tile::new_instances::{NewInstance, NewPoint, polygon_area};
+
+    let mut n = NewInstance::new(kind).attr("area", wce_tile::ted_scene::format_ted_number(polygon_area(&points)));
+    if !closed {
+        n = n.attr("polygon_closed", "0");
+    }
+
+    n.points = points.into_iter().map(NewPoint::at).collect();
+    n
+}
+
+/// A type placed by a click (`TileDocument::create`), at `at` (local to where it goes), with its parts.
+fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_tile::new_instances::NewInstance, String> {
+    use wce_tile::new_instances::{NewInstance, circle_points, element_text, vector};
+
+    let square = |half_m: f64| {
+        let h = half_m * unit;
+        vec![Double3::new(-h, 0.0, -h), Double3::new(h, 0.0, -h), Double3::new(h, 0.0, h), Double3::new(-h, 0.0, h)]
+    };
+
+    Ok(match kind {
+        "ProjectedDecalInstance" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" => {
+            let n = NewInstance::new(kind).position(at);
+            if key.is_empty() { n } else { n.attr("key", key) }
+        }
+
+        "VFXInstance" => {
+            let n = NewInstance::new(kind).position(at);
+            if key.is_empty() { n } else { n.attr("vfx", key) }
+        }
+
+        "POINT_LIGHT_INSTANCE" => NewInstance::new(kind).position(at),
+        "CivilianShelter" => NewInstance::new(kind).position(at).attr("target", vector(at + Double3::new(0.0, 0.0, 10.0 * unit))),
+        "CaptureLocationInstance" => {
+            let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_ted_number(20.0 * unit));
+            let mut n = NewInstance::new(kind).position(at);
+            n.children.push(element_text(&boundary)?);
+            n
+        }
+
+        "SiegeAINodeInstance" => {
+            let mut n = NewInstance::new(kind).position(at);
+            n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", square(10.0), true).attr("polygon_closed", "1"))?);
+            n
+        }
+
+        "DeploymentZonePolygonInstanceGroup" => {
+            let mut n = NewInstance::new(kind).position(at);
+            n.children.push(element_text(&new_polygon("DEPLOYMENT_ZONE_POLYGON_INSTANCE", square(32.0), true))?);
+            n
+        }
+
+        _ => return Err(format!("{kind} is drawn, not placed")),
+    })
 }

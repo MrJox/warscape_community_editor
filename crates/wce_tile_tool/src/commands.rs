@@ -1075,6 +1075,57 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("prefab_rescan", "prefab_rescan", "scan the prefab folders again", |e, _| with_tile(e, |t, e| ok(format!("{} prefabs", t.rescan_prefabs(e)))));
 
+    c.add("keys", "keys <type> [filter]", "the valid keys of a type in the open tile's files (the Create and Placement pickers' lists): the count and the first 20 matching", |e, a| {
+        let Some(kind) = a.first().cloned() else { return fail("usage: keys <type> [filter]") };
+        let filter = a.get(1).map(|f| f.to_lowercase()).unwrap_or_default();
+        with_tile(e, |t, e| {
+            let keys = t.catalogue(e, &kind);
+            let hits = keys.iter().filter(|k| k.to_lowercase().contains(&filter)).collect::<Vec<_>>();
+            ok(format!("{} keys, {} matching: {}", keys.len(), hits.len(), hits.iter().take(20).map(|k| k.as_str()).collect::<Vec<_>>().join(", ")))
+        })
+    });
+
+    c.add(
+        "place_preview", "place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off",
+        "start placing (a Create type, a building or a prefab) and show its preview at x z as if the mouse were there", |e, a| {
+        if a.first().map(String::as_str) == Some("off") {
+            return with_tile(e, |t, _| {
+                t.placing = None;
+                t.preview_forced = false;
+                ok("")
+            });
+        }
+
+        let (Some(what), Some(x), Some(z)) = (a.first().cloned(), a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v))) else {
+            return fail("usage: place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off");
+        };
+
+        let key = a.get(3).cloned().unwrap_or_default();
+        with_tile(e, |t, e| {
+            let Some(d) = crate::tool::document(e) else { return no_tile() };
+            t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+            t.terrain_hit = true;
+            t.preview_forced = true;
+            t.placing = Some(match what.as_str() {
+                "building" => {
+                    t.building_key = key;
+                    crate::tool::Placing::Building
+                }
+
+                "prefab" => crate::tool::Placing::Prefab(key),
+                kind => {
+                    if let Err(err) = t.set_new_kind(kind) {
+                        return fail(err);
+                    }
+
+                    t.new_key = key;
+                    crate::tool::Placing::Create
+                }
+            });
+            ok("")
+        })
+    });
+
     c.add("prefab_place", "prefab_place <key> [x m z m]", "place a prefab in the working layer, on the ground at x z (default: the view's centre)", |e, a| {
         let Some(key) = a.first().cloned() else { return fail("usage: prefab_place <key> [x m z m]") };
         let at = (a.len() >= 3).then(|| Some(Float3::new(number(&a[1])?, 0.0, number(&a[2])?))).flatten();

@@ -4,6 +4,7 @@
 //! prefab file and gives every other copy in the tile the new contents (one undo entry), Cancel gives the copy the file's contents back.
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
@@ -265,7 +266,30 @@ impl TileTool {
         Ok(format!("saved {}", path.display()))
     }
 
-    /// The Prefabs panel: the library by folder, filtered by words; Place (or a double click) puts one in the working layer.
+    /// How many instance groups of the open tile have each name (lower case): the copies of each prefab. Counted again only when the
+    /// tile's structure changed (a rename, an addition, an undo ...), not every frame: a city has tens of thousands of groups.
+    fn prefab_copy_counts(&mut self, e: &mut Editor) -> Arc<HashMap<String, usize>> {
+        let Some(d) = document(e) else { return Arc::default() };
+        let key = (d.id(), d.tile().structure_version());
+        if let Some((k, counts)) = &self.prefab_counts
+            && *k == key
+        {
+            return counts.clone();
+        }
+
+        let sc = d.tile().tscene();
+        let mut counts = HashMap::new();
+        for g in sc.find_all("UserInstanceGroup") {
+            *counts.entry(sc.name(g).to_lowercase()).or_insert(0) += 1;
+        }
+
+        let counts = Arc::new(counts);
+        self.prefab_counts = Some((key, counts.clone()));
+        counts
+    }
+
+    /// The Prefabs panel: the library by folder, filtered by words; Place (or a double click) places the chosen one with clicks on the terrain,
+    /// in the working layer, previewed under the mouse.
     pub(crate) fn draw_prefab_panel(&mut self, e: &mut Editor) {
         gui::set_next_window_size(gui::v2(360.0, 420.0), gui::COND_FIRST_USE_EVER);
         if !gui::begin("Prefabs", None, 0) {
@@ -313,7 +337,7 @@ impl TileTool {
         // By folder, then by key (the folders are the tree's nodes).
         shown.sort_by_cached_key(|p| (p.folder.to_lowercase(), p.key.to_lowercase()));
 
-        let copies = document(e).map(|d| d.tile().tscene().find_all("UserInstanceGroup").into_iter().map(|g| d.tile().tscene().name(g).to_lowercase()).collect::<Vec<_>>()).unwrap_or_default();
+        let copies = self.prefab_copy_counts(e);
         gui::text_disabled(&format!("{} of {} prefabs", shown.len(), lib.len()));
         let footer = gui::frame_height_with_spacing() * 1.4;
         let mut place = None;
@@ -335,9 +359,14 @@ impl TileTool {
                     continue;
                 }
 
-                let n = copies.iter().filter(|c| **c == p.key.to_lowercase()).count();
+                let n = copies.get(&p.key.to_lowercase()).copied().unwrap_or(0);
                 let label = if n == 0 { format!("{}  {}##{}", icons::COMPONENT, p.key, p.path.display()) } else { format!("{}  {}  ({n} in the tile)##{}", icons::COMPONENT, p.key, p.path.display()) };
                 if gui::selectable(&label, self.prefab_selected == p.key, gui::SELECTABLE_ALLOW_DOUBLE_CLICK) {
+                    // Placing another prefab: the one now chosen.
+                    if matches!(self.placing, Some(crate::tool::Placing::Prefab(_))) {
+                        self.placing = Some(crate::tool::Placing::Prefab(p.key.clone()));
+                    }
+
                     self.prefab_selected = p.key.clone();
                     if gui::is_mouse_double_clicked(0) {
                         place = Some(p.key.clone());
@@ -356,18 +385,16 @@ impl TileTool {
 
         gui::end_child();
         gui::begin_disabled(self.prefab_selected.is_empty() || document(e).is_none());
-        if gui::button(&format!("{}  Place", icons::COMPONENT)) {
-            place = Some(self.prefab_selected.clone());
-        }
+        self.place_button(crate::tool::Placing::Prefab(self.prefab_selected.clone()));
 
         gui::end_disabled();
         gui::same_line();
-        gui::text_disabled("in the working layer, under the mouse or the view's centre");
+        gui::text_disabled("in the working layer");
         gui::end();
 
+        // A double click starts placing it too.
         if let Some(key) = place {
-            let at = self.placement_point(e);
-            self.status = self.place_prefab(e, &key, at).unwrap_or_else(|err| err);
+            self.placing = Some(crate::tool::Placing::Prefab(key));
         }
     }
 
