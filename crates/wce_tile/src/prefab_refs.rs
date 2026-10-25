@@ -73,9 +73,10 @@ fn position_numbers(raw: &[u8]) -> Option<[f64; 3]> {
 }
 
 /// Whether two raw values of an attribute are the same. Positions are the same across (x, z) within `POSITION_TOLERANCE`; the height of
-/// what stands on the terrain (`landscape`, the prefab's element) is not compared, any other's must be equal.
+/// what stands on the terrain (`landscape`, the prefab's element) is not compared, any other's must be equal. A polygon's `area` is not
+/// compared: it is the flat area of its points (x, z), so it follows their drift (and a reference gets the prefab's points and area).
 fn same_value(attr: &str, landscape: bool, a: &[u8], b: &[u8]) -> bool {
-    if a == b {
+    if a == b || attr == "area" {
         return true;
     }
 
@@ -409,15 +410,16 @@ mod tests {
 
     #[test]
     fn the_height_of_what_stands_on_the_terrain_is_not_compared() {
-        let base = "<BUILDING_INSTANCE position=\"vector(1,0.5,2)\" surface_mode=\"MSM_LANDSCAPE\"/>\n<BUILDING_INSTANCE position=\"vector(3,0.5,4)\" surface_mode=\"MSM_FREEFORM\"/>\n<VegetationExclusionPolygonInstance surface_mode=\"MSM_LANDSCAPE\">\n    <point position=\"5,1,6\"/>\n</VegetationExclusionPolygonInstance>\n";
+        let base = "<BUILDING_INSTANCE position=\"vector(1,0.5,2)\" surface_mode=\"MSM_LANDSCAPE\"/>\n<BUILDING_INSTANCE position=\"vector(3,0.5,4)\" surface_mode=\"MSM_FREEFORM\"/>\n<VegetationExclusionPolygonInstance surface_mode=\"MSM_LANDSCAPE\" area=\"12\">\n    <point position=\"5,1,6\"/>\n</VegetationExclusionPolygonInstance>\n";
         let copy = base.replace("vector(1,0.5,2)", "vector(1,7,2)").replace("5,1,6", "5,-3,6");
         assert_eq!(overrides(copy.as_bytes(), base.as_bytes()).unwrap(), vec![], "landscape heights are the terrain's");
 
         let moved = copy.replace("vector(1,7,2)", "vector(1.5,7,2)").replace("vector(3,0.5,4)", "vector(3,0.6,4)");
         assert_eq!(overrides(moved.as_bytes(), base.as_bytes()).unwrap().iter().map(|o| o.path.clone()).collect::<Vec<_>>(), vec![vec![0], vec![1]], "x/z, and a freeform height, count");
 
-        let drift = copy.replace("vector(3,0.5,4)", "vector(3.02,0.5,3.97)");
-        assert_eq!(overrides(drift.as_bytes(), base.as_bytes()).unwrap(), vec![], "a drift of hundredths across is no override");
+        let drift = copy.replace("vector(3,0.5,4)", "vector(3.02,0.5,3.97)").replace("area=\"12\"", "area=\"12.0001\"");
+        assert!(drift.contains("12.0001"));
+        assert_eq!(overrides(drift.as_bytes(), base.as_bytes()).unwrap(), vec![], "a drift of hundredths across (and the area it changes) is no override");
 
         let index = ContentIndex::new([("p", base.as_bytes().to_vec())]);
         let tile = format!("<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"p\">\n<children>\n{copy}</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n");
