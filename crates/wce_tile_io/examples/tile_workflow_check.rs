@@ -61,7 +61,7 @@ fn main() -> Result<(), String> {
     let scratch = PathBuf::from(&args[1]);
     for folder in &args[2..] {
         let files = game.exported_from_packs(folder)?;
-        let (project, losses) = open_exported(&game, &files, folder, &scratch.join("workspace"))?;
+        let (project, losses) = open_exported(&game, &files, folder, &scratch.join("workspace"), false)?;
         println!("{folder}: opened as {} ({} notes)", project.display(), losses.notes.len());
         // WCE_WORKFLOW_EDIT=1: an edit as the editor would save it: the first tree moved 5 m and a patch of the height map raised.
         if std::env::var_os("WCE_WORKFLOW_EDIT").is_some() {

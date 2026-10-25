@@ -56,7 +56,9 @@ Differences: the legacy app held one active file; here every open file is a docu
 
 A tile's root is its tile database entry (`_tile_database/TILES/*.xml`, [formats/tile_database.md](formats/tile_database.md)): it names the folder of `tile.ted` (location + variation) and holds the size, colour, ground groups, height / normal parameters and links. Open one with the **Tiles** panel (the kits' entries from an index, no scan; word filter; double-click opens the first variation, a button per variation; above the list, **Favourites** (the star at a row's right, `tile_favourite <key>`) and **Recently opened** (the last 10 tiles opened, with the variation, which a double-click opens again), both of the panel's source and under the same kind and word filters, kept in `[tools.tile] favourites` / `recent` (`tile_marks` logs them); an exported tile opened into a workspace counts as the packs'), Tile > Open tile... (an entry `.xml`, a `tile.ted`), `--tile <target>` or the `tile <target> [variation]` command, where the target is an entry file, a name (`assembly_kit/osgiliath_test`, or the entry's file name), a variation folder, a tile folder (opens its first variation) or a `tile.ted`. A folder or `tile.ted` resolves its entry from the path; outside a kit there is none and the tile opens with a warning and no height scale. The **Tile** panel shows the entry read-only (colour, size, flags, ground groups, a variation chooser that opens the other variation as its own document, the variations' height / normal / overlap values, links and targets). A `TileDocument` wraps a `TileProject` (the lossless `TedScene` and the `HeightField`), and everything it does is a `Command` on the document's stack:
 attribute edits on the scene (moves, rotations, polygon points) merge per gesture, structural edits (duplicate, delete, add building, polygons, layers) keep whole-document snapshots, and a brush stroke is one entry however many steps it took. Items are element indices + 1 (item 0 is the terrain), so the shared
-outliner, selection, inspector, gizmo and history work on them. Save writes `tile.ted` and `height_map_0.png` in place (a one-time `.bak` of each), only what changed: the edited spans of `tile.ted`, the kit-exact PNG encoder for the height map; `save_to <folder>` writes both elsewhere.
+outliner, selection, inspector, gizmo and history work on them.
+
+**Where tiles are saved** (`wce_tile::project_files`, `tile_document/kit.rs`): a tile is saved as **`tile.wce`** in the game's projects folder (`<projects>/assembly_kit`, laid out like a kit's `raw_data`: the tile at `raw_data/terrain/tiles/...` and its entry in `_tile_database/TILES`), never in the Assembly Kit. `tile.wce` is a superset of `tile.ted`: the same XML, the root `<project>` marked `wce_version="1"`, where the editor may keep what TEd does not know, named so that the conversion finds it: an attribute `wce_...`, an element `Wce...`. The first save of a tile opened from the kit makes its project (the tile's folder and its entry copied, `tile.wce` written) and the document goes on from there; opening a kit's tile that has a project opens the project. Save writes only what changed (the edited spans, the kit-exact PNG encoder for the height map, the river files of rivers that changed); `save_to <folder>` writes the tile elsewhere. **Tile > Save for Assembly Kit** (`save_for_kit [raw_data]`) writes a tile TEd reads into the kit that has the tile's kind: `tile.ted` (`project_files::to_ted`: the polyfills of the editor's features, then what TEd lacks dropped, all in the log), every river file, the height map, the other files and the entry; files with other bytes keep a `.bak`, identical ones are left alone. **Tile > Import from Assembly Kit** (`import_from_kit`) opens the kit's copy of the project, whose next save replaces the project. A tile **extracted** from the packs (`open_exported`) is decompiled into the projects with `_extracted` at the end of its tile's folder and its entry's location (`.../farm_western/1x1_extracted/aa`), so that it never takes a kit tile's place; Save for Assembly Kit and the export to the game (`save_exported`, which reads `tile.wce` as `tile.ted`) take the mark off.
 
 What it shows: the terrain from the height map (patches of the shared terrain pass), BUILDING_INSTANCEs as their real models (`rigidmodels/buildings/<key>/` pieces; a key without a drawable model is a wire box and is listed in the log), every other instance as a small marker batched per type
 with distance culling (vegetation 450 m, decals 300 m, others 3000 m, adjustable in the Tile menu), polygon outlines, the tile's rectangle, and highlights for the selection (box, axes, polygon point handles) and the brush ring. Where the height map sits is in `docs/formats/tile_ted.md`.
@@ -135,7 +137,7 @@ A plain interactive start opens the tool the last interactive session was in (`l
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | config (`settings.toml`, `layouts/`) | `~/.config/wce` | `%LOCALAPPDATA%\wce\config` | `~/Library/Application Support/wce` |
-| data, the user's files (`tile_workspace/`) | `~/.local/share/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
+| data, the user's files (`projects/<game>/`) | `~/.local/share/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
 | cache (`map_context/`, `tile_index/`) | `~/.cache/wce` | `%LOCALAPPDATA%\wce\cache` | `~/Library/Caches/wce` |
 | log (`last_run.log`) | `~/.local/state/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
 
@@ -143,7 +145,7 @@ A plain interactive start opens the tool the last interactive session was in (`l
 way. `$WCE_CACHE_DIR` moves the caches alone.
 
 `settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `output_dir`, `game` (the game being
-edited) and `[appearance]`; `[games.<id>]` holds a game's `dir`, `mod_packs`, `project_dir` and `overlay_folders`; `[tools.<id>]` is a tool's own table, which
+edited) and `[appearance]`; `[games.<id>]` holds a game's `dir`, `assembly_kit` (the folder with `raw_data`; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs` and `overlay_folders` (until the release, an old `project_dir` is moved into them when the settings load); `[tools.<id>]` is a tool's own table, which
 the tool reads and writes with its own serde type (`Editor::tool_settings`, `Editor::update_tool_settings`), so the shell knows nothing of it. Saves write a temporary
 file and rename it over the old one. A file that does not read is kept as `settings.toml.bad` and the defaults are used. An environment variable wins over the
 file and is never written back:
@@ -155,8 +157,10 @@ file and is never written back:
 | loose folders | `WCE_OVERLAY` (`;` separated) |
 | output folder | `WCE_OUTPUT_DIR` |
 | frame cap | `WCE_FRAME_CAP` |
-| Tile: tile kits | `WCE_TILE_KITS` (`;` separated) |
-| Tile: workspace of decompiled tiles | `WCE_TILE_WORKSPACE` |
+| the Assembly Kit | `WCE_ASSEMBLY_KIT` |
+| the projects folder | `WCE_PROJECTS` |
+| Tile: the kits the Tiles panel lists (tests) | `WCE_TILE_KITS` (`;` separated) |
+| Tile: the projects in the kit's layout (tests) | `WCE_TILE_WORKSPACE` |
 
 Until the first release, a missing `settings.toml` is filled from the old `key=value` `wce.ini` (in the same folder, or in `~/.local/share/awe` /
 `%LOCALAPPDATA%\awe`) and its layouts are copied; the old folder is left alone (`settings/legacy.rs`, to be removed).

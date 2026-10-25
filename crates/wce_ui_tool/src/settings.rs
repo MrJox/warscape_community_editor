@@ -1,4 +1,4 @@
-//! The UI tool's settings: the `[tools.ui]` table. The project folder is the game's (`Settings::project_dir`): every tool reads it.
+//! The UI tool's settings: the `[tools.ui]` table. The skins, layouts and pictures are in the game's projects folder's `loose/` (`Settings::loose_dir`): every tool reads it.
 
 use serde::{Deserialize, Serialize};
 

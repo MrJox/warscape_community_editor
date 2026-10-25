@@ -7,6 +7,7 @@ pub mod height_field;
 pub mod instance_templates;
 pub mod new_instances;
 pub mod prefabs;
+pub mod project_files;
 pub mod river_files;
 pub mod splines;
 pub mod properties;

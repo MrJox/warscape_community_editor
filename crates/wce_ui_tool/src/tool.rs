@@ -220,8 +220,9 @@ impl UiTool {
 
         self.loads += 1;
         let skin = (!self.skin.is_empty()).then_some(self.skin.clone());
-        // the project folder is read from disk each time, so a picture saved a moment ago shows
-        if let Some(pd) = e.project_dir() {
+        // the loose folder is read from disk each time, so a picture saved a moment ago shows
+        {
+            let pd = e.loose_dir();
             for cand in skins::candidates(path, skin.as_deref()) {
                 let f = pd.join(&cand);
                 if let Ok(bytes) = std::fs::read(&f) {
@@ -258,8 +259,8 @@ impl UiTool {
     fn load_skins(&mut self, e: &Editor) {
         if self.skins.is_none() {
             if let Some(vfs) = e.vfs() {
-                let pd = e.project_dir();
-                let list = skins::list(vfs, pd.as_deref());
+                let pd = e.loose_dir();
+                let list = skins::list(vfs, Some(&pd));
                 if !self.skin.is_empty() && !list.iter().any(|s| s.name == self.skin) {
                     self.skin.clear();
                 }
@@ -1433,15 +1434,16 @@ linked by the component name '{}'", r.path, r.via));
 
     // ---- project folder, export, hot reload
 
-    /// Makes `folder` the project: layouts are saved there, pictures put there show at once, and Export packs it.
+    /// Makes `folder` the game's projects folder: layouts are saved in its `loose/`, pictures put there show at once, and Export packs it.
     pub(crate) fn set_project(&mut self, e: &mut Editor, folder: &str) -> Result<(), String> {
         let f = folder.trim();
         if f.is_empty() {
             return Err("give a folder".into());
         }
 
-        std::fs::create_dir_all(PathBuf::from(f).join("ui").join("skins")).map_err(|er| format!("cannot create {f}: {er}"))?;
-        e.settings().game_mut().project_dir = Some(PathBuf::from(f));
+        let loose = PathBuf::from(f).join("loose");
+        std::fs::create_dir_all(loose.join("ui").join("skins")).map_err(|er| format!("cannot create {}: {er}", loose.display()))?;
+        e.settings().game_mut().projects = Some(PathBuf::from(f));
         e.save_settings();
         e.remount_vfs()?;
         self.skins = None;
@@ -1453,7 +1455,7 @@ linked by the component name '{}'", r.path, r.via));
 
     /// Saves the layouts with unsaved changes into the project folder, then writes every file of the folder into a new mod pack.
     pub(crate) fn export_pack(&mut self, e: &mut Editor, pack: &str) -> Result<usize, String> {
-        let project = e.project_dir().ok_or("make a skin first (UI > New skin...)")?;
+        let project = e.loose_dir();
         if !pack.to_lowercase().ends_with(".pack") {
             return Err("the pack file must end in .pack".into());
         }
@@ -1488,7 +1490,7 @@ linked by the component name '{}'", r.path, r.via));
 
         self.watch_acc = 0.0;
         // the skin list follows the mounted files and the skin folders on disk
-        let sig = (e.vfs().map(|v| std::sync::Arc::as_ptr(v) as *const u8 as usize).unwrap_or(0), e.project_dir().map(|p| skins::loose_names(&p)).unwrap_or_default());
+        let sig = (e.vfs().map(|v| std::sync::Arc::as_ptr(v) as *const u8 as usize).unwrap_or(0), skins::loose_names(&e.loose_dir()));
         if sig != self.skin_sig {
             self.skin_sig = sig;
             self.skins = None;
@@ -1503,7 +1505,8 @@ linked by the component name '{}'", r.path, r.via));
             e.images.forget(&k);
         }
 
-        if let Some(pd) = e.project_dir() {
+        {
+            let pd = e.loose_dir();
             let appeared: Vec<String> = self
                 .missing
                 .iter()
@@ -1519,12 +1522,12 @@ linked by the component name '{}'", r.path, r.via));
             }
         }
 
-        let project = e.project_dir();
+        let project = e.loose_dir();
         let ids: Vec<DocumentId> = e.docs.order().iter().copied().filter(|&i| ui_doc_ref(e, i).is_some()).collect();
         for id in ids {
             let (path, modified) = {
                 let d = ui_doc_ref(e, id).unwrap();
-                let p = if d.source.vfs_path.is_empty() { Some(d.source.disk.clone()) } else { project.as_ref().map(|pd| pd.join(&d.source.vfs_path)) };
+                let p = if d.source.vfs_path.is_empty() { Some(d.source.disk.clone()) } else { Some(project.join(&d.source.vfs_path)) };
                 (p, d.modified())
             };
 
@@ -1562,12 +1565,6 @@ linked by the component name '{}'", r.path, r.via));
         }
     }
 
-    /// The folder skins are made in, until the user has one: under Documents.
-    fn default_project_dir() -> PathBuf {
-        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
-        home.join("Documents").join("WarscapeCommunityEditor").join("ui_skins_project")
-    }
-
     /// Makes a skin of your own: a folder `ui/skins/<name>` in the project folder (made on first use), selected in the preview.
     pub(crate) fn new_skin(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
         let n: String = name.trim().to_lowercase().chars().map(|c| if c == ' ' { '_' } else { c }).collect();
@@ -1579,14 +1576,7 @@ linked by the component name '{}'", r.path, r.via));
             return Err("\"default\" is the game's own skin: pick another name".into());
         }
 
-        let root = match e.project_dir() {
-            Some(p) => p,
-            None => {
-                let p = Self::default_project_dir();
-                self.set_project(e, &p.display().to_string())?;
-                p
-            }
-        };
+        let root = e.loose_dir();
 
         let dir = root.join("ui").join("skins").join(&n);
         let existed = dir.is_dir();
@@ -1598,7 +1588,7 @@ linked by the component name '{}'", r.path, r.via));
 
     /// Opens the folder of the selected loose skin in the file explorer.
     fn open_skin_folder(&self, e: &Editor) -> Result<(), String> {
-        let root = e.project_dir().ok_or("no skin folder yet")?;
+        let root = e.loose_dir();
         let dir = root.join("ui").join("skins").join(&self.skin);
         if !dir.is_dir() {
             return Err(format!("{} does not exist", dir.display()));
@@ -1617,7 +1607,7 @@ linked by the component name '{}'", r.path, r.via));
         }
 
         if gui::begin_popup_modal("New skin", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
-            let root = e.project_dir().unwrap_or_else(Self::default_project_dir);
+            let root = e.loose_dir();
             gui::text_wrapped("Name your skin. The editor makes a folder with that name; put your PNG pictures in it (same names as the game's pictures in ui/skins/default) and the preview updates as you save them.");
             gui::set_next_item_width(300.0);
             gui::input_text("Name", Some("my_skin"), &mut self.new_skin_name, 64, 0);
@@ -1659,7 +1649,7 @@ linked by the component name '{}'", r.path, r.via));
             self.export_popup = false;
             self.export_msg.clear();
             if self.export_path.is_empty() {
-                self.export_path = Some(e.tool_settings::<UiSettings>(SETTINGS_ID).export_pack).filter(|p| !p.is_empty()).or_else(|| e.project_dir().map(|p| format!("{}.pack", p.display()))).unwrap_or_default();
+                self.export_path = Some(e.tool_settings::<UiSettings>(SETTINGS_ID).export_pack).filter(|p| !p.is_empty()).or_else(|| Some(format!("{}.pack", e.loose_dir().display()))).unwrap_or_default();
             }
 
             gui::open_popup("Export mod pack");
@@ -2356,7 +2346,7 @@ impl Tool for UiTool {
         };
 
         log::info(format!("UI layout {path}: version {}, {} components", model.version, model.entries().len()));
-        let out = e.project_dir().unwrap_or_else(|| e.output_dir());
+        let out = e.loose_dir();
         Ok(Box::new(UiDocument::new(source, model, out)))
     }
 

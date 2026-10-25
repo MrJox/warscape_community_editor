@@ -77,6 +77,13 @@ impl TileFiles {
     /// The folder could not be listed.
     pub fn from_kit_dir(dir: &Path) -> Result<Self> {
         let mut files = Self::from_dir(dir)?;
+
+        // The editor's tile.wce is read as the tile.ted TEd would get ("Save for Assembly Kit").
+        if let Some(blob) = files.folder.remove(wce_tile::project_files::WCE_FILE) {
+            let ted = wce_tile::project_files::to_ted(blob.bytes()?.to_vec()).map_err(std::io::Error::other)?.0;
+            files.folder.insert(wce_tile::project_files::TED_FILE.to_owned(), Blob::Bytes(ted.into()));
+        }
+
         if let Some(root) = kit_raw_root(dir) {
             let index = TileIndex::shared(&root);
             let r = index.resolve(dir);

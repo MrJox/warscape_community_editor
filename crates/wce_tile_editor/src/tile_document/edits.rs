@@ -1439,15 +1439,22 @@ impl TileDocument {
 
     // ---- save
 
-    /// Saves tile.ted and the height map (in place, or into the folder of `target`); the message says what was written.
+    /// Saves tile.wce and the height map (in place, or into the folder of `target`); the message says what was written. A tile opened
+    /// from a kit is saved into its project (kit.rs), which the document is from then on.
     pub(crate) fn save_tile(&mut self, target: &SaveTarget) -> Result<String, String> {
         self.end_stroke();
-        let elsewhere = !target.path.as_os_str().is_empty();
+        let mut elsewhere = !target.path.as_os_str().is_empty();
+        let mut into_project = None;
+        if !elsewhere && !self.is_project() {
+            into_project = Some(self.make_project()?);
+            elsewhere = true;
+        }
+
         let t = self.tile();
-        let mut out = if elsewhere { target.path.clone() } else { t.project.dir.clone() };
+        let mut out = into_project.clone().unwrap_or_else(|| if elsewhere { target.path.clone() } else { t.project.dir.clone() });
 
         // "Save as..." hands over a file name: the tile goes into its folder.
-        if elsewhere && out.extension().is_some() {
+        if into_project.is_none() && elsewhere && out.extension().is_some() {
             out = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         }
 
@@ -1456,6 +1463,12 @@ impl TileDocument {
         let t = self.tile_mut();
         t.project.height_dirty = height_dirty;
         let (wrote, msg) = t.project.save(&out, force_scene, false)?;
+        if let Some(dir) = into_project {
+            self.moved_to_project(dir);
+            elsewhere = false;
+        }
+
+        let t = self.tile_mut();
         if !elsewhere {
             t.ted_on_disk_edited = t.tscene().modified();
             t.png_on_disk_edited = t.height_modified();

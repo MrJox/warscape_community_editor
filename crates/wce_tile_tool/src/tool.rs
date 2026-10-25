@@ -189,6 +189,9 @@ pub struct TileTool {
     /// The viewport's right-click menu opens on the next frame.
     pub(crate) context_menu: bool,
 
+    /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
+    pub(crate) open_kit_copy: bool,
+
     /// The weather chips' width last frame (they go beside the compass when there is room).
     chips_width: f32,
 
@@ -273,7 +276,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -357,8 +360,9 @@ impl TileTool {
         self.draw_pts.clear();
     }
 
-    /// The raw_data folders the tile browser lists: `$WCE_TILE_KITS` (';' separated), else the settings' `kits`, else the assembly kits in
-    /// the game folder.
+    /// The raw_data folders the tile browser lists: `$WCE_TILE_KITS` (';' separated, for the tests), else the game's Assembly Kit (and the
+    /// campaign tile map kit beside a battle tile map kit, a development install) and the projects in the kit's layout (`tile.wce` tiles,
+    /// extracted ones among them).
     pub fn kit_roots(&self, e: &mut Editor) -> Vec<PathBuf> {
         // The index of the kits' tile database entries keeps its rows in the cache folder between runs.
         TileIndex::set_cache_dir(&e.settings_ref().paths().cache_dir().join("tile_index"));
@@ -366,19 +370,19 @@ impl TileTool {
             return kits.split(';').filter(|k| !k.is_empty()).map(PathBuf::from).collect();
         }
 
-        let kits = e.tool_settings::<TileSettings>(SETTINGS_ID).kits;
-        if !kits.is_empty() {
-            return kits;
+        let mut roots = vec![];
+        if let Some(kit) = e.settings_ref().assembly_kit_dir() {
+            let mut kits = vec![kit.clone()];
+            if kit.file_name().is_some_and(|n| n == "assembly_kit_battle_tilemap") {
+                kits.push(kit.with_file_name("assembly_kit_campaign_tilemap"));
+            }
+
+            roots.extend(kits.into_iter().map(|k| k.join("raw_data")).filter(|raw| raw.join("terrain").join("tiles").is_dir()));
         }
 
-        let mut roots = vec![];
-        if let Some(game) = e.settings_ref().game_dir() {
-            for kit in ["assembly_kit_battle_tilemap", "assembly_kit_campaign_tilemap"] {
-                let raw = Path::new(&game).join(kit).join("raw_data");
-                if raw.join("terrain").join("tiles").is_dir() {
-                    roots.push(raw);
-                }
-            }
+        let projects = Self::workspace_dir(e).join("raw_data");
+        if projects.join("terrain").join("tiles").is_dir() {
+            roots.insert(0, projects);
         }
 
         roots
@@ -501,8 +505,9 @@ impl TileTool {
         let (Some(entry), Some(raw_root)) = (&p.entry, &p.raw_root) else { return };
         let key = wce_formats::tile_entry::normalize_location(&entry.location());
         let variation = p.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        // A tile of the projects (extracted ones too, `<location>_extracted`) is listed with the projects' source.
         let raw_root = source_of(raw_root);
-        let exported = raw_root == source_of(&Self::workspace_dir(e).join("raw_data")) || self.workspaces.contains(&raw_root);
+        let exported = self.workspaces.contains(&raw_root) && raw_root != source_of(&Self::workspace_dir(e).join("raw_data"));
         let source = if exported { PACKS_SOURCE.to_owned() } else { raw_root };
         self.marks(e);
         let (_, recent) = self.browse_marks.as_mut().expect("read above");
@@ -548,7 +553,7 @@ impl TileTool {
             if entry_xml.is_none() {
                 return Err(format!("no file, folder or tile entry '{target}'"));
             }
-        } else if p.is_dir() && !p.join("tile.ted").exists() {
+        } else if p.is_dir() && !wce_tile::tile_project::has_tile(p) {
             // A tile folder: its entry lists the variations.
             let found = kit_raw_root(p).and_then(|root| TileIndex::shared(&root).resolve(p).entry.map(|entry| entry.xml.clone()));
             match found {
@@ -583,7 +588,13 @@ impl TileTool {
             return Err(format!("{file_name} lists no variations"));
         }
 
-        let ted = entry.ted_path(&root, v);
+        // A project's variation folder holds tile.wce.
+        let mut ted = entry.ted_path(&root, v);
+        let wce = ted.with_file_name(wce_tile::project_files::WCE_FILE);
+        if !ted.exists() && wce.exists() {
+            ted = wce;
+        }
+
         self.pending_entry = Some(entry_xml.clone());
         self.pending_variation = Some(v);
         let opened = e.open_path_from(self, &ted.display().to_string(), false, true);
@@ -671,11 +682,10 @@ impl TileTool {
         Ok(format!("{rows} tiles in the source"))
     }
 
-    /// Where opened exported tiles are decompiled to: `$WCE_TILE_WORKSPACE`, else the settings' `workspace`, else `<data folder>/tile_workspace`.
+    /// The projects in the Assembly Kit's layout (`<projects>/assembly_kit`): where tiles are saved (`tile.wce`) and exported tiles are
+    /// extracted to; `$WCE_TILE_WORKSPACE` for the tests.
     pub fn workspace_dir(e: &mut Editor) -> PathBuf {
-        env_value("WCE_TILE_WORKSPACE").map(PathBuf::from)
-            .or_else(|| e.tool_settings::<TileSettings>(SETTINGS_ID).workspace)
-            .unwrap_or_else(|| e.settings_ref().paths().data_dir().join("tile_workspace"))
+        env_value("WCE_TILE_WORKSPACE").map(PathBuf::from).unwrap_or_else(|| e.settings_ref().kit_projects_dir())
     }
 
     /// Opens an exported tile: a folder on disk (`.../terrain/tiles/<kind>/.../<variation>`) or the packs' (`terrain/tiles/...`). It is
@@ -689,13 +699,13 @@ impl TileTool {
         let workspace = workspace.map_or_else(|| Self::workspace_dir(e), Path::to_path_buf);
         self.workspaces.insert(source_of(&workspace.join("raw_data")));
 
-        // A tile of the packs decompiled before opens from the workspace (with its edits), unless `fresh`.
+        // A tile of the packs extracted before opens from the projects (with its edits), unless `fresh`.
         if !fresh && !Path::new(target).is_dir() {
-            let folder = target.replace('\\', "/").trim_matches('/').to_lowercase();
+            let folder = wce_tile::project_files::mark_extracted(&target.replace('\\', "/").trim_matches('/').to_lowercase());
             let dir = workspace.join("raw_data").join(&folder);
-            if dir.join("tile.ted").is_file() {
+            if wce_tile::tile_project::has_tile(&dir) {
                 let msg = self.open_folder(e, &dir.display().to_string())?;
-                return Ok(format!("{msg}  (the workspace's copy; open_exported {folder} --fresh decompiles it again)"));
+                return Ok(format!("{msg}  (the projects' copy; open_exported {folder} --fresh extracts it again)"));
             }
         }
 
@@ -709,13 +719,21 @@ impl TileTool {
             (game.exported_from_packs(&folder)?, folder)
         };
 
-        let (dir, losses) = open_exported(&game, &files, &folder, &workspace)?;
+        let (dir, losses) = open_exported(&game, &files, &folder, &workspace, true)?;
         for n in &losses.notes {
             log::info(format!("{folder}: {n}"));
         }
 
+        // The decompile writes TEd's tile.ted: the project keeps tile.wce.
+        let ted = dir.join(wce_tile::project_files::TED_FILE);
+        if ted.is_file() {
+            let text = std::fs::read(&ted).map_err(|err| format!("{}: {err}", ted.display()))?;
+            std::fs::write(dir.join(wce_tile::project_files::WCE_FILE), wce_tile::project_files::to_wce(text)?).map_err(|err| err.to_string())?;
+            std::fs::remove_file(&ted).map_err(|err| err.to_string())?;
+        }
+
         let msg = self.open_folder(e, &dir.display().to_string())?;
-        Ok(format!("{msg}  (decompiled into {}; {} notes in the log)", dir.display(), losses.notes.len()))
+        Ok(format!("{msg}  (extracted into {}; {} notes in the log)", dir.display(), losses.notes.len()))
     }
 
     /// Saves the open tile as an exported tile under `out` (`<out>/terrain/tiles/...` and the tile database), after saving its project.
@@ -740,15 +758,88 @@ impl TileTool {
         Ok(format!("saved as an exported tile in {} ({} notes in the log)", saved.display(), notes.notes.len()))
     }
 
-    /// Opens a tile folder (its tile.ted) or a tile.ted.
+    /// The kit a tile of `kind` (`battle`, `campaign`) is saved for: the first of the kits the Tiles panel lists (not the projects) that has
+    /// that kind's tile database.
+    fn kit_for(&self, e: &mut Editor, kind: &str) -> Option<PathBuf> {
+        let projects = Self::workspace_dir(e).join("raw_data");
+        self.kit_roots(e).into_iter().filter(|r| *r != projects).find(|r| r.join("terrain/tiles").join(kind).join("_tile_database").is_dir())
+    }
+
+    /// "Save for Assembly Kit": the open tile (saved first when modified) as TEd reads it, into `kit_raw` (a raw_data folder) or the kit of its
+    /// kind.
+    ///
+    /// # Errors
+    ///
+    /// No tile, no kit, or the save fails.
+    pub fn save_for_kit(&mut self, e: &mut Editor, kit_raw: Option<PathBuf>) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile is open")?;
+        if e.docs.find(id).is_some_and(|d| d.modified()) {
+            e.docs.save_one(id)?;
+        }
+
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
+        let kind = folder.split('/').nth(2).unwrap_or("battle").to_owned();
+        let kit = match kit_raw {
+            Some(k) => k,
+            None => self.kit_for(e, &kind).ok_or("no Assembly Kit (set it in the game's settings)")?,
+        };
+
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
+        d.save_for_kit(&kit)
+    }
+
+    /// "Import from Assembly Kit": opens the kit's copy of the open project (its next save replaces the project); an extracted tile is
+    /// extracted again from the game.
+    ///
+    /// # Errors
+    ///
+    /// No project is open, it has unsaved changes, or the kit has no such tile.
+    pub fn import_from_kit(&mut self, e: &mut Editor) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile is open")?;
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        if d.modified() {
+            return Err("the project has unsaved changes: save or undo them first".to_owned());
+        }
+
+        let folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
+        let kit_folder = wce_tile::project_files::unmark_extracted(&folder);
+        if wce_tile::project_files::is_extracted(&folder) {
+            e.close_document(id);
+            return self.open_exported(e, &kit_folder, None, true);
+        }
+
+        let kind = kit_folder.split('/').nth(2).unwrap_or("battle").to_owned();
+        let kit = self.kit_for(e, &kind).ok_or("no Assembly Kit (set it in the game's settings)")?;
+        let dir = kit.join(&kit_folder);
+        if !wce_tile::tile_project::has_tile(&dir) {
+            return Err(format!("the Assembly Kit has no {kit_folder}"));
+        }
+
+        e.close_document(id);
+        self.open_kit_copy = true;
+        let msg = self.open_folder(e, &dir.display().to_string())?;
+        Ok(format!("{msg}  (the Assembly Kit's copy: saving it replaces the project)"))
+    }
+
+    /// Opens a tile folder (its tile.wce, else its tile.ted) or either file.
     ///
     /// # Errors
     ///
     /// The tile can't be opened.
     pub fn open_folder(&mut self, e: &mut Editor, dir: &str) -> Result<String, String> {
+        use wce_tile::project_files::{TED_FILE, WCE_FILE};
+
         let tile = Path::new(dir);
-        let path = if tile.is_dir() { tile.join("tile.ted") } else { tile.to_path_buf() };
-        e.open_path_from(self, &path.display().to_string(), false, true)
+        let path = if tile.is_dir() { tile.join(if tile.join(WCE_FILE).exists() { WCE_FILE } else { TED_FILE }) } else { tile.to_path_buf() };
+        let msg = e.open_path_from(self, &path.display().to_string(), false, true)?;
+
+        // A kit's tile with a project opened as the project (`open`): say so.
+        let opened = document(e).map(|d| d.project().dir.clone());
+        Ok(match opened {
+            Some(d) if !path.starts_with(&d) => format!("opened the project {} (tile.wce) of {}", d.display(), path.display()),
+            _ => msg,
+        })
     }
 
     fn handle_size(e: &Editor) -> f32 {
@@ -1321,7 +1412,15 @@ impl TileTool {
 
         // The kits' raw tiles, then the game's packs (exported tiles, decompiled into the workspace when opened).
         const PACKS_LABEL: &str = "game packs (exported tiles)";
-        let kit_label = |r: &Path| r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        // The projects are named so; a kit by its folder.
+        let projects_raw = Self::workspace_dir(e).join("raw_data");
+        let kit_label = |r: &Path| {
+            if r == projects_raw {
+                return "projects (tile.wce)".to_owned();
+            }
+
+            r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
+        };
         self.browse_kit = self.browse_kit.min(self.browse_roots.len());
         let packs = self.browse_kit == self.browse_roots.len();
         gui::set_next_item_width(220.0);
@@ -1794,26 +1893,19 @@ impl Tool for TileTool {
         self.browse_marks = None;
         self.browse_marks_version += 1;
 
-        // The prefab folders may have changed.
+        // The Assembly Kit or the projects folder may have changed.
         self.prefabs = None;
     }
 
     fn draw_settings(&mut self, draft: &mut Settings) {
         let mut s: TileSettings = draft.tool(SETTINGS_ID);
         let before = s.clone();
-        settings_window::label("Tile kits");
-        settings_window::folder_list("kits", &mut s.kits);
-        settings_window::env_note("WCE_TILE_KITS");
-        settings_window::help("The raw_data folders the tile browser lists; none: the assembly kits in the game folder.");
-
-        settings_window::label("Prefab folders");
-        settings_window::folder_list("prefabs", &mut s.prefab_folders);
-        settings_window::help("Read before every kit's raw_data/art/prefabs (a checkout of a prefab collection, say); new prefabs go into the first one.");
-
-        let default_workspace = draft.paths().data_dir().join("tile_workspace").display().to_string();
-        settings_window::folder_field("Workspace", &mut s.workspace, &default_workspace);
-        settings_window::env_note("WCE_TILE_WORKSPACE");
-        settings_window::help("Exported tiles you open are decompiled here into TEd projects (your files: not a cache).");
+        // The folders are the game's (Settings > Game): shown here for reference.
+        settings_window::label("Assembly Kit");
+        gui::text_disabled(&draft.assembly_kit_dir().map_or_else(|| "none (set it in the game's settings)".to_owned(), |k| k.display().to_string()));
+        settings_window::label("Tile projects");
+        gui::text_disabled(&draft.kit_projects_dir().display().to_string());
+        settings_window::help("Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.");
 
         gui::separator_text("New tiles");
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
@@ -1827,7 +1919,7 @@ impl Tool for TileTool {
     }
 
     fn opens(&self) -> Vec<String> {
-        vec![".ted".to_owned()]
+        vec![".ted".to_owned(), ".wce".to_owned()]
     }
 
     fn default_layout(&self, dockspace: gui::ImGuiID) {
@@ -1979,7 +2071,7 @@ impl Tool for TileTool {
 
         if gui::menu_item("Open tile...", None, false, true) {
             let filters = [
-                ("Tile database entry or tile.ted".to_owned(), "*.xml tile.ted *.ted".to_owned()), ("Tile (tile.ted)".to_owned(), "tile.ted *.ted".to_owned()),
+                ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()), ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
                 ("All files".to_owned(), "*.*".to_owned()),
             ];
             if let Some(p) = file_dialog(false, Path::new(""), &filters) {
@@ -2001,6 +2093,27 @@ impl Tool for TileTool {
             e.status(&msg, false);
         }
 
+        gui::separator();
+        let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted(&d.project().dir.to_string_lossy())));
+        if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
+            let msg = self.save_for_kit(e, None).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit, without the extracted mark; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
+        }
+
+        if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
+            let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.");
+        }
+
+        gui::separator();
         if gui::menu_item("Tile browser", None, false, true) {
             gui::set_window_focus("Tiles");
         }
@@ -2326,11 +2439,25 @@ impl Tool for TileTool {
         let dir = tile_dir_of(path);
 
         // Opened by its database entry: the entry file is the root, the folder is what it names.
-        let project = match self.pending_entry.take() {
+        let mut project = match self.pending_entry.take() {
             Some(entry) => TileProject::open_entry(&entry, self.pending_variation.take()),
             None => TileProject::open(&dir),
         }
         .map_err(|err| err.to_string())?;
+
+        // A kit's tile with a project (saved before) opens as the project, unless the kit's copy is asked for (Import from Assembly Kit).
+        let projects = Self::workspace_dir(e);
+        let kit_copy = std::mem::take(&mut self.open_kit_copy);
+        if !kit_copy && !project.dir.starts_with(&projects)
+            && let Some(folder) = wce_tile_editor::tile_document::kit::tile_folder(&project.dir)
+        {
+            let mirror = projects.join("raw_data").join(&folder);
+            if wce_tile::tile_project::has_tile(&mirror) {
+                project = TileProject::open(&mirror).map_err(|err| err.to_string())?;
+                self.status = format!("opened the project of {folder} (its tile.wce); Tile > Import from Assembly Kit takes the kit's copy again");
+                log::info(self.status.clone());
+            }
+        }
 
         if !project.warning.is_empty() {
             log::warn(project.warning.clone());
@@ -2338,6 +2465,7 @@ impl Tool for TileTool {
         }
 
         let mut doc = TileDocument::new(project, e.files());
+        doc.set_projects_root(Some(projects));
         let settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
         doc.tile_mut().display_mut().show_sea = settings.show_sea;
         if !settings.show_vfx_boxes {

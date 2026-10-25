@@ -116,8 +116,18 @@ pub struct GameSettings {
     /// Mod pack file names in the data folder, read on top of the game's release packs.
     pub mod_packs: Vec<String>,
 
-    /// The project folder (the UI tool's saved layouts and the user's pictures), read before every pack.
+    /// The Assembly Kit (the folder that holds `raw_data`): files kept as TEd and BOB read them, read by the tools and written only by
+    /// "Save for Assembly Kit"; none: the kit found in the game folder.
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub assembly_kit: Option<PathBuf>,
+
+    /// The game's projects: `assembly_kit/` (the editor's own files in the kit's layout, like the tiles' `tile.wce`) and `loose/` (loose files
+    /// read before every pack: the UI tool's skins, layouts and pictures); none: `<data folder>/projects/<game>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projects: Option<PathBuf>,
+
+    /// TODO(pre-release): the old project folder, read only to move it into `overlay_folders` (`Settings::load`); `loose` replaces it.
+    #[serde(skip_serializing)]
     pub project_dir: Option<PathBuf>,
 
     /// Loose folders read before every pack, after the project folder, highest priority first.
@@ -221,6 +231,16 @@ impl Settings {
             }
         };
 
+        // TODO(pre-release): the old per-game project folder becomes the first overlay folder (its files stay read); `loose` replaces it.
+        for (game, g) in &mut settings.games {
+            if let Some(old) = g.project_dir.take()
+                && !g.overlay_folders.contains(&old)
+            {
+                log::info(format!("{game}: the old project folder {} is read as an overlay folder now; the projects folder's loose/ replaces it", old.display()));
+                g.overlay_folders.insert(0, old);
+            }
+        }
+
         settings.paths = paths;
         settings
     }
@@ -273,8 +293,30 @@ impl Settings {
         env_list("WCE_OVERLAY").map_or_else(|| self.game_settings().overlay_folders, |v| v.into_iter().map(PathBuf::from).collect())
     }
 
-    pub fn project_dir(&self) -> Option<PathBuf> {
-        self.game_settings().project_dir
+    /// The Assembly Kit: `$WCE_ASSEMBLY_KIT`, else the file's, else the kit in the game folder (`assembly_kit`, or the battle tile map kit of
+    /// a development install). `None`: no kit.
+    pub fn assembly_kit_dir(&self) -> Option<PathBuf> {
+        if let Some(k) = env_value("WCE_ASSEMBLY_KIT").map(PathBuf::from).or_else(|| self.game_settings().assembly_kit) {
+            return Some(k);
+        }
+
+        let game = self.game_dir()?;
+        ["assembly_kit", "assembly_kit_battle_tilemap"].iter().map(|k| game.join(k)).find(|k| k.join("raw_data").is_dir())
+    }
+
+    /// The game's projects folder: `$WCE_PROJECTS`, else the file's, else `<data folder>/projects/<game>`.
+    pub fn projects_dir(&self) -> PathBuf {
+        env_value("WCE_PROJECTS").map(PathBuf::from).or_else(|| self.game_settings().projects).unwrap_or_else(|| self.paths.data_dir().join("projects").join(&self.game))
+    }
+
+    /// The projects' loose files, read before every pack.
+    pub fn loose_dir(&self) -> PathBuf {
+        self.projects_dir().join("loose")
+    }
+
+    /// The projects in the Assembly Kit's layout (`<this>/raw_data/terrain/tiles/...`).
+    pub fn kit_projects_dir(&self) -> PathBuf {
+        self.projects_dir().join("assembly_kit")
     }
 
     /// `$WCE_OUTPUT_DIR`, else the file's.

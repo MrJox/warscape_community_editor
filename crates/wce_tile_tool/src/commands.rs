@@ -878,7 +878,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.move_to_layer(el, layer).map_or_else(fail, |_| ok(""))
     });
 
-    c.add("save_to", "save_to <folder>", "write tile.ted and height_map_0.png into another folder (the originals stay)", |e, a| {
+    c.add("save_for_kit", "save_for_kit [raw_data folder]", "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder), without the extracted mark", |e, a| {
+        let kit = a.first().map(std::path::PathBuf::from);
+        with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
+    });
+
+    c.add("import_from_kit", "import_from_kit", "open the Assembly Kit's copy of the open project (its next save replaces the project; an extracted tile is extracted again)", |e, _| {
+        with_tile(e, |t, e| t.import_from_kit(e).map_or_else(fail, ok))
+    });
+
+    c.add("save_to", "save_to <folder>", "write the tile (tile.wce, the height map and its other files) into another folder (the originals stay)", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(dir) = a.first() else { return fail("usage: save_to <folder>") };
         match d.save(&SaveTarget { path: PathBuf::from(dir) }) {
