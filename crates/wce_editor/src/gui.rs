@@ -619,6 +619,21 @@ impl DrawList {
         call!(sys::ImDrawList_AddLine(self.0, a, b, col, thickness))
     }
 
+    /// Lines through `pts`, back to the first one when `closed`.
+    pub fn polyline(&self, pts: &[Vec2], col: u32, closed: bool, thickness: f32) {
+        if pts.len() >= 2 {
+            let flags = if closed { sys::ImDrawFlags_Closed as i32 } else { 0 };
+            call!(sys::ImDrawList_AddPolyline(self.0, pts.as_ptr(), pts.len() as i32, col, thickness, flags))
+        }
+    }
+
+    /// A filled polygon, convex or not (no holes, not crossing itself).
+    pub fn concave_poly_filled(&self, pts: &[Vec2], col: u32) {
+        if pts.len() >= 3 {
+            call!(sys::ImDrawList_AddConcavePolyFilled(self.0, pts.as_ptr(), pts.len() as i32, col))
+        }
+    }
+
     pub fn triangle_filled(&self, a: Vec2, b: Vec2, c: Vec2, col: u32) {
         call!(sys::ImDrawList_AddTriangleFilled(self.0, a, b, c, col))
     }

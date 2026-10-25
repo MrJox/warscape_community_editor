@@ -27,7 +27,12 @@ pub struct ImageRef {
 pub struct ImageTextures {
     pending: Vec<Pending>,
     ready: HashMap<String, ImageRef>,
-    keep: Vec<Texture>,
+
+    /// The textures behind `ready`, by id.
+    keep: HashMap<u64, Texture>,
+
+    /// Ids forgotten since the last flush: their textures go then (a frame may still draw them until it ends).
+    retired: Vec<u64>,
 }
 
 impl ImageTextures {
@@ -50,23 +55,29 @@ impl ImageTextures {
     /// Forgets one picture so the next `submit` replaces it (its file changed).
     pub fn forget(&mut self, key: &str) {
         self.pending.retain(|p| p.key != key);
-        self.ready.remove(key);
+        if let Some(r) = self.ready.remove(key) {
+            self.retired.push(r.id);
+        }
     }
 
     /// Forgets everything (the game folder changed).
     pub fn clear(&mut self) {
         self.pending.clear();
-        self.ready.clear();
-        self.keep.clear();
+        self.retired.extend(self.ready.drain().map(|(_, r)| r.id));
     }
 
     pub(crate) fn flush(&mut self, dev: &ID3D11Device, textures: &mut D3D11Renderer) {
+        for id in self.retired.drain(..) {
+            textures.unregister(dear_imgui_rs::TextureId::new(id));
+            self.keep.remove(&id);
+        }
+
         for p in self.pending.drain(..) {
             let t = make_rgba_texture(dev, p.w, p.h, &p.rgba, false);
             if let Some(srv) = &t.srv {
                 let id = textures.register(srv).id();
                 self.ready.insert(p.key, ImageRef { id, w: p.w, h: p.h });
-                self.keep.push(t);
+                self.keep.insert(id, t);
             }
         }
     }

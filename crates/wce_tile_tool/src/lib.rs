@@ -15,6 +15,7 @@ mod image_brush;
 pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;
+pub mod minimap_panel;
 pub mod new_tile_dialog;
 pub mod placement_modes;
 pub mod prefab_panel;
