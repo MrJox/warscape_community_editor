@@ -78,6 +78,11 @@ pub trait Document: Any {
         false
     }
 
+    /// Save does something even without changes (a tile opened from the Assembly Kit: its first save makes its project).
+    fn save_wanted(&self) -> bool {
+        false
+    }
+
     /// Writes the document as minimal edits of its source bytes.
     ///
     /// # Errors
