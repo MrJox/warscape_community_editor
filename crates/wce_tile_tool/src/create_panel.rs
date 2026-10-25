@@ -15,7 +15,7 @@ use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::{Create, Draft, turned};
 
 use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
-use crate::tool::{TileTool, document, primary};
+use crate::tool::{SetInUse, TileTool, document, primary};
 
 /// The categories, in the panel's order.
 pub const CATEGORIES: [&str; 10] = ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Rivers & roads"];
@@ -223,7 +223,7 @@ impl TileTool {
                 let mut d = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
                 d.key = set.pick(self.random.unit()).map(|en| en.key.clone()).unwrap_or_default();
                 self.draft = Some(d);
-                self.veg_set = Some(set);
+                self.veg_set = Some(if name.is_empty() { SetInUse::New } else { SetInUse::Saved(name.clone()) });
                 self.placing = Some(crate::tool::Placing::Draft);
             }
 
@@ -317,6 +317,15 @@ impl TileTool {
 
     /// Places what is being placed at a point on the ground (in the working layer).
     pub fn place_at(&mut self, e: &mut Editor, at: Float3) -> Result<String, String> {
+        // From a vegetation set: one of its trees (another if the one picked left the set).
+        let set = self.set_in_use(e);
+        if let Some(set) = &set {
+            let draft = self.draft.as_mut().ok_or("nothing to place")?;
+            if !set.entries.iter().any(|en| en.key == draft.key) {
+                draft.key = set.pick(self.random.unit()).map(|en| en.key.clone()).ok_or("the vegetation set has no trees")?;
+            }
+        }
+
         let text = self.placing_text(e).ok_or("nothing to place (no key?)")?;
         let (what, name) = match self.placing.clone() {
             Some(crate::tool::Placing::Prefab(key)) => (key.clone(), Some(key)),
@@ -329,7 +338,7 @@ impl TileTool {
         let placed = d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"));
 
         // From a vegetation set: the next one is another of its trees.
-        if let (Some(set), Some(draft)) = (self.veg_set.as_ref(), self.draft.as_mut())
+        if let (Some(set), Some(draft)) = (set, self.draft.as_mut())
             && let Some(en) = set.pick(self.random.unit())
         {
             draft.key.clone_from(&en.key);
@@ -396,9 +405,7 @@ impl TileTool {
             self.inspect_veg_brush(e, ins);
         }
 
-        if self.veg_set.is_some() {
-            self.inspect_veg_set(e, ins);
-        }
+        self.inspect_veg_set(e, ins);
 
         let Some(mut draft) = self.draft.clone() else { return false };
         let Some(d) = document(e) else { return false };
@@ -596,15 +603,7 @@ impl TileTool {
     fn make_or_add(&mut self, e: &mut Editor, en: &Entry, in_popup: bool) {
         match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
             Some(keys) => {
-                self.add_to_new_set(&keys);
-
-                // Placing with the new set from its first tree on (it follows the trees added later).
-                if !self.veg_set.as_ref().is_some_and(|v| v.path.as_os_str().is_empty()) {
-                    let status = std::mem::take(&mut self.status);
-                    self.start_new_set(e);
-                    self.status = status;
-                }
-
+                self.add_to_new_set(e, &keys);
                 e.pending_focus = (!in_popup).then(|| "Inspector".to_owned());
             }
 

@@ -1149,14 +1149,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
     });
 
-    c.add("veg_set_add", "veg_set_add <key>...", "add trees to the new vegetation set (not saved), as Ctrl + click on them in the Create panel does", |e, a| {
+    c.add("veg_set_add", "veg_set_add <key>...", "add trees to the new vegetation set (not saved) and place or paint with it, as Ctrl + click on them in the Create panel does", |e, a| {
         if a.is_empty() {
             return fail("usage: veg_set_add <key>...");
         }
 
         let keys = a.iter().map(|k| wce_tile::vegetation_sets::SetEntry { key: k.clone(), weight: 1.0, scale: None }).collect::<Vec<_>>();
-        with_tile(e, |t, _| {
-            t.add_to_new_set(&keys);
+        with_tile(e, |t, e| {
+            let trees = t.catalogue(e, "VEGETATION_INSTANCE");
+            if let Some(k) = keys.iter().find(|k| !trees.contains(&k.key)) {
+                return fail(format!("no tree '{}' in the game's files", k.key));
+            }
+
+            t.add_to_new_set(e, &keys);
             ok(t.status.clone())
         })
     });
