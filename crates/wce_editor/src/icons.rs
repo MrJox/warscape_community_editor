@@ -91,3 +91,4 @@ pub const SPLINE: &str = "\u{e38b}";
 pub const BOXES: &str = "\u{e2d0}";
 pub const GIT_COMMIT_HORIZONTAL: &str = "\u{e0e3}";
 pub const COMPONENT: &str = "\u{e2ad}";
+pub const FUNNEL: &str = "\u{e0dc}";
