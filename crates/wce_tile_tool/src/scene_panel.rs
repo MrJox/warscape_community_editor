@@ -1,5 +1,5 @@
 //! The Scene panel of the Tile tool: the layer tree laid out like TEd's Scene tab (a name, then at the right edge the type's icon, where it is
-//! exported, an eye and a cursor arrow, greyed when off), type toggles at the top (what the list and the viewport show), with selection, rename (F2 / double-click), delete, new layer, group, duplicate, export type, and drag and drop to
+//! exported, an eye and a cursor arrow, greyed when off), a types' filter by the name filter (what the list and the viewport show), with selection, rename (F2 / double-click), delete, new layer, group, duplicate, export type, and drag and drop to
 //! reorder or move into a layer. The eye is OIF_VISIBLE and the cursor arrow OIF_ACTIVE (selectable): `TileDocument::set_flags`. The tree is
 //! flattened to the rows that are open and drawn through a list clipper, so a layer with 30,000 instances costs what its visible rows cost.
 //! Open layers are remembered by their name path, which survives the index shifts of structural edits (a node id made of the element index
@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, DrawList, Vec2, v2};
-use wce_editor::theme;
+use wce_editor::{icons, theme};
 use wce_tile::ted_scene::TedScene;
 use wce_editor_core::document::Document;
 use wce_tile_editor::tile_document::TileDocument;
@@ -414,9 +414,14 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         }
     }
 
-    gui::set_next_item_width(-1.0);
+    // The name filter, and the types' filter at its right.
+    let hidden_n = e.docs.find_as::<TileDocument>(id).map_or(0, |d| d.tile().display().hidden_types.len());
+    let types_label = if hidden_n == 0 { icons::FUNNEL.to_owned() } else { format!("{} {hidden_n}", icons::FUNNEL) };
+    let types_width = gui::calc_text_width(&types_label) + gui::style_frame_padding().x * 2.0;
+    gui::set_next_item_width(-(types_width + gui::item_spacing().x));
     gui::input_text("##treefilter", Some("Filter by name or type"), &mut tool.tree_filter, 256, 0);
-    draw_type_toggles(e, id);
+    gui::same_line();
+    draw_type_filter(e, id, &types_label, hidden_n);
 
     // ---- the tree
     let footer = gui::frame_height_with_spacing() * 1.2;
@@ -480,43 +485,68 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     gui::end();
 }
 
-/// The types on the tile as toggles (icon and count): a type turned off is neither listed nor shown in the viewport (a view setting of this
-/// tool, not a flag of the file). A right click shows that type alone; a right click on the only one shown shows them all again.
-fn draw_type_toggles(e: &mut Editor, id: wce_scene::render_scene::DocumentId) {
-    let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+/// The types' filter: a button (lit, with the count, while some are hidden) that opens the types on the tile with their icons and counts. A
+/// type turned off is neither listed nor shown in the viewport (a view setting of this tool, not a flag of the file). A right click shows
+/// that type alone; a right click on the only one shown shows them all again.
+fn draw_type_filter(e: &mut Editor, id: wce_scene::render_scene::DocumentId, label: &str, hidden_n: usize) {
+    if hidden_n != 0 {
+        let h = theme::palette().highlight;
+        gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
+    }
+
+    if gui::button(&format!("{label}##typefilter")) {
+        gui::open_popup("typefilter");
+    }
+
+    if hidden_n != 0 {
+        gui::pop_style_color(1);
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip(&if hidden_n == 0 { "Types shown: all".to_owned() } else { format!("{hidden_n} type(s) hidden: click to choose") });
+    }
+
+    if !gui::begin_popup("typefilter") {
+        return;
+    }
+
+    let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else {
+        gui::end_popup();
+        return;
+    };
+
     let counts = d.tile().type_counts().clone();
     let hidden = d.tile().display().hidden_types.clone();
     let mut change: Option<Vec<(String, bool)>> = None;
-    // The buttons flow left to right and wrap at the panel's edge.
-    let right_edge = gui::cursor_screen_pos().x + gui::content_region_avail().x;
-    for (i, (ty, n)) in counts.iter().enumerate() {
-        let on = !hidden.contains(ty);
-        let label = format!("{} {n}##ty{i}", type_icon(ty));
-        let width = gui::calc_text_width(&format!("{} {n}", type_icon(ty))) + gui::style_frame_padding().x * 2.0;
-        if i != 0 && gui::item_rect().1.x + gui::item_spacing().x + width < right_edge {
-            gui::same_line();
-        }
+    if gui::small_button("All") {
+        change = Some(counts.keys().map(|t| (t.clone(), true)).collect());
+    }
 
-        gui::push_style_color(gui::COL_BUTTON, if on { gui::style_color(gui::COL_BUTTON_ACTIVE) } else { gui::style_color(gui::COL_FRAME_BG) });
-        if !on {
-            gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
-        }
+    gui::same_line();
+    if gui::small_button("None") {
+        change = Some(counts.keys().map(|t| (t.clone(), false)).collect());
+    }
 
-        if gui::small_button(&label) {
-            change = Some(vec![(ty.clone(), !on)]);
+    gui::same_line();
+    gui::text_disabled("right click: only that one");
+    gui::separator();
+    for (ty, n) in &counts {
+        let mut on = !hidden.contains(ty);
+        if gui::checkbox(&format!("{}  {}  ({n})##ty{ty}", type_icon(ty), crate::entity_types::type_name(ty)), &mut on) {
+            change = Some(vec![(ty.clone(), on)]);
         }
 
         if gui::is_item_clicked_with(1) {
-            let only = counts.keys().all(|t| t == ty || hidden.contains(t)) && on;
+            let only = counts.keys().all(|t| t == ty || hidden.contains(t)) && !hidden.contains(ty);
             change = Some(counts.keys().map(|t| (t.clone(), only || t == ty)).collect());
         }
 
-        gui::pop_style_color(if on { 1 } else { 2 });
         if gui::is_item_hovered() {
-            gui::set_tooltip(&format!("{ty}: {n}\nClick to {}; right click to show only this type (again: all)", if on { "hide" } else { "show" }));
+            gui::set_tooltip(ty);
         }
     }
 
+    gui::end_popup();
     if let Some(change) = change {
         let t = d.tile_mut();
         for (ty, on) in change {
