@@ -142,8 +142,8 @@ impl TileTool {
 
         // Depth first, children in order: the stack holds them reversed.
         while let Some((e, depth, key)) = stack.pop() {
-            // A copy of a prefab is one row (its contents are listed only while it is edited).
-            let layer = sc.is_layer(e) && !self.closed_prefab(d, e);
+            // A copy of a prefab opens like a group: a click on one of its items opens the copy for overrides (`select_whole_prefabs`).
+            let layer = sc.is_layer(e);
             let mut kids = if layer { sc.children(e) } else { vec![] };
             let all_kids = kids.clone();
             if let Some(keep) = &keep {
@@ -663,6 +663,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 }
 
                 activate = true;
+                tool_ref.tree_picked = true;
                 if gui::is_mouse_double_clicked(0) && !is_graph {
                     actions.push(RowAction::Rename(el));
                 }

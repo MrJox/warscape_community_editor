@@ -100,6 +100,9 @@ pub struct Editor {
     pub scene: RenderScene,
     pub docs: DocumentManager,
     pub selection: Selection,
+
+    /// The selection's outlined entities (`selection_entities`), for the selection and the scene structure they were found for.
+    outline_cache: Option<(Vec<wce_scene::render_scene::SourceRef>, u64, Vec<wce_scene::render_scene::EntityId>)>,
     pub(crate) commands: CommandRegistry<Editor>,
     pub(crate) script: ScriptRunner,
     pub(crate) script_lines: Vec<String>,
@@ -195,7 +198,7 @@ impl Editor {
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], prompt_close: vec![], prompt_error: String::new(),
+            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
@@ -214,6 +217,39 @@ impl Editor {
 
     /// The selection outline's colour (the theme's highlight) and width: 2 px at 100 % (the display's scale, and the pixel density of a high
     /// density window). Scripted runs keep 2 px, so that shots do not depend on the machine.
+    /// The entities the selection is outlined and framed by: each item's, a group's being the items below it (`Document::outline_items`).
+    /// Found again when the selection or the scene's structure changes.
+    pub fn selection_entities(&mut self) -> Vec<wce_scene::render_scene::EntityId> {
+        let items = self.selection.items().to_vec();
+        let rev = self.scene.structure_revision();
+        if let Some((i, r, ents)) = &self.outline_cache
+            && *i == items
+            && *r == rev
+        {
+            return ents.clone();
+        }
+
+        let mut expanded = vec![];
+        for &it in &items {
+            match self.docs.find(it.doc) {
+                Some(d) => expanded.extend(d.outline_items(it)),
+                None => expanded.push(it),
+            }
+        }
+
+        let ents = match expanded.as_slice() {
+            [] => vec![],
+            &[r] => self.scene.entities_of(r),
+            many => {
+                let wanted = many.iter().copied().collect::<std::collections::HashSet<_>>();
+                self.scene.entities().iter().filter(|e| wanted.contains(&e.source)).map(|e| e.id).collect()
+            }
+        };
+
+        self.outline_cache = Some((items, rev, ents.clone()));
+        ents
+    }
+
     pub fn selection_outline_style(&self) -> ([f32; 4], f32) {
         let density = if self.scripted_input() { 1.0 } else { self.display_scale * gui::io().DisplayFramebufferScale.x.max(1.0) };
         (crate::theme::palette().highlight, 2.0 * density)
