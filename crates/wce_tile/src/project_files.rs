@@ -111,8 +111,152 @@ pub fn ted_number_text(_element: &str, attr: &str, value: &str) -> Option<String
     Some(if attr == "lf_offset" { format_general(v) } else { format_ted_number(v) })
 }
 
+/// The attribute of a placed prefab: a group that is a reference to the prefab of this key. tile.wce (and a prefab file of the editor's)
+/// keeps the group without its contents; the editor fills them in from the prefab when it reads the file (`expand_prefabs`) and leaves them
+/// out when it writes it (`strip_prefab_contents`). For TEd the group is written with them (baked, as TEd copies a prefab).
+pub const PREFAB_ATTR: &str = "wce_prefab";
+
+/// The ranges of the contents of the prefab references' `children` (from just after `<children>` to the start of `</children>`; a
+/// self-closing `<children/>` is the whole element, with `None`), and the indentation of that `children` line. Outermost references only.
+fn reference_contents(doc: &wce_formats::xml_doc::XmlDoc, text: &[u8]) -> Vec<(usize, usize, Option<()>, String, String)> {
+    let els = doc.elements();
+    let is_ref = |e: usize| doc.get(e, PREFAB_ATTR).is_some_and(|k| !k.is_empty());
+    let mut out = vec![];
+    for (e, el) in els.iter().enumerate() {
+        if !is_ref(e) || std::iter::successors(el.parent, |&p| els[p].parent).any(is_ref) {
+            continue;
+        }
+
+        let key = doc.get(e, PREFAB_ATTR).unwrap_or_default();
+        let Some(&c) = el.children.iter().find(|&&c| els[c].name == "children") else { continue };
+        let ch = &els[c];
+        let line_start = text[..ch.start_off].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        let indent = String::from_utf8_lossy(&text[line_start..ch.start_off]).into_owned();
+        if ch.self_closing {
+            out.push((ch.start_off, ch.end_off, None, indent, key));
+        } else {
+            out.push((ch.start_end, ch.end_off - "</children>".len(), Some(()), indent, key));
+        }
+    }
+
+    out
+}
+
+/// The text without the contents of the prefab references (each `children` left empty), as tile.wce keeps them.
+pub fn strip_prefab_contents(text: Vec<u8>) -> Vec<u8> {
+    if !text.windows(PREFAB_ATTR.len()).any(|w| w == PREFAB_ATTR.as_bytes()) {
+        return text;
+    }
+
+    let Ok(doc) = wce_formats::xml_doc::XmlDoc::parse(text.clone()) else { return text };
+    let mut out = Vec::with_capacity(text.len());
+    let mut at = 0;
+    for (start, end, open, indent, _) in reference_contents(&doc, &text) {
+        out.extend_from_slice(&text[at..start]);
+        match open {
+            Some(()) => out.extend_from_slice(format!("\n{indent}").as_bytes()),
+            None => out.extend_from_slice(b"<children/>"),
+        }
+
+        at = end;
+    }
+
+    out.extend_from_slice(&text[at..]);
+    out
+}
+
+/// The text with the empty prefab references filled in from their prefabs (`contents`: a key's group contents, at column 0), the
+/// references inside those too (up to 8 deep). Returns the text and the keys no prefab was found for.
+///
+/// # Errors
+///
+/// The text does not read.
+pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<(Vec<u8>, Vec<String>), String> {
+    let mut missing = vec![];
+    for _ in 0..8 {
+        if !text.windows(PREFAB_ATTR.len()).any(|w| w == PREFAB_ATTR.as_bytes()) {
+            break;
+        }
+
+        let doc = wce_formats::xml_doc::XmlDoc::parse(text.clone()).map_err(|e| e.to_string())?;
+        let mut out = Vec::with_capacity(text.len());
+        let mut at = 0;
+        let mut filled = 0;
+        for (start, end, open, indent, key) in reference_contents(&doc, &text) {
+            let empty = text[start..end].iter().all(u8::is_ascii_whitespace) || open.is_none();
+            if !empty {
+                continue;
+            }
+
+            let Some(body) = contents(&key) else {
+                if !missing.contains(&key) {
+                    missing.push(key);
+                }
+
+                continue;
+            };
+
+            out.extend_from_slice(&text[at..start]);
+            if open.is_none() {
+                out.extend_from_slice(b"<children>");
+            }
+
+            out.push(b'\n');
+            for line in body.split_inclusive(|&c| c == b'\n') {
+                out.extend_from_slice(indent.as_bytes());
+                out.extend_from_slice(b"    ");
+                out.extend_from_slice(line);
+            }
+
+            if !out.ends_with(b"\n") {
+                out.push(b'\n');
+            }
+
+            out.extend_from_slice(indent.as_bytes());
+            if open.is_none() {
+                out.extend_from_slice(b"</children>");
+            }
+
+            at = end;
+            filled += 1;
+        }
+
+        out.extend_from_slice(&text[at..]);
+        text = out;
+        if filled == 0 {
+            break;
+        }
+    }
+
+    Ok((text, missing))
+}
+
 /// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
-const POLYFILLED_ATTRS: [&str; 1] = ["wce_prefab"];
+const POLYFILLED_ATTRS: [&str; 1] = [PREFAB_ATTR];
+
+/// A file's text (tile.wce, a prefab of the editor's) with its root element marked (`wce_version`), unless it is.
+pub fn mark_wce_text(mut text: Vec<u8>) -> Vec<u8> {
+    let name = WCE_VERSION_ATTR.as_bytes();
+
+    // The root's start tag: the first `<` that starts an element (not `<?xml` or a comment).
+    let mut start = None;
+    for (i, w) in text.windows(2).enumerate() {
+        if w[0] == b'<' && w[1].is_ascii_alphabetic() {
+            start = Some(i);
+            break;
+        }
+    }
+
+    let Some(start) = start else { return text };
+    let Some(end) = text[start..].iter().position(|&c| c == b'>').map(|i| start + i) else { return text };
+    if text[start..end].windows(name.len()).any(|w| w == name) {
+        return text;
+    }
+
+    let at = if text[end - 1] == b'/' { end - 1 } else { end };
+    text.splice(at..at, format!(" {WCE_VERSION_ATTR}=\"{WCE_VERSION}\"").into_bytes());
+    text
+}
 
 /// What the conversion to TEd did: the polyfills it applied and what it dropped (each a line for people).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -130,17 +274,23 @@ impl TedReport {
     }
 }
 
-/// `tile.wce`'s text (or a tile.ted's) as a tile.ted TEd reads: the root's mark, the `wce_` attributes and the `Wce` elements go, after
-/// the polyfills of the features that have one.
+/// `tile.wce`'s text (or a tile.ted's, or a prefab's) as TEd reads it: the root's mark, the `wce_` attributes and the `Wce` elements go,
+/// after the polyfills of the features that have one, and numbers get TEd's precision. A prefab reference must have its contents (the
+/// editor's text, `expand_prefabs`).
 ///
 /// # Errors
 ///
 /// The text does not read.
 pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
-    let mut scene = TedScene::parse(wce)?;
+    let mut scene = TedScene::parse_any(wce)?;
     let mut report = TedReport::default();
 
-    // The polyfills of the editor's features go here, before the attributes and elements TEd lacks are removed.
+    // The polyfills of the editor's features, before the attributes and elements TEd lacks are removed:
+    // - a prefab reference is written as the group it holds (the text is the editor's, with the contents filled in): TEd's copy of a prefab.
+    let refs = (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, PREFAB_ATTR).is_some_and(|k| !k.is_empty())).count();
+    if refs != 0 {
+        report.polyfilled.push(format!("{refs} prefab reference(s) written as groups"));
+    }
 
     // Elements TEd lacks, the outermost of each (with what is inside), last first so that the indices stay valid.
     let doc = scene.doc();
@@ -267,5 +417,25 @@ mod tests {
         assert!(ted.contains("lf_offset=\"-1.7191e-05\"") && ted.contains("seed=\"1869639023\""), "TEd's own numbers stay: {ted}");
         assert!(ted.contains("position=\"0.123457,2,3\""), "{ted}");
         assert_eq!(report.polyfilled.len(), 1, "{report:?}");
+    }
+
+    #[test]
+    fn a_prefab_reference_is_filled_stripped_and_baked() {
+        let stored = b"<project version=\"16\" wce_version=\"1\">\n    <scene>\n        <UserInstanceGroup name=\"rocks\" wce_prefab=\"rocks\" position=\"vector(5,0,5)\">\n            <children>\n            </children>\n        </UserInstanceGroup>\n    </scene>\n</project>\n".to_vec();
+        let rock = b"<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(1,0,0)\"/>\n".to_vec();
+        let (filled, missing) = expand_prefabs(stored.clone(), &|k| (k == "rocks").then(|| rock.clone())).unwrap();
+        let text = String::from_utf8(filled.clone()).unwrap();
+        assert!(missing.is_empty());
+        assert!(text.contains("            <children>\n                <BUILDING_INSTANCE key=\"rock\""), "{text}");
+        assert_eq!(strip_prefab_contents(filled.clone()), stored, "stripping gives back what was stored");
+
+        let (ted, report) = to_ted(filled).unwrap();
+        let ted = String::from_utf8(ted).unwrap();
+        assert!(ted.contains("<UserInstanceGroup name=\"rocks\" position=\"vector(5,0,5)\">") && ted.contains("key=\"rock\""), "baked: {ted}");
+        assert_eq!((report.polyfilled.len(), report.dropped.len()), (1, 0), "{report:?}");
+
+        let (_, missing) = expand_prefabs(stored, &|_| None).unwrap();
+        assert_eq!(missing, vec!["rocks".to_owned()]);
+        assert!(String::from_utf8(mark_wce_text(b"<INSTANCE_SELECTION version=\"17\">\n</INSTANCE_SELECTION>\n".to_vec())).unwrap().starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">"));
     }
 }

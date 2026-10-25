@@ -577,6 +577,7 @@ enum PrefabAction {
     Apply,
     Cancel,
     Unpack(usize),
+    SaveForKit(usize),
     Save(usize),
 }
 
@@ -767,6 +768,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
                         if gui::menu_item("Unpack prefab", None, false, true) {
                             actions.push(RowAction::Prefab(PrefabAction::Unpack(el)));
+                        }
+
+                        if gui::menu_item("Save prefab for Assembly Kit", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::SaveForKit(el)));
                         }
                     }
 
@@ -1075,6 +1080,13 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             PrefabAction::Apply => tool.apply_prefab_edit(e),
             PrefabAction::Cancel => tool.cancel_prefab_edit(e),
             PrefabAction::Unpack(el) => tool.unpack_prefab(e, el),
+            PrefabAction::SaveForKit(el) => {
+                let key = e.docs.find_as::<TileDocument>(id).and_then(|d| tool.prefab_of(d, el));
+                match key {
+                    Some(k) => tool.save_prefab_for_kit(e, &k),
+                    None => Err("not a copy of a prefab".to_owned()),
+                }
+            }
             PrefabAction::Save(el) => {
                 let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
                 tool.request_save_prefab(d, el);

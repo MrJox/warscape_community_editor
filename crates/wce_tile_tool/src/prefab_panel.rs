@@ -9,6 +9,7 @@ use std::sync::Arc;
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
+use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::SourceRef;
 use wce_tile::prefabs::{self, PrefabLibrary};
@@ -58,12 +59,8 @@ impl TileTool {
 
     /// The prefab key of an element when it is a copy of a prefab of the library (an instance group named after the key).
     pub(crate) fn prefab_of(&self, d: &TileDocument, elem: usize) -> Option<String> {
-        let sc = d.tile().tscene();
-        if sc.type_of(elem) != "UserInstanceGroup" {
-            return None;
-        }
-
-        self.prefabs.as_ref()?.get(&sc.name(elem)).map(|p| p.key.clone())
+        let key = d.prefab_key(elem)?;
+        self.prefabs.as_ref()?.get(&key).map(|p| p.key.clone())
     }
 
     /// The copy being edited in this tile, if there is one.
@@ -129,7 +126,7 @@ impl TileTool {
     pub fn place_prefab(&mut self, e: &mut Editor, key: &str, at: Float3) -> Result<String, String> {
         let lib = self.prefab_library(e);
         let entry = lib.get(key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
-        let p = prefabs::load(&entry.path)?;
+        let p = lib.load(&entry.key)?;
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
         d.place_prefab(&entry.key, &p.group_text, into, at)?;
@@ -171,11 +168,16 @@ impl TileTool {
         let key = self.prefab_edit.as_ref().map(|p| p.2.clone()).unwrap_or_default();
         let entry = lib.get(&key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
         let children = d.children_text(copy);
-        prefabs::update_children(&entry.path, &children)?;
+
+        // The edit goes into the projects' prefab (its .wce), never into the kit.
+        let projects = prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"));
+        let saved = lib.save_edit(&entry.key, &projects, &children)?;
+        let d = document(e).ok_or("no tile open")?;
         let others = d.prefab_copies(&key).into_iter().filter(|&c| c != copy).collect::<Vec<_>>();
         let n = d.set_groups_children(&others, &children, &format!("Update the copies of {key}"))?;
         self.end_prefab_edit(e);
-        Ok(format!("{key} saved to {}; {n} other cop{} updated", entry.path.display(), if n == 1 { "y" } else { "ies" }))
+        self.rescan_prefabs(e);
+        Ok(format!("{key} saved to {}; {n} other cop{} updated", saved.display(), if n == 1 { "y" } else { "ies" }))
     }
 
     /// Ends the edit without saving: the copy gets the prefab file's contents back.
@@ -188,8 +190,7 @@ impl TileTool {
         let d = document(e).ok_or("no tile open")?;
         let copy = self.edited_copy(d).ok_or("no prefab is being edited")?;
         let key = self.prefab_edit.as_ref().map(|p| p.2.clone()).unwrap_or_default();
-        let entry = lib.get(&key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
-        let p = prefabs::load(&entry.path)?;
+        let p = lib.load(&key)?;
         d.set_groups_children(&[copy], &p.children_text, &format!("Cancel the edit of {key}"))?;
         self.end_prefab_edit(e);
         Ok(format!("{key}: edit cancelled"))
@@ -217,7 +218,7 @@ impl TileTool {
             return Err("the copy is being edited: apply or cancel it first".to_owned());
         }
 
-        d.rename(copy, &format!("{key} (unpacked)"));
+        d.unpack_prefab_copy(copy, &format!("{key} (unpacked)"));
         self.prefab_version += 1;
         Ok(format!("{key} unpacked into a plain group"))
     }
@@ -245,11 +246,31 @@ impl TileTool {
 
         let root = lib.roots().first().cloned().or_else(|| d.project().raw_root.as_deref().map(prefabs::prefab_root)).ok_or("no kit to put the prefab in")?;
         let folder = folder.trim().trim_matches(['/', '\\']);
-        let path = if folder.is_empty() { root.join(format!("{name}.xml")) } else { root.join(folder).join(format!("{name}.xml")) };
+        let path = if folder.is_empty() { root.join(format!("{name}.wce")) } else { root.join(folder).join(format!("{name}.wce")) };
         d.rename(group, name);
         prefabs::write(&path, &d.element_text(group))?;
+
+        // The group is a reference to it now.
+        d.make_prefab_reference(group, name);
         self.rescan_prefabs(e);
         Ok(format!("saved {}", path.display()))
+    }
+
+    /// "Save for Assembly Kit" of a prefab: its file as TEd reads it in the kit's art/prefabs (the prefabs placed in it baked).
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, no kit, or the file can't be written.
+    pub fn save_prefab_for_kit(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
+        let lib = self.prefab_library(e);
+        let projects = Self::workspace_dir(e).join("raw_data");
+        let kit = self.kit_roots(e).into_iter().find(|r| *r != projects).ok_or("no Assembly Kit (set it in the game's settings)")?;
+        let (path, report) = lib.save_for_kit(key, &prefabs::prefab_root(&kit))?;
+        for line in report.polyfilled.iter().chain(&report.dropped) {
+            log::info(format!("Save prefab for Assembly Kit: {line}"));
+        }
+
+        Ok(format!("{key} saved for the Assembly Kit: {} ({})", path.display(), report.summary()))
     }
 
     /// The "Save as prefab" dialog (opened from a group's menu in the Scene panel).
