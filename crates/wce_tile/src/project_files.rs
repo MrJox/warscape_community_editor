@@ -75,6 +75,45 @@ pub fn mark_wce(scene: &mut TedScene) {
     }
 }
 
+/// A number as TEd would write it in an attribute: `vector(..)` / `euler(..)` components and plain numbers as `%.6f` of the float32
+/// trimmed (`format_ted_number`), the `x,y,z` of points and spline handles and `lf_offset` as `%g` of the float32 (`format_general`),
+/// integers as they are (measured over the kit's tile.ted files: `examples/ted_numbers_check.rs`). `None`: not a value of
+/// numbers (or one whose shape this does not know).
+pub fn ted_number_text(_element: &str, attr: &str, value: &str) -> Option<String> {
+    use crate::ted_scene::{format_general, format_ted_number};
+
+    let num = |t: &str| -> Option<f64> {
+        let t = t.trim();
+        (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E')) && t.bytes().any(|b| b.is_ascii_digit()))
+            .then(|| t.parse::<f64>().ok())
+            .flatten()
+    };
+
+    for prefix in ["vector", "euler"] {
+        if let Some(inner) = value.strip_prefix(prefix).and_then(|r| r.strip_prefix('(')).and_then(|r| r.strip_suffix(')')) {
+            let parts = inner.split(',').map(num).collect::<Option<Vec<_>>>()?;
+            return Some(format!("{prefix}({})", parts.into_iter().map(format_ted_number).collect::<Vec<_>>().join(",")));
+        }
+    }
+
+    if value.contains(',') {
+        let parts = value.split(',').map(num).collect::<Option<Vec<_>>>()?;
+        return (parts.len() == 3).then(|| parts.into_iter().map(format_general).collect::<Vec<_>>().join(","));
+    }
+
+    // Integers (the generation seeds) as they are; `lf_offset` as `%g`; the other numbers as the vectors' components.
+    let v = num(value)?;
+    let t = value.trim();
+    if t.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+        return Some(format!("{}", v as i64));
+    }
+
+    Some(if attr == "lf_offset" { format_general(v) } else { format_ted_number(v) })
+}
+
+/// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
+const POLYFILLED_ATTRS: [&str; 1] = ["wce_prefab"];
+
 /// What the conversion to TEd did: the polyfills it applied and what it dropped (each a line for people).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TedReport {
@@ -117,30 +156,47 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
         scene.remove(e)?;
     }
 
-    // Attributes TEd lacks: cut out of the text (with the space before each), read again so that the offsets are the text's.
+    // Attributes TEd lacks: cut out of the text (with the space before each); numbers at more precision than TEd's: written as TEd writes
+    // them (`ted_number_text`, only where that is shorter, so what TEd wrote stays as it is). Read again so that the offsets are the text's.
     let text = scene.save();
     let fresh = wce_formats::xml_doc::XmlDoc::parse(text.clone()).map_err(|e| e.to_string())?;
-    let mut cuts = vec![];
+    let mut cuts: Vec<(usize, usize, Vec<u8>)> = vec![];
+    let mut rounded = 0;
     for (e, el) in fresh.elements().iter().enumerate() {
-        for a in el.attrs.iter().filter(|a| a.name.starts_with("wce_")) {
-            if a.name != WCE_VERSION_ATTR {
-                report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
+        for a in &el.attrs {
+            if a.name.starts_with("wce_") {
+                if a.name != WCE_VERSION_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) {
+                    report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
+                }
+
+                // `name=` and the quote before the value, the quote after it.
+                let mut start = a.value_off - 2 - a.name.len();
+                while start > 0 && text[start - 1].is_ascii_whitespace() {
+                    start -= 1;
+                }
+
+                cuts.push((start, a.value_off + a.value_len + 1, vec![]));
+                continue;
             }
 
-            // `name=` and the quote before the value, the quote after it.
-            let mut start = a.value_off - 2 - a.name.len();
-            while start > 0 && text[start - 1].is_ascii_whitespace() {
-                start -= 1;
+            let raw = &text[a.value_off..a.value_off + a.value_len];
+            let Ok(value) = std::str::from_utf8(raw) else { continue };
+            if let Some(ted) = ted_number_text(&el.name, &a.name, value).filter(|t| t.len() < value.len()) {
+                cuts.push((a.value_off, a.value_off + a.value_len, ted.into_bytes()));
+                rounded += 1;
             }
-
-            cuts.push((start, a.value_off + a.value_len + 1));
         }
+    }
+
+    if rounded != 0 {
+        report.polyfilled.push(format!("{rounded} number(s) written at TEd's precision"));
     }
 
     let mut out = Vec::with_capacity(text.len());
     let mut at = 0;
-    for (start, end) in cuts {
+    for (start, end, with) in cuts {
         out.extend_from_slice(&text[at..start]);
+        out.extend_from_slice(&with);
         at = end;
     }
 
@@ -200,5 +256,16 @@ mod tests {
         let back = String::from_utf8(back).unwrap();
         assert!(!back.contains("wce_") && !back.contains("Wce"), "{back}");
         assert_eq!(report.dropped.len(), 2, "{report:?}");
+    }
+
+    #[test]
+    fn numbers_get_teds_precision_and_teds_own_stay() {
+        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <BUILDING_INSTANCE lf_offset=\"-1.7191e-05\" position=\"vector(133.46086123456,-7.737109999999,0.5)\" seed=\"1869639023\"/>\n    <point position=\"0.123456789,2,3\"/>\n</project>\n".to_vec();
+        let (ted, report) = to_ted(wce).unwrap();
+        let ted = String::from_utf8(ted).unwrap();
+        assert!(ted.contains("position=\"vector(133.460861,-7.73711,0.5)\""), "{ted}");
+        assert!(ted.contains("lf_offset=\"-1.7191e-05\"") && ted.contains("seed=\"1869639023\""), "TEd's own numbers stay: {ted}");
+        assert!(ted.contains("position=\"0.123457,2,3\""), "{ted}");
+        assert_eq!(report.polyfilled.len(), 1, "{report:?}");
     }
 }

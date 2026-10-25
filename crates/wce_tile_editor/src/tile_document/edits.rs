@@ -1167,7 +1167,7 @@ impl TileDocument {
 
                 let at = local(pts[0]);
                 let positions = pts.iter().map(|&p| local(p) - at).collect::<Vec<_>>();
-                let mut n = NewInstance::new(kind).position(at).attr("lf_offset", wce_tile::ted_scene::format_ted_number(at.y));
+                let mut n = NewInstance::new(kind).position(at).attr("lf_offset", wce_tile::ted_scene::format_number(at.y));
                 n.points = wce_tile::splines::new_points(&positions).into_iter().map(|p| {
                     let mut q = NewPoint::at(p.position);
                     q.attrs.insert("controlIn".to_owned(), wce_tile::new_instances::point_text(p.control_in));
@@ -1908,7 +1908,7 @@ impl Tile {
 fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_instances::NewInstance {
     use wce_tile::new_instances::{NewInstance, NewPoint, polygon_area};
 
-    let mut n = NewInstance::new(kind).attr("area", wce_tile::ted_scene::format_ted_number(polygon_area(&points)));
+    let mut n = NewInstance::new(kind).attr("area", wce_tile::ted_scene::format_number(polygon_area(&points)));
     if !closed {
         n = n.attr("polygon_closed", "0");
     }
@@ -1941,7 +1941,7 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
         "POINT_LIGHT_INSTANCE" => NewInstance::new(kind).position(at),
         "CivilianShelter" => NewInstance::new(kind).position(at).attr("target", vector(at + Double3::new(0.0, 0.0, 10.0 * unit))),
         "CaptureLocationInstance" => {
-            let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_ted_number(20.0 * unit));
+            let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_number(20.0 * unit));
             let mut n = NewInstance::new(kind).position(at);
             n.children.push(element_text(&boundary)?);
             n
