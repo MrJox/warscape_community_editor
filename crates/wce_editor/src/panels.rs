@@ -218,7 +218,7 @@ impl Inspector for ImGuiInspector {
     }
 
     fn edit_checks(&mut self, field: &str, label: &str, names: &[&str], on: &mut [bool]) -> bool {
-        gui::text(label);
+        self.draw_label(field, label, false);
         let mut changed = false;
         let mut ended = false;
         for (i, name) in names.iter().enumerate() {

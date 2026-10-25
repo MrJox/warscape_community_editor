@@ -643,7 +643,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
 
         // The override marks are found again after an edit (or a new library).
-        let marks_key = (id, d.history().position(), d.history().size(), tool.prefab_version);
+        let marks_key = (id, d.history().version(), tool.prefab_version);
         if tool.override_rows.0 != marks_key {
             tool.override_rows = (marks_key, HashMap::new());
         }
