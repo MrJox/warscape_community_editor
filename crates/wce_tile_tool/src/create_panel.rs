@@ -584,21 +584,25 @@ impl TileTool {
         }
 
         if let Some(i) = start {
-            // Ctrl + click on a tree (or a set): into the new set, not placed.
-            let into_set = match &entries[i].make {
-                Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
-                Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
-                _ => None,
-            };
+            self.make_or_add(e, &entries[i]);
+        }
+    }
 
-            match into_set.filter(|_| gui::io().KeyCtrl) {
-                Some(keys) => {
-                    self.add_to_new_set(&keys);
-                    e.pending_focus = Some("Inspector".to_owned());
-                }
+    /// A click on an entry: makes it; with Ctrl, a tree (or a set) goes into the new vegetation set instead.
+    fn make_or_add(&mut self, e: &mut Editor, en: &Entry) {
+        let into_set = match &en.make {
+            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
+            Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
+            _ => None,
+        };
 
-                None => self.start_making(e, &entries[i]),
+        match into_set.filter(|_| gui::io().KeyCtrl) {
+            Some(keys) => {
+                self.add_to_new_set(&keys);
+                e.pending_focus = Some("Inspector".to_owned());
             }
+
+            None => self.start_making(e, en),
         }
     }
 
@@ -685,7 +689,7 @@ impl TileTool {
 
         gui::end_popup();
         if let Some(i) = start {
-            self.start_making(e, &entries[i]);
+            self.make_or_add(e, &entries[i]);
         }
     }
 }

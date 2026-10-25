@@ -159,21 +159,20 @@ impl TileTool {
         set
     }
 
-    /// The set in use, in the Inspector: its trees, their weights and scale ranges, add and remove; a saved one is saved at once, the new
-    /// one (not saved yet) follows.
+    /// The saved set in use, in the Inspector: its trees, their weights and scale ranges, add and remove; saved at once (the new one is
+    /// edited at the top of the Inspector, `inspect_new_set`).
     pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
         let Some(set) = self.veg_set.clone() else { return };
-        let before = set.clone();
-        let new = set.path.as_os_str().is_empty();
-        ins.section(&if new { "New vegetation set (not saved)".to_owned() } else { format!("Vegetation set {}", set.name) });
-        let set = self.edit_set_entries(e, ins, set);
-        if set == before {
+
+        // The new set is edited at the top of the Inspector already.
+        if set.path.as_os_str().is_empty() {
             return;
         }
 
-        if new {
-            self.scratch_set = Some(set.clone());
-            self.veg_set = Some(set);
+        let before = set.clone();
+        ins.section(&format!("Vegetation set {}", set.name));
+        let set = self.edit_set_entries(e, ins, set);
+        if set == before {
             return;
         }
 
@@ -222,6 +221,12 @@ impl TileTool {
         let drop = gui::small_button(&format!("{}  Discard", icons::X));
         gui::separator();
         self.scratch_name = name;
+
+        // Placing or painting with it: it follows the edits.
+        if self.veg_set.as_ref().is_some_and(|v| v.path.as_os_str().is_empty()) {
+            self.veg_set = Some(set.clone());
+        }
+
         self.scratch_set = Some(set.clone());
 
         if save {

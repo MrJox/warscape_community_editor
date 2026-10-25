@@ -2603,16 +2603,13 @@ impl Tool for TileTool {
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
-        if self.inspect_making(e, ins) {
-            return true;
-        }
-
-        // The new vegetation set (not saved) above the selection's.
-        if self.scratch_set.is_some() {
+        // The new vegetation set (not saved) at the top, placing or not.
+        let scratch = self.scratch_set.is_some();
+        if scratch {
             self.inspect_new_set(e, ins);
         }
 
-        self.inspect_brush(e, ins)
+        self.inspect_making(e, ins) || self.inspect_brush(e, ins)
     }
 
     fn toolbar(&mut self, e: &mut Editor) {
