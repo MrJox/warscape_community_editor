@@ -87,6 +87,105 @@ pub struct SurfaceHit {
     pub entity: EntityId,
 }
 
+/// The targets of an id pass: the entity ids, the world positions of the surfaces (w 1 where one is), the depth, and staging copies to read
+/// them back (`staging` pixels wide and high).
+#[derive(Default)]
+pub(crate) struct PickTargets {
+    id_tex: Option<ID3D11Texture2D>,
+    id_rtv: Option<ID3D11RenderTargetView>,
+    id_staging: Option<ID3D11Texture2D>,
+    pos_tex: Option<ID3D11Texture2D>,
+    pos_rtv: Option<ID3D11RenderTargetView>,
+    pos_staging: Option<ID3D11Texture2D>,
+    dsv: Option<ID3D11DepthStencilView>,
+    w: u32,
+    h: u32,
+}
+
+impl PickTargets {
+    /// Made again when the size changes; `id_staging` / `pos_staging`: the sizes of the read-back copies.
+    fn ensure(&mut self, dev: &ID3D11Device, w: u32, h: u32, id_staging: (u32, u32), pos_staging: (u32, u32)) {
+        if self.w == w && self.h == h && self.id_tex.is_some() {
+            return;
+        }
+
+        let desc = |w: u32, h: u32, fmt: DXGI_FORMAT, usage: D3D11_USAGE, bind: u32, cpu: u32| D3D11_TEXTURE2D_DESC {
+            Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: usage, BindFlags: bind,
+            CPUAccessFlags: cpu, MiscFlags: 0,
+        };
+
+        self.id_tex = dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+        self.id_rtv = self.id_tex.as_ref().and_then(|tex| dev.create_render_target_view(tex, None).ok());
+        self.dsv = depth_target(dev, w, h, DXGI_FORMAT_D32_FLOAT);
+        self.id_staging = dev.create_texture_2d(&desc(id_staging.0, id_staging.1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
+        self.pos_tex = dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+        self.pos_rtv = self.pos_tex.as_ref().and_then(|tex| dev.create_render_target_view(tex, None).ok());
+        self.pos_staging = dev.create_texture_2d(&desc(pos_staging.0, pos_staging.1, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
+        self.w = w;
+        self.h = h;
+    }
+}
+
+/// The topmost surfaces over a square of the ground, seen straight down (`Renderer::surfaces_below`): per pixel its world point (w 1 where
+/// there is one) and entity, row 0 at the square's +z edge.
+#[derive(Clone, Debug, Default)]
+pub struct SurfaceGrid {
+    pub center: Float3,
+    pub size: f32,
+    pub res: u32,
+    pub points: Vec<[f32; 4]>,
+    pub ids: Vec<EntityId>,
+}
+
+impl SurfaceGrid {
+    fn at(&self, i: i64, j: i64) -> Option<(Float3, EntityId)> {
+        let n = i64::from(self.res);
+        if i < 0 || j < 0 || i >= n || j >= n {
+            return None;
+        }
+
+        let k = (j * n + i) as usize;
+        let p = self.points.get(k)?;
+        (p[3] > 0.5).then(|| (Float3::new(p[0], p[1], p[2]), self.ids.get(k).copied().unwrap_or(0)))
+    }
+
+    /// The topmost surface at a ground point: its world point, its normal (from the pixels around it, up-facing; straight up where they
+    /// are missing) and its entity. `None` outside the square or where nothing is.
+    pub fn hit(&self, x: f32, z: f32) -> Option<SurfaceHit> {
+        let res = self.res as f32;
+        let i = (((x - self.center.x) / self.size + 0.5) * res).floor() as i64;
+        let j = ((0.5 - (z - self.center.z) / self.size) * res).floor() as i64;
+        let (point, entity) = self.at(i, j)?;
+
+        // Neighbours on the same thing only (an edge between a roof and the ground is no slope).
+        let same = |a: i64, b: i64| self.at(a, b).filter(|(_, id)| *id == entity).map(|(p, _)| p);
+        let side = |a: Option<Float3>, b: Option<Float3>| match (a, b) {
+            (Some(a), Some(b)) => Some(b - a),
+            (Some(a), None) => Some(point - a),
+            (None, Some(b)) => Some(b - point),
+            (None, None) => None,
+        };
+
+        let up = Float3::new(0.0, 1.0, 0.0);
+        let normal = match (side(same(i - 1, j), same(i + 1, j)), side(same(i, j + 1), same(i, j - 1))) {
+            (Some(dx), Some(dz)) => {
+                let n = wce_foundation::math::cross(dz, dx);
+                let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
+                if len > 1e-9 && n.y.abs() > 1e-6 {
+                    let s = if n.y < 0.0 { -1.0 } else { 1.0 } / len;
+                    Float3::new(n.x * s, n.y * s, n.z * s)
+                } else {
+                    up
+                }
+            }
+
+            _ => up,
+        };
+
+        Some(SurfaceHit { point, normal, entity })
+    }
+}
+
 /// The editor passes' GPU objects, created on first use.
 #[derive(Default)]
 pub(crate) struct EditorGpu {
@@ -112,17 +211,9 @@ pub(crate) struct EditorGpu {
     ovl_ds_off: Option<ID3D11DepthStencilState>,
     pick_ds: Option<ID3D11DepthStencilState>,
     ovl_rs: Option<ID3D11RasterizerState>,
-    pick_id_tex: Option<ID3D11Texture2D>,
-    pick_staging: Option<ID3D11Texture2D>,
-    pick_id_rtv: Option<ID3D11RenderTargetView>,
-
-    /// The world positions of the id pass's surfaces, and a 3x3 staging copy (`pick_surface`).
-    pick_pos_tex: Option<ID3D11Texture2D>,
-    pick_pos_rtv: Option<ID3D11RenderTargetView>,
-    pick_pos_staging: Option<ID3D11Texture2D>,
-    pick_dsv: Option<ID3D11DepthStencilView>,
-    pick_w: u32,
-    pick_h: u32,
+    /// The id pass's targets: the view's (`pick`, `pick_surface`) and the straight-down one (`surfaces_below`), each kept at its size.
+    pick_view: PickTargets,
+    pick_top: PickTargets,
     pick_inst_vb: Option<ID3D11Buffer>,
     pick_id_vb: Option<ID3D11Buffer>,
     pick_inst_capacity: usize,
@@ -578,40 +669,30 @@ impl Renderer {
         }
 
         // 2. Meshes and terrain: an id pass at the target's size, read back at one pixel.
-        if !self.id_pass(scene, params, &vp_m, w, h, &|_| false) {
+        if !self.id_pass(scene, params, &vp_m, (w, h), &|_| false, false) {
             return 0;
         }
 
-        let (Some(staging), Some(id_tex)) = (self.editor.pick_staging.clone(), self.editor.pick_id_tex.clone()) else { return 0 };
+        let (Some(staging), Some(id_tex)) = (self.editor.pick_view.id_staging.clone(), self.editor.pick_view.id_tex.clone()) else { return 0 };
         let pick_box = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
         self.ctx.copy_subresource_region(&staging, 0, [0; 3], &id_tex, 0, Some(&pick_box));
         self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0)
     }
 
     /// The id pass of the meshes and the terrain into the pick targets (ids, world positions), at the target's size; `skip`: entities left out.
-    /// False when the targets can't be made.
-    fn id_pass(&mut self, scene: &RenderScene, params: &ViewParams, vp_m: &Float4x4, w: u32, h: u32, skip: &dyn Fn(EntityId) -> bool) -> bool {
+    /// `top`: the straight-down targets (`surfaces_below`, every LOD drawn as the camera sees it, nothing too small to draw left out), else
+    /// the view's. False when the targets can't be made.
+    fn id_pass(&mut self, scene: &RenderScene, params: &ViewParams, vp_m: &Float4x4, (w, h): (u32, u32), skip: &dyn Fn(EntityId) -> bool, top: bool) -> bool {
         let vp_m = *vp_m;
-        if self.editor.pick_w != w || self.editor.pick_h != h {
-            let e = &mut self.editor;
-            let desc = |w: u32, h: u32, fmt: DXGI_FORMAT, usage: D3D11_USAGE, bind: u32, cpu: u32| D3D11_TEXTURE2D_DESC {
-                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: usage, BindFlags: bind,
-                CPUAccessFlags: cpu, MiscFlags: 0,
-            };
-
-            e.pick_id_tex = self.dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
-            e.pick_id_rtv = e.pick_id_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
-            e.pick_dsv = depth_target(&self.dev, w, h, DXGI_FORMAT_D32_FLOAT);
-            e.pick_staging = self.dev.create_texture_2d(&desc(1, 1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
-            e.pick_pos_tex = self.dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
-            e.pick_pos_rtv = e.pick_pos_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
-            e.pick_pos_staging = self.dev.create_texture_2d(&desc(3, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
-
-            e.pick_w = w;
-            e.pick_h = h;
+        let dev = self.dev.clone();
+        if top {
+            self.editor.pick_top.ensure(&dev, w, h, (w, h), (w, h));
+        } else {
+            self.editor.pick_view.ensure(&dev, w, h, (1, 1), (3, 3));
         }
 
-        let (Some(rtv), Some(pos_rtv), Some(dsv)) = (self.editor.pick_id_rtv.clone(), self.editor.pick_pos_rtv.clone(), self.editor.pick_dsv.clone()) else { return false };
+        let t = if top { &self.editor.pick_top } else { &self.editor.pick_view };
+        let (Some(rtv), Some(pos_rtv), Some(dsv)) = (t.id_rtv.clone(), t.pos_rtv.clone(), t.dsv.clone()) else { return false };
         let e = &self.editor;
         // The unsigned integer target is cleared with zero bits; the positions with w 0 (nothing there).
         self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
@@ -635,7 +716,7 @@ impl Renderer {
             frustum: Frustum::from_view_projection(&vp_m),
             eye: params.camera.eye,
             lod_scale: self.settings.lod_scale,
-            min_ratio: self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32,
+            min_ratio: if top { 0.0 } else { self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32 },
             ..Default::default()
         };
 
@@ -699,13 +780,12 @@ impl Renderer {
 
         self.build_draws(scene, params.camera.eye);
         let vp_m = Self::view_projection(&params.camera, w, h);
-        if !self.id_pass(scene, params, &vp_m, w, h, skip) {
+        if !self.id_pass(scene, params, &vp_m, (w, h), skip, false) {
             return None;
         }
 
-        let (Some(staging), Some(id_staging), Some(pos_tex), Some(id_tex)) =
-            (self.editor.pick_pos_staging.clone(), self.editor.pick_staging.clone(), self.editor.pick_pos_tex.clone(), self.editor.pick_id_tex.clone())
-        else {
+        let t = &self.editor.pick_view;
+        let (Some(staging), Some(id_staging), Some(pos_tex), Some(id_tex)) = (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone()) else {
             return None;
         };
 
@@ -747,5 +827,53 @@ impl Renderer {
         };
 
         Some(SurfaceHit { point, normal, entity })
+    }
+
+    /// The topmost surfaces (meshes and terrain; not the overlays, the locked layers, what `skip` says) over a `size` metres square around
+    /// `center`, seen straight down at `res` x `res` pixels, the models at the LODs the camera of `params` sees. For putting things on
+    /// whatever is below a ground point, wherever the camera is. `None` when the pass can't be drawn.
+    pub fn surfaces_below(&mut self, scene: &RenderScene, params: &ViewParams, center: Float3, size: f32, res: u32, skip: &dyn Fn(EntityId) -> bool) -> Option<SurfaceGrid> {
+        if let Err(error) = self.create_editor_resources() {
+            self.error(error.0);
+            return None;
+        }
+
+        // From well above the ground, looking down with +z up on the image.
+        const ABOVE: f32 = 1000.0;
+        let eye = Float3::new(center.x, center.y + ABOVE, center.z);
+        let view = wce_foundation::math::look_at_lh(eye, center, Float3::new(0.0, 0.0, 1.0));
+        let vp_m = wce_foundation::math::ortho_lh(size, size, 1.0, ABOVE * 2.0) * view;
+        self.build_draws(scene, params.camera.eye);
+        if !self.id_pass(scene, params, &vp_m, (res, res), skip, true) {
+            return None;
+        }
+
+        let t = &self.editor.pick_top;
+        let (Some(pos_staging), Some(id_staging), Some(pos_tex), Some(id_tex)) = (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone()) else {
+            return None;
+        };
+
+        self.ctx.copy_resource(&pos_staging, &pos_tex);
+        self.ctx.copy_resource(&id_staging, &id_tex);
+        let n = res as usize;
+        let mut grid = SurfaceGrid { center, size, res, points: Vec::with_capacity(n * n), ids: Vec::with_capacity(n * n) };
+        {
+            let ms = self.ctx.map(&id_staging, 0, D3D11_MAP_READ, 0).ok()?;
+            for j in 0..n {
+                let row = ms.row(j, n * 4)?;
+                grid.ids.extend(row.as_chunks::<4>().0.iter().map(|b| u32::from_le_bytes(*b)));
+            }
+        }
+
+        let ms = self.ctx.map(&pos_staging, 0, D3D11_MAP_READ, 0).ok()?;
+        for j in 0..n {
+            let row = ms.row(j, n * 16)?;
+            grid.points.extend(row.as_chunks::<16>().0.iter().map(|b| {
+                let f = |k: usize| f32::from_le_bytes([b[k * 4], b[k * 4 + 1], b[k * 4 + 2], b[k * 4 + 3]]);
+                [f(0), f(1), f(2), f(3)]
+            }));
+        }
+
+        Some(grid)
     }
 }

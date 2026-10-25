@@ -4,24 +4,28 @@
 //! trees are previewed while it lasts and put into the working layer at its end, one undo entry. Ctrl + drag takes the manual trees in the
 //! circle away (one entry too). The settings are in the Inspector while the brush is on, kept in the Tile settings.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use wce_editor::editor::Editor;
 use wce_editor_core::inspector::Inspector;
-use wce_foundation::math::Float3;
+use wce_foundation::math::{Double3, Float3};
+use wce_render::renderer::SurfaceGrid;
+use wce_scene::render_scene::{EntityId, Kind};
 use wce_tile_editor::tile_document::brush::Footprint;
-use wce_tile_editor::tile_document::{turned, with_root_attr};
+use wce_tile_editor::tile_document::{elem_of, turned, with_root_attr};
 
-use crate::settings::{SETTINGS_ID, TileSettings, VegBrush};
+use crate::settings::{SETTINGS_ID, SurfaceMode, TileSettings, VegBrush};
 use crate::tool::{TileTool, document};
 
-/// A painted tree: where (world metres), its key, scale and turn (degrees).
+/// A painted tree: where (world metres), its key, scale and turn (degrees), and the normal of what it stands on when that is not the terrain
+/// (Entity: Above).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Planted {
     pub at: Float3,
     pub key: String,
     pub scale: f32,
     pub yaw: f32,
+    pub normal: Option<Float3>,
 }
 
 /// One stroke of the brush.
@@ -87,11 +91,15 @@ impl TileTool {
     pub(crate) fn dab(&mut self, e: &mut Editor) {
         let b = self.veg_brush(e);
         let at = self.cursor;
-        let set = self.set_in_use(e);
-        let Some(stroke) = self.stroke.as_mut() else { return };
+        let Some(stroke) = self.stroke.as_ref() else { return };
         if stroke.last.is_some_and(|l| (l.x - at.x).hypot(l.z - at.z) < b.radius * 0.25) {
             return;
         }
+
+        // Entity: Above: on whatever is topmost at each point (the trees left out), seen straight down over the circle.
+        let below = if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
+        let set = self.set_in_use(e);
+        let Some(stroke) = self.stroke.as_mut() else { return };
 
         stroke.last = Some(at);
         let r2 = b.radius * b.radius;
@@ -118,9 +126,12 @@ impl TileTool {
         for _ in 0..tries {
             let (a, r) = (self.random.unit() * std::f32::consts::TAU, b.radius * self.random.unit().sqrt());
             let (x, z) = (at.x + a.cos() * r, at.z + a.sin() * r);
+
+            // On a thing (not the terrain), the things' clearance does not count: it stands on one.
+            let on = below.as_ref().and_then(|(grid, terrain)| grid.hit(x, z).filter(|h| h.entity != 0 && !terrain.contains(&h.entity)));
             let free = near.iter().all(|f| {
                 let dist = (f.x - x).hypot(f.z - z);
-                if f.tree { dist >= spacing } else { dist >= f.radius + b.clearance }
+                if f.tree { dist >= spacing } else { on.is_some() || dist >= f.radius + b.clearance }
             }) && stroke.planted.iter().all(|p| (p.at.x - x).hypot(p.at.z - z) >= spacing);
             if !free {
                 continue;
@@ -132,7 +143,8 @@ impl TileTool {
             let (lo, hi) = picked.and_then(|en| en.scale).unwrap_or((b.scale_min, b.scale_max));
             let scale = lo + (hi - lo).max(0.0) * self.random.unit();
             let yaw = if b.random_yaw { self.random.unit() * 360.0 } else { 0.0 };
-            stroke.planted.push(Planted { at: Float3::new(x, d.tile().terrain_height(x, z), z), key, scale, yaw });
+            let (y, normal) = on.map_or_else(|| (d.tile().terrain_height(x, z), None), |h| (h.point.y, Some(h.normal)));
+            stroke.planted.push(Planted { at: Float3::new(x, y, z), key, scale, yaw, normal });
         }
     }
 
@@ -143,9 +155,23 @@ impl TileTool {
         draft.yaw = 0.0;
         let text = d.draft_text(&draft)?;
         let text = with_root_attr(&text, "scale", &wce_tile::ted_scene::format_number(f64::from(p.scale)));
-        // Tilted (Follow surface) to the terrain at its own point: the mouse has moved on since.
-        let normal = crate::placement_modes::terrain_normal(d, p.at.x, p.at.z);
+        // Tilted (Follow surface) to what it stands on at its own point: the mouse has moved on since.
+        let normal = p.normal.map_or_else(|| crate::placement_modes::terrain_normal(d, p.at.x, p.at.z), |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)));
         Some(turned(&self.apply_placement_modes_on(text, normal), p.yaw))
+    }
+
+    /// The topmost surfaces over the brush's circle (Entity: Above), the trees left out, and which of the entities there are the terrain.
+    fn surfaces_in_circle(&self, e: &mut Editor, at: Float3, radius: f32) -> Option<(SurfaceGrid, HashSet<EntityId>)> {
+        let doc = crate::tool::document_id(e)?;
+        let trees = self.stroke.as_ref()?.footprints.iter().filter(|f| f.tree).map(|f| f.elem).collect::<HashSet<_>>();
+        let size = radius * 2.0 + 1.0;
+
+        // About 10 cm a pixel.
+        let res = ((size / 0.1).ceil() as u32).clamp(64, 512);
+        let skip = |en: &wce_scene::render_scene::Entity| en.source.doc == doc && elem_of(en.source.item).is_some_and(|el| trees.contains(&el));
+        let grid = wce_editor::viewport::surfaces_below(e, at, size, res, &skip)?;
+        let terrain = grid.ids.iter().copied().collect::<HashSet<_>>().into_iter().filter(|&id| e.scene.find(id).is_some_and(|en| en.kind() == Kind::Terrain)).collect();
+        Some((grid, terrain))
     }
 
     /// The stroke ends: its trees go into the working layer (one undo entry), or the trees it took away go.
@@ -178,10 +204,13 @@ impl TileTool {
         let stroke = self.stroke.as_ref()?;
         let d = document(e)?;
         let unit = d.tile().unit();
+        let landscape = self.modes.unwrap_or_default().0 == SurfaceMode::Landscape;
         let mut out = b"<UserInstanceGroup name=\"stroke\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n    <children>\n".to_vec();
         for p in &stroke.planted {
             let Some(text) = self.planted_text(d, p) else { continue };
-            let pos = format!("vector({},{},{})", f64::from(p.at.x) * unit, 0, f64::from(p.at.z) * unit);
+            // Landscape ones are put on the terrain by the preview; the others are at their height.
+            let y = if landscape { 0.0 } else { f64::from(p.at.y) * unit };
+            let pos = format!("vector({},{},{})", f64::from(p.at.x) * unit, y, f64::from(p.at.z) * unit);
             let text = with_root_attr(&text, "position", &pos);
             for line in text.split_inclusive(|&c| c == b'\n') {
                 out.extend_from_slice(b"        ");
