@@ -225,6 +225,9 @@ pub struct TileTool {
 
     // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
     browse_filter: String,
+
+    /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
+    browse_focus_frames: u8,
     browse_kit: usize,
     browse_kind: i32,
 
@@ -282,7 +285,7 @@ impl Default for TileTool {
             prefab_selected: String::new(), prefab_counts: None, prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: None, key_picker: Default::default(), building_picker: Default::default(), catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
+            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: None, key_picker: Default::default(), building_picker: Default::default(), catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -1487,6 +1490,15 @@ impl TileTool {
     /// variations. A double-click opens the first variation, the buttons under the list open one.
     fn draw_browser_panel(&mut self, e: &mut Editor) {
         gui::set_next_window_size(gui::v2(520.0, 340.0), gui::COND_FIRST_USE_EVER);
+
+        // The first time the tool is shown, the Tiles list is the panel in front (a tile is opened from it), its filter ready for typing.
+        // A few frames: the dock layout is applied on the first ones and would take the focus back.
+        let focus = self.browse_focus_frames > 0;
+        if focus {
+            gui::set_next_window_focus();
+            self.browse_focus_frames -= 1;
+        }
+
         if !gui::begin("Tiles", None, 0) {
             gui::end();
             return;
@@ -1529,6 +1541,10 @@ impl TileTool {
         gui::set_next_item_width(110.0);
         gui::combo("##kind", &mut self.browse_kind, &["all kinds", "battle", "campaign"]);
         gui::set_next_item_width(-1.0);
+        if focus && self.browse_focus_frames == 0 {
+            gui::set_keyboard_focus_here(0);
+        }
+
         gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse_filter, 96, 0);
         // The rows' source: the kit's index, or the packs' databases (read on first use: the game's packs, a few seconds).
         let source: Arc<Vec<wce_formats::tile_index::TileIndexEntry>> = if packs {

@@ -58,6 +58,11 @@ pub fn set_next_window_pos(pos: Vec2, cond: i32, pivot: Vec2) {
     call!(sys::igSetNextWindowPos(pos, cond, pivot))
 }
 
+/// Brings the next window to the front (a docked one: its tab is selected).
+pub fn set_next_window_focus() {
+    call!(sys::igSetNextWindowFocus())
+}
+
 pub fn set_next_window_size(size: Vec2, cond: i32) {
     call!(sys::igSetNextWindowSize(size, cond))
 }
