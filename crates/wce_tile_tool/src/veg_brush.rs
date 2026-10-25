@@ -87,6 +87,7 @@ impl TileTool {
     pub(crate) fn dab(&mut self, e: &mut Editor) {
         let b = self.veg_brush(e);
         let at = self.cursor;
+        let set = self.set_in_use(e);
         let Some(stroke) = self.stroke.as_mut() else { return };
         if stroke.last.is_some_and(|l| (l.x - at.x).hypot(l.z - at.z) < b.radius * 0.25) {
             return;
@@ -105,7 +106,10 @@ impl TileTool {
 
         let Some(d) = document(e) else { return };
         let key = self.draft.as_ref().map(|d| d.key.clone()).unwrap_or_default();
-        let set = self.veg_set.clone();
+        if set.as_ref().is_some_and(|s| s.entries.is_empty()) {
+            return;
+        }
+
         let spacing = b.spacing.max(0.25);
 
         // As many tries as trees would fit at that spacing, times the fill.
