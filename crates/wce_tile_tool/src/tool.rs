@@ -2320,15 +2320,9 @@ impl Tool for TileTool {
                 false
             }
 
-            // A right click stops placing or drawing; else the menu of the selection (not the click that cancelled a grab).
+            // The menu of the selection; not while placing or drawing (only Esc stops them), nor for the click that cancelled a grab.
             ViewportEventKind::ContextMenu => {
-                if std::mem::take(&mut self.right_used) {
-                    return true;
-                }
-
-                if self.placing.is_some() || self.drawing {
-                    self.stop_making();
-                } else {
+                if !std::mem::take(&mut self.right_used) && self.placing.is_none() && !self.drawing {
                     self.context_click(e, ev.hit_source);
                 }
 
