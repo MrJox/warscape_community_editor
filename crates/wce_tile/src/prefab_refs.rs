@@ -60,8 +60,8 @@ fn landscape_flags(doc: &XmlDoc) -> Vec<bool> {
 }
 
 /// How far apart (in the file's units) two positions may be across (x and z) and be the same: TEd's copies of a prefab drift by
-/// that much (about 1 hundredth at the median over the kit's copies).
-pub const POSITION_TOLERANCE: f64 = 0.05;
+/// that much (up to about 7 hundredths for 90 % of the kit's drifted items).
+pub const POSITION_TOLERANCE: f64 = 0.1;
 
 /// A position's three numbers (`vector(x,y,z)` or `x,y,z`).
 fn position_numbers(raw: &[u8]) -> Option<[f64; 3]> {
