@@ -309,6 +309,13 @@ pub(crate) struct PickGrid {
 
 /// Everything of a tile document but its undo stack: what its commands edit.
 pub struct Tile {
+    /// The prefabs' contents the references' overrides are compared with (`TileDocument::overrides_of`), each with the text it was read
+    /// from: read again when the prefab's contents change.
+    pub(crate) prefab_cache: HashMap<String, (Vec<u8>, Arc<wce_tile::prefab_refs::BaseContents>)>,
+
+    /// The copy being edited (Edit prefab): its contents may change in structure (`TileDocument::check_structure`).
+    pub(crate) unlocked_reference: Option<usize>,
+
     pub(crate) id: DocumentId,
     pub(crate) project: TileProject,
     pub(crate) files: Option<Arc<dyn Files>>,
@@ -544,7 +551,7 @@ impl TileDocument {
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
-            clip_to_tile: false, material_clip_id: 0, context_lf: None,
+            clip_to_tile: false, material_clip_id: 0, context_lf: None, prefab_cache: HashMap::new(), unlocked_reference: None,
         };
 
         tile.build_index();

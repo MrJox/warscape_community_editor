@@ -52,6 +52,8 @@ impl TileDocument {
             return Ok(vec![]);
         }
 
+        self.check_structure(&[], Some(into))?;
+
         let mark = self.begin()?;
         let mut added: Vec<usize> = vec![];
         let result = (|| -> Result<(), String> {
