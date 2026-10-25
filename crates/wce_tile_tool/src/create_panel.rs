@@ -91,6 +91,9 @@ pub struct CreateUi {
     quick_filter: String,
     quick_open: bool,
 
+    /// The Shift+A popup's highlighted row (Up / Down move it while typing; Enter takes it).
+    quick_row: usize,
+
     /// The sticky drafts of each type (its values and turn), and the prefab's turn.
     pub drafts: std::collections::HashMap<String, Draft>,
     pub prefab_yaw: f32,
@@ -525,6 +528,7 @@ impl TileTool {
     pub fn request_quick_add(&mut self) {
         self.create.quick_open = true;
         self.create.quick_filter.clear();
+        self.create.quick_row = 0;
     }
 
     /// The Shift+A popup: the same search, the first rows; Enter takes the first.
@@ -542,7 +546,16 @@ impl TileTool {
         }
 
         gui::set_next_item_width(380.0);
-        let enter = gui::input_text("##quickfilter", Some(&format!("{}  add... (words are and-ed)", icons::SEARCH)), &mut self.create.quick_filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        let before = self.create.quick_filter.clone();
+        let enter = gui::input_text("##quickfilter", Some(&format!("{}  add... (words are and-ed; Up / Down, Enter)", icons::SEARCH)), &mut self.create.quick_filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        if self.create.quick_filter != before {
+            self.create.quick_row = 0;
+        }
+
+        // The text keeps the keyboard: Up / Down move the highlight (the list takes no keyboard focus).
+        if !gui::is_item_active() && !enter && !gui::is_window_appearing() {
+            gui::set_keyboard_focus_here(-1);
+        }
         let entries = self.create_entries(e);
         let words = words(&self.create.quick_filter);
         let (_, recent) = self.create_marks(e);
@@ -555,11 +568,33 @@ impl TileTool {
         };
 
         gui::text_disabled(&if words.is_empty() { "recent".to_owned() } else { format!("{} found", rows.len()) });
-        let mut start = enter.then(|| rows.first().copied()).flatten();
-        if gui::begin_child("quickrows", gui::v2(380.0, 300.0), 0, 0) {
+        let moved = if gui::is_key_pressed(gui::KEY_DOWN_ARROW, true) {
+            self.create.quick_row = (self.create.quick_row + 1).min(rows.len().saturating_sub(1));
+            true
+        } else if gui::is_key_pressed(gui::KEY_UP_ARROW, true) {
+            self.create.quick_row = self.create.quick_row.saturating_sub(1);
+            true
+        } else {
+            false
+        };
+
+        let row = self.create.quick_row.min(rows.len().saturating_sub(1));
+        let mut start = enter.then(|| rows.get(row).copied()).flatten();
+        if gui::begin_child("quickrows", gui::v2(380.0, 300.0), 0, gui::WINDOW_NO_NAV) {
+            // The highlighted row in view (the list draws only the rows on screen, so it is scrolled to by its height).
+            if moved {
+                let line = gui::text_line_height_with_spacing();
+                let (top, height) = (row as f32 * line, gui::window_height());
+                if top < gui::scroll_y() {
+                    gui::set_scroll_y(top);
+                } else if top + line > gui::scroll_y() + height {
+                    gui::set_scroll_y(top + line - height);
+                }
+            }
+
             gui::clipped(rows.len(), |r| {
                 let en = &entries[rows[r]];
-                if gui::selectable(&format!("{}  {}   ##q{}", en.icon(), en.label, rows[r]), false, 0) {
+                if gui::selectable(&format!("{}  {}   ##q{}", en.icon(), en.label, rows[r]), r == row, 0) {
                     start = Some(rows[r]);
                 }
 

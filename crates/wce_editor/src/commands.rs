@@ -865,6 +865,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 Some(sys::ImGuiKey_Space)
             } else if l == "tab" {
                 Some(sys::ImGuiKey_Tab)
+            } else if l == "up" {
+                Some(sys::ImGuiKey_UpArrow)
+            } else if l == "down" {
+                Some(sys::ImGuiKey_DownArrow)
             } else if b.len() >= 2 && (b[0] == b'F' || b[0] == b'f') {
                 let n = atoi(&rest[1..]);
                 (1..=12).contains(&n).then(|| sys::ImGuiKey_F1 + n - 1)
