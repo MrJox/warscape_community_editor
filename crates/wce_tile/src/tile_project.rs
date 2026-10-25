@@ -12,7 +12,7 @@ use wce_formats::tile_index::TileIndex;
 use wce_foundation::wce_prof;
 
 use crate::height_field::HeightField;
-use crate::project_files::{TED_FILE, TedReport, WCE_FILE, mark_wce_text, strip_prefab_contents};
+use crate::project_files::{TED_FILE, TedReport, WCE_FILE, mark_wce_text, strip_prefab_contents_with};
 use crate::ted_scene::TedScene;
 use crate::world_transform::world_transform;
 
@@ -206,6 +206,25 @@ pub struct TileProject {
 
     /// The rivers' text when the tile was opened or last saved (`river_files`): a save writes the rivers' files only when one changed.
     pub river_texts: Vec<Vec<u8>>,
+
+    /// The prefabs' contents (`PrefabLibrary::contents`): a save keeps what the references' contents differ by from them as their
+    /// overrides (`prefab_refs`). Without it, a save drops them.
+    pub prefab_base: Option<PrefabSource>,
+
+    /// What the last save found about the references (each one that kept its contents: they differ from its prefab by more than values).
+    pub prefab_notes: Vec<String>,
+}
+
+/// A key's prefab contents, as a copy holds them (`PrefabLibrary::contents`).
+#[derive(Clone)]
+pub struct PrefabSource(pub std::sync::Arc<SourceFn>);
+
+type SourceFn = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
+
+impl std::fmt::Debug for PrefabSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PrefabSource")
+    }
 }
 
 /// What the parallel half of opening reads besides the scene.
@@ -329,7 +348,7 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![],
+            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
         };
 
         project.river_texts = project.current_river_texts();
@@ -447,7 +466,7 @@ impl TileProject {
         crate::river_files::rivers(&self.scene).into_iter().map(|r| self.scene.element_text(r)).collect()
     }
 
-    pub fn save(&self, out_dir: &Path, force_scene: bool, force_height: bool) -> Result<(bool, String)> {
+    pub fn save(&mut self, out_dir: &Path, force_scene: bool, force_height: bool) -> Result<(bool, String)> {
         let mut msg = String::new();
         let mut wrote = false;
         let elsewhere = out_dir != self.dir;
@@ -473,8 +492,15 @@ impl TileProject {
 
         std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
         if self.scene.modified() || force_scene || elsewhere || !out_dir.join(WCE_FILE).exists() {
-            write(WCE_FILE, &mark_wce_text(strip_prefab_contents(self.scene.save())))?;
+            let base = self.prefab_base.clone();
+            let (text, kept) = strip_prefab_contents_with(self.scene.save(), base.as_ref().map(|b| &*b.0 as crate::project_files::PrefabContents<'_>));
+            write(WCE_FILE, &mark_wce_text(text))?;
             msg += &format!("{WCE_FILE} saved. ");
+            if !kept.is_empty() {
+                msg += &format!("{} prefab reference(s) differ from their prefab by more than values: they keep their own contents ({}). ", kept.len(), kept.join("; "));
+            }
+
+            self.prefab_notes = kept;
             wrote = true;
         }
 
@@ -537,6 +563,26 @@ impl TileProject {
         }
 
         Ok(missing)
+    }
+
+    /// Makes instance groups references to prefabs (each with its key: the copies `prefab_refs::recognise` found) as the tile opens: the
+    /// scene is read again, unmodified.
+    ///
+    /// # Errors
+    ///
+    /// The text does not read again.
+    pub fn make_references(&mut self, groups: &[(usize, String)]) -> Result<()> {
+        if groups.is_empty() {
+            return Ok(());
+        }
+
+        for (g, key) in groups {
+            self.scene.set_attr(*g, crate::project_files::PREFAB_ATTR, key);
+        }
+
+        self.scene = TedScene::parse(self.scene.save())?;
+        self.river_texts = self.current_river_texts();
+        Ok(())
     }
 
     /// Copies the tile's files that the save does not write (blend map, ground types, the other height maps, ...) into `out_dir`: every

@@ -1279,6 +1279,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.cancel_prefab_edit(e).map_or_else(fail, ok))
     });
 
+    c.add("prefab_recognise", "prefab_recognise", "make the instance groups that are exact copies of a prefab references to it (as opening a tile from the Assembly Kit does)", |e, _| {
+        with_tile(e, |t, e| t.recognise_prefabs(e).map_or_else(fail, ok))
+    });
+
     c.add("prefab_unpack", "prefab_unpack", "make the selected copy of a prefab a plain group", |e, _| {
         let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
         with_tile(e, |t, e| t.unpack_prefab(e, g).map_or_else(fail, ok))

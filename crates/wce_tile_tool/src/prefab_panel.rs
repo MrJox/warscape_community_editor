@@ -4,7 +4,8 @@
 //! prefab file and gives every other copy in the tile the new contents (one undo entry), Cancel gives the copy the file's contents back.
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
@@ -12,13 +13,102 @@ use wce_editor_core::document::Document;
 use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::SourceRef;
+use wce_tile::prefab_refs::ContentIndex;
 use wce_tile::prefabs::{self, PrefabLibrary};
+use wce_tile::tile_project::PrefabSource;
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
 use crate::scene_panel::{layer_by_key, layer_key};
 use crate::tool::{TileTool, document, document_id, selected};
 
+/// The library in use and the prefab contents read from it (each once; dropped with the library), shared with the open tiles' projects.
+#[derive(Default)]
+pub(crate) struct PrefabBase {
+    lib: Option<Arc<PrefabLibrary>>,
+    contents: HashMap<String, Option<Arc<Vec<u8>>>>,
+    index: Option<Arc<ContentIndex>>,
+}
+
+impl PrefabBase {
+    /// A key's contents, as a copy holds them (`PrefabLibrary::contents`).
+    pub(crate) fn contents(&mut self, key: &str) -> Option<Arc<Vec<u8>>> {
+        let k = key.to_lowercase();
+        if let Some(c) = self.contents.get(&k) {
+            return c.clone();
+        }
+
+        let c = self.lib.as_ref()?.contents(key).map(Arc::new);
+        self.contents.insert(k, c.clone());
+        c
+    }
+}
+
+pub(crate) type SharedBase = Arc<Mutex<PrefabBase>>;
+
+/// A key's contents from the shared base.
+pub(crate) fn base_contents(base: &SharedBase, key: &str) -> Option<Arc<Vec<u8>>> {
+    base.lock().ok()?.contents(key)
+}
+
 impl TileTool {
+    /// The source of the prefabs' contents for a tile's project (`TileProject::prefab_base`), following the library in use.
+    pub(crate) fn prefab_source(&self) -> PrefabSource {
+        let base = self.prefab_base.clone();
+        PrefabSource(Arc::new(move |k: &str| base_contents(&base, k).map(|c| (*c).clone())))
+    }
+
+    /// The index of the prefabs' contents (to find the groups that are copies of one), made once per library.
+    pub(crate) fn content_index(&mut self, e: &mut Editor) -> Arc<ContentIndex> {
+        let lib = self.prefab_library(e);
+        let Ok(mut base) = self.prefab_base.lock() else { return Arc::default() };
+        if let Some(i) = &base.index {
+            return i.clone();
+        }
+
+        let keys = lib.entries().map(|p| p.key.clone()).collect::<Vec<_>>();
+        let all = keys.iter().filter_map(|k| base.contents(k).map(|c| (k.as_str(), (*c).clone()))).collect::<Vec<_>>();
+        let index = Arc::new(ContentIndex::new(all));
+        base.index = Some(index.clone());
+        index
+    }
+
+    /// Makes the instance groups that are exact copies of a prefab references to it (one undo entry), the ones inside those left as their
+    /// contents. Returns what was done.
+    ///
+    /// # Errors
+    ///
+    /// No tile open.
+    pub fn recognise_prefabs(&mut self, e: &mut Editor) -> Result<String, String> {
+        let index = self.content_index(e);
+        let lib = self.prefab_library(e);
+        let d = document(e).ok_or("no tile open")?;
+        let found = wce_tile::prefab_refs::recognise(d.tile().tscene(), &index, &|n| lib.get(n).is_some());
+        let n = d.make_references(&found.copies, "Turn copies of prefabs into references");
+        self.prefab_version += 1;
+        Ok(recognised_message(n, found.named_but_different))
+    }
+
+    /// The Tile panel's Prefabs: the references in the tile, and turning the groups that are copies of a prefab into references (done when
+    /// a tile opens from the Assembly Kit; this does it again).
+    pub(crate) fn draw_prefabs_section(&mut self, e: &mut Editor, id: wce_scene::render_scene::DocumentId) {
+        if !gui::collapsing_header("Prefabs", 0) {
+            return;
+        }
+
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let sc = d.tile().tscene();
+        let refs = sc.find_all("UserInstanceGroup").into_iter().filter(|&g| d.is_prefab_reference(g)).count();
+        gui::text(&format!("{refs} prefab reference(s)"));
+        gui::text_wrapped("A reference's contents are its prefab's; select it, then one of its items (click it again, or in the Scene tree), and what you edit is an override, marked in the Inspector.");
+        if gui::button(&format!("{}  Turn copies of prefabs into references", icons::BOXES)) {
+            self.status = self.recognise_prefabs(e).unwrap_or_else(|err| err);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Every instance group whose contents are exactly a prefab's becomes a reference to it (one undo entry). Done when a tile opens from the Assembly Kit.");
+        }
+    }
+
     /// The folders the library is read from: the projects' `raw_data/art/prefabs` (new prefabs go there), then `art/prefabs` of the open
     /// tile's kit and of the kits the Tiles panel lists (the Assembly Kit).
     pub(crate) fn prefab_folders(&self, e: &mut Editor) -> Vec<std::path::PathBuf> {
@@ -47,6 +137,10 @@ impl TileTool {
         let folders = self.prefab_folders(e);
         let lib = Arc::new(PrefabLibrary::scan_folders(&folders));
         self.prefabs = Some(lib.clone());
+        if let Ok(mut base) = self.prefab_base.lock() {
+            *base = PrefabBase { lib: Some(lib.clone()), ..Default::default() };
+        }
+
         self.prefab_version += 1;
         lib
     }
@@ -254,7 +348,7 @@ impl TileTool {
         let folder = folder.trim().trim_matches(['/', '\\']);
         let path = if folder.is_empty() { root.join(format!("{name}.wce")) } else { root.join(folder).join(format!("{name}.wce")) };
         d.rename(group, name);
-        prefabs::write(&path, &d.element_text(group))?;
+        prefabs::write(&path, &d.element_text(group), Some(&|k: &str| lib.contents(k)))?;
 
         // The group is a reference to it now.
         d.make_prefab_reference(group, name);
@@ -346,4 +440,14 @@ pub(crate) const PREFAB_ICON: &str = icons::COMPONENT;
 /// The colour of an edited copy's row marks.
 pub(crate) fn edited_colour() -> [f32; 4] {
     theme::palette().highlight
+}
+
+/// What turning copies into references says.
+pub(crate) fn recognised_message(n: usize, different: usize) -> String {
+    let mut msg = format!("{n} group(s) that are copies of a prefab are references to it now");
+    if different != 0 {
+        msg += &format!("; {different} group(s) named after a prefab differ from it and stay plain groups");
+    }
+
+    msg
 }

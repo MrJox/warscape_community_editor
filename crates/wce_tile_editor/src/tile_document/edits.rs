@@ -1263,6 +1263,24 @@ impl TileDocument {
         self.rename(group, name)
     }
 
+    /// Makes instance groups references to prefabs (each with its key; the copies `prefab_refs::recognise` found), one undo entry. Returns
+    /// how many.
+    pub fn make_references(&mut self, groups: &[(usize, String)], what: &str) -> usize {
+        let n = self.tile().tscene().doc().elements().len();
+        let groups = groups.iter().filter(|(g, _)| *g < n).collect::<Vec<_>>();
+        if groups.is_empty() {
+            return 0;
+        }
+
+        let Ok(mark) = self.begin() else { return 0 };
+        for (g, key) in &groups {
+            self.tscene_mut().set_attr(*g, wce_tile::project_files::PREFAB_ATTR, key);
+        }
+
+        self.push_splice(what.to_owned(), mark, vec![], vec![]);
+        groups.len()
+    }
+
     /// Makes an instance group a reference to the prefab `key` (after "Save as prefab").
     pub fn make_prefab_reference(&mut self, group: usize, key: &str) -> bool {
         self.rename(group, key) && self.set_attribute(group, wce_tile::project_files::PREFAB_ATTR, key)

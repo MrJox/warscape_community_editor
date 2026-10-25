@@ -139,6 +139,10 @@ pub struct TileTool {
     /// counted so that the Scene tree is built again.
     pub(crate) prefabs: Option<Arc<wce_tile::prefabs::PrefabLibrary>>,
     pub(crate) prefab_version: u64,
+
+    /// The library's prefab contents, read once each and shared with the open tiles' projects (`TileProject::prefab_base`: a save keeps
+    /// what the references differ by as their overrides), and the index of their contents (`prefab_refs::ContentIndex`).
+    pub(crate) prefab_base: crate::prefab_panel::SharedBase,
     pub(crate) tree_prefab_seen: u64,
 
     /// The prefab copy being edited: the tile, the copy's name path (`scene_panel::layer_key`) and the prefab's key.
@@ -308,7 +312,7 @@ impl Default for TileTool {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None,
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
@@ -1228,6 +1232,8 @@ impl TileTool {
         self.context.draw(e, id);
         gui::separator();
         self.draw_placement_section(e, id);
+        gui::separator();
+        self.draw_prefabs_section(e, id);
         gui::separator();
         self.draw_ground_section(e, id);
         gui::separator();
@@ -2666,11 +2672,23 @@ impl Tool for TileTool {
             self.status = project.warning.clone();
         }
 
-        // The prefabs placed as references get their contents.
+        // The prefabs placed as references get their contents (and their overrides); a save keeps what they differ by.
         let lib = self.prefab_library(e);
         let missing = project.fill_prefab_references(&|k| lib.contents(k)).map_err(|err| err.to_string())?;
         if !missing.is_empty() {
             log::warn(format!("no prefab {}: their references are kept empty", missing.join(", ")));
+        }
+
+        project.prefab_base = Some(self.prefab_source());
+
+        // From the Assembly Kit: the groups that are exact copies of a prefab become references to it (Tile > Prefabs does it again).
+        if !project.dir.starts_with(&projects) {
+            let index = self.content_index(e);
+            let found = wce_tile::prefab_refs::recognise(&project.scene, &index, &|n| lib.get(n).is_some());
+            if !found.copies.is_empty() || found.named_but_different != 0 {
+                project.make_references(&found.copies).map_err(|err| err.to_string())?;
+                log::info(crate::prefab_panel::recognised_message(found.copies.len(), found.named_but_different));
+            }
         }
 
         let mut doc = TileDocument::new(project, e.files());
