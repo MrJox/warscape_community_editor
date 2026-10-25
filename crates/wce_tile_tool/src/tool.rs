@@ -1813,6 +1813,9 @@ impl Tool for TileTool {
         // The favourites and recent tiles are read again (the window writes the whole table).
         self.browse_marks = None;
         self.browse_marks_version += 1;
+
+        // The prefab folders may have changed.
+        self.prefabs = None;
     }
 
     fn draw_settings(&mut self, draft: &mut Settings) {
@@ -1822,6 +1825,10 @@ impl Tool for TileTool {
         settings_window::folder_list("kits", &mut s.kits);
         settings_window::env_note("WCE_TILE_KITS");
         settings_window::help("The raw_data folders the tile browser lists; none: the assembly kits in the game folder.");
+
+        settings_window::label("Prefab folders");
+        settings_window::folder_list("prefabs", &mut s.prefab_folders);
+        settings_window::help("Read before every kit's raw_data/art/prefabs (a checkout of a prefab collection, say); new prefabs go into the first one.");
 
         let default_workspace = draft.paths().data_dir().join("tile_workspace").display().to_string();
         settings_window::folder_field("Workspace", &mut s.workspace, &default_workspace);
@@ -1899,6 +1906,9 @@ impl Tool for TileTool {
 
             self.weather.tile_changed(e, id);
             self.note_recent(e, id);
+
+            // The library holds the tile's kit's prefabs too.
+            self.prefabs = None;
             self.poly_point = None;
             self.drawing = false;
             self.grabbing = false;
