@@ -1,7 +1,7 @@
 //! The Tile tool's settings: the `[tools.tile]` table.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -38,21 +38,11 @@ pub fn source_of(raw_root: &Path) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TileSettings {
-    /// The raw_data folders the tile browser lists; empty: the assembly kits in the game folder.
-    pub kits: Vec<PathBuf>,
-
     /// The sea at 0 m (the tile's plane and the map context's sea).
     pub show_sea: bool,
 
     /// The VFX boxes (the VFXInstance markers; the effects still play).
     pub show_vfx_boxes: bool,
-
-    /// Prefab folders read before the kits' `art/prefabs` (a checkout of a prefab collection, say); new prefabs go into the first one.
-    pub prefab_folders: Vec<PathBuf>,
-
-    /// Where opened exported tiles are decompiled to (TEd projects); none: `tile_workspace` in the data folder.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<PathBuf>,
 
     /// The battle wind the sea is drawn with (a key of `wind_levels_tables`); empty: the renderer's default.
     pub sea_state: String,
@@ -84,6 +74,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { kits: vec![], prefab_folders: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![] }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![] }
     }
 }

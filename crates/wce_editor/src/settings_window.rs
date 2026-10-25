@@ -215,7 +215,7 @@ impl Editor {
 
         let now = self.settings_ref();
         let game_changed = before.game_dir() != now.game_dir();
-        let files_changed = before.mod_packs() != now.mod_packs() || before.overlay_folders() != now.overlay_folders() || before.project_dir() != now.project_dir();
+        let files_changed = before.mod_packs() != now.mod_packs() || before.overlay_folders() != now.overlay_folders() || before.loose_dir() != now.loose_dir();
         if !self.is_mounted() {
             if self.start() {
                 self.activate_all_tools();
@@ -394,17 +394,29 @@ impl Editor {
         self.mod_pack_checks_at(&game, LABEL_WIDTH);
 
         let Some(d) = self.settings_window.draft.as_mut() else { return };
-        gui::separator_text("Loose files");
-        let mut project = d.game_mut().project_dir.clone();
-        if folder_field("Project folder", &mut project, "none") {
-            d.game_mut().project_dir = project;
+        gui::separator_text("Assembly Kit and projects");
+        let detected = d.assembly_kit_dir().map_or_else(|| "none found in the game folder".to_owned(), |k| k.display().to_string());
+        let mut kit = d.game_mut().assembly_kit.clone();
+        if folder_field("Assembly Kit", &mut kit, &detected) {
+            d.game_mut().assembly_kit = kit;
         }
 
-        help("Your project (the UI tool's skins, saved layouts and pictures): read before every pack.");
+        env_note("WCE_ASSEMBLY_KIT");
+        help("The folder with raw_data. The tools read it; only \"Save for Assembly Kit\" writes to it, as TEd and the kit's tools read files.");
+        let default_projects = d.projects_dir().display().to_string();
+        let mut projects = d.game_mut().projects.clone();
+        if folder_field("Projects", &mut projects, &default_projects) {
+            d.game_mut().projects = projects;
+        }
+
+        env_note("WCE_PROJECTS");
+        help("Where the editor saves: assembly_kit/ holds the tiles (tile.wce) in the kit's layout, loose/ the loose files read before every pack (the UI tool's skins, layouts and pictures).");
+
+        gui::separator_text("Loose files");
         label("Other folders");
         folder_list("overlays", &mut d.game_mut().overlay_folders);
         env_note("WCE_OVERLAY");
-        help("Read before every pack, after the project folder; the first one wins.");
+        help("Read before every pack, after the projects' loose files; the first one wins.");
     }
 
     fn draw_appearance_page(&mut self) {

@@ -128,12 +128,12 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"js
 grep -q '"name":"ui_set_property"' "$C/mcp.log" && grep -q 'settlement_captured' "$C/mcp.log" || fail "mcp"
 
 echo "== wce.exe"
-D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/project/ui/skins/gate_skin"; cp "$SETTINGS_SRC/settings.toml" "$D/settings/" 2>/dev/null
+D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/projects/loose/ui/skins/gate_skin"; cp "$SETTINGS_SRC/settings.toml" "$D/settings/" 2>/dev/null
 # the settings of the machine decide which mod packs are chosen: none here, so that nothing but the game's release packs is read
 sed -i '/^mod_packs = /d' "$D/settings/settings.toml" 2>/dev/null
 png "$D/fixtures/red.png" 255 0 0
 png "$D/fixtures/blue.png" 0 0 255
-png "$D/project/ui/skins/gate_skin/gate.png" 0 255 0
+png "$D/projects/loose/ui/skins/gate_skin/gate.png" 0 255 0
 "$W" --game "$GAME" set_entry "ui/campaign ui/messageicon" --entry 1 --x 222 --save --out "$D/fixtures/x222.bin" > /dev/null || fail "make the layout fixture"
 sed -e "s|%OUT%|$(cygpath -m "$D")|g" "$ROOT/scripts/ui_smoke.txt" > "$D/script.txt"
 CARGO_TARGET_DIR="$TARGET" cargo build --release -q -p wce_app --all-features || fail "build wce_app"
@@ -148,12 +148,12 @@ cmp -s "$D/reset_before.xml" "$D/reset_after.xml" || fail "reset all changes did
 [ "$("$W" --game "$GAME" entry "$D/smoke_layout.bin" --entry 1 | python -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "300" ] || fail "ui_smoke.pack does not have the offset that was set"
 
 # the exported pack: exactly what is in the project folder, byte for byte, and the changed layout as it was in the editor
-[ -d "$D/project/ui/skins/fresh_skin" ] || fail "the new skin has no folder"
+[ -d "$D/projects/loose/ui/skins/fresh_skin" ] || fail "the new skin has no folder"
 [ -s "$D/project.pack" ] || fail "the project was not exported to a pack"
 "$PD" list "$D/project.pack" | cut -f1 > "$D/exported.txt"
 printf '%s\n' "ui/campaign ui/messageicon" "ui/skins/default/wce_gate_picture.png" "ui/skins/gate_skin/gate.png" | sort > "$D/expected.txt"
 sort "$D/exported.txt" | cmp -s - "$D/expected.txt" || { fail "the exported pack holds the wrong files: $(tr '\n' ' ' < "$D/exported.txt")"; }
-"$PD" get "$D/project.pack" "ui/skins/gate_skin/gate.png" "$D/out_gate.png" && cmp -s "$D/out_gate.png" "$D/project/ui/skins/gate_skin/gate.png" || fail "a picture in the pack is not the one in the folder"
+"$PD" get "$D/project.pack" "ui/skins/gate_skin/gate.png" "$D/out_gate.png" && cmp -s "$D/out_gate.png" "$D/projects/loose/ui/skins/gate_skin/gate.png" || fail "a picture in the pack is not the one in the folder"
 "$PD" get "$D/project.pack" "ui/skins/default/wce_gate_picture.png" "$D/out_pic.png" && cmp -s "$D/out_pic.png" "$D/fixtures/blue.png" || fail "the changed picture in the pack is not the latest one"
 "$PD" get "$D/project.pack" "ui/campaign ui/messageicon" "$D/out_layout.bin" || fail "read the exported layout"
 [ "$("$W" --game "$GAME" entry "$D/out_layout.bin" --entry 1 | python -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "5" ] || fail "the exported layout is not the one that was in the editor"

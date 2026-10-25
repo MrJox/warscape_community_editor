@@ -479,10 +479,7 @@ impl TileTool {
                 }
 
                 if c == 6 && rows.is_empty() {
-                    gui::text_wrapped("No prefabs. TEd keeps them in <kit>/raw_data/art/prefabs; a collection elsewhere is a prefab folder of the Tile settings.");
-                    if gui::button(&format!("{}  Add a prefab folder...", icons::FOLDER_PLUS)) {
-                        self.add_prefab_folder(e);
-                    }
+                    gui::text_wrapped("No prefabs. TEd keeps them in <Assembly Kit>/raw_data/art/prefabs; new ones are saved in the projects folder's assembly_kit/raw_data/art/prefabs.");
                 }
 
                 gui::clipped(rows.len(), |r| {

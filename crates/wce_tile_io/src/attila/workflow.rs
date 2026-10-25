@@ -85,17 +85,25 @@ fn kind_of(folder: &str) -> String {
 
 /// Decompiles an exported tile (its files and folder, `terrain/tiles/...`) into a TEd project under `workspace` (`<workspace>/raw_data`
 /// gets the project at the same folder and its entry in `terrain/tiles/<kind>/_tile_database/TILES`, with the kit's `_settings.xml`).
-/// Returns the project's folder and what the decompile lost or made up.
+/// `extracted`: the folder and the entry get the extracted mark (`wce_tile::project_files`), so that the project does not take the place of
+/// a kit's tile of the same name in the workspace. Returns the project's folder and what the decompile lost or made up.
 ///
 /// # Errors
 ///
 /// The files don't read as an exported tile, the decompile fails or a file can't be written.
-pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &Path) -> Result<(PathBuf, Losses), String> {
+pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &Path, extracted: bool) -> Result<(PathBuf, Losses), String> {
+    use wce_tile::project_files::{EXTRACTED, entry_with_location_mark, mark_extracted};
+
     let (binary, _) = TileBinary.read(files).map_err(|e| e.to_string())?;
     let (project, losses) = decompile(&binary, folder, &game.data.context(None))?;
-    let (written, _) = TedProject.write(&project).map_err(|e| e.to_string())?;
+    let (mut written, _) = TedProject.write(&project).map_err(|e| e.to_string())?;
+    if extracted && let Some((name, blob)) = written.entry.take() {
+        let text = String::from_utf8_lossy(&blob.bytes().map_err(|e| e.to_string())?).into_owned();
+        written.entry = Some((name.replace(".xml", &format!("{EXTRACTED}.xml")), Blob::Bytes(entry_with_location_mark(&text, true).into_bytes().into())));
+    }
+
     let raw = workspace.join("raw_data");
-    let dir = raw.join(folder);
+    let dir = raw.join(if extracted { mark_extracted(folder) } else { folder.to_owned() });
     let database = raw.join("terrain/tiles").join(kind_of(folder)).join("_tile_database");
     written.write_to(&dir, Some(&database.join("TILES"))).map_err(|e| e.to_string())?;
     let settings = database.join("_settings.xml");
@@ -185,9 +193,12 @@ fn with_attribute(xml: &str, element: &str, attr: &str) -> String {
 ///
 /// The project doesn't read or compile, or a file can't be written.
 pub fn save_exported(game: &Game, project_dir: &Path, out: &Path) -> Result<(PathBuf, CompileNotes), String> {
-    let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
+    use wce_tile::project_files::{entry_with_location_mark, unmark_extracted};
+
+    // An extracted tile goes back to its own name.
+    let folder = unmark_extracted(&tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?);
     let files = TileFiles::from_kit_dir(project_dir).map_err(|e| e.to_string())?;
-    let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| String::from_utf8_lossy(&b).into_owned())).transpose().map_err(|e| e.to_string())?;
+    let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| entry_with_location_mark(&String::from_utf8_lossy(&b), false))).transpose().map_err(|e| e.to_string())?;
     let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
 
     let kit_raw = game.kit_raw_data();

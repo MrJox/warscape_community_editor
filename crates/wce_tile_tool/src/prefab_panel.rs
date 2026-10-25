@@ -18,10 +18,10 @@ use crate::scene_panel::{layer_by_key, layer_key};
 use crate::tool::{TileTool, document, document_id, selected};
 
 impl TileTool {
-    /// The folders the library is read from: the settings' prefab folders, then `art/prefabs` of the open tile's kit and of the kits the
-    /// Tiles panel lists.
+    /// The folders the library is read from: the projects' `raw_data/art/prefabs` (new prefabs go there), then `art/prefabs` of the open
+    /// tile's kit and of the kits the Tiles panel lists (the Assembly Kit).
     pub(crate) fn prefab_folders(&self, e: &mut Editor) -> Vec<std::path::PathBuf> {
-        let mut folders = e.tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID).prefab_folders;
+        let mut folders = vec![prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"))];
         let mut kits = self.kit_roots(e);
         if let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) {
             kits.insert(0, raw);
@@ -48,19 +48,6 @@ impl TileTool {
         self.prefabs = Some(lib.clone());
         self.prefab_version += 1;
         lib
-    }
-
-    /// Asks for a folder and adds it to the settings' prefab folders (first), then scans again.
-    pub(crate) fn add_prefab_folder(&mut self, e: &mut Editor) {
-        if let Some(dir) = wce_editor::steam_detect::pick_folder("Prefab folder (like a kit's raw_data/art/prefabs)") {
-            e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {
-                if !s.prefab_folders.contains(&dir) {
-                    s.prefab_folders.insert(0, dir.clone());
-                }
-            });
-
-            self.status = format!("{} prefabs", self.rescan_prefabs(e));
-        }
     }
 
     /// Scans the prefab folders again.

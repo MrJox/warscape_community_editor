@@ -155,7 +155,7 @@ ui_animate none
 assert_modified 0
 
 # a skin of your own: a folder in the project folder, in the skin list as loose, selected
-ui_project "%OUT%/project"
+ui_project "%OUT%/projects"
 frames 5
 ui_new_skin "Fresh Skin"
 ui_assert_skin fresh_skin loose
@@ -166,13 +166,13 @@ ui_assert_skin gate_skin loose
 # a picture put in the project folder is found within a second, and a changed one is read again
 ui_load_picture ui/skins/default/wce_gate_picture.png
 frames 3
-ui_copy_file "%OUT%/fixtures/red.png" "%OUT%/project/ui/skins/default/wce_gate_picture.png"
+ui_copy_file "%OUT%/fixtures/red.png" "%OUT%/projects/loose/ui/skins/default/wce_gate_picture.png"
 ui_watch_now
 frames 3
 ui_load_picture ui/skins/default/wce_gate_picture.png
 frames 3
 ui_assert_picture_pixel ui/skins/default/wce_gate_picture.png 255 0 0
-ui_copy_file "%OUT%/fixtures/blue.png" "%OUT%/project/ui/skins/default/wce_gate_picture.png"
+ui_copy_file "%OUT%/fixtures/blue.png" "%OUT%/projects/loose/ui/skins/default/wce_gate_picture.png"
 ui_watch_now
 frames 3
 ui_load_picture ui/skins/default/wce_gate_picture.png
@@ -190,13 +190,13 @@ ui_assert_prop component "Offset X" 111
 assert_modified 0
 ui_watch_now
 frames 3
-ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/project/ui/campaign ui/messageicon"
+ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/projects/loose/ui/campaign ui/messageicon"
 ui_watch_now
 frames 3
 ui_assert_prop component "Offset X" 222
 assert_modified 0
 ui_set x 5
-ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/project/ui/campaign ui/messageicon"
+ui_copy_file "%OUT%/fixtures/x222.bin" "%OUT%/projects/loose/ui/campaign ui/messageicon"
 ui_watch_now
 frames 3
 ui_assert_prop component "Offset X" 5

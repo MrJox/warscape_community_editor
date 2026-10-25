@@ -98,4 +98,4 @@ run_ui.sh), `~/.cache/wce_cli/` (corpus manifests, C++ harnesses), `/tmp/wce_rs/
 - Interactive checks by hand on a scaled display: clicks in the 3D view and gizmo drags after the HiDPI change.
 - Decisions pending: whether command-line actions other than `--script` / `--shot` / `--capture` should keep the window interactive;
   whether DXVK should default to `DXVK_LOG_LEVEL=warn`.
-- Using the synthetic kit in the Tile tool needs `kits = ["~/.cache/wce_tile/fx2/kit/raw_data"]` in `[tools.tile]` of settings.toml (or `WCE_TILE_KITS`) (it replaces the kit search).
+- Using the synthetic kit in the Tile tool needs `WCE_TILE_KITS=~/.cache/wce_tile/fx2/kit/raw_data` (or the game's `assembly_kit` set to `~/.cache/wce_tile/fx2/kit`) (it replaces the kit search).

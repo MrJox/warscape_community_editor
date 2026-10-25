@@ -376,9 +376,9 @@ impl Editor {
         self.tool_info.get(self.active_tool).map_or(&[], |t| t.opens.as_slice())
     }
 
-    /// The project folder (the current game's `project_dir` in the settings): the UI tool's saved layouts and the user's pictures live there.
-    pub fn project_dir(&self) -> Option<PathBuf> {
-        self.settings.project_dir()
+    /// The projects' loose files (`<projects>/loose`): the UI tool's skins, saved layouts and pictures live there, read before every pack.
+    pub fn loose_dir(&self) -> PathBuf {
+        self.settings.loose_dir()
     }
 
     /// What to mount: the game's release packs, the mod packs the user chose, and the loose folders above them. The launcher's list of
@@ -496,9 +496,9 @@ impl Editor {
         }
     }
 
-    /// Loose folders read before every pack, highest priority first: the project folder, then the current game's `overlay_folders`.
+    /// Loose folders read before every pack, highest priority first: the projects' loose files, then the current game's `overlay_folders`.
     fn overlay_folders(&self) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = self.project_dir().into_iter().collect();
+        let mut v = vec![self.loose_dir()];
         v.extend(self.settings.overlay_folders());
         v
     }

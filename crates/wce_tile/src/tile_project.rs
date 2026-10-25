@@ -12,6 +12,7 @@ use wce_formats::tile_index::TileIndex;
 use wce_foundation::wce_prof;
 
 use crate::height_field::HeightField;
+use crate::project_files::{TED_FILE, TedReport, WCE_FILE};
 use crate::ted_scene::TedScene;
 use crate::world_transform::world_transform;
 
@@ -119,6 +120,26 @@ pub fn fit_baked_heights(pairs: &[(f64, f64)]) -> Option<(f64, f64, usize)> {
     Some((a, b, inliers.len()))
 }
 
+/// Whether a folder holds a tile: the editor's tile.wce or TEd's tile.ted.
+pub fn has_tile(dir: &Path) -> bool {
+    dir.join(WCE_FILE).exists() || dir.join(TED_FILE).exists()
+}
+
+/// A scene's saved text marked as tile.wce (the root's `wce_version`), unless it is.
+fn mark_wce_text(mut text: Vec<u8>) -> Vec<u8> {
+    let name = crate::project_files::WCE_VERSION_ATTR.as_bytes();
+    let Some(start) = text.windows(8).position(|w| w == b"<project") else { return text };
+    let Some(end) = text[start..].iter().position(|&c| c == b'>').map(|i| start + i) else { return text };
+    if text[start..end].windows(name.len()).any(|w| w == name) {
+        return text;
+    }
+
+    let at = if text[end - 1] == b'/' { end - 1 } else { end };
+    let attr = format!(" {}=\"{}\"", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
+    text.splice(at..at, attr.into_bytes());
+    text
+}
+
 /// The raw_data folder an entry file or a tile path lives under (the part before terrain/tiles), if there is one.
 pub fn kit_raw_root(path: &Path) -> Option<PathBuf> {
     let g = path.to_string_lossy().replace('\\', "/");
@@ -216,8 +237,9 @@ impl TileProject {
     ///
     /// No tile.ted, or a file that does not read.
     pub fn open(path: &Path) -> Result<Self> {
-        let dir = if path.is_file() && path.file_name().is_some_and(|n| n == "tile.ted") { path.parent().unwrap_or(path).to_path_buf() } else { path.to_path_buf() };
-        if !dir.join("tile.ted").exists() {
+        let named = |n: &std::ffi::OsStr| n == TED_FILE || n == WCE_FILE;
+        let dir = if path.is_file() && path.file_name().is_some_and(named) { path.parent().unwrap_or(path).to_path_buf() } else { path.to_path_buf() };
+        if !has_tile(&dir) {
             // A tile folder that holds its variations: the first one (the entry lists them in order).
             if let Some(root) = kit_raw_root(&dir) {
                 let index = TileIndex::shared(&root);
@@ -267,9 +289,11 @@ impl TileProject {
     /// the caller did not bring it, the entry.
     fn open_dir(dir: PathBuf, found: Option<FoundTile>) -> Result<Self> {
         wce_prof!("tile.open");
-        let ted = dir.join("tile.ted");
+
+        // The editor's tile.wce, else TEd's tile.ted.
+        let ted = if dir.join(WCE_FILE).exists() { dir.join(WCE_FILE) } else { dir.join(TED_FILE) };
         if !ted.exists() {
-            return Err(format!("no tile.ted in {}", dir.display()));
+            return Err(format!("no {WCE_FILE} or {TED_FILE} in {}", dir.display()));
         }
 
         let (scene, side) = rayon::join(
@@ -441,6 +465,17 @@ impl TileProject {
     pub fn save(&self, out_dir: &Path, force_scene: bool, force_height: bool) -> Result<(bool, String)> {
         let mut msg = String::new();
         let mut wrote = false;
+        let elsewhere = out_dir != self.dir;
+
+        // Into another folder (the first save of a kit's tile into the projects, "Save as"): the tile's other files go with it.
+        if elsewhere {
+            std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
+            let copied = self.copy_other_files(out_dir)?;
+            if copied != 0 {
+                msg += &format!("{copied} other file(s) copied. ");
+            }
+        }
+
         let write = |name: &str, bytes: &[u8]| -> Result<()> {
             let target = out_dir.join(name);
             let bak = out_dir.join(format!("{name}.bak"));
@@ -452,9 +487,9 @@ impl TileProject {
         };
 
         std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
-        if self.scene.modified() || force_scene {
-            write("tile.ted", &self.scene.save())?;
-            msg += "tile.ted saved. ";
+        if self.scene.modified() || force_scene || elsewhere || !out_dir.join(WCE_FILE).exists() {
+            write(WCE_FILE, &mark_wce_text(self.scene.save()))?;
+            msg += &format!("{WCE_FILE} saved. ");
             wrote = true;
         }
 
@@ -462,7 +497,6 @@ impl TileProject {
         // file TEd left (see `river_files`). The files past the last river become empty: BOB reads up to the first missing one.
         // Saved elsewhere ("Save as"): every river's file, with the factors of the tile's own files.
         let rivers = self.current_river_texts();
-        let elsewhere = out_dir != self.dir;
         if rivers != self.river_texts || elsewhere {
             let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
             let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
@@ -484,7 +518,7 @@ impl TileProject {
         }
 
         if let (Some(field), Some(base)) = (&self.height, &self.height_png)
-            && (self.height_dirty || force_height)
+            && (self.height_dirty || force_height || (elsewhere && !out_dir.join("height_map_0.png").exists()))
         {
             let png = field.to_png(base);
             let bytes = if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?;
@@ -494,6 +528,88 @@ impl TileProject {
         }
 
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
+    }
+
+    /// Copies the tile's files that the save does not write (blend map, ground types, the other height maps, ...) into `out_dir`: every
+    /// file of the folder but the tile itself, its height map (the save writes it) and the backups, replacing what is there. Returns how many.
+    ///
+    /// # Errors
+    ///
+    /// A file can't be copied.
+    fn copy_other_files(&self, out_dir: &Path) -> Result<usize> {
+        let Ok(read) = std::fs::read_dir(&self.dir) else { return Ok(0) };
+        let mut n = 0;
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || name.ends_with(".bak") || !entry.path().is_file();
+            if !skip {
+                std::fs::copy(entry.path(), out_dir.join(&name)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
+                n += 1;
+            }
+        }
+
+        Ok(n)
+    }
+
+    /// "Save for Assembly Kit": the tile as TEd reads it in `kit_dir` (a variation folder of the kit): tile.ted (the conversion's polyfills
+    /// applied, what TEd lacks dropped), every river's file, the height map and the tile's other files. A file it replaces gets a `.bak`.
+    /// Returns the message and the conversion's report.
+    ///
+    /// # Errors
+    ///
+    /// The scene does not convert, or a file can't be written.
+    pub fn save_for_kit(&self, kit_dir: &Path) -> Result<(String, TedReport)> {
+        std::fs::create_dir_all(kit_dir).map_err(|error| format!("{}: {error}", kit_dir.display()))?;
+        // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak`.
+        let write = |name: &str, bytes: &[u8]| -> Result<bool> {
+            let target = kit_dir.join(name);
+            match std::fs::read(&target) {
+                Ok(old) if old == bytes => return Ok(false),
+                Ok(_) => {
+                    std::fs::copy(&target, kit_dir.join(format!("{name}.bak"))).map_err(|error| error.to_string())?;
+                }
+
+                Err(_) => {}
+            }
+
+            std::fs::write(&target, bytes).map_err(|_| format!("could not write {}", target.display()))?;
+            Ok(true)
+        };
+
+        let (ted, report) = crate::project_files::to_ted(self.scene.save())?;
+        write(TED_FILE, &ted)?;
+
+        // Every river's file, with the factors of the project's (`river_files`); the files past the last river become empty.
+        let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
+        let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
+        for (name, text) in &files {
+            write(name, text)?;
+        }
+
+        let mut n = files.len();
+        while kit_dir.join(format!("river_spline{n}.xml")).exists() {
+            write(&format!("river_spline{n}.xml"), b"<SEGMENTED_SPLINE/>\r\n")?;
+            n += 1;
+        }
+
+        if let (Some(field), Some(base)) = (&self.height, &self.height_png) {
+            let png = field.to_png(base);
+            write("height_map_0.png", &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?)?;
+        }
+
+        // The other files, as the project has them.
+        let mut others = 0;
+        if let Ok(read) = std::fs::read_dir(&self.dir) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || name.starts_with("river_spline") || name.ends_with(".bak");
+                if !ours && entry.path().is_file() && write(&name, &std::fs::read(entry.path()).map_err(|error| error.to_string())?)? {
+                    others += 1;
+                }
+            }
+        }
+
+        Ok((format!("saved for the Assembly Kit in {} ({TED_FILE}, {} river file(s), {others} other file(s) changed); {}", kit_dir.display(), files.len(), report.summary()), report))
     }
 
     pub fn has_entry(&self) -> bool {

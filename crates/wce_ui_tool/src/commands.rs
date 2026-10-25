@@ -424,7 +424,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_project", "ui_project <folder>", "Makes the folder the project: layouts are saved there, pictures in it show at once", |e, a| {
+    c.add("ui_project", "ui_project <folder>", "Makes the folder the game's projects folder: layouts are saved in its loose/, pictures there show at once", |e, a| {
         if a.is_empty() {
             return fail("usage: ui_project <folder>");
         }
