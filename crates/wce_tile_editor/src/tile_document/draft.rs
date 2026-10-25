@@ -121,12 +121,8 @@ impl TileDocument {
 
         let Some(props) = schema(&d.kind) else { return false };
         // The values a new one gets without the draft's: its kind's own (an effect's scale) over the type's defaults.
-        let template = wce_tile::instance_templates::template(&d.kind);
-        let own = if d.kind == super::WALL_SPLINE {
-            super::walls::wall_defaults()
-        } else {
-            point_instance(&d.kind, Double3::ZERO, &d.key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default()
-        };
+        let template = wce_tile::new_instances::template(&d.kind);
+        let own = point_instance(&d.kind, Double3::ZERO, &d.key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default();
         let default = |attr: &str| own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()));
         let before = d.yaw;
         let mut yaw = d.yaw;

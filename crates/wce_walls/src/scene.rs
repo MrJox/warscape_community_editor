@@ -11,8 +11,7 @@ use crate::pieces::{Piece, door_pieces};
 use crate::profile::{Profile, profile};
 use crate::solver::{Plan, WallInput, solve};
 
-/// The element name of a procedural wall.
-pub const WALL_SPLINE: &str = "WceWallSpline";
+pub use wce_tile::new_instances::WALL_SPLINE;
 
 /// The base a wall without (or with an unknown) `wall_base` uses.
 pub const DEFAULT_BASE: &str = "barbarian_fort_straight";

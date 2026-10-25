@@ -18,22 +18,23 @@ use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
 use crate::tool::{SetInUse, TileTool, document, primary};
 
 /// The categories, in the panel's order.
-pub const CATEGORIES: [&str; 10] = ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Rivers & roads"];
+pub const CATEGORIES: [&str; 11] =
+    ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads"];
 
 /// The types without a key of each fixed category (category, type, drawn).
 const FIXED: [(usize, &str, bool); 17] = [
     (5, "POINT_LIGHT_INSTANCE", false), (7, "CaptureLocationInstance", false), (7, "DeploymentZonePolygonInstanceGroup", false),
     (7, "DEPLOYMENT_ZONE_POLYGON_INSTANCE", true), (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
-    (7, "LiteBuildingZone", true), (7, "SiegeAINodeInstance", false), (7, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),
+    (7, "LiteBuildingZone", true), (9, "SiegeAINodeInstance", false), (9, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),
     (8, "NOGO_REGION_POLYGON_INSTANCE", true), (8, "GO_REGION_POLYGON_INSTANCE", true), (8, "VegetationExclusionPolygonInstance", true),
-    (8, "SIEGE_AI_POLYGON_INSTANCE", true), (8, "AISeparatorInstance", true), (9, "SplineRiverInstance", true),
+    (9, "SIEGE_AI_POLYGON_INSTANCE", true), (8, "AISeparatorInstance", true), (10, "SplineRiverInstance", true),
 ];
 
 /// The roads, drawn like the rivers.
-const ROAD: (usize, &str, bool) = (9, "SEGMENTED_SPLINE_INSTANCE", true);
+const ROAD: (usize, &str, bool) = (10, "SEGMENTED_SPLINE_INSTANCE", true);
 
-/// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), drawn with the buildings.
-const WALL: (usize, &str, bool) = (0, wce_tile_editor::tile_document::WALL_SPLINE, true);
+/// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), drawn with the siege's types.
+const WALL: (usize, &str, bool) = (9, wce_tile_editor::tile_document::WALL_SPLINE, true);
 
 /// The keyed types of the first categories.
 const KEYED: [(usize, &str); 5] = [(0, "BUILDING_INSTANCE"), (1, "VEGETATION_INSTANCE"), (2, "ProjectedDecalInstance"), (3, "SIMPLE_MESH_INSTANCE"), (4, "VFXInstance")];
