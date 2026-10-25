@@ -1,5 +1,5 @@
 //! Prefabs in the Tile tool (`wce_tile::prefabs`): the library of TEd's saved groups (`<kit raw_data>/art/prefabs` of the kits and of the
-//! tile), the Prefabs panel to place them, and the copies in the tile: an instance group named after a prefab's key is a copy, shown as a
+//! tile), the Prefabs panel to place them, and the copies in the tile: a reference to a prefab (`wce_prefab`) is a copy, shown as a
 //! Prefab row (its items listed when it is opened in the tree; a click on them in the viewport selects the copy). "Edit prefab" opens a copy for editing; Apply writes the
 //! prefab file and gives every other copy in the tile the new contents (one undo entry), Cancel gives the copy the file's contents back.
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
@@ -151,7 +151,7 @@ impl TileTool {
         self.prefab_library(e).len()
     }
 
-    /// The prefab key of an element when it is a copy of a prefab of the library (an instance group named after the key).
+    /// The prefab key of an element when it is a reference to a prefab of the library.
     pub(crate) fn prefab_of(&self, d: &TileDocument, elem: usize) -> Option<String> {
         let key = d.prefab_key(elem)?;
         self.prefabs.as_ref()?.get(&key).map(|p| p.key.clone())
