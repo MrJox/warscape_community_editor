@@ -724,8 +724,12 @@ pub fn begin_popup_modal(name: &str, open: Option<&mut bool>, flags: i32) -> boo
 
 /// A popup opened with `open_popup`.
 pub fn begin_popup(id: &str) -> bool {
+    begin_popup_flags(id, 0)
+}
+
+pub fn begin_popup_flags(id: &str, flags: i32) -> bool {
     let c = cs(id);
-    call!(sys::igBeginPopup(c.as_ptr(), 0))
+    call!(sys::igBeginPopup(c.as_ptr(), flags))
 }
 
 pub fn begin_popup_context_item(id: &str) -> bool {
@@ -785,6 +789,12 @@ pub fn item_id() -> ImGuiID {
 }
 
 // ---- input
+
+/// Text typed into the focused text field (queued for the next frame), as the keyboard would.
+pub fn add_input_text(text: &str) {
+    let c = cs(text);
+    call!(sys::ImGuiIO_AddInputCharactersUTF8(sys::igGetIO_Nil(), c.as_ptr()))
+}
 
 pub fn io() -> &'static mut sys::ImGuiIO {
     call!(&mut *sys::igGetIO_Nil())
@@ -948,6 +958,7 @@ pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
 pub const KEY_DOWN_ARROW: i32 = sys::ImGuiKey_DownArrow;
 pub const WINDOW_NO_NAV: i32 = sys::ImGuiWindowFlags_NoNav;
+pub const WINDOW_NO_NAV_INPUTS: i32 = sys::ImGuiWindowFlags_NoNavInputs;
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
 pub const MOD_ALT: i32 = sys::ImGuiMod_Alt;

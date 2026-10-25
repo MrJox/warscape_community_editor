@@ -828,8 +828,14 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame", mouse,
     );
 
+    c.add("type", "type <text>", "type text into the focused text field, as the keyboard would", |_, a| {
+        let Some(text) = a.first() else { return fail("usage: type <text>") };
+        gui::add_input_text(text);
+        ok("").wait(2)
+    });
+
     c.add(
-        "key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab>", "press a key combination (held for two frames), as the keyboard would", |e, a| {
+        "key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down>", "press a key combination (held for two frames), as the keyboard would", |e, a| {
             let Some(combo) = a.first() else { return fail("usage: key Ctrl+1") };
             let mut rest = combo.as_str();
             let mut mods = vec![];
