@@ -1310,6 +1310,7 @@ impl TileDocument {
             t.png_on_disk_edited = t.height_modified();
             t.saved_height_depth = t.project.height.as_ref().map_or(0, |h| h.edit_depth());
             t.project.height_dirty = false;
+            t.project.river_texts = t.project.current_river_texts();
             self.history.mark_saved();
         }
 

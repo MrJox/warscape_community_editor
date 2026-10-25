@@ -197,6 +197,9 @@ pub struct TileProject {
 
     /// Which min_height / scale the height map uses when it is not the entry's (see `calibrate_from_final_heights`), empty otherwise.
     pub height_calibration: String,
+
+    /// The rivers' text when the tile was opened or last saved (`river_files`): a save writes the rivers' files only when one changed.
+    pub river_texts: Vec<Vec<u8>>,
 }
 
 /// What the parallel half of opening reads besides the scene.
@@ -317,8 +320,10 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(),
+            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![],
         };
+
+        project.river_texts = project.current_river_texts();
 
         project.calibrate_from_final_heights();
         if project.height_calibration.is_empty() {
@@ -428,6 +433,11 @@ impl TileProject {
     /// # Errors
     ///
     /// A file could not be written.
+    /// Every river's text (its element with its points), in document order.
+    pub fn current_river_texts(&self) -> Vec<Vec<u8>> {
+        crate::river_files::rivers(&self.scene).into_iter().map(|r| self.scene.element_text(r)).collect()
+    }
+
     pub fn save(&self, out_dir: &Path, force_scene: bool, force_height: bool) -> Result<(bool, String)> {
         let mut msg = String::new();
         let mut wrote = false;
@@ -445,6 +455,31 @@ impl TileProject {
         if self.scene.modified() || force_scene {
             write("tile.ted", &self.scene.save())?;
             msg += "tile.ted saved. ";
+            wrote = true;
+        }
+
+        // The rivers' files (TEd writes them next to tile.ted; BOB reads them): only when a river changed, so that an old river keeps the
+        // file TEd left (see `river_files`). The files past the last river become empty: BOB reads up to the first missing one.
+        // Saved elsewhere ("Save as"): every river's file, with the factors of the tile's own files.
+        let rivers = self.current_river_texts();
+        let elsewhere = out_dir != self.dir;
+        if rivers != self.river_texts || elsewhere {
+            let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
+            let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
+            for (n, (name, text)) in files.iter().enumerate() {
+                let changed = elsewhere || self.river_texts.len() != rivers.len() || self.river_texts.get(n) != rivers.get(n);
+                if changed || !out_dir.join(name).exists() {
+                    std::fs::write(out_dir.join(name), text).map_err(|_| format!("could not write {}", out_dir.join(name).display()))?;
+                }
+            }
+
+            let mut n = files.len();
+            while out_dir.join(format!("river_spline{n}.xml")).exists() {
+                std::fs::write(out_dir.join(format!("river_spline{n}.xml")), b"<SEGMENTED_SPLINE/>\r\n").map_err(|e| e.to_string())?;
+                n += 1;
+            }
+
+            msg += &format!("river_spline*.xml saved ({} river{}). ", files.len(), if files.len() == 1 { "" } else { "s" });
             wrote = true;
         }
 
