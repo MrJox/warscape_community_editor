@@ -612,3 +612,29 @@ fn a_spline_is_drawn_and_edited_with_its_handles() {
 
     assert_eq!(text(&d), original);
 }
+
+#[test]
+fn an_item_tilted_to_its_surface_keeps_its_heading() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    d.rotate(b, 30.0);
+    let heading = |d: &TileDocument| {
+        let f = wce_tile::world_transform::world_transform(d.tile().tscene(), b).rotation * Double3::new(0.0, 0.0, 1.0);
+        f.x.atan2(f.z)
+    };
+
+    let before = heading(&d);
+    let n = Double3::new(0.3, 1.0, -0.2);
+    assert!(d.tilt_to_surface(b, n, 0));
+    let w = wce_tile::world_transform::world_transform(d.tile().tscene(), b).rotation;
+    let up = w * Double3::new(0.0, 1.0, 0.0);
+    let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
+    assert!((up - n * (1.0 / len)).max_abs_diff(Double3::ZERO) < 1e-6, "up {up:?}");
+    assert!((heading(&d) - before).abs() < 0.05, "the heading is kept: {} vs {before}", heading(&d));
+    while d.history_mut().can_undo() {
+        d.history_mut().undo();
+    }
+
+    assert_eq!(text(&d), original);
+}
