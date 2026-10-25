@@ -383,15 +383,36 @@ impl TedScene {
     ///
     /// No such layer, or it has no children element.
     pub fn add_layer(&mut self, parent_layer: Option<usize>, name: &str) -> Result<usize> {
+        let mut open = b"<LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"".to_vec();
+        open.extend(encode_entities(name.as_bytes(), b'"'));
+        open.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
+        self.add_container(parent_layer, &open, b"</LayerInstance>")
+    }
+
+    /// An empty UserInstanceGroup (TEd's instance group) at a local position, appended to the layer's children; returns its index. Text
+    /// splices on the document: element indices change.
+    ///
+    /// # Errors
+    ///
+    /// No such layer, or it has no children element.
+    pub fn add_group(&mut self, parent_layer: Option<usize>, name: &str, position: Double3) -> Result<usize> {
+        let mut open = b"<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE\" lf_offset=\"0\" low_frequency_change_effect=\"GRM_AS_SINGLE\" position=\"".to_vec();
+        open.extend_from_slice(format!("vector({},{},{})", format_ted_number(position.x), format_ted_number(position.y), format_ted_number(position.z)).as_bytes());
+        open.extend_from_slice(b"\" name=\"");
+        open.extend(encode_entities(name.as_bytes(), b'"'));
+        open.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
+        self.add_container(parent_layer, &open, b"</UserInstanceGroup>")
+    }
+
+    /// An element with an empty `<children>` appended to the layer's children: `open` is its start tag, `close` its end tag.
+    fn add_container(&mut self, parent_layer: Option<usize>, open: &[u8], close: &[u8]) -> Result<usize> {
         let parent = self.require_element(parent_layer, "layer")?;
         self.doc.bake_pending().map_err(xml_error)?;
         let (at, ind) = self.append_point(parent, "layer has no children element")?;
         let nl = self.newline();
         let mut snippet = ind.clone();
-        snippet.extend_from_slice(b"<LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"");
-        snippet.extend(encode_entities(name.as_bytes(), b'"'));
-        snippet.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
-        for part in [b"    <children>".as_slice(), b"    </children>", b"</LayerInstance>"] {
+        snippet.extend_from_slice(open);
+        for part in [b"    <children>".as_slice(), b"    </children>", close] {
             snippet.extend_from_slice(nl);
             snippet.extend_from_slice(&ind);
             snippet.extend_from_slice(part);

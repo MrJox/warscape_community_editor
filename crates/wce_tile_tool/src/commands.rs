@@ -755,15 +755,22 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if el.is_some_and(|el| d.rotate(el, deg)) { ok("") } else { fail("nothing selected") }
     });
 
-    c.add("add_building", "add_building <key> [x m z m]", "add a building (a copy of the selected or the first one, with this key), on the ground at x z when given", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(key) = a.first() else { return fail("usage: add_building <key> [x m z m]") };
-        let at = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten().map(|(x, z)| Float3::new(x, d.tile().terrain_height(x, z), z));
-        d.add_building(key, el, at, Placement::Landscape).map_or_else(fail, |_| ok(format!("added {key}")))
-    });
+    c.add(
+        "add_building", "add_building <key> [x m z m]",
+        "add a building (a copy of the selected or the first one, with this key) in the working layer, on the ground at x z when given",
+        |e, a| {
+            let el = primary(e);
+            let Some(key) = a.first().cloned() else { return fail("usage: add_building <key> [x m z m]") };
+            with_tile(e, |t, e| {
+                let Some(d) = document(e) else { return no_tile() };
+                let at = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten().map(|(x, z)| Float3::new(x, d.tile().terrain_height(x, z), z));
+                let into = t.new_items_layer(d);
+                d.add_building_in(&key, el, at, Placement::Landscape, into).map_or_else(fail, |_| ok(format!("added {key}")))
+            })
+        },
+    );
 
-    c.add("add_polygon", "add_polygon \"TYPE|HINT|x,z;x,z;...\"", "add a polygon (AI hint, zone, ...) from points in metres; selects it", |e, a| {
+    c.add("add_polygon", "add_polygon \"TYPE|HINT|x,z;x,z;...\"", "add a polygon (AI hint, zone, ...) from points in metres in the working layer; selects it", |e, a| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let Some(spec) = a.first() else { return fail("usage: add_polygon \"TYPE|HINT|x,z;x,z;...\"") };
@@ -784,12 +791,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 Some(Float3::new(x, d.tile().terrain_height(x, z), z))
             })
             .collect::<Vec<_>>();
-        let layer = match el {
-            Some(el) => d.tile().layer_of(el),
-            None => d.tile().tscene().scene_graph(),
-        };
-
-        d.add_polygon(layer, parts[0], parts[1], &pts).map_or_else(fail, |_| ok(format!("added {}", parts[0])))
+        let _ = el;
+        let (kind, hint) = (parts[0].to_owned(), parts[1].to_owned());
+        with_tile(e, |t, e| {
+            let Some(d) = document(e) else { return no_tile() };
+            let layer = t.new_items_layer(d);
+            d.add_polygon(layer, &kind, &hint, &pts).map_or_else(fail, |_| ok(format!("added {kind}")))
+        })
     });
 
     c.add("polygon_point", "polygon_point move|insert|remove <index> <x m> <z m>", "edit a point of the selected polygon (insert: after the index)", |e, a| {
@@ -982,6 +990,30 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let sel = selected(e);
         let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_group <new layer name>") };
         d.group_items(&sel, &a[0]).map_or_else(fail, |_| ok(""))
+    });
+
+    c.add("tile_working_layer", "tile_working_layer [layer path | #elem | none]", "TEd's working layer, where new items go (none: the root); no argument: log it", |e, a| {
+        let sel = selected(e);
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        with_tile(e, |t, e| {
+            let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+            match a.first().map(String::as_str) {
+                None => ok(t.working_layer_of(d).map_or_else(|| "the root".to_owned(), |l| crate::tool::TileTool::layer_label(d, l))),
+                Some("none") => t.set_working_layer(d, None).map_or_else(fail, ok),
+                Some(spec) => {
+                    let Some(el) = element_arg(d, spec, primary_of(&sel, d)) else { return fail(format!("no layer '{spec}'")) };
+                    t.set_working_layer(d, Some(el)).map_or_else(fail, ok)
+                }
+            }
+        })
+    });
+
+    c.add("tile_instance_group", "tile_instance_group", "group the selection into an instance group in the working layer (Ctrl+G)", |e, _| {
+        with_tile(e, |t, e| t.group_selection(e).map_or_else(fail, ok))
+    });
+
+    c.add("tile_ungroup", "tile_ungroup", "take the selected instance groups apart into the working layer (Ctrl+U)", |e, _| {
+        with_tile(e, |t, e| t.ungroup_selection(e).map_or_else(fail, ok))
     });
 
     c.add("tile_delete", "tile_delete <layer path | #elem | selected>", "delete layers / instances (with everything below)", |e, a| {

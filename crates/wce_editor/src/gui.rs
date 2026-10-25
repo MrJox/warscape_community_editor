@@ -900,7 +900,7 @@ pub use sys::{
     ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
     ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_Appearing as COND_APPEARING, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
-    ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
+    ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_U as KEY_U, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
     ImGuiKey_S as KEY_S, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z, ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK,
     ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING, ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING,
     ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_Leaf as TREE_LEAF, ImGuiTreeNodeFlags_NoTreePushOnOpen as TREE_NO_PUSH_ON_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW, ImGuiTreeNodeFlags_Selected as TREE_SELECTED,

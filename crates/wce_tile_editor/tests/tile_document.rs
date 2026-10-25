@@ -429,3 +429,57 @@ fn the_pieces_of_a_building_are_its_children_with_their_own_properties() {
     d.history_mut().redo();
     assert_eq!(d.tile().piece_props(b, 1).map(|p| p.opacity), Some(0.25));
 }
+
+#[test]
+fn a_group_keeps_its_items_in_the_world_and_ungroups_into_a_layer() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let (b, p) = (d.tile().tscene().find_all("BUILDING_INSTANCE")[0], d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0]);
+    let before = [d.tile().world_position(b), d.tile().world_position(p)];
+
+    // Grouped into the scene graph (no working layer): a UserInstanceGroup at their centre, holding both, which stay where they were.
+    let g = d.group_instances(&[b, p], graph, "").unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.type_of(g), "UserInstanceGroup");
+    assert_eq!(d.tile().tscene().children(graph).last().copied(), Some(g));
+    let kids = sc.children(g);
+    assert_eq!(kids.iter().map(|&k| sc.type_of(k)).collect::<Vec<_>>(), ["BUILDING_INSTANCE", "AI_HINT_POLYGON_INSTANCE"]);
+    let near = |a: Float3, b: Float3| (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
+    assert!(near(d.tile().world_position(kids[0]), before[0]) && near(d.tile().world_position(kids[1]), before[1]));
+    let gp = d.tile().world_position(g);
+    assert!(near(gp, (before[0] + before[1]) * 0.5), "the group sits at the centre of its items: {gp:?}");
+
+    // Ungrouped into the layer: the items are its last children, in the same places; the group is gone.
+    let layer_now = d.tile().tscene().find_all("LayerInstance")[0];
+    assert_eq!(layer_now, layer);
+    let freed = d.ungroup(&[g], layer).unwrap();
+    let sc = d.tile().tscene();
+    assert!(sc.find_all("UserInstanceGroup").is_empty());
+    assert_eq!(freed.len(), 2);
+    assert!(freed.iter().all(|&f| sc.doc().elements()[f].parent.and_then(|w| sc.doc().elements()[w].parent) == Some(layer)));
+    assert!(near(d.tile().world_position(freed[0]), before[0]) && near(d.tile().world_position(freed[1]), before[1]));
+
+    // Each is one undo entry.
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(text(&d), original);
+}
+
+#[test]
+fn several_groups_ungroup_at_once() {
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g1 = d.group_instances(&[b], graph, "one").unwrap();
+    let p = d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    let g2 = d.group_instances(&[p], graph, "two").unwrap();
+    let g1 = d.tile().tscene().find_all("UserInstanceGroup").into_iter().find(|&g| d.tile().tscene().name(g) == "one").unwrap_or(g1);
+    let freed = d.ungroup(&[g1, g2], graph).unwrap();
+    let sc = d.tile().tscene();
+    assert!(sc.find_all("UserInstanceGroup").is_empty());
+    let mut types = freed.iter().map(|&f| sc.type_of(f).to_owned()).collect::<Vec<_>>();
+    types.sort();
+    assert_eq!(types, ["AI_HINT_POLYGON_INSTANCE", "BUILDING_INSTANCE"], "the freed indices point at the moved items");
+}

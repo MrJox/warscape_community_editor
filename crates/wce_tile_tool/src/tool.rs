@@ -114,6 +114,10 @@ pub struct TileTool {
     /// The hidden types the tree was built with (the type toggles).
     pub(crate) tree_hidden_seen: Option<Vec<String>>,
 
+    /// TEd's working layer: the tile (document) and the layer's name path (`scene_panel::layer_key`). New items go into it (placed buildings,
+    /// drawn polygons, groups, ungrouped items); without one they go to the scene graph.
+    pub(crate) working_layer: Option<(DocumentId, String)>,
+
     /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
     /// to scroll to.
     pub(crate) tree_synced: Option<usize>,
@@ -205,7 +209,7 @@ impl Default for TileTool {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
             building_key: String::new(), new_placement: Placement::Landscape, off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
@@ -317,6 +321,62 @@ impl TileTool {
         }
 
         roots
+    }
+
+    /// The working layer of the tile `id`, if one is set and still there.
+    pub(crate) fn working_layer_of(&self, d: &TileDocument) -> Option<usize> {
+        let (doc, key) = self.working_layer.as_ref().filter(|(doc, _)| *doc == d.id())?;
+        let _ = doc;
+        crate::scene_panel::layer_by_key(d.tile().tscene(), key)
+    }
+
+    /// Where new items go in the tile: the working layer, else the scene graph.
+    pub(crate) fn new_items_layer(&self, d: &TileDocument) -> Option<usize> {
+        self.working_layer_of(d).or_else(|| d.tile().tscene().scene_graph())
+    }
+
+    /// A layer's path including itself (`root` for the scene graph).
+    pub(crate) fn layer_label(d: &TileDocument, layer: usize) -> String {
+        let sc = d.tile().tscene();
+        if sc.type_of(layer) == "SCENE_GRAPH" {
+            return "root".to_owned();
+        }
+
+        let above = sc.layer_path(layer);
+        if above.is_empty() { sc.name(layer) } else { format!("{above}/{}", sc.name(layer)) }
+    }
+
+    /// Makes a layer the working layer (`None`: none, new items go to the scene graph).
+    pub fn set_working_layer(&mut self, d: &TileDocument, layer: Option<usize>) -> Result<String, String> {
+        let Some(layer) = layer else {
+            self.working_layer = None;
+            return Ok("no working layer: new items go to the root".to_owned());
+        };
+
+        let sc = d.tile().tscene();
+        if !matches!(sc.type_of(layer), "LayerInstance" | "SCENE_GRAPH") {
+            return Err("only a layer can be the working layer".to_owned());
+        }
+
+        let key = crate::scene_panel::layer_key(sc, layer).ok_or("that layer is not in the scene graph")?;
+        self.working_layer = Some((d.id(), key));
+        Ok(format!("working layer: {}", Self::layer_label(d, layer)))
+    }
+
+    /// Groups the selection into an instance group in the working layer (Ctrl+G).
+    pub fn group_selection(&mut self, e: &mut Editor) -> Result<String, String> {
+        let sel = selected(e);
+        let Some(d) = document(e) else { return Err("no tile open".to_owned()) };
+        let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
+        d.group_instances(&sel, into, "").map(|_| "grouped".to_owned())
+    }
+
+    /// Takes the selected instance groups apart into the working layer (Ctrl+U).
+    pub fn ungroup_selection(&mut self, e: &mut Editor) -> Result<String, String> {
+        let sel = selected(e);
+        let Some(d) = document(e) else { return Err("no tile open".to_owned()) };
+        let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
+        d.ungroup(&sel, into).map(|freed| format!("ungrouped: {} items", freed.len()))
     }
 
     /// The Tiles panel's source as a [`TileRef`] source: the kit's raw_data folder, or the packs.
@@ -750,13 +810,9 @@ impl TileTool {
             return;
         }
 
-        let sel = primary(e);
         let Some(d) = document(e) else { return };
         self.drawing = false;
-        let layer = match sel {
-            Some(s) => d.tile().layer_of(s),
-            None => d.tile().tscene().scene_graph(),
-        };
+        let layer = self.new_items_layer(d);
 
         let added = d.add_polygon(layer, POLYGON_TYPES[self.new_poly_type], HINTS[self.new_hint], &self.draw_pts);
         self.draw_pts.clear();
@@ -810,14 +866,11 @@ impl TileTool {
 
             let all = selected(e);
             if gui::is_key_pressed(gui::KEY_G, false) && !all.is_empty() && !grabbing {
-                match document(e).expect("a tile").group_items(&all, "New layer") {
-                    Ok(_) => {
-                        self.status = "grouped into a new layer".to_owned();
-                        self.begin_rename_next = true;
-                    }
+                self.status = self.group_selection(e).unwrap_or_else(|err| err);
+            }
 
-                    Err(err) => self.status = err,
-                }
+            if gui::is_key_pressed(gui::KEY_U, false) && !all.is_empty() && !grabbing {
+                self.status = self.ungroup_selection(e).unwrap_or_else(|err| err);
             }
 
             return;
@@ -945,7 +998,8 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         if gui::button("Add") {
             let at = self.terrain_hit.then_some(self.cursor);
-            self.status = match d.add_building(&self.building_key, sel, at, self.new_placement) {
+            let into = self.new_items_layer(d);
+            self.status = match d.add_building_in(&self.building_key, sel, at, self.new_placement, into) {
                 Ok(_) => format!("added {}", self.building_key),
                 Err(err) => err,
             };
