@@ -187,6 +187,7 @@ impl TileDocument {
     ///
     /// The text is not an element, or there is no such layer.
     pub fn place_text(&mut self, what: &str, text: &[u8], into: usize, at: wce_foundation::math::Float3, name: Option<&str>, on_terrain: bool) -> Result<usize, String> {
+        self.check_structure(&[], Some(into))?;
         let mark = self.begin()?;
         let result = (|| -> Result<usize, String> {
             let g = self.tscene_mut().insert_element_text(into, text)?;

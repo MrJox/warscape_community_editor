@@ -164,25 +164,85 @@ impl TileTool {
         layer_by_key(d.tile().tscene(), key)
     }
 
-    /// A copy whose contents the Scene tree does not list and whose contents a click does not select: every copy but the edited one.
-    pub(crate) fn closed_prefab(&self, d: &TileDocument, elem: usize) -> bool {
-        self.prefab_of(d, elem).is_some() && self.edited_copy(d) != Some(elem)
+    /// The copy opened for its items (a click on one of the items of a selected copy; for a reference, what is edited in them is an
+    /// override), if there is one in this tile.
+    pub(crate) fn opened_copy(&self, d: &TileDocument) -> Option<usize> {
+        let (doc, key) = self.prefab_open.as_ref()?;
+        if *doc != d.id() {
+            return None;
+        }
+
+        layer_by_key(d.tile().tscene(), key)
     }
 
-    /// The selection with the contents of closed copies replaced by the copies (once per frame, after the clicks).
+    /// A copy whose contents the Scene tree does not list and whose contents a click does not select: every copy but the edited one and the
+    /// opened one (and the copies inside those).
+    pub(crate) fn closed_prefab(&self, d: &TileDocument, elem: usize) -> bool {
+        if self.prefab_of(d, elem).is_none() {
+            return false;
+        }
+
+        let open = [self.edited_copy(d), self.opened_copy(d)];
+        let els = d.tile().tscene().doc().elements();
+        !std::iter::successors(Some(elem), |&x| els.get(x).and_then(|el| el.parent)).any(|x| open.contains(&Some(x)))
+    }
+
+    /// The selection with the contents of closed copies replaced by the copies (once per frame, after the clicks). A click on an item of a
+    /// copy that was selected opens the copy: its items are selected and edited (a reference's edits are its overrides) until the selection
+    /// leaves it.
     pub(crate) fn select_whole_prefabs(&mut self, e: &mut Editor) {
         let Some(id) = document_id(e) else { return };
+
+        // The edited copy may change in structure.
+        if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+            let copy = self.edited_copy(d);
+            d.set_unlocked_reference(copy);
+        }
+
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
-        if self.prefabs.is_none() || e.selection.is_empty() {
+        if self.prefabs.is_none() {
             return;
         }
 
+        let previous = std::mem::take(&mut self.prefab_sel_before);
         let sc = d.tile().tscene();
+        let els = sc.doc().elements();
+        let sel = selected(e);
+
+        // An item of a copy that was selected the frame before: the copy opens.
+        let opening = sel.iter().find_map(|&el| {
+            let mut copy = None;
+            let mut p = els.get(el).and_then(|x| x.parent);
+            while let Some(q) = p {
+                if self.closed_prefab(d, q) {
+                    copy = Some(q);
+                }
+
+                p = els[q].parent;
+            }
+
+            copy.filter(|c| previous.contains(c))
+        });
+
+        if let Some(c) = opening && let Some(key) = layer_key(sc, c) {
+            self.prefab_open = Some((id, key));
+            self.prefab_version += 1;
+        }
+
+        // The selection left the opened copy: it closes.
+        if let Some(o) = self.opened_copy(d) {
+            let inside = sel.iter().any(|&el| std::iter::successors(Some(el), |&x| els.get(x).and_then(|y| y.parent)).any(|x| x == o));
+            if !inside {
+                self.prefab_open = None;
+                self.prefab_version += 1;
+            }
+        }
+
         let mut changed = false;
         let mut items = vec![];
-        for &el in &selected(e) {
+        for &el in &sel {
             // An element that is gone (an undone addition) leaves the selection.
-            let Some(element) = sc.doc().elements().get(el) else {
+            let Some(element) = els.get(el) else {
                 changed = true;
                 continue;
             };
@@ -195,7 +255,7 @@ impl TileTool {
                     copy = Some(q);
                 }
 
-                p = sc.doc().elements()[q].parent;
+                p = els[q].parent;
             }
 
             match copy {
@@ -208,14 +268,16 @@ impl TileTool {
             }
         }
 
+        items.sort_unstable();
+        items.dedup();
         if changed {
-            items.sort_unstable();
-            items.dedup();
             e.selection.clear();
-            for el in items {
+            for &el in &items {
                 e.selection.add(SourceRef { doc: id, item: item_of(el) });
             }
         }
+
+        self.prefab_sel_before = items;
     }
 
     /// Places a prefab in the working layer, on the ground at `at` (world metres).
@@ -269,12 +331,32 @@ impl TileTool {
         let entry = lib.get(&key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
         let children = d.children_text(copy);
 
+        // The other references keep their overrides (what they differ by from the prefab before the edit), on top of the new contents; one
+        // that differs by more keeps its own contents. TEd's copies get the new contents.
+        let old = lib.contents(&key).unwrap_or_default();
+        let mut each = vec![];
+        let mut kept = 0;
+        for c in d.prefab_copies(&key).into_iter().filter(|&c| c != copy) {
+            if !d.is_prefab_reference(c) {
+                each.push((c, children.clone()));
+                continue;
+            }
+
+            match wce_tile::prefab_refs::overrides(&d.children_text(c), &old).and_then(|ovs| wce_tile::prefab_refs::apply(&children, &ovs)) {
+                Ok((text, _)) => each.push((c, text)),
+                Err(_) => kept += 1,
+            }
+        }
+
         // The edit goes into the projects' prefab (its .wce), never into the kit.
         let projects = prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"));
         let saved = lib.save_edit(&entry.key, &projects, &children)?;
         let d = document(e).ok_or("no tile open")?;
-        let others = d.prefab_copies(&key).into_iter().filter(|&c| c != copy).collect::<Vec<_>>();
-        let n = d.set_groups_children(&others, &children, &format!("Update the copies of {key}"))?;
+        let n = d.set_each_group_children(&each, &format!("Update the copies of {key}"))?;
+        if kept != 0 {
+            log::warn(format!("{kept} reference(s) to {key} differ from it by more than values: they keep their own contents"));
+        }
+
         self.end_prefab_edit(e);
         self.rescan_prefabs(e);
         Ok(format!("{key} saved to {}; {n} other cop{} updated", saved.display(), if n == 1 { "y" } else { "ies" }))

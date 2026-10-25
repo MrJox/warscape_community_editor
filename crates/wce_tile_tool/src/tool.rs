@@ -148,6 +148,11 @@ pub struct TileTool {
     /// The prefab copy being edited: the tile, the copy's name path (`scene_panel::layer_key`) and the prefab's key.
     pub(crate) prefab_edit: Option<(DocumentId, String, String)>,
 
+    /// The copy opened for its items (`prefab_panel::opened_copy`): the tile and its name path; the selection the frame before (a click on an
+    /// item of a copy selected then opens it).
+    pub(crate) prefab_open: Option<(DocumentId, String)>,
+    pub(crate) prefab_sel_before: Vec<usize>,
+
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
 
@@ -312,7 +317,7 @@ impl Default for TileTool {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![],
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,

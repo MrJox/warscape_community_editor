@@ -68,6 +68,12 @@ impl wce_editor_core::inspector::Inspector for DumpInspector {
         self.lines.push(format!("== {title}"));
     }
 
+    fn mark_fields(&mut self, marks: Vec<(String, String)>) {
+        for (f, note) in marks {
+            self.lines.push(format!("  ! {f}: {note}"));
+        }
+    }
+
     fn text(&mut self, _: &str, label: &str, value: &str) {
         self.lines.push(format!("  {label}: {value}  (read-only)"));
     }

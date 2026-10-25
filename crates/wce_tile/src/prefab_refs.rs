@@ -156,6 +156,61 @@ pub fn read_overrides(doc: &XmlDoc, reference: usize) -> Vec<Override> {
     }).collect()
 }
 
+/// The attributes an item of a reference overrides, each with the prefab's value (`None`: the prefab's item has no such attribute).
+pub type Differences = Vec<(String, Option<String>)>;
+
+/// A prefab's contents read once, to compare a reference's items with (the Inspector's override marks).
+#[derive(Debug)]
+pub struct BaseContents {
+    doc: XmlDoc,
+}
+
+impl BaseContents {
+    /// # Errors
+    ///
+    /// The contents do not read.
+    pub fn parse(children: &[u8]) -> Result<Self, String> {
+        Ok(Self { doc: wrapped(children)? })
+    }
+
+    /// The attributes of an element of a reference's contents (`current`'s `elem`, at `path` in them) that differ from the prefab's element
+    /// at that path, each with the prefab's value (`None`: the prefab's has no such attribute). `None` when the prefab has no element of that
+    /// kind there.
+    pub fn differences(&self, current: &XmlDoc, elem: usize, path: &[usize]) -> Option<Differences> {
+        let b = at_path(&self.doc, path).filter(|_| !path.is_empty())?;
+        let c = &current.elements()[elem];
+        if self.doc.elements()[b].name != c.name {
+            return None;
+        }
+
+        Some(c.attrs.iter().enumerate().filter_map(|(i, a)| {
+            let base = self.doc.find_attr(b, &a.name);
+            if base.is_some_and(|j| self.doc.attr_raw(b, j) == current.attr_raw(elem, i)) {
+                return None;
+            }
+
+            Some((a.name.clone(), base.map(|j| String::from_utf8_lossy(&decode_entities(self.doc.attr_raw(b, j))).into_owned())))
+        }).collect())
+    }
+}
+
+/// An element's path in a reference's contents: the element indices from the reference's `children` element down to it. `None` when it
+/// is not below it.
+pub fn path_in(doc: &XmlDoc, reference: usize, elem: usize) -> Option<Vec<usize>> {
+    let els = doc.elements();
+    let ch = *els[reference].children.iter().find(|&&c| els[c].name == "children")?;
+    let mut path = vec![];
+    let mut e = elem;
+    while e != ch {
+        let p = els[e].parent?;
+        path.push(els[p].children.iter().position(|&c| c == e)?);
+        e = p;
+    }
+
+    path.reverse();
+    Some(path)
+}
+
 // ---- exact copies
 
 /// The hashes of elements: their name, their attributes (names and values, in order) and their elements, whatever the spacing between.

@@ -18,6 +18,9 @@ use crate::gui;
 pub struct ImGuiInspector {
     target: InspectTarget,
     ended: bool,
+
+    /// The marked fields and their notes (`Inspector::mark_fields`), for the current target.
+    marks: Vec<(String, String)>,
 }
 
 /// The value column starts after the longest label that fits: 40% of the panel, at least 110 px.
@@ -30,8 +33,28 @@ impl ImGuiInspector {
         format!("##{}", self.path(field))
     }
 
-    fn label(&self, label: &str, full_width: bool) {
-        gui::text(label);
+    /// A field's mark note, when it is marked (or a field it is part of).
+    fn mark(&self, field: &str) -> Option<&str> {
+        self.marks.iter().find(|(f, _)| field == f || field.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('.'))).map(|(_, n)| n.as_str())
+    }
+
+    /// A label: in the warning colour with the note as its tooltip when its field is marked.
+    fn draw_label(&self, field: &str, label: &str, disabled: bool) {
+        match self.mark(field) {
+            Some(note) => {
+                gui::text_colored(crate::theme::warning(), &format!("{} {label}", crate::icons::TRIANGLE_ALERT));
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(note);
+                }
+            }
+
+            None if disabled => gui::text_disabled(label),
+            None => gui::text(label),
+        }
+    }
+
+    fn label(&self, field: &str, label: &str, full_width: bool) {
+        self.draw_label(field, label, false);
         gui::same_line_at(label_column());
         if full_width {
             gui::set_next_item_width(-1.0);
@@ -49,77 +72,89 @@ impl Inspector for ImGuiInspector {
     }
 
     fn set_target(&mut self, target: InspectTarget) {
+        if target != self.target {
+            self.marks.clear();
+        }
+
         self.target = target;
+    }
+
+    fn mark_fields(&mut self, marks: Vec<(String, String)>) {
+        self.marks = marks;
+    }
+
+    fn button(&mut self, field: &str, label: &str) -> bool {
+        gui::small_button(&format!("{label}{}", self.id(field)))
     }
 
     fn section(&mut self, title: &str) {
         gui::separator_text(title);
     }
 
-    fn text(&mut self, _field: &str, label: &str, value: &str) {
-        gui::text_disabled(label);
+    fn text(&mut self, field: &str, label: &str, value: &str) {
+        self.draw_label(field, label, true);
         gui::same_line_at(label_column());
         gui::text(value);
     }
 
     fn edit_float(&mut self, field: &str, label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::drag_float(&self.id(field), v, speed, lo, hi, "%.3f");
         self.finish_widget();
         changed
     }
 
     fn edit_float3(&mut self, field: &str, label: &str, v: &mut [f32; 3], speed: f32) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::drag_float3(&self.id(field), v, speed, "%.3f");
         self.finish_widget();
         changed
     }
 
     fn edit_float2(&mut self, field: &str, label: &str, v: &mut [f32; 2], speed: f32) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::drag_float2(&self.id(field), v, speed, "%.6g");
         self.finish_widget();
         changed
     }
 
     fn edit_int(&mut self, field: &str, label: &str, v: &mut i64, speed: f32) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::drag_i64(&self.id(field), v, speed);
         self.finish_widget();
         changed
     }
 
     fn edit_color3(&mut self, field: &str, label: &str, v: &mut [f32; 3]) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::color_edit3(&self.id(field), v, gui::COLOR_FLOAT | gui::COLOR_HDR);
         self.finish_widget();
         changed
     }
 
     fn edit_color4(&mut self, field: &str, label: &str, v: &mut [f32; 4]) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::color_edit4(&self.id(field), v, gui::COLOR_FLOAT | gui::COLOR_HDR | gui::COLOR_ALPHA_BAR);
         self.finish_widget();
         changed
     }
 
     fn edit_bool(&mut self, field: &str, label: &str, v: &mut bool) -> bool {
-        self.label(label, false);
+        self.label(field, label, false);
         let changed = gui::checkbox(&self.id(field), v);
         self.ended = changed;
         changed
     }
 
     fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let changed = gui::input_text(&self.id(field), None, v, 512, 0);
         self.finish_widget();
         changed
     }
 
     fn edit_choice(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String]) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let mut changed = false;
         let shown = usize::try_from(*index).ok().and_then(|i| choices.get(i)).map_or("", String::as_str);
         if gui::begin_combo(&self.id(field), shown) {
@@ -142,7 +177,7 @@ impl Inspector for ImGuiInspector {
     }
 
     fn edit_slider(&mut self, field: &str, label: &str, v: &mut f32, lo: f32, hi: f32) -> bool {
-        self.label(label, false);
+        self.label(field, label, false);
         gui::set_next_item_width(72.0);
         let mut changed = gui::drag_float(&format!("##{}.box", self.path(field)), v, (hi - lo) * 0.005, lo, hi, "%.3f");
         let mut ended = gui::is_item_deactivated_after_edit();
@@ -155,7 +190,7 @@ impl Inspector for ImGuiInspector {
     }
 
     fn edit_int_slider(&mut self, field: &str, label: &str, v: &mut i64, lo: i64, hi: i64) -> bool {
-        self.label(label, false);
+        self.label(field, label, false);
         let mut small = (*v).clamp(lo, hi) as i32;
         gui::set_next_item_width(-1.0);
         let changed = gui::slider_int(&self.id(field), &mut small, lo as i32, hi as i32);
@@ -168,7 +203,7 @@ impl Inspector for ImGuiInspector {
     }
 
     fn edit_angle(&mut self, field: &str, label: &str, radians: &mut f32, max: f32) -> bool {
-        self.label(label, true);
+        self.label(field, label, true);
         let mut deg = radians.to_degrees();
         let changed = gui::drag_float(&self.id(field), &mut deg, 0.5, 0.0, max.to_degrees(), "%.1f\u{b0}");
         self.finish_widget();

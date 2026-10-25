@@ -367,6 +367,7 @@ impl TileDocument {
     ///
     /// Nothing to duplicate.
     pub fn duplicate(&mut self, elem: usize) -> Result<usize, String> {
+        self.check_structure(&[elem], None)?;
         let t = self.tile();
         if elem >= t.tscene().doc().elements().len() || (!t.is_instance(elem) && !t.tscene().is_layer(elem)) {
             return Err("nothing to duplicate".to_owned());
@@ -395,6 +396,11 @@ impl TileDocument {
 
     pub fn remove(&mut self, elem: usize) -> bool {
         if elem >= self.tile().tscene().doc().elements().len() {
+            return false;
+        }
+
+        if let Err(err) = self.check_structure(&[elem], None) {
+            wce_foundation::log::warn(err);
             return false;
         }
 
@@ -744,6 +750,8 @@ impl TileDocument {
             return Ok(false);
         }
 
+        self.check_structure(&[elem], Some(layer))?;
+
         if self.tile().tscene().is_descendant(layer, elem) {
             return Err("cannot move a layer into itself".to_owned());
         }
@@ -786,6 +794,11 @@ impl TileDocument {
     }
 
     pub fn remove_layer(&mut self, layer: usize) -> bool {
+        if let Err(err) = self.check_structure(&[layer], None) {
+            wce_foundation::log::warn(err);
+            return false;
+        }
+
         let sc = self.tile().tscene();
         if layer >= sc.doc().elements().len() || !sc.is_layer(layer) || sc.type_of(layer) == "SCENE_GRAPH" {
             return false;
@@ -865,6 +878,7 @@ impl TileDocument {
     ///
     /// Nothing to move, a target that is not a layer, or a move the text does not allow.
     pub fn move_items(&mut self, elems: &[usize], layer: usize, before: Option<usize>) -> Result<(), String> {
+        self.check_structure(elems, Some(layer))?;
         let sc = self.tile().tscene();
         if elems.is_empty() || layer >= sc.doc().elements().len() || !sc.is_layer(layer) {
             return Err("nothing to move, or the target is not a layer".to_owned());
@@ -905,6 +919,7 @@ impl TileDocument {
     ///
     /// Nothing selected, an element that can't be grouped, or a selection outside a layer.
     pub fn group_items(&mut self, elems: &[usize], name: &str) -> Result<usize, String> {
+        self.check_structure(elems, None)?;
         let sc = self.tile().tscene();
         if elems.is_empty() {
             return Err("nothing selected".to_owned());
@@ -1029,6 +1044,7 @@ impl TileDocument {
     ///
     /// No group among the elements, or `into` inside one of them.
     pub fn ungroup(&mut self, elems: &[usize], into: usize) -> Result<Vec<usize>, String> {
+        self.check_structure(elems, Some(into))?;
         let sc = self.tile().tscene();
         let n = sc.doc().elements().len();
         let groups = top_level(sc, elems.iter().copied().filter(|&e| e < n && matches!(sc.type_of(e), "UserInstanceGroup" | "INSTANCE_GROUP")).collect());
@@ -1115,6 +1131,7 @@ impl TileDocument {
     ///
     /// As `create`.
     pub fn create_with(&mut self, kind: &str, into: usize, shape: &Create, key: &str, attrs: &BTreeMap<String, String>) -> Result<usize, String> {
+        self.check_structure(&[], Some(into))?;
         use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
 
         let t = self.tile();
@@ -1263,6 +1280,149 @@ impl TileDocument {
         self.rename(group, name)
     }
 
+    /// The copy being edited (Edit prefab), whose contents may change in structure too (`check_structure`); the tool says which.
+    pub fn set_unlocked_reference(&mut self, copy: Option<usize>) {
+        self.tile_mut().unlocked_reference = copy;
+    }
+
+    /// A structural edit (adding, taking away, moving or grouping items) of items inside a prefab reference, or into one, is refused: what
+    /// changes in a reference's items is kept as overrides, values only. Not inside the copy being edited.
+    ///
+    /// # Errors
+    ///
+    /// An item (or `into`) is inside a reference: says which.
+    pub fn check_structure(&self, elems: &[usize], into: Option<usize>) -> Result<(), String> {
+        let doc = self.tile().tscene().doc();
+        let els = doc.elements();
+        let unlocked = self.tile().unlocked_reference;
+        let locked = |e: usize, itself: bool| -> Option<usize> {
+            let mut chain = std::iter::successors(if itself { Some(e) } else { els.get(e)?.parent }, |&p| els.get(p).and_then(|x| x.parent));
+            let r = chain.find(|&p| self.is_prefab_reference(p))?;
+            let open = std::iter::successors(Some(e), |&p| els.get(p).and_then(|x| x.parent)).any(|p| Some(p) == unlocked);
+            (!open).then_some(r)
+        };
+
+        let hit = elems.iter().find_map(|&e| locked(e, false)).or_else(|| into.and_then(|i| locked(i, true)));
+        match hit {
+            Some(r) => Err(format!(
+                "that is part of the prefab {}: a reference's items change only in their values (overrides); Edit prefab changes the prefab, Unpack prefab makes it a plain group",
+                self.prefab_key(r).unwrap_or_default()
+            )),
+
+            None => Ok(()),
+        }
+    }
+
+    /// The outermost prefab reference an element is inside (not the element itself), and the element's path in its contents.
+    pub fn reference_above(&self, elem: usize) -> Option<(usize, Vec<usize>)> {
+        let doc = self.tile().tscene().doc();
+        let els = doc.elements();
+        let r = std::iter::successors(els.get(elem)?.parent, |&p| els[p].parent).filter(|&p| self.is_prefab_reference(p)).last()?;
+        Some((r, wce_tile::prefab_refs::path_in(doc, r, elem)?))
+    }
+
+    /// A prefab's contents to compare its references with, from the project's prefab source (`TileProject::prefab_base`), read again when
+    /// they change.
+    fn base_contents(&mut self, key: &str) -> Option<(Vec<u8>, std::sync::Arc<wce_tile::prefab_refs::BaseContents>)> {
+        let src = self.project().prefab_base.clone()?;
+        let bytes = (src.0)(key)?;
+        if let Some((b, c)) = self.tile().prefab_cache.get(key)
+            && *b == bytes
+        {
+            return Some((bytes, c.clone()));
+        }
+
+        let c = std::sync::Arc::new(wce_tile::prefab_refs::BaseContents::parse(&bytes).ok()?);
+        self.tile_mut().prefab_cache.insert(key.to_owned(), (bytes.clone(), c.clone()));
+        Some((bytes, c))
+    }
+
+    /// An item of a prefab reference's contents: the reference's key and the attributes it overrides, each with the prefab's value (`None`:
+    /// the prefab's item has no such attribute). `None` when it is not in a reference, or the prefab has no such item there.
+    pub fn overrides_of(&mut self, elem: usize) -> Option<(String, wce_tile::prefab_refs::Differences)> {
+        let (r, path) = self.reference_above(elem)?;
+        let key = self.prefab_key(r)?;
+        let (_, base) = self.base_contents(&key)?;
+        let diffs = base.differences(self.tile().tscene().doc(), elem, &path)?;
+        Some((key, diffs))
+    }
+
+    /// How many values a prefab reference's contents override; `None` when they differ by more than values (or there is no prefab).
+    pub fn override_count(&mut self, reference: usize) -> Option<usize> {
+        let key = self.prefab_key(reference).filter(|_| self.is_prefab_reference(reference))?;
+        let (bytes, _) = self.base_contents(&key)?;
+        wce_tile::prefab_refs::overrides(&self.tile().tscene().children_text(reference), &bytes).ok().map(|o| o.len())
+    }
+
+    /// Gives an item of a prefab reference its prefab's values back (or, for the reference, all its contents): one undo entry. Returns how
+    /// many values went back (a reference: 1 when its contents did).
+    pub fn revert_overrides(&mut self, elem: usize) -> usize {
+        if self.is_prefab_reference(elem) {
+            let Some(key) = self.prefab_key(elem) else { return 0 };
+            let Some((bytes, _)) = self.base_contents(&key) else { return 0 };
+            return self.set_groups_children(&[elem], &bytes, &format!("Revert the overrides of {key}")).unwrap_or(0);
+        }
+
+        let Some((key, diffs)) = self.overrides_of(elem) else { return 0 };
+        let back = diffs.into_iter().filter_map(|(a, v)| v.map(|v| (a, v))).collect::<Vec<_>>();
+        if back.is_empty() {
+            return 0;
+        }
+
+        let Ok(mark) = self.begin() else { return 0 };
+        for (a, v) in &back {
+            self.tscene_mut().set_attr(elem, a, v);
+        }
+
+        self.push_splice(format!("Revert the overrides of an item of {key}"), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        back.len()
+    }
+
+    /// The Inspector's rows of a prefab reference's overrides: on one of its items, the values it overrides (marked) and reverting them; on
+    /// the reference, how many and reverting them all.
+    fn override_rows(&mut self, e: usize, ins: &mut dyn Inspector) {
+        if self.is_prefab_reference(e) {
+            let key = self.prefab_key(e).unwrap_or_default();
+            ins.text("prefab", "prefab", &key);
+            match self.override_count(e) {
+                Some(0) => ins.text("overrides", "overrides", "none"),
+                Some(n) => {
+                    ins.mark_fields(vec![("overrides".to_owned(), "Values of its items that are not the prefab's".to_owned())]);
+                    ins.text("overrides", "overrides", &format!("{n} value(s) in its items"));
+                    if ins.button("revert_all", "Revert all overrides") {
+                        self.revert_overrides(e);
+                    }
+                }
+
+                None => ins.text("overrides", "overrides", "its items differ by more than values (kept as they are)"),
+            }
+
+            return;
+        }
+
+        let Some((key, diffs)) = self.overrides_of(e) else { return };
+        ins.text("prefab", "in the prefab", &key);
+        if diffs.is_empty() {
+            ins.text("overrides", "overrides", "none");
+            return;
+        }
+
+        ins.text("overrides", "overrides", &format!("{} (marked)", diffs.len()));
+        if ins.button("revert", "Revert to the prefab's values") {
+            self.revert_overrides(e);
+        }
+
+        let marks = diffs.into_iter().map(|(a, v)| {
+            let note = match v {
+                Some(v) => format!("Override: the prefab has {v}"),
+                None => "Override: the prefab's item has no such value".to_owned(),
+            };
+
+            (a, note)
+        }).collect();
+        ins.mark_fields(marks);
+    }
+
     /// Makes instance groups references to prefabs (each with its key; the copies `prefab_refs::recognise` found), one undo entry. Returns
     /// how many.
     pub fn make_references(&mut self, groups: &[(usize, String)], what: &str) -> usize {
@@ -1336,8 +1496,40 @@ impl TileDocument {
         Ok(changed.len())
     }
 
+    /// Gives each instance group its own contents (`(group, contents)`), one undo entry. Returns how many changed.
+    ///
+    /// # Errors
+    ///
+    /// A group's contents do not read (nothing changes).
+    pub fn set_each_group_children(&mut self, groups: &[(usize, Vec<u8>)], what: &str) -> Result<usize, String> {
+        let mut groups = groups.iter().filter(|(g, c)| self.tile().tscene().children_text(*g) != *c).collect::<Vec<_>>();
+        groups.sort_unstable_by_key(|(g, _)| *g);
+        groups.dedup_by_key(|(g, _)| *g);
+        if groups.is_empty() {
+            return Ok(0);
+        }
+
+        // From the last one: an edit moves only the indices after it.
+        let mark = self.begin()?;
+        for (g, c) in groups.iter().rev() {
+            if let Err(e) = self.tscene_mut().set_children_text(*g, c) {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                return Err(e);
+            }
+        }
+
+        self.push_splice(what.to_owned(), mark, vec![], vec![]);
+        Ok(groups.len())
+    }
+
     /// One undo entry; the selection afterwards is empty.
     pub fn remove_items(&mut self, elems: &[usize]) -> bool {
+        if let Err(err) = self.check_structure(elems, None) {
+            wce_foundation::log::warn(err);
+            return false;
+        }
+
         let sc = self.tile().tscene();
         let valid = elems.iter().copied().filter(|&e| e < sc.doc().elements().len() && sc.type_of(e) != "SCENE_GRAPH").collect();
         let top = top_level(sc, valid);
@@ -1362,6 +1554,7 @@ impl TileDocument {
     ///
     /// Not a layer, or a layer that can't be copied.
     pub fn duplicate_layer(&mut self, layer: usize) -> Result<usize, String> {
+        self.check_structure(&[layer], None)?;
         let sc = self.tile().tscene();
         if layer >= sc.doc().elements().len() || !sc.is_layer(layer) || sc.type_of(layer) == "SCENE_GRAPH" {
             return Err("not a layer".to_owned());
@@ -1583,6 +1776,9 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         ins.section(sc.type_of(e));
+        self.override_rows(e, ins);
+        let t = self.tile();
+        let sc = t.tscene();
         let before = sc.name(e);
         if sc.doc().get(e, "name").is_some() {
             // TEd renames in the Scene tab; the name is not one of the properties.
@@ -1625,7 +1821,8 @@ impl TileDocument {
 
         // The rows of TEd's Property Editor, in its order.
         ins.section("Properties");
-        let mut shown = vec!["name"];
+        // The reference's key is the prefab row above.
+        let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR];
         for prop in schema {
             shown.push(prop.attr);
             if let Some(twin) = prop.twin {

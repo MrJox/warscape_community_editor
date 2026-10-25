@@ -41,6 +41,19 @@ pub trait Inspector {
 
     fn section(&mut self, title: &str);
 
+    /// Marks the rows that follow of these fields (a field also marks its parts, `flags` marks `flags.visible`), each with a note: a
+    /// prefab reference's overrides, with the prefab's value. The ImGui inspector draws their labels in the warning colour, the note as their
+    /// tooltip. Until the target changes.
+    fn mark_fields(&mut self, marks: Vec<(String, String)>) {
+        let _ = marks;
+    }
+
+    /// A button; true when it was clicked.
+    fn button(&mut self, field: &str, label: &str) -> bool {
+        let _ = (field, label);
+        false
+    }
+
     /// Read-only.
     fn text(&mut self, field: &str, label: &str, value: &str);
 
