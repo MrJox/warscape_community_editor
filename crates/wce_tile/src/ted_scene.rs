@@ -33,6 +33,20 @@ pub fn format_ted_number(v: f64) -> String {
     trim_fraction(&printf_f_msvc(d, 6)).to_owned()
 }
 
+/// A number at full precision, as tile.wce keeps it (the shortest text that reads back as the same f64); TEd's precision is applied when a
+/// tile is converted for it (`project_files::to_ted`).
+pub fn format_number(v: f64) -> String {
+    if !v.is_finite() {
+        return printf_g(v);
+    }
+
+    if v == 0.0 {
+        return "0".to_owned();
+    }
+
+    format!("{v}")
+}
+
 /// `%g` (6 significant digits) of the value as float32, used for `<point position="x,y,z">`.
 pub fn format_general(v: f64) -> String {
     printf_g(f64::from(v as f32))
@@ -272,12 +286,12 @@ impl TedScene {
 
     fn set_vector(&mut self, elem: usize, attr: &str, prefix: &str, v: Double3) {
         if let Some(old) = self.doc.get(elem, attr).and_then(|cur| parse_vec3(&cur, prefix))
-            && (0..3).all(|i| old[i] as f32 == v[i] as f32)
+            && (0..3).all(|i| old[i] == v[i])
         {
             return;
         }
 
-        let text = format!("{prefix}({},{},{})", format_ted_number(v.x), format_ted_number(v.y), format_ted_number(v.z));
+        let text = format!("{prefix}({},{},{})", format_number(v.x), format_number(v.y), format_number(v.z));
         self.doc.set(elem, attr, &text);
     }
 
@@ -436,7 +450,7 @@ impl TedScene {
     /// No such layer, or it has no children element.
     pub fn add_group(&mut self, parent_layer: Option<usize>, name: &str, position: Double3) -> Result<usize> {
         let mut open = b"<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE\" lf_offset=\"0\" low_frequency_change_effect=\"GRM_AS_SINGLE\" position=\"".to_vec();
-        open.extend_from_slice(format!("vector({},{},{})", format_ted_number(position.x), format_ted_number(position.y), format_ted_number(position.z)).as_bytes());
+        open.extend_from_slice(format!("vector({},{},{})", format_number(position.x), format_number(position.y), format_number(position.z)).as_bytes());
         open.extend_from_slice(b"\" name=\"");
         open.extend(encode_entities(name.as_bytes(), b'"'));
         open.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
@@ -751,13 +765,13 @@ impl TedScene {
 
     fn refresh_area(&mut self, elem: usize) {
         if self.doc.get(elem, "area").is_some() {
-            let area = format_ted_number(self.polygon_area(elem));
+            let area = format_number(self.polygon_area(elem));
             self.set_attr(elem, "area", &area);
         }
     }
 
     fn point_text(local: Double3) -> String {
-        format!("{},{},{}", format_general(local.x), format_general(local.y), format_general(local.z))
+        format!("{},{},{}", format_number(local.x), format_number(local.y), format_number(local.z))
     }
 
     /// Also refreshes `area`.
@@ -847,7 +861,7 @@ impl TedScene {
             c += p / n;
         }
 
-        a.insert("position".to_owned(), format!("vector({},{},{})", format_ted_number(c.x), format_ted_number(c.y), format_ted_number(c.z)));
+        a.insert("position".to_owned(), format!("vector({},{},{})", format_number(c.x), format_number(c.y), format_number(c.z)));
         a.insert("name".to_owned(), name.to_owned());
         let local = world_points.iter().map(|&p| p - c).collect::<Vec<_>>();
         let mut area = 0.0;
@@ -856,7 +870,7 @@ impl TedScene {
             area += p.x * q.z - q.x * p.z;
         }
 
-        a.insert("area".to_owned(), format_ted_number(area.abs() / 2.0));
+        a.insert("area".to_owned(), format_number(area.abs() / 2.0));
 
         self.doc.bake_pending().map_err(xml_error)?;
         let (at, ind) = self.append_point(layer, "layer has no children element")?;

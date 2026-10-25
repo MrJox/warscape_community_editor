@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use wce_foundation::math::Double3;
 
 use crate::instance_templates::template;
-use crate::ted_scene::{format_general, format_ted_number};
+use crate::ted_scene::format_number;
 
 /// A point of a polygon or a spline: its local position and attributes other than the template's (`controlIn`, `width`, ...).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -47,14 +47,14 @@ impl NewInstance {
     }
 }
 
-/// `vector(x,y,z)` as TEd writes a position.
+/// `vector(x,y,z)` (full precision: tile.wce's).
 pub fn vector(p: Double3) -> String {
-    format!("vector({},{},{})", format_ted_number(p.x), format_ted_number(p.y), format_ted_number(p.z))
+    format!("vector({},{},{})", format_number(p.x), format_number(p.y), format_number(p.z))
 }
 
-/// `x,y,z` as TEd writes a point.
+/// `x,y,z` of a point (full precision: tile.wce's).
 pub fn point_text(p: Double3) -> String {
-    format!("{},{},{}", format_general(p.x), format_general(p.y), format_general(p.z))
+    format!("{},{},{}", format_number(p.x), format_number(p.y), format_number(p.z))
 }
 
 /// The area a polygon's points enclose on the ground (x, z).
