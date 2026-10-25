@@ -34,6 +34,9 @@ pub const HINTS: [&str; 16] = [
     "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
 ];
 
+/// What the Scene tree's override marks were found for: the tile, its history (position, size) and the library's version.
+pub(crate) type OverrideMarksKey = (DocumentId, usize, usize, u64);
+
 /// The vegetation set being placed or painted: the new one (not saved) or a saved one by its name. It is read each time a tree is picked, so
 /// it follows the edits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,7 +161,7 @@ pub struct TileTool {
 
     /// The Scene tree's override marks: each reference's overridden items (`TileDocument::overridden_items`), found when a row of it is
     /// drawn, for the (tile, history, library) they were found for.
-    pub(crate) override_rows: ((DocumentId, usize, usize, u64), HashMap<usize, HashSet<usize>>),
+    pub(crate) override_rows: (OverrideMarksKey, HashMap<usize, HashSet<usize>>),
 
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
