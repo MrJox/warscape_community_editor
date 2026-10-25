@@ -20,12 +20,24 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, Create, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
 pub const POLYGON_TYPES: [&str; 5] =
     ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
+
+/// What the Create section makes (`TileDocument::create`, or `add_polygon` for the polygon types it had first): the type, whether it is placed
+/// with a click (true) or drawn, and what its key is called (none: no key).
+pub const CREATE_TYPES: [(&str, bool, Option<&str>); 20] = [
+    ("POINT_LIGHT_INSTANCE", true, None), ("VFXInstance", true, Some("effect (vfx)")), ("ProjectedDecalInstance", true, Some("decal model")),
+    ("SIMPLE_MESH_INSTANCE", true, Some("model")), ("VEGETATION_INSTANCE", true, Some("tree (species.variant)")), ("CivilianShelter", true, None),
+    ("CaptureLocationInstance", true, None), ("SiegeAINodeInstance", true, None), ("DeploymentZonePolygonInstanceGroup", true, None),
+    ("AI_HINT_POLYGON_INSTANCE", false, None), ("NOGO_REGION_POLYGON_INSTANCE", false, None), ("GO_REGION_POLYGON_INSTANCE", false, None),
+    ("VegetationExclusionPolygonInstance", false, None), ("SIEGE_AI_POLYGON_INSTANCE", false, None), ("ZONE_POLYGON_INSTANCE", false, None),
+    ("CivilianDeploymentZone", false, None), ("LiteBuildingZone", false, None), ("AISeparatorInstance", false, None),
+    ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", false, None), ("SiegeAIEdgeInstance", false, None),
+];
 
 pub const HINTS: [&str; 16] = [
     "AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
@@ -162,6 +174,11 @@ pub struct TileTool {
     pub(crate) drawing: bool,
     draw_pts: Vec<Float3>,
     pub(crate) new_poly_type: usize,
+
+    /// The Create section: the type (an index of CREATE_TYPES), its key, and whether clicks on the terrain place it now.
+    pub(crate) new_kind: usize,
+    pub(crate) new_key: String,
+    pub(crate) placing: bool,
     pub(crate) new_hint: usize,
     camera_set_for: DocumentId,
 
@@ -227,7 +244,7 @@ impl Default for TileTool {
             prefab_selected: String::new(), prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
+            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -343,6 +360,22 @@ impl TileTool {
         let (doc, key) = self.working_layer.as_ref().filter(|(doc, _)| *doc == d.id())?;
         let _ = doc;
         crate::scene_panel::layer_by_key(d.tile().tscene(), key)
+    }
+
+    /// Places the Create section's type at a point on the ground (in the working layer).
+    pub fn place_new(&mut self, e: &mut Editor, at: Float3) -> Result<String, String> {
+        let (kind, _, _) = CREATE_TYPES[self.new_kind];
+        let key = self.new_key.trim().to_owned();
+        let d = document(e).ok_or("no tile open")?;
+        let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
+        let at = Float3::new(at.x, d.tile().terrain_height(at.x, at.z), at.z);
+        d.create(kind, into, &Create::Point(at), &key).map(|_| format!("added {kind}"))
+    }
+
+    /// Picks the Create section's type by name.
+    pub fn set_new_kind(&mut self, kind: &str) -> Result<(), String> {
+        self.new_kind = CREATE_TYPES.iter().position(|(k, _, _)| *k == kind).ok_or_else(|| format!("{kind} can't be created here"))?;
+        Ok(())
     }
 
     /// Where new items go in the tile: the working layer, else the scene graph.
@@ -825,15 +858,29 @@ impl TileTool {
             return;
         }
 
+        let sel = primary(e);
         let Some(d) = document(e) else { return };
         self.drawing = false;
+        let kind = CREATE_TYPES[self.new_kind].0;
         let layer = self.new_items_layer(d);
 
-        let added = d.add_polygon(layer, POLYGON_TYPES[self.new_poly_type], HINTS[self.new_hint], &self.draw_pts);
+        // A deployment polygon goes into the selected deployment group.
+        let group = sel.and_then(|s| {
+            let sc = d.tile().tscene();
+            std::iter::successors(Some(s), |&x| sc.doc().elements()[x].parent).find(|&x| sc.type_of(x) == "DeploymentZonePolygonInstanceGroup")
+        });
+
+        let added = if POLYGON_TYPES.contains(&kind) {
+            d.add_polygon(layer, kind, HINTS[self.new_hint], &self.draw_pts)
+        } else {
+            let into = if kind == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" { group.or(layer) } else { layer };
+            into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.create(kind, into, &Create::Line(self.draw_pts.clone()), ""))
+        };
+
         self.draw_pts.clear();
         self.poly_point = None;
         self.status = match added {
-            Ok(el) => format!("added {} in {}", POLYGON_TYPES[self.new_poly_type], d.tile().tscene().layer_path(el)),
+            Ok(el) => format!("added {kind} in {}", Self::layer_label(d, d.tile().layer_of(el).unwrap_or(el))),
             Err(err) => err,
         };
     }
@@ -851,6 +898,8 @@ impl TileTool {
             } else if self.drawing {
                 self.drawing = false;
                 self.draw_pts.clear();
+            } else if self.placing {
+                self.placing = false;
             } else if self.mode != TileMode::Select {
                 self.mode = TileMode::Select;
             }
@@ -1667,22 +1716,54 @@ impl TileTool {
     }
 
     fn draw_polygon_panel(&mut self, e: &mut Editor, id: DocumentId) {
-        if !gui::collapsing_header("Polygons / AI hints", gui::TREE_DEFAULT_OPEN) {
+        if !gui::collapsing_header("Create", gui::TREE_DEFAULT_OPEN) {
             return;
         }
 
-        gui::set_next_item_width(260.0);
-        if gui::begin_combo("type", POLYGON_TYPES[self.new_poly_type]) {
-            for (i, t) in POLYGON_TYPES.iter().enumerate() {
-                if gui::selectable(t, i == self.new_poly_type, 0) {
-                    self.new_poly_type = i;
+        let (kind, placed, key_label) = CREATE_TYPES[self.new_kind];
+        gui::set_next_item_width(300.0);
+        if gui::begin_combo("type", &format!("{}  {kind}", crate::entity_types::type_icon(kind))) {
+            for (i, (t, p, _)) in CREATE_TYPES.iter().enumerate() {
+                let how = if *p { "click" } else { "draw" };
+                if gui::selectable(&format!("{}  {t}   ({how})", crate::entity_types::type_icon(t)), i == self.new_kind, 0) {
+                    self.new_kind = i;
+                    self.new_key.clear();
+                    self.placing = false;
                 }
             }
 
             gui::end_combo();
         }
 
-        if self.new_poly_type == 0 {
+        if let Some(label) = key_label {
+            let default = wce_tile::instance_templates::template(kind)
+                .and_then(|t| t.attrs.iter().find(|(k, _)| *k == if kind == "VFXInstance" { "vfx" } else { "key" }).map(|(_, v)| v.to_string()))
+                .unwrap_or_default();
+            gui::set_next_item_width(300.0);
+            gui::input_text(label, Some(&default), &mut self.new_key, 256, 0);
+        }
+
+        gui::text_disabled(&format!("into the working layer ({})", document(e).and_then(|d| self.working_layer_of(d).map(|l| Self::layer_label(d, l))).unwrap_or_else(|| "the root".to_owned())));
+        if placed {
+            if self.placing {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            if gui::button(if self.placing { "Placing: click the terrain (Esc stops)" } else { "Place (click the terrain)" }) {
+                self.placing = !self.placing;
+                self.drawing = false;
+            }
+
+            if self.placing {
+                gui::pop_style_color(1);
+            }
+
+            self.show_selected_polygon(e, id);
+            return;
+        }
+
+        self.placing = false;
+        if kind == "AI_HINT_POLYGON_INSTANCE" {
             gui::set_next_item_width(260.0);
             if gui::begin_combo("hint", HINTS[self.new_hint]) {
                 for (i, h) in HINTS.iter().enumerate() {
@@ -1696,7 +1777,7 @@ impl TileTool {
         }
 
         if !self.drawing {
-            if gui::button("Draw polygon") {
+            if gui::button("Draw (click the terrain; Enter finishes)") {
                 self.start_drawing();
                 self.status = "click the terrain to add points; Enter finishes, Esc cancels".to_owned();
             }
@@ -1714,6 +1795,11 @@ impl TileTool {
             }
         }
 
+        self.show_selected_polygon(e, id);
+    }
+
+    /// The selected polygon's points and area.
+    fn show_selected_polygon(&self, e: &mut Editor, id: DocumentId) {
         let sel = primary(e);
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         if let Some(s) = sel.filter(|&s| d.tile().is_polygon(s)) {
@@ -2058,6 +2144,14 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                if self.placing {
+                    if self.terrain_hit {
+                        self.status = self.place_new(e, self.cursor).unwrap_or_else(|err| err);
+                    }
+
+                    return true;
+                }
+
                 if let Some(kind) = self.mode.brush() {
                     let dt = e.clock.dt();
                     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
@@ -2208,7 +2302,7 @@ impl Tool for TileTool {
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
-        self.mode != TileMode::Select || self.drawing || self.grabbing
+        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

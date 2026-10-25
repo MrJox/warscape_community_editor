@@ -4,6 +4,8 @@
 pub mod battle_map;
 pub mod building_db;
 pub mod height_field;
+pub mod instance_templates;
+pub mod new_instances;
 pub mod prefabs;
 pub mod properties;
 pub mod property_enums;
