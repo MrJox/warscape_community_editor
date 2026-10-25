@@ -1149,6 +1149,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
     });
 
+    c.add("veg_set_add", "veg_set_add <key>...", "add trees to the new vegetation set (not saved), as Ctrl + click on them in the Create panel does", |e, a| {
+        if a.is_empty() {
+            return fail("usage: veg_set_add <key>...");
+        }
+
+        let keys = a.iter().map(|k| wce_tile::vegetation_sets::SetEntry { key: k.clone(), weight: 1.0, scale: None }).collect::<Vec<_>>();
+        with_tile(e, |t, _| {
+            t.add_to_new_set(&keys);
+            ok(t.status.clone())
+        })
+    });
+
+    c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: veg_set_save <name>") };
+        with_tile(e, |t, e| {
+            t.scratch_name = name;
+            t.save_new_set(e).map_or_else(fail, ok)
+        })
+    });
+
     c.add("veg_set", "veg_set <name>", "place or paint the trees of a vegetation set (as its Create panel entry)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: veg_set <name>") };
         with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))

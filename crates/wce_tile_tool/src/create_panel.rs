@@ -62,6 +62,11 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The new vegetation set (not saved) as an entry, to place or paint with it.
+    pub fn new_set_entry() -> Self {
+        Self { category: 1, label: "new vegetation set".to_owned(), make: Make::VegSet { name: String::new() }, search: String::new() }
+    }
+
     /// Its id in the favourites and the recent entries.
     pub fn id(&self) -> String {
         match &self.make {
@@ -203,7 +208,8 @@ impl TileTool {
         self.making = Some(en.label.clone());
         match &en.make {
             Make::VegSet { name } => {
-                let set = self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned();
+                // No name: the new set, not saved yet.
+                let set = if name.is_empty() { self.scratch_set.clone() } else { self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned() };
                 let Some(set) = set.filter(|s| !s.entries.is_empty()) else {
                     self.status = format!("the vegetation set {name} has no trees");
                     self.making = None;
@@ -490,7 +496,7 @@ impl TileTool {
         }
 
         gui::set_next_item_width(-1.0);
-        gui::input_text("##createfilter", Some(&format!("{}  search everything (Shift+A in the viewport)", icons::SEARCH)), &mut self.create.filter, 128, 0);
+        gui::input_text("##createfilter", Some(&format!("{}  search everything (Shift+A in the viewport; Ctrl + click a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, 0);
         let entries = self.create_entries(e);
         self.filter_entries(&entries);
         let words = words(&self.create.filter);
@@ -578,7 +584,21 @@ impl TileTool {
         }
 
         if let Some(i) = start {
-            self.start_making(e, &entries[i]);
+            // Ctrl + click on a tree (or a set): into the new set, not placed.
+            let into_set = match &entries[i].make {
+                Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
+                Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
+                _ => None,
+            };
+
+            match into_set.filter(|_| gui::io().KeyCtrl) {
+                Some(keys) => {
+                    self.add_to_new_set(&keys);
+                    e.pending_focus = Some("Inspector".to_owned());
+                }
+
+                None => self.start_making(e, &entries[i]),
+            }
         }
     }
 
