@@ -70,6 +70,49 @@ fn draw_icon(dl: DrawList, c: Vec2, icon: &str, col: u32) {
     dl.text(v2(c.x - w * 0.5, c.y - gui::text_line_height() * 0.5), col, icon);
 }
 
+/// A layer's name path as the tree keys it (`root/<name>#<ordinal among the siblings of that name>/...`, see `rebuild_tree`): it survives the
+/// index shifts of structural edits.
+pub(crate) fn layer_key(sc: &TedScene, layer: usize) -> Option<String> {
+    let mut chain = vec![layer];
+    let mut p = parent_layer(sc, layer);
+    while let Some(l) = p {
+        chain.push(l);
+        p = parent_layer(sc, l);
+    }
+
+    chain.reverse();
+    if Some(chain[0]) != sc.scene_graph() {
+        return None;
+    }
+
+    let mut key = "root".to_owned();
+    for w in chain.windows(2) {
+        let (parent, child) = (w[0], w[1]);
+        let nm = label_of(sc, child);
+        let ordinal = sc.children(parent).into_iter().take_while(|&k| k != child).filter(|&k| label_of(sc, k) == nm).count();
+        key = format!("{key}/{nm}#{ordinal}");
+    }
+
+    Some(key)
+}
+
+/// The layer with a name path (`layer_key`), if there still is one.
+pub(crate) fn layer_by_key(sc: &TedScene, key: &str) -> Option<usize> {
+    let mut parts = key.split('/');
+    if parts.next() != Some("root") {
+        return None;
+    }
+
+    let mut at = sc.scene_graph()?;
+    for part in parts {
+        let (nm, ordinal) = part.rsplit_once('#')?;
+        let ordinal = ordinal.parse::<usize>().ok()?;
+        at = sc.children(at).into_iter().filter(|&k| label_of(sc, k) == nm).nth(ordinal).filter(|&k| sc.is_layer(k))?;
+    }
+
+    Some(at)
+}
+
 /// The name shown for an element: its name, else its type.
 fn label_of(sc: &TedScene, e: usize) -> String {
     let n = sc.name(e);
@@ -297,19 +340,27 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
 
         gui::same_line();
         gui::begin_disabled(sel.is_empty());
+        let into = tool.new_items_layer(d);
         if gui::button("Group") {
-            match d.group_items(&sel, "New layer") {
-                Ok(_) => {
-                    tool.status = "grouped into a new layer".to_owned();
-                    tool.begin_rename_next = true;
-                }
-
-                Err(err) => tool.status = err,
-            }
+            tool.status = into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.group_instances(&sel, into, "")).map_or_else(|err| err, |_| "grouped".to_owned());
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Put the selected items into a new layer (Ctrl+G)");
+            gui::set_tooltip("Put the selected items into a new instance group in the working layer (Ctrl+G)");
+        }
+
+        gui::same_line();
+        let sc = d.tile().tscene();
+        let has_group = sel.iter().any(|&s| matches!(sc.type_of(s), "UserInstanceGroup" | "INSTANCE_GROUP"));
+        gui::begin_disabled(!has_group);
+        if gui::button("Ungroup") {
+            tool.status = into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.ungroup(&sel, into))
+                .map_or_else(|err| err, |freed| format!("ungrouped: {} items", freed.len()));
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Take the selected instance groups apart into the working layer (Ctrl+U)");
         }
 
         gui::same_line();
@@ -328,6 +379,35 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         gui::text_disabled(&format!("{} selected", sel.len()));
         if delete {
             tool.request_delete(e);
+        }
+    }
+
+    // The working layer, where new items go.
+    {
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let working = tool.working_layer_of(d);
+        if working.is_none() && tool.working_layer.as_ref().is_some_and(|(doc, _)| *doc == id) {
+            tool.working_layer = None;
+            tool.status = "the working layer is gone: new items go to the root".to_owned();
+        }
+
+        gui::align_text_to_frame_padding();
+        gui::text_colored(theme::palette().highlight, wce_editor::icons::SQUARE_PEN);
+        gui::same_line();
+        match working {
+            Some(l) => {
+                gui::text(&format!("Working layer: {}", TileTool::layer_label(d, l)));
+                gui::same_line();
+                if gui::small_button(&format!("{}##clearworking", wce_editor::icons::X)) {
+                    tool.working_layer = None;
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Clear the working layer: new items go to the root");
+                }
+            }
+
+            None => gui::text_disabled("Working layer: the root (right click a layer to set one)"),
         }
     }
 
@@ -461,7 +541,10 @@ fn export_menu(sc: &TedScene, layer: usize, actions: &mut Vec<RowAction>) {
 enum RowAction {
     SetFlags(Vec<usize>, &'static str, bool),
     AddLayer(usize, String),
+    GroupIntoLayer(Vec<usize>),
     Group(Vec<usize>),
+    Ungroup(Vec<usize>),
+    SetWorking(Option<usize>),
     MoveInto(Vec<usize>, usize),
     Rename(usize),
     DuplicateLayer(usize),
@@ -490,6 +573,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
     {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let working = tool.working_layer_of(d);
         let t = d.tile();
         let sc = t.tscene();
         let rows = tool.tree_rows.clone();
@@ -601,8 +685,27 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     actions.push(RowAction::AddLayer(el, row.key.clone()));
                 }
 
-                if !sel.is_empty() && gui::menu_item("Group selection into a new layer", Some("Ctrl+G"), false, true) {
+                if !sel.is_empty() && gui::menu_item("Group", Some("Ctrl+G"), false, true) {
                     actions.push(RowAction::Group(sel.clone()));
+                }
+
+                let has_group = sel.iter().any(|&s| matches!(sc.type_of(s), "UserInstanceGroup" | "INSTANCE_GROUP"));
+                if has_group && gui::menu_item("Ungroup", Some("Ctrl+U"), false, true) {
+                    actions.push(RowAction::Ungroup(sel.clone()));
+                }
+
+                if !sel.is_empty() && gui::menu_item("Group into a new layer", None, false, true) {
+                    actions.push(RowAction::GroupIntoLayer(sel.clone()));
+                }
+
+                if matches!(sc.type_of(el), "LayerInstance" | "SCENE_GRAPH") {
+                    if Some(el) == working {
+                        if gui::menu_item("Clear the working layer", None, false, true) {
+                            actions.push(RowAction::SetWorking(None));
+                        }
+                    } else if gui::menu_item("Set as the working layer", None, false, true) {
+                        actions.push(RowAction::SetWorking(Some(el)));
+                    }
                 }
 
                 if row.layer && !sel.is_empty() && !sel.contains(&el) && gui::menu_item("Move selection here", None, false, true) {
@@ -669,7 +772,13 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 theme::u32(theme::text())
             };
 
-            let tx = x0 + 16.0;
+            let mut tx = x0 + 16.0;
+
+            // The working layer: a pen before its name.
+            if Some(el) == working {
+                draw_icon(dl, v2(tx + 7.0, cy), wce_editor::icons::SQUARE_PEN, theme::u32(theme::palette().highlight));
+                tx += 18.0;
+            }
 
             if tool_ref.rename_elem == Some(el) {
                 gui::set_cursor_screen_pos(v2(tx, p0.y));
@@ -802,14 +911,27 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 Err(err) => tool.status = err,
             },
 
-            RowAction::Group(sel) => match d.group_items(&sel, "New layer") {
+            RowAction::GroupIntoLayer(sel) => match d.group_items(&sel, "New layer") {
                 Ok(_) => {
-                    tool.status = "grouped".to_owned();
+                    tool.status = "grouped into a new layer".to_owned();
                     tool.begin_rename_next = true;
                 }
 
                 Err(err) => tool.status = err,
             },
+
+            RowAction::Group(sel) => {
+                let into = tool.new_items_layer(d);
+                tool.status = into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.group_instances(&sel, into, "")).map_or_else(|err| err, |_| "grouped".to_owned());
+            }
+
+            RowAction::Ungroup(sel) => {
+                let into = tool.new_items_layer(d);
+                tool.status = into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.ungroup(&sel, into))
+                    .map_or_else(|err| err, |freed| format!("ungrouped: {} items", freed.len()));
+            }
+
+            RowAction::SetWorking(layer) => tool.status = tool.set_working_layer(d, layer).unwrap_or_else(|err| err),
 
             RowAction::MoveInto(sel, layer) => {
                 let name = d.tile().tscene().name(layer);
@@ -832,7 +954,12 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             }
 
             RowAction::CommitRename(el, name) => {
+                // The working layer is kept by its name path: renamed, it is keyed again.
+                let was_working = tool.working_layer_of(d) == Some(el);
                 d.rename(el, &name);
+                if was_working {
+                    let _ = tool.set_working_layer(d, Some(el));
+                }
             }
 
             RowAction::ToggleOpen(key, open) => {

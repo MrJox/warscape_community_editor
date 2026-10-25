@@ -407,6 +407,15 @@ impl TileDocument {
     ///
     /// No key, or no building to copy.
     pub fn add_building(&mut self, key: &str, template_elem: Option<usize>, at: Option<Float3>, mode: Placement) -> Result<usize, String> {
+        self.add_building_in(key, template_elem, at, mode, None)
+    }
+
+    /// [`Self::add_building`] into the layer `into` (the working layer, or the scene graph); `None`: next to the template.
+    ///
+    /// # Errors
+    ///
+    /// No key, or no building to copy.
+    pub fn add_building_in(&mut self, key: &str, template_elem: Option<usize>, at: Option<Float3>, mode: Placement, into: Option<usize>) -> Result<usize, String> {
         if key.is_empty() {
             return Err(String::new());
         }
@@ -415,7 +424,13 @@ impl TileDocument {
         let tmpl = template_elem.filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE").or_else(|| sc.find_all("BUILDING_INSTANCE").first().copied())
             .ok_or("no BUILDING_INSTANCE to use as a template in this tile")?;
         let mark = self.begin()?;
-        let copy = self.tscene_mut().duplicate(tmpl)?;
+        let mut copy = self.tscene_mut().duplicate(tmpl)?;
+        if let Some(into) = into.filter(|&l| self.tile().layer_of(copy) != Some(l)) {
+            let world = world_transform(self.tile().tscene(), copy);
+            copy = self.tscene_mut().move_element(copy, into, None)?;
+            self.keep_worlds(&[copy], &[world]);
+        }
+
         let sc = self.tscene_mut();
         sc.set_attr(copy, "key", key);
         sc.set_attr(copy, "name", key);
@@ -744,6 +759,137 @@ impl TileDocument {
         let new_layer = els[els[moved[0]].parent.expect("a children wrapper")].parent.expect("the new layer");
         self.push_splice("Group into layer".to_owned(), mark, sel_before, vec![item_of(new_layer)]);
         Ok(new_layer)
+    }
+
+    /// Groups items into a new instance group (TEd's `UserInstanceGroup`) in the layer `into` (the working layer, or the scene graph), at the
+    /// centre of the items, which keep their place in the world. One undo entry; the selection afterwards is the group.
+    ///
+    /// # Errors
+    ///
+    /// Nothing to group, the scene graph, or `into` inside one of the items.
+    pub fn group_instances(&mut self, elems: &[usize], into: usize, name: &str) -> Result<usize, String> {
+        let sc = self.tile().tscene();
+        let n = sc.doc().elements().len();
+        if elems.is_empty() || into >= n || !sc.is_layer(into) {
+            return Err("nothing to group, or no layer to put the group in".to_owned());
+        }
+
+        if elems.iter().any(|&e| e >= n || sc.type_of(e) == "SCENE_GRAPH") {
+            return Err("cannot group this element".to_owned());
+        }
+
+        let top = top_level(sc, elems.to_vec());
+        if top.iter().any(|&e| e == into || sc.is_descendant(into, e)) {
+            return Err("the working layer is inside the selection".to_owned());
+        }
+
+        let worlds = top.iter().map(|&e| world_transform(sc, e)).collect::<Vec<_>>();
+        let k = worlds.len() as f64;
+        let centre = worlds.iter().fold(Double3::default(), |a, w| a + w.position) * (1.0 / k);
+        let pw = world_transform(sc, into);
+        let local = pw.rotation.transpose() * (centre - pw.position);
+        let sel_before = top.iter().map(|&e| item_of(e)).collect::<Vec<_>>();
+        let mark = self.begin()?;
+        let result = (|| -> Result<(usize, Vec<usize>), String> {
+            let sc = self.tscene_mut();
+
+            // Appended to `into`: the elements after it shift by its size.
+            let group = sc.add_group(Some(into), if name.is_empty() { "Instance Group" } else { name }, local)?;
+            let shift = sc.doc().subtree_size(group);
+            let shifted = top.iter().map(|&e| if e >= group { e + shift } else { e }).collect();
+            let moved = sc.move_elements(shifted, group, None)?;
+            Ok((group, moved))
+        })();
+
+        let (group, moved) = match result {
+            Ok(r) => r,
+            Err(e) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                return Err(e);
+            }
+        };
+
+        self.keep_worlds(&moved, &worlds);
+
+        // The group sits before its moved contents when it came after them.
+        let els = self.tile().tscene().doc().elements();
+        let group = els[els[moved[0]].parent.expect("a children wrapper")].parent.unwrap_or(group);
+        self.push_splice("Group".to_owned(), mark, sel_before, vec![item_of(group)]);
+        Ok(group)
+    }
+
+    /// Takes instance groups apart: their contents go into the layer `into` (the working layer, or the scene graph), keeping their place in
+    /// the world, and the groups are deleted. Only instance groups (`UserInstanceGroup`, `INSTANCE_GROUP`) among `elems` are taken apart. One
+    /// undo entry; the selection afterwards is what they held.
+    ///
+    /// # Errors
+    ///
+    /// No group among the elements, or `into` inside one of them.
+    pub fn ungroup(&mut self, elems: &[usize], into: usize) -> Result<Vec<usize>, String> {
+        let sc = self.tile().tscene();
+        let n = sc.doc().elements().len();
+        let groups = top_level(sc, elems.iter().copied().filter(|&e| e < n && matches!(sc.type_of(e), "UserInstanceGroup" | "INSTANCE_GROUP")).collect());
+        if groups.is_empty() || into >= n || !sc.is_layer(into) {
+            return Err("no instance group selected".to_owned());
+        }
+
+        if groups.iter().any(|&g| g == into || sc.is_descendant(into, g)) {
+            return Err("the working layer is inside a selected group".to_owned());
+        }
+
+        let sel_before = groups.iter().map(|&e| item_of(e)).collect::<Vec<_>>();
+        let group_worlds = groups.iter().map(|&e| world_transform(sc, e)).collect::<Vec<_>>();
+        let mark = self.begin()?;
+        let result = (|| -> Result<Vec<usize>, String> {
+            // 1. The groups move into `into` together (they keep their place): they are its last children now.
+            let moved_groups = self.tscene_mut().move_elements(groups.clone(), into, None)?;
+            self.keep_worlds(&moved_groups, &group_worlds);
+
+            // 2. From the last group to the first: its contents go to the end of `into` and the empty group goes. Every change is after the
+            // groups still to do, so their indices hold.
+            let mut freed: Vec<usize> = vec![];
+            for &g in moved_groups.iter().rev() {
+                let sc = self.tile().tscene();
+                let kids = sc.children(g);
+                let worlds = kids.iter().map(|&k| world_transform(sc, k)).collect::<Vec<_>>();
+                if !kids.is_empty() {
+                    // The contents freed before sit after this group: cutting its contents moves them down by their size.
+                    let cut = kids.iter().map(|&k| sc.doc().subtree_size(k)).sum::<usize>();
+                    let moved = self.tscene_mut().move_elements(kids, into, None)?;
+                    self.keep_worlds(&moved, &worlds);
+                    for f in &mut freed {
+                        *f -= cut;
+                    }
+
+                    freed.extend(moved);
+                }
+
+                // Removing the (now empty) group moves what comes after it down by its size.
+                let size = self.tile().tscene().doc().subtree_size(g);
+                self.tscene_mut().remove(g)?;
+                for f in &mut freed {
+                    if *f > g {
+                        *f -= size;
+                    }
+                }
+            }
+
+            Ok(freed)
+        })();
+
+        match result {
+            Ok(freed) => {
+                self.push_splice(if groups.len() == 1 { "Ungroup".to_owned() } else { format!("Ungroup {} groups", groups.len()) }, mark, sel_before, freed.iter().map(|&m| item_of(m)).collect());
+                Ok(freed)
+            }
+
+            Err(e) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(e)
+            }
+        }
     }
 
     /// One undo entry; the selection afterwards is empty.
