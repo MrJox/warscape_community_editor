@@ -48,6 +48,13 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 pub use self::index::style_of;
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 
+/// What a new instance is made from (`TileDocument::create`): a point on the ground (world metres), or drawn points.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Create {
+    Point(Float3),
+    Line(Vec<Float3>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrushKind {
     Raise,

@@ -7,7 +7,7 @@ use wce_editor_core::inspector::{InspectTarget, Inspector};
 use wce_scene::render_scene::SourceRef;
 use wce_foundation::math::{Double3, Float3};
 use wce_tile::tile_project::TileProject;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, TileDocument, item_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, Create, TileDocument, item_of};
 
 const TED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <project version="16">
@@ -511,6 +511,54 @@ fn prefab_copies_are_placed_and_updated_together() {
     assert_eq!(d.set_groups_children(&copies, &new_children, "Update rocks").unwrap(), 0);
 
     for _ in 0..3 {
+        d.history_mut().undo();
+    }
+
+    assert_eq!(text(&d), original);
+}
+
+#[test]
+fn every_kind_is_created_with_its_parts() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let at = Create::Point(Float3::new(10.0, 0.0, 10.0));
+    let drawn = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(20.0, 0.0, 0.0), Float3::new(20.0, 0.0, 20.0)]);
+    let cases: [(&str, &Create, &str, &[&str]); 12] = [
+        ("POINT_LIGHT_INSTANCE", &at, "", &[]),
+        ("ProjectedDecalInstance", &at, "rigidmodels/decals/x.rigid_model_v2", &[]),
+        ("VFXInstance", &at, "enviro_vfx_smoke", &[]),
+        ("CivilianShelter", &at, "", &[]),
+        ("CaptureLocationInstance", &at, "", &["CaptureLocationPolygonInstance"]),
+        ("SiegeAINodeInstance", &at, "", &["SIEGE_AI_POLYGON_INSTANCE"]),
+        ("DeploymentZonePolygonInstanceGroup", &at, "", &["DEPLOYMENT_ZONE_POLYGON_INSTANCE"]),
+        ("ZONE_POLYGON_INSTANCE", &drawn, "", &[]),
+        ("LiteBuildingZone", &drawn, "", &[]),
+        ("AISeparatorInstance", &drawn, "", &[]),
+        ("SiegeAIEdgeInstance", &drawn, "", &["SIEGE_AI_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE"]),
+        ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", &drawn, "", &[]),
+    ];
+
+    for (kind, shape, key, parts) in cases {
+        let e = d.create(kind, graph, shape, key).unwrap_or_else(|err| panic!("{kind}: {err}"));
+        let sc = d.tile().tscene();
+        let made = if kind == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" { sc.children(e)[0] } else { e };
+        assert_eq!(sc.type_of(made), kind, "a drawn deployment polygon outside a group comes in a new group");
+        assert_eq!(sc.children(made).iter().map(|&c| sc.type_of(c)).collect::<Vec<_>>(), parts, "{kind}");
+        if !key.is_empty() {
+            let attr = if kind == "VFXInstance" { "vfx" } else { "key" };
+            assert_eq!(sc.doc().get(made, attr).as_deref(), Some(key));
+        }
+
+        if let Create::Point(p) = shape {
+            let w = d.tile().world_position(made);
+            assert!((w.x - p.x).abs() < 1e-3 && (w.z - p.z).abs() < 1e-3, "{kind} at {w:?}");
+        }
+    }
+
+    // The file reads back, and every addition undoes.
+    assert!(wce_tile::ted_scene::TedScene::parse(text(&d)).is_ok());
+    for _ in 0..12 {
         d.history_mut().undo();
     }
 

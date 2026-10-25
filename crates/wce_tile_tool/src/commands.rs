@@ -796,9 +796,33 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| {
             let Some(d) = document(e) else { return no_tile() };
             let layer = t.new_items_layer(d);
-            d.add_polygon(layer, &kind, &hint, &pts).map_or_else(fail, |_| ok(format!("added {kind}")))
+            if crate::tool::POLYGON_TYPES.contains(&kind.as_str()) {
+                d.add_polygon(layer, &kind, &hint, &pts).map_or_else(fail, |_| ok(format!("added {kind}")))
+            } else {
+                let Some(layer) = layer else { return fail("this tile has no scene graph") };
+                d.create(&kind, layer, &wce_tile_editor::tile_document::Create::Line(pts), "").map_or_else(fail, |_| ok(format!("added {kind}")))
+            }
         })
     });
+
+    c.add(
+        "create", "create <type> <x m> <z m> [key]",
+        "place a new instance of a type (a light, an effect, a decal, a capture location, ...; see the Create section) on the ground at x z, in the working layer",
+        |e, a| {
+            let (Some(kind), Some(x), Some(z)) = (a.first().cloned(), a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v))) else {
+                return fail("usage: create <type> <x m> <z m> [key]");
+            };
+            let key = a.get(3).cloned().unwrap_or_default();
+            with_tile(e, |t, e| {
+                if let Err(err) = t.set_new_kind(&kind) {
+                    return fail(err);
+                }
+
+                t.new_key = key.clone();
+                t.place_new(e, Float3::new(x, 0.0, z)).map_or_else(fail, ok)
+            })
+        },
+    );
 
     c.add("polygon_point", "polygon_point move|insert|remove <index> <x m> <z m>", "edit a point of the selected polygon (insert: after the index)", |e, a| {
         let el = primary(e);

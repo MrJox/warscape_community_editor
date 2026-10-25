@@ -1,0 +1,960 @@
+{
+ "AISeparatorInstance": {
+  "count": 108,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "subdivision_length",
+   "max_subdivisions",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "type",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "subdivision_length": "5",
+   "max_subdivisions": "100",
+   "polygon_closed": "0",
+   "position": "vector(1599.862427,1.597856,1338.195313)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "type": "PALT_FORT",
+   "name": "AI Separator",
+   "polygon_shape": "PS_POLYGON",
+   "area": "0",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-329.896,-1.40591,-606.06"
+  }
+ },
+ "AI_HINT_POLYGON_INSTANCE": {
+  "count": 6166,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "subdivision_length",
+   "max_subdivisions",
+   "hint_type",
+   "is_generated",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "generated",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "subdivision_length": "5",
+   "max_subdivisions": "100",
+   "hint_type": "AIH_AMBUSH_FOREST",
+   "is_generated": "false",
+   "polygon_closed": "0",
+   "position": "vector(0,0,0)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "AI hint polygon",
+   "polygon_shape": "PS_POLYGON",
+   "area": "0",
+   "generated": "false",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-2,0,0"
+  }
+ },
+ "BUILDING_INSTANCE": {
+  "count": 1896156,
+  "order": [
+   "flags",
+   "opacity",
+   "building_tech_level",
+   "bounds_colour",
+   "indestructible",
+   "lf_offset",
+   "glow_amount",
+   "position",
+   "key",
+   "dirt_level",
+   "destruction_level",
+   "name",
+   "toggleable",
+   "burn",
+   "burn_amount",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "opacity": "1",
+   "building_tech_level": "TL_TECH_LEVEL1",
+   "bounds_colour": "argb(1.0,0.0,0.0,1.0)",
+   "indestructible": "false",
+   "lf_offset": "0",
+   "glow_amount": "1",
+   "position": "vector(0.420227,-0.5,0.44696)",
+   "key": "vines_pillar",
+   "dirt_level": "1",
+   "destruction_level": "0",
+   "name": "vines_pillar",
+   "burn": "false",
+   "burn_amount": "1",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(1.572894,0,0)",
+   "toggleable": "false",
+   "ai_breachable": "true",
+   "weak_wall": "false",
+   "dockable": "true",
+   "capture_location": "gate_c"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "CaptureLocationInstance": {
+  "count": 1006,
+  "order": [
+   "flag_facing",
+   "flags",
+   "lf_offset",
+   "database_type",
+   "position",
+   "min_num_players",
+   "type",
+   "name",
+   "max_num_players",
+   "flag_position",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flag_facing": "0",
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "lf_offset": "0",
+   "database_type": "capture_point_tower_only",
+   "position": "vector(978,20,1133)",
+   "min_num_players": "2",
+   "type": "CLT_MINOR",
+   "name": "plaza_a",
+   "max_num_players": "8",
+   "flag_position": "vector(11.317749,0,-12.765503)",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "children"
+  ],
+  "point_order": [],
+  "point_values": {}
+ },
+ "CaptureLocationPolygonInstance": {
+  "count": 1006,
+  "order": [
+   "flags",
+   "radius",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "radius": "20",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "polygon_closed": "1",
+   "position": "vector(0,0,0)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Boundary",
+   "polygon_shape": "PS_CIRCLE",
+   "area": "1236.064087",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "0,0,30"
+  }
+ },
+ "CivilianDeploymentZone": {
+  "count": 941,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "civilian_type",
+   "civilian_amount",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(0.294,0.0,0.51,1.0)",
+   "civilian_type": "Urban",
+   "civilian_amount": "small",
+   "polygon_closed": "1",
+   "position": "vector(654.727295,1.222412,932.787537)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Civilian Deployment Zone",
+   "polygon_shape": "PS_POLYGON",
+   "area": "9021.925781",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-67.7767,-1.22241,90.8805"
+  }
+ },
+ "CivilianShelter": {
+  "count": 9095,
+  "order": [
+   "flags",
+   "target",
+   "lf_offset",
+   "colour_1",
+   "colour_2",
+   "position",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "target": "vector(699.182678,7.987986,667.823853)",
+   "lf_offset": "0",
+   "colour_1": "argb(0.0,1.0,0.0,0.8)",
+   "colour_2": "argb(1.0,0.0,0.0,0.8)",
+   "position": "vector(746.720581,7.993208,760.913757)",
+   "name": "Civilian Shelter",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "DEPLOYMENT_ZONE_POLYGON_INSTANCE": {
+  "count": 800,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "subdivision_length",
+   "max_subdivisions",
+   "polygon_closed",
+   "position",
+   "deployment_polygon_type",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,0.0,0.0,0.7)",
+   "subdivision_length": "5",
+   "max_subdivisions": "100",
+   "polygon_closed": "1",
+   "position": "vector(0,0,0)",
+   "deployment_polygon_type": "DZPT_ADDITIVE",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Deployment Zone Polygon",
+   "polygon_shape": "PS_POLYGON",
+   "area": "266240",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-400,9.53674e-07,-144"
+  }
+ },
+ "DeploymentZonePolygonInstanceGroup": {
+  "count": 403,
+  "order": [
+   "flags",
+   "deployment_category",
+   "lf_offset",
+   "deployment_type",
+   "new_polygon_type",
+   "position",
+   "facing_direction",
+   "deployment_zone_id",
+   "name",
+   "add_polygon",
+   "alliance_id",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "deployment_category": "DAC_AMBUSH",
+   "lf_offset": "0",
+   "deployment_type": "EDZT_1V1",
+   "new_polygon_type": "PDM_POLYGON",
+   "position": "vector(512,2.62366,510)",
+   "facing_direction": "0",
+   "deployment_zone_id": "0",
+   "name": "Deployment Zone",
+   "add_polygon": "0",
+   "alliance_id": "1",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "children"
+  ],
+  "point_order": [],
+  "point_values": {}
+ },
+ "GO_REGION_POLYGON_INSTANCE": {
+  "count": 222,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(0.0,0.25,0.0,1.0)",
+   "polygon_closed": "1",
+   "position": "vector(977.638306,15.674683,776.242004)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Go region",
+   "polygon_shape": "PS_POLYGON",
+   "area": "1347682.375",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "810.327,-2.51383,915.284"
+  }
+ },
+ "LiteBuildingZone": {
+  "count": 140,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,0.78,0.98,1.0)",
+   "polygon_closed": "1",
+   "position": "vector(1143.5,14.432783,458)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Lite Building zone",
+   "polygon_shape": "PS_POLYGON",
+   "area": "371891.34375",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-276.5,2.56699,74"
+  }
+ },
+ "NOGO_REGION_POLYGON_INSTANCE": {
+  "count": 3981,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(0.65,0.0,0.0,1.0)",
+   "polygon_closed": "1",
+   "position": "vector(24.481812,-0.008137,15.757446)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "No-go region",
+   "polygon_shape": "PS_POLYGON",
+   "area": "247.357101",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-3.23584,-0.062662,2.62805"
+  }
+ },
+ "POINT_LIGHT_INSTANCE": {
+  "count": 166054,
+  "order": [
+   "random_offset",
+   "flags",
+   "animation_type",
+   "radius",
+   "falloff_type",
+   "lf_offset",
+   "position",
+   "colour_min",
+   "colour_scale",
+   "colour",
+   "name",
+   "surface_mode",
+   "orientation",
+   "animation_speed_scale"
+  ],
+  "values": {
+   "random_offset": "0",
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "animation_type": "LAT_NONE",
+   "radius": "2.044122",
+   "falloff_type": "WPLFT_SMOOTH",
+   "lf_offset": "0",
+   "position": "vector(0,0,0)",
+   "colour_min": "0",
+   "colour_scale": "0.8",
+   "colour": "argb(1.0,0.882353,0.796078,1.0)",
+   "name": "Point light",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(12.566371,0,0)",
+   "animation_speed_scale": "vector(0,0)"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "ProjectedDecalInstance": {
+  "count": 1921915,
+  "order": [
+   "flags",
+   "scale",
+   "lf_offset",
+   "position",
+   "key",
+   "name",
+   "surface_mode",
+   "orientation",
+   "parallax_scale",
+   "tiled"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "scale": "vector(12,20,-3)",
+   "lf_offset": "0",
+   "position": "vector(0.047363,-2.204741,0.963867)",
+   "key": "rigidmodels\\decals\\battle\\border_1.rigid_model_v2",
+   "name": "Projected Decal",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0.005208,0,0)",
+   "parallax_scale": "0.1",
+   "tiled": "false"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "SEGMENTED_SPLINE_INSTANCE": {
+  "count": 4,
+  "order": [
+   "flags",
+   "lf_offset",
+   "position",
+   "step_size",
+   "select_all_points",
+   "closed",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "lf_offset": "-0.631566",
+   "position": "vector(-64.936005,-0.631566,127.818932)",
+   "step_size": "10",
+   "select_all_points": "0",
+   "closed": "0",
+   "name": "Segmented Spline Instance",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)",
+   "flatten": "0"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "width",
+   "terrain_offset",
+   "controlIn",
+   "position",
+   "controlOut"
+  ],
+  "point_values": {
+   "width": "15",
+   "terrain_offset": "-0.492745",
+   "controlIn": "0,0,0",
+   "position": "0,0,0",
+   "controlOut": "0,0,0"
+  }
+ },
+ "SIEGE_AI_POLYGON_INSTANCE": {
+  "count": 9085,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "polygon_closed": "0",
+   "position": "vector(0,0,-1)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Street boundary",
+   "polygon_shape": "PS_POLYGON",
+   "area": "0",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "12.5469,0,-8.5"
+  }
+ },
+ "SIMPLE_MESH_INSTANCE": {
+  "count": 1233,
+  "order": [
+   "show_collision",
+   "surface_mode",
+   "opacity",
+   "scale",
+   "burn_amount",
+   "key",
+   "visible_outside_snow_zone",
+   "name",
+   "bounds_colour",
+   "visible_outside_destruction_zone",
+   "flags",
+   "position",
+   "seasons",
+   "orientation",
+   "burn",
+   "glow_amount",
+   "visible_inside_snow_zone",
+   "visible_inside_destruction_zone",
+   "dirt_level",
+   "lf_offset"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "opacity": "1",
+   "bounds_colour": "argb(0.5,1.0,1.0,1.0)",
+   "scale": "vector(0.07,0.07,0.07)",
+   "lf_offset": "0",
+   "glow_amount": "0",
+   "position": "vector(-0.383118,0.850305,-0.453369)",
+   "dirt_level": "0",
+   "key": "RigidModels/Buildings/water_plane/water_plane.rigid_model_v2",
+   "show_collision": "false",
+   "name": "water_plane",
+   "burn": "false",
+   "burn_amount": "0",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(1.221731,0,0)",
+   "visible_outside_snow_zone": "true",
+   "visible_outside_destruction_zone": "true",
+   "seasons": " SEASON_BF_WINTER|SEASON_BF_SPRING|SEASON_BF_SUMMER|SEASON_BF_AUTUMN",
+   "visible_inside_snow_zone": "true",
+   "visible_inside_destruction_zone": "true"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "SiegeAIEdgeInstance": {
+  "count": 2419,
+  "order": [
+   "flags",
+   "lf_offset",
+   "position",
+   "add_boundary",
+   "type",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "lf_offset": "0",
+   "position": "vector(0,0,0)",
+   "add_boundary": "0",
+   "type": "SAET_STREET",
+   "name": "Siege AI Edge",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "children"
+  ],
+  "point_order": [],
+  "point_values": {}
+ },
+ "SiegeAINodeInstance": {
+  "count": 1632,
+  "order": [
+   "flags",
+   "lf_offset",
+   "position",
+   "add_boundary",
+   "type",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "lf_offset": "0",
+   "position": "vector(1024.026978,0.361359,1023.814209)",
+   "add_boundary": "0",
+   "type": "SANT_AREA",
+   "name": "Siege AI Node",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "children"
+  ],
+  "point_order": [],
+  "point_values": {}
+ },
+ "SplineRiverInstance": {
+  "count": 254,
+  "order": [
+   "flags",
+   "lf_offset",
+   "position",
+   "step_size",
+   "flatten",
+   "select_all_points",
+   "closed",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE",
+   "lf_offset": "0",
+   "position": "vector(0,0,0)",
+   "step_size": "10",
+   "flatten": "0",
+   "select_all_points": "0",
+   "closed": "0",
+   "name": "River Spline",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "width",
+   "foam_amount",
+   "alpha_fade",
+   "terrain_offset",
+   "controlIn",
+   "position",
+   "flow_speed",
+   "controlOut"
+  ],
+  "point_values": {
+   "width": "90",
+   "foam_amount": "0.1",
+   "alpha_fade": "1",
+   "terrain_offset": "0.5",
+   "controlIn": "0,0,0",
+   "position": "0,0,0",
+   "flow_speed": "0.5",
+   "controlOut": "0,0,0"
+  }
+ },
+ "VEGETATION_INSTANCE": {
+  "count": 1404435,
+  "order": [
+   "flags",
+   "scale",
+   "lf_offset",
+   "position",
+   "key",
+   "name",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "scale": "1",
+   "lf_offset": "0",
+   "position": "vector(0.010254,-1,1.131836)",
+   "key": "shrubs.shrub_rosec",
+   "name": "Vegetation Instance",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(14.209032,0,0)"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "VFXInstance": {
+  "count": 33956,
+  "order": [
+   "vfx",
+   "flags",
+   "use_in_outfield",
+   "scale",
+   "lf_offset",
+   "position",
+   "seasons",
+   "name",
+   "surface_mode",
+   "orientation",
+   "autoplay"
+  ],
+  "values": {
+   "vfx": "enviro_vfx_fire_loop",
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "use_in_outfield": "false",
+   "scale": "0.15",
+   "lf_offset": "0",
+   "position": "vector(0,2.4,0)",
+   "seasons": " SEASON_BF_WINTER|SEASON_BF_SPRING|SEASON_BF_SUMMER|SEASON_BF_AUTUMN",
+   "name": "VFX",
+   "surface_mode": "MSM_FREEFORM",
+   "orientation": "euler(0,0,0)",
+   "autoplay": "true"
+  },
+  "shape": [],
+  "point_order": [],
+  "point_values": {}
+ },
+ "VegetationExclusionPolygonInstance": {
+  "count": 12653,
+  "order": [
+   "flags",
+   "recenter_polygon",
+   "lf_offset",
+   "line_colour",
+   "polygon_closed",
+   "position",
+   "selected_line_colour",
+   "name",
+   "polygon_shape",
+   "area",
+   "surface_mode",
+   "orientation"
+  ],
+  "values": {
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "recenter_polygon": "0",
+   "lf_offset": "0",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "polygon_closed": "1",
+   "position": "vector(5.85791,0.024668,11.647583)",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "name": "Polygon Instance",
+   "polygon_shape": "PS_POLYGON",
+   "area": "111.639999",
+   "surface_mode": "MSM_LANDSCAPE",
+   "orientation": "euler(0,0,0)"
+  },
+  "shape": [
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "-22.8164,-0.036272,-13.0742"
+  }
+ },
+ "ZONE_POLYGON_INSTANCE": {
+  "count": 575,
+  "order": [
+   "surface_mode",
+   "area",
+   "name",
+   "selected_line_colour",
+   "purpose",
+   "polygon_closed",
+   "rank_count",
+   "flags",
+   "position",
+   "zone_skirt_distance",
+   "locked",
+   "polygon_shape",
+   "max_subdivisions",
+   "orientation",
+   "line_colour",
+   "recenter_polygon",
+   "rank_distance",
+   "subdivision_length",
+   "lf_offset"
+  ],
+  "values": {
+   "surface_mode": "MSM_LANDSCAPE",
+   "area": "241.631836",
+   "name": "Zone",
+   "selected_line_colour": "argb(1.0,0.0,0.0,1.0)",
+   "purpose": "EFP_LOW_WALL",
+   "polygon_closed": "1",
+   "rank_count": "0",
+   "flags": " OIF_VISIBLE|OIF_ACTIVE",
+   "position": "vector(-5.999939,0,-348)",
+   "zone_skirt_distance": "3",
+   "locked": "false",
+   "polygon_shape": "PS_POLYGON",
+   "max_subdivisions": "100",
+   "orientation": "euler(12.56637,0,0)",
+   "line_colour": "argb(1.0,1.0,1.0,1.0)",
+   "recenter_polygon": "0",
+   "rank_distance": "3",
+   "subdivision_length": "5",
+   "lf_offset": "0"
+  },
+  "shape": [
+   "children",
+   "points"
+  ],
+  "point_order": [
+   "position"
+  ],
+  "point_values": {
+   "position": "21.8269,0.0367384,351.278"
+  }
+ }
+}
