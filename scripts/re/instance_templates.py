@@ -24,4 +24,11 @@ for kind, v in d.items():
     out.append(f'    InstanceTemplate {{ kind: "{kind}", attrs: &[{attrs}], wrappers: &[{wrappers}], point_attrs: &[{points}] }},')
 out += ["];", "", "/// The defaults of a type.", "pub fn template(kind: &str) -> Option<&'static InstanceTemplate> {",
         "    TEMPLATES.iter().find(|t| t.kind == kind)", "}", ""]
+
+# An effect's own most common scale (the type's default is the torches' flame).
+scales = d.get("VFXInstance", {}).get("vfx_scales", {})
+out += ["/// The most common `scale` of each effect the kit places (`vfx`, scale).", "pub const VFX_SCALES: &[(&str, &str)] = &["]
+out += [f'    ("{k}", "{v}"),' for k, v in scales.items()]
+out += ["];", "", "/// The kit's most common scale of an effect.", "pub fn vfx_scale(vfx: &str) -> Option<&'static str> {",
+        "    VFX_SCALES.iter().find(|(k, _)| *k == vfx).map(|(_, s)| *s)", "}", ""]
 open(sys.argv[2], "w").write("\n".join(out))

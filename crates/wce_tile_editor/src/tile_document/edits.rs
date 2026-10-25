@@ -2012,9 +2012,10 @@ fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_t
             if key.is_empty() { n } else { n.attr("key", key) }
         }
 
+        // An effect at its own most common scale in the kit (the type's default is a torch's flame), else 1.
         "VFXInstance" => {
             let n = NewInstance::new(kind).position(at);
-            if key.is_empty() { n } else { n.attr("vfx", key) }
+            if key.is_empty() { n } else { n.attr("vfx", key).attr("scale", wce_tile::instance_templates::vfx_scale(key).unwrap_or("1")) }
         }
 
         "POINT_LIGHT_INSTANCE" => NewInstance::new(kind).position(at),
