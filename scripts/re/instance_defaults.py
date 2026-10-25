@@ -22,6 +22,9 @@ values = collections.defaultdict(lambda: collections.defaultdict(collections.Cou
 shapes = collections.defaultdict(collections.Counter)
 point_attrs = collections.defaultdict(collections.Counter)
 point_values = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+
+# An effect's scale depends on the effect (a torch's flame 0.15, a chimney's smoke 1, an area of mist 6): per effect.
+vfx_scales = collections.defaultdict(collections.Counter)
 counts = collections.Counter()
 
 root, out = sys.argv[1], sys.argv[2]
@@ -50,6 +53,10 @@ for n, path in enumerate(sorted(files)):
                 orders[name][tuple(k for k, _ in pairs)] += 1
                 for k, v in pairs:
                     values[name][k][v] += 1
+                if name == "VFXInstance":
+                    a = dict(pairs)
+                    if "vfx" in a and "scale" in a:
+                        vfx_scales[a["vfx"]][a["scale"]] += 1
             if name == "point" and len(stack) >= 2 and stack[-1][0] == "points" and stack[-2][0] in TYPES:
                 owner = stack[-2][0]
                 pairs = [(k.decode(), v.decode()) for k, v in ATTR.findall(attrs)]
@@ -72,5 +79,6 @@ for t in sorted(counts):
         "point_order": list(point_attrs[t].most_common(1)[0][0]) if point_attrs[t] else [],
         "point_values": {k: c.most_common(1)[0][0] for k, c in point_values[t].items()},
     }
+summary["VFXInstance"]["vfx_scales"] = {k: c.most_common(1)[0][0] for k, c in sorted(vfx_scales.items())}
 json.dump(summary, open(out, "w"), indent=1)
 print("done", file=sys.stderr)

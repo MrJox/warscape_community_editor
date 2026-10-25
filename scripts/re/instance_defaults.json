@@ -860,7 +860,27 @@
   },
   "shape": [],
   "point_order": [],
-  "point_values": {}
+  "point_values": {},
+  "vfx_scales": {
+   "campaign_vfx_volcano_active": "3",
+   "campaign_vfx_volcano_dormant": "50",
+   "enviro_mountain_cloud": "20",
+   "enviro_vfx_ambient_smoke_15m_medium": "8",
+   "enviro_vfx_brazier_fire": "2",
+   "enviro_vfx_butterflies_smarm_small": "1",
+   "enviro_vfx_chimney_smoke_heavy": "1",
+   "enviro_vfx_chimney_smoke_light": "1",
+   "enviro_vfx_fire_loop": "0.15",
+   "enviro_vfx_fire_smoke_heavy_loop": "1",
+   "enviro_vfx_fire_smoke_light_loop": "1",
+   "enviro_vfx_firefly_smarm_small": "1",
+   "enviro_vfx_fly_swarm_large": "1",
+   "enviro_vfx_mist_area_15m_light": "2",
+   "enviro_vfx_mist_area_15m_medium": "6",
+   "enviro_vfx_sand_drift": "1",
+   "enviro_vfx_smoke_heavy_loop": "1",
+   "enviro_vfx_smoke_light_loop": "1"
+  }
  },
  "VegetationExclusionPolygonInstance": {
   "count": 12653,

@@ -48,3 +48,30 @@ pub const TEMPLATES: &[InstanceTemplate] = &[
 pub fn template(kind: &str) -> Option<&'static InstanceTemplate> {
     TEMPLATES.iter().find(|t| t.kind == kind)
 }
+
+/// The most common `scale` of each effect the kit places (`vfx`, scale).
+pub const VFX_SCALES: &[(&str, &str)] = &[
+    ("campaign_vfx_volcano_active", "3"),
+    ("campaign_vfx_volcano_dormant", "50"),
+    ("enviro_mountain_cloud", "20"),
+    ("enviro_vfx_ambient_smoke_15m_medium", "8"),
+    ("enviro_vfx_brazier_fire", "2"),
+    ("enviro_vfx_butterflies_smarm_small", "1"),
+    ("enviro_vfx_chimney_smoke_heavy", "1"),
+    ("enviro_vfx_chimney_smoke_light", "1"),
+    ("enviro_vfx_fire_loop", "0.15"),
+    ("enviro_vfx_fire_smoke_heavy_loop", "1"),
+    ("enviro_vfx_fire_smoke_light_loop", "1"),
+    ("enviro_vfx_firefly_smarm_small", "1"),
+    ("enviro_vfx_fly_swarm_large", "1"),
+    ("enviro_vfx_mist_area_15m_light", "2"),
+    ("enviro_vfx_mist_area_15m_medium", "6"),
+    ("enviro_vfx_sand_drift", "1"),
+    ("enviro_vfx_smoke_heavy_loop", "1"),
+    ("enviro_vfx_smoke_light_loop", "1"),
+];
+
+/// The kit's most common scale of an effect.
+pub fn vfx_scale(vfx: &str) -> Option<&'static str> {
+    VFX_SCALES.iter().find(|(k, _)| *k == vfx).map(|(_, s)| *s)
+}
