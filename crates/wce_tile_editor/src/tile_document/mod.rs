@@ -21,6 +21,7 @@ pub mod context;
 mod edits;
 mod index;
 mod pick;
+mod preview;
 mod grass;
 mod vegetation;
 mod view;
@@ -396,6 +397,9 @@ pub struct Tile {
     /// The kit's `battlefield_buildings` (categories), read on first use.
     pub(crate) building_db: OnceCell<BuildingDb>,
 
+    /// What the tool is about to place, following the mouse (preview.rs).
+    pub(crate) preview: preview::Preview,
+
     /// Text typed into a line edit of the Property Editor and not applied yet, by (element, attribute): it is applied when the typing ends.
     pub(crate) drafts: HashMap<(usize, String), String>,
 
@@ -529,7 +533,7 @@ impl TileDocument {
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], columns: columns::ColumnState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
-            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
+            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), preview: preview::Preview::default(), drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
             clip_to_tile: false, material_clip_id: 0, context_lf: None,
