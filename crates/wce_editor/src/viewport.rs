@@ -244,6 +244,7 @@ impl Viewport {
 fn render(e: &mut Editor, w: u32, h: u32) {
     wce_prof!("viewport.render");
     let outline_style = e.selection_outline_style();
+    let selection = e.selection_entities();
     let Some(r) = e.renderer.as_mut() else { return };
     if e.scene.environment.active.is_none() {
         // Nothing lights the scene yet: the default environment with the player's output settings.
@@ -253,7 +254,7 @@ fn render(e: &mut Editor, w: u32, h: u32) {
 
     let vp = &mut e.viewport;
     r.settings.show_grid = vp.show_grid;
-    r.settings.selection = e.selection.entities(&e.scene);
+    r.settings.selection = selection;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     e.clock.tick();
     r.settings.deterministic = e.clock.fixed_step();
@@ -320,6 +321,7 @@ pub fn surfaces_below(e: &mut Editor, center: wce_foundation::math::Float3, size
 /// Offscreen: `frames` fixed-step frames of the scene at w x h, the last one written as PNG. No window is involved.
 pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool {
     let outline_style = e.selection_outline_style();
+    let selection = e.selection_entities();
     let Some(r) = e.renderer.as_mut() else { return false };
     if w < 16 || h < 16 {
         return false;
@@ -340,7 +342,7 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     // A capture is a function of the scene, not of the live frames before it.
     r.restart_temporal();
     r.settings.show_grid = e.viewport.show_grid;
-    r.settings.selection = e.selection.entities(&e.scene);
+    r.settings.selection = selection;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     for _ in 0..frames {
         clock.tick();
@@ -353,10 +355,12 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
 
 /// Frames the selected items (the bounds of their models and overlays).
 pub fn focus_selection(e: &mut Editor) {
-    let Some(r) = e.renderer.as_mut() else { return };
     if e.selection.is_empty() {
         return;
     }
+
+    let selected = e.selection_entities();
+    let Some(r) = e.renderer.as_mut() else { return };
 
     let mut lo = Float3::new(1e30, 1e30, 1e30);
     let mut hi = Float3::new(-1e30, -1e30, -1e30);
@@ -365,7 +369,7 @@ pub fn focus_selection(e: &mut Editor) {
         hi = Float3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
     };
 
-    for id in e.selection.entities(&e.scene) {
+    for id in selected {
         let Some(ent) = e.scene.find(id) else { continue };
         match &ent.payload {
             Payload::MeshInstance(mi) => {

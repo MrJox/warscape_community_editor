@@ -1,6 +1,6 @@
 //! Prefabs in the Tile tool (`wce_tile::prefabs`): the library of TEd's saved groups (`<kit raw_data>/art/prefabs` of the kits and of the
-//! tile), the Prefabs panel to place them, and the copies in the tile: an instance group named after a prefab's key is a copy, shown as one
-//! Prefab row (its contents are not listed, and a click on them selects the copy). "Edit prefab" opens a copy for editing; Apply writes the
+//! tile), the Prefabs panel to place them, and the copies in the tile: an instance group named after a prefab's key is a copy, shown as a
+//! Prefab row (its items listed when it is opened in the tree; a click on them in the viewport selects the copy). "Edit prefab" opens a copy for editing; Apply writes the
 //! prefab file and gives every other copy in the tile the new contents (one undo entry), Cancel gives the copy the file's contents back.
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
 
@@ -188,8 +188,8 @@ impl TileTool {
     }
 
     /// The selection with the contents of closed copies replaced by the copies (once per frame, after the clicks). A click on an item of a
-    /// copy that was selected opens the copy: its items are selected and edited (a reference's edits are its overrides) until the selection
-    /// leaves it.
+    /// copy that was selected (in the viewport), or on an item's row in the Scene tree, opens the copy: its items are selected and edited (a
+    /// reference's edits are its overrides) until the selection leaves it.
     pub(crate) fn select_whole_prefabs(&mut self, e: &mut Editor) {
         let Some(id) = document_id(e) else { return };
 
@@ -205,6 +205,7 @@ impl TileTool {
         }
 
         let previous = std::mem::take(&mut self.prefab_sel_before);
+        let from_tree = std::mem::take(&mut self.tree_picked);
         let sc = d.tile().tscene();
         let els = sc.doc().elements();
         let sel = selected(e);
@@ -221,7 +222,7 @@ impl TileTool {
                 p = els[q].parent;
             }
 
-            copy.filter(|c| previous.contains(c))
+            copy.filter(|c| from_tree || previous.contains(c))
         });
 
         if let Some(c) = opening && let Some(key) = layer_key(sc, c) {

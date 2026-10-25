@@ -140,6 +140,12 @@ pub trait Document: Any {
         String::new()
     }
 
+    /// The items a selected item is outlined (and framed) by in the viewport: itself, or what it holds when it draws nothing of its own (a
+    /// group: the items below it).
+    fn outline_items(&self, item: SourceRef) -> Vec<SourceRef> {
+        vec![item]
+    }
+
     /// Identifies the file a document came from (a normalized in-pack path); an open request for the same key activates the open document instead.
     fn source_key(&self) -> String {
         String::new()

@@ -682,6 +682,15 @@ impl Document for TileDocument {
         self.tile().describe(item)
     }
 
+    /// A layer or a group (a prefab copy too): the instances below it.
+    fn outline_items(&self, item: SourceRef) -> Vec<SourceRef> {
+        let sc = self.tile().tscene();
+        match elem_of(item.item).filter(|&e| e < sc.doc().elements().len() && sc.is_layer(e) && sc.type_of(e) != "SCENE_GRAPH") {
+            Some(e) => self.tile().instances_below(&[e]).into_iter().map(|i| SourceRef { doc: item.doc, item: item_of(i) }).collect(),
+            None => vec![item],
+        }
+    }
+
     fn source_key(&self) -> String {
         self.tile().project.dir.to_string_lossy().replace('\\', "/").to_lowercase()
     }
