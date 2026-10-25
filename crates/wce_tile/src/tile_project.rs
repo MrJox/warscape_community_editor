@@ -614,6 +614,16 @@ impl TileProject {
     ///
     /// The scene does not convert, or a file can't be written.
     pub fn save_for_kit(&self, kit_dir: &Path) -> Result<(String, TedReport)> {
+        self.save_for_kit_scene(kit_dir, self.scene.save(), vec![])
+    }
+
+    /// [`Self::save_for_kit`] with the scene given as text (the project's with a feature's polyfill applied that needs more than the
+    /// scene, the procedural walls), its polyfills listed in the report with the conversion's.
+    ///
+    /// # Errors
+    ///
+    /// As `save_for_kit`.
+    pub fn save_for_kit_scene(&self, kit_dir: &Path, scene: Vec<u8>, polyfilled: Vec<String>) -> Result<(String, TedReport)> {
         std::fs::create_dir_all(kit_dir).map_err(|error| format!("{}: {error}", kit_dir.display()))?;
         // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak`.
         let write = |name: &str, bytes: &[u8]| -> Result<bool> {
@@ -631,7 +641,8 @@ impl TileProject {
             Ok(true)
         };
 
-        let (ted, report) = crate::project_files::to_ted(self.scene.save())?;
+        let (ted, mut report) = crate::project_files::to_ted(scene)?;
+        report.polyfilled.splice(0..0, polyfilled);
         write(TED_FILE, &ted)?;
 
         // Every river's file, with the factors of the project's (`river_files`); the files past the last river become empty.

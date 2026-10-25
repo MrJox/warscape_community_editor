@@ -642,3 +642,44 @@ fn an_item_tilted_to_its_surface_keeps_its_heading() {
 
     assert_eq!(text(&d), original);
 }
+
+#[test]
+fn import_from_the_kit_puts_the_walls_back_in_place_of_their_pieces() {
+    use wce_tile_editor::tile_document::WALL_SPLINE;
+
+    // The project: a wall in the Buildings layer.
+    let (_dir, mut project) = open();
+    let layer = project.tile().find_layer("Buildings");
+    let pts = [Float3::new(10.0, 0.0, 10.0), Float3::new(40.0, 0.0, 10.0), Float3::new(60.0, 0.0, 30.0)];
+    project.add_polygon(layer, WALL_SPLINE, "barbarian_fort_straight", &pts).unwrap();
+    let walls = project.wall_texts();
+    assert_eq!(walls.len(), 1);
+    assert_eq!(walls[0].0, "Buildings");
+
+    // The kit's copy, as Save for Assembly Kit wrote it: no wall, its pieces in their own layer.
+    let pieces = r#"                <LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" export_type="LayerExportType_Normal" lf_offset="0" position="vector(0,0,0)" name="WCE procedural walls" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                    <children>
+                        <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(10,0,10)" name="Wall: wce_x_0_00" surface_mode="MSM_LANDSCAPE" orientation="euler(0,0,0)" key="wce_x_0_00"/>
+                    </children>
+                </LayerInstance>
+            </children>
+        </SCENE_GRAPH>"#;
+    let kit_text = TED.replacen("            </children>\n        </SCENE_GRAPH>", pieces, 1);
+    let kit = tempfile::tempdir().unwrap();
+    std::fs::write(kit.path().join("tile.ted"), &kit_text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(kit.path()).unwrap(), None);
+    let before = text(&d);
+
+    assert_eq!(d.restore_walls(&walls).unwrap(), 1);
+    let after = String::from_utf8(text(&d)).unwrap();
+    assert!(!after.contains("WCE procedural walls") && !after.contains("wce_x_0_00"), "{after}");
+    let sc = d.tile().tscene();
+    let restored = sc.find_all(WALL_SPLINE);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(sc.layer_path(restored[0]), "Buildings");
+    assert_eq!(sc.polygon_points(restored[0]).len(), 3);
+
+    // One undo entry.
+    d.history_mut().undo();
+    assert_eq!(text(&d), before);
+}

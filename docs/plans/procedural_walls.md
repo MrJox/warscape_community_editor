@@ -455,6 +455,23 @@ Two attributes of the spline (Inspector rows; 0: none):
 - **Check:** `wall_generate_check` makes every piece with a stair again without steps. The meshes and platforms must be the same at the
   levels the step pieces lack, and different at the others. Passed for both families.
 
+## TEd: the walls as their pieces (user, 2026-10-25)
+
+- **The format:** after the rebase on the projects folder and tile.wce, the wall is `WceWallSpline` (tile.wce names what TEd lacks
+  `Wce...`), so the conversion to TEd never writes it: TEd, which drops an element type it doesn't know, never sees one.
+- **The polyfill (option A of three; B, the base pieces unbent, and C, a guide line, were not taken):** Save for Assembly Kit lowers the
+  walls as the game export does, into a top layer *WCE procedural walls* of tile.ted (`export::walls_for_kit`, `KIT_LAYER`); the pieces'
+  files and rows go into `@wce_proc_data.pack`, a movie pack in the game's `data`, which TEd and the game always load.
+- **One pack for every tile:** a tile's save replaces only its own (`pack::replace_in_proc_pack`): its pieces' folders (keys
+  `<prefix>_<wall>_<piece>`) and its file of each table (`db/<table>/<prefix>`), no rows merged. The prefix is now the whole folder under
+  `terrain/tiles/<kind>/` (`key_prefix`; it was its last two parts, which tiles like `.../1x1/aa` share). A tile saved without walls
+  takes its pieces out.
+- **The round trip:** Import from Assembly Kit takes the project's walls before the project is replaced, drops the pieces' layer from the
+  kit's copy and puts the walls back in their layers (`TileDocument::restore_walls`, one undo entry). What was done to the pieces in TEd
+  is lost (logged).
+- **The game export** stays self-contained: `wce_<tile>.pack` keeps its own copy of the pieces, the same keys as the movie pack.
+- **To check (TEd):** that TEd lists and draws the pieces from the movie pack, and that its export of the tile works with them.
+
 ## To confirm
 
 - **How units get onto an 8 m wall** from the ground: the bank's lowest platform is 4 m up. Checked in game on a vanilla wall (phase 0);

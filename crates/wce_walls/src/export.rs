@@ -25,6 +25,7 @@ use crate::building::{BuildingFiles, folder};
 use crate::db::{self, bytes_mut, cell_mut};
 use crate::lines::{self, DockingLine};
 use crate::pieces::{Piece, PieceWarp, StepFiles, make_piece, pieces, step_ranges};
+use crate::pack::PROC_PACK;
 use crate::scene;
 
 /// Docking lines of a generated piece are cut in lines of at most this many units (CA's 20 m radius curve has about 5).
@@ -68,12 +69,13 @@ fn extent(files: &dyn Files, key: &str) -> Option<(f64, f64)> {
     crate::logic::extent_x(&b).ok().map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a)
 }
 
-/// Lowers the scene's walls (see the module), `ground(x, z)` the terrain in scene units, keys prefixed with `prefix`.
+/// Lowers the scene's walls (see the module), `ground(x, z)` the terrain in scene units, keys prefixed with `prefix`; the pieces go in each
+/// wall's layer, or in the top layer named `into`.
 ///
 /// # Errors
 ///
 /// A base's files or rows don't read, a piece can't be made, or the scene can't be edited.
-pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files: &dyn Files, schema: &Schema, prefix: &str) -> Result<LoweredWalls, String> {
+pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files: &dyn Files, schema: &Schema, prefix: &str, into: Option<&str>) -> Result<LoweredWalls, String> {
     let mut out = LoweredWalls::default();
     let walls = scene::walls(scene);
     if walls.is_empty() {
@@ -196,7 +198,8 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
     // Lower the walls, the last first (an edit only moves the indices of the elements after it).
     lowered.sort_by(|a, b| b.0.cmp(&a.0));
     for (wall, placed) in lowered {
-        scene::lower(scene, wall, &placed)?;
+        // A layer made at the end of the scene graph comes after every wall: removing one does not move it.
+        scene::lower(scene, wall, &placed, into)?;
     }
 
     Ok(out)
@@ -232,12 +235,37 @@ pub fn pack_name(folder: &str) -> String {
     format!("wce_{}.pack", rest.to_lowercase())
 }
 
-/// The key prefix of a tile's walls: `wce_` and its folder's last two parts (a tile and its variation; for instance
-/// `wce_middle_men_city_edoras_medium`).
+/// The key prefix of a tile's walls: `wce_` and its folder under `terrain/tiles/<kind>/` joined by `_` (for instance
+/// `wce_middle_men_city_edoras_medium`), unique to the tile: the tiles saved for the Assembly Kit share [`PROC_PACK`].
 pub fn key_prefix(folder: &str) -> String {
-    let parts = folder.split('/').collect::<Vec<_>>();
-    let tail = parts[parts.len().saturating_sub(2)..].join("_").to_lowercase();
-    format!("wce_{}", tail.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>())
+    let rest = folder.trim_start_matches("terrain/tiles/").split('/').skip(1).collect::<Vec<_>>().join("_").to_lowercase();
+    format!("wce_{}", rest.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>())
+}
+
+/// The layer the walls' pieces go into in TEd's tile (Save for Assembly Kit): Import from Assembly Kit drops it and puts the project's walls
+/// back.
+pub const KIT_LAYER: &str = "WCE procedural walls";
+
+/// The polyfill of the procedural walls for TEd (Save for Assembly Kit): `scene` (the editor's tile.wce text, prefab references with their
+/// contents) with its walls lowered into [`KIT_LAYER`], and the tile's pieces put into [`PROC_PACK`] in `data` (the game's data folder) in
+/// place of what it had of the tile's. Returns the scene's text, the walls lowered and the notes.
+///
+/// # Errors
+///
+/// The project or the scene doesn't read, a wall can't be made, or the pack can't be written.
+pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, schema: &Schema, folder: &str, data: &Path) -> Result<(Vec<u8>, usize, Vec<String>), String> {
+    let unit = project.unit_scale;
+    let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
+    let mut scene = TedScene::parse_any(scene)?;
+    let walls = scene::walls(&scene).len();
+    let prefix = key_prefix(&wce_tile::project_files::unmark_extracted(folder));
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, Some(KIT_LAYER))?;
+    let mut notes = lowered.notes;
+    let pieces = lowered.bases.len();
+    let pack = data.join(PROC_PACK);
+    let others = crate::pack::replace_in_proc_pack(&pack, "attila", &prefix, lowered.files, lowered.tables.into_iter().collect())?;
+    notes.push(format!("{pieces} wall piece(s) of {prefix} written into {} ({others} file(s) of other tiles kept)", pack.display()));
+    Ok((scene.save(), walls, notes))
 }
 
 /// Exports a project with walls: `scene` (the editor's tile.wce text, prefab references with their contents) compiled with its walls
@@ -255,7 +283,7 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
-    let lowered = lower_walls(&mut scene, &ground, files, schema, &key_prefix(&folder))?;
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &key_prefix(&folder), None)?;
     let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
     let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
     let base_of = |k: &str| bases.get(k).cloned();

@@ -838,11 +838,7 @@ impl TileTool {
         // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
         if d.tile().has_walls() {
             let files = e.files().ok_or("no game files are mounted")?;
-            let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
-            let schema_path = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
-                .or_else(wce_tile_io::attila::game_data::default_schema_path)
-                .ok_or("the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)")?;
-            let schema = rpfm_lib::schema::Schema::load(&schema_path, None).map_err(|err| format!("{}: {err}", schema_path.display()))?;
+            let schema = walls_schema(e)?;
             let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &dir, text, out)?;
             for n in &notes {
                 log::info(format!("{}: {n}", saved.display()));
@@ -887,8 +883,22 @@ impl TileTool {
             None => self.kit_for(e, &kind).ok_or("no Assembly Kit (set it in the game's settings)")?,
         };
 
+        // The procedural walls are written as their pieces, which go into the game's data (and a tile without walls takes its old ones out).
+        let data = e.settings_ref().game_dir().map(|g| g.join("data"));
+        let has_walls = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().has_walls());
+        let pack_there = data.as_ref().is_some_and(|d| d.join(wce_walls::pack::PROC_PACK).is_file());
+        let files = e.files();
+        let schema = if has_walls || pack_there { Some(walls_schema(e)) } else { None };
+        let sources = match (&files, schema, &data) {
+            (Some(f), Some(Ok(schema)), Some(data)) => Some((f.clone(), schema, data.clone())),
+            (_, Some(Err(err)), _) if has_walls => return Err(err),
+            _ if has_walls => return Err("the procedural walls need the game's files and its folder (set them in the game's settings)".to_owned()),
+            _ => None,
+        };
+
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        d.save_for_kit(&kit)
+        let walls = sources.as_ref().map(|(f, schema, data)| wce_tile_editor::tile_document::kit::WallSources { files: f.as_ref(), schema, data });
+        d.save_for_kit(&kit, walls)
     }
 
     /// "Import from Assembly Kit": opens the kit's copy of the open project (its next save replaces the project); an extracted tile is
@@ -918,9 +928,22 @@ impl TileTool {
             return Err(format!("the Assembly Kit has no {kit_folder}"));
         }
 
+        // TEd has the walls' pieces, the project the walls: the pieces go and the walls come back (edits of the pieces in TEd are lost).
+        let walls = e.docs.find_as::<TileDocument>(id).map(TileDocument::wall_texts).unwrap_or_default();
         e.close_document(id);
         self.open_kit_copy = true;
-        let msg = self.open_folder(e, &dir.display().to_string())?;
+        let mut msg = self.open_folder(e, &dir.display().to_string())?;
+        if let Some(d) = document(e) {
+            match d.restore_walls(&walls) {
+                Ok(0) => {}
+                Ok(n) => {
+                    log::info(format!("Import from Assembly Kit: the layer '{}' replaced by the project's {n} procedural wall(s); edits of their pieces in TEd are not kept", wce_walls::export::KIT_LAYER));
+                    msg += &format!("; {n} procedural wall(s) put back in place of their pieces");
+                }
+                Err(err) => log::warn(format!("Import from Assembly Kit: the procedural walls could not be put back: {err}")),
+            }
+        }
+
         Ok(format!("{msg}  (the Assembly Kit's copy: saving it replaces the project)"))
     }
 
@@ -2806,6 +2829,19 @@ impl Tool for TileTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// rpfm's Attila schema, for the procedural walls' database rows: `WCE_RPFM_SCHEMA`, else the Tile settings' `rpfm_schema`, else rpfm's own.
+///
+/// # Errors
+///
+/// None is found, or it doesn't read.
+fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
+    let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
+    let path = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
+        .or_else(wce_tile_io::attila::game_data::default_schema_path)
+        .ok_or("the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)")?;
+    rpfm_lib::schema::Schema::load(&path, None).map_err(|err| format!("{}: {err}", path.display()))
 }
 
 /// A wall's layout in one line: base, length, corners, runs, steps, attached ends (scene units).
