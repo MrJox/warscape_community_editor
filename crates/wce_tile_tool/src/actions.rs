@@ -196,6 +196,10 @@ impl TileTool {
             return;
         }
 
+        if gui::menu_item(&one("New vegetation set from the selected trees...", icons::TREES), None, false, self.trees_selected(e)) {
+            self.request_new_vegetation_set();
+        }
+
         gui::separator();
         if gui::menu_item(&one("Delete", icons::TRASH_2), Some("Del"), false, some) {
             self.request_delete(e);

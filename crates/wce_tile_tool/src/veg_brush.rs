@@ -105,6 +105,7 @@ impl TileTool {
 
         let Some(d) = document(e) else { return };
         let key = self.draft.as_ref().map(|d| d.key.clone()).unwrap_or_default();
+        let set = self.veg_set.clone();
         let spacing = b.spacing.max(0.25);
 
         // As many tries as trees would fit at that spacing, times the fill.
@@ -121,9 +122,13 @@ impl TileTool {
                 continue;
             }
 
-            let scale = b.scale_min + (b.scale_max - b.scale_min).max(0.0) * self.random.unit();
+            // A set's tree is picked by the weights, with its own scale range if it has one.
+            let picked = set.as_ref().and_then(|s| s.pick(self.random.unit()));
+            let key = picked.map_or_else(|| key.clone(), |en| en.key.clone());
+            let (lo, hi) = picked.and_then(|en| en.scale).unwrap_or((b.scale_min, b.scale_max));
+            let scale = lo + (hi - lo).max(0.0) * self.random.unit();
             let yaw = if b.random_yaw { self.random.unit() * 360.0 } else { 0.0 };
-            stroke.planted.push(Planted { at: Float3::new(x, d.tile().terrain_height(x, z), z), key: key.clone(), scale, yaw });
+            stroke.planted.push(Planted { at: Float3::new(x, d.tile().terrain_height(x, z), z), key, scale, yaw });
         }
     }
 

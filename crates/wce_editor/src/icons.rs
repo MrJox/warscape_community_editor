@@ -110,3 +110,4 @@ pub const GROUP: &str = "\u{e464}";
 pub const UNGROUP: &str = "\u{e467}";
 pub const PLUS: &str = "\u{e13d}";
 pub const BRUSH: &str = "\u{e1d3}";
+pub const TREES: &str = "\u{e2f5}";
