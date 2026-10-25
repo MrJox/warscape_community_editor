@@ -306,6 +306,17 @@ pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::r
     r.pick_surface(scene, &params, &e.viewport.target, x, y, &|id| scene.find(id).is_some_and(skip))
 }
 
+/// The topmost surfaces over a `size` metres square of the ground around `center`, seen straight down at `res` x `res` pixels
+/// (`Renderer::surfaces_below`; overlays, locked layers and what `skip` says left out). For putting things on whatever is below a ground
+/// point, wherever the camera is.
+pub fn surfaces_below(e: &mut Editor, center: wce_foundation::math::Float3, size: f32, res: u32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceGrid> {
+    wce_prof!("viewport.surfaces_below");
+    let r = e.renderer.as_mut()?;
+    let params = ViewParams { camera: e.viewport.camera(), time_s: e.clock.time() as f32 };
+    let scene = &e.scene;
+    r.surfaces_below(scene, &params, center, size, res, &|id| scene.find(id).is_some_and(skip))
+}
+
 /// Offscreen: `frames` fixed-step frames of the scene at w x h, the last one written as PNG. No window is involved.
 pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool {
     let outline_style = e.selection_outline_style();

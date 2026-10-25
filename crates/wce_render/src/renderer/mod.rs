@@ -29,7 +29,7 @@ mod lights;
 mod grass;
 mod draws;
 mod editor;
-pub use self::editor::SurfaceHit;
+pub use self::editor::{SurfaceGrid, SurfaceHit};
 mod passes;
 mod post;
 mod shadow_fit;
