@@ -48,9 +48,9 @@ pub trait Inspector {
         let _ = marks;
     }
 
-    /// A button; true when it was clicked.
-    fn button(&mut self, field: &str, label: &str) -> bool {
-        let _ = (field, label);
+    /// A button, greyed out when not `enabled`; true when it was clicked.
+    fn button(&mut self, field: &str, label: &str, enabled: bool) -> bool {
+        let _ = (field, label, enabled);
         false
     }
 

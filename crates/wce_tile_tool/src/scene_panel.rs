@@ -131,9 +131,10 @@ impl TileTool {
 
         // With a filter: only the elements that match or hold a match, their layers open.
         let filter = self.tree_filter.trim().to_lowercase();
+        let mut opened = HashSet::new();
         let keep = (!filter.is_empty()).then(|| {
             let mut keep = HashSet::new();
-            mark_matches(sc, g, &filter, &mut keep);
+            mark_matches(sc, g, &filter, &mut keep, &mut opened);
             keep.insert(g);
             keep
         });
@@ -153,7 +154,7 @@ impl TileTool {
             // The types turned off at the top are not listed (layers and groups always are).
             kids.retain(|&k| sc.is_layer(k) || !hidden.contains(sc.type_of(k)));
 
-            let open = depth == 0 || (layer && !kids.is_empty() && (keep.is_some() || self.tree_open.contains(&key)));
+            let open = depth == 0 || (layer && !kids.is_empty() && (opened.contains(&e) || self.tree_open.contains(&key)));
             self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, open, kids: kids.len() });
             if !open {
                 continue;
@@ -252,20 +253,35 @@ impl TileTool {
 }
 
 /// Marks the elements under `e` that match the filter (name or type, lower-cased) or hold one; true when `e` is marked.
-fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>) -> bool {
-    let mut any = false;
-    if sc.is_layer(e) {
-        for k in sc.children(e) {
-            any |= mark_matches(sc, k, filter, keep);
+/// The rows a filter keeps: the elements that match, everything below them (`keep`), and the layers above them, which open (`open`; a
+/// match opens too, to show what it holds; below it, rows open as the user left them).
+fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>, open: &mut HashSet<usize>) -> bool {
+    if label_of(sc, e).to_lowercase().contains(filter) || sc.type_of(e).to_lowercase().contains(filter) {
+        let mut stack = vec![e];
+        while let Some(x) = stack.pop() {
+            keep.insert(x);
+            if sc.is_layer(x) {
+                stack.extend(sc.children(x));
+            }
         }
-    }
 
-    if any || label_of(sc, e).to_lowercase().contains(filter) || sc.type_of(e).to_lowercase().contains(filter) {
-        keep.insert(e);
+        open.insert(e);
         return true;
     }
 
-    false
+    let mut any = false;
+    if sc.is_layer(e) {
+        for k in sc.children(e) {
+            any |= mark_matches(sc, k, filter, keep, open);
+        }
+    }
+
+    if any {
+        keep.insert(e);
+        open.insert(e);
+    }
+
+    any
 }
 
 /// Where a drop on a row puts the dragged items.
@@ -278,6 +294,13 @@ enum Zone {
 
 pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     gui::set_next_window_size(v2(380.0, 600.0), gui::COND_FIRST_USE_EVER);
+
+    // A tile just opened: the Scene tree in front, to edit it (a few frames: a dock layout being applied takes the focus back).
+    if tool.scene_focus_frames > 0 {
+        tool.scene_focus_frames -= 1;
+        gui::set_next_window_focus();
+    }
+
     if !gui::begin("Scene", None, 0) {
         gui::end();
         return;
@@ -618,6 +641,13 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
     {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+
+        // The override marks are found again after an edit (or a new library).
+        let marks_key = (id, d.history().position(), d.history().size(), tool.prefab_version);
+        if tool.override_rows.0 != marks_key {
+            tool.override_rows = (marks_key, HashMap::new());
+        }
+
         let working = tool.working_layer_of(d);
         let edited_copy = tool.edited_copy(d);
         let lib = tool.prefabs.clone();
@@ -848,7 +878,23 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 }
             }
 
-            let text_col = if !vis {
+            // In a prefab reference: an item that overrides the prefab's values (in the warning colour, "override"), and the reference or a
+            // group in it holding some (how many).
+            let reference = if d.is_prefab_reference(el) { Some(el) } else { d.reference_above(el).map(|(r, _)| r) };
+            let (overridden, holds) = match reference {
+                Some(r) => {
+                    let items = tool_ref.override_rows.1.entry(r).or_insert_with(|| d.overridden_items(r).into_iter().collect());
+                    let els = sc.doc().elements();
+                    let below = items.iter().filter(|&&i| i != el && std::iter::successors(els.get(i).and_then(|x| x.parent), |&p| els.get(p).and_then(|x| x.parent)).any(|p| p == el)).count();
+                    (items.contains(&el), below)
+                }
+
+                None => (false, 0),
+            };
+
+            let text_col = if overridden {
+                theme::u32(theme::warning())
+            } else if !vis {
                 theme::u32(theme::dim())
             } else if !act {
                 theme::u32(theme::mix(theme::text(), theme::dim(), 0.5))
@@ -890,8 +936,18 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     label += &format!("  ({})", row.kids);
                 }
 
+                if overridden {
+                    label = format!("{} {label}  (override)", wce_editor::icons::TRIANGLE_ALERT);
+                }
+
                 dl.push_clip_rect(v2(tx, p0.y), v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH - 2.0, p0.y + row_h));
-                dl.text(v2(tx, p0.y + (row_h - gui::text_line_height()) * 0.5), text_col, &label);
+                let ty = p0.y + (row_h - gui::text_line_height()) * 0.5;
+                dl.text(v2(tx, ty), text_col, &label);
+                if holds != 0 {
+                    let w = gui::calc_text_size(&label).x;
+                    dl.text(v2(tx + w + 8.0, ty), theme::u32(theme::warning()), &format!("{} {holds}", wce_editor::icons::TRIANGLE_ALERT));
+                }
+
                 dl.pop_clip_rect();
             }
 
