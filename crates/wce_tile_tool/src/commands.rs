@@ -1016,6 +1016,55 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.ungroup_selection(e).map_or_else(fail, ok))
     });
 
+    // ---- prefabs (prefab_panel.rs)
+
+    c.add("prefab_list", "prefab_list [words]", "log the prefab library (key, folder), filtered by words", |e, a| {
+        let words = a.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+        with_tile(e, |t, e| {
+            let lib = t.prefab_library(e);
+            let rows = lib.entries().filter(|p| words.iter().all(|w| format!("{}/{}", p.folder, p.key).to_lowercase().contains(w))).map(|p| format!("{}  {}", p.key, p.folder)).collect::<Vec<_>>();
+            ok(format!("{} prefabs:\n{}", rows.len(), rows.join("\n")))
+        })
+    });
+
+    c.add("prefab_rescan", "prefab_rescan", "scan the prefab folders again", |e, _| with_tile(e, |t, e| ok(format!("{} prefabs", t.rescan_prefabs(e)))));
+
+    c.add("prefab_place", "prefab_place <key> [x m z m]", "place a prefab in the working layer, on the ground at x z (default: the view's centre)", |e, a| {
+        let Some(key) = a.first().cloned() else { return fail("usage: prefab_place <key> [x m z m]") };
+        let at = (a.len() >= 3).then(|| Some(Float3::new(number(&a[1])?, 0.0, number(&a[2])?))).flatten();
+        with_tile(e, |t, e| {
+            let at = at.unwrap_or_else(|| t.placement_point(e));
+            t.place_prefab(e, &key, at).map_or_else(fail, ok)
+        })
+    });
+
+    fn selected_group(e: &Editor) -> Option<usize> {
+        let d = e.docs.find_as::<TileDocument>(crate::tool::document_id(e)?)?;
+        selected(e).into_iter().find(|&el| d.tile().tscene().type_of(el) == "UserInstanceGroup")
+    }
+
+    c.add("prefab_edit", "prefab_edit", "edit the selected copy of a prefab", |e, _| {
+        let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
+        with_tile(e, |t, e| t.edit_prefab(e, g).map_or_else(fail, ok))
+    });
+
+    c.add("prefab_apply", "prefab_apply", "write the edited prefab and update its copies in this tile", |e, _| with_tile(e, |t, e| t.apply_prefab_edit(e).map_or_else(fail, ok)));
+    c.add("prefab_cancel", "prefab_cancel", "end the prefab edit without saving: the copy gets the file's contents back", |e, _| {
+        with_tile(e, |t, e| t.cancel_prefab_edit(e).map_or_else(fail, ok))
+    });
+
+    c.add("prefab_unpack", "prefab_unpack", "make the selected copy of a prefab a plain group", |e, _| {
+        let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
+        with_tile(e, |t, e| t.unpack_prefab(e, g).map_or_else(fail, ok))
+    });
+
+    c.add("prefab_save", "prefab_save <name> [folder]", "save the selected instance group as a new prefab (renamed after it)", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: prefab_save <name> [folder]") };
+        let folder = a.get(1).cloned().unwrap_or_default();
+        let Some(g) = selected_group(e) else { return fail("select an instance group") };
+        with_tile(e, |t, e| t.save_as_prefab(e, g, &name, &folder).map_or_else(fail, ok))
+    });
+
     c.add("tile_delete", "tile_delete <layer path | #elem | selected>", "delete layers / instances (with everything below)", |e, a| {
         let sel = selected(e);
         let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_delete <layer path | #elem | selected>") };

@@ -118,6 +118,20 @@ pub struct TileTool {
     /// drawn polygons, groups, ungrouped items); without one they go to the scene graph.
     pub(crate) working_layer: Option<(DocumentId, String)>,
 
+    /// The prefab library (`prefab_panel.rs`), scanned on first use; its changes (a rescan, a new prefab, an edit started or ended) are
+    /// counted so that the Scene tree is built again.
+    pub(crate) prefabs: Option<Arc<wce_tile::prefabs::PrefabLibrary>>,
+    pub(crate) prefab_version: u64,
+    pub(crate) tree_prefab_seen: u64,
+
+    /// The prefab copy being edited: the tile, the copy's name path (`scene_panel::layer_key`) and the prefab's key.
+    pub(crate) prefab_edit: Option<(DocumentId, String, String)>,
+    pub(crate) prefab_filter: String,
+    pub(crate) prefab_selected: String,
+
+    /// "Save as prefab": the group's name path, the name and the folder typed.
+    pub(crate) prefab_save: Option<(String, String, String)>,
+
     /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
     /// to scroll to.
     pub(crate) tree_synced: Option<usize>,
@@ -209,7 +223,8 @@ impl Default for TileTool {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
             building_key: String::new(), new_placement: Placement::Landscape, off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None, prefab_filter: String::new(),
+            prefab_selected: String::new(), prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], new_poly_type: 0, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(),
@@ -1834,6 +1849,7 @@ impl Tool for TileTool {
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.18);
         gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Tiles", left);
+        gui::dock_builder_dock_window("Prefabs", left);
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Tile", right);
@@ -1891,6 +1907,7 @@ impl Tool for TileTool {
             self.context.tile_changed(e, id);
         }
 
+        self.select_whole_prefabs(e);
         self.context.poll(e, id);
         e.viewport.north = self.context.north();
         e.viewport.map_frame = self.context.map_frame();
@@ -1940,6 +1957,7 @@ impl Tool for TileTool {
         self.draw_tile_panel(e);
         crate::scene_panel::draw_layers_panel(self, e);
         self.draw_browser_panel(e);
+        self.draw_prefab_panel(e);
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {

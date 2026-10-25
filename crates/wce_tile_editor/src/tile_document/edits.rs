@@ -892,6 +892,84 @@ impl TileDocument {
         }
     }
 
+    // ---- prefabs (wce_tile::prefabs): a copy is an instance group named after the prefab's key
+
+    /// The copies of a prefab in the tile: its instance groups named the prefab's key (case aside), in document order.
+    pub fn prefab_copies(&self, key: &str) -> Vec<usize> {
+        let sc = self.tile().tscene();
+        sc.find_all("UserInstanceGroup").into_iter().filter(|&g| sc.name(g).eq_ignore_ascii_case(key)).collect()
+    }
+
+    /// The text of an element (at column 0) and of a container's contents, as a prefab file holds them.
+    pub fn element_text(&self, elem: usize) -> Vec<u8> {
+        self.tile().tscene().element_text(elem)
+    }
+
+    pub fn children_text(&self, elem: usize) -> Vec<u8> {
+        self.tile().tscene().children_text(elem)
+    }
+
+    /// Places a copy of a prefab (its group's text) in the layer `into`, named after the key, standing on the ground at `at` (world metres).
+    /// One undo entry; the selection afterwards is the copy.
+    ///
+    /// # Errors
+    ///
+    /// No such layer, or the text is not one element.
+    pub fn place_prefab(&mut self, key: &str, group_text: &[u8], into: usize, at: Float3) -> Result<usize, String> {
+        let mark = self.begin()?;
+        let result = (|| -> Result<usize, String> {
+            let g = self.tscene_mut().insert_element_text(into, group_text)?;
+            self.tscene_mut().set_attr(g, "name", key);
+            let t = self.tile();
+            let p = scene_point(Float3::new(at.x, t.terrain_height(at.x, at.z), at.z), t.unit());
+            set_world_position(self.tscene_mut(), g, p);
+            Ok(g)
+        })();
+
+        match result {
+            Ok(g) => {
+                self.push_splice(format!("Place {key}"), mark, vec![], vec![item_of(g)]);
+                Ok(g)
+            }
+
+            Err(e) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(e)
+            }
+        }
+    }
+
+    /// Gives every group of `groups` these contents (text at column 0; their positions are relative to the group, so each copy keeps its
+    /// place). One undo entry named `what`; the selection afterwards is empty. Returns how many groups changed.
+    ///
+    /// # Errors
+    ///
+    /// A group without a children element.
+    pub fn set_groups_children(&mut self, groups: &[usize], children: &[u8], what: &str) -> Result<usize, String> {
+        let mut groups = groups.to_vec();
+        groups.sort_unstable();
+        groups.dedup();
+
+        // From the last one: an edit moves only the indices after it.
+        let changed = groups.iter().filter(|&&g| self.tile().tscene().children_text(g) != children).copied().collect::<Vec<_>>();
+        if changed.is_empty() {
+            return Ok(0);
+        }
+
+        let mark = self.begin()?;
+        for &g in changed.iter().rev() {
+            if let Err(e) = self.tscene_mut().set_children_text(g, children) {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                return Err(e);
+            }
+        }
+
+        self.push_splice(what.to_owned(), mark, vec![], vec![]);
+        Ok(changed.len())
+    }
+
     /// One undo entry; the selection afterwards is empty.
     pub fn remove_items(&mut self, elems: &[usize]) -> bool {
         let sc = self.tile().tscene();

@@ -104,6 +104,36 @@ fn reindent(piece: &[u8], old: &[u8], new: &[u8], out: &mut Vec<u8>) {
     }
 }
 
+/// The text with `\r\n` line ends made `\n`.
+fn lf(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for (i, &c) in text.iter().enumerate() {
+        if c != b'\r' || text.get(i + 1) != Some(&b'\n') {
+            out.push(c);
+        }
+    }
+
+    out
+}
+
+/// `\n` line ends made `newline`.
+fn with_newline(text: &[u8], newline: &[u8]) -> Vec<u8> {
+    if newline == b"\n" {
+        return text.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(text.len() + text.len() / 40);
+    for &c in text {
+        if c == b'\n' {
+            out.extend_from_slice(newline);
+        } else {
+            out.push(c);
+        }
+    }
+
+    out
+}
+
 fn xml_error(error: wce_formats::xml_doc::XmlError) -> String {
     error.to_string()
 }
@@ -130,6 +160,15 @@ impl TedScene {
         }
 
         Ok(Self { doc })
+    }
+
+    /// Another file of TEd's elements (a prefab's `INSTANCE_SELECTION`), read the same way.
+    ///
+    /// # Errors
+    ///
+    /// Not XML.
+    pub fn parse_any(bytes: Vec<u8>) -> Result<Self> {
+        Ok(Self { doc: XmlDoc::parse(bytes).map_err(xml_error)? })
     }
 
     pub fn save(&self) -> Vec<u8> {
@@ -402,6 +441,86 @@ impl TedScene {
         open.extend(encode_entities(name.as_bytes(), b'"'));
         open.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
         self.add_container(parent_layer, &open, b"</UserInstanceGroup>")
+    }
+
+    /// An element's lines with every pending edit, at column 0 and with `\n` line ends: the text a prefab file holds, or that
+    /// [`Self::insert_element_text`] puts somewhere else.
+    pub fn element_text(&self, elem: usize) -> Vec<u8> {
+        let t = self.doc.original_text();
+        let e = &self.doc.elements()[elem];
+        let (a, b) = (line_start(t, e.start_off), line_end(t, e.end_off.saturating_sub(1)));
+        let ind = indent_of(t, e.start_off);
+        let mut out = vec![];
+        reindent(&lf(&self.doc.text_of_range(a, b)), &ind, b"", &mut out);
+        out
+    }
+
+    /// The lines of the elements inside a container's `<children>` (with every pending edit), at column 0 and with `\n` line ends; empty when
+    /// it has none.
+    pub fn children_text(&self, elem: usize) -> Vec<u8> {
+        let Some(w) = self.children_wrapper(elem) else { return vec![] };
+        let els = self.doc.elements();
+        let (Some(&first), Some(&last)) = (els[w].children.first(), els[w].children.last()) else { return vec![] };
+        let t = self.doc.original_text();
+        let (a, b) = (line_start(t, els[first].start_off), line_end(t, els[last].end_off.saturating_sub(1)));
+        let ind = indent_of(t, els[first].start_off);
+        let mut out = vec![];
+        reindent(&lf(&self.doc.text_of_range(a, b)), &ind, b"", &mut out);
+        out
+    }
+
+    /// Replaces what is inside a container's `<children>` with `text` (lines at column 0, as [`Self::children_text`] gives them), indented
+    /// under it and with the document's line ends. Text splices on the document: element indices change.
+    ///
+    /// # Errors
+    ///
+    /// No such element, or it has no `<children>` element.
+    pub fn set_children_text(&mut self, elem: usize, text: &[u8]) -> Result<()> {
+        let elem = self.require_element(Some(elem), "element")?;
+        self.doc.bake_pending().map_err(xml_error)?;
+        let w = self.children_wrapper(elem).ok_or("the element has no children element")?;
+        let t = self.doc.original_text();
+        let open_end = line_end(t, self.doc.elements()[w].start_off);
+        let close = rfind_at(t, b"</children>", self.doc.elements()[w].end_off).ok_or("the element has no children element")?;
+        let close_start = line_start(t, close);
+        if close_start < open_end {
+            return Err("the children element is on one line".to_owned());
+        }
+
+        let mut ind = indent_of(t, close);
+        ind.extend_from_slice(b"    ");
+        let mut body = vec![];
+        reindent(text, b"", &ind, &mut body);
+        let body = with_newline(&body, self.newline());
+        self.doc.splice(open_end, close_start - open_end, &body).map_err(xml_error)?;
+        Ok(())
+    }
+
+    /// Appends an element given as text (lines at column 0, as [`Self::element_text`] gives them) to a layer's children; returns its index.
+    /// Text splices on the document: element indices change.
+    ///
+    /// # Errors
+    ///
+    /// No such layer, it has no children element, or the text is not one element.
+    pub fn insert_element_text(&mut self, layer: usize, text: &[u8]) -> Result<usize> {
+        let layer = self.require_element(Some(layer), "layer")?;
+        self.doc.bake_pending().map_err(xml_error)?;
+        let (at, ind) = self.append_point(layer, "layer has no children element")?;
+        let before = self.doc.elements()[self.children_wrapper(layer).ok_or("layer has no children element")?].children.len();
+        let mut body = vec![];
+        reindent(text, b"", &ind, &mut body);
+        if !body.ends_with(b"\n") {
+            body.push(b'\n');
+        }
+
+        let body = with_newline(&body, self.newline());
+        self.doc.splice(at, 0, &body).map_err(xml_error)?;
+        let w = self.children_wrapper(layer).ok_or("layer has no children element")?;
+        if self.doc.elements()[w].children.len() != before + 1 {
+            return Err("the text is not one element".to_owned());
+        }
+
+        Ok(self.last_child(layer))
     }
 
     /// An element with an empty `<children>` appended to the layer's children: `open` is its start tag, `close` its end tag.
