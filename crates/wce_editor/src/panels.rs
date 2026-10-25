@@ -423,6 +423,13 @@ pub fn inspector(e: &mut Editor) {
         return;
     }
 
+    // The active tool's contents first (what it is about to make).
+    let mut ins = ImGuiInspector::default();
+    if e.with_active_tool(|t, e| t.inspect(e, &mut ins)) == Some(true) {
+        gui::end();
+        return;
+    }
+
     if e.selection.is_empty() {
         gui::text_disabled("Nothing selected.");
     } else {

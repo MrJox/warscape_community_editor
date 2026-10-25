@@ -58,6 +58,27 @@ pub fn set_next_window_pos(pos: Vec2, cond: i32, pivot: Vec2) {
     call!(sys::igSetNextWindowPos(pos, cond, pivot))
 }
 
+/// Docks the next window into a dock node (`cond`: when, like COND_FIRST_USE_EVER: a window the layout does not know yet).
+pub fn set_next_window_dock_id(dock: ImGuiID, cond: i32) {
+    call!(sys::igSetNextWindowDockID(dock, cond))
+}
+
+/// The dock node the current window is in (0: none).
+pub fn window_dock_id() -> ImGuiID {
+    call!(sys::igGetWindowDockID())
+}
+
+/// Opens or closes the next tree node.
+pub fn set_next_item_open(open: bool, cond: i32) {
+    call!(sys::igSetNextItemOpen(open, cond))
+}
+
+/// Brings a window to the front by its name (a docked one: its tab is selected).
+pub fn set_window_focus_named(name: &str) {
+    let n = cs(name);
+    call!(sys::igSetWindowFocus_Str(n.as_ptr()))
+}
+
 /// Brings the next window to the front (a docked one: its tab is selected).
 pub fn set_next_window_focus() {
     call!(sys::igSetNextWindowFocus())

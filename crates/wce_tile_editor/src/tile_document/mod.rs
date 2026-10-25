@@ -17,6 +17,7 @@
 mod collapse;
 mod columns;
 mod commands;
+mod draft;
 pub mod context;
 mod edits;
 mod index;
@@ -46,6 +47,7 @@ use wce_vfs::files::Files;
 
 use crate::terrain_bake::{BakedColour, TerrainLook};
 
+pub use self::draft::{Draft, turned};
 pub use self::index::style_of;
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 

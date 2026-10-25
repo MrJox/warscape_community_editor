@@ -36,6 +36,36 @@ pub fn type_icon(ty: &str) -> &'static str {
     }
 }
 
+/// A type's name for people (the Create panel).
+pub fn type_name(ty: &str) -> &'static str {
+    match ty {
+        "BUILDING_INSTANCE" => "Building",
+        "VEGETATION_INSTANCE" => "Tree",
+        "ProjectedDecalInstance" => "Decal",
+        "POINT_LIGHT_INSTANCE" => "Point light",
+        "VFXInstance" => "Effect",
+        "SIMPLE_MESH_INSTANCE" => "Model",
+        "AI_HINT_POLYGON_INSTANCE" => "AI hint",
+        "NOGO_REGION_POLYGON_INSTANCE" => "No-go region",
+        "GO_REGION_POLYGON_INSTANCE" => "Go region",
+        "SIEGE_AI_POLYGON_INSTANCE" => "Siege AI polygon",
+        "VegetationExclusionPolygonInstance" => "Vegetation exclusion",
+        "ZONE_POLYGON_INSTANCE" => "Zone",
+        "DeploymentZonePolygonInstanceGroup" => "Deployment zone (64 m square)",
+        "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => "Deployment zone polygon (drawn)",
+        "CaptureLocationInstance" => "Capture location",
+        "CivilianDeploymentZone" => "Civilian deployment zone",
+        "CivilianShelter" => "Civilian shelter",
+        "LiteBuildingZone" => "Lite building zone",
+        "SiegeAINodeInstance" => "Siege AI node",
+        "SiegeAIEdgeInstance" => "Siege AI edge",
+        "AISeparatorInstance" => "AI separator",
+        "SplineRiverInstance" => "River",
+        "SEGMENTED_SPLINE_INSTANCE" => "Road",
+        _ => "Other",
+    }
+}
+
 /// A layer's export types (without the `LayerExportType_` prefix), as TEd's layer properties name them.
 pub const EXPORT_TYPES: [(&str, &str); 6] = [
     ("Normal", "Export"), ("Off", "Don't Export"), ("Separate", "Export Separately"), ("Escalation1", "Escalation 1"), ("Escalation2", "Escalation 2"),

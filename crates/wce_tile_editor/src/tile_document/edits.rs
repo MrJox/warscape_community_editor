@@ -46,7 +46,7 @@ fn close(a: Double3, b: Double3) -> bool {
 }
 
 /// A world position in scene units (`unit` per metre horizontally).
-fn scene_point(p: Float3, unit: f64) -> Double3 {
+pub(crate) fn scene_point(p: Float3, unit: f64) -> Double3 {
     Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit)
 }
 
@@ -270,12 +270,12 @@ impl Tile {
 }
 
 impl TileDocument {
-    fn tscene_mut(&mut self) -> &mut TedScene {
+    pub(crate) fn tscene_mut(&mut self) -> &mut TedScene {
         &mut self.tile_mut().project.scene
     }
 
     /// A structural edit is recorded as the text splices it made (`TedScene::begin_edit` / `end_edit`): `mark` is what `begin_edit` returned.
-    fn push_splice(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>) {
+    pub(crate) fn push_splice(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>) {
         let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
 
         // Element indices moved: the index is rebuilt by the republish that follows.
@@ -283,7 +283,7 @@ impl TileDocument {
         self.history.push(Box::new(TedSpliceCommand { name, record, sel_before, sel_after, first: true }));
     }
 
-    fn begin(&mut self) -> Result<usize, String> {
+    pub(crate) fn begin(&mut self) -> Result<usize, String> {
         self.tscene_mut().begin_edit()
     }
 
@@ -1087,6 +1087,15 @@ impl TileDocument {
     ///
     /// A type that can't be made this way, too few points, or no such layer.
     pub fn create(&mut self, kind: &str, into: usize, shape: &Create, key: &str) -> Result<usize, String> {
+        self.create_with(kind, into, shape, key, &BTreeMap::new())
+    }
+
+    /// [`Self::create`] with these attributes over the type's defaults (a draft's values, `Draft::attrs`).
+    ///
+    /// # Errors
+    ///
+    /// As `create`.
+    pub fn create_with(&mut self, kind: &str, into: usize, shape: &Create, key: &str, attrs: &BTreeMap<String, String>) -> Result<usize, String> {
         use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
 
         let t = self.tile();
@@ -1107,7 +1116,11 @@ impl TileDocument {
         let into_type = t.tscene().type_of(into).to_owned();
         let element = match (kind, shape) {
             (_, Create::Point(p)) => point_instance(kind, local(*p), key, unit)?,
-            ("ZONE_POLYGON_INSTANCE" | "CivilianDeploymentZone" | "LiteBuildingZone", Create::Line(pts)) => {
+            (
+                "ZONE_POLYGON_INSTANCE" | "CivilianDeploymentZone" | "LiteBuildingZone" | "AI_HINT_POLYGON_INSTANCE" | "NOGO_REGION_POLYGON_INSTANCE"
+                | "GO_REGION_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance" | "SIEGE_AI_POLYGON_INSTANCE",
+                Create::Line(pts),
+            ) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, true).position(c)
             }
@@ -1167,6 +1180,11 @@ impl TileDocument {
             (_, Create::Line(_)) => return Err(format!("{kind} is placed, not drawn")),
         };
 
+        let mut element = element;
+        if element.kind == kind {
+            element.attrs.extend(attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+
         let text = element_text(&element)?;
         let mark = self.begin()?;
         match self.tscene_mut().insert_element_text(into, &text) {
@@ -1213,28 +1231,7 @@ impl TileDocument {
     ///
     /// No such layer, or the text is not one element.
     pub fn place_prefab(&mut self, key: &str, group_text: &[u8], into: usize, at: Float3) -> Result<usize, String> {
-        let mark = self.begin()?;
-        let result = (|| -> Result<usize, String> {
-            let g = self.tscene_mut().insert_element_text(into, group_text)?;
-            self.tscene_mut().set_attr(g, "name", key);
-            let t = self.tile();
-            let p = scene_point(Float3::new(at.x, t.terrain_height(at.x, at.z), at.z), t.unit());
-            set_world_position(self.tscene_mut(), g, p);
-            Ok(g)
-        })();
-
-        match result {
-            Ok(g) => {
-                self.push_splice(format!("Place {key}"), mark, vec![], vec![item_of(g)]);
-                Ok(g)
-            }
-
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
-        }
+        self.place_text(&format!("Place {key}"), group_text, into, at, Some(key))
     }
 
     /// Gives every group of `groups` these contents (text at column 0; their positions are relative to the group, so each copy keeps its
@@ -1771,107 +1768,17 @@ impl TileDocument {
         }
 
         let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x7;
-        let mut new: Option<String> = None;
-        match prop.kind {
-            Kind::Bool => {
-                let mut v = parse_bool(&cur);
-                if ins.edit_bool(field, label, &mut v) {
-                    new = Some(format_bool(v).to_owned());
-                }
+        let mut new = edit_value(prop, &cur, text.is_some(), i64::from(self.tile().destruction_levels(&key)), ins);
+        if prop.kind == Kind::Text {
+            // Typed text is applied when the typing ends (a key edit loads a model).
+            let drafts_key = (e, prop.attr.to_owned());
+            let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| cur.clone());
+            if ins.edit_string(field, label, &mut shown) {
+                self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
 
-            Kind::Slider(lo, hi) => {
-                let mut v = parse_float(&cur).unwrap_or(lo).clamp(lo, hi);
-                if ins.edit_slider(field, label, &mut v, lo, hi) {
-                    new = Some(format_float(v.clamp(lo, hi)));
-                }
-            }
-
-            Kind::Float => {
-                let mut v = parse_float(&cur).unwrap_or(0.0);
-                if ins.edit_float(field, label, &mut v, 0.01, -1.0e9, 1.0e9) {
-                    new = Some(format_float(v));
-                }
-            }
-
-            Kind::Vec3 => {
-                let mut v = parse_vec3_text(&cur).unwrap_or([1.0; 3]);
-                if ins.edit_float3(field, label, &mut v, 0.05) {
-                    new = Some(format_vec3(v));
-                }
-            }
-
-            Kind::Vec2 => {
-                let mut v = parse_vec2(&cur).unwrap_or([0.0; 2]);
-                if ins.edit_float2(field, label, &mut v, 0.05) {
-                    new = Some(format_vec2(v));
-                }
-            }
-
-            Kind::Angle(max) => {
-                let mut v = parse_float(&cur).unwrap_or(0.0);
-                if ins.edit_angle(field, label, &mut v, max) {
-                    new = Some(format_float(v.clamp(0.0, max)));
-                }
-            }
-
-            Kind::Colour => {
-                let mut v = parse_colour(&cur).unwrap_or([1.0; 4]);
-                if ins.edit_color4(field, label, &mut v) {
-                    new = Some(format_colour(v));
-                }
-            }
-
-            Kind::Enum(table) => {
-                let mut choices = table.iter().map(|(_, d)| (*d).to_owned()).collect::<Vec<_>>();
-                let mut idx = table.iter().position(|(f, _)| *f == cur).map_or(-1, |i| i as i32);
-                if idx < 0 && !cur.is_empty() {
-                    // A value TEd's table does not have: shown as it is, until another is chosen.
-                    choices.push(cur.clone());
-                    idx = choices.len() as i32 - 1;
-                }
-
-                if ins.edit_choice(field, label, &mut idx, &choices) && let Some((f, _)) = usize::try_from(idx).ok().and_then(|i| table.get(i)) {
-                    new = Some((*f).to_owned());
-                }
-            }
-
-            Kind::Text => {
-                // Typed text is applied when the typing ends (a key edit loads a model).
-                let drafts_key = (e, prop.attr.to_owned());
-                let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| cur.clone());
-                if ins.edit_string(field, label, &mut shown) {
-                    self.tile_mut().drafts.insert(drafts_key.clone(), shown);
-                }
-
-                if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
-                    new = Some(v);
-                }
-            }
-
-            Kind::Int(lo, hi) => {
-                let mut v = parse_int(&cur).unwrap_or(i64::from(lo)).clamp(i64::from(lo), i64::from(hi));
-                if ins.edit_int_slider(field, label, &mut v, i64::from(lo), i64::from(hi)) {
-                    new = Some(v.clamp(i64::from(lo), i64::from(hi)).to_string());
-                }
-            }
-
-            Kind::DestructionLevel => {
-                let levels = i64::from(self.tile().destruction_levels(&key));
-                let mut v = parse_int(&cur).unwrap_or(0).clamp(0, levels - 1);
-                if ins.edit_int_slider(field, label, &mut v, 0, levels - 1) {
-                    new = Some(v.clamp(0, levels - 1).to_string());
-                }
-            }
-
-            Kind::ReadOnlyFloat => ins.text(field, label, &cur),
-            Kind::Flags | Kind::Seasons | Kind::Placement | Kind::Position | Kind::Orientation => {}
-        }
-
-        if prop.kind == Kind::Seasons {
-            let mut on = if text.is_some() { parse_seasons(&cur) } else { [true; 4] };
-            if ins.edit_checks(field, label, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
-                new = Some(format_seasons(on));
+            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
+                new = Some(v);
             }
         }
 
@@ -1998,7 +1905,7 @@ fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_
 }
 
 /// A type placed by a click (`TileDocument::create`), at `at` (local to where it goes), with its parts.
-fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_tile::new_instances::NewInstance, String> {
+pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_tile::new_instances::NewInstance, String> {
     use wce_tile::new_instances::{NewInstance, circle_points, element_text, vector};
 
     let square = |half_m: f64| {
@@ -2041,4 +1948,104 @@ fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_t
 
         _ => return Err(format!("{kind} is drawn, not placed")),
     })
+}
+
+/// The row of a property with a plain value (not the flags, placement, position or orientation, nor typed text): the new value when it was
+/// edited. `present`: the element has the attribute; `levels`: a building's destruction levels.
+pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins: &mut dyn Inspector) -> Option<String> {
+    let (field, label) = (prop.attr, prop.attr);
+    let mut new: Option<String> = None;
+    match prop.kind {
+        Kind::Bool => {
+            let mut v = parse_bool(cur);
+            if ins.edit_bool(field, label, &mut v) {
+                new = Some(format_bool(v).to_owned());
+            }
+        }
+
+        Kind::Slider(lo, hi) => {
+            let mut v = parse_float(cur).unwrap_or(lo).clamp(lo, hi);
+            if ins.edit_slider(field, label, &mut v, lo, hi) {
+                new = Some(format_float(v.clamp(lo, hi)));
+            }
+        }
+
+        Kind::Float => {
+            let mut v = parse_float(cur).unwrap_or(0.0);
+            if ins.edit_float(field, label, &mut v, 0.01, -1.0e9, 1.0e9) {
+                new = Some(format_float(v));
+            }
+        }
+
+        Kind::Vec3 => {
+            let mut v = parse_vec3_text(cur).unwrap_or([1.0; 3]);
+            if ins.edit_float3(field, label, &mut v, 0.05) {
+                new = Some(format_vec3(v));
+            }
+        }
+
+        Kind::Vec2 => {
+            let mut v = parse_vec2(cur).unwrap_or([0.0; 2]);
+            if ins.edit_float2(field, label, &mut v, 0.05) {
+                new = Some(format_vec2(v));
+            }
+        }
+
+        Kind::Angle(max) => {
+            let mut v = parse_float(cur).unwrap_or(0.0);
+            if ins.edit_angle(field, label, &mut v, max) {
+                new = Some(format_float(v.clamp(0.0, max)));
+            }
+        }
+
+        Kind::Colour => {
+            let mut v = parse_colour(cur).unwrap_or([1.0; 4]);
+            if ins.edit_color4(field, label, &mut v) {
+                new = Some(format_colour(v));
+            }
+        }
+
+        Kind::Enum(table) => {
+            let mut choices = table.iter().map(|(_, d)| (*d).to_owned()).collect::<Vec<_>>();
+            let mut idx = table.iter().position(|(f, _)| *f == cur).map_or(-1, |i| i as i32);
+            if idx < 0 && !cur.is_empty() {
+                // A value TEd's table does not have: shown as it is, until another is chosen.
+                choices.push(cur.to_owned());
+                idx = choices.len() as i32 - 1;
+            }
+
+            if ins.edit_choice(field, label, &mut idx, &choices) && let Some((f, _)) = usize::try_from(idx).ok().and_then(|i| table.get(i)) {
+                new = Some((*f).to_owned());
+            }
+        }
+
+        // The caller applies typed text when the typing ends (`text_row`).
+        Kind::Text => {}
+
+        Kind::Int(lo, hi) => {
+            let mut v = parse_int(cur).unwrap_or(i64::from(lo)).clamp(i64::from(lo), i64::from(hi));
+            if ins.edit_int_slider(field, label, &mut v, i64::from(lo), i64::from(hi)) {
+                new = Some(v.clamp(i64::from(lo), i64::from(hi)).to_string());
+            }
+        }
+
+        Kind::DestructionLevel => {
+            let mut v = parse_int(cur).unwrap_or(0).clamp(0, levels - 1);
+            if ins.edit_int_slider(field, label, &mut v, 0, levels - 1) {
+                new = Some(v.clamp(0, levels - 1).to_string());
+            }
+        }
+
+        Kind::ReadOnlyFloat => ins.text(field, label, cur),
+        Kind::Flags | Kind::Seasons | Kind::Placement | Kind::Position | Kind::Orientation => {}
+    }
+
+    if prop.kind == Kind::Seasons {
+        let mut on = if present { parse_seasons(cur) } else { [true; 4] };
+        if ins.edit_checks(field, label, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
+            new = Some(format_seasons(on));
+        }
+    }
+
+    new
 }

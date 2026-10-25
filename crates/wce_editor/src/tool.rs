@@ -103,6 +103,12 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// The Inspector's contents instead of the selection's (what the tool is about to make, say): true when it filled it.
+    fn inspect(&mut self, editor: &mut Editor, inspector: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        let _ = (editor, inspector);
+        false
+    }
+
     /// True when the event was handled (the default click-to-select is then skipped).
     fn viewport_input(&mut self, editor: &mut Editor, event: &ViewportEvent) -> bool {
         let _ = (editor, event);

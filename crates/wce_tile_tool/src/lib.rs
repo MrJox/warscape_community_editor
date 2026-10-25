@@ -4,9 +4,9 @@
 //! action is a command too (`commands`), so scripts and menus use the same code.
 
 pub mod commands;
+pub mod create_panel;
 pub mod context_panel;
 pub mod entity_types;
-pub mod key_picker;
 pub mod prefab_panel;
 pub mod scene_panel;
 pub mod settings;
