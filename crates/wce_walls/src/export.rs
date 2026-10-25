@@ -1,7 +1,7 @@
 //! Exporting a tile with procedural walls (docs/plans/procedural_walls.md, phase 5): the walls become buildings of their own, in one pack
 //! with the compiled tile.
 //!
-//! - **Lowering** ([`lower_walls`]): every `WALL_SPLINE` of the scene is laid out, cut into pieces and replaced by a `BUILDING_INSTANCE`
+//! - **Lowering** ([`lower_walls`]): every `WceWallSpline` of the scene is laid out, cut into pieces and replaced by a `BUILDING_INSTANCE`
 //!   per piece, keyed `<prefix>_<wall>_<piece>`; each piece's files are generated in full (every level's meshes, the logic and zone
 //!   files, the collapses left out) from its base (the straight, or the door section).
 //! - **Rows:** the bases' `battlefield_buildings` and `models_building` rows copied under the new keys (`db::copy_rows`); the

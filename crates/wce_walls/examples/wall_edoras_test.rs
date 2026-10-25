@@ -6,7 +6,7 @@
 //!       [--mods a.pack;b.pack]
 //!
 //! The tile is decompiled fresh from the game's packs into the workspace. The wall: the south run west of the west gate, from the gate
-//! to the rock pile where it ends. Its pieces go (12 straights, the bastion by the gate, the endcap), and a `WALL_SPLINE` on
+//! to the rock pile where it ends. Its pieces go (12 straights, the bastion by the gate, the endcap), and a `WceWallSpline` on
 //! barbarian_fort_straight replaces them, attached to the gate's end. The run stood on flat ground, so the new wall bulges 40 units out
 //! over a 6 m hill raised on the plain outside: it turns and climbs. Its level holds within 1 m of the ground (`wall_tolerance`; the
 //! old ring sits buried in the terraces' banks, which wave by that much). Towers and bastions every 120 units.

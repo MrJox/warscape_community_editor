@@ -871,7 +871,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_spline_value(el, &points, attr, value, 0) { ok(format!("{attr} = {value} on {} points", points.len())) } else { fail("nothing changed") }
     });
 
-    c.add("wall_sharp", "wall_sharp <point index> on|off", "mark a point of the selected wall (WALL_SPLINE) as a corner (a mitre) or a smooth one", |e, a| {
+    c.add("wall_sharp", "wall_sharp <point index> on|off", "mark a point of the selected wall (WceWallSpline) as a corner (a mitre) or a smooth one", |e, a| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else { return fail("usage: wall_sharp <point index> on|off") };
@@ -1012,7 +1012,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         mouse(e, &args, "")
     });
 
-    c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WALL_SPLINE, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
+    c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {
             if let Err(err) = crate::create_panel::make_for_script(t, e, kind, "") {

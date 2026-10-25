@@ -464,7 +464,7 @@ impl TileDocument {
     }
 
     /// A polygon from world points in `layer` (`None`: the scene graph).
-    /// `hint`: an AI hint polygon's hint type, a wall's (`WALL_SPLINE`) base wall.
+    /// `hint`: an AI hint polygon's hint type, a wall's (`WceWallSpline`) base wall.
     ///
     /// # Errors
     ///

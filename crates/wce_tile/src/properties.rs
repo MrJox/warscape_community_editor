@@ -291,7 +291,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "CivilianShelter" => TERRAIN_LINE,
         "SEGMENTED_SPLINE_INSTANCE" | "SplineRiverInstance" => SPLINE,
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
-        "WALL_SPLINE" => WALL,
+        "WceWallSpline" => WALL,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
         "AISeparatorInstance" => SEPARATOR,

@@ -1,4 +1,4 @@
-//! Procedural walls in the document (docs/plans/procedural_walls.md, phase 1). A `WALL_SPLINE` is stored like the polygons (a `<points>`
+//! Procedural walls in the document (docs/plans/procedural_walls.md, phase 1). A `WceWallSpline` is stored like the polygons (a `<points>`
 //! list, `polygon_closed="0"`) with its own attributes (`wall_base`, `wall_tolerance`, `wall_flip`, its points' `sharp`), so the polygon
 //! tools edit it; here its layout comes from the solver (`wce_walls::solver`), its ends attach to the fort buildings' ends, and the view
 //! gets the lines to draw.

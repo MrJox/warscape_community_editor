@@ -1,4 +1,4 @@
-# Procedural walls, phase 1 (docs/plans/procedural_walls.md): a WALL_SPLINE drawn as a polygon of its own kind, its ends attached to a fort
+# Procedural walls, phase 1 (docs/plans/procedural_walls.md): a WceWallSpline drawn as a polygon of its own kind, its ends attached to a fort
 # building's ends (snapped when placed within 4 m), a point marked sharp and back with undo, an end moved onto another building end, and a
 # save that keeps the wall (tile_check.sh looks at the saved tile.wce). %TILE% is the kit tile terrain_rugged_hills_desert/1x1/aa.
 tile "%TILE%"
@@ -10,7 +10,7 @@ frames 60
 tile_model_bounds barbarian_fort_straight
 
 # The wall: its first point 1 m off the straight's far end goes onto it; the rest is open ground.
-add_polygon "WALL_SPLINE|barbarian_fort_straight|71,61;85,75;100,78;115,72"
+add_polygon "WceWallSpline|barbarian_fort_straight|71,61;85,75;100,78;115,72"
 frames 2
 wall_info
 assert_wall 0 - attached free
@@ -31,12 +31,12 @@ wall_info
 assert_wall 1 - attached attached
 
 # A 15 m wall of 200 m (400 units) gets a door section at 100 and 300; with a no-go region over the second one's landing, one.
-add_polygon "WALL_SPLINE|roman_fort_straight|20,120;220,120"
+add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
 frames 2
 assert_wall_doors 2
 undo
 add_polygon "NOGO_REGION_POLYGON_INSTANCE||158,125;172,125;172,140;158,140"
-add_polygon "WALL_SPLINE|roman_fort_straight|20,120;220,120"
+add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
 frames 2
 assert_wall_doors 1
 undo

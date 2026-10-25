@@ -2,7 +2,7 @@
 //! Assembly Kit (docs/formats/tile_ted.md, "Attribute kinds"). An attribute's kind follows its name in every class, except `position`
 //! (a `vector(...)` on instances, `x,y,z` on polygon points) and `scale` (a vector on decals and simple meshes, a number on trees and VFX).
 //! Integers that are counts, ids, seeds and command placeholders are `Int`; every other number is a float, written TEd's way, except
-//! `lf_offset`, the spline control points and the point positions, which TEd writes with `%g`. Also the editor's own `WALL_SPLINE`
+//! `lf_offset`, the spline control points and the point positions, which TEd writes with `%g`. Also the editor's own `WceWallSpline`
 //! (`wall_base`, `wall_tolerance`, `wall_flip`, its points' `sharp`; docs/plans/procedural_walls.md), which no kit file has.
 
 use wce_tile_model::Sym;
