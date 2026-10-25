@@ -194,12 +194,15 @@ impl TileTool {
 
     /// Starts making an entry: placing it, or drawing it.
     pub fn start_making(&mut self, e: &mut Editor, en: &Entry) {
-        let (favourites, mut recent) = self.create_marks(e);
-        let id = en.id();
-        recent.retain(|r| *r != id);
-        recent.insert(0, id);
-        recent.truncate(RECENT_KEEP);
-        self.set_create_marks(e, favourites, recent);
+        // The new set (not saved) is not one to come back to.
+        if !matches!(&en.make, Make::VegSet { name } if name.is_empty()) {
+            let (favourites, mut recent) = self.create_marks(e);
+            let id = en.id();
+            recent.retain(|r| *r != id);
+            recent.insert(0, id);
+            recent.truncate(RECENT_KEEP);
+            self.set_create_marks(e, favourites, recent);
+        }
 
         self.drawing = false;
         self.draw_pts.clear();
@@ -584,16 +587,25 @@ impl TileTool {
         }
 
         if let Some(i) = start {
-            self.make_or_add(e, &entries[i]);
+            self.make_or_add(e, &entries[i], false);
         }
     }
 
     /// A click on an entry: makes it; with Ctrl, a tree (or a set) goes into the new vegetation set instead.
-    fn make_or_add(&mut self, e: &mut Editor, en: &Entry) {
+    /// While the Shift+A popup stays open (`in_popup`), the Inspector is not focused: that would close it.
+    fn make_or_add(&mut self, e: &mut Editor, en: &Entry, in_popup: bool) {
         match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
             Some(keys) => {
                 self.add_to_new_set(&keys);
-                e.pending_focus = Some("Inspector".to_owned());
+
+                // Placing with the new set from its first tree on (it follows the trees added later).
+                if !self.veg_set.as_ref().is_some_and(|v| v.path.as_os_str().is_empty()) {
+                    let status = std::mem::take(&mut self.status);
+                    self.start_new_set(e);
+                    self.status = status;
+                }
+
+                e.pending_focus = (!in_popup).then(|| "Inspector".to_owned());
             }
 
             None => self.start_making(e, en),
@@ -695,7 +707,7 @@ impl TileTool {
 
         gui::end_popup();
         if let Some(i) = start {
-            self.make_or_add(e, &entries[i]);
+            self.make_or_add(e, &entries[i], adding);
         }
     }
 }
