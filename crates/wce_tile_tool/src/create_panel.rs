@@ -104,6 +104,10 @@ pub struct CreateUi {
     /// The Shift+A popup's highlighted row (Up / Down move it while typing; Enter takes it).
     quick_row: usize,
 
+    /// The search (the panel's, the popup's) gets the keyboard back on the next frame: Ctrl + Enter added a tree to the new set.
+    filter_refocus: bool,
+    quick_refocus: bool,
+
     /// The sticky drafts of each type (its values and turn), and the prefab's turn.
     pub drafts: std::collections::HashMap<String, Draft>,
     pub prefab_yaw: f32,
@@ -400,12 +404,12 @@ impl TileTool {
             return true;
         }
 
-        // The brush's settings first while it paints trees; the set in use.
+        // The saved set in use (the brush's settings are above it, `Tool::inspect`); a painted tree's draft is not shown: the brush picks
+        // the keys, scales and turns.
+        self.inspect_veg_set(e);
         if self.painting_trees(e) {
-            self.inspect_veg_brush(e, ins);
+            return true;
         }
-
-        self.inspect_veg_set(e, ins);
 
         let Some(mut draft) = self.draft.clone() else { return false };
         let Some(d) = document(e) else { return false };
@@ -506,14 +510,25 @@ impl TileTool {
         }
 
         gui::set_next_item_width(-1.0);
-        gui::input_text("##createfilter", Some(&format!("{}  search everything (Shift+A in the viewport; Ctrl + click a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, 0);
+        if std::mem::take(&mut self.create.filter_refocus) {
+            gui::set_keyboard_focus_here(0);
+        }
+
+        let enter = gui::input_text("##createfilter", Some(&format!("{}  search everything (Enter: the first; Shift+A in the viewport; Ctrl + click / Ctrl + Enter a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
         let entries = self.create_entries(e);
         self.filter_entries(&entries);
+
+        // Enter takes the first entry found (Ctrl + Enter on a tree: into the new set, and the search keeps the keyboard).
+        let first = (enter && !self.create.filter.trim().is_empty()).then(|| self.create.shown.iter().find_map(|rows| rows.first().copied())).flatten();
+        if let Some(i) = first {
+            self.create.filter_refocus = gui::io().KeyCtrl && self.set_entries_of(e, &entries[i]).is_some();
+        }
+
         let words = words(&self.create.filter);
         let (favourites, recent) = self.create_marks(e);
         let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
 
-        let mut start = None;
+        let mut start = first;
         let mut star = None;
         if gui::begin_child("createlist", gui::v2(0.0, 0.0), 0, 0) {
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
@@ -594,17 +609,18 @@ impl TileTool {
         }
 
         if let Some(i) = start {
-            self.make_or_add(e, &entries[i], false);
+            self.make_or_add(e, &entries[i], self.create.filter_refocus);
         }
     }
 
     /// A click on an entry: makes it; with Ctrl, a tree (or a set) goes into the new vegetation set instead.
-    /// While the Shift+A popup stays open (`in_popup`), the Inspector is not focused: that would close it.
-    fn make_or_add(&mut self, e: &mut Editor, en: &Entry, in_popup: bool) {
+    /// With `keep_focus` (the Shift+A popup staying open, a search after Ctrl + Enter) the Inspector is not focused: that would close the
+    /// popup or take the keyboard from the search.
+    fn make_or_add(&mut self, e: &mut Editor, en: &Entry, keep_focus: bool) {
         match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
             Some(keys) => {
                 self.add_to_new_set(e, &keys);
-                e.pending_focus = (!in_popup).then(|| "Inspector".to_owned());
+                e.pending_focus = (!keep_focus).then(|| "Inspector".to_owned());
             }
 
             None => self.start_making(e, en),
@@ -638,7 +654,7 @@ impl TileTool {
             return;
         }
 
-        if gui::is_window_appearing() {
+        if gui::is_window_appearing() || std::mem::take(&mut self.create.quick_refocus) {
             gui::set_keyboard_focus_here(0);
         }
 
@@ -700,6 +716,7 @@ impl TileTool {
 
         // It stays open while trees are added to the new set (Ctrl + click), to add more.
         let adding = start.is_some_and(|i| gui::io().KeyCtrl && self.set_entries_of(e, &entries[i]).is_some());
+        self.create.quick_refocus = adding && enter;
         if (start.is_some() && !adding) || gui::is_key_pressed(gui::KEY_ESCAPE, false) {
             gui::close_current_popup();
         }

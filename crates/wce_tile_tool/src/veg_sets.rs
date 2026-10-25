@@ -6,8 +6,7 @@
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, icons};
-use wce_editor_core::inspector::Inspector;
+use wce_editor::{gui, icons, theme};
 use wce_tile::vegetation_sets::{SetEntry, VegetationSet, scan, sets_root};
 
 use crate::tool::{SetInUse, TileTool, document, selected};
@@ -120,66 +119,20 @@ impl TileTool {
         gui::end_popup();
     }
 
-    /// The rows of a set's trees: weight, own scale range, remove; and a key to add (typed in the new set's field or the saved one's).
-    /// Returns the set as edited.
-    fn edit_set_entries(&mut self, e: &mut Editor, ins: &mut dyn Inspector, mut set: VegetationSet, new: bool) -> VegetationSet {
-        let mut remove = None;
-        for (i, en) in set.entries.iter_mut().enumerate() {
-            gui::push_id_int(i as i32);
-            ins.text("key", "tree", &en.key);
-            ins.edit_slider("weight", "weight", &mut en.weight, 0.0, 10.0);
-            let mut own = en.scale.is_some();
-            if ins.edit_bool("own_scale", "own scale range", &mut own) {
-                en.scale = own.then_some((0.85, 1.15));
-            }
-
-            if let Some((lo, hi)) = en.scale.as_mut() {
-                ins.edit_slider("scale_min", "scale from", lo, 0.1, 3.0);
-                ins.edit_slider("scale_max", "scale to", hi, 0.1, 3.0);
-            }
-
-            if gui::small_button(&format!("{}  Remove {}", icons::TRASH_2, en.key)) {
-                remove = Some(i);
-            }
-
-            gui::separator();
-            gui::pop_id();
-        }
-
-        if let Some(i) = remove {
-            set.entries.remove(i);
-        }
-
-        // Another tree: its key (a tree of the game's files; Ctrl + click in the Create panel adds one too).
-        let mut key = std::mem::take(if new { &mut self.scratch_key } else { &mut self.new_set_key });
-        ins.edit_string("new_key", "add a tree (species.variant)", &mut key);
-        let known = self.catalogue(e, "VEGETATION_INSTANCE").iter().any(|k| *k == key.trim());
-        gui::begin_disabled(!known || set.entries.iter().any(|en| en.key == key.trim()));
-        if gui::small_button(&format!("{}  Add", icons::PLUS)) {
-            set.entries.push(SetEntry { key: key.trim().to_owned(), weight: 1.0, scale: None });
-            key.clear();
-        }
-
-        gui::end_disabled();
-        *(if new { &mut self.scratch_key } else { &mut self.new_set_key }) = key;
-        set
-    }
-
-    /// The saved set in use, in the Inspector: its trees, their weights and scale ranges, add and remove; saved at once (the new one is
-    /// edited at the top of the Inspector, `inspect_new_set`).
-    pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
+    /// The saved set in use, in the Inspector (its box): its trees, their weights and scale ranges, remove; saved at once (the new one has
+    /// its own box, `inspect_new_set`).
+    pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor) {
         if !matches!(self.veg_set, Some(SetInUse::Saved(_))) {
             return;
         }
 
-        let Some(set) = self.set_in_use(e) else { return };
-        if let Some(d) = document(e) {
-            ins.begin(wce_editor_core::document::Document::id(d), u64::MAX - 12);
+        let Some(mut set) = self.set_in_use(e) else { return };
+        let before = set.clone();
+        if begin_set_box("##savedset", &format!("Vegetation set {}", set.name), "saved at once") {
+            set_rows(&mut set);
         }
 
-        let before = set.clone();
-        ins.section(&format!("Vegetation set {}", set.name));
-        let set = self.edit_set_entries(e, ins, set, false);
+        end_set_box();
         if set == before {
             return;
         }
@@ -209,28 +162,35 @@ impl TileTool {
         self.status = format!("the new vegetation set has {kinds} kind(s) of tree (the Inspector); click the terrain to place, Esc stops");
     }
 
-    /// The new set (not saved), at the top of the Inspector: its trees, a name to save it with, using it, dropping it (and placing with it).
-    pub(crate) fn inspect_new_set(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
-        let Some(set) = self.scratch_set.clone() else { return };
-        if let Some(d) = document(e) {
-            ins.begin(wce_editor_core::document::Document::id(d), u64::MAX - 11);
+    /// The new set (not saved), in its box at the top of the Inspector: its trees, a name to save it with, placing with it, dropping it.
+    pub(crate) fn inspect_new_set(&mut self, e: &mut Editor) {
+        let Some(mut set) = self.scratch_set.clone() else { return };
+        let (mut save, mut use_it, mut drop) = (false, false, false);
+        if begin_set_box("##newset", "New vegetation set", "not saved") {
+            set_rows(&mut set);
+            gui::spacing();
+            let mut name = std::mem::take(&mut self.scratch_name);
+            gui::set_next_item_width(-1.0);
+            let enter = gui::input_text("##setname", Some("its name, to save it"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+            let can_save = !name.trim().is_empty() && !set.entries.is_empty();
+            gui::begin_disabled(!can_save);
+            save = gui::small_button(&format!("{}  Save", icons::SAVE)) || (enter && can_save);
+            gui::end_disabled();
+
+            // Placing with it already from the first tree; again after Esc.
+            if self.veg_set != Some(SetInUse::New) {
+                gui::same_line();
+                gui::begin_disabled(set.entries.is_empty());
+                use_it = gui::small_button(&format!("{}  Place / paint", icons::MOUSE_POINTER_2));
+                gui::end_disabled();
+            }
+
+            gui::same_line();
+            drop = gui::small_button(&format!("{}  Discard", icons::X));
+            self.scratch_name = name;
         }
 
-        ins.section("New vegetation set (not saved)");
-        let set = self.edit_set_entries(e, ins, set, true);
-        let mut name = std::mem::take(&mut self.scratch_name);
-        ins.edit_string("set_name", "name", &mut name);
-        gui::begin_disabled(name.trim().is_empty() || set.entries.is_empty());
-        let save = gui::small_button(&format!("{}  Save", icons::SAVE));
-        gui::end_disabled();
-        gui::same_line();
-        gui::begin_disabled(set.entries.is_empty());
-        let use_it = gui::small_button(&format!("{}  Place / paint with it", icons::TREES));
-        gui::end_disabled();
-        gui::same_line();
-        let drop = gui::small_button(&format!("{}  Discard", icons::X));
-        gui::separator();
-        self.scratch_name = name;
+        end_set_box();
         self.scratch_set = Some(set);
 
         if save {
@@ -245,7 +205,6 @@ impl TileTool {
 
             self.scratch_set = None;
             self.scratch_name.clear();
-            self.scratch_key.clear();
         }
     }
 
@@ -266,7 +225,6 @@ impl TileTool {
         set.save()?;
         self.scratch_set = None;
         self.scratch_name.clear();
-        self.scratch_key.clear();
         self.rescan_vegetation_sets();
         if self.veg_set == Some(SetInUse::New) {
             self.veg_set = Some(SetInUse::Saved(name.clone()));
@@ -295,4 +253,89 @@ fn set_file_name(name: &str) -> Result<&str, String> {
     }
 
     Ok(name)
+}
+
+/// A set's box in the Inspector: framed, so that it reads as one thing (not more of the Inspector's sections), with its title and a note.
+fn begin_set_box(id: &str, title: &str, note: &str) -> bool {
+    gui::push_style_color(gui::COL_CHILD_BG, gui::v4(1.0, 1.0, 1.0, 0.035));
+    let open = gui::begin_child(id, gui::v2(0.0, 0.0), gui::CHILD_BORDERS | gui::CHILD_AUTO_RESIZE_Y, 0);
+    gui::pop_style_color(1);
+    if open {
+        gui::text_colored(theme::palette().highlight, &format!("{}  {title}", icons::TREES));
+        gui::same_line();
+        gui::text_disabled(&format!("({note})"));
+    }
+
+    open
+}
+
+fn end_set_box() {
+    gui::end_child();
+    gui::spacing();
+}
+
+/// A set's trees, one row each: the key, its weight, its own scale range (else the brush's), remove; and how to add more.
+fn set_rows(set: &mut VegetationSet) {
+    let mut remove = None;
+    if !set.entries.is_empty() && gui::begin_table("trees", 4, gui::TABLE_ROW_BG | gui::TABLE_SIZING_FIXED_FIT, gui::v2(0.0, 0.0)) {
+        gui::table_setup_column("tree", gui::COLUMN_WIDTH_STRETCH, 0.0);
+        gui::table_setup_column("weight", gui::COLUMN_WIDTH_FIXED, 56.0);
+        gui::table_setup_column("own scale", gui::COLUMN_WIDTH_FIXED, 150.0);
+        gui::table_setup_column("", gui::COLUMN_WIDTH_FIXED, 0.0);
+        gui::table_headers_row();
+        for (i, en) in set.entries.iter_mut().enumerate() {
+            gui::push_id_int(i as i32);
+            gui::table_next_row();
+            gui::table_next_column();
+            gui::text(&en.key);
+            gui::table_next_column();
+            gui::set_next_item_width(-1.0);
+            gui::drag_float("##weight", &mut en.weight, 0.05, 0.0, 10.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How often it is picked, against the others' weights");
+            }
+
+            gui::table_next_column();
+            let mut own = en.scale.is_some();
+            if gui::checkbox("##own", &mut own) {
+                en.scale = own.then_some((0.85, 1.15));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("A scale range of its own (else the brush's)");
+            }
+
+            gui::same_line();
+            if let Some((lo, hi)) = en.scale.as_mut() {
+                let mut v = [*lo, *hi];
+                gui::set_next_item_width(-1.0);
+                if gui::drag_float2("##scale", &mut v, 0.01, "%.2f") {
+                    (*lo, *hi) = (v[0].clamp(0.1, 3.0), v[1].clamp(0.1, 3.0));
+                }
+            } else {
+                gui::text_disabled("brush's");
+            }
+
+            gui::table_next_column();
+            if gui::small_button(icons::TRASH_2) {
+                remove = Some(i);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("Take {} out of the set", en.key));
+            }
+
+            gui::pop_id();
+        }
+
+        gui::end_table();
+    }
+
+    if let Some(i) = remove {
+        set.entries.remove(i);
+    }
+
+    gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
+    gui::text_wrapped("Ctrl + click or Ctrl + Enter on a tree in Create or Shift+A adds it here.");
+    gui::pop_style_color(1);
 }

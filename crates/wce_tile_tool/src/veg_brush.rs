@@ -201,6 +201,10 @@ impl TileTool {
     pub(crate) fn inspect_veg_brush(&mut self, e: &mut Editor, ins: &mut dyn Inspector) {
         let mut b = self.veg_brush(e);
         let before = b;
+        if let Some(d) = document(e) {
+            ins.begin(wce_editor_core::document::Document::id(d), u64::MAX - 13);
+        }
+
         ins.section("Vegetation brush (Ctrl + drag takes trees away)");
         ins.edit_slider("veg_radius", "radius (m)", &mut b.radius, 1.0, 100.0);
         ins.edit_slider("veg_spacing", "spacing (m)", &mut b.spacing, 0.5, 40.0);
