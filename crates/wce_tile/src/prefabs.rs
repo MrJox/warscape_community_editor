@@ -2,6 +2,11 @@
 //! `UserInstanceGroup`. TEd copies a prefab into a tile as a plain group; the editor takes a group whose name is a prefab's key (its file
 //! name, case aside) for a copy of that prefab.
 //!
+//! The editor's prefabs are `<key>.wce` in the projects (`<projects>/assembly_kit/raw_data/art/prefabs`): the same file (a superset, its root
+//! marked, `project_files`), where a prefab placed inside keeps its reference (`wce_prefab`) without its contents. An edit is saved there,
+//! never in the kit; a `.wce` takes the place of the kit's `.xml` of the same key. The editor places a prefab as a reference
+//! (`project_files::PREFAB_ATTR`), and "Save for Assembly Kit" writes a prefab TEd reads (the references in it baked).
+//!
 //! A file as TEd writes it (`\n` line ends, four-space indentation):
 //!
 //! ```text
@@ -36,6 +41,9 @@ pub struct PrefabEntry {
 
     /// The `art/prefabs` folder it is in.
     pub root: PathBuf,
+
+    /// The editor's `.wce` (else TEd's `.xml`).
+    pub wce: bool,
 }
 
 /// The prefabs of some kits, by key (lower case). A key in several folders or kits is the first one found.
@@ -78,9 +86,10 @@ impl PrefabLibrary {
 
                     if path.is_dir() {
                         stack.push(path);
-                    } else if let Some(key) = name.strip_suffix(".xml").or_else(|| name.strip_suffix(".XML")) {
+                    } else if let Some((key, wce)) = name.strip_suffix(".wce").map(|k| (k, true)).or_else(|| name.strip_suffix(".xml").or_else(|| name.strip_suffix(".XML")).map(|k| (k, false))) {
+                        // The editor's .wce sorts before the .xml of the same key in a folder, and takes its place.
                         let folder = path.parent().and_then(|p| p.strip_prefix(&root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-                        lib.entries.entry(key.to_lowercase()).or_insert(PrefabEntry { key: key.to_owned(), path: path.clone(), folder, root: root.clone() });
+                        lib.entries.entry(key.to_lowercase()).or_insert(PrefabEntry { key: key.to_owned(), path: path.clone(), folder, root: root.clone(), wce });
                     }
                 }
             }
@@ -111,6 +120,100 @@ impl PrefabLibrary {
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
+
+    /// A prefab's group contents (at column 0) with the prefabs placed in it filled in (up to 8 deep), as a placed copy holds them.
+    pub fn contents(&self, key: &str) -> Option<Vec<u8>> {
+        self.contents_at(key, 0)
+    }
+
+    fn contents_at(&self, key: &str, depth: u32) -> Option<Vec<u8>> {
+        if depth > 8 {
+            return None;
+        }
+
+        let entry = self.get(key)?;
+        let text = std::fs::read(&entry.path).ok()?;
+        let (text, _) = crate::project_files::expand_prefabs(text, &|k| self.contents_at(k, depth + 1)).ok()?;
+        let scene = TedScene::parse_any(text).ok()?;
+        let group = *scene.find_all("UserInstanceGroup").first()?;
+        Some(scene.children_text(group))
+    }
+
+    /// A prefab's file as the editor reads it: its group's text with the prefabs placed in it filled in.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, or its file does not read.
+    pub fn load(&self, key: &str) -> Result<Prefab, String> {
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        let text = std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let (text, missing) = crate::project_files::expand_prefabs(text, &|k| self.contents(k))?;
+        if !missing.is_empty() {
+            wce_foundation::log::warn(format!("{}: no prefab {} (placed in it)", entry.path.display(), missing.join(", ")));
+        }
+
+        let scene = TedScene::parse_any(text).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        Ok(Prefab { group_text: scene.element_text(group), children_text: scene.children_text(group) })
+    }
+
+    /// Saves an edit of a prefab's contents (`children_text`, the editor's: references filled in) into the projects' prefab folder
+    /// `projects_root`: its `.wce` there, made from the kit's file the first time. Returns the file.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, or a file can't be read or written.
+    pub fn save_edit(&self, key: &str, projects_root: &Path, children_text: &[u8]) -> Result<PathBuf, String> {
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        let target = if entry.wce && entry.path.starts_with(projects_root) {
+            entry.path.clone()
+        } else {
+            let folder = if entry.folder.is_empty() { projects_root.to_path_buf() } else { projects_root.join(&entry.folder) };
+            folder.join(format!("{}.wce", entry.key))
+        };
+
+        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        scene.set_children_text(group, children_text)?;
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+
+        std::fs::write(&target, wce_file_text(scene.save())).map_err(|e| format!("{}: {e}", target.display()))?;
+        Ok(target)
+    }
+
+    /// "Save for Assembly Kit" of a prefab: its file as TEd reads it (the prefabs placed in it baked) in the kit's prefab folder `kit_root`,
+    /// at the same folder, as `<key>.xml`. A file it replaces with other bytes keeps a `.bak`. Returns the file and the conversion's report.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, or a file can't be read, converted or written.
+    pub fn save_for_kit(&self, key: &str, kit_root: &Path) -> Result<(PathBuf, crate::project_files::TedReport), String> {
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        let text = std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let (text, _) = crate::project_files::expand_prefabs(text, &|k| self.contents(k))?;
+        let (ted, report) = crate::project_files::to_ted(text)?;
+        let folder = if entry.folder.is_empty() { kit_root.to_path_buf() } else { kit_root.join(&entry.folder) };
+        std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        let target = folder.join(format!("{}.xml", entry.key));
+        match std::fs::read(&target) {
+            Ok(old) if old == ted => return Ok((target, report)),
+            Ok(_) => {
+                std::fs::copy(&target, target.with_extension("xml.bak")).map_err(|e| e.to_string())?;
+            }
+
+            Err(_) => {}
+        }
+
+        std::fs::write(&target, ted).map_err(|e| format!("{}: {e}", target.display()))?;
+        Ok((target, report))
+    }
+}
+
+/// A prefab file's text as the editor keeps it: the references' contents left out, the root marked.
+fn wce_file_text(text: Vec<u8>) -> Vec<u8> {
+    crate::project_files::mark_wce_text(crate::project_files::strip_prefab_contents(text))
 }
 
 /// A prefab file's group: its whole text and the text of its contents (both at column 0, `\n` line ends, see [`TedScene::element_text`]).
@@ -147,7 +250,7 @@ pub fn file_text(group_text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Writes a new prefab file (its folders too).
+/// Writes a new prefab file (its folders too): a `.wce` as the editor keeps it, an `.xml` as TEd's.
 ///
 /// # Errors
 ///
@@ -157,7 +260,9 @@ pub fn write(path: &Path, group_text: &[u8]) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
 
-    std::fs::write(path, file_text(group_text)).map_err(|e| format!("{}: {e}", path.display()))
+    let text = file_text(group_text);
+    let text = if path.extension().is_some_and(|x| x == "wce") { wce_file_text(text) } else { text };
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Replaces the contents of a prefab file's group, keeping the rest of the file as it is.
@@ -204,5 +309,31 @@ mod tests {
         update_children(&path, b"<BUILDING_INSTANCE position=\"vector(0,0,0)\" key=\"tree\" name=\"tree\"/>\n").unwrap();
         let now = std::fs::read_to_string(&path).unwrap();
         assert_eq!(now, FILE.replace("                <BUILDING_INSTANCE position=\"vector(1,0,0)\" key=\"rock\" name=\"rock\"/>\n                <BUILDING_INSTANCE position=\"vector(-1,0,0)\" key=\"rock\" name=\"rock\"/>\n", "                <BUILDING_INSTANCE position=\"vector(0,0,0)\" key=\"tree\" name=\"tree\"/>\n"));
+    }
+
+    #[test]
+    fn an_edit_goes_to_the_projects_wce_which_takes_the_kits_place() {
+        let kit = tempfile::tempdir().unwrap();
+        let projects = tempfile::tempdir().unwrap();
+        let path = prefab_root(kit.path()).join("global").join("rocks.xml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, FILE).unwrap();
+        let lib = PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+        let saved = lib.save_edit("rocks", &prefab_root(projects.path()), b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\" name=\"rock\"/>\n").unwrap();
+        assert_eq!(saved, prefab_root(projects.path()).join("global").join("rocks.wce"));
+        assert_eq!(std::fs::read(&path).unwrap(), FILE.as_bytes(), "the kit's file is not touched");
+        let text = String::from_utf8(std::fs::read(&saved).unwrap()).unwrap();
+        assert!(text.starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">") && text.contains("vector(2,0,0)"), "{text}");
+
+        let lib = PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+        let e = lib.get("rocks").unwrap();
+        assert!(e.wce && e.path == saved, "{e:?}");
+        assert_eq!(lib.contents("rocks").unwrap(), b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\" name=\"rock\"/>\n");
+
+        // For the kit: TEd's file again, at the kit's place.
+        let (back, _) = lib.save_for_kit("rocks", &prefab_root(kit.path())).unwrap();
+        assert_eq!(back, path);
+        let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+        assert!(!ted.contains("wce_") && ted.contains("vector(2,0,0)"), "{ted}");
     }
 }

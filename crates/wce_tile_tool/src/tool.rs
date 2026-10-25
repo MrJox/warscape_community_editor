@@ -745,12 +745,16 @@ impl TileTool {
         let game = self.exported_game(e)?;
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
-        let (dir, modified) = (d.project().dir.clone(), d.modified());
+        let modified = d.modified();
         if modified {
             e.docs.save_one(id)?;
         }
 
-        let (saved, notes) = wce_tile_io::attila::workflow::save_exported(&game, &dir, out)?;
+        // The scene as the editor holds it (the prefab references with their contents), as TEd's.
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let dir = d.project().dir.clone();
+        let (scene, _) = wce_tile::project_files::to_ted(d.tile().tscene().save())?;
+        let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &dir, Some(scene), out)?;
         for n in &notes.notes {
             log::info(format!("{}: {n}", saved.display()));
         }
@@ -2496,6 +2500,13 @@ impl Tool for TileTool {
         if !project.warning.is_empty() {
             log::warn(project.warning.clone());
             self.status = project.warning.clone();
+        }
+
+        // The prefabs placed as references get their contents.
+        let lib = self.prefab_library(e);
+        let missing = project.fill_prefab_references(&|k| lib.contents(k)).map_err(|err| err.to_string())?;
+        if !missing.is_empty() {
+            log::warn(format!("no prefab {}: their references are kept empty", missing.join(", ")));
         }
 
         let mut doc = TileDocument::new(project, e.files());

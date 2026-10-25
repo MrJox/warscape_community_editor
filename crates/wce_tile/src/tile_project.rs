@@ -12,7 +12,7 @@ use wce_formats::tile_index::TileIndex;
 use wce_foundation::wce_prof;
 
 use crate::height_field::HeightField;
-use crate::project_files::{TED_FILE, TedReport, WCE_FILE};
+use crate::project_files::{TED_FILE, TedReport, WCE_FILE, mark_wce_text, strip_prefab_contents};
 use crate::ted_scene::TedScene;
 use crate::world_transform::world_transform;
 
@@ -123,21 +123,6 @@ pub fn fit_baked_heights(pairs: &[(f64, f64)]) -> Option<(f64, f64, usize)> {
 /// Whether a folder holds a tile: the editor's tile.wce or TEd's tile.ted.
 pub fn has_tile(dir: &Path) -> bool {
     dir.join(WCE_FILE).exists() || dir.join(TED_FILE).exists()
-}
-
-/// A scene's saved text marked as tile.wce (the root's `wce_version`), unless it is.
-fn mark_wce_text(mut text: Vec<u8>) -> Vec<u8> {
-    let name = crate::project_files::WCE_VERSION_ATTR.as_bytes();
-    let Some(start) = text.windows(8).position(|w| w == b"<project") else { return text };
-    let Some(end) = text[start..].iter().position(|&c| c == b'>').map(|i| start + i) else { return text };
-    if text[start..end].windows(name.len()).any(|w| w == name) {
-        return text;
-    }
-
-    let at = if text[end - 1] == b'/' { end - 1 } else { end };
-    let attr = format!(" {}=\"{}\"", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
-    text.splice(at..at, attr.into_bytes());
-    text
 }
 
 /// The raw_data folder an entry file or a tile path lives under (the part before terrain/tiles), if there is one.
@@ -488,7 +473,7 @@ impl TileProject {
 
         std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
         if self.scene.modified() || force_scene || elsewhere || !out_dir.join(WCE_FILE).exists() {
-            write(WCE_FILE, &mark_wce_text(self.scene.save()))?;
+            write(WCE_FILE, &mark_wce_text(strip_prefab_contents(self.scene.save())))?;
             msg += &format!("{WCE_FILE} saved. ");
             wrote = true;
         }
@@ -528,6 +513,30 @@ impl TileProject {
         }
 
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
+    }
+
+    /// Fills in the prefab references' contents from their prefabs (`contents`: a key's group contents; `PrefabLibrary::contents`), as the
+    /// editor holds them; the scene is read again (unmodified) only when it has references. Returns the keys no prefab was found for (their
+    /// references stay empty, and are kept as they are).
+    ///
+    /// # Errors
+    ///
+    /// The filled text does not read.
+    pub fn fill_prefab_references(&mut self, contents: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Vec<String>> {
+        let text = self.scene.save();
+        if !text.windows(crate::project_files::PREFAB_ATTR.len()).any(|w| w == crate::project_files::PREFAB_ATTR.as_bytes()) {
+            return Ok(vec![]);
+        }
+
+        let (filled, missing) = crate::project_files::expand_prefabs(text, contents)?;
+        self.scene = TedScene::parse(filled)?;
+        self.river_texts = self.current_river_texts();
+        if !missing.is_empty() {
+            let note = format!("no prefab {} for the references placed in the tile (kept empty)", missing.join(", "));
+            self.warning = if self.warning.is_empty() { note } else { format!("{}; {note}", self.warning) };
+        }
+
+        Ok(missing)
     }
 
     /// Copies the tile's files that the save does not write (blend map, ground types, the other height maps, ...) into `out_dir`: every

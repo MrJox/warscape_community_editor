@@ -253,7 +253,7 @@ impl TileTool {
             crate::tool::Placing::Prefab(key) => {
                 if self.placing_prefab_text.as_ref().is_none_or(|(k, _)| *k != key) {
                     let lib = self.prefab_library(e);
-                    let text = lib.get(&key).and_then(|p| wce_tile::prefabs::load(&p.path).ok()).map(|p| p.group_text).unwrap_or_default();
+                    let text = lib.load(&key).map(|p| wce_tile_editor::tile_document::prefab_reference_text(&p.group_text, &key)).unwrap_or_default();
                     self.placing_prefab_text = Some((key.clone(), text));
                 }
 

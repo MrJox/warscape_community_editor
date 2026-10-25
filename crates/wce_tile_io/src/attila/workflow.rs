@@ -193,11 +193,26 @@ fn with_attribute(xml: &str, element: &str, attr: &str) -> String {
 ///
 /// The project doesn't read or compile, or a file can't be written.
 pub fn save_exported(game: &Game, project_dir: &Path, out: &Path) -> Result<(PathBuf, CompileNotes), String> {
-    use wce_tile::project_files::{entry_with_location_mark, unmark_extracted};
+    save_exported_scene(game, project_dir, None, out)
+}
+
+/// [`save_exported`] with the scene given as tile.ted's text (the editor's, prefab references baked: `project_files::to_ted`) instead of the
+/// folder's.
+///
+/// # Errors
+///
+/// As `save_exported`.
+pub fn save_exported_scene(game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, out: &Path) -> Result<(PathBuf, CompileNotes), String> {
+    use wce_tile::project_files::{TED_FILE, WCE_FILE, entry_with_location_mark, unmark_extracted};
 
     // An extracted tile goes back to its own name.
     let folder = unmark_extracted(&tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?);
-    let files = TileFiles::from_kit_dir(project_dir).map_err(|e| e.to_string())?;
+    let mut files = TileFiles::from_kit_dir(project_dir).map_err(|e| e.to_string())?;
+    if let Some(scene) = scene {
+        files.folder.remove(WCE_FILE);
+        files.folder.insert(TED_FILE.to_owned(), Blob::Bytes(scene.into()));
+    }
+
     let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| entry_with_location_mark(&String::from_utf8_lossy(&b), false))).transpose().map_err(|e| e.to_string())?;
     let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
 

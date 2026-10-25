@@ -1212,7 +1212,41 @@ impl TileDocument {
     /// The copies of a prefab in the tile: its instance groups named the prefab's key (case aside), in document order.
     pub fn prefab_copies(&self, key: &str) -> Vec<usize> {
         let sc = self.tile().tscene();
-        sc.find_all("UserInstanceGroup").into_iter().filter(|&g| sc.name(g).eq_ignore_ascii_case(key)).collect()
+        sc.find_all("UserInstanceGroup").into_iter().filter(|&g| self.prefab_key(g).is_some_and(|k| k.eq_ignore_ascii_case(key))).collect()
+    }
+
+    /// The prefab an instance group is a copy of: its reference (`wce_prefab`), else its name (a group TEd copied is named after the
+    /// prefab's key; whether there is such a prefab is the caller's to check).
+    pub fn prefab_key(&self, group: usize) -> Option<String> {
+        let sc = self.tile().tscene();
+        if sc.type_of(group) != "UserInstanceGroup" {
+            return None;
+        }
+
+        match sc.doc().get(group, wce_tile::project_files::PREFAB_ATTR) {
+            Some(k) if !k.is_empty() => Some(k),
+            Some(_) => None,
+            None => Some(sc.name(group)),
+        }
+    }
+
+    /// Whether an instance group is a reference to a prefab (placed by the editor), not a copy TEd made.
+    pub fn is_prefab_reference(&self, group: usize) -> bool {
+        self.tile().tscene().doc().get(group, wce_tile::project_files::PREFAB_ATTR).is_some_and(|k| !k.is_empty())
+    }
+
+    /// Makes a copy a plain group: its reference goes (an empty `wce_prefab`, which tile.wce and TEd's file leave out), and its name.
+    pub fn unpack_prefab_copy(&mut self, group: usize, name: &str) -> bool {
+        if self.tile().tscene().doc().get(group, wce_tile::project_files::PREFAB_ATTR).is_some() {
+            self.set_attribute(group, wce_tile::project_files::PREFAB_ATTR, "");
+        }
+
+        self.rename(group, name)
+    }
+
+    /// Makes an instance group a reference to the prefab `key` (after "Save as prefab").
+    pub fn make_prefab_reference(&mut self, group: usize, key: &str) -> bool {
+        self.rename(group, key) && self.set_attribute(group, wce_tile::project_files::PREFAB_ATTR, key)
     }
 
     /// The text of an element (at column 0) and of a container's contents, as a prefab file holds them.
@@ -1231,7 +1265,8 @@ impl TileDocument {
     ///
     /// No such layer, or the text is not one element.
     pub fn place_prefab(&mut self, key: &str, group_text: &[u8], into: usize, at: Float3) -> Result<usize, String> {
-        self.place_text(&format!("Place {key}"), group_text, into, at, Some(key))
+        let text = prefab_reference_text(group_text, key);
+        self.place_text(&format!("Place {key}"), &text, into, at, Some(key))
     }
 
     /// Gives every group of `groups` these contents (text at column 0; their positions are relative to the group, so each copy keeps its
@@ -2061,4 +2096,24 @@ pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins
     }
 
     new
+}
+
+/// A prefab's group text as a placed reference: `wce_prefab="<key>"` on its start tag (replacing one it has).
+pub fn prefab_reference_text(group_text: &[u8], key: &str) -> Vec<u8> {
+    let attr = wce_tile::project_files::PREFAB_ATTR;
+    let Some(end) = group_text.iter().position(|&c| c == b'>') else { return group_text.to_vec() };
+    let end = if end > 0 && group_text[end - 1] == b'/' { end - 1 } else { end };
+    let tag = String::from_utf8_lossy(&group_text[..end]).into_owned();
+    let tag = match tag.find(&format!(" {attr}=\"")) {
+        Some(at) => {
+            let close = tag[at + attr.len() + 3..].find('"').map_or(tag.len(), |i| at + attr.len() + 3 + i + 1);
+            format!("{}{}", &tag[..at], &tag[close..])
+        }
+
+        None => tag,
+    };
+
+    let mut out = format!("{tag} {attr}=\"{key}\"").into_bytes();
+    out.extend_from_slice(&group_text[end..]);
+    out
 }
