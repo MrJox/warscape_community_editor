@@ -348,11 +348,16 @@ impl TileDocument {
 
         let sc = self.tscene_mut();
         let Some(old_euler) = sc.euler(elem) else { return false };
+        let old_text = sc.doc().get(elem, "orientation");
         rotate_world_yaw(sc, elem, radians(deg));
         let new_euler = sc.euler(elem).unwrap_or(old_euler);
 
-        // The command applies it.
-        sc.set_euler(elem, old_euler);
+        // The command applies it; the file's text goes back first, so that undo writes it again as it was.
+        match old_text {
+            Some(t) => sc.set_attr(elem, "orientation", &t),
+            None => sc.set_euler(elem, old_euler),
+        }
+
         self.set_local(elem, None, Some(new_euler), 0)
     }
 
@@ -472,6 +477,20 @@ impl TileDocument {
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
         self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
         Ok(e)
+    }
+
+    /// Tilts an instance so that its up is `normal` (world), keeping its heading (where its +z points on the ground). The steps of one
+    /// gesture merge.
+    pub fn tilt_to_surface(&mut self, elem: usize, normal: Double3, gesture: u64) -> bool {
+        let sc = self.tile().tscene();
+        let Some(euler) = sc.euler(elem) else { return false };
+        let world = world_transform(sc, elem).rotation;
+        let parent = world * wce_tile::world_transform::euler_matrix(euler).transpose();
+        let forward = world * Double3::new(0.0, 0.0, 1.0);
+        let yaw = if forward.x.hypot(forward.z) > 1e-6 { forward.x.atan2(forward.z) } else { 0.0 };
+        let tilted = super::draft::tilt_to(normal) * Double3x3::rotation_y(yaw);
+        let local = euler_from_matrix(&(parent.transpose() * tilted));
+        self.set_local(elem, None, Some(local), gesture)
     }
 
     /// move | insert | remove a point of a polygon.
@@ -1772,10 +1791,40 @@ impl TileDocument {
 
             Kind::Placement => {
                 if self.tile().is_instance(e) && self.tile().tscene().doc().get(e, "surface_mode").is_some() {
-                    let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
-                    let mut idx = i32::from(self.tile().placement(e) == Placement::Freeform);
-                    if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable {
+                    // TEd's two modes and the editor's Entity: Above (freeform, marked: `project_files::SURFACE_ATTR`).
+                    use wce_tile::project_files::{ROTATION_ATTR, SURFACE_ATTR};
+                    let doc = self.tile().tscene().doc();
+                    let on_entity = doc.get(e, SURFACE_ATTR).is_some_and(|v| v == "entity");
+                    let modes = ["Landscape: Above", "Freeform", "Entity: Above"].map(str::to_owned);
+                    let mut idx = if on_entity { 2 } else { i32::from(self.tile().placement(e) == Placement::Freeform) };
+                    let before = idx;
+                    if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable && idx != before {
                         self.set_placement(&[e], if idx == 0 { Placement::Landscape } else { Placement::Freeform });
+                        if idx == 2 {
+                            self.set_attribute(e, SURFACE_ATTR, "entity");
+                        } else if on_entity {
+                            self.set_attribute(e, SURFACE_ATTR, "");
+                        }
+                    }
+
+                    if idx == 2 {
+                        ins.text("surface_note", "", "kept at its height; G puts it on what is under the mouse");
+                    }
+
+                    // The rotation: free (as given), or following the surface under it (tilted to it now; a grab tilts it again).
+                    let follow = self.tile().tscene().doc().get(e, ROTATION_ATTR).is_some_and(|v| v == "surface");
+                    let rotations = ["Free", "Follow surface"].map(str::to_owned);
+                    let mut r = i32::from(follow);
+                    if ins.edit_choice("rotation_mode", "rotation", &mut r, &rotations) && editable && (r == 1) != follow {
+                        if r == 1 {
+                            let p = self.tile().world_position(e);
+                            let n = self.tile().terrain_normal(p.x, p.z);
+                            self.tilt_to_surface(e, n, base + 5);
+                            self.history.break_merge();
+                            self.set_attribute(e, ROTATION_ATTR, "surface");
+                        } else {
+                            self.set_attribute(e, ROTATION_ATTR, "");
+                        }
                     }
 
                     let t = self.tile();

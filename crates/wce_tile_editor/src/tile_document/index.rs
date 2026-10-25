@@ -175,6 +175,12 @@ impl Tile {
         (self.project.height_at(f64::from(x), f64::from(z)) / self.unit()) as f32
     }
 
+    /// The terrain's normal at a point (world metres), from the heights half a metre to each side.
+    pub fn terrain_normal(&self, x: f32, z: f32) -> Double3 {
+        let h = |x: f32, z: f32| f64::from(self.terrain_height(x, z));
+        Double3::new(h(x - 0.5, z) - h(x + 0.5, z), 1.0, h(x, z - 0.5) - h(x, z + 0.5))
+    }
+
     pub fn landscape_y(&self, _elem: usize, x: f32, z: f32) -> f32 {
         self.terrain_height(x, z)
     }

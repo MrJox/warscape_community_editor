@@ -142,7 +142,7 @@ impl TileTool {
             gui::text_disabled("|");
             gui::same_line();
             let rotations = [
-                (RotationMode::None, icons::ARROW_BIG_UP, "Upright: turned only about the vertical (R / Shift+R)"),
+                (RotationMode::None, icons::ARROW_BIG_UP, "Free: as you turn it (R / Shift+R; the Inspector's orientation); not tilted"),
                 (RotationMode::Surface, icons::ROTATE_3D, "Follow surface: tilted to the surface under it (the turn of R / Shift+R kept)"),
             ];
             for (mode, icon, tip) in rotations {

@@ -988,6 +988,16 @@ impl TileTool {
             };
 
             d.set_world_metres(g, Float3::new(gx, gy, gz), self.grab_gesture);
+
+            // An item that follows its surface is tilted to the one it is moved onto.
+            if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
+                let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
+                    (crate::settings::SurfaceMode::Entity, Some(h)) => wce_foundation::math::Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z)),
+                    _ => d.tile().terrain_normal(gx, gz),
+                };
+
+                d.tilt_to_surface(g, n, self.grab_gesture);
+            }
         }
     }
 
