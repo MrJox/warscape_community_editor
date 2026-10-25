@@ -483,3 +483,36 @@ fn several_groups_ungroup_at_once() {
     types.sort();
     assert_eq!(types, ["AI_HINT_POLYGON_INSTANCE", "BUILDING_INSTANCE"], "the freed indices point at the moved items");
 }
+
+#[test]
+fn prefab_copies_are_placed_and_updated_together() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    let group_text = d.element_text(g);
+    let children = d.children_text(g);
+    assert!(group_text.starts_with(b"<UserInstanceGroup ") && children.starts_with(b"<BUILDING_INSTANCE "));
+
+    // A second copy, placed elsewhere: same contents, its own place.
+    let c = d.place_prefab("rocks", &group_text, graph, Float3::new(20.0, 0.0, 20.0)).unwrap();
+    assert_eq!(d.prefab_copies("ROCKS").len(), 2);
+    assert_eq!(d.children_text(c), children);
+    let p = d.tile().world_position(c);
+    assert!((p.x - 20.0).abs() < 1e-3 && (p.z - 20.0).abs() < 1e-3);
+
+    // New contents for every copy, one entry; copies that already have them do not change.
+    let new_children = String::from_utf8(children.clone()).unwrap().replace("key=\"house\"", "key=\"tower\"").into_bytes();
+    let copies = d.prefab_copies("rocks");
+    assert_eq!(d.set_groups_children(&copies, &new_children, "Update rocks").unwrap(), 2);
+    assert!(d.prefab_copies("rocks").iter().all(|&g| d.children_text(g) == new_children));
+    let copies = d.prefab_copies("rocks");
+    assert_eq!(d.set_groups_children(&copies, &new_children, "Update rocks").unwrap(), 0);
+
+    for _ in 0..3 {
+        d.history_mut().undo();
+    }
+
+    assert_eq!(text(&d), original);
+}

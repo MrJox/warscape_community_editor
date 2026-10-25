@@ -177,24 +177,36 @@ impl XmlDoc {
             return self.text.clone();
         }
 
+        self.text_of_range(0, self.text.len())
+    }
+
+    /// The text from `start` to `end` (offsets of [`Self::original_text`]) with the pending edits inside that span applied: a part of what
+    /// [`Self::save`] writes (an element's lines, say), without baking the edits.
+    pub fn text_of_range(&self, start: usize, end: usize) -> Vec<u8> {
+        let end = end.min(self.text.len());
+
         // Value edits and attribute insertions go into one ordered list of span replacements.
-        let mut ops = self.edits.clone();
+        let mut ops = self.edits.range(start..end).map(|(&off, op)| (off, op.clone())).collect::<BTreeMap<_, _>>();
         for (&(elem, attr), raw) in &self.appended_values {
             let element = &self.elems[elem];
+            if element.attrs_end < start || element.attrs_end >= end {
+                continue;
+            }
+
             let op = ops.entry(element.attrs_end).or_insert(Edit { len: 0, text: vec![] });
             op.len = 0;
             op.text.extend_from_slice(&added_attr_text(&element.attrs[attr], raw));
         }
 
-        let mut out = Vec::with_capacity(self.text.len() + 256);
-        let mut pos = 0;
-        for (&off, op) in &ops {
-            out.extend_from_slice(&self.text[pos..off]);
+        let mut out = Vec::with_capacity(end - start + 256);
+        let mut pos = start;
+        for (off, op) in &ops {
+            out.extend_from_slice(&self.text[pos..*off]);
             out.extend_from_slice(&op.text);
             pos = off + op.len;
         }
 
-        out.extend_from_slice(&self.text[pos..]);
+        out.extend_from_slice(&self.text[pos.min(end)..end]);
         out
     }
 

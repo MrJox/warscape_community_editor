@@ -4,6 +4,7 @@
 pub mod battle_map;
 pub mod building_db;
 pub mod height_field;
+pub mod prefabs;
 pub mod properties;
 pub mod property_enums;
 pub mod ted_scene;

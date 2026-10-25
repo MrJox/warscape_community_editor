@@ -125,6 +125,7 @@ impl TileTool {
         self.tree_filter_seen = self.tree_filter.clone();
         let hidden = &d.tile().display().hidden_types;
         self.tree_hidden_seen = Some(hidden.iter().cloned().collect());
+        self.tree_prefab_seen = self.prefab_version;
         let sc = d.tile().tscene();
         let Some(g) = sc.scene_graph() else { return };
 
@@ -141,7 +142,8 @@ impl TileTool {
 
         // Depth first, children in order: the stack holds them reversed.
         while let Some((e, depth, key)) = stack.pop() {
-            let layer = sc.is_layer(e);
+            // A copy of a prefab is one row (its contents are listed only while it is edited).
+            let layer = sc.is_layer(e) && !self.closed_prefab(d, e);
             let mut kids = if layer { sc.children(e) } else { vec![] };
             let all_kids = kids.clone();
             if let Some(keep) = &keep {
@@ -287,6 +289,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         return;
     };
 
+    tool.prefab_library(e);
     let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
     let Some(graph) = d.tile().tscene().scene_graph() else {
         gui::text_disabled("This tile has no SCENE_GRAPH.");
@@ -306,7 +309,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
 
     let hidden_now = d.tile().display().hidden_types.iter().cloned().collect::<Vec<_>>();
     if tool.tree_doc != id || tool.tree_version != Some(d.tile().structure_version()) || tool.tree_open_version_seen != Some(tool.tree_open_version)
-        || tool.tree_filter != tool.tree_filter_seen || tool.tree_hidden_seen.as_ref() != Some(&hidden_now)
+        || tool.tree_filter != tool.tree_filter_seen || tool.tree_hidden_seen.as_ref() != Some(&hidden_now) || tool.tree_prefab_seen != tool.prefab_version
     {
         tool.rebuild_tree(d);
     }
@@ -473,6 +476,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         gui::end_popup();
     }
 
+    tool.draw_save_prefab_popup(e);
     gui::end();
 }
 
@@ -537,6 +541,15 @@ fn export_menu(sc: &TedScene, layer: usize, actions: &mut Vec<RowAction>) {
     }
 }
 
+/// A prefab action asked from a row's menu.
+enum PrefabAction {
+    Edit(usize),
+    Apply,
+    Cancel,
+    Unpack(usize),
+    Save(usize),
+}
+
 /// What a row asked for this frame, applied once the rows are drawn (the edits move element indices).
 enum RowAction {
     SetFlags(Vec<usize>, &'static str, bool),
@@ -545,6 +558,7 @@ enum RowAction {
     Group(Vec<usize>),
     Ungroup(Vec<usize>),
     SetWorking(Option<usize>),
+    Prefab(PrefabAction),
     MoveInto(Vec<usize>, usize),
     Rename(usize),
     DuplicateLayer(usize),
@@ -574,6 +588,12 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let working = tool.working_layer_of(d);
+        let edited_copy = tool.edited_copy(d);
+        let lib = tool.prefabs.clone();
+        let prefab_of = |el: usize| -> Option<String> {
+            let sc = d.tile().tscene();
+            (sc.type_of(el) == "UserInstanceGroup").then(|| lib.as_ref().and_then(|l| l.get(&sc.name(el)).map(|p| p.key.clone()))).flatten()
+        };
         let t = d.tile();
         let sc = t.tscene();
         let rows = tool.tree_rows.clone();
@@ -698,6 +718,35 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     actions.push(RowAction::GroupIntoLayer(sel.clone()));
                 }
 
+                // Prefabs: a copy is edited, unpacked; a plain instance group is saved as one.
+                match prefab_of(el) {
+                    Some(_) if Some(el) == edited_copy => {
+                        if gui::menu_item("Apply the prefab edit", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::Apply));
+                        }
+
+                        if gui::menu_item("Cancel the prefab edit", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::Cancel));
+                        }
+                    }
+
+                    Some(_) => {
+                        if gui::menu_item("Edit prefab", None, false, edited_copy.is_none()) {
+                            actions.push(RowAction::Prefab(PrefabAction::Edit(el)));
+                        }
+
+                        if gui::menu_item("Unpack prefab", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::Unpack(el)));
+                        }
+                    }
+
+                    None if sc.type_of(el) == "UserInstanceGroup" && gui::menu_item("Save as prefab...", None, false, true) => {
+                        actions.push(RowAction::Prefab(PrefabAction::Save(el)));
+                    }
+
+                    None => {}
+                }
+
                 if matches!(sc.type_of(el), "LayerInstance" | "SCENE_GRAPH") {
                     if Some(el) == working {
                         if gui::menu_item("Clear the working layer", None, false, true) {
@@ -811,15 +860,27 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 dl.pop_clip_rect();
             }
 
-            // The type and where it is exported.
+            // The type (a prefab copy's is Prefab) and where it is exported.
             let ty = sc.type_of(el);
+            let prefab = prefab_of(el);
+            let edited = prefab.is_some() && Some(el) == edited_copy;
             gui::set_cursor_screen_pos(v2(p0.x + avail - 4.0 * ICON_WIDTH, p0.y));
             gui::invisible_button("##type", v2(ICON_WIDTH, row_h), gui::BUTTON_LEFT);
             if gui::is_item_hovered() {
-                gui::set_tooltip(ty);
+                match &prefab {
+                    Some(k) if edited => gui::set_tooltip(&format!("Prefab {k}, being edited: right click to apply or cancel")),
+                    Some(k) => gui::set_tooltip(&format!("Prefab {k}")),
+                    None => gui::set_tooltip(ty),
+                }
             }
 
-            draw_icon(dl, v2(p0.x + avail - 3.5 * ICON_WIDTH, cy), type_icon(ty), text_col);
+            let (icon, icol) = match prefab {
+                Some(_) if edited => (crate::prefab_panel::PREFAB_ICON, theme::u32(crate::prefab_panel::edited_colour())),
+                Some(_) => (crate::prefab_panel::PREFAB_ICON, text_col),
+                None => (type_icon(ty), text_col),
+            };
+
+            draw_icon(dl, v2(p0.x + avail - 3.5 * ICON_WIDTH, cy), icon, icol);
             let (export, decided_by) = effective_export(sc, el);
             let own = sc.type_of(el) == "LayerInstance";
             gui::set_cursor_screen_pos(v2(p0.x + avail - 3.0 * ICON_WIDTH, p0.y));
@@ -893,6 +954,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         }
     }
 
+    let mut prefab_actions = vec![];
     for action in actions {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         match action {
@@ -933,6 +995,8 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
             RowAction::SetWorking(layer) => tool.status = tool.set_working_layer(d, layer).unwrap_or_else(|err| err),
 
+            RowAction::Prefab(p) => prefab_actions.push(p),
+
             RowAction::MoveInto(sel, layer) => {
                 let name = d.tile().tscene().name(layer);
                 tool.status = match d.move_items(&sel, layer, None) {
@@ -972,6 +1036,23 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 tool.tree_open_version += 1;
             }
         }
+    }
+
+    // The prefab actions need the editor (the library, the selection).
+    for p in prefab_actions {
+        let result = match p {
+            PrefabAction::Edit(el) => tool.edit_prefab(e, el),
+            PrefabAction::Apply => tool.apply_prefab_edit(e),
+            PrefabAction::Cancel => tool.cancel_prefab_edit(e),
+            PrefabAction::Unpack(el) => tool.unpack_prefab(e, el),
+            PrefabAction::Save(el) => {
+                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+                tool.request_save_prefab(d, el);
+                Ok(String::new())
+            }
+        };
+
+        tool.status = result.unwrap_or_else(|err| err);
     }
 
     if let Some((elems, layer, before)) = pending_drop {
