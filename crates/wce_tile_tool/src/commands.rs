@@ -1124,6 +1124,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("veg_brush", "veg_brush on|off [radius] [spacing] [clearance] [fill]", "the vegetation brush: paint trees instead of placing one per click, and its settings", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: veg_brush on|off [radius] [spacing] [clearance] [fill]"),
+        };
+
+        with_tile(e, |t, e| {
+            let mut b = t.veg_brush(e);
+            b.on = on;
+            let num = |i: usize| a.get(i).and_then(|v| number(v));
+            b.radius = num(1).unwrap_or(b.radius);
+            b.spacing = num(2).unwrap_or(b.spacing);
+            b.clearance = num(3).unwrap_or(b.clearance);
+            b.fill = num(4).unwrap_or(b.fill);
+            t.set_veg_brush(e, b);
+            ok("")
+        })
+    });
+
     c.add("start_making", "start_making <type | building | prefab> [key]", "start placing or drawing something, as a click in the Create panel does (the mouse places it)", |e, a| {
         let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
         let key = a.get(1).cloned().unwrap_or_default();

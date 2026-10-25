@@ -343,6 +343,11 @@ impl TileTool {
             return true;
         }
 
+        // The brush's settings first while it paints trees.
+        if self.painting_trees(e) {
+            self.inspect_veg_brush(e, ins);
+        }
+
         let Some(mut draft) = self.draft.clone() else { return false };
         let Some(d) = document(e) else { return false };
         ins.begin(d.id(), u64::MAX - 7);

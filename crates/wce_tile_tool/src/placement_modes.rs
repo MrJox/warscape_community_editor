@@ -151,6 +151,28 @@ impl TileTool {
                 }
             }
 
+            // A tree: one per click, or the brush.
+            let tree = self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE");
+            let mut brush = None;
+            if tree {
+                gui::text_disabled("|");
+                gui::same_line();
+                let on = self.veg_brush(e).on;
+                if chip(!on, icons::TREE_PINE, "vegsingle", "One tree per click") {
+                    brush = Some(false);
+                }
+
+                if chip(on, icons::BRUSH, "vegbrush", "Brush: paint trees (Ctrl + drag takes them away); its settings are in the Inspector") {
+                    brush = Some(true);
+                }
+            }
+
+            if let Some(on) = brush {
+                let mut b = self.veg_brush(e);
+                b.on = on;
+                self.set_veg_brush(e, b);
+            }
+
             gui::new_line();
         }
 

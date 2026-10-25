@@ -109,3 +109,4 @@ pub const ARROW_DOWN_TO_LINE: &str = "\u{e455}";
 pub const GROUP: &str = "\u{e464}";
 pub const UNGROUP: &str = "\u{e467}";
 pub const PLUS: &str = "\u{e13d}";
+pub const BRUSH: &str = "\u{e1d3}";
