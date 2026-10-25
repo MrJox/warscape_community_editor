@@ -79,6 +79,9 @@ pub struct Viewport {
     press: (f32, f32),
     pressed: bool,
 
+    /// Where the right button went down over the image (a release there, without moving, is a context click).
+    right_press: Option<(f32, f32)>,
+
     /// The active tool owns the current left-button gesture.
     tool_drag: bool,
 
@@ -93,7 +96,7 @@ impl Default for Viewport {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
+            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -662,6 +665,26 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     }
 
     e.viewport.controller().update(&input);
+
+    // ---- a right click (press and release without moving; a right drag turns the camera): the tool's context menu
+    if hovered && gui::is_mouse_clicked(1) {
+        e.viewport.right_press = Some((mouse_x, mouse_y));
+    }
+
+    if gui::is_mouse_released(1)
+        && let Some((px, py)) = e.viewport.right_press.take()
+        && has_tool
+        && hovered
+        && (mouse_x - px).hypot(mouse_y - py) < 4.0
+    {
+        let mut ev = event(ViewportEventKind::ContextMenu);
+        ev.hit = pick(e, ev.x, ev.y);
+        if let Some(ent) = e.scene.find(ev.hit) {
+            ev.hit_source = ent.source;
+        }
+
+        e.tool_viewport_input(&ev);
+    }
 
     // ---- click: a press and release without moving selects what is under the cursor
     if hovered && gui::is_mouse_clicked(0) && !over_gizmo && !tool_drag && !claims {

@@ -20,7 +20,7 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
@@ -99,7 +99,7 @@ pub struct TileTool {
     pub(crate) brush: BrushSettings,
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
-    angle_step: f32,
+    pub(crate) angle_step: f32,
 
     // The off-terrain report of the Tile panel.
     off_tol: f32,
@@ -186,6 +186,12 @@ pub struct TileTool {
     /// The dock node of the Tiles panel (where the Create panel goes the first time).
     pub(crate) left_dock: Option<gui::ImGuiID>,
 
+    /// The viewport's right-click menu opens on the next frame.
+    pub(crate) context_menu: bool,
+
+    /// The right click ended a grab: its release opens no menu.
+    right_used: bool,
+
     /// The dock node of the Tile panel (where the Weather panel goes the first time).
     pub(crate) right_dock: Option<gui::ImGuiID>,
 
@@ -264,7 +270,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -881,6 +887,7 @@ impl TileTool {
         }
 
         if self.grabbing && gui::is_mouse_clicked(1) {
+            self.right_used = true;
             self.end_grab(e, false);
         }
 
@@ -965,11 +972,8 @@ impl TileTool {
             return;
         };
 
-        let sel = primary(e);
-        let all = selected(e);
         {
-            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-            let t = d.tile();
+            let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let p = d.project();
             let file_name = |p: &Path| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
             gui::text(&file_name(&p.dir));
@@ -977,23 +981,12 @@ impl TileTool {
             if !p.warning.is_empty() {
                 gui::text_colored(theme::warning(), &p.warning);
             }
+        }
 
-            gui::separator();
-            let names = ["Select", "Raise", "Lower", "Smooth", "Flatten", "Level"];
-            for (i, name) in names.iter().enumerate() {
-                if i != 0 {
-                    gui::same_line();
-                }
-
-                if gui::radio_button(name, self.mode == TileMode::from_index(i)) {
-                    self.set_mode(TileMode::from_index(i));
-                }
-            }
-
-            gui::slider_float("radius (m)", &mut self.brush.radius_m, 1.0, 120.0, "%.3f");
-            gui::slider_float("strength", &mut self.brush.strength, 0.5, 30.0, "%.3f");
-            gui::slider_float("falloff", &mut self.brush.falloff, 0.0, 1.0, "%.3f");
-            gui::drag_float("flatten height (m)", &mut self.brush.flatten_height, 0.1, 0.0, 0.0, "%.3f");
+        if gui::collapsing_header("Info", gui::TREE_DEFAULT_OPEN) {
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let t = d.tile();
+            let p = d.project();
             if self.terrain_hit {
                 gui::text(&format!(
                     "cursor: {:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, t.terrain_height(self.cursor.x, self.cursor.z),
@@ -1019,57 +1012,10 @@ impl TileTool {
             if !t.model_fallbacks().is_empty() {
                 gui::text_colored(theme::warning(), &format!("{} building keys have no model (boxes), see the log", t.model_fallbacks().len()));
             }
-
-            gui::separator();
         }
 
         self.draw_entry_section(e, id);
         self.context.draw(e, id);
-        gui::separator();
-        gui::checkbox("snap to grid", &mut self.snap_grid);
-        gui::same_line();
-        gui::set_next_item_width(90.0);
-        gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
-        gui::set_next_item_width(90.0);
-        gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-
-        gui::begin_disabled(sel.is_none());
-        let grab = gui::button("Grab on ground (G)");
-        gui::same_line();
-
-        // Landscape instances stand on it by themselves; a freeform one is put on it (its mode stays).
-        if gui::button("Drop to terrain") && sel.is_some() {
-            let n = d.snap_to_terrain(&all, true);
-            self.status = if n != 0 { format!("on the terrain: {n} item(s)") } else { "already on the terrain".to_owned() };
-        }
-
-        if gui::button("Duplicate (Ctrl+D)")
-            && let Some(s) = sel
-            && let Err(err) = d.duplicate(s)
-        {
-            self.status = err;
-        }
-
-        gui::same_line();
-        if gui::button("Delete (Del)")
-            && let Some(s) = sel
-        {
-            d.remove(s);
-        }
-
-        gui::same_line();
-        if gui::button("Rotate (Ctrl+R)")
-            && let Some(s) = sel
-        {
-            d.rotate(s, self.angle_step);
-        }
-
-        gui::end_disabled();
-        if grab {
-            self.begin_grab(e);
-        }
-
         gui::separator();
         self.draw_placement_section(e, id);
         gui::separator();
@@ -1249,36 +1195,16 @@ impl TileTool {
         }
     }
 
-    /// Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The buttons act on the
-    /// selection (layers: everything below); the report lists the landscape instances that are off the terrain.
+    /// Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The counts, and the report
+    /// of the landscape instances that are off the terrain (the selection's placement is in the right-click and Edit menus).
     fn draw_placement_section(&mut self, e: &mut Editor, id: DocumentId) {
         if !gui::collapsing_header("Placement", 0) {
             return;
         }
 
-        let sel = selected(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
-        gui::begin_disabled(sel.is_empty());
-        if gui::button("Landscape") {
-            let n = d.set_placement(&sel, Placement::Landscape);
-            self.status = format!("{n} set to landscape (snapped to the terrain)");
-        }
-
-        gui::same_line();
-        if gui::button("Freeform") {
-            let n = d.set_placement(&sel, Placement::Freeform);
-            self.status = format!("{n} set to freeform");
-        }
-
-        gui::same_line();
-        if gui::button("Snap to terrain") {
-            let n = d.snap_to_terrain(&sel, false);
-            self.status = format!("{n} landscape item(s) snapped");
-        }
-
-        gui::end_disabled();
         gui::set_next_item_width(90.0);
         gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
         gui::same_line();
@@ -2116,6 +2042,21 @@ impl Tool for TileTool {
                 false
             }
 
+            // A right click stops placing or drawing; else the menu of the selection (not the click that cancelled a grab).
+            ViewportEventKind::ContextMenu => {
+                if std::mem::take(&mut self.right_used) {
+                    return true;
+                }
+
+                if self.placing.is_some() || self.drawing {
+                    self.stop_making();
+                } else {
+                    self.context_click(e, ev.hit_source);
+                }
+
+                true
+            }
+
             ViewportEventKind::Press => {
                 self.on_hover(e, ev);
                 if self.grabbing {
@@ -2349,10 +2290,22 @@ impl Tool for TileTool {
 
         gui::end_child();
         gui::pop_style_color(1);
+        self.draw_context_menu(e);
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
-        self.inspect_making(e, ins)
+        self.inspect_making(e, ins) || self.inspect_brush(e, ins)
+    }
+
+    fn toolbar(&mut self, e: &mut Editor) {
+        self.draw_toolbar(e);
+    }
+
+    fn edit_menu(&mut self, e: &mut Editor) {
+        if document_id(e).is_some() {
+            gui::separator();
+            self.selection_items(e);
+        }
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {

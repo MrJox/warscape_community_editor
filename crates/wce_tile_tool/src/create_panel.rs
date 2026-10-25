@@ -204,6 +204,8 @@ impl TileTool {
             }
         }
 
+        // Its values, before the first click.
+        e.pending_focus = Some("Inspector".to_owned());
         self.status = match &en.make {
             Make::Draw { .. } => format!("{}: click the terrain for its points, Enter finishes, Esc cancels", en.label),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
