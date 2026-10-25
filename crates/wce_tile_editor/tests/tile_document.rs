@@ -564,3 +564,51 @@ fn every_kind_is_created_with_its_parts() {
 
     assert_eq!(text(&d), original);
 }
+
+#[test]
+fn a_spline_is_drawn_and_edited_with_its_handles() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let drawn = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(0.0, 0.0, 30.0), Float3::new(30.0, 0.0, 30.0)]);
+    let r = d.create("SplineRiverInstance", graph, &drawn, "").unwrap();
+    let pts = |d: &TileDocument| wce_tile::splines::read(d.tile().tscene(), r);
+    let first = pts(&d);
+    assert_eq!(first.len(), 3);
+    assert_eq!(first[0].position, Double3::ZERO, "TEd's layout: the instance at the first point");
+    assert_eq!((first[0].control_in, first[2].control_out), (Double3::ZERO, Double3::ZERO), "unused handles are 0,0,0");
+
+    // A moved point takes its handles along; a moved handle mirrors the other.
+    d.spline_point(r, "move", 1, Float3::new(5.0, 0.0, 30.0), 1).unwrap();
+    d.spline_point(r, "move", 1, Float3::new(10.0, 0.0, 30.0), 1).unwrap();
+    let moved = pts(&d);
+    let shift = moved[1].position - first[1].position;
+    assert!((moved[1].control_in - (first[1].control_in + shift)).max_abs_diff(Double3::ZERO) < 1e-3, "{moved:?}");
+    d.spline_point(r, "out", 1, Float3::new(20.0, 0.0, 40.0), 0).unwrap();
+    let h = pts(&d)[1];
+    assert!((wce_tile::splines::mirror(h.position, h.control_out) - h.control_in).max_abs_diff(Double3::ZERO) < 1e-3, "{h:?}");
+    assert!(d.spline_point(r, "in", 0, Float3::new(1.0, 0.0, 1.0), 0).is_err(), "the first point's controlIn is not used");
+
+    // Growing at both ends and removing the ends keep the unused handles at 0,0,0.
+    d.spline_point(r, "insert", 2, Float3::new(60.0, 0.0, 30.0), 0).unwrap();
+    d.spline_point(r, "prepend", 0, Float3::new(0.0, 0.0, -30.0), 0).unwrap();
+    let grown = pts(&d);
+    assert_eq!(grown.len(), 5);
+    assert_eq!((grown[0].control_in, grown[4].control_out), (Double3::ZERO, Double3::ZERO));
+    assert!(grown[3].control_out != Double3::ZERO && grown[1].control_in != Double3::ZERO, "the old ends have both handles now");
+    d.spline_point(r, "remove", 4, Float3::default(), 0).unwrap();
+    d.spline_point(r, "remove", 0, Float3::default(), 0).unwrap();
+    let cut = pts(&d);
+    assert_eq!((cut.len(), cut[0].control_in, cut[2].control_out), (3, Double3::ZERO, Double3::ZERO));
+
+    // Values of points, then a road; everything undoes.
+    assert!(d.set_spline_value(r, &[0, 1, 2], "width", "40", 0));
+    assert_eq!(d.tile().tscene().doc().get(d.tile().tscene().polygon_points(r)[2], "width").as_deref(), Some("40"));
+    d.create("SEGMENTED_SPLINE_INSTANCE", graph, &drawn, "").unwrap();
+    assert!(wce_tile::ted_scene::TedScene::parse(text(&d)).is_ok());
+    while d.history_mut().can_undo() {
+        d.history_mut().undo();
+    }
+
+    assert_eq!(text(&d), original);
+}

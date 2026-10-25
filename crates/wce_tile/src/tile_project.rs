@@ -467,7 +467,7 @@ impl TileProject {
             let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
             let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
             for (n, (name, text)) in files.iter().enumerate() {
-                let changed = elsewhere || self.river_texts.len() != rivers.len() || self.river_texts.get(n) != rivers.get(n);
+                let changed = elsewhere || self.river_texts.get(n) != rivers.get(n);
                 if changed || !out_dir.join(name).exists() {
                     std::fs::write(out_dir.join(name), text).map_err(|_| format!("could not write {}", out_dir.join(name).display()))?;
                 }
