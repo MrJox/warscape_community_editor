@@ -240,6 +240,32 @@ fn ted_world_position(scene: &TedScene, elem: usize) -> [f32; 3] {
     [w[3], w[7], w[11]]
 }
 
+/// The `VEGETATION_INSTANCE`s BOB leaves out of the game: those whose world position is in no `VegetationExclusionPolygonInstance` (every
+/// one when the tile has none; see `static_trees`). The same test as BOB's, a bounding box per polygon first. Document order.
+pub fn trees_outside_exclusions(scene: &TedScene) -> Vec<usize> {
+    let polys = exclusions(scene)
+        .into_iter()
+        .map(|p| {
+            let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+            for &(x, z) in &p {
+                lo = (lo.0.min(x), lo.1.min(z));
+                hi = (hi.0.max(x), hi.1.max(z));
+            }
+
+            (lo, hi, p)
+        })
+        .collect::<Vec<_>>();
+
+    let doc = scene.doc();
+    (0..doc.elements().len())
+        .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE")
+        .filter(|&e| {
+            let [x, _, z] = ted_world_position(scene, e);
+            !polys.iter().any(|(lo, hi, p)| x >= lo.0 && x <= hi.0 && z >= lo.1 && z <= hi.1 && generate::point_in(p, x, z))
+        })
+        .collect()
+}
+
 /// The tile's static trees as BOB collects them: only when the tile has a `VegetationExclusionPolygonInstance`, every `VEGETATION_INSTANCE`
 /// (hidden ones too) whose world position is inside one of the exclusion polygons, the first one at a position; in the order of that
 /// position map (a CA map), which is the order BOB adds them to each list in.
@@ -342,4 +368,23 @@ pub fn generated_vfx(inputs: &TileInputs, params: &GenerationParams, category: u
     let density = params.densities.get(category).map_or(0.0, |d| d.vfx);
     let chosen = generate::generate(params, inputs, category, params::VFX, seeds.vfx, density);
     by_key(generate::to_vfx_list(inputs, &chosen).into_iter(), |v| v.key.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tree_outside_every_exclusion_polygon_is_left_out() {
+        let tile = |polygon: &str| format!(
+            "<project version=\"16\">\n    <scene>\n        <SCENE_GRAPH name=\"root\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n            <children>\n{polygon}                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"in\" position=\"vector(10,0,10)\" orientation=\"euler(0,0,0)\"/>\n                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"out\" position=\"vector(100,0,100)\" orientation=\"euler(0,0,0)\"/>\n            </children>\n        </SCENE_GRAPH>\n    </scene>\n</project>\n"
+        );
+        let polygon = "                <VegetationExclusionPolygonInstance name=\"p\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n                    <points>\n                        <point position=\"0,0,0\"/>\n                        <point position=\"20,0,0\"/>\n                        <point position=\"20,0,20\"/>\n                        <point position=\"0,0,20\"/>\n                    </points>\n                </VegetationExclusionPolygonInstance>\n";
+        let scene = TedScene::parse(tile(polygon).into_bytes()).unwrap();
+        let out = trees_outside_exclusions(&scene);
+        assert_eq!(out.iter().map(|&e| scene.name(e)).collect::<Vec<_>>(), ["out"]);
+
+        let none = TedScene::parse(tile("").into_bytes()).unwrap();
+        assert_eq!(trees_outside_exclusions(&none).len(), 2, "without a polygon BOB keeps no manual tree");
+    }
 }

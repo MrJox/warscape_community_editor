@@ -878,6 +878,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.move_to_layer(el, layer).map_or_else(fail, |_| ok(""))
     });
 
+    c.add("tile_problems", "tile_problems", "log what the game would leave out of the open tile: the manual trees outside every vegetation exclusion polygon", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        let trees = d.trees_outside_exclusions();
+        let shown = trees.iter().take(10).map(|&t| {
+            let p = d.tile().world_position(t);
+            format!("{t} ({:.1}, {:.1})", p.x, p.z)
+        }).collect::<Vec<_>>();
+        ok(format!("{} manual tree(s) outside every vegetation exclusion polygon{}{}", trees.len(), if shown.is_empty() { "" } else { ": " }, shown.join(", ")))
+    });
+
     c.add("save_for_kit", "save_for_kit [raw_data folder]", "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder), without the extracted mark", |e, a| {
         let kit = a.first().map(std::path::PathBuf::from);
         with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))

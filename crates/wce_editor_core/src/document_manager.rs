@@ -167,7 +167,10 @@ impl DocumentManager {
 
         e.doc.save(&SaveTarget::default())?;
         e.doc.history_mut().mark_saved();
-        Ok(format!("saved {}", e.doc.title()))
+        Ok(match e.doc.save_message() {
+            Some(m) if !m.is_empty() => format!("saved {}: {m}", e.doc.title()),
+            _ => format!("saved {}", e.doc.title()),
+        })
     }
 
     /// Saves every modified document that can be saved. The messages say what was saved and explain each failure; true when nothing failed.

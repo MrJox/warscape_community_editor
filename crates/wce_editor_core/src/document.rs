@@ -78,6 +78,11 @@ pub trait Document: Any {
         false
     }
 
+    /// What the last save said beyond "saved" (what it wrote, a warning), shown with it; none by default.
+    fn save_message(&self) -> Option<String> {
+        None
+    }
+
     /// Save does something even without changes (a tile opened from the Assembly Kit: its first save makes its project).
     fn save_wanted(&self) -> bool {
         false
