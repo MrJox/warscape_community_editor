@@ -590,19 +590,22 @@ impl TileTool {
 
     /// A click on an entry: makes it; with Ctrl, a tree (or a set) goes into the new vegetation set instead.
     fn make_or_add(&mut self, e: &mut Editor, en: &Entry) {
-        let into_set = match &en.make {
-            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
-            Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
-            _ => None,
-        };
-
-        match into_set.filter(|_| gui::io().KeyCtrl) {
+        match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
             Some(keys) => {
                 self.add_to_new_set(&keys);
                 e.pending_focus = Some("Inspector".to_owned());
             }
 
             None => self.start_making(e, en),
+        }
+    }
+
+    /// What an entry adds to the new vegetation set: a tree, or a set's trees; `None` for anything else.
+    fn set_entries_of(&mut self, e: &mut Editor, en: &Entry) -> Option<Vec<wce_tile::vegetation_sets::SetEntry>> {
+        match &en.make {
+            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
+            Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
+            _ => None,
         }
     }
 
@@ -673,7 +676,7 @@ impl TileTool {
 
             gui::clipped(rows.len(), |r| {
                 let en = &entries[rows[r]];
-                if gui::selectable(&format!("{}  {}   ##q{}", en.icon(), en.label, rows[r]), r == row, 0) {
+                if gui::selectable(&format!("{}  {}   ##q{}", en.icon(), en.label, rows[r]), r == row, gui::SELECTABLE_NO_AUTO_CLOSE) {
                     start = Some(rows[r]);
                 }
 
@@ -683,7 +686,10 @@ impl TileTool {
         }
 
         gui::end_child();
-        if start.is_some() || gui::is_key_pressed(gui::KEY_ESCAPE, false) {
+
+        // It stays open while trees are added to the new set (Ctrl + click), to add more.
+        let adding = start.is_some_and(|i| gui::io().KeyCtrl && self.set_entries_of(e, &entries[i]).is_some());
+        if (start.is_some() && !adding) || gui::is_key_pressed(gui::KEY_ESCAPE, false) {
             gui::close_current_popup();
         }
 
