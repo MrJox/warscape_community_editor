@@ -657,6 +657,10 @@ impl Document for TileDocument {
         self.tile().structure_version
     }
 
+    fn save_wanted(&self) -> bool {
+        !self.is_project()
+    }
+
     fn inspect(&mut self, item: SourceRef, inspector: &mut dyn Inspector) {
         self.inspect_item(item, inspector);
     }

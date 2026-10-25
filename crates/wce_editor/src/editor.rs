@@ -1137,7 +1137,12 @@ impl Editor {
             return;
         }
 
-        // Shortcuts (not while typing into a field).
+        // Save works from anywhere, a text field too; the other shortcuts not while typing into a field.
+        let io = gui::io();
+        if io.KeyCtrl && gui::is_key_pressed(gui::KEY_S, false) {
+            let _ = CommandRegistry::run(self, if io.KeyShift { "save_all" } else { "save" });
+        }
+
         let io = gui::io();
         if !io.WantTextInput {
             if io.KeyCtrl {
@@ -1155,10 +1160,6 @@ impl Editor {
 
             if io.KeyCtrl && gui::is_key_pressed(gui::KEY_Y, true) {
                 let _ = CommandRegistry::run(self, "redo");
-            }
-
-            if io.KeyCtrl && gui::is_key_pressed(gui::KEY_S, false) {
-                let _ = CommandRegistry::run(self, if io.KeyShift { "save_all" } else { "save" });
             }
 
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
@@ -1312,7 +1313,7 @@ impl Editor {
         }
 
         let active = self.docs.active_id();
-        let (can_save, modified, has_doc) = self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified(), true));
+        let (can_save, modified, has_doc) = self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified() || d.save_wanted(), true));
         if gui::begin_menu("File") {
             if gui::menu_item(&format!("{}  Open from the game packs...", icons::PACKAGE), None, false, true) {
                 self.panels.assets = true;

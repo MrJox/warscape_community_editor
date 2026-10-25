@@ -1066,6 +1066,7 @@ impl TileTool {
             return;
         };
 
+        let mut action = None;
         {
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let p = d.project();
@@ -1075,6 +1076,39 @@ impl TileTool {
             if !p.warning.is_empty() {
                 gui::text_colored(theme::warning(), &p.warning);
             }
+
+            // Where the tile is: the Assembly Kit's copy (saving makes its project) or a project (tile.wce).
+            if d.is_project() {
+                gui::text_disabled(&format!("{}  project (tile.wce)", icons::FOLDER));
+                gui::same_line();
+                if gui::small_button("Save for Assembly Kit") {
+                    action = Some(true);
+                }
+            } else {
+                gui::text_colored(theme::warning(), &format!("{}  Assembly Kit copy", icons::PACKAGE));
+                gui::same_line();
+                if gui::small_button("Save as project (Ctrl+S)") {
+                    action = Some(false);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(&format!("Saves it as tile.wce in {}", d.project_folder().map(|f| f.display().to_string()).unwrap_or_default()));
+                }
+            }
+        }
+
+        match action {
+            Some(true) => {
+                let msg = self.save_for_kit(e, None).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
+                e.status(&msg, false);
+            }
+
+            Some(false) => {
+                let msg = e.docs.save_one(id).unwrap_or_else(|m| format!("save failed: {m}"));
+                e.status(&msg, false);
+            }
+
+            None => {}
         }
 
         if gui::collapsing_header("Info", gui::TREE_DEFAULT_OPEN) {
