@@ -1266,7 +1266,7 @@ impl TileDocument {
     /// No such layer, or the text is not one element.
     pub fn place_prefab(&mut self, key: &str, group_text: &[u8], into: usize, at: Float3) -> Result<usize, String> {
         let text = prefab_reference_text(group_text, key);
-        self.place_text(&format!("Place {key}"), &text, into, at, Some(key))
+        self.place_text(&format!("Place {key}"), &text, into, at, Some(key), true)
     }
 
     /// Gives every group of `groups` these contents (text at column 0; their positions are relative to the group, so each copy keeps its
@@ -2110,20 +2110,5 @@ pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins
 
 /// A prefab's group text as a placed reference: `wce_prefab="<key>"` on its start tag (replacing one it has).
 pub fn prefab_reference_text(group_text: &[u8], key: &str) -> Vec<u8> {
-    let attr = wce_tile::project_files::PREFAB_ATTR;
-    let Some(end) = group_text.iter().position(|&c| c == b'>') else { return group_text.to_vec() };
-    let end = if end > 0 && group_text[end - 1] == b'/' { end - 1 } else { end };
-    let tag = String::from_utf8_lossy(&group_text[..end]).into_owned();
-    let tag = match tag.find(&format!(" {attr}=\"")) {
-        Some(at) => {
-            let close = tag[at + attr.len() + 3..].find('"').map_or(tag.len(), |i| at + attr.len() + 3 + i + 1);
-            format!("{}{}", &tag[..at], &tag[close..])
-        }
-
-        None => tag,
-    };
-
-    let mut out = format!("{tag} {attr}=\"{key}\"").into_bytes();
-    out.extend_from_slice(&group_text[end..]);
-    out
+    super::draft::with_root_attr(group_text, wce_tile::project_files::PREFAB_ATTR, key)
 }

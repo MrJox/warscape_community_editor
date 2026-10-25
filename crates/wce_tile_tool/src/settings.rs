@@ -59,6 +59,29 @@ pub struct TileSettings {
     /// The Create panel's starred entries and the last ones used, the latest first (at most [`RECENT_KEEP`]); ids like `kind|key`.
     pub create_favourites: Vec<String>,
     pub create_recent: Vec<String>,
+
+    /// The placement chips: what new things stand on and how they are turned.
+    pub place_surface: SurfaceMode,
+    pub place_rotation: RotationMode,
+}
+
+/// What new things stand on (`placement_modes.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceMode {
+    Freeform,
+    #[default]
+    Landscape,
+    Entity,
+}
+
+/// How new things are turned (`placement_modes.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RotationMode {
+    #[default]
+    None,
+    Surface,
 }
 
 /// The weather a tile is lit with and the filters of its list.
@@ -74,6 +97,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![] }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default() }
     }
 }

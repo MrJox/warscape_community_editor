@@ -48,7 +48,7 @@ use wce_vfs::files::Files;
 
 use crate::terrain_bake::{BakedColour, TerrainLook};
 
-pub use self::draft::{Draft, turned};
+pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
 pub use self::index::style_of;
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};

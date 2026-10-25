@@ -232,7 +232,13 @@ pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u
 }
 
 /// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
-const POLYFILLED_ATTRS: [&str; 1] = [PREFAB_ATTR];
+const POLYFILLED_ATTRS: [&str; 3] = [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR];
+
+/// An item placed on another thing ("Entity: Above"): `wce_surface="entity"`, kept as freeform at the height it was put at.
+pub const SURFACE_ATTR: &str = "wce_surface";
+
+/// An item tilted to the surface it stands on ("Follow surface"): `wce_rotation="surface"`, its orientation the tilted one.
+pub const ROTATION_ATTR: &str = "wce_rotation";
 
 /// A file's text (tile.wce, a prefab of the editor's) with its root element marked (`wce_version`), unless it is.
 pub fn mark_wce_text(mut text: Vec<u8>) -> Vec<u8> {
@@ -290,6 +296,19 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     let refs = (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, PREFAB_ATTR).is_some_and(|k| !k.is_empty())).count();
     if refs != 0 {
         report.polyfilled.push(format!("{refs} prefab reference(s) written as groups"));
+    }
+
+    // - an item on another thing (Entity: Above) is freeform at its height already: TEd gets it as such (the mark goes);
+    // - a tilted item (Follow surface) has its tilted orientation: TEd gets it (the mark goes).
+    let count = |attr: &str, value: &str| (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, attr).is_some_and(|v| v == value)).count();
+    let on_entities = count(SURFACE_ATTR, "entity");
+    if on_entities != 0 {
+        report.polyfilled.push(format!("{on_entities} item(s) placed on other things written as freeform at their height"));
+    }
+
+    let tilted = count(ROTATION_ATTR, "surface");
+    if tilted != 0 {
+        report.polyfilled.push(format!("{tilted} item(s) tilted to their surface written with that orientation"));
     }
 
     // Elements TEd lacks, the outermost of each (with what is inside), last first so that the indices stay valid.
@@ -400,12 +419,13 @@ mod tests {
 
         let extra = String::from_utf8(ted).unwrap().replace(
             "key=\"a\" name=\"a\"",
-            "key=\"a\" wce_surface=\"entity\" name=\"a\"",
+            "key=\"a\" wce_surface=\"entity\" wce_custom=\"x\" name=\"a\"",
         ).replace("            </children>", "                <WceSpline name=\"s\">\n                    <points/>\n                </WceSpline>\n            </children>");
         let (back, report) = to_ted(extra.into_bytes()).unwrap();
         let back = String::from_utf8(back).unwrap();
         assert!(!back.contains("wce_") && !back.contains("Wce"), "{back}");
-        assert_eq!(report.dropped.len(), 2, "{report:?}");
+        assert_eq!(report.dropped.len(), 2, "the spline and wce_custom: {report:?}");
+        assert_eq!(report.polyfilled.len(), 1, "the item on another thing: {report:?}");
     }
 
     #[test]

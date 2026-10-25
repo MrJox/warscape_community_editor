@@ -189,6 +189,13 @@ pub struct TileTool {
     /// The viewport's right-click menu opens on the next frame.
     pub(crate) context_menu: bool,
 
+    /// The placement chips' modes (read from the settings on first use), the surface under the mouse for Entity: Above (and the pixel it
+    /// was found at), and the chips' width last frame.
+    pub(crate) modes: Option<(crate::settings::SurfaceMode, crate::settings::RotationMode)>,
+    pub(crate) surface_hit: Option<crate::placement_modes::SurfacePoint>,
+    pub(crate) surface_px: Option<(i32, i32)>,
+    pub(crate) place_chips_width: f32,
+
     /// The Problems section's trees, and the (tile, history, structure) they were found for.
     problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
 
@@ -279,7 +286,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -917,6 +924,7 @@ impl TileTool {
     // ---- mouse
 
     fn on_hover(&mut self, e: &mut Editor, ev: &ViewportEvent) {
+        self.hover_surface(e, ev);
         self.terrain_hit = false;
         let Some((o, dir)) = e.viewport.ray(ev.x, ev.y) else { return };
         let Some(d) = document(e) else { return };
@@ -932,7 +940,12 @@ impl TileTool {
                 gz = (gz / self.grid_m).round() * self.grid_m;
             }
 
-            let gy = d.tile().terrain_height(gx, gz) + self.grab_y_offset as f32;
+            // Entity: Above: on what is under the mouse; else at the height it had above the terrain.
+            let gy = match (self.modes.unwrap_or_default().0, self.surface_hit) {
+                (crate::settings::SurfaceMode::Entity, Some(h)) => h.point.y,
+                _ => d.tile().terrain_height(gx, gz) + self.grab_y_offset as f32,
+            };
+
             d.set_world_metres(g, Float3::new(gx, gy, gz), self.grab_gesture);
         }
     }
@@ -2116,7 +2129,7 @@ impl Tool for TileTool {
         let preview = if self.terrain_hit && (e.viewport.hovered || self.preview_forced) { self.placing_text(e) } else { None };
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_view(&mut e.scene, eye);
-        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), self.cursor);
+        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), self.place_point().0);
         d.tile_mut().set_highlight(&mut e.scene, &sel, self.poly_point, handle, &overlay);
     }
 
@@ -2492,6 +2505,11 @@ impl Tool for TileTool {
         let (lo, hi) = gui::item_rect();
         self.chips_width = hi.x - lo.x;
         gui::pop_style_color(1);
+
+        // The placement chips at the top right, beside the compass too.
+        let compass_right = origin.x + size.x * 0.5 + (size.x - 16.0).min(360.0) * 0.5;
+        let beside = !e.viewport.show_compass || origin.x + size.x - 8.0 - self.place_chips_width - 8.0 >= compass_right;
+        self.draw_placement_chips(e, origin, size, if beside { 6.0 } else { 58.0 });
         self.draw_context_menu(e);
     }
 

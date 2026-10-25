@@ -248,6 +248,13 @@ impl TileTool {
 
     /// The text of what a click places now (the preview shows it).
     pub(crate) fn placing_text(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
+        let text = self.placing_text_unmoded(e)?;
+        self.placement_modes(e);
+        let d = document(e)?;
+        Some(self.apply_placement_modes(d, text))
+    }
+
+    fn placing_text_unmoded(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
         match self.placing.clone()? {
             crate::tool::Placing::Draft => document(e)?.draft_text(self.draft.as_ref()?),
             crate::tool::Placing::Prefab(key) => {
@@ -279,7 +286,8 @@ impl TileTool {
 
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
-        d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref()).map(|_| format!("added {what}"))
+        let (at, on_terrain) = if self.preview_forced { (at, true) } else { self.place_point() };
+        d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"))
     }
 
     /// Finishes a drawn type with the drawn points.

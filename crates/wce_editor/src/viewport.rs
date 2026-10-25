@@ -292,6 +292,20 @@ pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
     r.pick(&e.scene, &params, &e.viewport.target, x, y)
 }
 
+/// The surface under a pixel of the viewport image: the nearest mesh or terrain (overlays, locked layers and what `skip` says left out), its
+/// world point and normal (`Renderer::pick_surface`). For placing things on other things.
+pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceHit> {
+    wce_prof!("viewport.surface_under");
+    let r = e.renderer.as_mut()?;
+    if !e.viewport.target.valid() {
+        return None;
+    }
+
+    let params = ViewParams { camera: e.viewport.camera(), time_s: e.clock.time() as f32 };
+    let scene = &e.scene;
+    r.pick_surface(scene, &params, &e.viewport.target, x, y, &|id| scene.find(id).is_some_and(skip))
+}
+
 /// Offscreen: `frames` fixed-step frames of the scene at w x h, the last one written as PNG. No window is involved.
 pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool {
     let outline_style = e.selection_outline_style();

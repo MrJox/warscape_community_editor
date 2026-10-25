@@ -1104,6 +1104,32 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("place_modes", "place_modes <freeform|landscape|entity> [none|surface]", "the placement chips: what new things stand on and how they are turned", |e, a| {
+        use crate::settings::{RotationMode, SurfaceMode};
+        let surface = match a.first().map(String::as_str) {
+            Some("freeform") => SurfaceMode::Freeform,
+            Some("landscape") => SurfaceMode::Landscape,
+            Some("entity") => SurfaceMode::Entity,
+            _ => return fail("usage: place_modes <freeform|landscape|entity> [none|surface]"),
+        };
+
+        let rotation = if a.get(1).map(String::as_str) == Some("surface") { RotationMode::Surface } else { RotationMode::None };
+        with_tile(e, |t, e| {
+            t.modes = Some((surface, rotation));
+            e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {
+                s.place_surface = surface;
+                s.place_rotation = rotation;
+            });
+            ok("")
+        })
+    });
+
+    c.add("start_making", "start_making <type | building | prefab> [key]", "start placing or drawing something, as a click in the Create panel does (the mouse places it)", |e, a| {
+        let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
+        let key = a.get(1).cloned().unwrap_or_default();
+        with_tile(e, |t, e| crate::create_panel::make_for_script(t, e, &what, &key).map_or_else(fail, |()| ok("")))
+    });
+
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();

@@ -25,15 +25,19 @@ float4 ovl_ps(OvlOut i) : SV_Target { return i.col; }
 
 // Same vertex and instance layout as the game's rigid shaders: half4 position, rows of the 3x4 world matrix in POSITION1..3.
 struct PickIn { float4 pos : POSITION0; float4 w0 : POSITION1; float4 w1 : POSITION2; float4 w2 : POSITION3; uint id : TEXCOORD0; };
-struct PickOut { float4 pos : SV_Position; nointerpolation uint id : TEXCOORD0; };
+struct PickOut { float4 pos : SV_Position; nointerpolation uint id : TEXCOORD0; float3 world : TEXCOORD1; };
 PickOut pick_vs(PickIn i) {
     float4 p = float4(i.pos.xyz, 1);
     PickOut o;
-    o.pos = mul(vp, float4(dot(i.w0, p), dot(i.w1, p), dot(i.w2, p), 1));
+    o.world = float3(dot(i.w0, p), dot(i.w1, p), dot(i.w2, p));
+    o.pos = mul(vp, float4(o.world, 1));
     o.id = i.id;
     return o;
 }
-uint pick_ps(PickOut i) : SV_Target { return i.id; }
+
+// The entity id, and the world position of the surface (w 1: something is there) for the placing on surfaces.
+struct PickTargets { uint id : SV_Target0; float4 world : SV_Target1; };
+PickTargets pick_ps(PickOut i) { PickTargets o; o.id = i.id; o.world = float4(i.world, 1); return o; }
 
 // The selection mask: the blend state's write mask picks the channel (red: the whole selection, green: its parts in front of the scene).
 float4 mask_ps() : SV_Target { return float4(1, 1, 0, 0); }
@@ -75,6 +79,14 @@ const FRAME_CB: usize = 80;
 /// The size of an overlay vertex.
 const OVERLAY_VERTEX: usize = 16;
 
+/// A surface under a pixel (`Renderer::pick_surface`): its world point, its normal, and the entity it belongs to (0: none known).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceHit {
+    pub point: Float3,
+    pub normal: Float3,
+    pub entity: EntityId,
+}
+
 /// The editor passes' GPU objects, created on first use.
 #[derive(Default)]
 pub(crate) struct EditorGpu {
@@ -103,6 +115,11 @@ pub(crate) struct EditorGpu {
     pick_id_tex: Option<ID3D11Texture2D>,
     pick_staging: Option<ID3D11Texture2D>,
     pick_id_rtv: Option<ID3D11RenderTargetView>,
+
+    /// The world positions of the id pass's surfaces, and a 3x3 staging copy (`pick_surface`).
+    pick_pos_tex: Option<ID3D11Texture2D>,
+    pick_pos_rtv: Option<ID3D11RenderTargetView>,
+    pick_pos_staging: Option<ID3D11Texture2D>,
     pick_dsv: Option<ID3D11DepthStencilView>,
     pick_w: u32,
     pick_h: u32,
@@ -561,6 +578,20 @@ impl Renderer {
         }
 
         // 2. Meshes and terrain: an id pass at the target's size, read back at one pixel.
+        if !self.id_pass(scene, params, &vp_m, w, h, &|_| false) {
+            return 0;
+        }
+
+        let (Some(staging), Some(id_tex)) = (self.editor.pick_staging.clone(), self.editor.pick_id_tex.clone()) else { return 0 };
+        let pick_box = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
+        self.ctx.copy_subresource_region(&staging, 0, [0; 3], &id_tex, 0, Some(&pick_box));
+        self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0)
+    }
+
+    /// The id pass of the meshes and the terrain into the pick targets (ids, world positions), at the target's size; `skip`: entities left out.
+    /// False when the targets can't be made.
+    fn id_pass(&mut self, scene: &RenderScene, params: &ViewParams, vp_m: &Float4x4, w: u32, h: u32, skip: &dyn Fn(EntityId) -> bool) -> bool {
+        let vp_m = *vp_m;
         if self.editor.pick_w != w || self.editor.pick_h != h {
             let e = &mut self.editor;
             let desc = |w: u32, h: u32, fmt: DXGI_FORMAT, usage: D3D11_USAGE, bind: u32, cpu: u32| D3D11_TEXTURE2D_DESC {
@@ -572,17 +603,21 @@ impl Renderer {
             e.pick_id_rtv = e.pick_id_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
             e.pick_dsv = depth_target(&self.dev, w, h, DXGI_FORMAT_D32_FLOAT);
             e.pick_staging = self.dev.create_texture_2d(&desc(1, 1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
+            e.pick_pos_tex = self.dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+            e.pick_pos_rtv = e.pick_pos_tex.as_ref().and_then(|tex| self.dev.create_render_target_view(tex, None).ok());
+            e.pick_pos_staging = self.dev.create_texture_2d(&desc(3, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
 
             e.pick_w = w;
             e.pick_h = h;
         }
 
-        let (Some(rtv), Some(dsv), Some(staging), Some(id_tex)) = (self.editor.pick_id_rtv.clone(), self.editor.pick_dsv.clone(), self.editor.pick_staging.clone(), self.editor.pick_id_tex.clone()) else { return 0 };
+        let (Some(rtv), Some(pos_rtv), Some(dsv)) = (self.editor.pick_id_rtv.clone(), self.editor.pick_pos_rtv.clone(), self.editor.pick_dsv.clone()) else { return false };
         let e = &self.editor;
-        // The unsigned integer target is cleared with zero bits.
+        // The unsigned integer target is cleared with zero bits; the positions with w 0 (nothing there).
         self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
+        self.ctx.clear_render_target_view(&pos_rtv, [0.0; 4]);
         self.ctx.clear_depth_stencil_view(&dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
-        self.ctx.set_render_targets(&[Some(rtv)], Some(&dsv));
+        self.ctx.set_render_targets(&[Some(rtv), Some(pos_rtv)], Some(&dsv));
         self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
         self.ctx.set_depth_stencil_state(e.pick_ds.as_ref(), 0);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -610,8 +645,8 @@ impl Renderer {
             let mut vis = Visible::default();
             set.cull(&view, &mut vis);
 
-            // Locked layers can't be picked (the flag can change without the scene's revision moving).
-            set.retain(&mut vis, |id| scene.find(id).is_some_and(|e| scene.pickable(e)));
+            // Locked layers can't be picked (the flag can change without the scene's revision moving); nor what the caller skips.
+            set.retain(&mut vis, |id| !skip(id) && scene.find(id).is_some_and(|e| scene.pickable(e)));
             let n = vis.instances();
             if n == 0 {
                 continue;
@@ -644,9 +679,73 @@ impl Renderer {
 
         self.draw_lists.draws = draws;
         self.draw_lists.terrain_draws = terrain_draws;
-        let pick_box = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
         self.ctx.set_render_targets(&[], None);
-        self.ctx.copy_subresource_region(&staging, 0, [0; 3], &id_tex, 0, Some(&pick_box));
-        self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0)
+        true
+    }
+
+    /// The surface under pixel (x, y): the nearest mesh or terrain (not the overlays, not the locked layers, not what `skip` says), its world
+    /// point, its normal (from the points of the pixels around it, towards the camera; straight up where they are missing) and its entity.
+    /// `None` where nothing is.
+    pub fn pick_surface(&mut self, scene: &RenderScene, params: &ViewParams, target: &RenderTarget, x: i32, y: i32, skip: &dyn Fn(EntityId) -> bool) -> Option<SurfaceHit> {
+        let (w, h) = (target.width(), target.height());
+        if x < 1 || y < 1 || x + 1 >= w as i32 || y + 1 >= h as i32 {
+            return None;
+        }
+
+        if let Err(error) = self.create_editor_resources() {
+            self.error(error.0);
+            return None;
+        }
+
+        self.build_draws(scene, params.camera.eye);
+        let vp_m = Self::view_projection(&params.camera, w, h);
+        if !self.id_pass(scene, params, &vp_m, w, h, skip) {
+            return None;
+        }
+
+        let (Some(staging), Some(id_staging), Some(pos_tex), Some(id_tex)) =
+            (self.editor.pick_pos_staging.clone(), self.editor.pick_staging.clone(), self.editor.pick_pos_tex.clone(), self.editor.pick_id_tex.clone())
+        else {
+            return None;
+        };
+
+        let around = D3D11_BOX { left: x as u32 - 1, top: y as u32 - 1, front: 0, right: x as u32 + 2, bottom: y as u32 + 2, back: 1 };
+        let one = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
+        self.ctx.copy_subresource_region(&staging, 0, [0; 3], &pos_tex, 0, Some(&around));
+        self.ctx.copy_subresource_region(&id_staging, 0, [0; 3], &id_tex, 0, Some(&one));
+        let entity = self.ctx.map(&id_staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0);
+        let ms = self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok()?;
+        let at = |i: usize, j: usize| -> Option<Float3> {
+            let row = ms.row(j, 48)?;
+            let f = |k: usize| f32::from_le_bytes([row[i * 16 + k * 4], row[i * 16 + k * 4 + 1], row[i * 16 + k * 4 + 2], row[i * 16 + k * 4 + 3]]);
+            (f(3) > 0.5).then(|| Float3::new(f(0), f(1), f(2)))
+        };
+
+        let point = at(1, 1)?;
+        let side = |a: Option<Float3>, b: Option<Float3>| match (a, b) {
+            (Some(a), Some(b)) => Some(b - a),
+            (Some(a), None) => Some(point - a),
+            (None, Some(b)) => Some(b - point),
+            (None, None) => None,
+        };
+
+        let up = Float3::new(0.0, 1.0, 0.0);
+        let normal = match (side(at(0, 1), at(2, 1)), side(at(1, 0), at(1, 2))) {
+            (Some(dx), Some(dy)) => {
+                let n = wce_foundation::math::cross(dx, dy);
+                let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
+                if len > 1e-9 {
+                    let n = Float3::new(n.x / len, n.y / len, n.z / len);
+                    let to_eye = params.camera.eye - point;
+                    if n.x * to_eye.x + n.y * to_eye.y + n.z * to_eye.z < 0.0 { Float3::new(-n.x, -n.y, -n.z) } else { n }
+                } else {
+                    up
+                }
+            }
+
+            _ => up,
+        };
+
+        Some(SurfaceHit { point, normal, entity })
     }
 }
