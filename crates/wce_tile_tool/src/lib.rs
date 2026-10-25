@@ -5,6 +5,7 @@
 
 pub mod commands;
 pub mod context_panel;
+pub mod entity_types;
 pub mod scene_panel;
 pub mod settings;
 pub mod tool;

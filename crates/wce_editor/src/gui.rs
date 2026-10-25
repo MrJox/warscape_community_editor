@@ -144,6 +144,11 @@ pub fn separator_text(s: &str) {
     call!(sys::igSeparatorText(c.as_ptr()))
 }
 
+/// The style's padding inside a frame (x, y).
+pub fn style_frame_padding() -> Vec2 {
+    call!((*sys::igGetStyle()).FramePadding)
+}
+
 /// The style's spacing between items (x, y).
 pub fn item_spacing() -> Vec2 {
     call!((*sys::igGetStyle()).ItemSpacing)
@@ -685,6 +690,12 @@ pub fn open_popup(id: &str) {
 pub fn begin_popup_modal(name: &str, open: Option<&mut bool>, flags: i32) -> bool {
     let c = cs(name);
     call!(sys::igBeginPopupModal(c.as_ptr(), open.map_or(std::ptr::null_mut(), |o| o as *mut bool), flags))
+}
+
+/// A popup opened with `open_popup`.
+pub fn begin_popup(id: &str) -> bool {
+    let c = cs(id);
+    call!(sys::igBeginPopup(c.as_ptr(), 0))
 }
 
 pub fn begin_popup_context_item(id: &str) -> bool {

@@ -1,5 +1,5 @@
-//! The Scene panel of the Tile tool: the layer tree laid out like TEd's Scene tab (a name, then an eye and a cursor arrow at the right edge that
-//! are greyed when off), with selection, rename (F2 / double-click), delete, new layer, group, duplicate, export type, and drag and drop to
+//! The Scene panel of the Tile tool: the layer tree laid out like TEd's Scene tab (a name, then at the right edge the type's icon, where it is
+//! exported, an eye and a cursor arrow, greyed when off), type toggles at the top (what the list and the viewport show), with selection, rename (F2 / double-click), delete, new layer, group, duplicate, export type, and drag and drop to
 //! reorder or move into a layer. The eye is OIF_VISIBLE and the cursor arrow OIF_ACTIVE (selectable): `TileDocument::set_flags`. The tree is
 //! flattened to the rows that are open and drawn through a list clipper, so a layer with 30,000 instances costs what its visible rows cost.
 //! Open layers are remembered by their name path, which survives the index shifts of structural edits (a node id made of the element index
@@ -14,9 +14,13 @@ use wce_tile::ted_scene::TedScene;
 use wce_editor_core::document::Document;
 use wce_tile_editor::tile_document::TileDocument;
 
+use crate::entity_types::{EXPORT_TYPES, effective_export, export_icon, export_label, own_export, type_icon};
 use crate::tool::{TileTool, TreeRow, document_id, selected};
 
 const ICON_WIDTH: f32 = 22.0;
+
+/// The icon columns at the right edge: the type, the export, the eye and the cursor arrow.
+const ICON_COLUMNS: f32 = 4.0;
 
 /// Elements below a deleted layer: ask first.
 const CONFIRM_DELETE_ABOVE: usize = 200;
@@ -60,11 +64,10 @@ fn draw_cursor(dl: DrawList, c: Vec2, on: bool, inherited_off: bool) {
     dl.line(v2(tip.x + 3.0, tip.y + 8.0), v2(tip.x + 6.0, tip.y + 13.0), col, 1.8);
 }
 
-fn draw_layer_icon(dl: DrawList, c: Vec2, col: u32) {
-    for i in 0..3 {
-        let y = c.y - 5.0 + i as f32 * 3.5;
-        dl.rect_filled(v2(c.x - 6.0, y), v2(c.x + 6.0, y + 2.0), col, 1.0);
-    }
+/// An icon (a glyph of the UI font) centred on `c`.
+fn draw_icon(dl: DrawList, c: Vec2, icon: &str, col: u32) {
+    let w = gui::calc_text_width(icon);
+    dl.text(v2(c.x - w * 0.5, c.y - gui::text_line_height() * 0.5), col, icon);
 }
 
 /// The name shown for an element: its name, else its type.
@@ -77,6 +80,8 @@ impl TileTool {
     pub(crate) fn rebuild_tree(&mut self, d: &TileDocument) {
         self.tree_rows.clear();
         self.tree_filter_seen = self.tree_filter.clone();
+        let hidden = &d.tile().display().hidden_types;
+        self.tree_hidden_seen = Some(hidden.iter().cloned().collect());
         let sc = d.tile().tscene();
         let Some(g) = sc.scene_graph() else { return };
 
@@ -99,6 +104,9 @@ impl TileTool {
             if let Some(keep) = &keep {
                 kids.retain(|k| keep.contains(k));
             }
+
+            // The types turned off at the top are not listed (layers and groups always are).
+            kids.retain(|&k| sc.is_layer(k) || !hidden.contains(sc.type_of(k)));
 
             let open = depth == 0 || (layer && !kids.is_empty() && (keep.is_some() || self.tree_open.contains(&key)));
             self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, open, kids: kids.len() });
@@ -253,8 +261,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         }
     }
 
+    let hidden_now = d.tile().display().hidden_types.iter().cloned().collect::<Vec<_>>();
     if tool.tree_doc != id || tool.tree_version != Some(d.tile().structure_version()) || tool.tree_open_version_seen != Some(tool.tree_open_version)
-        || tool.tree_filter != tool.tree_filter_seen
+        || tool.tree_filter != tool.tree_filter_seen || tool.tree_hidden_seen.as_ref() != Some(&hidden_now)
     {
         tool.rebuild_tree(d);
     }
@@ -324,6 +333,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
 
     gui::set_next_item_width(-1.0);
     gui::input_text("##treefilter", Some("Filter by name or type"), &mut tool.tree_filter, 256, 0);
+    draw_type_toggles(e, id);
 
     // ---- the tree
     let footer = gui::frame_height_with_spacing() * 1.2;
@@ -383,26 +393,68 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         gui::end_popup();
     }
 
-    // ---- what is on the tile, per instance type (the visibility of a type is a view setting of this tool, not a flag of the file)
-    if gui::collapsing_header("Instance types", 0) {
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        let counts = d.tile().type_counts().clone();
-        let t = d.tile_mut();
-        for (ty, n) in counts {
-            let mut vis = !t.display().hidden_types.contains(&ty);
-            if gui::checkbox(&format!("{ty} ({n})##t"), &mut vis) {
-                if vis {
-                    t.display_mut().hidden_types.remove(&ty);
-                } else {
-                    t.display_mut().hidden_types.insert(ty.clone());
-                }
+    gui::end();
+}
 
-                t.display_changed();
-            }
+/// The types on the tile as toggles (icon and count): a type turned off is neither listed nor shown in the viewport (a view setting of this
+/// tool, not a flag of the file). A right click shows that type alone; a right click on the only one shown shows them all again.
+fn draw_type_toggles(e: &mut Editor, id: wce_scene::render_scene::DocumentId) {
+    let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+    let counts = d.tile().type_counts().clone();
+    let hidden = d.tile().display().hidden_types.clone();
+    let mut change: Option<Vec<(String, bool)>> = None;
+    // The buttons flow left to right and wrap at the panel's edge.
+    let right_edge = gui::cursor_screen_pos().x + gui::content_region_avail().x;
+    for (i, (ty, n)) in counts.iter().enumerate() {
+        let on = !hidden.contains(ty);
+        let label = format!("{} {n}##ty{i}", type_icon(ty));
+        let width = gui::calc_text_width(&format!("{} {n}", type_icon(ty))) + gui::style_frame_padding().x * 2.0;
+        if i != 0 && gui::item_rect().1.x + gui::item_spacing().x + width < right_edge {
+            gui::same_line();
+        }
+
+        gui::push_style_color(gui::COL_BUTTON, if on { gui::style_color(gui::COL_BUTTON_ACTIVE) } else { gui::style_color(gui::COL_FRAME_BG) });
+        if !on {
+            gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
+        }
+
+        if gui::small_button(&label) {
+            change = Some(vec![(ty.clone(), !on)]);
+        }
+
+        if gui::is_item_clicked_with(1) {
+            let only = counts.keys().all(|t| t == ty || hidden.contains(t)) && on;
+            change = Some(counts.keys().map(|t| (t.clone(), only || t == ty)).collect());
+        }
+
+        gui::pop_style_color(if on { 1 } else { 2 });
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{ty}: {n}\nClick to {}; right click to show only this type (again: all)", if on { "hide" } else { "show" }));
         }
     }
 
-    gui::end();
+    if let Some(change) = change {
+        let t = d.tile_mut();
+        for (ty, on) in change {
+            if on {
+                t.display_mut().hidden_types.remove(&ty);
+            } else {
+                t.display_mut().hidden_types.insert(ty);
+            }
+        }
+
+        t.display_changed();
+    }
+}
+
+/// A layer's export types (TEd's "Export" property), the current one ticked.
+fn export_menu(sc: &TedScene, layer: usize, actions: &mut Vec<RowAction>) {
+    let now = own_export(sc, layer);
+    for (kind, label) in EXPORT_TYPES {
+        if gui::menu_item(&format!("{}  {label}", export_icon(kind)), None, now == kind, true) {
+            actions.push(RowAction::ExportType(layer, format!("LayerExportType_{kind}")));
+        }
+    }
 }
 
 /// What a row asked for this frame, applied once the rows are drawn (the edits move element indices).
@@ -457,9 +509,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
             // The row: selection, double-click to rename, context menu, drag source and drop target.
             gui::set_next_item_allow_overlap();
-            let clicked = gui::selectable_sized("##row", is_sel, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, v2(avail - 2.0 * ICON_WIDTH, row_h));
+            let clicked = gui::selectable_sized("##row", is_sel, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, v2(avail - ICON_COLUMNS * ICON_WIDTH, row_h));
             let row_hovered = gui::is_item_hovered();
-            let (rmin, rmax) = (p0, v2(p0.x + avail - 2.0 * ICON_WIDTH, p0.y + row_h));
+            let (rmin, rmax) = (p0, v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH, p0.y + row_h));
             if clicked && tool_ref.rename_elem != Some(el) {
                 let io = gui::io();
                 if io.KeyCtrl {
@@ -582,14 +634,8 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     actions.push(RowAction::SetFlags(targets, "OIF_ACTIVE", !own_act));
                 }
 
-                if row.layer && !is_graph && sc.doc().get(el, "export_type").is_some() && gui::begin_menu("Export type") {
-                    let now = t.export_type(el);
-                    for kind in ["Normal", "Escalation1", "Escalation2", "Escalation3"] {
-                        if gui::menu_item(kind, None, now == kind, true) {
-                            actions.push(RowAction::ExportType(el, format!("LayerExportType_{kind}")));
-                        }
-                    }
-
+                if sc.type_of(el) == "LayerInstance" && gui::begin_menu("Export") {
+                    export_menu(sc, el, &mut actions);
                     gui::end_menu();
                 }
 
@@ -623,15 +669,11 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 theme::u32(theme::text())
             };
 
-            let mut tx = x0 + 16.0;
-            if row.layer {
-                draw_layer_icon(dl, v2(tx + 6.0, cy), text_col);
-                tx += 18.0;
-            }
+            let tx = x0 + 16.0;
 
             if tool_ref.rename_elem == Some(el) {
                 gui::set_cursor_screen_pos(v2(tx, p0.y));
-                gui::set_next_item_width((avail - 2.0 * ICON_WIDTH - (tx - p0.x) - 4.0).max(60.0));
+                gui::set_next_item_width((avail - ICON_COLUMNS * ICON_WIDTH - (tx - p0.x) - 4.0).max(60.0));
                 if tool_ref.rename_focus {
                     gui::set_keyboard_focus_here(0);
                     tool_ref.rename_focus = false;
@@ -653,21 +695,49 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 let mut label = label_of(sc, el);
                 if row.layer && row.kids != 0 {
                     label += &format!("  ({})", row.kids);
-                } else if !row.layer {
-                    label += &format!("   {}", sc.type_of(el));
                 }
 
-                if row.layer && !is_graph {
-                    let x = t.export_type(el);
-                    if x != "Normal" {
-                        label += &format!("  [{x}]");
-                    }
-                }
-
-                dl.push_clip_rect(v2(tx, p0.y), v2(p0.x + avail - 2.0 * ICON_WIDTH - 2.0, p0.y + row_h));
+                dl.push_clip_rect(v2(tx, p0.y), v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH - 2.0, p0.y + row_h));
                 dl.text(v2(tx, p0.y + (row_h - gui::text_line_height()) * 0.5), text_col, &label);
                 dl.pop_clip_rect();
             }
+
+            // The type and where it is exported.
+            let ty = sc.type_of(el);
+            gui::set_cursor_screen_pos(v2(p0.x + avail - 4.0 * ICON_WIDTH, p0.y));
+            gui::invisible_button("##type", v2(ICON_WIDTH, row_h), gui::BUTTON_LEFT);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(ty);
+            }
+
+            draw_icon(dl, v2(p0.x + avail - 3.5 * ICON_WIDTH, cy), type_icon(ty), text_col);
+            let (export, decided_by) = effective_export(sc, el);
+            let own = sc.type_of(el) == "LayerInstance";
+            gui::set_cursor_screen_pos(v2(p0.x + avail - 3.0 * ICON_WIDTH, p0.y));
+            if gui::invisible_button("##export", v2(ICON_WIDTH, row_h), gui::BUTTON_LEFT) && own {
+                gui::open_popup("exportmenu");
+            }
+
+            if gui::is_item_hovered() {
+                let by = match decided_by {
+                    Some(l) if l == el => " (this layer)".to_owned(),
+                    Some(l) => format!(" (layer {})", label_of(sc, l)),
+                    None => String::new(),
+                };
+
+                let click = if own { "\nClick to change it" } else { "" };
+                gui::set_tooltip(&format!("{}{by}{click}", export_label(&export)));
+            }
+
+            if gui::begin_popup("exportmenu") {
+                export_menu(sc, el, &mut actions);
+                gui::end_popup();
+            }
+
+            let inherited = decided_by != Some(el);
+            let base = if export == "Off" { theme::error() } else { theme::text() };
+            let ecol = if inherited { theme::mix(base, theme::palette_background(), 0.45) } else { base };
+            draw_icon(dl, v2(p0.x + avail - 2.5 * ICON_WIDTH, cy), export_icon(&export), theme::u32(ecol));
 
             // The eye and the cursor arrow.
             let targets = if is_sel { sel_all.clone() } else { vec![el] };
