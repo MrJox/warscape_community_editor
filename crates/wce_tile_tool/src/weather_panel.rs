@@ -375,7 +375,7 @@ impl WeatherUi {
     }
 
     /// The weather chips over the viewport: season, precipitation, time of day and climate (a value no file passes is greyed), then the file
-    /// lighting the tile (a click opens the Weather panel) and a pencil that edits it in the Weather tool (a copy in the output folder, which
+    /// lighting the tile (icons, the values in their tooltips; a click on the cloud opens the Weather panel) and a pencil that edits it in the Weather tool (a copy in the output folder, which
     /// the tile follows).
     pub(crate) fn draw_chips(&mut self, e: &mut Editor) {
         let Some(env) = &self.env else { return };
@@ -383,12 +383,23 @@ impl WeatherUi {
         for (icon, category, label) in CHIPS {
             let value = self.choice.query.get(category).cloned().unwrap_or_default();
             let values = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
-            if gui::small_button(&format!("{icon} {}##chip{category}", if value.is_empty() { "any" } else { &value })) {
+            // Icon only (lit while it filters); the value in the tooltip.
+            if !value.is_empty() {
+                let h = theme::palette().highlight;
+                gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
+            }
+
+            let clicked = gui::small_button(&format!("{icon}##chip{category}"));
+            if !value.is_empty() {
+                gui::pop_style_color(1);
+            }
+
+            if clicked {
                 gui::open_popup(&format!("chip{category}"));
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip(label);
+                gui::set_tooltip(&format!("{label}: {}", if value.is_empty() { "any" } else { &value }));
             }
 
             gui::same_line();
@@ -413,13 +424,12 @@ impl WeatherUi {
         }
 
         let file = e.weather_preview().map(str::to_owned);
-        let shown = file.as_deref().map_or("default light".to_owned(), |f| f.rsplit('/').next().unwrap_or(f).to_owned());
-        if gui::small_button(&format!("{shown}##weatherfile")) {
+        if gui::small_button(&format!("{}##weatherfile", icons::CLOUD_SUN)) {
             e.pending_focus = Some("Weather".to_owned());
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip(&format!("{}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light")));
+            gui::set_tooltip(&format!("Lit by {}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light")));
         }
 
         if let Some(f) = file {

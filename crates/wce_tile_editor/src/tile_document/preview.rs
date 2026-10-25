@@ -186,6 +186,7 @@ impl Tile {
 
             let payloads = match mini.type_of(e) {
                 "ProjectedDecalInstance" => get("key").map(|k| Payload::Decal(Decal { model: k.replace('\\', "/"), tiled: false, opacity: 1.0, parallax: 0.0 })).into_iter().collect(),
+                "POINT_LIGHT_INSTANCE" => vec![Payload::PointLight(super::view::point_light_of(mini.doc(), e, 0.0))],
                 "VFXInstance" => get("vfx").map(|effect| {
                     let scale = get("scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / unit;
                     Payload::VfxEmitter(VfxEmitter { effect, scale: scale as f32, mesh: None })
@@ -197,8 +198,8 @@ impl Tile {
                 }).collect::<Vec<_>>(),
             };
 
-            // A marker where nothing is drawn, and around an effect (a torch's flame is a few centimetres).
-            if payloads.is_empty() || mini.type_of(e) == "VFXInstance" {
+            // A marker where nothing is drawn, and around an effect (a torch's flame is a few centimetres) and a light (it lights, it has no shape).
+            if payloads.is_empty() || matches!(mini.type_of(e), "VFXInstance" | "POINT_LIGHT_INSTANCE") {
                 let h = 1.0;
                 for (a, b) in box_edges(Float3::new(at.x - h, at.y, at.z - h), Float3::new(at.x + h, at.y + 2.0 * h, at.z + h)) {
                     lines.push((a, b));

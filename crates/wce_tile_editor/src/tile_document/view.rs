@@ -914,28 +914,34 @@ impl Tile {
     /// the animation and its speeds; the falloff is always smooth there (falloff_type is not read) and the phase comes from the game's
     /// random generator, not random_offset.
     fn point_light(&self, elem: usize) -> PointLight {
-        let doc = self.tscene().doc();
-        let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
-        let c = doc.get(elem, "colour").and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or([1.0; 4]);
-        let speed = doc.get(elem, "animation_speed_scale").and_then(|v| wce_tile::properties::parse_vec2(&v)).unwrap_or([0.0; 2]);
-        let animation = match doc.get(elem, "animation_type").as_deref() {
-            Some("LAT_RADIUS_SIN") => 1,
-            Some("LAT_RADIUS_SIN_SIN") => 2,
-            _ => 0,
-        };
-
-        PointLight {
-            colour: [c[0], c[1], c[2]],
-            colour_scale: num("colour_scale", 1.0),
-            colour_min: num("colour_min", 0.0),
-            radius: num("radius", 1.0),
-            smooth: true,
-            animation,
-            speed,
-            phase: self.light_phase(elem),
-        }
+        point_light_of(self.tscene().doc(), elem, self.light_phase(elem))
     }
+}
 
+/// A POINT_LIGHT_INSTANCE's light from its attributes (`phase`: its animation's, see `light_phase`); the preview draws one too.
+pub(crate) fn point_light_of(doc: &wce_formats::xml_doc::XmlDoc, elem: usize, phase: f32) -> PointLight {
+    let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
+    let c = doc.get(elem, "colour").and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or([1.0; 4]);
+    let speed = doc.get(elem, "animation_speed_scale").and_then(|v| wce_tile::properties::parse_vec2(&v)).unwrap_or([0.0; 2]);
+    let animation = match doc.get(elem, "animation_type").as_deref() {
+        Some("LAT_RADIUS_SIN") => 1,
+        Some("LAT_RADIUS_SIN_SIN") => 2,
+        _ => 0,
+    };
+
+    PointLight {
+        colour: [c[0], c[1], c[2]],
+        colour_scale: num("colour_scale", 1.0),
+        colour_min: num("colour_min", 0.0),
+        radius: num("radius", 1.0),
+        smooth: true,
+        animation,
+        speed,
+        phase,
+    }
+}
+
+impl Tile {
     /// A VFXInstance's effect, when it plays (an effect is set, autoplay is on and it is in the terrain look's season).
     fn vfx_emitter(&self, elem: usize) -> Option<VfxEmitter> {
         let doc = self.tscene().doc();
