@@ -189,6 +189,9 @@ pub struct TileTool {
     /// The viewport's right-click menu opens on the next frame.
     pub(crate) context_menu: bool,
 
+    /// The weather chips' width last frame (they go beside the compass when there is room).
+    chips_width: f32,
+
     /// The right click ended a grab: its release opens no menu.
     right_used: bool,
 
@@ -270,7 +273,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -2280,15 +2283,18 @@ impl Tool for TileTool {
             return;
         }
 
-        // The weather chips at the top left of the image, under the compass.
-        let top = if e.viewport.show_compass { 58.0 } else { 8.0 };
-        gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + top));
+        // The weather chips at the top left of the image, beside the compass (under it when the image is too narrow for both).
+        let compass_left = origin.x + size.x * 0.5 - (size.x - 16.0).min(360.0) * 0.5;
+        let beside = !e.viewport.show_compass || origin.x + 8.0 + self.chips_width + 8.0 <= compass_left;
+        gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + if beside { 6.0 } else { 58.0 }));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_child("##weatherchips", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
             self.weather.draw_chips(e);
         }
 
         gui::end_child();
+        let (lo, hi) = gui::item_rect();
+        self.chips_width = hi.x - lo.x;
         gui::pop_style_color(1);
         self.draw_context_menu(e);
     }

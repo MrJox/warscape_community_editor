@@ -537,7 +537,8 @@ impl TileTool {
             gui::open_popup("quick_add");
         }
 
-        if !gui::begin_popup("quick_add") {
+        // No keyboard navigation in it: Up / Down are the list's, and the search keeps the keyboard.
+        if !gui::begin_popup_flags("quick_add", gui::WINDOW_NO_NAV_INPUTS) {
             return;
         }
 
@@ -552,10 +553,6 @@ impl TileTool {
             self.create.quick_row = 0;
         }
 
-        // The text keeps the keyboard: Up / Down move the highlight (the list takes no keyboard focus).
-        if !gui::is_item_active() && !enter && !gui::is_window_appearing() {
-            gui::set_keyboard_focus_here(-1);
-        }
         let entries = self.create_entries(e);
         let words = words(&self.create.quick_filter);
         let (_, recent) = self.create_marks(e);
