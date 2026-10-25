@@ -179,7 +179,7 @@ impl PrefabLibrary {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
 
-        std::fs::write(&target, wce_file_text(scene.save())).map_err(|e| format!("{}: {e}", target.display()))?;
+        std::fs::write(&target, wce_file_text(scene.save(), Some(&|k: &str| self.contents(k)))).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(target)
     }
 
@@ -211,9 +211,10 @@ impl PrefabLibrary {
     }
 }
 
-/// A prefab file's text as the editor keeps it: the references' contents left out, the root marked.
-fn wce_file_text(text: Vec<u8>) -> Vec<u8> {
-    crate::project_files::mark_wce_text(crate::project_files::strip_prefab_contents(text))
+/// A prefab file's text as the editor keeps it: the references' contents left out (what they differ by from `base`, their prefabs'
+/// contents, kept as their overrides), the root marked.
+fn wce_file_text(text: Vec<u8>, base: Option<crate::project_files::PrefabContents<'_>>) -> Vec<u8> {
+    crate::project_files::mark_wce_text(crate::project_files::strip_prefab_contents_with(text, base).0)
 }
 
 /// A prefab file's group: its whole text and the text of its contents (both at column 0, `\n` line ends, see [`TedScene::element_text`]).
@@ -250,18 +251,19 @@ pub fn file_text(group_text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Writes a new prefab file (its folders too): a `.wce` as the editor keeps it, an `.xml` as TEd's.
+/// Writes a new prefab file (its folders too): a `.wce` as the editor keeps it (the references in it keep what they differ by from `base`,
+/// their prefabs' contents), an `.xml` as TEd's.
 ///
 /// # Errors
 ///
 /// The file can't be written.
-pub fn write(path: &Path, group_text: &[u8]) -> Result<(), String> {
+pub fn write(path: &Path, group_text: &[u8], base: Option<crate::project_files::PrefabContents<'_>>) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
 
     let text = file_text(group_text);
-    let text = if path.extension().is_some_and(|x| x == "wce") { wce_file_text(text) } else { text };
+    let text = if path.extension().is_some_and(|x| x == "wce") { wce_file_text(text, base) } else { text };
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 

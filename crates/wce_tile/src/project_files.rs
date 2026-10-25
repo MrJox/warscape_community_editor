@@ -116,9 +116,56 @@ pub fn ted_number_text(_element: &str, attr: &str, value: &str) -> Option<String
 /// out when it writes it (`strip_prefab_contents`). For TEd the group is written with them (baked, as TEd copies a prefab).
 pub const PREFAB_ATTR: &str = "wce_prefab";
 
-/// The ranges of the contents of the prefab references' `children` (from just after `<children>` to the start of `</children>`; a
-/// self-closing `<children/>` is the whole element, with `None`), and the indentation of that `children` line. Outermost references only.
-fn reference_contents(doc: &wce_formats::xml_doc::XmlDoc, text: &[u8]) -> Vec<(usize, usize, Option<()>, String, String)> {
+/// A key's prefab contents, as a copy holds them (`PrefabLibrary::contents`).
+pub type PrefabContents<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
+
+/// A prefab reference in a text (outermost ones only): the range of its `children`'s contents (from just after `<children>` to the start of
+/// `</children>`; a self-closing `<children/>` is the whole element, with `open` false), the indentation of that `children` line, its key,
+/// and its overrides (`prefab_refs`) with the range of their element (from the line end before it to its end).
+struct RefSpan {
+    start: usize,
+    end: usize,
+    open: bool,
+    indent: String,
+    key: String,
+    overrides: Vec<crate::prefab_refs::Override>,
+    overrides_range: Option<(usize, usize)>,
+}
+
+/// The line end a text uses (its first line's): `\r\n` (TEd's tiles) or `\n`.
+fn eol_of(text: &[u8]) -> &'static [u8] {
+    match memchr_newline(text) {
+        Some(i) if i > 0 && text[i - 1] == b'\r' => b"\r\n",
+        _ => b"\n",
+    }
+}
+
+fn memchr_newline(text: &[u8]) -> Option<usize> {
+    text.iter().position(|&b| b == b'\n')
+}
+
+/// Lines with `\n` ends written with `eol` ones.
+fn with_eol(text: &[u8], eol: &[u8]) -> Vec<u8> {
+    if eol == b"\n" {
+        return text.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(text.len() + text.len() / 32);
+    for line in text.split_inclusive(|&c| c == b'\n') {
+        match line.strip_suffix(b"\n") {
+            Some(l) => {
+                out.extend_from_slice(l.strip_suffix(b"\r").unwrap_or(l));
+                out.extend_from_slice(eol);
+            }
+
+            None => out.extend_from_slice(line),
+        }
+    }
+
+    out
+}
+
+fn reference_spans(doc: &wce_formats::xml_doc::XmlDoc, text: &[u8]) -> Vec<RefSpan> {
     let els = doc.elements();
     let is_ref = |e: usize| doc.get(e, PREFAB_ATTR).is_some_and(|k| !k.is_empty());
     let mut out = vec![];
@@ -130,43 +177,85 @@ fn reference_contents(doc: &wce_formats::xml_doc::XmlDoc, text: &[u8]) -> Vec<(u
         let key = doc.get(e, PREFAB_ATTR).unwrap_or_default();
         let Some(&c) = el.children.iter().find(|&&c| els[c].name == "children") else { continue };
         let ch = &els[c];
-        let line_start = text[..ch.start_off].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-        let indent = String::from_utf8_lossy(&text[line_start..ch.start_off]).into_owned();
-        if ch.self_closing {
-            out.push((ch.start_off, ch.end_off, None, indent, key));
-        } else {
-            out.push((ch.start_end, ch.end_off - "</children>".len(), Some(()), indent, key));
-        }
+        let line_start = |at: usize| text[..at].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        let indent = String::from_utf8_lossy(&text[line_start(ch.start_off)..ch.start_off]).into_owned();
+        let overrides_range = el.children.iter().find(|&&o| els[o].name == crate::prefab_refs::OVERRIDES_ELEMENT).map(|&o| (line_start(els[o].start_off).saturating_sub(1), els[o].end_off));
+        let overrides = crate::prefab_refs::read_overrides(doc, e);
+        let (start, end, open) = if ch.self_closing { (ch.start_off, ch.end_off, false) } else { (ch.start_end, ch.end_off - "</children>".len(), true) };
+        out.push(RefSpan { start, end, open, indent, key, overrides, overrides_range });
     }
 
     out
 }
 
-/// The text without the contents of the prefab references (each `children` left empty), as tile.wce keeps them.
-pub fn strip_prefab_contents(text: Vec<u8>) -> Vec<u8> {
+/// The text without the contents of the prefab references (each `children` left empty), as tile.wce keeps them. `base`, a key's
+/// contents (`PrefabLibrary::contents`), keeps what each reference's contents differ by from them as its overrides (`prefab_refs`); a
+/// reference whose contents differ by more keeps them all. Without it, the contents just go. Returns the text and, for each reference that
+/// kept its contents, why.
+pub fn strip_prefab_contents_with(text: Vec<u8>, base: Option<PrefabContents<'_>>) -> (Vec<u8>, Vec<String>) {
     if !text.windows(PREFAB_ATTR.len()).any(|w| w == PREFAB_ATTR.as_bytes()) {
-        return text;
+        return (text, vec![]);
     }
 
-    let Ok(doc) = wce_formats::xml_doc::XmlDoc::parse(text.clone()) else { return text };
+    let Ok(doc) = wce_formats::xml_doc::XmlDoc::parse(text.clone()) else { return (text, vec![]) };
+    let eol = eol_of(&text);
     let mut out = Vec::with_capacity(text.len());
+    let mut kept = vec![];
     let mut at = 0;
-    for (start, end, open, indent, _) in reference_contents(&doc, &text) {
-        out.extend_from_slice(&text[at..start]);
-        match open {
-            Some(()) => out.extend_from_slice(format!("\n{indent}").as_bytes()),
-            None => out.extend_from_slice(b"<children/>"),
+    for r in reference_spans(&doc, &text) {
+        // What the contents differ by (the overrides read with them are in them already).
+        let ovs = match base.map(|b| b(&r.key)) {
+            Some(Some(b)) if r.start < r.end || r.open => match crate::prefab_refs::overrides(&text[r.start..r.end], &b) {
+                Ok(ovs) => ovs,
+                Err(why) => {
+                    kept.push(format!("{}: {why}", r.key));
+                    continue;
+                }
+            },
+
+            _ => vec![],
+        };
+
+        out.extend_from_slice(&text[at..r.start]);
+        if r.open {
+            out.extend_from_slice(eol);
+            out.extend_from_slice(r.indent.as_bytes());
+        } else {
+            out.extend_from_slice(b"<children/>");
         }
 
-        at = end;
+        at = r.end;
+
+        // The old overrides element goes; the new one follows the `children` element.
+        let close = if r.open { r.end + "</children>".len() } else { r.end };
+        out.extend_from_slice(&text[at..close]);
+        at = close;
+        if let Some((o_start, o_end)) = r.overrides_range {
+            out.extend_from_slice(&text[at..o_start.max(at)]);
+            at = o_end;
+        }
+
+        if !ovs.is_empty() {
+            out.extend_from_slice(eol);
+            for line in with_eol(&crate::prefab_refs::overrides_text(&ovs), eol).split_inclusive(|&c| c == b'\n') {
+                out.extend_from_slice(r.indent.as_bytes());
+                out.extend_from_slice(line);
+            }
+        }
     }
 
     out.extend_from_slice(&text[at..]);
-    out
+    (out, kept)
 }
 
-/// The text with the empty prefab references filled in from their prefabs (`contents`: a key's group contents, at column 0), the
-/// references inside those too (up to 8 deep). Returns the text and the keys no prefab was found for.
+/// The text without the contents of the prefab references (each `children` left empty), their overrides dropped.
+pub fn strip_prefab_contents(text: Vec<u8>) -> Vec<u8> {
+    strip_prefab_contents_with(text, None).0
+}
+
+/// The text with the empty prefab references filled in from their prefabs (`contents`: a key's group contents, at column 0) and their
+/// overrides applied (their element goes), the references inside those too (up to 8 deep). Returns the text and the keys no prefab was found
+/// for (an override that no longer fits its prefab is left out, logged).
 ///
 /// # Errors
 ///
@@ -179,45 +268,58 @@ pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u
         }
 
         let doc = wce_formats::xml_doc::XmlDoc::parse(text.clone()).map_err(|e| e.to_string())?;
+        let eol = eol_of(&text);
         let mut out = Vec::with_capacity(text.len());
         let mut at = 0;
         let mut filled = 0;
-        for (start, end, open, indent, key) in reference_contents(&doc, &text) {
-            let empty = text[start..end].iter().all(u8::is_ascii_whitespace) || open.is_none();
+        for r in reference_spans(&doc, &text) {
+            let empty = text[r.start..r.end].iter().all(u8::is_ascii_whitespace) || !r.open;
             if !empty {
                 continue;
             }
 
-            let Some(body) = contents(&key) else {
-                if !missing.contains(&key) {
-                    missing.push(key);
+            let Some(body) = contents(&r.key) else {
+                if !missing.contains(&r.key) {
+                    missing.push(r.key);
                 }
 
                 continue;
             };
 
-            out.extend_from_slice(&text[at..start]);
-            if open.is_none() {
+            let (body, lost) = crate::prefab_refs::apply(&body, &r.overrides)?;
+            if !lost.is_empty() {
+                wce_foundation::log::warn(format!("prefab {}: {} override(s) no longer fit it, left out", r.key, lost.len()));
+            }
+
+            out.extend_from_slice(&text[at..r.start]);
+            if !r.open {
                 out.extend_from_slice(b"<children>");
             }
 
-            out.push(b'\n');
-            for line in body.split_inclusive(|&c| c == b'\n') {
-                out.extend_from_slice(indent.as_bytes());
+            out.extend_from_slice(eol);
+            for line in with_eol(&body, eol).split_inclusive(|&c| c == b'\n') {
+                out.extend_from_slice(r.indent.as_bytes());
                 out.extend_from_slice(b"    ");
                 out.extend_from_slice(line);
             }
 
             if !out.ends_with(b"\n") {
-                out.push(b'\n');
+                out.extend_from_slice(eol);
             }
 
-            out.extend_from_slice(indent.as_bytes());
-            if open.is_none() {
+            out.extend_from_slice(r.indent.as_bytes());
+            if !r.open {
                 out.extend_from_slice(b"</children>");
             }
 
-            at = end;
+            at = r.end;
+
+            // Applied: the overrides' element goes (with its line).
+            if let Some((o_start, o_end)) = r.overrides_range {
+                out.extend_from_slice(&text[at..o_start.max(at)]);
+                at = o_end;
+            }
+
             filled += 1;
         }
 
@@ -457,5 +559,36 @@ mod tests {
         let (_, missing) = expand_prefabs(stored, &|_| None).unwrap();
         assert_eq!(missing, vec!["rocks".to_owned()]);
         assert!(String::from_utf8(mark_wce_text(b"<INSTANCE_SELECTION version=\"17\">\n</INSTANCE_SELECTION>\n".to_vec())).unwrap().starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">"));
+    }
+
+    #[test]
+    fn a_references_overrides_are_kept_on_save_and_applied_on_open() {
+        let stored = b"<project version=\"16\" wce_version=\"1\">\n    <scene>\n        <UserInstanceGroup name=\"rocks\" wce_prefab=\"rocks\" position=\"vector(5,0,5)\">\n            <children>\n            </children>\n        </UserInstanceGroup>\n    </scene>\n</project>\n".to_vec();
+        let rock = b"<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(1,0,0)\"/>\n<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(2,0,0)\"/>\n".to_vec();
+        let base = |k: &str| (k == "rocks").then(|| rock.clone());
+        let (filled, _) = expand_prefabs(stored.clone(), &base).unwrap();
+
+        // An edit of the contents is an override.
+        let edited = String::from_utf8(filled).unwrap().replace("vector(2,0,0)", "vector(2,0,7)").into_bytes();
+        let (saved, kept) = strip_prefab_contents_with(edited.clone(), Some(&base));
+        let text = String::from_utf8(saved.clone()).unwrap();
+        assert!(kept.is_empty());
+        assert!(text.contains("            </children>\n            <WceOverrides>\n                <WceOverride path=\"1\" element=\"BUILDING_INSTANCE\" attr=\"position\" value=\"vector(2,0,7)\"/>\n            </WceOverrides>\n        </UserInstanceGroup>"), "{text}");
+        assert!(!text.contains("vector(1,0,0)"), "the contents went: {text}");
+
+        // Opened again: the very text edited.
+        let (back, _) = expand_prefabs(saved.clone(), &base).unwrap();
+        assert_eq!(String::from_utf8(back.clone()).unwrap(), String::from_utf8(edited.clone()).unwrap());
+
+        // Saved again: the same file; for TEd: baked with the override, no trace of it.
+        assert_eq!(strip_prefab_contents_with(back.clone(), Some(&base)).0, saved);
+        let (ted, _) = to_ted(back).unwrap();
+        let ted = String::from_utf8(ted).unwrap();
+        assert!(ted.contains("vector(2,0,7)") && !ted.contains("Wce") && !ted.contains("wce_"), "{ted}");
+
+        // Contents that differ by more keep them all.
+        let more = String::from_utf8(edited).unwrap().replace("<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(1,0,0)\"/>\n", "").into_bytes();
+        let (kept_text, kept) = strip_prefab_contents_with(more.clone(), Some(&base));
+        assert_eq!((kept_text, kept.len()), (more, 1));
     }
 }
