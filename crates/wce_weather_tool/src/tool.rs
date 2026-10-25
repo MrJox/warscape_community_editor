@@ -955,7 +955,12 @@ impl Tool for WeatherTool {
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
-        let (source, bytes) = if from_packs {
+        let copy = from_packs.then(|| e.output_copy(path)).flatten();
+        let (source, bytes) = if let Some(copy) = copy {
+            // The copy in the output folder (where Save writes it) before the packs.
+            let bytes = std::fs::read(&copy).map_err(|e| format!("cannot read {}: {e}", copy.display()))?;
+            (Source { vfs_path: normalize(path), disk: copy, label: "output folder".to_owned() }, bytes)
+        } else if from_packs {
             let vfs = e.vfs().ok_or("the game packs are not mounted")?;
             let p = normalize(path);
             let owner = vfs.owner(&p).ok_or("not found in the packs")?;

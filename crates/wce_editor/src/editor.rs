@@ -573,6 +573,33 @@ impl Editor {
         self.settings.output_dir().unwrap_or_else(|| self.default_output_dir())
     }
 
+    /// The loose copy of a game file in the output folder (Save writes files there, under their path in the packs), if there is one.
+    pub fn output_copy(&self, path: &str) -> Option<PathBuf> {
+        let p = self.output_dir().join(normalize(path));
+        p.is_file().then_some(p)
+    }
+
+    /// Copies a game file from the packs into the output folder, unless a copy is there already; returns the copy.
+    ///
+    /// # Errors
+    ///
+    /// The packs are not mounted, the file is not in them, or the copy can't be written.
+    pub fn copy_to_output(&self, path: &str) -> Result<PathBuf, String> {
+        if let Some(copy) = self.output_copy(path) {
+            return Ok(copy);
+        }
+
+        let path = normalize(path);
+        let bytes = self.vfs.as_ref().ok_or("the game packs are not mounted")?.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let to = self.output_dir().join(&path);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+
+        std::fs::write(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))?;
+        Ok(to)
+    }
+
     /// The output folder when the settings name none.
     pub fn default_output_dir(&self) -> PathBuf {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
@@ -819,8 +846,12 @@ impl Editor {
             return Err(format!("{path} is not an .environment or .lighting file"));
         }
 
-        let vfs = self.vfs.as_ref().ok_or("the game packs are not mounted")?;
-        let bytes = vfs.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        // A copy in the output folder (one being edited) before the packs.
+        let bytes = match self.output_copy(&path) {
+            Some(copy) => std::fs::read(&copy).map_err(|e| format!("{}: {e}", copy.display()))?,
+            None => self.vfs.as_ref().ok_or("the game packs are not mounted")?.read(&path).map_err(|e| format!("{path}: {e}"))?,
+        };
+
         let doc = XmlDoc::parse(bytes).map_err(|e| format!("{path}: {e}"))?;
 
         self.weather_preview = Some(WeatherPreview { params: read_environment(&doc), path: path.clone() });

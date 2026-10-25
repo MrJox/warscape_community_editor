@@ -103,6 +103,12 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
+    /// pixels. A child window there takes the mouse before the viewport.
+    fn viewport_overlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        let _ = (editor, origin, size);
+    }
+
     /// The Inspector's contents instead of the selection's (what the tool is about to make, say): true when it filled it.
     fn inspect(&mut self, editor: &mut Editor, inspector: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
         let _ = (editor, inspector);

@@ -939,6 +939,8 @@ pub use sys::{
     ImGuiTableFlags_Borders as TABLE_BORDERS, ImGuiTableFlags_SizingStretchProp as TABLE_SIZING_STRETCH_PROP, ImGuiTableFlags_ScrollY as TABLE_SCROLL_Y,
     ImGuiTableColumnFlags_WidthStretch as COLUMN_WIDTH_STRETCH, ImGuiTableColumnFlags_WidthFixed as COLUMN_WIDTH_FIXED, ImGuiTabItemFlags_SetSelected as TAB_SET_SELECTED,
 };
+pub const CHILD_AUTO_RESIZE: i32 = sys::ImGuiChildFlags_AutoResizeX | sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
+pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
 pub const MOD_ALT: i32 = sys::ImGuiMod_Alt;

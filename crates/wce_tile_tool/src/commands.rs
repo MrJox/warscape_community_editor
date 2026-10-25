@@ -1714,6 +1714,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("tile_weather_edit", "tile_weather_edit", "edit the open tile's weather in the Weather tool (a copy in the output folder, which the tile follows)", |e, _| {
+        with_tile(e, |t, e| {
+            let Some(file) = e.weather_preview().map(str::to_owned) else { return fail("the tile has no weather file") };
+            t.weather.edit(e, &file);
+            ok("")
+        })
+    });
+
     c.add("tile_weather_search", "tile_weather_search [words]", "the words (and-ed) the files of the open tile's weather list must hold; none: every file", |e, a| {
         let words = a.join(" ");
         with_tile(e, |t, _| {
