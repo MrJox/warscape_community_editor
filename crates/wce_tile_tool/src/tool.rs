@@ -20,25 +20,13 @@ use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, BrushSettings, Create, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, Placement, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
+/// The polygon types `add_polygon` makes (the `add_polygon` command; the Create panel makes them with `create_with`).
 pub const POLYGON_TYPES: [&str; 5] =
     ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
-
-/// What the Create section makes (`TileDocument::create`, or `add_polygon` for the polygon types it had first): the type, whether it is placed
-/// with a click (true) or drawn, and what its key is called (none: no key).
-pub const CREATE_TYPES: [(&str, bool, Option<&str>); 22] = [
-    ("POINT_LIGHT_INSTANCE", true, None), ("VFXInstance", true, Some("effect (vfx)")), ("ProjectedDecalInstance", true, Some("decal model")),
-    ("SIMPLE_MESH_INSTANCE", true, Some("model")), ("VEGETATION_INSTANCE", true, Some("tree (species.variant)")), ("CivilianShelter", true, None),
-    ("CaptureLocationInstance", true, None), ("SiegeAINodeInstance", true, None), ("DeploymentZonePolygonInstanceGroup", true, None),
-    ("AI_HINT_POLYGON_INSTANCE", false, None), ("NOGO_REGION_POLYGON_INSTANCE", false, None), ("GO_REGION_POLYGON_INSTANCE", false, None),
-    ("VegetationExclusionPolygonInstance", false, None), ("SIEGE_AI_POLYGON_INSTANCE", false, None), ("ZONE_POLYGON_INSTANCE", false, None),
-    ("CivilianDeploymentZone", false, None), ("LiteBuildingZone", false, None), ("AISeparatorInstance", false, None),
-    ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", false, None), ("SiegeAIEdgeInstance", false, None), ("SplineRiverInstance", false, None),
-    ("SEGMENTED_SPLINE_INSTANCE", false, None),
-];
 
 pub const HINTS: [&str; 16] = [
     "AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
@@ -46,17 +34,11 @@ pub const HINTS: [&str; 16] = [
     "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
 ];
 
-/// How many instance groups of a tile have each name (lower case).
-pub(crate) type PrefabCounts = Arc<HashMap<String, usize>>;
-
-/// What clicks on the terrain place, with a preview under the mouse until then.
+/// What clicks on the terrain place, with a preview under the mouse until then (the Create panel).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Placing {
-    /// The Create section's type.
-    Create,
-
-    /// A building of the Placement section's key.
-    Building,
+    /// The draft (`TileTool::draft`): a type with its key and values.
+    Draft,
 
     /// A prefab of the library.
     Prefab(String),
@@ -118,10 +100,8 @@ pub struct TileTool {
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
     angle_step: f32,
-    pub(crate) building_key: String,
 
-    // Placement: the mode of new buildings, the off-terrain report of the Tile panel.
-    new_placement: Placement,
+    // The off-terrain report of the Tile panel.
     off_tol: f32,
     off_list: Vec<OffTerrain>,
     off_doc_version: Option<u64>,
@@ -155,11 +135,6 @@ pub struct TileTool {
 
     /// The prefab copy being edited: the tile, the copy's name path (`scene_panel::layer_key`) and the prefab's key.
     pub(crate) prefab_edit: Option<(DocumentId, String, String)>,
-    pub(crate) prefab_filter: String,
-    pub(crate) prefab_selected: String,
-
-    /// The Prefabs panel's copy counts and the (tile, structure version) they were counted for.
-    pub(crate) prefab_counts: Option<((DocumentId, u64), PrefabCounts)>,
 
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
@@ -188,7 +163,7 @@ pub struct TileTool {
     pub(crate) grab_y_offset: f64,
     grab_history: usize,
     pub(crate) grab_gesture: u64,
-    poly_point: Option<usize>,
+    pub(crate) poly_point: Option<usize>,
 
     /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
     spline_handle: Option<bool>,
@@ -199,25 +174,26 @@ pub struct TileTool {
     point_drag: bool,
     point_gesture: u64,
     pub(crate) drawing: bool,
-    draw_pts: Vec<Float3>,
-    pub(crate) new_poly_type: usize,
+    pub(crate) draw_pts: Vec<Float3>,
 
-    /// The Create section: the type (an index of CREATE_TYPES) and its key; what clicks on the terrain place now.
-    pub(crate) new_kind: usize,
-    pub(crate) new_key: String,
+    /// What the Create panel makes: clicks on the terrain place it now (`placing`) or draw it (`drawing`); the draft (its type, key and
+    /// values; none for a prefab) and its label.
     pub(crate) placing: Option<Placing>,
+    pub(crate) draft: Option<wce_tile_editor::tile_document::Draft>,
+    pub(crate) making: Option<String>,
+    pub(crate) create: crate::create_panel::CreateUi,
 
-    /// The key pickers (Create section, buildings) and the keys of each type, per tile.
-    key_picker: crate::key_picker::KeyPicker,
-    building_picker: crate::key_picker::KeyPicker,
+    /// The dock node of the Tiles panel (where the Create panel goes the first time).
+    pub(crate) left_dock: Option<gui::ImGuiID>,
+
+    /// The keys of each type, per tile.
     catalogues: HashMap<(DocumentId, String), Arc<Vec<String>>>,
 
     /// The text of the prefab being placed (read once per placing).
-    placing_prefab_text: Option<(String, Vec<u8>)>,
+    pub(crate) placing_prefab_text: Option<(String, Vec<u8>)>,
 
     /// The preview is shown at `cursor` without the mouse over the viewport (`place_preview`, for scripts).
     pub(crate) preview_forced: bool,
-    pub(crate) new_hint: usize,
     camera_set_for: DocumentId,
 
     /// mark_height values for the tests.
@@ -279,13 +255,13 @@ impl Default for TileTool {
     fn default() -> Self {
         Self {
             status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
-            building_key: String::new(), new_placement: Placement::Landscape, off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
+            off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None, prefab_filter: String::new(),
-            prefab_selected: String::new(), prefab_counts: None, prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
+            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, tree_prefab_seen: 0, prefab_edit: None,
+            prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], new_poly_type: 0, new_kind: 0, new_key: String::new(), placing: None, key_picker: Default::default(), building_picker: Default::default(), catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, new_hint: 0, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -403,89 +379,10 @@ impl TileTool {
         crate::scene_panel::layer_by_key(d.tile().tscene(), key)
     }
 
-    /// Places the Create section's type at a point on the ground (in the working layer).
-    pub fn place_new(&mut self, e: &mut Editor, at: Float3) -> Result<String, String> {
-        let (kind, _, _) = CREATE_TYPES[self.new_kind];
-        let key = self.new_key.trim().to_owned();
-        let d = document(e).ok_or("no tile open")?;
-        let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
-        let at = Float3::new(at.x, d.tile().terrain_height(at.x, at.z), at.z);
-        d.create(kind, into, &Create::Point(at), &key).map(|_| format!("added {kind}"))
-    }
-
-    /// Places a building of the Placement section's key at a point on the ground (in the working layer; the selected building is the
-    /// template of its other attributes).
-    pub fn place_building(&mut self, e: &mut Editor, at: Float3) -> Result<String, String> {
-        let key = self.building_key.trim().to_owned();
-        let template = primary(e);
-        let d = document(e).ok_or("no tile open")?;
-        let into = self.new_items_layer(d);
-        d.add_building_in(&key, template, Some(at), self.new_placement, into).map(|_| format!("added {key}"))
-    }
-
     /// The keys of a type in the open tile's files (read once per tile).
     pub(crate) fn catalogue(&mut self, e: &mut Editor, kind: &str) -> Arc<Vec<String>> {
         let Some(d) = document(e) else { return Arc::default() };
         self.catalogues.entry((d.id(), kind.to_owned())).or_insert_with(|| Arc::new(d.tile().key_catalogue(kind))).clone()
-    }
-
-    /// A button that starts placing `what` (or stops it, lit while placing). Returns whether it was clicked.
-    pub(crate) fn place_button(&mut self, what: Placing) -> bool {
-        let on = self.placing.as_ref() == Some(&what);
-        if on {
-            gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-        }
-
-        // The label changes and several of these share a window: the id is the kind of thing placed.
-        let id = match &what {
-            Placing::Create => "create",
-            Placing::Building => "building",
-            Placing::Prefab(_) => "prefab",
-        };
-
-        let label = if on { "Placing: click the terrain (Esc stops)" } else { "Place (click the terrain)" };
-        let clicked = gui::button(&format!("{label}###place_{id}"));
-        if on {
-            gui::pop_style_color(1);
-        }
-
-        if clicked {
-            self.placing = if on { None } else { Some(what) };
-        }
-
-        clicked
-    }
-
-    /// The text of what a click places now, for the preview under the mouse.
-    fn placing_text(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
-        match self.placing.clone()? {
-            Placing::Create => {
-                let (kind, _, _) = CREATE_TYPES[self.new_kind];
-                document(e)?.point_instance_text(kind, self.new_key.trim())
-            }
-
-            Placing::Building => {
-                let key = self.building_key.trim();
-                let mode = if self.new_placement == Placement::Freeform { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" };
-                (!key.is_empty()).then(|| format!("<BUILDING_INSTANCE key=\"{key}\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\" surface_mode=\"{mode}\"/>\n").into_bytes())
-            }
-
-            Placing::Prefab(key) => {
-                if self.placing_prefab_text.as_ref().is_none_or(|(k, _)| *k != key) {
-                    let lib = self.prefab_library(e);
-                    let text = lib.get(&key).and_then(|p| wce_tile::prefabs::load(&p.path).ok()).map(|p| p.group_text).unwrap_or_default();
-                    self.placing_prefab_text = Some((key, text));
-                }
-
-                self.placing_prefab_text.as_ref().map(|(_, t)| t.clone()).filter(|t| !t.is_empty())
-            }
-        }
-    }
-
-    /// Picks the Create section's type by name.
-    pub fn set_new_kind(&mut self, kind: &str) -> Result<(), String> {
-        self.new_kind = CREATE_TYPES.iter().position(|(k, _, _)| *k == kind).ok_or_else(|| format!("{kind} can't be created here"))?;
-        Ok(())
     }
 
     /// Where new items go in the tile: the working layer, else the scene graph.
@@ -963,38 +860,6 @@ impl TileTool {
         self.grab_elem = None;
     }
 
-    pub fn finish_polygon(&mut self, e: &mut Editor) {
-        if !self.drawing {
-            return;
-        }
-
-        let sel = primary(e);
-        let Some(d) = document(e) else { return };
-        self.drawing = false;
-        let kind = CREATE_TYPES[self.new_kind].0;
-        let layer = self.new_items_layer(d);
-
-        // A deployment polygon goes into the selected deployment group.
-        let group = sel.and_then(|s| {
-            let sc = d.tile().tscene();
-            std::iter::successors(Some(s), |&x| sc.doc().elements()[x].parent).find(|&x| sc.type_of(x) == "DeploymentZonePolygonInstanceGroup")
-        });
-
-        let added = if POLYGON_TYPES.contains(&kind) {
-            d.add_polygon(layer, kind, HINTS[self.new_hint], &self.draw_pts)
-        } else {
-            let into = if kind == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" { group.or(layer) } else { layer };
-            into.ok_or_else(|| "this tile has no scene graph".to_owned()).and_then(|into| d.create(kind, into, &Create::Line(self.draw_pts.clone()), ""))
-        };
-
-        self.draw_pts.clear();
-        self.poly_point = None;
-        self.status = match added {
-            Ok(el) => format!("added {kind} in {}", Self::layer_label(d, d.tile().layer_of(el).unwrap_or(el))),
-            Err(err) => err,
-        };
-    }
-
     fn handle_keys(&mut self, e: &mut Editor) {
         let io = gui::io();
         if document_id(e).is_none() || io.WantTextInput {
@@ -1005,11 +870,8 @@ impl TileTool {
         if gui::is_key_pressed(gui::KEY_ESCAPE, false) {
             if self.grabbing {
                 self.end_grab(e, false);
-            } else if self.drawing {
-                self.drawing = false;
-                self.draw_pts.clear();
-            } else if self.placing.is_some() {
-                self.placing = None;
+            } else if self.drawing || self.placing.is_some() {
+                self.stop_making();
             } else if self.mode != TileMode::Select {
                 self.mode = TileMode::Select;
             }
@@ -1017,6 +879,15 @@ impl TileTool {
 
         if self.grabbing && gui::is_mouse_clicked(1) {
             self.end_grab(e, false);
+        }
+
+        // While placing: R / Shift+R turn it. Shift+A over the viewport: the quick-add popup.
+        if !io.KeyCtrl && self.placing.is_some() && gui::is_key_pressed(gui::KEY_R, false) {
+            self.turn_placing(if io.KeyShift { -self.angle_step } else { self.angle_step });
+        }
+
+        if io.KeyShift && !io.KeyCtrl && e.viewport.hovered && !gui::is_mouse_down(1) && gui::is_key_pressed(gui::KEY_A, false) {
+            self.request_quick_add();
         }
 
         if io.KeyCtrl {
@@ -1070,7 +941,7 @@ impl TileTool {
         }
 
         if self.drawing && (gui::is_key_pressed(gui::KEY_ENTER, false) || gui::is_key_pressed(gui::KEY_KEYPAD_ENTER, false)) {
-            self.finish_polygon(e);
+            self.finish_drawing(e);
         }
     }
 
@@ -1156,29 +1027,6 @@ impl TileTool {
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
         gui::set_next_item_width(90.0);
         gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
-        let keys = self.catalogue(e, "BUILDING_INSTANCE");
-        if keys.is_empty() {
-            gui::set_next_item_width(260.0);
-            gui::input_text("building key", None, &mut self.building_key, 128, 0);
-        } else {
-            self.building_picker.combo("building key", &mut self.building_key, &keys, 260.0);
-        }
-
-        gui::same_line();
-        let mut np = i32::from(self.new_placement == Placement::Freeform);
-        gui::set_next_item_width(120.0);
-        if gui::combo("##new_placement", &mut np, &["Landscape", "Freeform"]) {
-            self.new_placement = if np == 1 { Placement::Freeform } else { Placement::Landscape };
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("placement of a new building: landscape stands on the terrain, freeform keeps the height it is given");
-        }
-
-        gui::same_line();
-        gui::begin_disabled(self.building_key.trim().is_empty());
-        self.place_button(Placing::Building);
-        gui::end_disabled();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
 
         gui::begin_disabled(sel.is_none());
@@ -1503,6 +1351,8 @@ impl TileTool {
             gui::end();
             return;
         }
+
+        self.left_dock = Some(gui::window_dock_id());
 
         if gui::time() - self.browse_roots_time > 2.0 {
             self.browse_roots = self.kit_roots(e);
@@ -1840,90 +1690,13 @@ impl TileTool {
         }
     }
 
+    /// The selected polygon's or spline's points (shown while one is selected; new ones are made in the Create panel).
     fn draw_polygon_panel(&mut self, e: &mut Editor, id: DocumentId) {
-        if !gui::collapsing_header("Create", gui::TREE_DEFAULT_OPEN) {
-            return;
-        }
-
-        let (kind, placed, key_label) = CREATE_TYPES[self.new_kind];
-        gui::set_next_item_width(300.0);
-        if gui::begin_combo("type", &format!("{}  {kind}", crate::entity_types::type_icon(kind))) {
-            for (i, (t, p, _)) in CREATE_TYPES.iter().enumerate() {
-                let how = if *p { "click" } else { "draw" };
-                if gui::selectable(&format!("{}  {t}   ({how})", crate::entity_types::type_icon(t)), i == self.new_kind, 0) {
-                    self.new_kind = i;
-                    self.new_key.clear();
-                    self.placing = None;
-                }
-            }
-
-            gui::end_combo();
-        }
-
-        if let Some(label) = key_label {
-            let default = wce_tile::instance_templates::template(kind)
-                .and_then(|t| t.attrs.iter().find(|(k, _)| *k == if kind == "VFXInstance" { "vfx" } else { "key" }).map(|(_, v)| v.to_string()))
-                .unwrap_or_default();
-            let keys = self.catalogue(e, kind);
-            if keys.is_empty() {
-                gui::set_next_item_width(300.0);
-                gui::input_text(label, Some(&default), &mut self.new_key, 256, 0);
-            } else {
-                self.key_picker.combo(label, &mut self.new_key, &keys, 300.0);
-                if self.new_key.is_empty() {
-                    gui::same_line();
-                    gui::text_disabled(&format!("(default {default})"));
-                }
-            }
-        }
-
-        gui::text_disabled(&format!("into the working layer ({})", document(e).and_then(|d| self.working_layer_of(d).map(|l| Self::layer_label(d, l))).unwrap_or_else(|| "the root".to_owned())));
-        if placed {
-            if self.place_button(Placing::Create) {
-                self.drawing = false;
-            }
-
+        let sel = primary(e);
+        let is_polygon = e.docs.find_as::<TileDocument>(id).is_some_and(|d| sel.is_some_and(|s| d.tile().is_polygon(s)));
+        if is_polygon && gui::collapsing_header("Points", gui::TREE_DEFAULT_OPEN) {
             self.show_selected_polygon(e, id);
-            return;
         }
-
-        if self.placing == Some(Placing::Create) {
-            self.placing = None;
-        }
-
-        if kind == "AI_HINT_POLYGON_INSTANCE" {
-            gui::set_next_item_width(260.0);
-            if gui::begin_combo("hint", HINTS[self.new_hint]) {
-                for (i, h) in HINTS.iter().enumerate() {
-                    if gui::selectable(h, i == self.new_hint, 0) {
-                        self.new_hint = i;
-                    }
-                }
-
-                gui::end_combo();
-            }
-        }
-
-        if !self.drawing {
-            if gui::button("Draw (click the terrain; Enter finishes)") {
-                self.start_drawing();
-                self.status = "click the terrain to add points; Enter finishes, Esc cancels".to_owned();
-            }
-        } else {
-            gui::text(&format!("{} points", self.draw_pts.len()));
-            gui::same_line();
-            if gui::button("Finish") {
-                self.finish_polygon(e);
-            }
-
-            gui::same_line();
-            if gui::button("Cancel") {
-                self.drawing = false;
-                self.draw_pts.clear();
-            }
-        }
-
-        self.show_selected_polygon(e, id);
     }
 
     /// The selected polygon's points and area.
@@ -2109,7 +1882,7 @@ impl Tool for TileTool {
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.18);
         gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Tiles", left);
-        gui::dock_builder_dock_window("Prefabs", left);
+        gui::dock_builder_dock_window("Create", left);
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Tile", right);
@@ -2234,8 +2007,9 @@ impl Tool for TileTool {
             self.draw_browser_panel(e);
         }
 
-        wce_foundation::wce_prof!("tile.panel.prefabs");
-        self.draw_prefab_panel(e);
+        wce_foundation::wce_prof!("tile.panel.create");
+        self.draw_create_panel(e);
+        self.draw_quick_add(e);
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {
@@ -2328,12 +2102,8 @@ impl Tool for TileTool {
 
                 if let Some(placing) = self.placing.clone() {
                     if self.terrain_hit {
-                        self.status = match placing {
-                            Placing::Create => self.place_new(e, self.cursor),
-                            Placing::Building => self.place_building(e, self.cursor),
-                            Placing::Prefab(key) => self.place_prefab(e, &key, self.cursor),
-                        }
-                        .unwrap_or_else(|err| err);
+                        let _ = placing;
+                        self.status = self.place_at(e, self.cursor).unwrap_or_else(|err| err);
                     }
 
                     return true;
@@ -2531,6 +2301,10 @@ impl Tool for TileTool {
                 true
             }
         }
+    }
+
+    fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        self.inspect_making(e, ins)
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {

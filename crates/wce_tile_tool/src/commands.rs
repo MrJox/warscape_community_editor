@@ -25,7 +25,7 @@ use wce_tile::world_transform::world_transform;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
 
-use crate::tool::{HINTS, MODE_NAMES, POLYGON_TYPES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
+use crate::tool::{HINTS, MODE_NAMES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
 
 /// An inspector that writes the rows it is given, with their values (for `tile_inspect`).
 #[derive(Default)]
@@ -814,12 +814,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             };
             let key = a.get(3).cloned().unwrap_or_default();
             with_tile(e, |t, e| {
-                if let Err(err) = t.set_new_kind(&kind) {
-                    return fail(err);
-                }
-
-                t.new_key = key.clone();
-                t.place_new(e, Float3::new(x, 0.0, z)).map_or_else(fail, ok)
+                let Some(d) = document(e) else { return no_tile() };
+                let Some(into) = t.new_items_layer(d) else { return fail("this tile has no scene graph") };
+                let at = Float3::new(x, d.tile().terrain_height(x, z), z);
+                d.create(&kind, into, &wce_tile_editor::tile_document::Create::Point(at), &key).map_or_else(fail, |_| ok(format!("added {kind}")))
             })
         },
     );
@@ -933,18 +931,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("draw_polygon", "draw_polygon <type> [hint]", "start drawing a polygon: click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint]") };
-        with_tile(e, |t, _| {
-            let Some(i) = POLYGON_TYPES.iter().position(|p| p == kind) else {
-                t.new_poly_type = 0;
-                return fail(format!("unknown polygon type '{kind}'"));
-            };
-
-            t.new_poly_type = i;
-            if let Some(h) = a.get(1).and_then(|h| HINTS.iter().position(|x| x == h)) {
-                t.new_hint = h;
+        with_tile(e, |t, e| {
+            if let Err(err) = crate::create_panel::make_for_script(t, e, kind, "") {
+                return fail(err);
             }
 
-            t.start_drawing();
+            if !t.drawing {
+                t.stop_making();
+                return fail(format!("{kind} is placed, not drawn"));
+            }
+
+            if let (Some(h), Some(d)) = (a.get(1).filter(|h| HINTS.contains(&h.as_str())), t.draft.as_mut()) {
+                d.attrs.insert("hint_type".to_owned(), h.clone());
+            }
+
             ok("")
         })
     });
@@ -1085,6 +1085,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
+        with_tile(e, |t, _| {
+            t.request_quick_add();
+            ok("")
+        })
+    });
+
     c.add(
         "place_preview", "place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off",
         "start placing (a Create type, a building or a prefab) and show its preview at x z as if the mouse were there", |e, a| {
@@ -1106,23 +1113,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
             t.terrain_hit = true;
             t.preview_forced = true;
-            t.placing = Some(match what.as_str() {
-                "building" => {
-                    t.building_key = key;
-                    crate::tool::Placing::Building
-                }
-
-                "prefab" => crate::tool::Placing::Prefab(key),
-                kind => {
-                    if let Err(err) = t.set_new_kind(kind) {
-                        return fail(err);
-                    }
-
-                    t.new_key = key;
-                    crate::tool::Placing::Create
-                }
-            });
-            ok("")
+            match crate::create_panel::make_for_script(t, e, &what, &key) {
+                Ok(()) => ok(""),
+                Err(err) => fail(err),
+            }
         })
     });
 

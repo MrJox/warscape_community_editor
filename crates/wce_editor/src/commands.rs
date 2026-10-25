@@ -672,6 +672,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 "))
     });
 
+    c.add("window_focus", "window_focus <window>", "bring a window to the front (a docked one: its tab is selected), by its title", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: window_focus <window>") };
+        e.pending_focus = Some(name.clone());
+        ok("")
+    });
+
     c.add("panel", "panel <name> on|off", "show or hide a panel (viewport outliner inspector assets log history commands)", |e, a| {
         if a.len() < 2 {
             return fail("usage: panel <name> on|off");

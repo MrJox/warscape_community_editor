@@ -65,6 +65,10 @@ pub struct TileSettings {
 
     /// The last tiles opened, the latest first (at most [`RECENT_KEEP`]).
     pub recent: Vec<TileRef>,
+
+    /// The Create panel's starred entries and the last ones used, the latest first (at most [`RECENT_KEEP`]); ids like `kind|key`.
+    pub create_favourites: Vec<String>,
+    pub create_recent: Vec<String>,
 }
 
 /// The weather a tile is lit with and the filters of its list.
@@ -80,6 +84,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { kits: vec![], prefab_folders: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![] }
+        Self { kits: vec![], prefab_folders: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![] }
     }
 }

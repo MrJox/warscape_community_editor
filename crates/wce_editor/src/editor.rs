@@ -104,6 +104,9 @@ pub struct Editor {
     pub(crate) script: ScriptRunner,
     pub(crate) script_lines: Vec<String>,
     pub viewport: Viewport,
+
+    /// A window to bring to the front on the next frame (`window_focus`, for scripts).
+    pub pending_focus: Option<String>,
     pub clock: Clock,
     tools: Vec<Option<Box<dyn Tool>>>,
     tool_info: Vec<ToolInfo>,
@@ -187,7 +190,7 @@ impl Editor {
         let mut e = Self {
             dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load_default(), vfs: None, renderer: None, scene: RenderScene::default(),
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
-            viewport: Viewport::default(), clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
+            viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
@@ -358,6 +361,11 @@ impl Editor {
 
     pub fn tool_title(&self, id: &str) -> Option<&str> {
         self.tool_info.iter().find(|t| t.id == id).map(|t| t.title.as_str())
+    }
+
+    /// Runs `f` on the active tool.
+    pub fn with_active_tool<R>(&mut self, f: impl FnOnce(&mut dyn Tool, &mut Editor) -> R) -> Option<R> {
+        self.with_tool_at(self.active_tool, f)
     }
 
     pub fn active_tool_id(&self) -> &str {
@@ -1122,7 +1130,9 @@ impl Editor {
                 let _ = CommandRegistry::run(self, if io.KeyShift { "save_all" } else { "save" });
             }
 
-            if !io.KeyCtrl && self.viewport.hovered {
+            // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
+            let claimed = self.with_tool_at(self.active_tool, |t, e| t.claims_left_button(e)).unwrap_or(false);
+            if !io.KeyCtrl && self.viewport.hovered && !claimed {
                 let fly = self.viewport.is_fly();
                 for (key, mode) in [
                     (gui::KEY_W, crate::viewport::GizmoMode::Translate), (gui::KEY_E, crate::viewport::GizmoMode::Rotate), (gui::KEY_R, crate::viewport::GizmoMode::Scale),
@@ -1152,6 +1162,10 @@ impl Editor {
     }
 
     fn draw_panels(&mut self, textures: &mut D3D11Renderer) {
+        if let Some(name) = self.pending_focus.take() {
+            gui::set_window_focus_named(&name);
+        }
+
         let shows_viewport = self.with_tool_at(self.active_tool, |t, _| t.shows_viewport()).unwrap_or(true);
         if self.panels.viewport && shows_viewport {
             wce_prof!("panel.viewport");
