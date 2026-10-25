@@ -34,8 +34,9 @@ pub const HINTS: [&str; 16] = [
     "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
 ];
 
-/// What the Scene tree's override marks were found for: the tile, its history (position, size) and the library's version.
-pub(crate) type OverrideMarksKey = (DocumentId, usize, usize, u64);
+/// What the Scene tree's override marks were found for: the tile, its history's version (every edit moves it, a merged one too) and the
+/// library's version.
+pub(crate) type OverrideMarksKey = (DocumentId, u64, u64);
 
 /// The vegetation set being placed or painted: the new one (not saved) or a saved one by its name. It is read each time a tree is picked, so
 /// it follows the edits.
