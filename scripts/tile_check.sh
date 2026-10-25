@@ -85,7 +85,7 @@ OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
 # procedural walls, phase 1: drawn, ends attached, corners, undo; the saved tile.wce keeps the wall and the undone corner mark is gone
 run_script tile_walls 1 "$DESERT"
 W="$OUT/tile_walls1/saved/tile.wce"
-[ "$(grep -c '<WALL_SPLINE' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
+[ "$(grep -c '<WceWallSpline' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
 
 run_script tile_layers 1 "$OSG"
 run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del

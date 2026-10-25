@@ -113,16 +113,16 @@ Consequences:
 
 ## Design
 
-### The model: a `WALL_SPLINE` node
+### The model: a `WceWallSpline` node
 
-A node of the tile model's scene (class `WALL_SPLINE`, in a layer like any element), written by the TEd format as a custom element (TEd
+A node of the tile model's scene (class `WceWallSpline`, in a layer like any element), written by the TEd format as a custom element (TEd
 ignores it; checked to read back unchanged in `tile.semantic()`):
 
 - `base` (the straight's key; the culture's step piece and endcap come from a kit table, see below), `tolerance` (0.5 m),
 - `start` / `end`: a free end, or attached to a building (the gate / bastion element and which of its ends),
 - `points`: per vertex its position (x, z) and `sharp` (bool). Heights are not stored: they come from the terrain.
 
-Compiling a tile lowers each `WALL_SPLINE` into `BUILDING_INSTANCE`s of generated keys (stage A sees ordinary buildings), so the rest of the
+Compiling a tile lowers each `WceWallSpline` into `BUILDING_INSTANCE`s of generated keys (stage A sees ordinary buildings), so the rest of the
 compile needs no change except where it reads building files (below).
 
 ### The kit table: one profile per base
@@ -175,7 +175,7 @@ A **warp** maps the base's frame to the world: x is the arc length along the str
 
 The generator runs in memory. Its meshes feed the model cache the way a pack's files do, through a generated-files overlay over the VFS.
 The pieces are drawn but cannot be picked one by one: a click selects the wall. Gizmos edit the vertices (move, add, delete, smooth/sharp)
-and the ends (attach to a gate or bastion end, or free). Undo works on the `WALL_SPLINE` node like any edit.
+and the ends (attach to a gate or bastion end, or free). Undo works on the `WceWallSpline` node like any edit.
 
 ### Export
 
@@ -211,10 +211,10 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
    `building_list` with the spike pack. Only the building list: an unedited decompile and compile gives it back record for record (12 781
    of 12 781), and the edited ones differ from CA's by exactly the two renamed and three added records; the other files would be our
    compile's markers and terrain instead of CA's (the terrain fingerprint covers every building, though walls don't stamp it).
-1. **Model and editing:** the `WALL_SPLINE` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
+1. **Model and editing:** the `WceWallSpline` node, TEd read/write of the custom element, the editing tools, the solver's centre line and
    height profile drawn as lines (no meshes yet).
    **Status (2026-10-24): done.** As built:
-   - **Storage:** `WALL_SPLINE` is stored like the polygons (`<points>` of `<point position="x,y,z"/>`, `polygon_closed="0"`) with
+   - **Storage:** `WceWallSpline` is stored like the polygons (`<points>` of `<point position="x,y,z"/>`, `polygon_closed="0"`) with
      `wall_base`, `wall_tolerance`, `wall_flip` and the points' `sharp`, so the polygon tools (draw, handles, insert, remove, undo) edit
      it and the TEd format reads and writes it with no unknown attribute (`attila::schema`; the round trip gate passes on a tile with a
      wall); the compile ignores it (it picks elements by class).
@@ -226,7 +226,7 @@ When the tile is exported to a pack, the wall's generated buildings go into the 
      when placed or moved within 8 (4 m in the editor). A building end is its model's x extent at z = 0 (the models' bounds stand in for
      the pieces' frames; the logic files' boxes in phase 2). An attached end's run is at the building's level. A wall does not follow a
      moved gate: its end is then free until moved back onto it.
-   - **Editor:** `WALL_SPLINE` in the polygon types (with a base wall combo), the layout drawn with the outline, the panel's summary and
+   - **Editor:** `WceWallSpline` in the polygon types (with a base wall combo), the layout drawn with the outline, the panel's summary and
      "sharp corner" check box, the Inspector rows (`wce_tile::properties`), redrawn after terrain strokes, building moves and model
      loads. Commands `wall_sharp`, `wall_info`, `assert_wall`; `scripts/tile_walls.txt` in `tile_check.sh`.
 2. **Generator, straight runs:** copies, scaling, the foot, all three levels, the logic file, the zone file; the preview through the
@@ -400,7 +400,7 @@ Two attributes of the spline (Inspector rows; 0: none):
 - **First try:** the whole ring was rebuilt (7 walls, 69 pieces removed). The user asked for less: rebuilding every wall at once makes it
   likelier that the AI layout breaks.
 - **The tile:** Edoras (TDD, level 2), freshly decompiled. One wall is rebuilt: the south run from the west gate to the rock pile,
-  14 pieces (12 straights, the bastion by the gate, the endcap). A `WALL_SPLINE` on barbarian_fort_straight replaces it, attached to the
+  14 pieces (12 straights, the bastion by the gate, the endcap). A `WceWallSpline` on barbarian_fort_straight replaces it, attached to the
   gate's end. It bulges 40 units out over a 6 m hill raised outside, and climbs 5 -> 11.5 -> 5 m.
 - **Tolerance:** 1 m. The old ring sits buried in the terraces' banks, which wave by about that much. At 0.5 m every wave became a step.
 - **Spacings:** towers and bastions every 120 units; 12 generated pieces.

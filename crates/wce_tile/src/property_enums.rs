@@ -197,7 +197,7 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V4", "4v4"),
 ];
 
-/// Not TEd's: the base walls a `WALL_SPLINE` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
+/// Not TEd's: the base walls a `WceWallSpline` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
 /// `wce_walls::profile::BASES`, in its order.
 pub const WALL_BASE: &[(&str, &str)] = &[
     ("barbarian_fort_straight", "8 m: barbarian"),

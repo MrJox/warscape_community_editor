@@ -34,7 +34,7 @@ the deployment zones. What the game needs and how CA lays it out: docs/re/siege_
   zones, warnings); a checker (each street / connection end in exactly one node box, boxes don't overlap, the street graph connected,
   every capture in an area, the walls inside the defender zone, the approach lines inside the attacker zone).
 - **Walls:** a fort piece is a building whose logic file has docking lines or gates; its walkway line runs along its frame's x at the
-  middle of its top platforms. Pieces chain end to end (across towers) into runs; a run's line is cut where it enters no-go. `WALL_SPLINE`s
+  middle of its top platforms. Pieces chain end to end (across towers) into runs; a run's line is cut where it enters no-go. `WceWallSpline`s
   give their layout's walkway line.
 - **Nodes:** box = a rectangle along the street's direction that fits the free space (intersections ~22 su, areas up to ~80 su), boxes
   never overlap; Boundary = the free space nearest the node (a geodesic split between nodes) within a reach, grown a few su into the

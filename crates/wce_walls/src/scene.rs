@@ -1,4 +1,4 @@
-//! Procedural walls in a tile.ted scene (docs/plans/procedural_walls.md): what the editor and the exporter share. A `WALL_SPLINE` is
+//! Procedural walls in a tile.ted scene (docs/plans/procedural_walls.md): what the editor and the exporter share. A `WceWallSpline` is
 //! stored like the polygons (a `<points>` list, `polygon_closed="0"`) with `wall_base`, `wall_tolerance`, `wall_flip` and its points'
 //! `sharp`. Scene units throughout (the models' units; the height map's metres are the scene's y).
 
@@ -12,7 +12,7 @@ use crate::profile::{Profile, profile};
 use crate::solver::{Plan, WallInput, solve};
 
 /// The element name of a procedural wall.
-pub const WALL_SPLINE: &str = "WALL_SPLINE";
+pub const WALL_SPLINE: &str = "WceWallSpline";
 
 /// The base a wall without (or with an unknown) `wall_base` uses.
 pub const DEFAULT_BASE: &str = "barbarian_fort_straight";
