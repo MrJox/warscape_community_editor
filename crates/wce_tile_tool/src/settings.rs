@@ -47,6 +47,9 @@ pub struct TileSettings {
     /// The VFX boxes (the VFXInstance markers; the effects still play).
     pub show_vfx_boxes: bool,
 
+    /// Prefab folders read before the kits' `art/prefabs` (a checkout of a prefab collection, say); new prefabs go into the first one.
+    pub prefab_folders: Vec<PathBuf>,
+
     /// Where opened exported tiles are decompiled to (TEd projects); none: `tile_workspace` in the data folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
@@ -77,6 +80,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { kits: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![] }
+        Self { kits: vec![], prefab_folders: vec![], workspace: None, show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![] }
     }
 }

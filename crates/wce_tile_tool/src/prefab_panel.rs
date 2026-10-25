@@ -18,23 +18,49 @@ use crate::scene_panel::{layer_by_key, layer_key};
 use crate::tool::{TileTool, document, document_id, selected};
 
 impl TileTool {
-    /// The prefab library: the prefab folders of the kits the Tiles panel lists and of the open tile's kit (scanned on first use).
+    /// The folders the library is read from: the settings' prefab folders, then `art/prefabs` of the open tile's kit and of the kits the
+    /// Tiles panel lists.
+    pub(crate) fn prefab_folders(&self, e: &mut Editor) -> Vec<std::path::PathBuf> {
+        let mut folders = e.tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID).prefab_folders;
+        let mut kits = self.kit_roots(e);
+        if let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) {
+            kits.insert(0, raw);
+        }
+
+        for k in kits {
+            let f = prefabs::prefab_root(&k);
+            if !folders.contains(&f) {
+                folders.push(f);
+            }
+        }
+
+        folders
+    }
+
+    /// The prefab library (`prefab_folders`), scanned on first use and again for another tile.
     pub fn prefab_library(&mut self, e: &mut Editor) -> Arc<PrefabLibrary> {
         if let Some(lib) = &self.prefabs {
             return lib.clone();
         }
 
-        let mut roots = self.kit_roots(e);
-        if let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone())
-            && !roots.contains(&raw)
-        {
-            roots.insert(0, raw);
-        }
-
-        let lib = Arc::new(PrefabLibrary::scan(&roots));
+        let folders = self.prefab_folders(e);
+        let lib = Arc::new(PrefabLibrary::scan_folders(&folders));
         self.prefabs = Some(lib.clone());
         self.prefab_version += 1;
         lib
+    }
+
+    /// Asks for a folder and adds it to the settings' prefab folders (first), then scans again.
+    pub(crate) fn add_prefab_folder(&mut self, e: &mut Editor) {
+        if let Some(dir) = wce_editor::steam_detect::pick_folder("Prefab folder (like a kit's raw_data/art/prefabs)") {
+            e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {
+                if !s.prefab_folders.contains(&dir) {
+                    s.prefab_folders.insert(0, dir.clone());
+                }
+            });
+
+            self.status = format!("{} prefabs", self.rescan_prefabs(e));
+        }
     }
 
     /// Scans the prefab folders again.
@@ -249,7 +275,16 @@ impl TileTool {
 
         let lib = self.prefab_library(e);
         if lib.is_empty() {
-            gui::text_wrapped("No prefabs. TEd keeps them in <kit>/raw_data/art/prefabs (folders of .xml files, each a saved group).");
+            gui::text_wrapped("No prefabs. TEd keeps them in <kit>/raw_data/art/prefabs (folders of .xml files, each a saved group); a collection elsewhere is a prefab folder of the Tile settings. Searched:");
+            for f in lib.roots() {
+                gui::bullet_text(&f.display().to_string());
+            }
+
+            if gui::button(&format!("{}  Add a prefab folder...", icons::FOLDER_PLUS)) {
+                self.add_prefab_folder(e);
+            }
+
+            gui::same_line();
             if gui::button(&format!("{}  Scan again", icons::REFRESH_CW)) {
                 self.rescan_prefabs(e);
             }
@@ -266,14 +301,17 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Scan the prefab folders again");
+            gui::set_tooltip(&format!("Scan the prefab folders again:\n{}", lib.roots().iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join("\n")));
         }
 
         let words = self.prefab_filter.to_lowercase().split_whitespace().map(str::to_owned).collect::<Vec<_>>();
-        let shown = lib.entries().filter(|p| {
+        let mut shown = lib.entries().filter(|p| {
             let hay = format!("{}/{}", p.folder, p.key).to_lowercase();
             words.iter().all(|w| hay.contains(w))
         }).collect::<Vec<_>>();
+
+        // By folder, then by key (the folders are the tree's nodes).
+        shown.sort_by_cached_key(|p| (p.folder.to_lowercase(), p.key.to_lowercase()));
 
         let copies = document(e).map(|d| d.tile().tscene().find_all("UserInstanceGroup").into_iter().map(|g| d.tile().tscene().name(g).to_lowercase()).collect::<Vec<_>>()).unwrap_or_default();
         gui::text_disabled(&format!("{} of {} prefabs", shown.len(), lib.len()));

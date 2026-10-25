@@ -53,9 +53,14 @@ pub fn prefab_root(raw_data: &Path) -> PathBuf {
 impl PrefabLibrary {
     /// Every `.xml` below the prefab folders of these raw_data folders (folders starting with a dot, like a git checkout's, are skipped).
     pub fn scan(raw_data_roots: &[PathBuf]) -> Self {
+        Self::scan_folders(&raw_data_roots.iter().map(|r| prefab_root(r)).collect::<Vec<_>>())
+    }
+
+    /// Every `.xml` below these prefab folders (each one like a kit's `art/prefabs`), the first ones first.
+    pub fn scan_folders(folders: &[PathBuf]) -> Self {
         let mut lib = Self::default();
-        for raw in raw_data_roots {
-            let root = prefab_root(raw);
+        for root in folders {
+            let root = root.clone();
             if lib.roots.contains(&root) {
                 continue;
             }
