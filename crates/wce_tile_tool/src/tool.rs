@@ -196,6 +196,11 @@ pub struct TileTool {
     pub(crate) surface_px: Option<(i32, i32)>,
     pub(crate) place_chips_width: f32,
 
+    /// The vegetation brush's settings (read from the settings on first use), its stroke, and its random numbers.
+    pub(crate) veg: Option<crate::settings::VegBrush>,
+    pub(crate) stroke: Option<crate::veg_brush::Stroke>,
+    pub(crate) random: crate::veg_brush::Random,
+
     /// The Problems section's trees, and the (tile, history, structure) they were found for.
     problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
 
@@ -286,7 +291,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -865,12 +870,14 @@ impl TileTool {
         let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
-        if self.mode != TileMode::Select && self.terrain_hit && e.viewport.hovered {
+        let veg = self.placing == Some(Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg.is_some_and(|b| b.on);
+        let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
+        if (self.mode != TileMode::Select || veg) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
             let mut prev = Float3::default();
             for i in 0..=n {
                 let a = i as f32 * std::f32::consts::TAU / n as f32;
-                let mut p = Float3::new(self.cursor.x + a.cos() * self.brush.radius_m, 0.0, self.cursor.z + a.sin() * self.brush.radius_m);
+                let mut p = Float3::new(self.cursor.x + a.cos() * radius, 0.0, self.cursor.z + a.sin() * radius);
                 p.y = t.terrain_height(p.x, p.z) + 0.4;
                 if i != 0 {
                     o.line(prev, p, gold);
@@ -878,6 +885,13 @@ impl TileTool {
 
                 prev = p;
             }
+        }
+
+        // The trees an erasing stroke takes away: red crosses.
+        let red = overlay_colour(1.0, 0.25, 0.2, 1.0);
+        for p in self.erased_points(d) {
+            o.line(Float3::new(p.x - 1.0, p.y + 0.5, p.z - 1.0), Float3::new(p.x + 1.0, p.y + 0.5, p.z + 1.0), red);
+            o.line(Float3::new(p.x - 1.0, p.y + 0.5, p.z + 1.0), Float3::new(p.x + 1.0, p.y + 0.5, p.z - 1.0), red);
         }
 
         if self.drawing {
@@ -2126,10 +2140,18 @@ impl Tool for TileTool {
         let handle = Self::handle_size(e);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let overlay = self.tool_overlay(e, d);
-        let preview = if self.terrain_hit && (e.viewport.hovered || self.preview_forced) { self.placing_text(e) } else { None };
+        // The preview: the stroke's trees while the brush paints, else what a click places.
+        let (preview, at) = if self.painting_trees(e) {
+            (self.stroke_preview(e), Float3::default())
+        } else if self.terrain_hit && (e.viewport.hovered || self.preview_forced) {
+            (self.placing_text(e), self.place_point().0)
+        } else {
+            (None, self.place_point().0)
+        };
+
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_view(&mut e.scene, eye);
-        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), self.place_point().0);
+        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at);
         d.tile_mut().set_highlight(&mut e.scene, &sel, self.poly_point, handle, &overlay);
     }
 
@@ -2284,6 +2306,15 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                // The vegetation brush paints (Ctrl: takes away) instead of placing one.
+                if self.painting_trees(e) {
+                    if self.terrain_hit {
+                        self.begin_stroke(e, ev.ctrl);
+                    }
+
+                    return true;
+                }
+
                 if let Some(placing) = self.placing.clone() {
                     if self.terrain_hit {
                         let _ = placing;
@@ -2408,6 +2439,15 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Drag => {
+                if self.stroke.is_some() {
+                    self.on_hover(e, ev);
+                    if self.terrain_hit {
+                        self.dab(e);
+                    }
+
+                    return true;
+                }
+
                 if self.stroke_active {
                     self.on_hover(e, ev);
                     let dt = e.clock.dt();
@@ -2438,6 +2478,11 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Release => {
+                if self.stroke.is_some() {
+                    self.status = self.end_stroke_veg(e);
+                    return true;
+                }
+
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 if self.stroke_active {
                     self.stroke_active = false;

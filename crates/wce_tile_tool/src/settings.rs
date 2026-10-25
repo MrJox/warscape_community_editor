@@ -35,7 +35,7 @@ pub fn source_of(raw_root: &Path) -> String {
     s.trim_end_matches('/').to_owned()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TileSettings {
     /// The sea at 0 m (the tile's plane and the map context's sea).
@@ -63,6 +63,9 @@ pub struct TileSettings {
     /// The placement chips: what new things stand on and how they are turned.
     pub place_surface: SurfaceMode,
     pub place_rotation: RotationMode,
+
+    /// The vegetation brush.
+    pub veg_brush: VegBrush,
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -84,6 +87,37 @@ pub enum RotationMode {
     Surface,
 }
 
+/// The vegetation brush (`veg_brush.rs`): how big, how dense, how far from what is there, how varied.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VegBrush {
+    /// Paint with the brush (else a click places one tree).
+    pub on: bool,
+    pub radius: f32,
+
+    /// The least distance between two trunks (metres).
+    pub spacing: f32,
+
+    /// The least distance from the other things' footprints (metres).
+    pub clearance: f32,
+
+    /// How much of the room the spacing leaves is planted (0..1).
+    pub fill: f32,
+
+    /// The trees' scale, at random between these.
+    pub scale_min: f32,
+    pub scale_max: f32,
+
+    /// Each tree turned at random.
+    pub random_yaw: bool,
+}
+
+impl Default for VegBrush {
+    fn default() -> Self {
+        Self { on: false, radius: 15.0, spacing: 4.0, clearance: 1.0, fill: 0.6, scale_min: 0.85, scale_max: 1.15, random_yaw: true }
+    }
+}
+
 /// The weather a tile is lit with and the filters of its list.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -97,6 +131,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default() }
     }
 }

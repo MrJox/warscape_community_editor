@@ -13,6 +13,7 @@ pub mod prefab_panel;
 pub mod scene_panel;
 pub mod settings;
 pub mod tool;
+pub mod veg_brush;
 pub mod weather_panel;
 
 pub use tool::TileTool;

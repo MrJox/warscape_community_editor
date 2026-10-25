@@ -147,7 +147,8 @@ struct Local {
 }
 
 impl Tile {
-    pub(crate) fn unit(&self) -> f64 {
+    /// Scene units per metre.
+    pub fn unit(&self) -> f64 {
         self.project.unit_scale
     }
 

@@ -87,9 +87,15 @@ impl TileTool {
         let mut changed = false;
         let mut items = vec![];
         for &el in &selected(e) {
+            // An element that is gone (an undone addition) leaves the selection.
+            let Some(element) = sc.doc().elements().get(el) else {
+                changed = true;
+                continue;
+            };
+
             // The outermost closed copy above (or at) the element.
             let mut copy = None;
-            let mut p = sc.doc().elements()[el].parent;
+            let mut p = element.parent;
             while let Some(q) = p {
                 if self.closed_prefab(d, q) {
                     copy = Some(q);

@@ -16,6 +16,7 @@
 
 mod collapse;
 mod columns;
+pub mod brush;
 mod commands;
 mod draft;
 pub mod context;
