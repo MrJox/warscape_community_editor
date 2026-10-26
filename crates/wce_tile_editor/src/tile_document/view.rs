@@ -12,6 +12,8 @@ use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{TerrainImage, Decal, 
     EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
+use wce_tile::blend_field::BlendField;
+use wce_tile::ground_type_field::GroundTypeField;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
@@ -223,7 +225,14 @@ impl Tile {
             return None;
         }
 
-        if self.skin.is_some() && self.skin_look == self.look {
+        // Painted since the view was baked: the ground types at every step of a stroke, the blend groups (a whole bake) when it ends.
+        let stale = match self.look.view {
+            TerrainView::GroundTypes => self.project.ground.as_mut().and_then(GroundTypeField::take_changed).is_some(),
+            TerrainView::BlendGroups if !self.stroke_open => self.project.blend.as_mut().and_then(BlendField::take_changed).is_some(),
+            _ => false,
+        };
+
+        if self.skin.is_some() && self.skin_look == self.look && !stale {
             return self.skin.clone();
         }
 
@@ -247,8 +256,17 @@ impl Tile {
             return None;
         };
 
+        // The maps in memory when read (painted), else their files.
+        if self.look.view == TerrainView::GroundTypes {
+            let _ = self.project.load_ground();
+        }
+
         let map_view = matches!(self.look.view, TerrainView::GroundTypes | TerrainView::Protection);
-        let baked = if map_view { bake_terrain_map_view(&rq) } else { bake_terrain_colour(&rq, self.climates(), files.as_ref()) };
+        let baked = if map_view {
+            bake_terrain_map_view(&rq, self.project.ground.as_ref())
+        } else {
+            bake_terrain_colour(&rq, self.project.blend.as_ref(), self.climates(), files.as_ref())
+        };
         let baked = match baked {
             Ok(b) => Arc::new(b),
             Err(why) => {
@@ -1157,6 +1175,11 @@ impl Tile {
 
         if !self.stroke_open {
             self.update_columns(scene, layer);
+        }
+
+        // The blend groups view is baked again once a paint stroke ends.
+        if !self.stroke_open && self.look.view == TerrainView::BlendGroups && self.project.blend.as_ref().is_some_and(BlendField::changed) {
+            self.update_terrain(scene, false);
         }
 
         self.update_collapses(scene, layer);

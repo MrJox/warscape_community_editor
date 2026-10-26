@@ -136,5 +136,12 @@ climate's `TEXTURE` names, `TileDocument::texture_group_names`); `TileEntry::set
 as it was); `TextureGroupCommand` (undoable; the ground's material made again); a save writes the groups into the entry next to the tile
 when they differ there (`TileProject::save_texture_groups`). Command `texture_group <0-3> <name>`; in `scripts/tile_paint.txt`.
 
-**Open:** TEd's debug views (blend groups, ground types) are baked from the file on disk, so they show the paint after a save only (step
-2 needs the ground types one live).
+**Done (step 2, the ground type brush):** `wce_tile::pixel_layer::PixelLayer` (the block undo and changed rectangle, shared by both
+painted maps; `BlendField` is built on it); `wce_tile::ground_types` (the 13 types' names and colours, `wce_tile_io`'s decompile uses
+it); `GroundTypeField` (`ground_type_map.png` in memory: hard values under the brush, alpha 255 as on every painted pixel of the kit's
+711 battle tiles; an unpainted map is written as read, a painted one through the kit's encoder; the file's name in any case, BOB's tiles
+have `.PNG`). `TileProject::ground` / `load_ground` / `ground_dirty`, written by save, Save as and Save for Assembly Kit.
+`BrushKind::Ground(type)` ("Paint ground types", one undo entry per stroke). The tool's Ground types mode (the palette button; its
+Inspector: radius and the type, "none" or Ctrl erase) switches the view to TEd's ground types view while it is active, the look before
+coming back after. The debug views read the maps in memory: the ground types view is baked again at every step of a stroke, the blend
+groups view when a paint stroke ends. Commands `tile_mode ground`, `paint_ground_type`, `assert_ground_type`; in `scripts/tile_paint.txt`.

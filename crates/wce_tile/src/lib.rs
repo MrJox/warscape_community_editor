@@ -4,10 +4,13 @@
 pub mod battle_map;
 pub mod blend_field;
 pub mod building_db;
+pub mod ground_type_field;
+pub mod ground_types;
 pub mod height_field;
 pub mod instance_templates;
 pub mod new_instances;
 pub mod new_tile;
+pub mod pixel_layer;
 pub mod prefab_refs;
 pub mod prefabs;
 pub mod project_files;

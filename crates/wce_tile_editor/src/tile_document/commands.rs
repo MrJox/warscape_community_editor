@@ -468,6 +468,7 @@ impl Command<Tile> for BrushStepCommand {
             BrushKind::Flatten => "Flatten",
             BrushKind::Level => "Level",
             BrushKind::Paint(_) => return "Paint ground".to_owned(),
+            BrushKind::Ground(_) => return "Paint ground types".to_owned(),
         };
 
         format!("Terrain {n}")
@@ -479,12 +480,24 @@ impl Command<Tile> for BrushStepCommand {
             t.apply_brush_following(self.kind, self.x, self.z, &self.settings, self.dt, &mut self.moved);
         } else {
             t.end_stroke_edit();
-            if let BrushKind::Paint(_) = self.kind {
-                if let Some(b) = &mut t.project.blend {
-                    b.redo();
+            match self.kind {
+                BrushKind::Paint(_) => {
+                    if let Some(b) = &mut t.project.blend {
+                        b.redo();
+                    }
                 }
-            } else if let Some(h) = &mut t.project.height {
-                h.redo();
+
+                BrushKind::Ground(_) => {
+                    if let Some(g) = &mut t.project.ground {
+                        g.redo();
+                    }
+                }
+
+                _ => {
+                    if let Some(h) = &mut t.project.height {
+                        h.redo();
+                    }
+                }
             }
 
             t.put_positions(&self.moved, true);
@@ -493,12 +506,24 @@ impl Command<Tile> for BrushStepCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         t.end_stroke_edit();
-        if let BrushKind::Paint(_) = self.kind {
-            if let Some(b) = &mut t.project.blend {
-                b.undo();
+        match self.kind {
+            BrushKind::Paint(_) => {
+                if let Some(b) = &mut t.project.blend {
+                    b.undo();
+                }
             }
-        } else if let Some(h) = &mut t.project.height {
-            h.undo();
+
+            BrushKind::Ground(_) => {
+                if let Some(g) = &mut t.project.ground {
+                    g.undo();
+                }
+            }
+
+            _ => {
+                if let Some(h) = &mut t.project.height {
+                    h.undo();
+                }
+            }
         }
 
         t.put_positions(&self.moved, false);
