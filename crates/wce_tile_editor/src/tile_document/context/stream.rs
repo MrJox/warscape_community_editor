@@ -121,7 +121,14 @@ impl Shared {
 
         tiles.insert(key.clone(), Slot::Loading);
         drop(tiles);
-        let dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
+        let mut dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
+        if let Some(provide) = self.rq.provider.as_ref().filter(|_| !dir.is_dir()) {
+            match provide(&key.0, &key.1) {
+                Ok(made) => dir = made,
+                Err(e) => wce_foundation::log::info(format!("map context: {}\\{}: {e}", key.0, key.1)),
+            }
+        }
+
         let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees)));
         let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),

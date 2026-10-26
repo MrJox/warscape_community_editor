@@ -100,6 +100,14 @@ decompiled, the others noted as lost.
   vertices in the game's mesh, 22,590 in ours, from the same `CONVERSION_PARAMS`); no Rome 2 BOB to check against.
 - Stage C (vegetation): Rome 2 has no vegetation parameters: the lists are written as decompiled, noted when the project changed.
 
+## The campaign's battle map
+
+`terrain/battles/main_rome_map`: `tile_map.index` / `.tiles` version 6 (`wce_tile::battle_map::tile_map`: the index adds 736 chunk
+rectangles; 16-byte cells without the LF height range; the names are tile locations without a variation), `locations.blm` version 7
+(read as 8), `lf_height_map.dds` as Attila's. The tile tool's map context reads the neighbours from a tree in the cache
+(`<cache>/neighbours/rome_2/raw_data`: the whole database's entries in the kit's format, each tile decompiled from the packs the first
+time it is shown).
+
 ## Checks
 
 - `rome2_tile_database_check -- <Rome 2>`: every tile written back into its set's file, byte for byte.

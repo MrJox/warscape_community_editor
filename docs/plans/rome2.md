@@ -36,7 +36,10 @@ Status legend: **done**, **partial**, **todo**.
 - **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
 - **todo** GENERIC_MARKER v1 (one file); multi-list capture location files (two tiles).
 - **todo** Stage C for Rome 2: write the older tree / grass lists from the project's trees (the generated ones carried).
-- **todo** The campaign battle map context for Rome 2 (`tile_map.index` v6, `locations.blm` v7: the readers check versions >= 8).
+- **done** The campaign battle map context for Rome 2: `tile_map` version 6 (16-byte cells; names without the variation: the tile's
+  first one), `locations.blm` version 7; the neighbours decompiled from the packs on demand into the cache
+  (`workflow::neighbour_root` / `neighbour_tile`, `ContextRequest::provider`). Open: the neighbours draw coarser than the open tile, the
+  sea is not drawn (holes).
 
 ## Phase 2: Rome 2's renderer — partial
 
