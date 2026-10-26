@@ -8,12 +8,12 @@
 //!    regions of that are the differentials.
 //! 2. Each cell of a region walks down the steepest descent to the first cell out of the region (its foot) and up to the first one out
 //!    (its top): along a long cliff the foot and the top change, so they are per cell.
-//! 3. A region is kept when its rise (the 95th percentile of top - foot over its cells) and its area are big enough, and no building
-//!    footprint touches it or its foot band.
+//! 3. A region is kept when its rise (the 95th percentile of top - foot over its cells) and its area are big enough.
 //! 4. Foot band: the region's cells up to `foot_up` over their foot, and the cells out of it within `foot_out` on its low side (nearer the
-//!    foot's height than the top's). Face band: the region's cells above that, up to `top_margin` under their top.
+//!    foot's height than the top's). Face band: the region's cells above that, up to `top_margin` under their top. The cells within
+//!    `building_clearance` of a building's footprint are taken out of both: the coverage goes around the buildings.
 //! 5. Rocks are thrown into both bands (bigger at the foot), plants into the foot band, from a random sequence seeded by the seed and the
-//!    region, so that a region's result doesn't depend on the others.
+//!    region, so that a region's result doesn't depend on the others; one whose own radius reaches into a building's clearance is dropped.
 //! 6. The plants are clustered (single linkage within `cluster_distance`, no cluster wider than `max_cluster`); each cluster gets the convex
 //!    hull of circles of `plant_radius + exclusion_margin` around its plants.
 
@@ -71,6 +71,9 @@ pub struct Params {
     /// ground around a big rock is metres under its centre.
     pub min_visible: f32,
 
+    /// Metres every rock and plant keeps from a building's footprint.
+    pub building_clearance: f32,
+
     /// Metres: plants this near are in the same cluster.
     pub cluster_distance: f32,
 
@@ -102,6 +105,7 @@ impl Default for Params {
             seat: Seat::Average,
             sink: 0.25,
             min_visible: 0.5,
+            building_clearance: 3.0,
             cluster_distance: 8.0,
             max_cluster: 30.0,
             plant_radius: 1.0,
@@ -158,10 +162,10 @@ impl Params {
         p
     }
 
-    const NAMES: [&'static str; 22] = [
+    const NAMES: [&'static str; 23] = [
         "slope_deg", "min_rise", "min_area", "foot_up", "foot_out", "top_margin", "rock_density_foot", "rock_density_face", "plant_density",
         "plant_spacing", "rock_scale_foot_min", "rock_scale_foot_max", "rock_scale_face_min", "rock_scale_face_max", "plant_scale_min",
-        "plant_scale_max", "sink", "min_visible", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
+        "plant_scale_max", "sink", "min_visible", "building_clearance", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
     ];
 
     fn numbers(&self) -> Vec<(&'static str, f32)> {
@@ -189,6 +193,7 @@ impl Params {
             "plant_scale_max" => &mut self.plant_scale.1,
             "sink" => &mut self.sink,
             "min_visible" => &mut self.min_visible,
+            "building_clearance" => &mut self.building_clearance,
             "cluster_distance" => &mut self.cluster_distance,
             "max_cluster" => &mut self.max_cluster,
             "plant_radius" => &mut self.plant_radius,
@@ -251,7 +256,11 @@ impl Grid {
     }
 }
 
-/// Something that blocks a differential (a building): its centre and radius, metres.
+/// The categories of `battlefield_buildings` the coverage goes around: the real buildings. Not `incidental` (rocks, props, barricades) or
+/// `ground_platform` (path borders, mounds: part of the ground), nor a key of no known category (the invisible dummies among them).
+pub const AVOIDED_CATEGORIES: [&str; 6] = ["generic", "fort_wall", "fort_tower", "unbreachable_fort_wall", "gate", "bridge"];
+
+/// A building the coverage goes around: its centre and radius, metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Blocker {
     pub x: f32,
@@ -289,9 +298,6 @@ pub enum State {
 
     /// Its area (square metres) is under the minimum.
     TooSmall(f32),
-
-    /// The blocker (its index) touches it.
-    Blocked(usize),
 }
 
 /// A placed rock or plant: its key, where (metres, `y` the height of its origin), its scale and its turn (degrees).
@@ -318,6 +324,9 @@ pub struct Differential {
     pub face: Vec<usize>,
     pub rocks: Vec<Placed>,
     pub plants: Vec<Placed>,
+
+    /// How many buildings it goes around.
+    pub avoided: usize,
 
     /// The exclusion polygons around its plants (x, z), counter-clockwise seen from above (+y).
     pub exclusions: Vec<Vec<(f32, f32)>>,
@@ -428,9 +437,11 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         }
     }
 
-    // A building on a region or its foot band leaves the region alone.
+    // The cells near a building come out of the bands (the coverage goes around it).
+    let mut near = vec![false; n];
+    let mut avoided = vec![std::collections::BTreeSet::new(); regions.len()];
     for (b, bl) in input.blockers.iter().enumerate() {
-        let reach = bl.radius + 1.0;
+        let reach = bl.radius + p.building_clearance;
         let x0 = (((bl.x - reach - g.x0) / g.cell).floor().max(0.0) as usize).min(g.nx - 1);
         let x1 = (((bl.x + reach - g.x0) / g.cell).ceil().max(0.0) as usize).min(g.nx - 1);
         let z0 = (((bl.z - reach - g.z0) / g.cell).floor().max(0.0) as usize).min(g.nz - 1);
@@ -443,19 +454,28 @@ pub fn generate(input: &Input) -> Vec<Differential> {
                     continue;
                 }
 
+                near[i] = true;
                 let r = if label[i] != NONE { label[i] } else { ring[i] };
-                if r != NONE && regions[r].kept() {
-                    regions[r].state = Some(State::Blocked(b));
+                if r != NONE {
+                    avoided[r].insert(b);
                 }
             }
         }
     }
 
+    for (d, a) in regions.iter_mut().zip(avoided) {
+        d.avoided = a.len();
+        d.foot.retain(|&i| !near[i]);
+        d.face.retain(|&i| !near[i]);
+    }
+
+    let buildings = Buildings::new(input.blockers, p.building_clearance);
+
     // 5 and 6. What goes on the kept ones.
     for d in regions.iter_mut() {
         if d.kept() {
             d.foot.sort_unstable();
-            populate(input, d);
+            populate(input, &buildings, d);
         } else {
             d.foot.clear();
             d.face.clear();
@@ -557,8 +577,47 @@ impl Random {
     }
 }
 
-/// Rocks and plants on a kept differential, and the exclusion polygons around its plants.
-fn populate(input: &Input, d: &mut Differential) {
+/// The buildings in square buckets, to find the ones near a point quickly (a settlement has thousands).
+struct Buildings<'a> {
+    list: &'a [Blocker],
+    clearance: f32,
+    buckets: std::collections::HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl<'a> Buildings<'a> {
+    /// Metres a bucket is across.
+    const BUCKET: f32 = 32.0;
+
+    /// The largest radius of a rock or plant asked about (metres): a building is in every bucket this near its clearance.
+    const ITEM: f32 = 16.0;
+
+    fn new(list: &'a [Blocker], clearance: f32) -> Self {
+        let mut buckets: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
+        for (b, bl) in list.iter().enumerate() {
+            let reach = bl.radius + clearance + Self::ITEM;
+            let cell = |v: f32| (v / Self::BUCKET).floor() as i32;
+            for bz in cell(bl.z - reach)..=cell(bl.z + reach) {
+                for bx in cell(bl.x - reach)..=cell(bl.x + reach) {
+                    buckets.entry((bx, bz)).or_default().push(b);
+                }
+            }
+        }
+
+        Self { list, clearance, buckets }
+    }
+
+    /// Whether something of radius `r` at (x, z) keeps the clearance from every building.
+    fn clear(&self, x: f32, z: f32, r: f32) -> bool {
+        let key = ((x / Self::BUCKET).floor() as i32, (z / Self::BUCKET).floor() as i32);
+        self.buckets.get(&key).is_none_or(|bs| bs.iter().all(|&b| {
+            let bl = &self.list[b];
+            (bl.x - x).hypot(bl.z - z) >= bl.radius + self.clearance + r.min(Self::ITEM)
+        }))
+    }
+}
+
+/// Rocks and plants on a kept differential (clear of the buildings), and the exclusion polygons around its plants.
+fn populate(input: &Input, buildings: &Buildings, d: &mut Differential) {
     let g = input.grid;
     let p = &input.params;
     let mut rnd = Random::new(input.seed ^ (d.number as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
@@ -586,6 +645,10 @@ fn populate(input: &Input, d: &mut Differential) {
                 g.height(x + r * a.cos(), z + r * a.sin())
             });
 
+            if !buildings.clear(x, z, r) {
+                continue;
+            }
+
             let ground = match p.seat {
                 Seat::Centre => centre,
                 // Never over the centre's ground (at the foot of a cliff the ring's uphill side is high): it would float there.
@@ -609,7 +672,8 @@ fn populate(input: &Input, d: &mut Differential) {
             let (x, z) = rnd.point_in(g, &d.foot);
             let pick = rnd.unit();
             let (scale_r, yaw_r) = (rnd.unit(), rnd.unit());
-            let clear = d.plants.iter().all(|o| (o.x - x).hypot(o.z - z) >= p.plant_spacing)
+            let clear = buildings.clear(x, z, p.plant_radius)
+                && d.plants.iter().all(|o| (o.x - x).hypot(o.z - z) >= p.plant_spacing)
                 && rocks.iter().all(|&(rx, rz, rr)| (rx - x).hypot(rz - z) >= rr);
             if !clear || x < g.x0 || z < g.z0 || x > xmax || z > zmax {
                 continue;
@@ -803,15 +867,27 @@ mod tests {
     }
 
     #[test]
-    fn a_building_on_the_cliff_blocks_it() {
+    fn the_coverage_goes_around_a_building_on_the_cliff() {
         let g = step(10.0, 5.0);
-        let out = run(&g, &[Blocker { x: 42.0, z: 50.0, radius: 3.0 }], 1);
-        assert!(out.iter().any(|d| d.state == Some(State::Blocked(0))));
-        assert!(out.iter().all(|d| d.rocks.is_empty() && d.plants.is_empty()));
+        let b = Blocker { x: 42.0, z: 50.0, radius: 3.0 };
+        let out = run(&g, &[b], 1);
+        let d = out.iter().find(|d| d.kept()).expect("still covered");
+        assert_eq!(d.avoided, 1);
+        assert!(!d.rocks.is_empty() && !d.plants.is_empty());
 
-        // Far from it: not blocked.
+        // Every rock and plant keeps the clearance (with its own radius) from the building's footprint.
+        let p = Params::default();
+        for r in &d.rocks {
+            assert!((r.x - b.x).hypot(r.z - b.z) >= b.radius + p.building_clearance + 1.0, "rock at {}, {}", r.x, r.z);
+        }
+
+        for pl in &d.plants {
+            assert!((pl.x - b.x).hypot(pl.z - b.z) >= b.radius + p.building_clearance + p.plant_radius, "plant at {}, {}", pl.x, pl.z);
+        }
+
+        // Far from it: nothing avoided.
         let out = run(&g, &[Blocker { x: 10.0, z: 50.0, radius: 3.0 }], 1);
-        assert!(out.iter().any(Differential::kept));
+        assert!(out.iter().filter(|d| d.kept()).all(|d| d.avoided == 0));
     }
 
     #[test]

@@ -17,7 +17,7 @@ per differential may need tuning.
 | Question | Answer |
 |---|---|
 | Rock coverage | Rock `BUILDING_INSTANCE`s (the kit's own way: `gaul_rock_01/02`, `rocks_small_01`, `attila_rock_small_*`, ...) picked from a weighted **rock set**; no terrain texture painting |
-| "No collision" | Skip a differential when a **building** footprint overlaps it (whole differential dropped, no avoid-around) |
+| "No collision" | ~~Skip a differential when a building footprint overlaps it~~. Changed 2026-10-26: the coverage **goes around** the buildings (`building_clearance`, 3 m), and only real buildings count: categories generic, fort_wall, fort_tower, unbreachable_fort_wall, gate, bridge (packs' `battlefield_buildings` tables, mods included, else the kit's). Rocks, props (`incidental`), ground pieces (`ground_platform`) and keys of no known category don't. Before this, a TDD settlement's path borders and dummies dropped 274 of 340 slopes. |
 | Detection | Slope above an angle (default ~35°) -> connected regions; keep a region only when its rise is above a minimum (default ~3 m) |
 | Re-run | **Replace** the layer's contents, one undo entry, a warning that manual edits in the layer are lost |
 | Vegetation | A chosen **vegetation set** (existing `.wce` sets); the dialog remembers the last one |
@@ -31,8 +31,7 @@ per differential may need tuning.
 
 ## Defaults to confirm
 
-- Hand-placed rocks (any `BUILDING_INSTANCE` outside the AUTOGEN layer) count as buildings and block a differential. The AUTOGEN layer's own
-  rocks never block (they are replaced).
+- Hand-placed rocks (`incidental`) don't block (changed 2026-10-26, see the table). The AUTOGEN layer's own rocks never count.
 - Parameters (all in the dialog): slope angle 35°, min rise 3 m, min region area 20 m², foot band 3 m up the slope + 4 m out on the flat,
   top margin 1 m, rock density foot 1 / 10 m² and face 1 / 25 m², vegetation density foot 1 / 15 m², vegetation spacing 2 m, rock scale foot
   0.9-1.6 and face 0.5-1.0, sink 25 % of model height, cluster distance 8 m, exclusion margin 2 m.

@@ -11,7 +11,7 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_foundation::math::{Double3, Float3};
 use wce_tile::new_instances::NewInstance;
-use wce_tile::ground_coverage::{Blocker, Differential, Grid, Params, RockSize};
+use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Params, RockSize};
 use wce_tile::world_transform::{set_world_position, world_transform};
 
 use super::draft::{turned, with_root_attr};
@@ -80,13 +80,31 @@ impl TileDocument {
         Grid::sample(0.0, 0.0, t.extent_x() as f32, t.extent_z() as f32, GRID_CELL, |x, z| t.terrain_height(x, z))
     }
 
-    /// The buildings that leave a differential alone: every one outside the coverage layer (its rocks are replaced).
-    pub fn coverage_blockers(&self) -> Vec<Blocker> {
+    /// The buildings the coverage goes around: the ones outside the coverage layer (its rocks are replaced) whose category (`category`:
+    /// the packs' tables, else the kit's) is one of [`AVOIDED_CATEGORIES`]. A footprint whose model has not loaded yet takes its radius
+    /// from the model's files.
+    pub fn coverage_blockers(&self, category: &dyn Fn(&str) -> Option<String>) -> Vec<Blocker> {
         let sc = self.tile().tscene();
         let layer = self.coverage_layer();
+        let kit = self.tile().building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project().dir));
         self.footprints().into_iter()
             .filter(|f| sc.type_of(f.elem) == "BUILDING_INSTANCE" && layer.is_none_or(|l| !sc.is_descendant(f.elem, l)))
-            .map(|f| Blocker { x: f.x, z: f.z, radius: f.radius })
+            .filter_map(|f| {
+                let key = sc.doc().get(f.elem, "key").unwrap_or_default();
+                let cat = category(&key).or_else(|| kit.category(&key).map(str::to_owned))?;
+                if !AVOIDED_CATEGORIES.contains(&cat.as_str()) {
+                    return None;
+                }
+
+                let radius = if f.radius > 0.0 {
+                    f.radius
+                } else {
+                    let s = sc.scale(f.elem).map_or(1.0, |s| s.x.abs().max(s.z.abs()) as f32);
+                    self.rock_size(&key).map_or(0.0, |z| z.radius * s)
+                };
+
+                Some(Blocker { x: f.x, z: f.z, radius })
+            })
             .collect()
     }
 

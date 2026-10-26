@@ -6069,7 +6069,7 @@ fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
 
 /// Where rpfm's schema of the current game for the walls' database rows is: `WCE_RPFM_SCHEMA`, else the DB schemas folder's, else rpfm's
 /// own (`wce_foundation::settings::rpfm_schema_path`).
-fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
+pub(crate) fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
     let game = e.game();
     wce_foundation::settings::rpfm_schema_path(game)
         .ok_or_else(|| format!("the walls' database rows need rpfm's {} schema: {} in the DB schemas folder (Settings > General) or rpfm's; Help > Update Manager downloads it", game.display_name, game.rpfm_schema))
