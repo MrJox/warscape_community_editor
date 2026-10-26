@@ -179,9 +179,19 @@ Until the first release, a missing `settings.toml` is filled from the old `key=v
 
 **File > Settings...** (command `settings open [page] | close | apply`, `settings_window.rs`) edits every setting on pages (General, Game,
 Appearance, one per tool with settings, Folders) on a copy of the settings: OK and Apply put it in place, write the file and pass on what changed (the
-frame cap at once; other mod packs or loose folders remount the packs; a new game folder is used from the next start); Cancel drops it. A field an
+frame cap at once; other mod packs or loose folders remount the packs; a new game folder is used from the next start; another game switches to it,
+below); Cancel drops it. A field an
 environment variable overrides says so. A tool adds its page with `Tool::has_settings` / `draw_settings` (on the copy, its own table) and hears of
 applied settings in `settings_applied`.
+
+### Games
+
+The supported games are `wce_foundation::game::GameProfile`s (`ATTILA`, `ROME_2`; docs/plans/rome2.md): what the editor needs to know
+of each (Steam folder, preferences file, rpfm schema, campaign battle map, default environment, where its packs come from, whether its
+kit has the tiles). `game` in the settings names the current one (`Editor::game`). **File > Game** and the Settings window's Game page
+switch it live (`Editor::switch_game`): the documents close (the unsaved-changes prompt asks first), each tool drops what was the old
+game's (`Tool::game_changed`), and the game's packs and the renderer are made again; a game not set up yet opens the first-run dialog,
+which has the same choice of game. Each game keeps its own `[games.<id>]` table and projects folder.
 
 ### Appearance
 
@@ -192,9 +202,9 @@ when the appearance changes, so the Settings window shows a change at once. Pane
 success, highlight, the dim text) from `theme` instead of fixed values, so that every theme keeps them readable; what is drawn over the 3D view keeps
 its own colours. Appearance > "Dear ImGui's style editor" edits the live style, to work on a theme.
 
-When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it fills in the Steam library's Attila
-folder (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts and starts the
-active tool.
+When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it picks the game, fills in the Steam
+library's folder of it (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts
+and starts the active tool.
 
 `frame_cap` (View > Frame rate cap, command `frame_cap`, environment `WCE_FRAME_CAP`; default 60, 0 = none) holds an interactive session to that many frames per
 second: rendering the scene as fast as a fast laptop display refreshes kept the GPU at 100 % until it throttled itself (to 180 MHz of 3090 on the RTX 5070 Ti

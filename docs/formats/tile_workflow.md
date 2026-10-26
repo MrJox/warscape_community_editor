@@ -5,13 +5,14 @@ and the Tile menu's "Open exported tile..." / "Save as exported tile").
 
 ## The game
 
-`workflow::Game::load(<game folder>)` reads, once:
+`workflow::Game::from_vfs(<mounted packs>, <kit>)` (the editor's packs: the release, the patches, the chosen mods; `Game::load(<game>,
+<folder>)` for the checks mounts every pack of the folder) reads, once:
 
-- from the packs (`attila::game_data::GameData`): the tile databases (a mod's before the game's; per kind, the first is the one in
-  effect), the buildings' destruction levels (`<key>_tech.cs2.parsed`, else the models' `_destructNN` names) and the
-  `battlefield_buildings` tables (category, `destruct_thresholds`; through rpfm's schema, `~/.config/rpfm/schemas/schema_att.ron`);
-- the packs' file index (`stage_b::PackIndex`: the water planes' models, whether a tree model exists, an exported tile's files);
-- the kit's vegetation parameters (`assembly_kit/working_data`).
+- from the packs (`attila::game_data::GameData`): the tile databases (Attila's `tile_database.bin`, every pack's that has one, a mod's
+  first; Rome 2's XML database, docs/formats/rome2_tiles.md), the buildings' destruction levels (`<key>_tech.cs2.parsed`, else the
+  models' `_destructNN` names) and the `battlefield_buildings` tables (category, `destruct_thresholds`; through rpfm's schema of the
+  game, `~/.config/rpfm/schemas/<schema>`), the game's conventions (`TileConventions`);
+- the kit's vegetation parameters (`assembly_kit/working_data`), when the kit has the tiles.
 
 ## Opening
 
@@ -36,6 +37,13 @@ that the compile did not write are noted, not removed.
 `save_exported_with(game, project folder, scene, out, base_of)` is the same for a project with buildings the game's packs don't have yet
 (generated walls, docs/plans/procedural_walls.md): `base_of` names the building a key was made from, whose destruction levels and
 thresholds the compile uses for it.
+
+## Saving into a mod pack
+
+`save_exported_to_pack(game, project folder, scene, pack)` (Tile > Save to mod pack..., `save_to_pack <pack>`): the same compile into a
+scratch folder, then its files (the tile's folder, the tile database's: Attila's `tile_database.bin`, Rome 2's tile set file and
+`_settings.xml` when a texture group was added) into the pack, created if missing; the pack's files below the tile's folder go first.
+A game whose kit has no tiles (Rome 2) saves only so. An extracted tile is read without its extracted mark, as it was fingerprinted.
 
 ## Checks
 

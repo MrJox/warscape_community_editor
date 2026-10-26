@@ -11,6 +11,7 @@
 #   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
+#   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/gates}"; shift || true
@@ -54,6 +55,10 @@ ex() { # ex <crate> <example> [args...]: a Cargo example of the workspace, relea
     cargo run --release -q --manifest-path "$ROOT/Cargo.toml" -p "$crate" --example "$example" -- "$@"
 }
 
+ex_rome2() { # ex_rome2 <crate> <example> [args...]: the same for Rome 2 (WCE_GAME_KEY=rome_2)
+    WCE_GAME_KEY=rome_2 ex "$@"
+}
+
 # ---- unit tests (the C++ foundation_check, editor_check, unit_tests and height_check are crate tests)
 run tests             cargo test --release -q --manifest-path "$ROOT/Cargo.toml" --workspace
 
@@ -89,6 +94,18 @@ if [ "$CORPUS" = 1 ]; then
     run tile_entry_check_all ex wce_tile tile_entry_check "$GAME" --all   # every kit tile opens by folder, tile.ted and entry as the same document (about 80 s)
     run placement_check ex wce_tile_editor placement_check "$BKIT"   # the tool's building placement against TEd's own building_list.xml export (Phase 0 oracle of docs/plans/tile_ted_parity.md)
     run tile_open_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_open_check.sh" "$OUT/tile_open_check"   # wce.exe opens one tile of every tile set and renders a frame
+fi
+
+# ---- Rome 2 gates (docs/formats/rome2_tiles.md): the XML tile databases written back byte for byte, a settlement tile's folders
+# decompiled and compiled again (the multi-list capture file of the release pack's copy is a known loss), the editor's round trip
+if [ -n "${WCE_ROME2:-}" ]; then
+    run rome2_tile_database ex wce_tile_io rome2_tile_database_check "$WCE_ROME2"
+    run rome2_tile_decompile ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2" --filter roads_stone/2x2
+    run rome2_tile_workflow ex_rome2 wce_tile_io tile_workflow_check "$WCE_ROME2" "$OUT/rome2_workflow" terrain/tiles/battle/settlement_roman_cities/roman_city_a/small
+    if [ "$CORPUS" = 1 ]; then
+        run rome2_tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$WCE_ROME2/data"
+        run rome2_tile_decompile_all ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2"
+    fi
 fi
 
 # ---- render gates (fixed camera and inputs; see docs/baseline.md for what is deterministic; the pixel regression is scripts/shots.sh)
