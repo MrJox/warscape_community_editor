@@ -177,6 +177,7 @@ slope filter, Use the no-go range). Command `paint_filter off | height <min> <ma
 `scripts/tile_paint_filter.txt` (a steep bump: the no-go range paints its flanks only, a height range its top only).
 
 **Section 3 is done.** Found on the way, not done (for the user to weigh): TEd's Blend Map module has more operations than the plain
-brush: **Normal (Grouped)** (a group, its variations kept or chosen for you), **Auto-Flange**, **Rock-painting** and **Spline splat**
-(not traced); the **Influence Map** module (`lf_influence_map.png`, with Subtract) and the nogo map are still Phase 5a items of
+brush: **Normal (Grouped)**, a blur, **Auto-Flange** (a group painted with a graded rim of its variations), **Rock-painting** (a
+channel set by the slope wherever the brush goes) and **Spline splat** (a channel laid along a chosen spline at its width, in one action;
+wce's "Stroke along the selected line" is near it); traced 2026-10-26, docs/re/terrain.md; the **Influence Map** module (`lf_influence_map.png`, with Subtract) and the nogo map are still Phase 5a items of
 tile_ted_parity.md.
