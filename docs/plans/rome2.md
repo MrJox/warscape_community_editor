@@ -35,7 +35,7 @@ Status legend: **done**, **partial**, **todo**.
   buildings have no height-map meshes). Open: the port decimates the meshes more than Rome 2's BOB did (3x fewer vertices).
 - **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
 - **done** GENERIC_MARKER v1 (one file: read, written back byte for byte, carried along).
-- **todo** Multi-list capture location files (two tiles). PARTICLE_EMITTER_MARKER v4's float in `unknown_64` (the effect's scale?)
+- **done** Multi-list capture location files (two tiles): the other lists carried, written after the project's. PARTICLE_EMITTER_MARKER v4's float in `unknown_64` (the effect's scale?)
   comes back an ulp off from the text.
 - **done** Stage C for Rome 2: the project's static trees into every older tree list (the generated ones kept); the decompiler reads
   them back from `default.tree_list`. Open: the grass list follows no edit (no grass parameters).

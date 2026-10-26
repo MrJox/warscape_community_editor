@@ -1231,8 +1231,9 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent_z)));
         let mut lists = vec![];
         all(&doc.root, "CAPTURE_LOCATION_LIST", &mut lists);
+        // The others (alternative sets) are carried: the compile writes them after the project's list.
         if lists.len() > 1 {
-            losses.note(format!("capture_location_list.xml: {} lists, the first decompiled (TEd writes one; two of Rome 2's tiles have three)", lists.len()));
+            losses.note(format!("capture_location_list.xml: {} lists, the first decompiled, the others carried (TEd writes one; two of Rome 2's tiles have three)", lists.len()));
         }
     }
 
@@ -1829,6 +1830,20 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
         if let Some(data) = files.folder.get(name) {
             out.files.push(OpaqueFile { path: name.to_owned(), data: data.clone() });
+        }
+    }
+
+    // A capture location file with several lists (Rome 2's alternative sets): carried whole, the compile writes its other lists after
+    // the project's.
+    if let Some(doc) = binary.document("capture_location_list.xml") {
+        let mut lists = vec![];
+        all(&doc.root, "CAPTURE_LOCATION_LIST", &mut lists);
+        if lists.len() > 1 {
+            let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
+            let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
+            if let Some(data) = files.folder.get("capture_location_list.xml") {
+                out.files.push(OpaqueFile { path: super::compile::CAPTURE_ALTERNATIVES.to_owned(), data: data.clone() });
+            }
         }
     }
 
