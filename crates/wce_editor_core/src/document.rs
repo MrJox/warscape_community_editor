@@ -140,6 +140,16 @@ pub trait Document: Any {
         String::new()
     }
 
+    /// A view filter laying a colour over some of the document's items in the viewport (the tile tool's freeform instances): a key that
+    /// changes whenever the items or the colour do (0: no tint, `tint` is not asked), the items and the colour (RGBA, 0..1).
+    fn tint_key(&self) -> u64 {
+        0
+    }
+
+    fn tint(&self) -> (Vec<u64>, [f32; 4]) {
+        (vec![], [0.0; 4])
+    }
+
     /// The items a selected item is outlined (and framed) by in the viewport: itself, or what it holds when it draws nothing of its own (a
     /// group: the items below it).
     fn outline_items(&self, item: SourceRef) -> Vec<SourceRef> {

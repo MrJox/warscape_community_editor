@@ -103,6 +103,9 @@ pub struct Editor {
 
     /// The selection's outlined entities (`selection_entities`), for the selection and the scene structure they were found for.
     outline_cache: Option<(Vec<wce_scene::render_scene::SourceRef>, u64, Vec<wce_scene::render_scene::EntityId>)>,
+
+    /// The active document's tint (`Document::tint`) as entities: its document, key and the scene's structure revision it was found for.
+    tint_cache: Option<(DocumentId, u64, u64, Vec<wce_scene::render_scene::EntityId>, [f32; 4])>,
     pub(crate) commands: CommandRegistry<Editor>,
     pub(crate) script: ScriptRunner,
     pub(crate) script_lines: Vec<String>,
@@ -198,7 +201,7 @@ impl Editor {
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, prompt_close: vec![], prompt_error: String::new(),
+            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(),
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
@@ -250,6 +253,27 @@ impl Editor {
 
         self.outline_cache = Some((items, rev, ents.clone()));
         ents
+    }
+
+    /// The entities the active document tints in the viewport and the colour (`Document::tint`), none when it tints nothing.
+    pub fn tint_entities(&mut self) -> (Vec<wce_scene::render_scene::EntityId>, [f32; 4]) {
+        let Some(d) = self.docs.active() else { return (vec![], [0.0; 4]) };
+        let (doc, key, rev) = (d.id(), d.tint_key(), self.scene.structure_revision());
+        if key == 0 {
+            return (vec![], [0.0; 4]);
+        }
+
+        if let Some((cd, ck, cr, ents, colour)) = &self.tint_cache
+            && (*cd, *ck, *cr) == (doc, key, rev)
+        {
+            return (ents.clone(), *colour);
+        }
+
+        let (items, colour) = d.tint();
+        let wanted = items.into_iter().collect::<std::collections::HashSet<_>>();
+        let ents = self.scene.entities().iter().filter(|e| e.source.doc == doc && wanted.contains(&e.source.item)).map(|e| e.id).collect::<Vec<_>>();
+        self.tint_cache = Some((doc, key, rev, ents.clone(), colour));
+        (ents, colour)
     }
 
     pub fn selection_outline_style(&self) -> ([f32; 4], f32) {

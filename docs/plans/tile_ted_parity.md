@@ -39,17 +39,19 @@ file's order. The editor itself is described in
   handles scale with them. `scripts/tile_gizmo_size.txt`.
 
 ### Phase 2
-- Viewport tint for freeform instances: **not a TEd feature** (checked 2026-10-26: TEd's strings have the Landscape / Freeform modes
-  and "Adjust Freeform Objects", nothing that tints; the item came from this plan's first UI sketch). A wce idea, not parity: the user
-  decides whether it is wanted (a tint needs per-entity tint in the renderer, an outline would reuse the selection outline). The
-  Inspector shows the mode and the Placement section counts the instances.
+- Done (2026-10-26, a wce view filter, not TEd's: TEd has no tint, checked in its strings): **Tint freeform instances**. The Placement
+  section's "tint freeform" box, Tile menu > Tint freeform instances, command `tint_freeform on|off`. The renderer's `pass_tint` (an
+  editor pass like the selection outline: the tinted meshes drawn again over the finished image, against the scene's depth, in a
+  translucent colour; the game's shaders are untouched); `Document::tint_key` / `tint`, `Editor::tint_entities` (cached like the
+  selection's entities); the tile gives its freeform instances (`Placement::Freeform`, in effect through groups) in a translucent
+  blue (`FREEFORM_TINT`).
 - The 15 stacked crates (`docs/baseline/placement_check.txt`: osgiliath_test and TDD's wildmen_city_a medium / small): TEd's export puts
   them **exactly 2.701 m** (5.402 scene units) above the tool's world y, on every tile and at any ground height (2 m and 47.7 m), so the
   difference is one node's height, not the terrain. Found 2026-10-26 (static RE of `Ted::BMDExporter::export_`, `BMDExport.cpp`): the
   exported y is the node's own world position (the scene object's virtual +0x14), passed through `Ted::transform_to_game_tile_space`
   unchanged (it only scales x / z and mirrors z). The tool draws them at ground level while TEd lists them 2.7 m up, i.e. on the crates
   under them, so the tool is probably the one wrong. Not the nesting itself: freeform buildings inside landscape groups occur 256,480
-  times in the vanilla kit and Phase 0 found only these 15 off. **Waiting for the files** (only on the Windows side): osgiliath_test's
+  times in the vanilla kit and Phase 0 found only these 15 off. **Deferred: waiting for the files** (only on the Windows side): osgiliath_test's
   `tile.ted` and its `working_data` `building_list.xml`, or TDD's wildmen_city_a raw tile and export (the user, with the reference
   shots).
 

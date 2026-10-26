@@ -42,6 +42,10 @@ PickTargets pick_ps(PickOut i) { PickTargets o; o.id = i.id; o.world = float4(i.
 // The selection mask: the blend state's write mask picks the channel (red: the whole selection, green: its parts in front of the scene).
 float4 mask_ps() : SV_Target { return float4(1, 1, 0, 0); }
 
+// The tint over chosen meshes (an editor view filter): one translucent colour.
+cbuffer Tint : register(b1) { float4 tint_colour; };
+float4 tint_ps() : SV_Target { return tint_colour; }
+
 // The outline over the target: a full-screen triangle; a pixel outside the mask within `radius` of it.
 cbuffer Outline : register(b1) { float4 colour; float radius; float hidden_alpha; float2 outline_pad; };
 Texture2D<float2> mask : register(t0);
@@ -218,6 +222,12 @@ pub(crate) struct EditorGpu {
     pick_id_vb: Option<ID3D11Buffer>,
     pick_inst_capacity: usize,
 
+    // The tint over chosen meshes.
+    tint_ps: Option<ID3D11PixelShader>,
+    tint_cb: Option<ID3D11Buffer>,
+    tint_inst_vb: Option<ID3D11Buffer>,
+    tint_inst_capacity: usize,
+
     // The selection outline.
     mask_ps: Option<ID3D11PixelShader>,
     outline_vs: Option<ID3D11VertexShader>,
@@ -268,6 +278,7 @@ impl Renderer {
         let pvs = compile(EDITOR_HLSL, "editor_passes", "pick_vs", "vs_5_0")?;
         let pps = compile(EDITOR_HLSL, "editor_passes", "pick_ps", "ps_5_0")?;
         let mps = compile(EDITOR_HLSL, "editor_passes", "mask_ps", "ps_5_0")?;
+        let tps = compile(EDITOR_HLSL, "editor_passes", "tint_ps", "ps_5_0")?;
         let ovs = compile(EDITOR_HLSL, "editor_passes", "outline_vs", "vs_5_0")?;
         let ops = compile(EDITOR_HLSL, "editor_passes", "outline_ps", "ps_5_0")?;
         let oel = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, false)];
@@ -286,6 +297,8 @@ impl Renderer {
         let pick_failed = e.pick_il.is_none();
         e.pick_ps = dev.create_pixel_shader(&pps).ok();
         e.mask_ps = dev.create_pixel_shader(&mps).ok();
+        e.tint_ps = dev.create_pixel_shader(&tps).ok();
+        e.tint_cb = dynamic_buffer(&dev, 16, D3D11_BIND_CONSTANT_BUFFER);
         e.outline_vs = dev.create_vertex_shader(&ovs).ok();
         e.outline_ps = dev.create_pixel_shader(&ops).ok();
         e.outline_cb = dynamic_buffer(&dev, OUTLINE_CB, D3D11_BIND_CONSTANT_BUFFER);
@@ -459,6 +472,80 @@ impl Renderer {
     }
 
     /// The selection outline (see the module): the mask of the selected meshes, terrain and overlays, then its edge over the target.
+    /// The tint (an editor view filter, `settings.tinted`): those mesh entities drawn again over the target in `settings.tint_colour`,
+    /// against the scene's depth (pulled towards the camera like the selection mask's visible parts), so only their visible surfaces take
+    /// it. The game's shaders drew them first; this only lays a translucent colour on top.
+    pub(crate) fn pass_tint(&mut self, scene: &RenderScene, target: &RenderTarget) {
+        if self.settings.tinted.is_empty() || self.settings.tint_colour[3] <= 0.0 {
+            return;
+        }
+
+        if let Err(error) = self.create_editor_resources() {
+            self.error(error.0);
+            return;
+        }
+
+        let tinted = self.settings.tinted.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e) && matches!(e.payload, Payload::MeshInstance(_))))
+            .collect::<std::collections::HashSet<_>>();
+        if tinted.is_empty() {
+            return;
+        }
+
+        let (Some(cb), Some(tcb)) = (self.editor.pick_cb.clone(), self.editor.tint_cb.clone()) else { return };
+        let vp_m = self.camera.main_view_proj;
+        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, ..Default::default() };
+        let draws = std::mem::take(&mut self.draw_lists.draws);
+        let mut vis = Visible::default();
+        draws.cull(&view, &mut vis);
+        draws.retain(&mut vis, |id| tinted.contains(&id));
+        let n = vis.instances();
+        if n == 0 {
+            self.draw_lists.draws = draws;
+            return;
+        }
+
+        let mut instances = vec![RigidInstance::default(); n];
+        draws.gather(&vis, &mut instances, 1.0, [0.0; 3]);
+        if self.editor.tint_inst_capacity < n {
+            self.editor.tint_inst_capacity = (n * 2).max(1024);
+            self.editor.tint_inst_vb = dynamic_buffer(&self.dev, self.editor.tint_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+        }
+
+        let Some(vb) = self.editor.tint_inst_vb.clone().filter(|vb| write_dynamic(&self.ctx, vb, &instances)) else {
+            self.draw_lists.draws = draws;
+            return;
+        };
+
+        write_dynamic(&self.ctx, &cb, &frame_cb(&vp_m));
+        write_dynamic(&self.ctx, &tcb, &self.settings.tint_colour);
+        let e = &self.editor;
+        let (w, h) = (target.width(), target.height());
+        self.ctx.set_render_targets(&[target.rtv().cloned()], self.gbuffer.dsv.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        self.ctx.set_blend_state(e.ovl_blend.as_ref());
+        self.ctx.set_depth_stencil_state(e.ovl_ds_test.as_ref(), 0);
+        self.ctx.set_rasterizer_state(e.mask_rs_biased.as_ref());
+        self.ctx.set_input_layout(e.pick_il.as_ref());
+        self.ctx.vs_set_shader(e.pick_vs.as_ref());
+        self.ctx.vs_set_constant_buffers(0, std::slice::from_ref(&e.pick_cb));
+        self.ctx.ps_set_shader(e.tint_ps.as_ref());
+        self.ctx.ps_set_constant_buffers(1, &[Some(tcb)]);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        let stride = size_of::<RigidInstance>() as u32;
+        self.ctx.set_vertex_buffers(1, &[Some(vb.clone()), Some(vb)], &[stride, stride], &[0, 0]);
+        for &b in &vis.active {
+            let m = draws.batch_mesh(b);
+            let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
+            self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);
+            self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+            self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, vis.start[b as usize]);
+        }
+
+        self.draw_lists.draws = draws;
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_render_targets(&[], None);
+    }
+
     pub(crate) fn pass_selection_outline(&mut self, scene: &RenderScene, target: &RenderTarget) {
         if let Err(error) = self.create_editor_resources() {
             self.error(error.0);

@@ -309,6 +309,11 @@ pub struct RenderSettings {
     pub grid_half_extent: f32,
     pub selection: Vec<EntityId>,
 
+    /// Mesh entities laid over with `tint_colour` (RGBA, 0..1; alpha = how strong): an editor view filter (the tile tool's freeform
+    /// instances), drawn over the game's shading.
+    pub tinted: Vec<EntityId>,
+    pub tint_colour: [f32; 4],
+
     /// The selection outline's colour (RGBA, 0..1) and width in pixels.
     pub selection_colour: [f32; 4],
     pub selection_outline_px: f32,
@@ -353,6 +358,8 @@ impl Default for RenderSettings {
             grid_step: 10.0,
             grid_half_extent: 200.0,
             selection: vec![],
+            tinted: vec![],
+            tint_colour: [0.0; 4],
             selection_colour: [1.0, 0.82, 0.24, 1.0],
             selection_outline_px: 2.0,
             vfx_revision: 0,
@@ -1169,6 +1176,11 @@ impl Renderer {
         // Final: copies final_ with alpha = 1 for the viewport.
         self.pass_display(target);
         if self.settings.view == View::Final {
+            {
+                wce_prof!("render.tint");
+                self.pass_tint(scene, target);
+            }
+
             {
                 wce_prof!("render.selection_outline");
                 self.pass_selection_outline(scene, target);

@@ -798,6 +798,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tint_freeform", "tint_freeform on|off", "the view filter that tints the freeform instances in the viewport", |e, a| {
+        let Some(on) = a.first().map(|x| x == "on") else { return fail("usage: tint_freeform on|off") };
+        let Some(d) = document(e) else { return no_tile() };
+        d.tile_mut().display_mut().tint_freeform = on;
+        ok("")
+    });
+
     c.add("stroke_along", "stroke_along", "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)", |e, _| {
         let sel = primary(e);
         with_tile(e, |t, e| {

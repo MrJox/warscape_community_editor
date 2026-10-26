@@ -78,6 +78,10 @@ pub enum TileMode {
     Ground,
 }
 
+/// What the Tint freeform view filter does (its tooltip).
+const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
+     instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
+
 pub const MODE_NAMES: [&str; 8] = ["select", "raise", "lower", "smooth", "flatten", "level", "paint", "ground"];
 const MODES: [TileMode; 8] = [
     TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Paint, TileMode::Ground,
@@ -1884,6 +1888,13 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
+        gui::same_line();
+        let v = d.tile_mut().display_mut();
+        gui::checkbox("tint freeform", &mut v.tint_freeform);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(FREEFORM_TINT_TIP);
+        }
+
         gui::set_next_item_width(90.0);
         gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
         gui::same_line();
@@ -2909,6 +2920,11 @@ impl Tool for TileTool {
             changed |= gui::menu_item_toggle("Polygon outlines", &mut v.show_polygons);
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
             gui::menu_item_toggle("Tile border", &mut v.show_border);
+            gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(FREEFORM_TINT_TIP);
+            }
+
             let mut vfx = !v.hidden_types.contains(VFX_TYPE);
             if gui::menu_item_toggle("VFX boxes", &mut vfx) {
                 set_vfx_boxes(e, vfx);

@@ -82,6 +82,9 @@ pub enum BrushKind {
     Ground(u8),
 }
 
+/// The Freeform tint filter's colour: a translucent blue over the game's shading.
+pub const FREEFORM_TINT: [f32; 4] = [0.15, 0.55, 1.0, 0.45];
+
 /// `BrushKind::Ground`'s eraser: no ground type (black).
 pub const GROUND_ERASE: u8 = u8::MAX;
 
@@ -136,6 +139,9 @@ pub struct TileDisplay {
     /// The tile's own rectangle (inside the bordered height map).
     pub show_border: bool,
 
+    /// A view filter: the freeform instances (TEd's MSM_FREEFORM, in effect through their groups) tinted in the viewport.
+    pub tint_freeform: bool,
+
     /// The tile database entry's link rules and targets on the edge cells (read-only view).
     pub show_links: bool,
 
@@ -159,7 +165,7 @@ pub struct TileDisplay {
 impl Default for TileDisplay {
     fn default() -> Self {
         Self {
-            hidden_types: BTreeSet::new(), show_polygons: true, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true,
+            hidden_types: BTreeSet::new(), show_polygons: true, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
             show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false,
         }
     }
@@ -721,6 +727,21 @@ impl Document for TileDocument {
 
     fn outline_stamp(&self) -> u64 {
         self.tile().structure_version
+    }
+
+    /// The freeform instances while the Freeform tint filter is on; the key follows every edit (a placement change is an edit).
+    fn tint_key(&self) -> u64 {
+        if !self.tile().display.tint_freeform {
+            return 0;
+        }
+
+        self.history.version().wrapping_mul(1_000_003).wrapping_add(self.tile().structure_version) | 1
+    }
+
+    fn tint(&self) -> (Vec<u64>, [f32; 4]) {
+        let t = self.tile();
+        let items = t.instances.iter().copied().filter(|&e| t.placement(e) == Placement::Freeform).map(item_of).collect();
+        (items, FREEFORM_TINT)
     }
 
     fn save_message(&self) -> Option<String> {
