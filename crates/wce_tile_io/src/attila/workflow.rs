@@ -515,9 +515,26 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
 ///
 /// As `save_exported`, or the pack can't be read or written.
 pub fn save_exported_to_pack(game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, pack: &Path) -> Result<(String, CompileNotes), String> {
+    let (folder, files, notes) = exported_pack_files(game, project_dir, scene, &|_| None)?;
+    wce_vfs::mod_pack::write_files(&game.profile, pack, &[&folder], &files)?;
+    Ok((folder, notes))
+}
+
+/// What the packs never ship of a compile's output: BOB's list of the tile's buildings and files, TEd's XML twin of the building list.
+pub const NOT_IN_PACKS: [&str; 2] = ["tile.agf", "building_list.xml"];
+
+/// The files a mod pack gets for a project ([`save_exported_with`] into a scratch folder): the tile's folder (but [`NOT_IN_PACKS`]) and
+/// the tile database's files, sorted by path. Returns the tile's folder, the files and the compile's notes.
+///
+/// # Errors
+///
+/// As `save_exported`.
+pub fn exported_pack_files(
+    game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, base_of: &(dyn Fn(&str) -> Option<String> + Sync),
+) -> Result<(String, Vec<(String, Vec<u8>)>, CompileNotes), String> {
     let scratch = std::env::temp_dir().join(format!("wce_pack_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
     let result = (|| {
-        let (dir, notes) = save_exported_scene(game, project_dir, scene, &scratch)?;
+        let (dir, notes) = save_exported_with(game, project_dir, scene, &scratch, base_of)?;
         let folder = dir.strip_prefix(&scratch).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
         let mut files = vec![];
         let mut pending = vec![scratch.clone()];
@@ -528,14 +545,18 @@ pub fn save_exported_to_pack(game: &Game, project_dir: &Path, scene: Option<Vec<
                     pending.push(path);
                 } else {
                     let inside = path.strip_prefix(&scratch).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                    let name = inside.rsplit('/').next().unwrap_or_default();
+                    if inside.starts_with(&format!("{folder}/")) && NOT_IN_PACKS.iter().any(|n| name.eq_ignore_ascii_case(n)) {
+                        continue;
+                    }
+
                     files.push((inside, std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?));
                 }
             }
         }
 
         files.sort();
-        wce_vfs::mod_pack::write_files(&game.profile, pack, &[&folder], &files)?;
-        Ok((folder, notes))
+        Ok((folder, files, notes))
     })();
     let _ = std::fs::remove_dir_all(&scratch);
     result

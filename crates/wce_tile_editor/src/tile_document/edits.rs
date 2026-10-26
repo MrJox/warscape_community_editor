@@ -2869,6 +2869,7 @@ impl TileDocument {
         }
 
         let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x7;
+        let prop = &self.tile().game_choices(prop);
         let mut new = edit_value(prop, &cur, text.is_some(), i64::from(self.tile().destruction_levels(&key)), ins);
         if prop.kind == Kind::Text {
             // Typed text is applied when the typing ends (a key edit loads a model).
@@ -3084,6 +3085,16 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
 
 /// The row of a property with a plain value (not the flags, placement, position or orientation, nor typed text): the new value when it was
 /// edited. `present`: the element has the attribute; `levels`: a building's destruction levels.
+impl Tile {
+    /// A property with the choices the game's files have: the procedural walls' bases whose pieces are all there.
+    pub(crate) fn game_choices(&self, prop: &Prop) -> Prop {
+        match (prop.attr, prop.kind, self.files.as_deref()) {
+            ("wall_base", Kind::Enum(_), Some(files)) => Prop { kind: Kind::Enum(wce_walls::profile::available_bases(files)), ..*prop },
+            _ => *prop,
+        }
+    }
+}
+
 pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins: &mut dyn Inspector) -> Option<String> {
     let (field, label) = (prop.attr, prop.attr);
     let mut new: Option<String> = None;

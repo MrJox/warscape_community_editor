@@ -6,7 +6,7 @@ packs. Formats: docs/formats/rome2_tiles.md; renderer: docs/re/rome2_renderer.md
 
 Decisions (user, 2026-10-25): mod packs are the only output for Rome 2; a mod overriding a whole tile set file is acceptable; the
 Attila ports of BOB's stages are good enough for generated data (checked against the shipped files and in game, no Rome 2 oracle);
-siege AI and procedural walls are in scope (they are on branches not merged yet); the game switches live in the editor.
+siege AI and procedural walls are in scope (merged into master 2026-10-26); the game switches live in the editor.
 
 Status legend: **done**, **partial**, **todo**.
 
@@ -73,7 +73,9 @@ Status legend: **done**, **partial**, **todo**.
   folders). Procedural BMDs and tents have no UI of their own (the decompiler finds none in Rome 2's tiles).
 - **done** Instance templates: none needed of Rome 2 (its projects are TEd scenes as Attila's, compiled with Rome 2's conventions); an
   effect without a known scale gets the type's default.
-- **todo** Siege AI and procedural walls once their branches are merged: the wall bases and the siege classes per game.
+- **done** Procedural walls: saved into mod packs (any game), the packs written for the files' game, the bases Rome 2 has
+  (docs/plans/procedural_walls.md, "Mod packs and Rome 2"). In game: to confirm.
+- **todo** Siege AI generator on Rome 2's settlements (its classes and markers are Attila's: to check).
 
 ## Validation without TEd
 

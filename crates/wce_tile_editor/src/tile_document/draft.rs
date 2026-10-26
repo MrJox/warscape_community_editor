@@ -168,7 +168,7 @@ impl TileDocument {
                     ins.edit_string(prop.attr, prop.attr, &mut v).then_some(v)
                 }
 
-                _ => edit_value(prop, &cur, present, 1, ins),
+                _ => edit_value(&self.tile().game_choices(prop), &cur, present, 1, ins),
             };
 
             if let Some(v) = new.filter(|v| *v != cur) {

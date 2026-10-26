@@ -3,7 +3,7 @@
 //! `battlefield_buildings` and `models_building` rows (the logic file's path its own, firing and docking lines), and its instances in the
 //! tile's `building_list`.
 //!
-//!   cargo run --release -p wce_walls --example wall_pack_check -- <pack> <rpfm schema_att.ron>
+//!   cargo run --release -p wce_walls --example wall_pack_check -- <pack> <rpfm schema of the game> [game key: attila, rome_2]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -25,10 +25,14 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let [pack_path, schema] = args.as_slice() else { return Err("usage: wall_pack_check <pack> <rpfm schema_att.ron>".to_owned()) };
+    let (pack_path, schema, game) = match args.as_slice() {
+        [p, s] => (p, s, "attila"),
+        [p, s, g] => (p, s, g.as_str()),
+        _ => return Err("usage: wall_pack_check <pack> <rpfm schema of the game> [game key: attila, rome_2]".to_owned()),
+    };
     let schema = Schema::load(std::path::Path::new(schema), None).map_err(|e| e.to_string())?;
     let games = SupportedGames::default();
-    let mut pack = Pack::read_and_merge(&[pack_path.into()], games.game("attila").ok_or("no attila")?, true, false, false).map_err(|e| e.to_string())?;
+    let mut pack = Pack::read_and_merge(&[pack_path.into()], games.game(game).ok_or_else(|| format!("rpfm knows no {game}"))?, true, false, false).map_err(|e| e.to_string())?;
     let names = pack.files().keys().cloned().collect::<Vec<_>>();
     let mut read = |n: &str| pack.files_mut().get_mut(n).and_then(|f| f.encode(&None, false, false, true).ok().flatten());
 

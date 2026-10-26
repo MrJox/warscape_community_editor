@@ -1288,9 +1288,20 @@ impl TileTool {
 
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
-        let (scene, _) = wce_tile::project_files::to_ted(d.tile().tscene().save())?;
-        let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
-        for n in &notes.notes {
+        let text = d.tile().tscene().save();
+
+        // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
+        let (folder, notes) = if d.tile().has_walls() {
+            let files = e.files().ok_or("no game files are mounted")?;
+            let schema = walls_schema(e)?;
+            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack)?
+        } else {
+            let (scene, _) = wce_tile::project_files::to_ted(text)?;
+            let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
+            (folder, notes.notes)
+        };
+
+        for n in &notes {
             log::info(format!("{folder}: {n}"));
         }
 
@@ -1299,7 +1310,7 @@ impl TileTool {
         e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
             s.mod_packs.insert(key, path);
         });
-        Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.notes.len()))
+        Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.len()))
     }
 
     /// For a game whose kit has no tiles (Rome 2): the map context's neighbours come from the packs, decompiled on demand into a tree in

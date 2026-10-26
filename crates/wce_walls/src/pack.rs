@@ -8,7 +8,7 @@ use rpfm_lib::files::{Container, EncodeableExtraData, FileType, RFile, RFileDeco
 use rpfm_lib::games::pfh_file_type::PFHFileType;
 use rpfm_lib::games::supported_games::SupportedGames;
 
-/// Writes a mod pack for `game` (rpfm's key, `attila`) with the files (path, bytes) and the tables (`<name>_tables` -> rows), each table
+/// Writes a mod pack for `game` (rpfm's key: the game profile's) with the files (path, bytes) and the tables (`<name>_tables` -> rows), each table
 /// as `db/<name>_tables/<file stem of the pack>`.
 ///
 /// # Errors
@@ -105,6 +105,30 @@ pub fn replace_in_proc_pack(path: &Path, game: &str, prefix: &str, files: Vec<(S
 
     kept.extend(files);
     write_pack_as(path, game, PFHFileType::Movie, kept, tables, &prefix.to_lowercase())?;
+    Ok(others)
+}
+
+/// Puts a tile into a mod pack at `path` (created if missing): its files (`folder`'s, the tile database's, its walls' pieces) and its
+/// walls' rows (`db/<table>/<prefix>`), in place of what the pack had of the tile (`folder`'s files, [`is_tiles_file`] of `prefix`, the
+/// files written again); the rest stays. Returns how many files were kept.
+///
+/// # Errors
+///
+/// The pack exists and doesn't read, or it can't be written.
+pub fn replace_in_pack(path: &Path, game: &str, prefix: &str, folder: &str, files: Vec<(String, Vec<u8>)>, tables: Vec<(String, DB)>) -> Result<usize, String> {
+    let existing = if path.is_file() { read_pack_files(path, game)? } else { vec![] };
+    let below = format!("{}/", folder.trim_end_matches('/').to_lowercase());
+    let written = files.iter().map(|(p, _)| p.to_lowercase()).collect::<std::collections::HashSet<_>>();
+    let mut kept = existing
+        .into_iter()
+        .filter(|(p, _)| {
+            let l = p.replace('\\', "/").to_lowercase();
+            !is_tiles_file(&l, prefix) && !l.starts_with(&below) && !written.contains(&l)
+        })
+        .collect::<Vec<_>>();
+    let others = kept.len();
+    kept.extend(files);
+    write_pack_as(path, game, PFHFileType::Mod, kept, tables, &prefix.to_lowercase())?;
     Ok(others)
 }
 

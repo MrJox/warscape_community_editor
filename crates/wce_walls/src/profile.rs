@@ -180,6 +180,29 @@ pub const BASES: [Profile; 15] = [
     Profile { key: "gondor_fort_straight", defences: &["gondor_fort_tower_c_straight", "gondor_fort_bastion"], cap_start: "gondor_fort_tower_end_left", cap_end: "gondor_fort_tower_end_right", door: "gondor_fort_straight_with_doors_a", step_up: "gondor_fort_straight_stepped_up_bastion_a", step_down: "gondor_fort_straight_stepped_down_bastion_a", ..FIFTEEN },
 ];
 
+/// The editor's list of bases (`wce_tile::property_enums::WALL_BASE`) that the game's files have whole (every piece's logic file: Rome 2
+/// has the barbarian, roman, greek, egyptian and persian forts; TDD's bases come with its packs), made once per game (the packs mounted
+/// then); every base without the files' game.
+pub fn available_bases(files: &dyn wce_vfs::files::Files) -> &'static [(&'static str, &'static str)] {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MADE: OnceLock<Mutex<HashMap<String, &'static [(&'static str, &'static str)]>>> = OnceLock::new();
+    let all = wce_tile::property_enums::WALL_BASE;
+    let Some(game) = files.game() else { return all };
+    let made = MADE.get_or_init(Mutex::default);
+    let mut made = made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(list) = made.get(game.key) {
+        return list;
+    }
+
+    let has = |key: &str| key.is_empty() || files.exists(&format!("{}{key}_tech.cs2.parsed", crate::building::folder(key)));
+    let whole = |p: &Profile| [p.key, p.cap_start, p.cap_end, p.step_up, p.step_down, p.door].into_iter().chain(p.defences.iter().copied()).all(has);
+    let list: Vec<(&'static str, &'static str)> = all.iter().copied().filter(|(k, _)| profile(k).is_none_or(whole)).collect();
+    let list: &'static [(&'static str, &'static str)] = Box::leak(list.into_boxed_slice());
+    made.insert(game.key.to_owned(), list);
+    list
+}
+
 /// A base by its key.
 pub fn profile(key: &str) -> Option<&'static Profile> {
     BASES.iter().find(|p| p.key.eq_ignore_ascii_case(key))

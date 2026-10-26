@@ -263,7 +263,8 @@ pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, s
     let mut notes = lowered.notes;
     let pieces = lowered.bases.len();
     let pack = data.join(PROC_PACK);
-    let others = crate::pack::replace_in_proc_pack(&pack, "attila", &prefix, lowered.files, lowered.tables.into_iter().collect())?;
+    let game = files.game().map_or("attila", |g| g.key);
+    let others = crate::pack::replace_in_proc_pack(&pack, game, &prefix, lowered.files, lowered.tables.into_iter().collect())?;
     notes.push(format!("{pieces} wall piece(s) of {prefix} written into {} ({others} file(s) of other tiles kept)", pack.display()));
     Ok((scene.save(), walls, notes))
 }
@@ -296,7 +297,7 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
     let walls = lowered.bases.len();
     pack_files.extend(lowered.files);
     let pack = out.join(pack_name(&folder));
-    crate::pack::write_pack(&pack, "attila", pack_files, lowered.tables.into_iter().collect())?;
+    crate::pack::write_pack(&pack, game.profile.key, pack_files, lowered.tables.into_iter().collect())?;
     notes.push(format!("{walls} wall piece(s) generated"));
     Ok((pack, dir, notes))
 }
@@ -320,6 +321,35 @@ pub fn exported_pack_files(out: &Path, folder: &str) -> Result<Vec<(String, Vec<
     }
 
     Ok(files)
+}
+
+/// Saves a project with walls into a mod pack (created if missing): the walls lowered (see the module), the project compiled as the
+/// mod pack save does (`workflow::exported_pack_files`), and the tile's files, the tile database's, the walls' pieces and their rows (in
+/// the pack's own file of each table, `db/<table>/<key prefix>`) put in place of what the pack had of the tile. Returns the tile's
+/// folder and the notes.
+///
+/// # Errors
+///
+/// The project or the scene doesn't read, a wall can't be made, the compile fails, or the pack can't be read or written.
+pub fn save_walls_to_pack(game: &Game, files: &dyn Files, schema: &Schema, project_dir: &Path, scene: Vec<u8>, pack: &Path) -> Result<(String, Vec<String>), String> {
+    let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
+    let project = TileProject::open(project_dir).map_err(|e| e.to_string())?;
+    let unit = project.unit_scale;
+    let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
+    let mut scene = TedScene::parse_any(scene)?;
+    let prefix = key_prefix(&folder);
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, None)?;
+    let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
+    let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
+    let base_of = |k: &str| bases.get(k).cloned();
+    let (folder, mut pack_files, compiled) = wce_tile_io::attila::workflow::exported_pack_files(game, project_dir, Some(ted), &base_of)?;
+    let mut notes = lowered.notes;
+    notes.extend(compiled.notes);
+    let walls = lowered.bases.len();
+    pack_files.extend(lowered.files);
+    let kept = crate::pack::replace_in_pack(pack, game.profile.key, &prefix, &folder, pack_files, lowered.tables.into_iter().collect())?;
+    notes.push(format!("{walls} wall piece(s) generated; {kept} file(s) of the pack kept"));
+    Ok((folder, notes))
 }
 
 /// What the compile writes that the game's packs never ship: BOB's list of the tile's buildings and files (`tile.agf`), and TEd's XML
