@@ -50,7 +50,8 @@ Status legend: **done**, **partial**, **todo**.
 - **done** The terrain (surface, blend, composite, resolve; shadows). Open: the variation textures (the index map is not read).
 - **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
 - **done** The sea (the forward ocean; no planar reflection).
-- **todo** The effects (generated shaders).
+- **todo** The effects: Rome 2 simulates particles on the CPU and draws them with shaders generated per effect; the shaders' inputs are
+  known (docs/re/rome2_renderer.md, "Not drawn yet"), the simulation is not (to RE in the game's executable before porting).
 - **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
   engine's `g_hide_foliage`.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
