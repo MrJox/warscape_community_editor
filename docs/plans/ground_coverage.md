@@ -4,7 +4,13 @@ A Tile panel button that finds the tile's steep height differentials (slopes, cl
 each one, rocks only up its face to just under the top edge. Everything goes into the layer `(AUTOGEN) Ground Coverage`, with vegetation
 exclusion polygons around the vegetation it adds (BOB drops manual trees that are outside every exclusion polygon, docs/re/vegetation.md).
 
-Status: planned 2026-10-26, decisions from the grill below. Not started.
+Status (2026-10-26): steps 1-4 done on `feature/auto_ground_coverage`; step 5 (trying it on kit tiles, tuning the defaults) is the user's.
+Building scale (`wce_scale`) was added for the rocks and is **optional** (`scale the rocks`, off by default): TEd has no building scale and
+whether Attila honours the building list's scale is not known. Script command for checks: `ground_coverage <preview|generate> <rocks|-> <plants|-> [seed]`.
+
+Seen on mediterranean_mountains/custom_pillar_hercules_a (defaults, seed 7): 301 slopes, 97 covered, 18,685 rocks, 5,339 plants, 635
+polygons, about 1 s in release. A whole mountainside is one differential (283,000 m², 15,900 rocks on its face): the face density and a cap
+per differential may need tuning.
 
 ## Decisions (user, 2026-10-26)
 
