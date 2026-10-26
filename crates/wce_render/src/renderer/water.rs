@@ -220,7 +220,12 @@ impl Renderer {
         self.upload();
 
         null_ps_srvs(&self.ctx, 16);
-        let rtvs = [self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()];
+        // Rome 2's river and water plane shaders are forward passes: the lit colour only.
+        let rtvs = if self.game == super::game::RenderGame::Rome2 {
+            vec![self.gbuffer.hdr.rtv.clone()]
+        } else {
+            vec![self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()]
+        };
         self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), 1);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -232,6 +237,7 @@ impl Renderer {
         self.bind(&ps);
         let ctx = &self.ctx;
         bind_srv(ctx, &vs, "t_low_res_height_map", self.res.black_srv.as_ref());
+        bind_srv(ctx, &vs, "s_low_res_height_map", self.res.black_srv.as_ref());
         ps_samplers(ctx, &ps, &self.states.s_clamp_linear);
         bind_sampler(ctx, &ps, "s_normal", self.states.s_wrap_linear.as_ref());
         bind_sampler(ctx, &ps, "s_environment", self.states.s_wrap_linear.as_ref());
@@ -246,6 +252,8 @@ impl Renderer {
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
+        // Rome 2's planar reflection is not made (as the sea's): black.
+        bind_srv(ctx, &ps, "s_terrain_reflection", self.res.black_srv.as_ref());
         let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
         let inst_stride = if rivers { 64u32 } else { 96 };
         for e in water.iter().copied() {
