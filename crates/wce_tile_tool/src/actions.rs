@@ -148,6 +148,32 @@ impl TileTool {
             self.paint_channel = (group.clamp(0, 3) * 4 + variation.clamp(0, 3)) as u8;
         }
 
+        if self.mode == TileMode::Paint {
+            // TEd's Blendmap Filters: the paint lands only on the heights and slopes in range.
+            ins.section("Blendmap filters");
+            ins.edit_bool("filter_height_on", "height filter", &mut self.filter_height_on);
+            if self.filter_height_on {
+                let [mut lo, mut hi] = self.filter_height;
+                ins.edit_float("filter_height_min", "min height (m)", &mut lo, 0.1, -1000.0, 1000.0);
+                ins.edit_float("filter_height_max", "max height (m)", &mut hi, 0.1, -1000.0, 1000.0);
+                self.filter_height = if lo != self.filter_height[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
+            }
+
+            ins.edit_bool("filter_slope_on", "slope filter", &mut self.filter_slope_on);
+            if self.filter_slope_on {
+                let [mut lo, mut hi] = self.filter_slope;
+                ins.edit_slider("filter_slope_min", "min slope (deg)", &mut lo, 0.0, 90.0);
+                ins.edit_slider("filter_slope_max", "max slope (deg)", &mut hi, 0.0, 90.0);
+                self.filter_slope = if lo != self.filter_slope[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
+            }
+
+            if ins.button("filter_nogo", "Use the no-go range (impassable slopes)", true) {
+                (self.filter_slope_on, self.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]);
+            }
+
+            self.sync_paint_filter();
+        }
+
         if self.mode == TileMode::Flatten {
             ins.edit_float("flatten", "flatten height (m)", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6);
         }

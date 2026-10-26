@@ -293,3 +293,22 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 There are no shadow-receiving terrain variants: the terrain receives in the deferred directional light like everything else. It casts
 with its own technique, shadow_30_new = `vs30_shadow_new` + `ps30_shadow` (docs/re/renderer.md, "Shadow casting"): the same grid and
 height map as geom_new, CULL_BACK, the shadow rasterizers' bias (2500, slope 1.8). The editor draws it into every cascade.
+
+## TEd's blend painting and its Blendmap Filters (2026-10-26, static RE of `TEd.AssemblyKit.exe`, TEd not run)
+
+- **The Blend Map paint module** (constructor `FUN_004867d0`, name `L"Blend Map"`) registers the `QTU::GridPainter` operations
+  **Normal**, **Normal (Grouped)**, one more without a name string (`FUN_004833e0`), **Auto-Flange**, **Rock-painting** and **Spline
+  splat**. What Auto-Flange, Rock-painting and Spline splat do was not traced. The **Influence Map** module (`FUN_004891e0`,
+  `L"Influence Map"`, `lf_influence_map.png`) has the operation **Subtract** among others.
+- **Blendmap Filters** (`Ted::BlendFilterDialog`, `BlendFilterDialog.cpp`, constructor `FUN_005c3c00`, made by the Blend Map module): two
+  checkable groups, both off when the dialog is made. **Height Filter**: Min Height / Max Height, -1000 .. 1000 (defaults -1000 and
+  1000). **Slope Filter**: Min Slope / Max Slope in degrees, 0 .. 90, kept as `cos(min)` / `cos(max)`. Each min / max pair is held
+  ordered (`FUN_005c4a90`..`FUN_005c4ba0`: moving one past the other moves the other). **Use No-Go Range** (`FUN_005c4a40`, also run
+  when the dialog is made) sets the slope range to `EMPIREUTILITY::maximum_passable_slope_angle_degrees()` .. 90, i.e. only the slopes
+  units cannot walk.
+- **The filter is a 0 / 1 mask** (`FUN_004866f0`, called by slot 26 of the Blend Map and Influence Map modules' vtables): 0 where the
+  height filter is on and the terrain's height at the point is outside [min, max], or the slope filter is on and the terrain normal's y
+  is outside [cos(max), cos(min)]; 1 otherwise. No soft edge. It masks every operation of the two paint modules (it is the module's
+  virtual, not an operation's). TEd's height is the terrain point's y (the scene's units).
+- `MAXIMUM_PASSABLE_SLOPE_ANGLE_DEGREES` (EmpireUtility, `GroundTypeField.cpp`, "Sets the slope which defines no go regions"): a config
+  variable, default **30** degrees.

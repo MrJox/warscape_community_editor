@@ -18,6 +18,28 @@ pub type Result<T> = std::result::Result<T, String>;
 /// The sum of a pixel's weights.
 pub const FULL: u16 = u16::MAX;
 
+/// The slope units cannot walk from (`MAXIMUM_PASSABLE_SLOPE_ANGLE_DEGREES`, the game's default; docs/re/terrain.md).
+pub const NOGO_SLOPE_DEGREES: f32 = 30.0;
+
+/// TEd's Blendmap Filters (docs/re/terrain.md): the paint lands only where the terrain's height (metres) and slope (degrees) are in
+/// their ranges, a range that is `None` letting everything through. A hard mask, as TEd's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaintFilter {
+    pub height: Option<[f32; 2]>,
+    pub slope: Option<[f32; 2]>,
+}
+
+impl PaintFilter {
+    pub fn is_active(&self) -> bool {
+        self.height.is_some() || self.slope.is_some()
+    }
+
+    pub fn passes(&self, height_m: f64, slope_degrees: f64) -> bool {
+        let inside = |r: Option<[f32; 2]>, v: f64| r.is_none_or(|[lo, hi]| (f64::from(lo)..=f64::from(hi)).contains(&v));
+        inside(self.height, height_m) && inside(self.slope, slope_degrees)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlendField {
     /// The file's bytes before the samples (the directory) and after them, verbatim.
@@ -120,12 +142,13 @@ impl BlendField {
         self.layer.take_changed()
     }
 
-    /// Paints `channel` (0..16) under the brush: per pixel, the brush's weight (0..1) of what the other channels hold moves to it.
+    /// Paints `channel` (0..16) under the brush: per pixel, the brush's weight (0..1) of what the other channels hold moves to it; only
+    /// the pixels `mask` lets through.
     ///
     /// # Errors
     ///
     /// No edit is open, or no such channel.
-    pub fn paint(&mut self, b: &Brush, channel: usize) -> Result<()> {
+    pub fn paint(&mut self, b: &Brush, channel: usize, mask: &dyn Fn(u32, u32) -> bool) -> Result<()> {
         if !self.layer.is_editing() {
             return Err("begin_edit() before editing".to_owned());
         }
@@ -136,7 +159,7 @@ impl BlendField {
 
         for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
             let a = b.weight(dx, dy).min(1.0);
-            if a <= 0.0 {
+            if a <= 0.0 || !mask(x, y) {
                 continue;
             }
 
@@ -280,11 +303,11 @@ mod tests {
         let original = std::fs::read(tmp.path().join("a.tif")).unwrap();
 
         f.begin_edit().unwrap();
-        f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, ..Default::default() }, 6).unwrap();
-        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15).unwrap();
+        f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, ..Default::default() }, 6, &|_, _| true).unwrap();
+        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15, &|x, _| x != 149).unwrap();
         f.end_edit();
-        assert!(f.pixel(63, 64)[6] > 0 && f.pixel(149, 0)[15] == FULL);
-        assert_eq!(f.take_changed(), Some((55, 0, 150, 70)));
+        assert!(f.pixel(63, 64)[6] > 0 && f.pixel(148, 0)[15] == FULL && f.pixel(149, 0)[15] == 0, "the mask keeps column 149");
+        assert_eq!(f.take_changed(), Some((55, 0, 149, 70)));
 
         f.write(&tmp.path().join("b.tif")).unwrap();
         let painted = std::fs::read(tmp.path().join("b.tif")).unwrap();
