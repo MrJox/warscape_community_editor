@@ -258,7 +258,7 @@ pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, s
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
     let walls = scene::walls(&scene).len();
-    let prefix = key_prefix(&wce_tile::project_files::unmark_extracted(folder));
+    let prefix = key_prefix(folder);
     let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, Some(KIT_LAYER))?;
     let mut notes = lowered.notes;
     let pieces = lowered.bases.len();
@@ -278,7 +278,7 @@ pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, s
 /// The project or the scene doesn't read, a wall can't be made, the compile fails, or a file can't be written.
 pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, project_dir: &Path, scene: Vec<u8>, out: &Path) -> Result<(PathBuf, PathBuf, Vec<String>), String> {
     // An extracted tile goes back to its own name, as the compile does.
-    let folder = wce_tile::project_files::unmark_extracted(&tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?);
+    let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
     let project = TileProject::open(project_dir).map_err(|e| e.to_string())?;
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);

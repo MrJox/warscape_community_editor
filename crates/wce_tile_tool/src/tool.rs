@@ -246,6 +246,13 @@ pub struct TileTool {
     pub(crate) new_tile: Option<crate::new_tile_dialog::NewTileDialog>,
     pub(crate) new_tile_open: bool,
 
+    /// The question before an exported tile is extracted over a project (and whether it opens on the next frame).
+    pub(crate) extract_prompt: Option<crate::extract_prompt::ExtractPrompt>,
+    pub(crate) extract_prompt_open: bool,
+
+    /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
+    browse_extracted: std::collections::HashSet<String>,
+
     /// The new vegetation set (not saved; Ctrl + click on trees in the Create panel) and the name it will be saved with.
     pub(crate) scratch_set: Option<wce_tile::vegetation_sets::VegetationSet>,
     pub(crate) scratch_name: String,
@@ -343,7 +350,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -420,6 +427,20 @@ pub fn select_elem(e: &mut Editor, elem: Option<usize>, add: bool) {
 fn tile_dir_of(path: &str) -> PathBuf {
     let p = PathBuf::from(path);
     if p.is_dir() { p } else { p.parent().map(Path::to_path_buf).unwrap_or_default() }
+}
+
+/// The entries (file, bytes) of a projects' raw_data whose location is `location` (`terrain/tiles/<kind>/...`, `/` separated).
+fn project_entries(raw: &Path, location: &str) -> Vec<(PathBuf, Vec<u8>)> {
+    let kind = location.split('/').nth(2).unwrap_or("battle");
+    let Ok(read) = std::fs::read_dir(raw.join("terrain/tiles").join(kind).join("_tile_database/TILES")) else { return vec![] };
+    read.flatten()
+        .map(|f| f.path())
+        .filter_map(|f| {
+            let bytes = std::fs::read(&f).ok()?;
+            let entry = TileEntry::parse(bytes.clone()).ok()?;
+            (wce_formats::tile_entry::normalize_location(&entry.location()) == location).then_some((f, bytes))
+        })
+        .collect()
 }
 
 /// Runs `f` on the tile tool (a command reaching its tool).
@@ -589,7 +610,7 @@ impl TileTool {
         let (Some(entry), Some(raw_root)) = (&p.entry, &p.raw_root) else { return };
         let key = wce_formats::tile_entry::normalize_location(&entry.location());
         let variation = p.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        // A tile of the projects (extracted ones too, `<location>_extracted`) is listed with the projects' source.
+        // A tile of the projects (extracted ones too) is listed with the projects' source.
         let raw_root = source_of(raw_root);
         let exported = self.workspaces.contains(&raw_root) && raw_root != source_of(&Self::workspace_dir(e).join("raw_data"));
         let source = if exported { PACKS_SOURCE.to_owned() } else { raw_root };
@@ -673,14 +694,14 @@ impl TileTool {
         }
 
         // A variation the project does not have yet (its entry lists every variation; a save brings one in): it opens from where it comes
-        // from, the kit's copy, or the packs for an extracted tile.
+        // from, the packs for an extracted tile (one of its variations in the project is marked), else the kit's copy.
         let mut entry_xml = entry_xml;
         let mut ted = entry.ted_path(&root, v);
         let projects = Self::workspace_dir(e).join("raw_data");
         if !wce_tile::tile_project::has_tile(&entry.variation_folder(&root, v)) && root == projects {
             let folder = wce_tile_editor::tile_document::kit::tile_folder(&entry.variation_folder(&root, v)).unwrap_or_default();
-            if wce_tile::project_files::is_extracted(&folder) {
-                return self.extract_variation(e, &entry_xml, &folder);
+            if (0..vars.len()).any(|i| wce_tile::project_files::is_extracted_dir(&entry.variation_folder(&root, i))) {
+                return self.open_exported(e, &folder, None, false);
             }
 
             let kind = folder.split('/').nth(2).unwrap_or("battle").to_owned();
@@ -710,28 +731,6 @@ impl TileTool {
         let mut msg = opened?;
         if vars.len() > 1 {
             msg += &format!("  (entry {file_name}, variation {} of: {names})", vars[v].location);
-        }
-
-        Ok(msg)
-    }
-
-    /// A variation of an extracted tile that is not in the project yet (`folder`, marked): extracted from the packs and opened. The decompile
-    /// writes the whole entry (`entry_xml`): the project's own numbers come back, this variation's from the decompile.
-    ///
-    /// # Errors
-    ///
-    /// The extraction or the entry's write fails.
-    fn extract_variation(&mut self, e: &mut Editor, entry_xml: &Path, folder: &str) -> Result<String, String> {
-        let before = std::fs::read(entry_xml).map_err(|err| format!("{}: {err}", entry_xml.display()))?;
-        let msg = self.open_exported(e, &wce_tile::project_files::unmark_extracted(folder), None, false)?;
-        let variation = folder.rsplit('/').next().unwrap_or_default();
-        if let (Ok(mut old), Ok(new)) = (TileEntry::parse(before), TileEntry::load(entry_xml))
-            && let (Some(o), Some(n)) = (old.find_variation(variation), new.find_variation(variation))
-        {
-            let v = &new.variations()[n];
-            old.set_height_range(o, v.min_height, v.scale);
-            std::fs::write(entry_xml, old.save()).map_err(|err| format!("{}: {err}", entry_xml.display()))?;
-            TileIndex::forget_shared();
         }
 
         Ok(msg)
@@ -817,52 +816,134 @@ impl TileTool {
         env_value("WCE_TILE_WORKSPACE").map(PathBuf::from).unwrap_or_else(|| e.settings_ref().kit_projects_dir())
     }
 
-    /// Opens an exported tile: a folder on disk (`.../terrain/tiles/<kind>/.../<variation>`) or the packs' (`terrain/tiles/...`). It is
-    /// decompiled into a TEd project in the workspace (`workspace`, else [`Self::workspace_dir`]), which then opens as a kit tile.
+    /// The tile folder (`terrain/tiles/<kind>/.../<variation>`) of an exported tile: a folder on disk or the packs' folder.
     ///
     /// # Errors
     ///
-    /// The tile can't be found, read, decompiled or opened.
+    /// A folder on disk that is not under `terrain/tiles/`.
+    pub fn exported_folder(target: &str) -> Result<String, String> {
+        let p = Path::new(target);
+        if p.is_dir() {
+            wce_tile_io::attila::workflow::tile_folder(p).ok_or_else(|| format!("{target} is not under a terrain/tiles/ folder"))
+        } else {
+            Ok(target.replace('\\', "/").trim_matches('/').to_lowercase())
+        }
+    }
+
+    /// The project an exported tile would be extracted into, when there is one already (extracted before, or the kit's tile of that name
+    /// saved): what extracting it again would replace.
+    pub fn extracted_project(e: &mut Editor, target: &str) -> Option<PathBuf> {
+        let dir = Self::workspace_dir(e).join("raw_data").join(Self::exported_folder(target).ok()?);
+        wce_tile::tile_project::has_tile(&dir).then_some(dir)
+    }
+
+    /// Opens an exported tile: a folder on disk (`.../terrain/tiles/<kind>/.../<variation>`) or the packs' (`terrain/tiles/...`). It is
+    /// decompiled into a project in the workspace (`workspace`, else [`Self::workspace_dir`]) at its own folder, its `tile.wce` marked as an
+    /// extracted tile, which then opens. A project there already (extracted before, or the kit's tile of that name saved) opens instead,
+    /// unless `fresh`: then the tile is extracted over it (its variation folder replaced; the entry keeps the other variations' numbers).
+    ///
+    /// # Errors
+    ///
+    /// The tile can't be found, read, decompiled or opened, or the project to replace is open with unsaved changes.
     pub fn open_exported(&mut self, e: &mut Editor, target: &str, workspace: Option<&Path>, fresh: bool) -> Result<String, String> {
-        use wce_tile_io::attila::workflow::{open_exported, tile_folder};
+        use wce_tile::project_files::{TED_FILE, WCE_FILE, mark_extracted_text, to_wce};
         let workspace = workspace.map_or_else(|| Self::workspace_dir(e), Path::to_path_buf);
         self.workspaces.insert(source_of(&workspace.join("raw_data")));
-
-        // A tile of the packs extracted before opens from the projects (with its edits), unless `fresh`.
-        if !fresh && !Path::new(target).is_dir() {
-            let folder = wce_tile::project_files::mark_extracted(&target.replace('\\', "/").trim_matches('/').to_lowercase());
-            let dir = workspace.join("raw_data").join(&folder);
-            if wce_tile::tile_project::has_tile(&dir) {
+        let folder = Self::exported_folder(target)?;
+        let dir = workspace.join("raw_data").join(&folder);
+        if wce_tile::tile_project::has_tile(&dir) {
+            if !fresh {
                 let msg = self.open_folder(e, &dir.display().to_string())?;
-                return Ok(format!("{msg}  (the projects' copy; open_exported {folder} --fresh extracts it again)"));
+                return Ok(format!("{msg}  (the projects' copy; open_exported {folder} --fresh extracts the tile over it)"));
             }
+
+            // Replaced: the document of it goes first (not with unsaved changes), then the folder.
+            let open = e.docs.order().iter().copied().find(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&dir.display().to_string())));
+            if let Some(id) = open {
+                if e.docs.find(id).is_some_and(|d| d.modified()) {
+                    return Err(format!("{folder} is open with unsaved changes: save or undo them before extracting the tile over it"));
+                }
+
+                e.close_document(id);
+            }
+
+            std::fs::remove_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
         }
 
         let game = self.exported_game(e)?;
         let p = Path::new(target);
-        let (files, folder) = if p.is_dir() {
-            let folder = tile_folder(p).ok_or_else(|| format!("{target} is not under a terrain/tiles/ folder"))?;
-            (wce_tile_io::TileFiles::from_dir(p).map_err(|err| err.to_string())?, folder)
-        } else {
-            let folder = target.replace('\\', "/").trim_matches('/').to_lowercase();
-            (game.exported_from_packs(&folder)?, folder)
-        };
+        let files = if p.is_dir() { wce_tile_io::TileFiles::from_dir(p).map_err(|err| err.to_string())? } else { game.exported_from_packs(&folder)? };
 
-        let (dir, losses) = open_exported(&game, &files, &folder, &workspace, true)?;
+        // The decompile writes the whole entry: a project's entry keeps the other variations' numbers.
+        let tile_location = folder.rsplit_once('/').map_or(folder.as_str(), |(t, _)| t).to_owned();
+        let variation = folder.rsplit('/').next().unwrap_or_default().to_owned();
+        let before = project_entries(&workspace.join("raw_data"), &tile_location);
+        let (dir, losses) = wce_tile_io::attila::workflow::open_exported(&game, &files, &folder, &workspace)?;
         for n in &losses.notes {
             log::info(format!("{folder}: {n}"));
         }
 
-        // The decompile writes TEd's tile.ted: the project keeps tile.wce.
-        let ted = dir.join(wce_tile::project_files::TED_FILE);
+        for (file, old) in before {
+            if let (Ok(mut old), Ok(new)) = (TileEntry::parse(old), TileEntry::load(&file))
+                && let (Some(o), Some(n)) = (old.find_variation(&variation), new.find_variation(&variation))
+            {
+                let v = &new.variations()[n];
+                old.set_height_range(o, v.min_height, v.scale);
+                std::fs::write(&file, old.save()).map_err(|err| format!("{}: {err}", file.display()))?;
+            }
+        }
+
+        TileIndex::forget_shared();
+
+        // The decompile writes TEd's tile.ted: the project keeps tile.wce, marked as an extracted tile.
+        let ted = dir.join(TED_FILE);
         if ted.is_file() {
             let text = std::fs::read(&ted).map_err(|err| format!("{}: {err}", ted.display()))?;
-            std::fs::write(dir.join(wce_tile::project_files::WCE_FILE), wce_tile::project_files::to_wce(text)?).map_err(|err| err.to_string())?;
+            std::fs::write(dir.join(WCE_FILE), mark_extracted_text(to_wce(text)?)).map_err(|err| err.to_string())?;
             std::fs::remove_file(&ted).map_err(|err| err.to_string())?;
         }
 
         let msg = self.open_folder(e, &dir.display().to_string())?;
         Ok(format!("{msg}  (extracted into {}; {} notes in the log)", dir.display(), losses.notes.len()))
+    }
+
+    /// Moves the projects of tiles extracted by older versions (`<tile>_extracted`) to their own names (`project_files::migrate_extracted`);
+    /// the open tiles' are left alone. The log lists every tile.
+    ///
+    /// # Errors
+    ///
+    /// The projects can't be read.
+    pub fn migrate_extracted(&mut self, e: &mut Editor) -> Result<String, String> {
+        let raw = Self::workspace_dir(e).join("raw_data");
+        let busy = e.docs.order().iter().filter_map(|&id| e.docs.find_as::<TileDocument>(id).map(|d| d.project().dir.clone())).collect::<Vec<_>>();
+        let m = wce_tile::project_files::migrate_extracted(&raw, &busy)?;
+        for line in &m.moved {
+            log::info(format!("migrated: {line}"));
+        }
+
+        for line in &m.skipped {
+            log::warn(format!("not migrated: {line}"));
+        }
+
+        self.browse_rows_key.clear();
+        Ok(format!("{} old extracted project(s) moved, {} left as they are (see the log)", m.moved.len(), m.skipped.len()))
+    }
+
+    /// Asks before an exported tile is extracted over a project (`extract_prompt.rs`), else extracts it.
+    pub fn extract_or_ask(&mut self, e: &mut Editor, target: &str) -> String {
+        if let Some(dir) = Self::extracted_project(e, target) {
+            // Open already: shown.
+            let path = dir.display().to_string();
+            if e.docs.order().iter().any(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&path))) {
+                return self.open_folder(e, &path).unwrap_or_else(|m| format!("open failed: {m}"));
+            }
+
+            self.extract_prompt = Some(crate::extract_prompt::ExtractPrompt::new(target, &dir));
+            self.extract_prompt_open = true;
+            return format!("{} is a project already: open it, or extract the tile over it?", dir.display());
+        }
+
+        self.open_exported(e, target, None, false).unwrap_or_else(|m| format!("open failed: {m}"))
     }
 
     /// Saves the open tile as an exported tile under `out` (`<out>/terrain/tiles/...` and the tile database), after saving its project.
@@ -963,10 +1044,8 @@ impl TileTool {
             return Err("the project has unsaved changes: save or undo them first".to_owned());
         }
 
-        let folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
-        let kit_folder = wce_tile::project_files::unmark_extracted(&folder);
-        if wce_tile::project_files::is_extracted(&folder) {
-            e.close_document(id);
+        let kit_folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
+        if wce_tile::project_files::is_extracted_dir(&d.project().dir) {
             return self.open_exported(e, &kit_folder, None, true);
         }
 
@@ -1783,6 +1862,16 @@ impl TileTool {
             };
 
             self.browse_rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
+
+            // The projects' extracted tiles (a variation's tile.wce marked), shown so.
+            self.browse_extracted.clear();
+            if !packs && self.browse_roots[self.browse_kit] == projects_raw {
+                let raw = &self.browse_roots[self.browse_kit];
+                self.browse_extracted = source.iter()
+                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
+                    .map(|en| en.key.clone())
+                    .collect();
+            }
             let by_key: HashMap<&str, usize> = source.iter().enumerate().map(|(i, en)| (en.key.as_str(), i)).collect();
             let (fav, recent) = self.browse_marks.as_ref().expect("read above");
             let row = |r: &TileRef| (r.source == src).then(|| by_key.get(r.key.as_str()).copied()).flatten().filter(|&i| pass(&source[i]));
@@ -1799,6 +1888,7 @@ impl TileTool {
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
             let selected_key = &mut self.browse_selected;
             let favs = &self.browse_fav_keys;
+            let extracted = &self.browse_extracted;
 
             // Favourites and recent tiles first: a double-click opens a favourite's first variation, a recent tile's variation opened.
             let open_row = |en: &wce_formats::tile_index::TileIndexEntry, variation: &str| {
@@ -1815,7 +1905,7 @@ impl TileTool {
                 for (i, &r) in self.browse_fav_rows.iter().enumerate() {
                     let en = &entries[r];
                     gui::push_id_int(i as i32);
-                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "");
+                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "", extracted.contains(&en.key));
                     if clicked {
                         selected_key.clone_from(&en.key);
                     }
@@ -1843,7 +1933,7 @@ impl TileTool {
                     let en = &entries[*r];
                     gui::push_id_int(i as i32);
                     let note = if variation.is_empty() { String::new() } else { format!("  ({variation})") };
-                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note);
+                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note, extracted.contains(&en.key));
                     if clicked {
                         selected_key.clone_from(&en.key);
                     }
@@ -1868,7 +1958,7 @@ impl TileTool {
             gui::clipped(rows.len(), |i| {
                 let en = &entries[rows[i]];
                 gui::push_id_int(i as i32);
-                let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), "");
+                let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), "", extracted.contains(&en.key));
                 if clicked {
                     selected_key.clone_from(&en.key);
                 }
@@ -1916,13 +2006,13 @@ impl TileTool {
 
         gui::end();
         if let Some((xml, variation, key, variation_name)) = open {
-            // A pack tile: its folder (`terrain/tiles/<kind>/.../<variation>`) through open_exported.
+            // A pack tile: its folder (`terrain/tiles/<kind>/.../<variation>`) extracted (asked first when a project is there).
             let msg = if packs {
-                self.open_exported(e, &format!("{key}/{}", variation_name.to_lowercase()), None, false)
+                self.extract_or_ask(e, &format!("{key}/{}", variation_name.to_lowercase()))
             } else {
-                self.open_tile(e, &xml, &variation)
+                self.open_tile(e, &xml, &variation).unwrap_or_else(|m| format!("open failed: {m}"))
             };
-            e.status(&msg.unwrap_or_else(|m| format!("open failed: {m}")), false);
+            e.status(&msg, false);
         }
     }
 
@@ -2129,16 +2219,21 @@ impl TileTool {
 }
 
 /// A browser row matches when every word is in its location, file name, set or variation names, in any case.
-/// A row of the Tiles panel: the tile's colour, its location, size and variations (and `note`), and its star on the right. Returns whether
-/// the row was clicked, double-clicked, and whether the star was.
-fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favourite: bool, note: &str) -> (bool, bool, bool) {
+/// A row of the Tiles panel: the tile's colour, its location, size and variations (and `note`), a package when it is an extracted tile, and
+/// its star on the right. Returns whether the row was clicked, double-clicked, and whether the star was.
+fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favourite: bool, note: &str, extracted: bool) -> (bool, bool, bool) {
     gui::color_swatch("##c", [en.red / 255.0, en.green / 255.0, en.blue / 255.0, 1.0], gui::v2(12.0, 12.0));
     gui::same_line();
     let prefix = format!("terrain/tiles/{}/", en.kind);
     let shown = en.key.strip_prefix(&prefix).unwrap_or(&en.key);
     let vars = if en.variations.len() > 1 { format!("  +{}v", en.variations.len()) } else { String::new() };
     let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
-    let clicked = gui::selectable_sized(&format!("{shown}  {}x{}{vars}{note}", en.width, en.height), selected, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(width, 0.0));
+    let mark = if extracted { format!("  {}", icons::PACKAGE) } else { String::new() };
+    let clicked = gui::selectable_sized(&format!("{shown}  {}x{}{vars}{note}{mark}", en.width, en.height), selected, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(width, 0.0));
+    if extracted && gui::is_item_hovered() {
+        gui::set_tooltip("Extracted from the game's packs (wce_extracted_tile)");
+    }
+
     let double = clicked && gui::is_mouse_double_clicked(0);
     gui::same_line();
     gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
@@ -2398,6 +2493,7 @@ impl Tool for TileTool {
         self.draw_create_panel(e);
         self.draw_new_set_popup(e);
         self.draw_new_tile_dialog(e);
+        self.draw_extract_prompt(e);
         self.draw_quick_add(e);
     }
 
@@ -2425,10 +2521,19 @@ impl Tool for TileTool {
             }
         }
 
+        if gui::menu_item("Migrate old extracted projects", None, false, true) {
+            let msg = self.migrate_extracted(e).unwrap_or_else(|m| format!("migration failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Moves the projects of tiles extracted by older versions (<tile>_extracted folders) to their own names, marked as extracted tiles; one whose place has a project, or that is open, stays (see the log).");
+        }
+
         if gui::menu_item("Open exported tile...", None, false, true)
             && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
         {
-            let msg = self.open_exported(e, &dir.display().to_string(), None, true).unwrap_or_else(|m| format!("open failed: {m}"));
+            let msg = self.extract_or_ask(e, &dir.display().to_string());
             e.status(&msg, false);
         }
 
@@ -2439,14 +2544,14 @@ impl Tool for TileTool {
         }
 
         gui::separator();
-        let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted(&d.project().dir.to_string_lossy())));
+        let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
         if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
             let msg = self.save_for_kit(e, None).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
             e.status(&msg, false);
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit, without the extracted mark; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
+            gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
         }
 
         if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {

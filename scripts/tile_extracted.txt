@@ -1,0 +1,22 @@
+# An extracted tile is a project at its own folder and entry, its tile.wce marked wce_extracted_tile: opened again it is shown, extracted
+# again (--fresh) over a saved project it replaces it, the kit's tile of that name opens it, and its other variation is extracted too.
+# Run with WCE_TILE_WORKSPACE set to a scratch folder and the game's packs mounted (the app starts with one document open).
+open_exported terrain/tiles/battle/farm_western/1x1/aa
+frames 3
+assert_documents 2
+open_exported terrain/tiles/battle/farm_western/1x1/aa
+frames 3
+assert_documents 2
+paint raise 100 100 50
+save
+open_exported terrain/tiles/battle/farm_western/1x1/aa --fresh
+frames 3
+assert_documents 2
+assert_modified 0
+tile farm_western_1x1
+frames 3
+assert_documents 2
+tile farm_western_1x1 ab
+frames 3
+assert_documents 3
+quit

@@ -320,8 +320,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "open_exported", "open_exported <exported tile folder | terrain/tiles/... in the packs> [workspace folder] [--fresh]",
-        "open an exported tile: decompile it into a TEd project in the workspace (the Tile settings' workspace) and open that; a pack tile \
-         decompiled before opens the workspace's copy unless --fresh",
+        "open an exported tile: decompile it into a project at its own folder in the workspace (the projects), its tile.wce marked \
+         wce_extracted_tile, and open that; a project there already (extracted before, or the kit's tile saved) opens instead, unless \
+         --fresh: extracted over it (the Tiles panel and the menu ask first)",
         |e, a| {
             let fresh = a.iter().any(|x| x == "--fresh");
             let a = a.iter().filter(|x| *x != "--fresh").collect::<Vec<_>>();
@@ -952,7 +953,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} manual tree(s) outside every vegetation exclusion polygon{}{}", trees.len(), if shown.is_empty() { "" } else { ": " }, shown.join(", ")))
     });
 
-    c.add("save_for_kit", "save_for_kit [raw_data folder]", "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder), without the extracted mark", |e, a| {
+    c.add("save_for_kit", "save_for_kit [raw_data folder]", "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder)", |e, a| {
         let kit = a.first().map(std::path::PathBuf::from);
         with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
     });
@@ -981,6 +982,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
         let t = new_tile::NewTile { name, cells_x, cells_y, height, density, seed: new_tile::clock_seed() };
         with_tile(e, |tool, e| tool.create_tile(e, &t).map_or_else(fail, ok))
+    });
+
+    c.add("extract", "extract <exported tile folder | terrain/tiles/... in the packs>", "extract a tile as the Tiles panel's packs and Tile > Open exported tile... do: asked first when a project is there (open it, overwrite, cancel)", |e, a| {
+        let Some(target) = a.first().cloned() else { return fail("usage: extract <exported tile folder | terrain/tiles/...>") };
+        with_tile(e, |t, e| ok(t.extract_or_ask(e, &target)))
+    });
+
+    c.add("migrate_extracted", "migrate_extracted", "move the projects of tiles extracted by older versions (<tile>_extracted) to their own names, marked as extracted tiles (Tile > Migrate old extracted projects)", |e, _| {
+        with_tile(e, |t, e| t.migrate_extracted(e).map_or_else(fail, ok))
     });
 
     c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {

@@ -1,11 +1,10 @@
 //! Where a tile is saved and how it reaches the Assembly Kit (`wce_tile::project_files`). A tile is saved as `tile.wce` in the projects
 //! folder (`<projects>/assembly_kit`, laid out like a kit's raw_data), never in the Assembly Kit: the first save of a tile opened from a kit
 //! makes its project (the tile's folder and its database entry copied there) and the document goes on from there. "Save for Assembly Kit"
-//! writes a tile TEd reads into the kit, without the extracted mark.
+//! writes a tile TEd reads into the kit.
 
 use std::path::{Path, PathBuf};
 
-use wce_tile::project_files::{EXTRACTED, entry_with_location_mark, unmark_extracted};
 
 use super::TileDocument;
 
@@ -21,25 +20,16 @@ fn kind_of(folder: &str) -> String {
     folder.split('/').nth(2).unwrap_or("battle").to_lowercase()
 }
 
-/// Copies a kit's tile database entry (`<raw>/terrain/tiles/<kind>/_tile_database/TILES/<name>.xml`) into the raw_data `to_raw` with its
-/// location's extracted mark set or removed (`mark`), and the kit's `_settings.xml` when that has none. A file it replaces gets a `.bak`.
+/// Copies a kit's tile database entry (`<raw>/terrain/tiles/<kind>/_tile_database/TILES/<name>.xml`) into the raw_data `to_raw`, and the
+/// kit's `_settings.xml` when that has none. A file it replaces gets a `.bak`.
 ///
 /// # Errors
 ///
 /// A file can't be read or written.
-fn copy_entry(entry_xml: &Path, from_raw: &Path, to_raw: &Path, kind: &str, mark: Option<bool>) -> Result<PathBuf, String> {
+fn copy_entry(entry_xml: &Path, from_raw: &Path, to_raw: &Path, kind: &str) -> Result<PathBuf, String> {
     let database = |raw: &Path| raw.join("terrain/tiles").join(kind).join("_tile_database");
     let name = entry_xml.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let name = match mark {
-        Some(false) => name.replace(&format!("{EXTRACTED}.xml"), ".xml"),
-        _ => name,
-    };
-
     let text = std::fs::read_to_string(entry_xml).map_err(|e| format!("{}: {e}", entry_xml.display()))?;
-    let text = match mark {
-        Some(m) => entry_with_location_mark(&text, m),
-        None => text,
-    };
 
     let tiles = database(to_raw).join("TILES");
     std::fs::create_dir_all(&tiles).map_err(|e| format!("{}: {e}", tiles.display()))?;
@@ -104,7 +94,7 @@ impl TileDocument {
         if let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone())
             && !has_entry
         {
-            copy_entry(entry.file(), &from_raw, &to_raw, &kind_of(&folder), None)?;
+            copy_entry(entry.file(), &from_raw, &to_raw, &kind_of(&folder))?;
         }
 
         Ok(target)
@@ -127,8 +117,8 @@ impl TileDocument {
         p.raw_root = raw;
     }
 
-    /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder without the extracted mark,
-    /// with its database entry (the location without the mark). Files it replaces get a `.bak`. The procedural walls need `walls`: they are
+    /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
+    /// Files it replaces get a `.bak`. The procedural walls need `walls`: they are
     /// written as their pieces (`wce_walls::export::walls_for_kit`), and a tile without walls takes its old pieces out of the pack.
     ///
     /// # Errors
@@ -137,7 +127,6 @@ impl TileDocument {
     pub fn save_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>) -> Result<String, String> {
         self.end_stroke();
         let folder = tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
-        let folder = unmark_extracted(&folder);
         let target = kit_raw.join(&folder);
         let text = self.tile().tscene().save();
         let (msg, report) = match walls {
@@ -171,7 +160,7 @@ impl TileDocument {
         }
 
         if let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone()) {
-            copy_entry(entry.file(), &from_raw, kit_raw, &kind_of(&folder), Some(false))?;
+            copy_entry(entry.file(), &from_raw, kit_raw, &kind_of(&folder))?;
         }
 
         Ok(msg)
@@ -219,25 +208,6 @@ pub struct WallSources<'a> {
     pub files: &'a dyn wce_vfs::files::Files,
     pub schema: &'a rpfm_lib::schema::Schema,
     pub data: &'a Path,
-}
-
-/// An extracted tile's database entry (written by the decompile) marked: its file renamed and its location with the mark.
-///
-/// # Errors
-///
-/// The entry can't be read or written.
-pub fn mark_extracted_entry(entry_xml: &Path) -> Result<PathBuf, String> {
-    let name = entry_xml.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if name.ends_with(&format!("{EXTRACTED}.xml")) {
-        return Ok(entry_xml.to_path_buf());
-    }
-
-    let text = std::fs::read_to_string(entry_xml).map_err(|e| format!("{}: {e}", entry_xml.display()))?;
-    let target = entry_xml.with_file_name(name.replace(".xml", &format!("{EXTRACTED}.xml")));
-    std::fs::write(&target, entry_with_location_mark(&text, true)).map_err(|e| format!("{}: {e}", target.display()))?;
-    std::fs::remove_file(entry_xml).map_err(|e| format!("{}: {e}", entry_xml.display()))?;
-    wce_formats::tile_index::TileIndex::forget_shared();
-    Ok(target)
 }
 
 impl TileDocument {
