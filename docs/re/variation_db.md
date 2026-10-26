@@ -87,7 +87,7 @@ variations allow it and its role, rename / remove (the game's values locked unle
 (`clone_value`: a new value every variation allows exactly when it allows the source), add values (data and unused categories; code-fed
 ones in Expert), add / rename / remove categories (Expert, or categories the game never asks for); a coverage grid (season x
 precipitation x time of day for one value of every other category: files the game picks from, `*` = after the default_map retry,
-red = none; a cell lists its files and adds a file for exactly its conditions); the variations with a per-category conditions grid
+red = none; values the game never sends are left out; open by default; a cell lists its files and adds a file for exactly its conditions); the variations with a per-category conditions grid
 (All / None); the file's problems and `variation_rules::check` (climates checked against the packs' battle tile database). Undo /
 Redo. Files: Open (.bin or .xml), Save (both forms into `<output>/warscape_asset_variation_db/`), Save As (format by extension),
 Convert (a file to the other format without opening it); saving is refused when the game would lose weather, unless "save anyway".

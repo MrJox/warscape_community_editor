@@ -119,12 +119,13 @@ fn report<E: ToString>(st: &mut VariationEditState, result: Result<(), E>, done:
 /// Draws the editor; true when the database changed this frame.
 pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditState, vfs: Option<&Vfs>, tile_climates: Option<&[String]>) -> bool {
     let mut changed = false;
-    draw_bits(db);
-    gui::same_line();
     gui::checkbox("Expert", &mut st.expert);
     if gui::is_item_hovered() {
         gui::set_tooltip("Unlocks the values and categories the game's code sends (season, precipitation, ...). Changing them costs battles their weather.");
     }
+
+    gui::same_line();
+    draw_bits(db);
 
     if !st.message.is_empty() {
         gui::text_colored(theme::warning(), &st.message);
@@ -154,7 +155,7 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
     }
 
     if !db.entries().is_empty() {
-        if gui::collapsing_header("Coverage", 0) {
+        if gui::collapsing_header("Coverage", gui::TREE_DEFAULT_OPEN) {
             changed |= draw_coverage(db, st);
         }
 
@@ -185,7 +186,7 @@ fn draw_bits(db: &AssetVariationDb) {
         };
 
         gui::same_line();
-        gui::color_swatch(&format!("##bit{bit}"), colour, gui::v2(11.0, gui::text_line_height()));
+        gui::color_swatch(&format!("##bit{bit}"), colour, gui::v2(8.0, gui::text_line_height()));
         if gui::is_item_hovered() {
             gui::set_tooltip(&tip);
         }
@@ -387,7 +388,11 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
         return false;
     };
 
-    let (rows, c0, c1) = (rows.values().clone(), c0.values().clone(), c1.values().clone());
+    // Values the game never sends would only add red rows and columns.
+    let asked = |category: &str, values: &[String]| {
+        values.iter().filter(|v| variation_rules::value_role(category, v) != Role::Unused).cloned().collect::<Vec<_>>()
+    };
+    let (rows, c0, c1) = (asked(ROWS, rows.values()), asked(COLUMNS[0], c0.values()), asked(COLUMNS[1], c1.values()));
     let key = db.entries()[st.entry].key().clone();
 
     // The other categories: one value each.
@@ -473,7 +478,11 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
         gui::end_table();
     }
 
-    gui::text_colored(theme::dim(), "Files the game picks from. * only after asking again with default_map; red: no weather. Click a cell for its files.");
+    gui::push_text_wrap_pos(0.0);
+    gui::text_colored(
+        theme::dim(), "Files the game picks from. * only after asking again with default_map; red: no weather. Click a cell for its files. Values the game never sends are left out.",
+    );
+    gui::pop_text_wrap_pos();
 
     // The picked cell: its files, and a new one for exactly its conditions.
     let Some(cell) = st.cell.clone().filter(|c| rows.contains(&c[0]) && c0.contains(&c[1]) && c1.contains(&c[2])) else { return false };
