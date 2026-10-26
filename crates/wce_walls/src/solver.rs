@@ -1,4 +1,4 @@
-//! A wall's spline to its layout (docs/plans/procedural_walls.md, "The solver"): the centre line, its corners, the ground along the outer
+//! A wall's spline to its layout (docs/plans/procedural_walls.md, "Design (as built)"): the centre line, its corners, the ground along the outer
 //! face and the stepped walkway. Scene units throughout (x, z horizontal, y up; the models' units). Pure: the ground comes in as a
 //! function, so the editor and the tests share it.
 //!

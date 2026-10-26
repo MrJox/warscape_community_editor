@@ -91,8 +91,8 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
   0.239849), `g_detail_normal_uv_scale1/2` 15.8 / 5, `g_detail_normal_uv_speed1/2` 7.8 / 6.8, `g_transparency_exponential_scale` 4,
   `g_foam_anim_data` (33, 34, 0.650017, 0) (two animation frames and the blend between them, it seems). The waterplane materials have their
   own copies of `OceanSharedConstants` (other values: 1 / 1 / 0, all zero).
-- **Still to trace** before the ocean can be drawn: how the sea bed info texture is filled (from the terrain heights?), the radial mesh's
-  vertex layout and placement, the sea / swell / foam-animation simulation, and where the constants come from (environment, settings).
+- **Still to trace** (the surfaces, foam animation and constants were traced 2026-10-20, below): how the sea bed info texture is filled
+  and the radial mesh's vertex layout and placement.
 - How this was found (reusable): string VAs scanned in .text, Ghidra headless decompiles (`C:\Users\frodo\ghidra_work`), and a minidump
   read with a small reader (module list + Memory64 list): count heap objects by vtable, follow pointers from known objects, and read
   variable objects (+0x08 name, +0x14 slot in the cbuffer's CPU copy).
@@ -144,7 +144,14 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
   - Not found: the code that fills the radial mesh (80 segments of a sin / cos table, 164 rings; `[0x24]`, `[0x25]` = 43.2, 2.72 at the
     dumped camera), so how the frames' heights (and the slope images) move the vertices is not known; and what the engine writes into the
     sea bed info texture.
-- **The editor (2026-10-19, interim; 2026-10-20 the surfaces, whitecaps and wind)**: `renderer/ocean.rs` draws the sea planes with these shaders and the dump's constants, the sea bed
-  texture built from the scene's terrains, `combined_foam.dds` and `water_detail_normal.dds`; still sea (neutral sea / swell surfaces),
-  no whitecaps (empty foam array), a grid instead of the radial mesh. The shore foam already shows. To do: the surfaces' simulation,
-  the foam animation, the radial mesh, the sea bed texture's real content and the constants' sources.
+- **The editor (2026-10-19; 2026-10-20 the surfaces, whitecaps and wind)**: `crates/wce_render/src/renderer/ocean.rs` (the files:
+  `crates/wce_render/src/sea_surface.rs`) draws the sea planes with these shaders, the wind's table row and prebaked surfaces, the
+  whitecap array, `combined_foam.dds` and `water_detail_normal.dds`. Stand-ins: a quadtree grid instead of the radial mesh, displaced by
+  the blended sea and swell heights; the sea bed texture built from the scene's terrain heights (512 x 512, encoded for the shader's
+  `r * 25 - 20`; it only changes how the waves flatten near the shore).
+- **How to settle the radial mesh and the sea bed texture** (both GPU-only): a RenderDoc (or PIX) capture of Attila (DX11) in a coastal
+  battle with the shore in view. At the ocean draw (`ocean.hlsl` vs30_main / ps30_main_*_water_quality) save: 1. the vertex buffer
+  (POSITION0 displaced, POSITION1 rest, TEXCOORD0) with that draw's camera: the rings' radii and, against the sea / swell frames of the
+  same time (`g_foam_anim_data` gives the sea frame), the displacement (heights only or the slope images too; scaling); 2. the texture
+  bound to `g_sea_bed_info_texture` (VS t0): format and pixels, against the map's `lf_sea_height_map.dds` and the terrain heights;
+  3. the `ocean_VS` and `OceanSharedConstants` buffers, to recheck the values taken from the tables.

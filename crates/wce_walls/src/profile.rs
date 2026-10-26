@@ -1,4 +1,4 @@
-//! What the generator knows of a base wall (docs/plans/procedural_walls.md, "The wall families" and "The kit table"): its family's frame,
+//! What the generator knows of a base wall (docs/re/buildings.md, "The families" and "The kit table"): its family's frame,
 //! walkway, outer face and how it changes height. In the piece's frame (scene units, which are the models' units): x along the wall, -z
 //! the outer side, y = 0 the ground the piece stands on.
 

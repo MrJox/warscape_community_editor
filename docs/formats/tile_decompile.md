@@ -18,7 +18,10 @@ The kit's raw tiles are not always what the packs were exported from, nor what B
 - 167 pack tiles ship a flat CHMF (range ~1e-13) and a flat terrain mesh where the kit's tile has relief; rolling_valley tiles ship ~0.18
   times the kit's relief.
 - farm_*, town_greek_plains, roads_* and sea_coast differ in decal rotations and heights, some building groups in their simple meshes'
-  yaw (a constant per group).
+  yaw (a constant per group: 208 simple meshes agree, 939 differ by 90, 180, 275 degrees ...).
+- Decals: 1,660,832 of the paired agree. The rest (farm_eastern / farm_western, arbitrary yaws) and 256k unpaired at another height
+  are in those families; there the binary's y looks terrain-relative (kit y ~ ground + 2 y, off by 0.1 to 0.7 m), everywhere else
+  absolute (2 y). Whether TEd's exporter writes some decals relative to the ground is open (docs/plans/tile_roundtrip.md).
 
 ## Frames
 

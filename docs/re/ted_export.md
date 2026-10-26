@@ -47,5 +47,5 @@ the model path). The groups come out in the order of a `CA::HashTableNoRemove<MA
 - **Table** (CAHashTable.inl): slot = hash % capacity, linear probing that wraps; when every slot is full the table grows to
   capacity * 2 + 1 and re-inserts in slot order. The initial capacity is 13.
 - Keys are inserted in the order their first record is added. This gives the group order of all 554 `prop_marker.markers` of the packs
-  (`tile_marker_keys`). The same table (EmpireUtility) orders BOB's BMD props, which the vegetation port does not reproduce yet
-  (docs/re/vegetation.md).
+  (`tile_marker_keys`). The same table (EmpireUtility) orders BOB's BMD props, which the vegetation writer reproduces
+  (`stage_c`, `compile::marker_table_order`; docs/re/vegetation.md).

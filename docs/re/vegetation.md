@@ -331,7 +331,8 @@ height (List heights) for every type, and checks the model file only for trees. 
   chimney smoke (outfield_tents).
 - **Order**: the markers of a key are in generation order, props before decals. The keys come out in the order of BOB's `MARKER_TABLE`, a
   tree of the key's path parts in a `CA::HashTableNoRemove` (linear probing; the hasher `FUN_10011aa0` didn't decompile) walked by its flat
-  marker iterator. That is not reproduced yet: the port puts the keys in the order they first appear. The order has no effect in the game. The table's hash and growth are now known (docs/re/ted_export.md, "Marker tables").
+  marker iterator (docs/re/ted_export.md, "Marker tables"). `vegetation::generated_props` groups the keys in first-seen order; the
+  writer (`wce_tile_io::attila::stage_c`) reorders them with `compile::marker_table_order`, as BOB. The order has no effect in the game.
 - rpfm read the v4 particle emitter marker with the emission rate before the transform; it comes after it (fixed in the fork). Read the
   wrong way round, the position lands in m23 and every element moves one place, which the identity rotation and the emission rate of 1
   hid.
@@ -372,8 +373,7 @@ that sets variables by name hash would not show up in this search; only a memory
     places inside a polygon (ctesiphon) is a static tree on the half-metre grid, so ctesiphon is exact.
   - The yurt file's only `<include_in_outfield />` has a non-breaking space before `/>`, so in BOB no object has the flag.
   - Settled: list heights (List heights, above). The game ignores the stored y anyway (trees go on the terrain).
-  - Done: props, decals and VFX, the static trees and the per-climate conversions (above). Writing the files is not done (the
-    editor generates and draws them).
+  - Done: props, decals and VFX, the static trees and the per-climate conversions (above), and writing the files (The writers, below).
 - **Grass, settled as far as the game's static code goes:**
   - The playable-area box: the tile's grass list is moved into the battle's frame (`GRASS_LIST::transform`, a 4×3 matrix per tile
     when the battle map is assembled) and patches must fit in ±s around the battle's origin. That depends on the battle, not on the
@@ -391,6 +391,9 @@ that sets variables by name hash would not show up in this search; only a memory
     `vegetation_season` (the tile's ground season).
 - `tree_metadata.txt` LOD distances vs the models' own.
 - The second instance matrix (untilted) vs the shader's TEXCOORD0..2 / 3..5: the editor feeds the tilted matrix to both.
+- Winding (2026-10-20): the dead tree models' normals run along the triangle winding, the pines' against it. Drawing trees two-sided
+  (most of the tree material's rasterizer descriptions, fn 0x116e5130, are CULL_NONE) changed nothing visible; which description the
+  G-buffer pass uses is not traced.
 
 ## The writers (2026-10-24)
 

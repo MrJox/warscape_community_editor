@@ -56,6 +56,9 @@ No ids: an edge's nodes come from geometry. Every vanilla instance has `add_boun
 - **Wall:** one open polyline per continuous wall run, endcap to endcap or into a no-go region, through gates and towers, on the walkway
   centre (8 m walls on the piece axis, 15 m walls 5 su to the city side), ~10 su samples on curves. None over walls inside no-go. Its ends
   touch no node; the nodes along it abut it (0-5 su).
+- **Obstacles:** CA's areas lie over buildings' `orange_thingies` (plazas, temple floors, roads stand on them); only hard collision
+  outlines bound the graph, and it runs over the siege barricades across the streets. Buildings with no hard outline (garden walls,
+  decorations) block nothing.
 - **Topology:** one connected street graph (72 of 73) with cycles: a ring road inside the walls, the major capture ~4 hops from each gate.
 - **Fort perimeter:** exactly one closed `AIH_FORT_PERIMETER`, ~10-14 su outside the walls, along the no-go edges where there is no wall;
   holds every node but some entries, every capture and the walls. A `PALT_FORT` separator often runs along it. 3-8 two-point

@@ -1,7 +1,7 @@
 //! The joints of a project's procedural walls with what they touch, once lowered (`export::lower_walls`): every end of a generated
 //! piece must meet another piece's end exactly, in place, height and direction, as the game's own walls do. In game, joints off by a
 //! fraction of a unit or a degree (a wall leaving a gate at an angle, a bastion on a curve) let ladders and towers dock while units could
-//! not cross onto the wall (docs/plans/procedural_walls.md, "Docking").
+//! not cross onto the wall (docs/re/buildings.md, "Wall pieces").
 //!
 //!   cargo run --release -p wce_walls --example wall_joint_check -- <game folder> <mod packs a.pack;b.pack> <rpfm schema_att.ron>
 //!       <project folder>

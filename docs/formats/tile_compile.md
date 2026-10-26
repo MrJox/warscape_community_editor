@@ -407,11 +407,11 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
       - Inside test (`FUN_10a81810`): crossings over the edges (first, last), (first, second), …. An edge counts when y lies in
         [low, high) and the point is left of it.
   - **The subtile filter** (`FUN_100886f0`): after simplifying, an outline stays only when every point's subtile,
-    `(int)(x x f32(1 / 256))`, passes `subtile_masked_valid`. That means inside the tile, and in the mask on a masked tile (not
-    ported). So outlines touching the right or bottom edge (2 (w - 1)) are dropped.
+    `(int)(x x f32(1 / 256))`, passes `subtile_masked_valid`. That means inside the tile, and in the mask on a masked tile (read
+    with the field's y, as BOB does: see "Unverified in stage B"). So outlines touching the right or bottom edge (2 (w - 1)) are
+    dropped.
   - Byte for byte on dense_forest_rugged/8x8/ac (28 outlines), sea_coast/2x2_bt_inner/2x2_aa,
     settlement_nordic_cities/nordic_city_c/minor (three go regions, two edge outlines dropped) and the gentle tiles (empty).
-    Masked tiles' mask test is not handled yet.
 - `ground_type_map.PNG` (upper case) is BOB's too (Windows); the project carries such a file as is, stage B reads it.
 - **DDS** (`write_dds_ATI_compressor`): levels down to log2 of the larger side truncated (8 for 384), each the 2 x 2 box of the one above
   ((sum + 2) >> 2, the last row and column clamped); header flags 0xa1007, the first level's size, caps 0x401008.
@@ -426,6 +426,42 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   (40 m of relief), blend, index and ground types on western_city_b/small (BOB stops before its normal map: the kit lacks its buildings'
   height-map meshes), but 2 colour blocks of western_city_b/small's index (of 133,000): the 2008 refinement reads, for the padding of
   a 4-colour group, error and colour slots it never writes (its stack), so a stale NaN can stop a refinement pass in rare blocks.
+
+### Unverified in stage B (ported from the RE, no oracle yet)
+
+These paths follow the decompiled code but no BOB run has exercised them; check them when a tile that uses them turns up.
+
+- **Straight self tiling, links above and below** (`tile_links::straight_self_tiling`, the vertical branch): no vanilla 1 x 1 linking
+  tile links that way. The left-and-right branches are exact on river_shallow/1x1_blend, roads/1x1_straight and sea_coast/1x1.
+- **Straight self tiling from another tile's heights**: when the links' linking tiles don't end with the tile's own variation, BOB
+  loads the first one's `final_heights` instead of the tile's own field. Not seen in the kit.
+- **Water plane scale order**: the instance's `scale` is applied as rotation x scale (`compile::instances`). TEd's `world_transform`
+  for scaled entities was not reverse-engineered; the vanilla planes are unrotated, where the order doesn't matter.
+- **Water plane models of RMV2 version 6+** (pivot at block + 0x274): only the version-5 `water_plane.rigid_model_v2` was tried. A
+  plane whose first block isn't type 83 makes BOB stop the remaining planes; we do the same, untested.
+- **Link blend with a 4-point `blend_quad`**: no vanilla link has one.
+- **Link blend with `height_map_0`** (a linking tile that is the tile itself, outside self tiling): the PNG path, / 65535, untested.
+- **The DXT5 residual**: a few blocks in 10^5 differ (5 on dense_forest_rugged/8x8/ac, 3 on river/4x4_y_l1_r0_b3, 2 of
+  western_city_b/small's index). BOB is deterministic (two runs, same bytes); the port gives the same blocks in double or in float
+  (x87 precision is not the cause); the blocks are ordinary gradients that BOB fits slightly worse (squared error 232 against 230 on
+  river/4x4 block (304, 304)). So the codec's search starts from state left on the stack by an earlier block (uninitialised arrays,
+  the stale NaN above); modelling it needs that leak found in the compressor's code.
+- **Masked tiles in the link blend**: `FUN_10015610` skips a link whose cell fails `subtile_masked_valid(x, h - y - 1)`; ported, but
+  the masked oracle's links all fall in valid cells.
+- **Go outline chunks**: TBB cuts the rows into chunks of `max(rows / ((threads x 5 + 5) x 4), 64)` rounded down to 64, and each chunk
+  restarts the f32 y accumulation. We assume 64 (any thread count up to dozens on a tile this size); with no worker threads BOB runs
+  the range in one piece.
+- **Go outline space**: the field's origin (0, 0), spacing 2 and bounds ((w - 1) 2, (h - 1) 2) come from `FUN_1000b360` and the output
+  transform; the provider's own bounds accessors were not decompiled. Exact on the one go-region oracle.
+- **Mask orientation in the outline filter**: BOB passes the field's y (rows from the top) to `subtile_masked_valid`, whose rows count
+  from the bottom; we do the same. The masked oracle's mask (0011 1111 1111 0011) is symmetric top to bottom, so the orientation is
+  unchecked.
+- **Building stamps at density 32**: `rasterise_max_heights` writes by the stamp matrix's metres; whether BOB scales them to the
+  32-per-subtile samples was not checked (no mountain tile has stamps in the oracle set).
+- **Rivers, water planes and tile links at density 32**: scaled by the RE (`128 / T`), but the density-32 oracle has none.
+- **Unmasked tiles with density other than 128**: none in the kit. The unmasked fringe keeps its sample-index modulus.
+- **`optimise_spline` edge cases**: degenerate segments (repeated control points) and splines of 3 samples or fewer; the vanilla
+  rivers have neither.
 
 ## Stage C: BOB's Vegetation processor (`attila::stage_c`)
 

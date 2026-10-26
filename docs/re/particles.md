@@ -236,8 +236,11 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
     +0x78 = +0xb4 = 1.
   - The ring: fn 0x119eb652 (the CRT's sincosf) returns (sin, cos); x takes the cosine.
   - Seeds: all 509 vanilla emitters have RandomSeed -1 (random per instance in the game); the editor seeds from the entity id.
-  - Open: the rigid light's phase (the render parameters' +0x30 passed to fn 0x117f9800; 0 here) and the game's use of the marker's
-    season mask.
+  - Open: the rigid light's phase (the render parameters' +0x30 passed to fn 0x117f9800; 0 here, so every VFX fire light flickers in
+    sync, each with the right pattern). The parameters only pass through virtual calls; the static trace didn't reach their fill. To
+    settle it: in a battle with fires on screen, break on fn 0x118dc650 (the named-light submit) and log its fourth argument, or read the
+    live rigid-model instances in a memory dump. (The map's POINT_LIGHT_INSTANCEs' phase is done: `light_phase` in
+    `wce_tile_editor/src/tile_document/view.rs`.) Also open: the game's use of the marker's season mask.
 - **Rigid bursts** (fn 0x11895130): a burst at T makes round(lerp(RigidsPerBurst)) rigids spread over lerp(BurstIntervalLength), each
   living lerp(RigidLifeTime); the next burst is at T + lerp(BurstInterval) + length (Bursts of them unless InfiniteBursts). The fires'
   light keeps one rigid alive (64 s interval and life); the storm lightning (`library_vfx_weather_rain` lightning_point_light: 1-3
@@ -248,4 +251,5 @@ Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (
   The editor draws an effect only in its seasons (the terrain look's su / au / wi). The game's check of the mask was not traced.
 - **Rigid particles with other models** (debris, mud, splinters, icons, the blood and impact decals of action effects; no tile or
   battle weather effect uses them): each rigid is a physics body (fn 0x11829920: velocity * owner +0x38, orientation quaternion, angular
-  velocity, placed by fn 0x1184cf80) of the engine's rigid simulation; not drawn.
+  velocity, placed by fn 0x1184cf80) of the engine's rigid simulation, not traced further. The editor draws the placed effects' debris
+  rigids as ballistic models (`effect_rigids`; assumptions in docs/re/buildings.md, "Collapses between levels"); the decal and icon rigids are not drawn as the game does.
