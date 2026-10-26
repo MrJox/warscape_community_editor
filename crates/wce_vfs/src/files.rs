@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::{Vfs, generated, list_folder, normalize};
+use crate::{GameProfile, Vfs, generated, list_folder, normalize};
 
 /// The game's files, readable from any thread.
 pub trait Files: Send + Sync {
@@ -20,6 +20,11 @@ pub trait Files: Send + Sync {
 
     /// The normalized paths starting with `prefix` and, if not empty, ending with `extension`, sorted.
     fn list(&self, prefix: &str, extension: &str) -> Vec<String>;
+
+    /// The game the files are of, when they know it (the mounted packs do; an extracted copy doesn't: Attila's, by default).
+    fn game(&self) -> Option<&GameProfile> {
+        None
+    }
 }
 
 impl Files for Vfs {
@@ -37,6 +42,10 @@ impl Files for Vfs {
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
         Vfs::list(self, prefix, extension).into_iter().map(str::to_owned).collect()
+    }
+
+    fn game(&self) -> Option<&GameProfile> {
+        Some(self.profile())
     }
 }
 

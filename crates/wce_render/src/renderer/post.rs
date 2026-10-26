@@ -96,24 +96,45 @@ impl Renderer {
     }
 
     pub(crate) fn pass_tonemap(&mut self, env: &EnvironmentParams, dt: f32) {
-        let names = [TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y, TM_TONE_MAP];
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        // Rome 2: the statistics in log Y (its own shaders for steps 1 and 2), the S-curve from the single tones biases.
+        let names = if rome2 {
+            [TM_R2_DOWN, TM_R2_STATS, TM_R2_STATS_DOWN, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y, TM_TONE_MAP]
+        } else {
+            [TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y, TM_TONE_MAP]
+        };
         let shaders = names.map(|name| self.shader(name));
         let [Some(down), Some(stats), Some(stats_down), Some(points), Some(high), Some(bx), Some(by), Some(tm)] = shaders else { return };
+        let log_y = if rome2 { self.shader(TM_R2_LOG_Y) } else { None };
+        if rome2 && log_y.is_none() {
+            return;
+        }
+
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
-        // 1. A quarter-size copy with the luma in .w.
+        // 1. A quarter-size copy with the luma in .w (Rome 2: the colour only).
         self.bind_post(&down, &self.states.s_clamp_linear.clone());
         bind_srv(&self.ctx, &down, "g_hdr_rgb_texture_sampler", self.gbuffer.hdr.srv.as_ref());
         let quarter = self.post.quarter.clone();
         self.fullscreen_to(&quarter.t.rtv, quarter.w, quarter.h, &down);
 
-        // 2. The luma statistics pyramid down to 1x1 (min, max, average), clamped by the absolute points.
+        // Rome 2: the quarter image as log Y, x, y (into the second bloom target, free until the bloom).
         let mut src = self.post.quarter.t.srv.clone();
+        if let Some(log_y) = &log_y {
+            let target = self.post.bloom_b.clone();
+            self.bind_post(log_y, &self.states.s_clamp_point.clone());
+            bind_srv(&self.ctx, log_y, "g_hdr_rgb_texture_sampler", src.as_ref());
+            self.fullscreen_to(&target.t.rtv, target.w, target.h, log_y);
+            src = target.t.srv;
+        }
+
+        // 2. The luma statistics pyramid down to 1x1 (min, max, average), clamped by the absolute points.
+        let (first_in, next_in) = if rome2 { ("g_hdr_logYxy_texture_sampler", "g_logY_values_texture_sampler") } else { ("g_luma_values_texture_sampler", "g_luma_stats_texture_sampler") };
         for i in 0..self.post.stats.len() {
             let s = if i == 0 { &stats } else { &stats_down };
             self.bind_post(s, &self.states.s_clamp_point.clone());
-            bind_srv(&self.ctx, s, if i == 0 { "g_luma_values_texture_sampler" } else { "g_luma_stats_texture_sampler" }, src.as_ref());
+            bind_srv(&self.ctx, s, if i == 0 { first_in } else { next_in }, src.as_ref());
             let target = self.post.stats[i].clone();
             self.fullscreen_to(&target.t.rtv, target.w, target.h, s);
             src = target.t.srv;
@@ -124,7 +145,7 @@ impl Renderer {
         self.cbs.set_f("auto_exposure_buffer", "g_auto_exposure_dt", &[if self.clock.frame == 0 { 1000.0 } else { dt }]);
         self.bind_post(&points, &self.states.s_clamp_point.clone());
         bind_srv(&self.ctx, &points, "g_prev_black_and_white_points_sampler", self.tonemap.points[prev].t.srv.as_ref());
-        bind_srv(&self.ctx, &points, "g_luma_stats_texture_sampler", self.post.stats.last().and_then(|s| s.t.srv.as_ref()));
+        bind_srv(&self.ctx, &points, if rome2 { "g_logY_values_texture_sampler" } else { "g_luma_stats_texture_sampler" }, self.post.stats.last().and_then(|s| s.t.srv.as_ref()));
         let point_rtv = self.tonemap.points[cur].t.rtv.clone();
         self.fullscreen_to(&point_rtv, 1, 1, &points);
         self.tonemap.cur = cur;
@@ -162,8 +183,11 @@ impl Renderer {
         bind_srv(&self.ctx, &by, "g_hdr_rgb_texture_sampler", bloom_b.t.srv.as_ref());
         self.fullscreen_to(&bloom_a.t.rtv, bloom_a.w, bloom_a.h, &by);
 
-        // 5. The tone map, with bloom and the S-curve.
-        let curve = build_scurve(env);
+        // 5. The tone map, with bloom and the S-curve (Rome 2: of the single tones biases, one curve for the three channels).
+        let curve = match env.tones_bias_single.filter(|_| rome2) {
+            Some([low, high]) => build_scurve(&EnvironmentParams { low_tones_bias: [low; 3], high_tones_bias: [high; 3], ..env.clone() }),
+            None => build_scurve(env),
+        };
         if curve != self.tonemap.scurve_last {
             if let Some(tex) = &self.tonemap.scurve_tex {
                 let _ = self.ctx.update_subresource(tex, 0, None, bytemuck::cast_slice(&curve), 256 * 8, 0);

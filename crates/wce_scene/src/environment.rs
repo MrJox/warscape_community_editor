@@ -88,6 +88,9 @@ pub struct EnvironmentParams {
     pub low_tones_bias: [f32; 3],
     pub high_tones_bias: [f32; 3],
 
+    /// The single low / high tones biases of a file that has them (Rome 2's battle HDR node reads them; Attila's ignores them).
+    pub tones_bias_single: Option<[f32; 2]>,
+
     // POST_PROCESSING
     pub overlay: Float3,
     pub brightness: Float3,
@@ -174,6 +177,7 @@ impl Default for EnvironmentParams {
             high_pass_threshold: 10.0,
             low_tones_bias: [0.33; 3],
             high_tones_bias: [0.66; 3],
+            tones_bias_single: None,
             overlay: one,
             brightness: one,
             contrast: one,
@@ -327,6 +331,14 @@ pub fn read_environment(doc: &XmlDoc) -> EnvironmentParams {
         hdr.f(&format!("high_tones_bias_{channel}"), &mut e.high_tones_bias[i]);
     }
 
+    // Read for the renderer of a game that uses them (Rome 2).
+    let (mut low, mut high) = (f32::NAN, f32::NAN);
+    hdr.f("low_tones_bias", &mut low);
+    hdr.f("high_tones_bias", &mut high);
+    if !low.is_nan() || !high.is_nan() {
+        e.tones_bias_single = Some([if low.is_nan() { 0.33 } else { low }, if high.is_nan() { 0.66 } else { high }]);
+    }
+
     let pp = Reader::new(doc, "POST_PROCESSING");
     pp.rgb("overlay", &mut e.overlay);
     for (name, target) in [("brightness", &mut e.brightness), ("contrast", &mut e.contrast), ("saturation", &mut e.saturation)] {
@@ -412,6 +424,10 @@ pub fn blend_environments(a: &EnvironmentParams, b: &EnvironmentParams, t: f32) 
     r.high_pass_threshold = f(a.high_pass_threshold, b.high_pass_threshold);
     arr(&a.low_tones_bias, &b.low_tones_bias, &mut r.low_tones_bias);
     arr(&a.high_tones_bias, &b.high_tones_bias, &mut r.high_tones_bias);
+    r.tones_bias_single = match (a.tones_bias_single, b.tones_bias_single) {
+        (Some(x), Some(y)) => Some([f(x[0], y[0]), f(x[1], y[1])]),
+        (x, y) => x.or(y),
+    };
     r.overlay = v(a.overlay, b.overlay);
     r.brightness = v(a.brightness, b.brightness);
     r.contrast = v(a.contrast, b.contrast);
