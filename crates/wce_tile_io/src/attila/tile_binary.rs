@@ -400,6 +400,11 @@ fn read_building_list(name: &str, b: &[u8], tile: &mut Tile) -> std::result::Res
     let NodeType::Record(r) = esf.root_node() else { unreachable!() };
     let mut root = Node::new("BATTLEFIELD_BUILDING_LIST");
     root.set("version", Value::Int(i64::from(*r.version())));
+    // A few of Rome 2's lists have their string table in index order (its tools' writer).
+    if *esf.strings_in_index_order() {
+        root.set("strings_in_index_order", Value::Bool(true));
+    }
+
     for b in list {
         let mut n = Node::new("building");
         let v3 = |v: [f32; 3]| Value::Vec3(v.map(f64::from));
@@ -519,6 +524,7 @@ fn write_building_list(doc: &Document) -> std::result::Result<Vec<u8>, String> {
     list.set_children(vec![vec![NodeType::Record(Box::new(block))]]);
     let mut esf = ESF::default();
     esf.set_signature(ESFSignature::CAAB);
+    esf.set_strings_in_index_order(root.get("strings_in_index_order").and_then(Value::as_bool).unwrap_or(false));
     esf.set_root_node(NodeType::Record(Box::new(list)));
     let mut out = vec![];
     esf.encode(&mut out, &None).map_err(|e| e.to_string())?;
