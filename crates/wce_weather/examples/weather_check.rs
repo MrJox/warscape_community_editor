@@ -37,12 +37,12 @@ fn main() {
         ]
         .map(|(k, v)| (k.to_owned(), v.to_owned())),
     );
-    let r = db.matches_listed_map("environment", &q);
+    let r = db.matches("environment", &q);
     println!("query desert/summer/dry/day: {} files{}", r.variations.len(), if r.used_default_map { " (default_map retry)" } else { "" });
     for c in &r.variations {
         println!("  {}", c.filename());
     }
 
     let default = BTreeMap::from([("map".to_owned(), "default_map".to_owned())]);
-    println!("unconstrained query on default_map: {} files", db.matches_listed_map("environment", &default).variations.len());
+    println!("unconstrained query on default_map: {} files", db.matches("environment", &default).variations.len());
 }
