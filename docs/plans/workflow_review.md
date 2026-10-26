@@ -160,3 +160,9 @@ the decoder reads; the weight is the luminance times the alpha; bilinear over th
 height and paint brushes use it. The Inspector: "image brush", the file, Load image..., the turn or a random turn at every step; kept in
 `[tools.tile] brush_image`. Command `brush_image off | <file> [degrees | random]`; `scripts/tile_image_brush.txt` (%IMAGE%: a picture
 white on its left half: the stroke rises on one side only, the other after half a turn).
+
+**Done (step 5, the spline paint stroke):** `TileDocument::stroke_along` (TEd's Spline Paint Stroke, on the tile's own lines: the active
+brush, any of them, stroked along the selected spline's curve, polygon or line, round to the first point when the polygon is closed, e.g.
+not an AI hint line; a dab every quarter radius at the most a frame gives; one undo entry). The brush's Inspector: "Stroke along the
+selected line" (select the line first, then pick the brush). Commands `stroke_along`, `brush_paint <group> <variation>`, `brush_ground
+<type>`; `scripts/tile_stroke_along.txt` (a closed no-go square painted and given a road round its edge, undone; a wall spline).

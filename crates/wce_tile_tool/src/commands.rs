@@ -748,6 +748,36 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("brush_paint", "brush_paint <group 0-3> <variation 0-3>", "what the paint brush lays (the entry's texture group and its variation)", |e, a| {
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten().filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1));
+        let Some((g, v)) = parsed else { return fail("usage: brush_paint <group 0-3> <variation 0-3>") };
+        with_tile(e, |t, _| {
+            t.paint_channel = g as u8 * 4 + v as u8;
+            ok("")
+        })
+    });
+
+    c.add("brush_ground", "brush_ground <ground type | none>", "what the ground types brush paints (a name with spaces in quotes)", |e, a| {
+        let ground = a.first().and_then(|n| if n == "none" { Some(GROUND_ERASE) } else { GROUND_TYPES.iter().position(|(g, _)| g == n).map(|i| i as u8) });
+        let Some(ground) = ground else { return fail("usage: brush_ground <ground type | none>") };
+        with_tile(e, |t, _| {
+            t.ground_type = ground;
+            ok("")
+        })
+    });
+
+    c.add("stroke_along", "stroke_along", "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)", |e, _| {
+        let sel = primary(e);
+        with_tile(e, |t, e| {
+            let (Some(sel), Some(kind)) = (sel, t.brush_kind()) else { return fail("select a spline, polygon or line, with a brush mode active") };
+            let Some(d) = document(e) else { return no_tile() };
+            match d.stroke_along(kind, sel, &t.brush) {
+                Ok(n) => ok(format!("{n} dabs")),
+                Err(why) => fail(why),
+            }
+        })
+    });
+
     c.add("falloff_window", "falloff_window 0|1", "close or open the Brush Falloff window", |e, a| {
         let on = a.first().is_some_and(|x| x == "1");
         with_tile(e, |t, _| {

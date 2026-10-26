@@ -1,0 +1,36 @@
+# The brush stroked along a line (TEd's Spline Paint Stroke; docs/plans/workflow_review.md, section 3): a new 2 x 2 tile at density 32, a
+# square no-go polygon (closed: the stroke goes round to its first point), painted along with group 2 and then road ground type; each
+# stroke one undo entry; a new spline (a wall spline) stroked too. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_stroke_along_test 2 2 10 32
+frames 5
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||60,60;140,60;140,140;60,140"
+frames 2
+tile_mode paint
+brush_paint 2 0
+brush 8 6 0.5 0 1
+stroke_along
+assert_blend 100 60 2 0 30000
+assert_blend 60 100 2 0 30000
+assert_blend 100 100 0 0 65535
+tile_mode ground
+brush_ground road
+stroke_along
+assert_ground_type 140 100 road
+assert_ground_type 100 100 none
+undo
+assert_ground_type 140 100 none
+assert_blend 100 60 2 0 30000
+undo
+assert_blend 100 60 0 0 65535
+redo
+assert_blend 100 60 2 0 30000
+tile_mode select
+add_polygon "WceWallSpline|barbarian_fort_straight|30,200;100,220;170,200"
+frames 2
+tile_mode ground
+stroke_along
+assert_ground_type 30 200 road
+assert_ground_type 170 200 road
+assert_ground_type 100 160 none
+tile_mode select
+quit
