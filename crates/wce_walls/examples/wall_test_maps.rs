@@ -100,7 +100,7 @@ fn run() -> Result<(), String> {
         return Err("usage: wall_test_maps <game folder> <wce_wall_spike.pack> <out .pack> <workspace folder> [--vanilla]".to_owned());
     };
 
-    let game = Game::load(Path::new(game_dir))?;
+    let game = Game::load(wce_foundation::game::GameProfile::from_env(), Path::new(game_dir))?;
     for w in &game.warnings {
         println!("game: {w}");
     }

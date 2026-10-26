@@ -44,6 +44,9 @@ pub struct Context<'a> {
     /// The `destruct_thresholds` of a building key (TEd exports level k, between the first and the last, as threshold k - 1).
     pub building_thresholds: Option<ThresholdsOf<'a>>,
 
+    /// The game's conventions: what its files mean at a version.
+    pub conventions: crate::conventions::TileConventions,
+
     /// The tree list whose trees become the "Decompiled vegetation" layer (default `outfield_tents.tree_list.bin`, then
     /// `default.tree_list.bin`; see docs/formats/tile_decompile.md).
     pub tree_list: Option<&'a str>,
@@ -425,7 +428,8 @@ fn building_node(bl: &BattlefieldBuilding, extent_z: f64, ctx: &Context, losses:
         ("opacity", Value::Float(1.0)), ("building_tech_level", s("TL_TECH_LEVEL1")), ("bounds_colour", Value::Colour([1.0, 0.0, 0.0, 1.0])),
         ("indestructible", b(bl.indestructible)), ("glow_amount", Value::Float(1.0)), ("key", s(&bl.key)), ("dirt_level", Value::Float(1.0)),
         ("destruction_level", i(destruction_level(bl, ctx, losses))), ("toggleable", b(bl.toggleable.unwrap_or(false))), ("burn", b(bl.on_fire)),
-        ("burn_amount", Value::Float(1.0)),
+        // Rome 2's list has the amount (TEd's default 1: Attila's lists have none).
+        ("burn_amount", Value::Float(bl.burn_amount.map_or(1.0, |a| crate::xml::values::Num::Ted.quantise(f64::from(a))))),
     ];
 
     // TEd keeps the wall flags only on walls (their category); without the category: when they differ from a plain building's.
@@ -457,7 +461,7 @@ fn building_node(bl: &BattlefieldBuilding, extent_z: f64, ctx: &Context, losses:
         losses.start_disabled += 1;
     }
 
-    if bl.position_type != 2 {
+    if bl.position_type.is_some_and(|t| t != 2) {
         losses.position_type += 1;
     }
 
@@ -486,13 +490,14 @@ fn bmd_buildings(bmd: &Node) -> Vec<BattlefieldBuilding> {
                 ai_breachable: bo(props, "ai_breachable"),
                 indestructible: bo(props, "indestructible"),
                 dockable: bo(props, "dockable"),
-                position_type: match it.get("position_type").and_then(Value::as_str) {
+                position_type: Some(match it.get("position_type").and_then(Value::as_str) {
                     Some("BBPT_RELATIVE") => 0,
                     Some("BBPT_ABSOLUTE") => 1,
                     _ => 2,
-                },
+                }),
                 toggleable: Some(bo(props, "toggleable")),
                 lite: Some(bo(props, "lite")),
+                burn_amount: None,
             }
         })
         .collect()
@@ -653,8 +658,10 @@ fn seasons(mask: i64) -> Value {
 }
 
 /// A prop record: a projected decal, or a model (SIMPLE_MESH_INSTANCE). The matrix rows hold the rotation ([`marker_rotation`]) times |scale| / 2;
-/// the position is (x, y, z) halved and z mirrored: scene (2 x, 2 y, 2 (extent - z)). The decal's scale fields are TEd's scale halved.
-fn prop_node(rec: &Node, key: &str, extent_z: f64, version: i64) -> Node {
+/// the position is (x, y, z) halved and z mirrored: scene (2 x, 2 y, 2 (extent - z)). The decal's scale fields are TEd's scale halved;
+/// `signed`: they are signed and the rows' lengths their magnitudes (`TileConventions::signed_decal_fields`), else the fields are
+/// magnitudes and the rows carry the sign.
+fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
     let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
     let decal = rec.get("is_decal").and_then(Value::as_int) == Some(1);
     let half = if decal {
@@ -671,14 +678,14 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64, version: i64) -> Node {
     let f = [1.0, 1.0, -1.0];
     let rows_of = |half: &[f64; 3]| -> [[f64; 3]; 3] {
         std::array::from_fn(|k| {
-            let n = if decal && version >= 6 { half[k].abs() } else if decal { half[k] } else { f[k] * half[k] };
+            let n = if decal && signed { half[k].abs() } else if decal { half[k] } else { f[k] * half[k] };
             let n = if n.abs() < 1e-12 { 1e-12 } else { n };
             [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
         })
     };
     let det = |a: &[[f64; 3]; 3]| a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
     // A version 5 decal's scale fields are magnitudes: TEd's negative z is in its rows (a mirror with the fields' signs).
-    if decal && version < 6 && det(&rows_of(&half)) < 0.0 {
+    if decal && !signed && det(&rows_of(&half)) < 0.0 {
         half[2] = -half[2];
     }
 
@@ -1190,6 +1197,11 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     // The normal layers' capture locations (the escalation layers' are in their BMDs).
     if let Some(doc) = binary.document("capture_location_list.xml") {
         items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent_z)));
+        let mut lists = vec![];
+        all(&doc.root, "CAPTURE_LOCATION_LIST", &mut lists);
+        if lists.len() > 1 {
+            losses.note(format!("capture_location_list.xml: {} lists, the first decompiled (TEd writes one; two of Rome 2's tiles have three)", lists.len()));
+        }
     }
 
     // Civilian shelters (civilian_shelter.bin): TEd's target and position; a capacity (CA's and TDD's tools only) as
@@ -1388,8 +1400,11 @@ fn bmd_captures(bmd: &Node) -> Vec<CaptureLocation> {
 /// The capture locations of `capture_location_list.xml` (`CAPTURE_LOCATION` elements: `position_x` / `position_y` the flag,
 /// `capture_point_list` the points `x,y;x,y...`, `flag_facing` `x,y`; the values are text).
 fn xml_captures(doc: &Node) -> Vec<CaptureLocation> {
+    // The first list's (an older file of Rome 2 has more).
+    let mut lists = vec![];
+    all(doc, "CAPTURE_LOCATION_LIST", &mut lists);
     let mut locs = vec![];
-    all(doc, "CAPTURE_LOCATION", &mut locs);
+    all(lists.first().copied().unwrap_or(doc), "CAPTURE_LOCATION", &mut locs);
     let f = |n: &Node, k: &str| str_attr(n, k).trim().parse::<f64>().unwrap_or(0.0);
     let pair = |t: &str| {
         let mut it = t.split(',').map(|v| v.trim().parse::<f64>().unwrap_or(0.0));
@@ -1608,7 +1623,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     for doc in binary.documents.iter().filter(|d| d.root.class == "BATTLEFIELD_BUILDING_LIST") {
         let name = doc.name.as_str();
         let separate = name.strip_prefix("building_list_").filter(|_| !name.ends_with(".xml"));
-        let current = doc.root.get("version").and_then(Value::as_int) == Some(12);
+        let current = doc.root.get("version").and_then(Value::as_int).is_some_and(|v| ctx.conventions.current_building_list(v));
         // TEd writes no main list for a project without buildings, but one per separate layer, empty or not: an empty main list (the
         // campaign river tiles') is legacy.
         let empty = doc.root.children.is_empty();
@@ -1710,7 +1725,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             order.into_iter().flat_map(|k| records.iter().filter(|(_, r)| *r == k).cloned().collect::<Vec<_>>()).collect::<Vec<_>>()
         };
         for (rec, key) in in_table_order(items("prop_list").iter().map(bmd_prop_record).collect()) {
-            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1, 9));
+            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1, true));
         }
 
         for (rec, key) in in_table_order(items("particle_emitter_list").iter().map(bmd_emitter_record).collect()) {
@@ -1797,7 +1812,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         for (rec, key) in recs {
             let key = key_str(key);
             l.wrapped_mut("children").push(match file {
-                "prop_marker.markers" => prop_node(rec, &key, extent.1, doc.root.get("version").and_then(Value::as_int).unwrap_or(9)),
+                "prop_marker.markers" => prop_node(rec, &key, extent.1, ctx.conventions.signed_decal_fields(doc.root.get("version").and_then(Value::as_int).unwrap_or(9))),
                 "particle_emitter_marker.markers" => emitter_node(rec, &key, extent.1),
                 _ => light_node(rec, &key, extent.1),
             });
@@ -1960,14 +1975,14 @@ mod tests {
         let a: f64 = 0.4;
         let (c, sn) = (a.cos(), a.sin());
         let m = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, -sn, 0.0, c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(m, true), "k", 100.0, 9);
+        let n = prop_node(&prop(m, true), "k", 100.0, true);
         assert_eq!(n.get("position").and_then(Value::as_vec3), Some([20.0, 1.0, 140.0]));
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
 
         // A simple mesh of the same turn has its z row negated (f = F).
         let mm = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, sn, 0.0, -c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(mm, false), "k", 100.0, 9);
+        let n = prop_node(&prop(mm, false), "k", 100.0, true);
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
         assert_eq!(n.get("scale").and_then(Value::as_vec3), Some([2.0, 2.0, 2.0]));

@@ -7,6 +7,7 @@
 //! Formats: [`attila::TedProject`] (`attila.ted_project`).
 
 pub mod attila;
+pub mod conventions;
 pub mod rome2;
 pub mod serde_node;
 pub mod xml;

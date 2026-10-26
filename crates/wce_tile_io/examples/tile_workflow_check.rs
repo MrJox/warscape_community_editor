@@ -4,6 +4,8 @@
 //!
 //!   cargo run --release -p wce_tile_io --example tile_workflow_check -- <game folder> <scratch dir> <tile folder> [<tile folder> ...]
 //!
+//! `$WCE_GAME_KEY` chooses the game (`rome_2`; Attila by default).
+//!
 //! A tile folder is the packs' path, `terrain/tiles/battle/farm_western/1x1/aa`. The scratch dir gets `workspace/` and `out/`.
 
 use std::path::PathBuf;
@@ -53,7 +55,7 @@ fn main() -> Result<(), String> {
         return Err("usage: tile_workflow_check <game folder> <scratch dir> <tile folder> ...".to_owned());
     }
 
-    let game = Game::load(&PathBuf::from(&args[0]))?;
+    let game = Game::load(wce_foundation::game::GameProfile::from_env(), &PathBuf::from(&args[0]))?;
     for w in &game.warnings {
         println!("warning: {w}");
     }

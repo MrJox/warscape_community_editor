@@ -165,7 +165,9 @@ pub(crate) struct Exported {
 
 /// An export's inputs (`TileTool::export_inputs`): everything the compile reads, owned, so that it can run on another thread.
 pub(crate) struct ExportInputs {
-    game_dir: PathBuf,
+    /// The game's packs as the editor mounted them, and the kit with the tiles (`tiles_kit`).
+    files: Arc<wce_vfs::Vfs>,
+    kit: Option<PathBuf>,
 
     /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
@@ -201,7 +203,7 @@ impl ExportInputs {
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::load(&self.game_dir)?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.files.clone(), self.kit.as_deref())?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -1003,23 +1005,23 @@ impl TileTool {
         Ok(msg)
     }
 
-    /// The game's tile data for exported tiles (the packs' databases, buildings and models, the kit's vegetation parameters), read on first
-    /// use from the game folder.
+    /// The game's tile data for exported tiles (the mounted packs' databases, buildings and models, the kit's vegetation parameters),
+    /// read on first use; again when the packs are mounted again.
     pub(crate) fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
-        let dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
-        if let Some(g) = self.exported_game.as_ref().filter(|g| g.dir == Path::new(&dir)) {
+        let vfs = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
+        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs)) {
             return Ok(g.clone());
         }
 
         // Being read on a thread already: waited for.
         if let Some(Ok(Ok(g))) = self.game_preload.take().map(|rx| rx.recv())
-            && g.dir == Path::new(&dir)
+            && Arc::ptr_eq(&g.files, &vfs)
         {
             self.exported_game = Some(g.clone());
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::load(Path::new(&dir))?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs, tiles_kit(e).as_deref())?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -1253,8 +1255,9 @@ impl TileTool {
     ///
     /// No tile or game folder, the project can't be saved, or a tile with procedural walls has no game files or schema.
     pub(crate) fn export_inputs(&mut self, e: &mut Editor) -> Result<ExportInputs, String> {
-        let game_dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
-        let game = self.exported_game.clone().filter(|g| g.dir == game_dir);
+        let files = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
+        let kit = tiles_kit(e);
+        let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files));
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         if d.modified() {
@@ -1267,7 +1270,7 @@ impl TileTool {
         let text = d.tile().tscene().save();
         let walls = if d.tile().has_walls() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { game_dir, game, pending, project_dir, text, walls })
+        Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
     }
 
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
@@ -3803,6 +3806,13 @@ impl Tool for TileTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// The Assembly Kit with the tiles (its folder, with `raw_data/terrain/tiles`): the first of the settings' kits that has them (the exports'
+/// vegetation parameters come from it).
+pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
+    let raw = e.settings_ref().assembly_kit_raw_dirs().into_iter().find(|raw| raw.join("terrain/tiles").is_dir())?;
+    raw.parent().map(Path::to_path_buf)
 }
 
 /// rpfm's Attila schema, for the procedural walls' database rows: `WCE_RPFM_SCHEMA`, else the Tile settings' `rpfm_schema`, else rpfm's own.

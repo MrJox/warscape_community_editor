@@ -5,27 +5,34 @@
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
 use wce_tile::vegetation::{GenerationParams, grass::GrassParams};
 use wce_tile_model::Blob;
 use wce_foundation::game::GameProfile;
+use wce_vfs::{Config, Vfs};
 
 use super::compile::{CompileContext, CompileNotes, compile};
 use super::decompile::{Losses, decompile};
 use super::game_data::GameData;
-use super::stage_b::{PackIndex, StageB};
+use super::stage_b::StageB;
 use super::stage_c::StageC;
 use super::{TedProject, TileBinary};
 use crate::{TileFiles, TileFormat};
 
-/// A game's folder and what the round trip reads from it: the packs (tile databases, buildings, models) and the Assembly Kit
-/// (`assembly_kit/raw_data` for BOB's inputs, `working_data` for the vegetation parameters).
+/// A game and what the round trip reads from it: the mounted packs (tile databases, buildings, models) and the Assembly Kit, if the game
+/// has one with its tiles (`raw_data` for BOB's inputs, `working_data` for the vegetation parameters).
 pub struct Game {
-    pub dir: PathBuf,
+    pub profile: GameProfile,
+
+    /// The game's packs, as the editor mounted them.
+    pub files: Arc<Vfs>,
+
+    /// The kit's `raw_data`, when it has the tiles (`terrain/tiles`; not Rome 2's).
+    pub kit_raw: Option<PathBuf>,
     pub data: GameData,
-    pub packs: PackIndex,
     vegetation: Option<(GenerationParams, Option<GrassParams>)>,
 
     /// What did not load (no schema, no vegetation parameters ...).
@@ -33,29 +40,53 @@ pub struct Game {
 }
 
 impl Game {
-    /// Reads the game's packs (`data`) and the kit's vegetation parameters.
+    /// A game's folder as the checks see it (its own packs and every mod pack of its data folder) and the kit in it
+    /// (`assembly_kit`).
     ///
     /// # Errors
     ///
-    /// The `data` folder can't be listed.
-    pub fn load(dir: &Path) -> Result<Self, String> {
-        let game = &GameProfile::ATTILA;
-        let data = GameData::load(game, &dir.join(game.data_dir), super::game_data::default_schema_path(game).as_deref())?;
+    /// The packs can't be mounted.
+    pub fn load(profile: &GameProfile, dir: &Path) -> Result<Self, String> {
+        let mut config = Config::new(dir, profile.clone());
+        config.use_mods = false;
+        config.mod_packs = Some(profile.available_mod_packs(dir));
+        let files = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
+        Self::from_vfs(files, Some(&dir.join("assembly_kit")))
+    }
+
+    /// The game of mounted packs (their profile) and its kit (the folder with `raw_data`, if any): the packs' tile data and the kit's
+    /// vegetation parameters.
+    ///
+    /// # Errors
+    ///
+    /// None for now: what can't be read is a warning.
+    pub fn from_vfs(files: Arc<Vfs>, kit: Option<&Path>) -> Result<Self, String> {
+        let profile = files.profile().clone();
+        let data = GameData::from_vfs(&files, super::game_data::default_schema_path(&profile).as_deref())?;
         let mut warnings = data.warnings.clone();
-        let vegetation = match super::stage_c::kit_params(&dir.join("assembly_kit/raw_data")) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                warnings.push(format!("no vegetation parameters in the kit ({e}): tree and grass lists are carried only"));
+        let kit_raw = kit.map(|k| k.join("raw_data")).filter(|r| r.join("terrain/tiles").is_dir());
+        let vegetation = match &kit_raw {
+            Some(raw) => match super::stage_c::kit_params(raw) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    warnings.push(format!("no vegetation parameters in the kit ({e}): tree and grass lists are carried only"));
+                    None
+                }
+            },
+
+            None => {
+                warnings.push(format!("{}: no Assembly Kit with the tiles: the vegetation is carried only, BOB's inputs are the projects'", profile.display_name));
                 None
             }
         };
 
-        Ok(Self { dir: dir.to_path_buf(), data, packs: PackIndex::new(&dir.join("data")), vegetation, warnings })
+        Ok(Self { profile, files, kit_raw, data, vegetation, warnings })
     }
 
-    /// The Assembly Kit's `raw_data`.
-    pub fn kit_raw_data(&self) -> PathBuf {
-        self.dir.join("assembly_kit/raw_data")
+    /// The `raw_data` BOB's stages read for a project under `project_raw` (a workspace's or a kit's `raw_data`): the kit's when the game
+    /// has one with the tiles, else the project's own (the workspace has the database's settings).
+    pub fn bob_raw_data(&self, project_raw: &Path) -> PathBuf {
+        self.kit_raw.clone().unwrap_or_else(|| project_raw.to_path_buf())
     }
 
     /// An exported tile's files from the game's packs (`terrain/tiles/battle/.../aa`).
@@ -64,12 +95,34 @@ impl Game {
     ///
     /// No pack holds a file of the folder.
     pub fn exported_from_packs(&self, folder: &str) -> Result<TileFiles, String> {
-        let files = self.packs.folder(folder);
-        if files.is_empty() {
+        let prefix = format!("{}/", wce_vfs::normalize(folder).trim_end_matches('/'));
+        let mut out = TileFiles::default();
+        for path in self.files.list(&prefix, "") {
+            let bytes = self.files.read(path).map_err(|e| e.to_string())?;
+            out.folder.insert(path[prefix.len()..].to_owned(), Blob::Bytes(bytes.into()));
+        }
+
+        if out.folder.is_empty() {
             return Err(format!("no pack holds {folder}"));
         }
 
-        Ok(TileFiles { folder: files.into_iter().map(|(n, b)| (n, Blob::Bytes(b.into()))).collect(), entry: None, variation: None })
+        Ok(out)
+    }
+
+    /// The tile database settings of a kind (`battle`, `campaign`) in the kit's format (`_settings.xml` of `_tile_database`): the kit's
+    /// file, else (Rome 2) the packs' database written so.
+    ///
+    /// # Errors
+    ///
+    /// Neither has it.
+    pub fn kit_settings(&self, kind: &str) -> Result<Vec<u8>, String> {
+        if let Some(raw) = &self.kit_raw {
+            let path = raw.join("terrain/tiles").join(kind).join("_tile_database/_settings.xml");
+            return std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()));
+        }
+
+        let db = self.data.database(kind).ok_or_else(|| format!("the game has no {kind} tile database"))?;
+        Ok(crate::rome2::kit_settings::kit_settings_xml(db).into_bytes())
     }
 }
 
@@ -102,8 +155,7 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     written.write_to(&dir, Some(&database.join("TILES"))).map_err(|e| e.to_string())?;
     let settings = database.join("_settings.xml");
     if !settings.is_file() {
-        let kit = game.kit_raw_data().join("terrain/tiles").join(kind_of(folder)).join("_tile_database/_settings.xml");
-        std::fs::copy(&kit, &settings).map_err(|e| format!("{}: {e}", kit.display()))?;
+        std::fs::write(&settings, game.kit_settings(&kind_of(folder))?).map_err(|e| format!("{}: {e}", settings.display()))?;
     }
 
     // The editor resolves the tile through the workspace's index, which has a new entry now.
@@ -226,9 +278,10 @@ pub fn save_exported_with(
         TedProject.read(&files).map_err(|e| e.to_string())?
     };
 
-    let kit_raw = game.kit_raw_data();
-    let models = |k: &str| game.packs.read(k);
-    let exists = |k: &str| game.packs.exists(k);
+    let project_raw = project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
+    let kit_raw = game.bob_raw_data(project_raw);
+    let models = |k: &str| game.files.read(k).ok();
+    let exists = |k: &str| game.files.owner(k).is_some();
     let settings = kit_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
     let mut ctx: CompileContext = game.data.compile_context();
     let (levels, thresholds) = (ctx.building_levels, ctx.building_thresholds);
@@ -266,8 +319,7 @@ pub fn save_exported_with(
     let kind = kind_of(&folder);
     match (entry_xml, game.data.database(&kind)) {
         (Some(entry), Some(base)) => {
-            let settings_path = kit_raw.join("terrain/tiles").join(&kind).join("_tile_database/_settings.xml");
-            let settings = std::fs::read(&settings_path).map_err(|e| format!("{}: {e}", settings_path.display()))?;
+            let settings = game.kit_settings(&kind)?;
             let mut db = merge_entries(base, &String::from_utf8_lossy(&settings), &[&entry])?;
             // A decompiled project's entry has the height range of its height map (and its density); while the terrain is as decompiled,
             // the row keeps the database's.
@@ -275,15 +327,30 @@ pub fn save_exported_with(
                 keep_height_range(&mut db, base, &folder);
             }
 
-            let mut bytes = vec![];
-            db.encode(&mut bytes, &None).map_err(|e| e.to_string())?;
-            let path = out.join("terrain/tiles").join(&kind).join("tile_database.bin");
-            std::fs::create_dir_all(path.parent().unwrap_or(out)).map_err(|e| e.to_string())?;
-            std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            let written = match game.data.xml_databases.get(&kind) {
+                // Rome 2: the tile's set file (and the settings, for a new texture group).
+                Some(xml) => {
+                    let (location, _) = super::decompile::split_location(&folder);
+                    let tile = db.tiles().iter().find(|t| t.location().eq_ignore_ascii_case(&location)).ok_or("the merged database lacks the tile")?;
+                    xml.with_tile(tile)?.into_iter().map(|(name, bytes)| (format!("{}{name}", crate::rome2::tile_database::Rome2TileDatabase::folder(&kind)), bytes)).collect()
+                }
+
+                None => {
+                    let mut bytes = vec![];
+                    db.encode(&mut bytes, &None).map_err(|e| e.to_string())?;
+                    vec![(format!("terrain/tiles/{kind}/tile_database.bin"), bytes)]
+                }
+            };
+
+            for (name, bytes) in written {
+                let path = out.join(&name);
+                std::fs::create_dir_all(path.parent().unwrap_or(out)).map_err(|e| e.to_string())?;
+                std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            }
         }
 
-        (None, _) => notes.notes.push("the project has no tile database entry: no tile_database.bin written".to_owned()),
-        (_, None) => notes.notes.push(format!("the game's packs have no {kind} tile database: no tile_database.bin written")),
+        (None, _) => notes.notes.push("the project has no tile database entry: no tile database written".to_owned()),
+        (_, None) => notes.notes.push(format!("the game's packs have no {kind} tile database: no tile database written")),
     }
 
     Ok((dir, notes))
