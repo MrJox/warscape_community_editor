@@ -1787,7 +1787,9 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     // bounds are the loaded models' in the editor, not reproduced: the file is carried along.
     // sound_emitter_list.xml, tree_random_seed.xml and loading_screen_radar.jpg (a few shipped tiles): nothing in TEd's project or BOB
     // makes them; carried along.
-    for name in ["definition.xml", "vegetation_exclusion.xml", "sound_emitter_list.xml", "tree_random_seed.xml"] {
+    // Rome 2's `<building list>.outlines` (outlines of a list's buildings, empty in the shipped tiles looked at): carried along too.
+    let outlines = binary.documents.iter().map(|d| d.name.clone()).filter(|n| n.to_lowercase().ends_with(".outlines")).collect::<Vec<_>>();
+    for name in ["definition.xml", "vegetation_exclusion.xml", "sound_emitter_list.xml", "tree_random_seed.xml"].into_iter().chain(outlines.iter().map(String::as_str)) {
         let Some(doc) = binary.document(name) else { continue };
         let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
