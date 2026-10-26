@@ -11,6 +11,10 @@
 //! blend is the source alpha over the colour channels (the game's grass gbuffer state). With the constructor's `g_far_addition` (-1) the
 //! far-diffuse tint is off, and with no burn (TEXCOORD4 = 0) the fire and burn maps don't count.
 //!
+//! Rome 2's pixel shader is another: it alpha-tests the diffuse (0.35) and the dissolve map, and fades the blades into the ground under the
+//! pixel with distance itself, reading the terrain resolve's inputs (the composite's albedo, normal and gloss, the depth's copy, the noise
+//! and mid-distance detail maps); it writes four channels, opaque.
+//!
 //! Only the patches within [`GRASS_DISTANCE`] of the camera are drawn, found through a grid of [`CELL`]-metre cells.
 
 use std::collections::HashMap;
@@ -261,6 +265,11 @@ impl Renderer {
             return;
         }
 
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        if rome2 && !self.terrain.r2_resolved {
+            return;
+        }
+
         let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), self.shader(GRASS_PS)) else { return };
         let Some(layout) = self.grass_layout(&vs) else { return };
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
@@ -316,7 +325,7 @@ impl Renderer {
         self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
-        self.ctx.set_blend_state(self.grass.bs.as_ref());
+        self.ctx.set_blend_state(if rome2 { self.states.bs_opaque.as_ref() } else { self.grass.bs.as_ref() });
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         self.bind(&vs);
@@ -336,6 +345,23 @@ impl Renderer {
             bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
             bind_sampler(ctx, &ps, "s_depth_map", self.states.s_clamp_point.as_ref());
             bind_sampler(ctx, &ps, "s_far_diffuse_map", self.states.s_clamp_linear.as_ref());
+        }
+
+        if rome2 {
+            let ctx = &self.ctx;
+            let noise = self.textures.get(super::terrain_rome2::NOISE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+            for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map"] {
+                bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
+            }
+
+            bind_sampler(ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+            bind_srv(ctx, &ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
+            bind_srv(ctx, &ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
+            bind_srv(ctx, &ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
+            bind_srv(ctx, &ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
+            bind_srv(ctx, &ps, "s_mid_distance_detail_map", self.terrain.r2_detail.as_ref().or(detail_normal.as_ref()));
+            bind_srv(ctx, &ps, "s_noise_map", noise.as_ref().or(self.res.white_srv.as_ref()));
+            bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
         }
 
         let mut first = 0u32;

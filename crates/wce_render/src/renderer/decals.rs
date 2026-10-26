@@ -419,10 +419,13 @@ impl Renderer {
                 let ctx = &self.ctx;
                 bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
                 bind_srv(ctx, &ps, "s_gbuffer_normal", self.decals.normal_copy.srv.as_ref());
+                // Rome 2's names for the same two (two targets written: the normal and the albedo).
+                bind_srv(ctx, &ps, "s_depth_buffer", self.gbuffer.channels[3].srv.as_ref());
+                bind_srv(ctx, &ps, "s_gbuffer_normal_wrap", self.decals.normal_copy.srv.as_ref());
                 bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
                 bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
                 ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
-                for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal"] {
+                for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal", "s_depth_buffer", "s_gbuffer_normal_wrap"] {
                     bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
                 }
 

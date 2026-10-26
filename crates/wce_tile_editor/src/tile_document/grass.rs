@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::fastbin_lists::{GRASS_LIST_EXTENSION, GrassListFile};
+use wce_formats::old_lists::{OldList, OldListKind};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, Grass, LayerId, Payload, RenderScene};
@@ -23,6 +24,9 @@ use super::vegetation::tilt;
 use super::{TERRAIN, Tile};
 
 const SEED: u32 = 0x4971_0ae3;
+
+/// The older grass list's extension.
+const OLD_GRASS_LIST_EXTENSION: &str = ".grass_list";
 const YAW_STEP: f32 = f32::from_bits(0x38c9_10a4);
 const LIST: &str = "default";
 
@@ -46,10 +50,27 @@ pub(crate) struct GrassState {
 impl Tile {
 
     fn read_grass_list(&self) -> Option<Vec<(String, Vec<(f32, f32)>)>> {
+        // Without the kit's grass parameters, a decompiled project's carried list too.
+        let carried = vegetation::grass_params_path(&self.project).is_none().then(|| self.project.dir.join(super::vegetation::CARRIED_DIR));
+        let read = |file: &str| {
+            std::fs::read(self.project.dir.join(file))
+                .ok()
+                .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))
+                .or_else(|| std::fs::read(carried.as_ref()?.join(file)).ok())
+        };
+
         let file = format!("{LIST}{GRASS_LIST_EXTENSION}");
-        let bytes = std::fs::read(self.project.dir.join(&file))
-            .ok()
-            .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))?;
+        let Some(bytes) = read(&file) else {
+            // Rome 2's tiles have the older list only.
+            let file = format!("{LIST}{OLD_GRASS_LIST_EXTENSION}");
+            return match OldList::parse(OldListKind::Grass, &read(&file)?) {
+                Ok(list) => Some(old_grass(&list)),
+                Err(error) => {
+                    log::warn(format!("{file}: {error}"));
+                    Some(vec![])
+                }
+            };
+        };
         match GrassListFile::decode(&mut Cursor::new(bytes), &None) {
             Ok(f) => Some(f.grass_list().grass_list().iter().map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect())).collect()),
             Err(error) => {
@@ -212,4 +233,17 @@ impl Tile {
 
         added
     }
+}
+
+/// An older grass list's patches per key (their x and z).
+fn old_grass(list: &OldList) -> Vec<(String, Vec<(f32, f32)>)> {
+    list.types
+        .iter()
+        .enumerate()
+        .map(|(t, (name, first))| {
+            let end = list.types.get(t + 1).map_or(list.len(), |(_, next)| *next as usize).min(list.len());
+            let key = String::from_utf8_lossy(name).replace('\\', "/").to_lowercase();
+            (key, (*first as usize..end).map(|i| list.position(i)).map(|[x, _, z]| (x, z)).collect())
+        })
+        .collect()
 }

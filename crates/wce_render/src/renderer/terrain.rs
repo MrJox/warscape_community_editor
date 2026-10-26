@@ -412,6 +412,11 @@ pub(crate) struct TerrainGpuState {
     pub(crate) r2_comp: [Target; 3],
     pub(crate) r2_w: u32,
     pub(crate) r2_h: u32,
+
+    /// Rome 2's resolve inputs the grass reads too: the mid-distance detail map (`viewz` holds the depth channel's copy), set by a frame's
+    /// resolve.
+    pub(crate) r2_detail: Option<ID3D11ShaderResourceView>,
+    pub(crate) r2_resolved: bool,
 }
 
 /// The frustum test of an axis-aligned box against a view-projection matrix (D3D clip volume: -w <= x, y <= w, 0 <= z <= w).
@@ -953,6 +958,7 @@ impl Renderer {
     }
 
     pub(crate) fn pass_terrain_material(&mut self, scene: &RenderScene) {
+        self.terrain.r2_resolved = false;
         if self.terrain.entities.is_empty() {
             return;
         }
