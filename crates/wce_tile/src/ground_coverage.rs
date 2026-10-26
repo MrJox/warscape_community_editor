@@ -61,8 +61,15 @@ pub struct Params {
     /// Scale range of the plants (a set entry's own range replaces it).
     pub plant_scale: (f32, f32),
 
-    /// How much of a rock's height goes under the ground (0..1).
+    /// What ground a rock stands on (before it is sunk).
+    pub seat: Seat,
+
+    /// How much of a rock's height goes under the ground it stands on (0..1).
     pub sink: f32,
+
+    /// How much of a rock's height stays over the ground at its centre at least (0..1), whatever the seat and the sink: on a steep face the
+    /// ground around a big rock is metres under its centre.
+    pub min_visible: f32,
 
     /// Metres: plants this near are in the same cluster.
     pub cluster_distance: f32,
@@ -92,11 +99,35 @@ impl Default for Params {
             rock_scale_foot: (0.9, 1.6),
             rock_scale_face: (0.5, 1.0),
             plant_scale: (0.85, 1.15),
+            seat: Seat::Average,
             sink: 0.25,
+            min_visible: 0.5,
             cluster_distance: 8.0,
             max_cluster: 30.0,
             plant_radius: 1.0,
             exclusion_margin: 2.0,
+        }
+    }
+}
+
+/// What ground a rock stands on: under its centre, the mean of that and of 8 points around it at its radius (no higher than the centre's),
+/// or the lowest of them (its downhill side never floats, but on a steep face it is buried).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Seat {
+    Centre,
+    #[default]
+    Average,
+    Lowest,
+}
+
+impl Seat {
+    pub const ALL: [Seat; 3] = [Seat::Centre, Seat::Average, Seat::Lowest];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Seat::Centre => "centre",
+            Seat::Average => "average",
+            Seat::Lowest => "lowest",
         }
     }
 }
@@ -107,6 +138,7 @@ impl Params {
         let mut out = self.numbers().into_iter().map(|(name, v)| format!("{name}={v}")).collect::<Vec<_>>();
 
         out.push(format!("scale_rocks={}", self.scale_rocks));
+        out.push(format!("seat={}", self.seat.name()));
         out.join(" ")
     }
 
@@ -116,6 +148,8 @@ impl Params {
         for (name, value) in text.split_whitespace().filter_map(|kv| kv.split_once('=')) {
             if name == "scale_rocks" {
                 p.scale_rocks = value == "true";
+            } else if name == "seat" {
+                p.seat = Seat::ALL.into_iter().find(|s| s.name() == value).unwrap_or_default();
             } else if let (Ok(v), Some(slot)) = (value.parse::<f32>(), p.number_mut(name)) {
                 *slot = v;
             }
@@ -124,10 +158,10 @@ impl Params {
         p
     }
 
-    const NAMES: [&'static str; 21] = [
+    const NAMES: [&'static str; 22] = [
         "slope_deg", "min_rise", "min_area", "foot_up", "foot_out", "top_margin", "rock_density_foot", "rock_density_face", "plant_density",
         "plant_spacing", "rock_scale_foot_min", "rock_scale_foot_max", "rock_scale_face_min", "rock_scale_face_max", "plant_scale_min",
-        "plant_scale_max", "sink", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
+        "plant_scale_max", "sink", "min_visible", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
     ];
 
     fn numbers(&self) -> Vec<(&'static str, f32)> {
@@ -154,6 +188,7 @@ impl Params {
             "plant_scale_min" => &mut self.plant_scale.0,
             "plant_scale_max" => &mut self.plant_scale.1,
             "sink" => &mut self.sink,
+            "min_visible" => &mut self.min_visible,
             "cluster_distance" => &mut self.cluster_distance,
             "max_cluster" => &mut self.max_cluster,
             "plant_radius" => &mut self.plant_radius,
@@ -544,14 +579,23 @@ fn populate(input: &Input, d: &mut Differential) {
             let scale = rnd.range(range) * own;
             let scale = if p.scale_rocks { scale } else { 1.0 };
             let size = (input.rock_size)(&entry.key);
-            let r = size.radius * scale;
-            let low = (0..8).map(|k| {
+            let (r, h) = (size.radius * scale, size.height * scale);
+            let centre = g.height(x, z);
+            let ring = (0..8).map(|k| {
                 let a = k as f32 * std::f32::consts::FRAC_PI_4;
                 g.height(x + r * a.cos(), z + r * a.sin())
-            }).fold(g.height(x, z), f32::min);
+            });
 
+            let ground = match p.seat {
+                Seat::Centre => centre,
+                // Never over the centre's ground (at the foot of a cliff the ring's uphill side is high): it would float there.
+                Seat::Average => ((centre + ring.sum::<f32>()) / 9.0).min(centre),
+                Seat::Lowest => ring.fold(centre, f32::min),
+            };
+
+            let y = (ground - p.sink * h).max(centre - (1.0 - p.min_visible) * h);
             let yaw = rnd.unit() * 360.0;
-            d.rocks.push(Placed { key: entry.key.clone(), x, y: low - p.sink * size.height * scale, z, scale, yaw });
+            d.rocks.push(Placed { key: entry.key.clone(), x, y, z, scale, yaw });
         }
     }
 
@@ -739,8 +783,9 @@ mod tests {
             }
         }
 
-        // A rock is sunk: its origin is under the ground around it.
+        // A rock is sunk, but at least half of it stays over the ground at its centre.
         assert!(d.rocks.iter().all(|r| r.y < g.height(r.x, r.z)));
+        assert!(d.rocks.iter().all(|r| r.y + 1.0 - g.height(r.x, r.z) >= 0.5 - 1e-4));
     }
 
     #[test]
@@ -778,7 +823,7 @@ mod tests {
 
     #[test]
     fn the_parameters_read_back_from_their_text() {
-        let p = Params { slope_deg: 40.5, scale_rocks: true, rock_scale_face: (0.25, 0.75), ..Default::default() };
+        let p = Params { slope_deg: 40.5, scale_rocks: true, rock_scale_face: (0.25, 0.75), seat: Seat::Lowest, min_visible: 0.3, ..Default::default() };
         assert_eq!(Params::from_text(&p.to_text()), p);
         assert_eq!(Params::from_text("min_rise=7 nonsense nope=1"), Params { min_rise: 7.0, ..Default::default() });
     }
