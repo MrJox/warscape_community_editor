@@ -30,10 +30,11 @@ fn attrs(b: &BattlefieldBuilding) -> Vec<(&'static str, String)> {
     let f = |v: f32| printf_f_msvc(f64::from(v), 6);
     let t = |v: bool| if v { "true" } else { "false" }.to_owned();
     let ptype = match b.position_type {
-        0 => "relative".to_owned(),
-        1 => "absolute".to_owned(),
-        2 => "lf_relative".to_owned(),
-        n => n.to_string(),
+        Some(0) => "relative".to_owned(),
+        Some(1) => "absolute".to_owned(),
+        Some(2) => "lf_relative".to_owned(),
+        Some(n) => n.to_string(),
+        None => String::new(),
     };
 
     vec![

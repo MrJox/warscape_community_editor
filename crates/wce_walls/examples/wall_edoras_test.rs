@@ -91,7 +91,7 @@ fn run() -> Result<(), String> {
         other => return Err(format!("no variant {other}")),
     };
 
-    let game = Game::load(Path::new(game_dir))?;
+    let game = Game::load(wce_foundation::game::GameProfile::from_env(), Path::new(game_dir))?;
     let mut config = Config::new(PathBuf::from(game_dir), GameProfile::ATTILA);
     config.mod_packs = mods.map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());
     let vfs = Vfs::mount(&config).map_err(|e| e.to_string())?;

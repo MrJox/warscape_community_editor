@@ -415,13 +415,20 @@ fn read_building_list(name: &str, b: &[u8], tile: &mut Tile) -> std::result::Res
             n.set(k, Value::Bool(v));
         }
 
-        n.set("position_type", Value::Int(i64::from(b.position_type)));
+        if let Some(t) = b.position_type {
+            n.set("position_type", Value::Int(i64::from(t)));
+        }
+
         if let Some(t) = b.toggleable {
             n.set("toggleable", Value::Bool(t));
         }
 
         if let Some(l) = b.lite {
             n.set("lite", Value::Bool(l));
+        }
+
+        if let Some(a) = b.burn_amount {
+            n.set("burn_amount", Value::Float(f64::from(a)));
         }
 
         root.children.push(n);
@@ -481,13 +488,21 @@ fn write_building_list(doc: &Document) -> std::result::Result<Vec<u8>, String> {
             values.push(booln(boolean(b, k)?));
         }
 
-        let mut ptype = U32Node::default();
-        ptype.set_value(int(b, "position_type")? as u32);
-        ptype.set_optimized(true);
-        values.push(NodeType::U32(ptype));
-        if version >= 12 {
+        // The fields past the flags are the ones the building has (by game and version, `building_list`).
+        if b.get("position_type").is_some() {
+            let mut ptype = U32Node::default();
+            ptype.set_value(int(b, "position_type")? as u32);
+            ptype.set_optimized(true);
+            values.push(NodeType::U32(ptype));
+        }
+
+        if b.get("toggleable").is_some() || b.get("lite").is_some() {
             values.push(booln(boolean(b, "toggleable")?));
             values.push(booln(boolean(b, "lite")?));
+        }
+
+        if b.get("burn_amount").is_some() {
+            values.push(f32n(float(b, "burn_amount")? as f32));
         }
 
         blocks.push(values);

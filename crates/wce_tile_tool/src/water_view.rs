@@ -89,9 +89,9 @@ fn water_depth_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow:
     }
 
     let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
-    let kit_raw = game.map(|g| g.kit_raw_data()).or_else(|| p.raw_root.clone()).unwrap_or_default();
+    let kit_raw = game.and_then(|g| g.kit_raw.clone()).or_else(|| p.raw_root.clone()).unwrap_or_default();
     let none = |_: &str| None;
-    let packs = |k: &str| game.and_then(|g| g.packs.read(k));
+    let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
     let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
     let f = water_fields(&raw, Path::new(&kit_raw), models)?;
     let depth = match &f.water {

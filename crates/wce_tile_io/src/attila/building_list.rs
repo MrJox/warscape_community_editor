@@ -1,7 +1,8 @@
 //! The binary building list of an exported tile (`building_list`, `far_building_list`, `building_list_sprawl`, `building_list_veg`): a CAAB
-//! ESF file, `BATTLEFIELD_BUILDING_LIST` (record version 12; 11 in three sprawl lists, without `toggleable` and `lite`) >
-//! `BATTLEFIELD_BUILDING_LIST_BLOCK`, one block per building. The XML twin
-//! (`building_list.xml`, TEd's stage-A export) names the fields; docs/formats/tile_binary.md, "Building lists".
+//! ESF file, `BATTLEFIELD_BUILDING_LIST` > `BATTLEFIELD_BUILDING_LIST_BLOCK`, one block per building. Attila writes record version 12 (11 in
+//! three sprawl lists, without `toggleable` and `lite`); Rome 2 versions 10 (without `position_type`), 11 and 12, whose 12 adds
+//! `burn_amount` instead (docs/formats/rome2_tiles.md). The XML twin (`building_list.xml`, TEd's stage-A export) names the fields;
+//! docs/formats/tile_binary.md, "Building lists".
 
 use rpfm_lib::files::esf::{ESF, NodeType};
 
@@ -22,12 +23,15 @@ pub struct BattlefieldBuilding {
     pub indestructible: bool,
     pub dockable: bool,
 
-    /// 0 relative, 1 absolute, 2 `lf_relative` (every shipped building).
-    pub position_type: u32,
+    /// 0 relative, 1 absolute, 2 `lf_relative` (every shipped building); `None` in a version 10 list (Rome 2's).
+    pub position_type: Option<u32>,
 
-    /// `None` in a version 11 list (the fields were added in 12).
+    /// Attila's version 12 fields: `None` in a version 11 list and in Rome 2's.
     pub toggleable: Option<bool>,
     pub lite: Option<bool>,
+
+    /// How much of the building burns, 0 to 1: Rome 2's version 12 field (EmpireUtility's XML writer names it).
+    pub burn_amount: Option<f32>,
 }
 
 fn record<'a>(node: &'a NodeType, name: &str) -> Result<&'a rpfm_lib::files::esf::RecordNode, String> {
@@ -48,7 +52,7 @@ pub fn read(esf: &ESF) -> Result<Vec<BattlefieldBuilding>, String> {
     let [children] = list.children().as_slice() else { return Err("the list has more than one block".to_owned()) };
     let [block] = children.as_slice() else { return Err("the list holds more than its block record".to_owned()) };
     let blocks = record(block, "BATTLEFIELD_BUILDING_LIST_BLOCK")?;
-    if !(11..=12).contains(list.version()) {
+    if !(10..=12).contains(list.version()) {
         return Err(format!("list version {}", list.version()));
     }
 
@@ -72,13 +76,20 @@ fn building(values: &[NodeType], version: u8) -> Result<BattlefieldBuilding, Str
         other => Err(format!("{other:?} where a vector was expected")),
     };
 
-    let expected = if version >= 12 { 17 } else { 15 };
-    if values.len() != expected {
-        return Err(format!("{} values ({expected} expected)", values.len()));
+    // Attila's 12: 17 values (two bools added); Rome 2's 12: 16 (an f32 added); 11: 15; Rome 2's 10: 14 (no position type).
+    let expected: &[usize] = match version {
+        12 => &[16, 17],
+        11 => &[15],
+        _ => &[14],
+    };
+    if !expected.contains(&values.len()) {
+        return Err(format!("{} values ({expected:?} expected)", values.len()));
     }
 
-    let [key, pos, oi, oj, ok, ow, scale, damage, fire, disabled, weak, breach, indestructible, dock, ptype] = &values[..15] else { unreachable!() };
-    let (toggle, lite) = (values.get(15), values.get(16));
+    let [key, pos, oi, oj, ok, ow, scale, damage, fire, disabled, weak, breach, indestructible, dock] = &values[..14] else { unreachable!() };
+    let ptype = values.get(14);
+    let (toggle, lite) = if values.len() == 17 { (values.get(15), values.get(16)) } else { (None, None) };
+    let burn = if values.len() == 16 { values.get(15) } else { None };
 
     Ok(BattlefieldBuilding {
         key: match key {
@@ -96,10 +107,12 @@ fn building(values: &[NodeType], version: u8) -> Result<BattlefieldBuilding, Str
         indestructible: b(indestructible)?,
         dockable: b(dock)?,
         position_type: match ptype {
-            N::U32(v) => *v.value(),
-            other => return Err(format!("{other:?} where the position type was expected")),
+            Some(N::U32(v)) => Some(*v.value()),
+            None => None,
+            Some(other) => return Err(format!("{other:?} where the position type was expected")),
         },
         toggleable: toggle.map(b).transpose()?,
         lite: lite.map(b).transpose()?,
+        burn_amount: burn.map(f).transpose()?,
     })
 }

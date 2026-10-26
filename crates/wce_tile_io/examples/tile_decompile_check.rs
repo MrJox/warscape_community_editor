@@ -367,6 +367,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 building_levels: ctx.building_levels,
                 building_thresholds: ctx.building_thresholds,
                 marker_versions: Some(&version_of),
+                conventions: ctx.conventions,
                 stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { raw_data: &raw_data, models: m }),
                 stage_c,
             };
@@ -792,6 +793,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             } else if p.name == "orientation" && (comps(&p.value).iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() > 1e-5 {
                                 // TEd's matrix was not a pure rotation (the binary's quaternion is not unit): an euler cannot say that.
                                 *local.losses.entry(format!("compile {kind}.orientation: the binary's quaternion is not unit")).or_default() += 1;
+                            } else if p.name == "scale" && comps(&p.value).iter().all(|v| (v.to_bits() as i64 - 1.0f32.to_bits() as i64).abs() <= 4) {
+                                // Rome 2's TEd writes each axis's length of the building's matrix in memory: 1 within a few ulps, which the
+                                // text cannot carry.
+                                *local.losses.entry(format!("compile {kind}.scale: 1 within 4 ulps (Rome 2's TEd's matrix in memory)")).or_default() += 1;
                             } else if p.name == "starting_damage" {
                                 // The decompiler's level is the one whose export is the binary's damage when any is (the inverse of the
                                 // export), so a damage no level gives is from older building data (another model's levels).
@@ -1439,7 +1444,7 @@ fn main() {
 
     // The game's tile data (the databases, the buildings' destruction levels, categories and thresholds), then the packs again for their
     // tile folders.
-    let data = wce_tile_io::attila::game_data::GameData::load(&wce_foundation::game::GameProfile::ATTILA, &game.join("data"), wce_tile_io::attila::game_data::default_schema_path(&wce_foundation::game::GameProfile::ATTILA).as_deref()).expect("data");
+    let data = wce_tile_io::attila::game_data::GameData::load(wce_foundation::game::GameProfile::from_env(), &game, wce_tile_io::attila::game_data::default_schema_path(wce_foundation::game::GameProfile::from_env()).as_deref()).expect("data");
     for w in &data.warnings {
         eprintln!("{w}");
     }

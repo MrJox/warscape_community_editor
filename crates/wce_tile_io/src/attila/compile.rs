@@ -8,6 +8,7 @@ use wce_tile::world_transform::{ted_mul_f32, ted_rotation_f32};
 use wce_tile_model::{Document, Node, Sym, Tile, Value};
 
 use super::decompile::{LevelsOf, ThresholdsOf};
+use crate::conventions::BuildingListLayout;
 use super::schema::TedSchema;
 
 /// The version to write a file in, by its name.
@@ -28,6 +29,9 @@ pub struct CompileContext<'a> {
     /// Stage B too (BOB's Tile processor: textures, meshes, heights, outlines), with what it needs from the kit; without it, stage A
     /// alone.
     pub stage_b: Option<super::stage_b::StageB<'a>>,
+
+    /// The game's conventions: what its files mean at a version, the versions its TEd writes.
+    pub conventions: crate::conventions::TileConventions,
 
     /// Stage C too (BOB's Vegetation processor: tree and grass lists, procedural BMDs) for a battle tile, with what it needs from the
     /// kit; a decompiled project's carried vegetation is kept while its inputs are unchanged (`stage_c::stage_c_files`).
@@ -184,13 +188,15 @@ fn zone_points(p: &Placed) -> Vec<(f32, f32)> {
 /// buildings in the scene's order (docs/formats/tile_decompile.md for the frames: the list's x = scene x / 2, z = extent - scene z / 2).
 fn building_lists(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes: &mut CompileNotes) -> Vec<Document> {
     let zones = placed.iter().filter(|p| p.node.class == "LiteBuildingZone" && p.export == "LayerExportType_Normal").map(zone_points).collect::<Vec<_>>();
+    // The version of a list: the decompiled file's, else the one the game's TEd writes.
+    let version_of = |name: &str| ctx.marker_versions.and_then(|f| f(name)).unwrap_or(ctx.conventions.building_list_version);
     // A separate layer exports its list even when it has no buildings.
     let mut lists: Vec<(String, Node)> = vec![];
     for p in placed.iter().filter(|p| p.node.class == "LayerInstance" && p.export == "LayerExportType_Separate") {
         let name = format!("building_list_{}", p.layer.to_lowercase());
         if !lists.iter().any(|(n, _)| *n == name) {
             let mut l = Node::new("BATTLEFIELD_BUILDING_LIST");
-            l.set("version", Value::Int(12));
+            l.set("version", Value::Int(version_of(&name)));
             lists.push((name, l));
         }
     }
@@ -204,12 +210,12 @@ fn building_lists(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes:
         };
 
         let lite = name == "building_list" && zones.iter().any(|z| inside(z, p.world[3], z_of(&p.world)));
-        let b = building_record(p, extent_z, ctx, lite, &mut unknown_levels);
+        let b = building_record(p, extent_z, ctx, lite, version_of(&name), &mut unknown_levels);
         match lists.iter_mut().find(|(n, _)| *n == name) {
             Some((_, l)) => l.children.push(b),
             None => {
                 let mut l = Node::new("BATTLEFIELD_BUILDING_LIST");
-                l.set("version", Value::Int(12));
+                l.set("version", Value::Int(version_of(&name)));
                 l.children.push(b);
                 lists.push((name, l));
             }
@@ -223,9 +229,10 @@ fn building_lists(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes:
     lists.into_iter().map(|(name, root)| Document { name, root }).collect()
 }
 
-/// A building of an exported list (the building list's record) from its BUILDING_INSTANCE (`Ted::BMDExporter::export_`); a building
-/// whose destruction levels are not known counts in `unknown_levels` (starting damage 1).
-fn building_record(p: &Placed, extent_z: f32, ctx: &CompileContext, lite: bool, unknown_levels: &mut usize) -> Node {
+/// A building of an exported list of a version (the building list's record) from its BUILDING_INSTANCE (`Ted::BMDExporter::export_`),
+/// with the fields of the game's layout (`TileConventions::building_list`); a building whose destruction levels are not known counts in
+/// `unknown_levels` (starting damage 1).
+fn building_record(p: &Placed, extent_z: f32, ctx: &CompileContext, lite: bool, version: i64, unknown_levels: &mut usize) -> Node {
     let n = p.node;
     let w = &p.world;
     let (x, y, z) = (w[3], w[7], w[11]);
@@ -259,9 +266,25 @@ fn building_record(p: &Placed, extent_z: f32, ctx: &CompileContext, lite: bool, 
         b.set(k, Value::Bool(if attr.is_empty() { default } else { bool_of(n, attr, default) }));
     }
 
-    b.set("position_type", Value::Int(2));
-    b.set("toggleable", Value::Bool(bool_of(n, "toggleable", false)));
-    b.set("lite", Value::Bool(lite));
+    // Rome 2's version 10 has no position type; Attila's 12 adds two flags, Rome 2's the burn amount (TEd's `burn_amount`).
+    if version >= 11 {
+        b.set("position_type", Value::Int(2));
+    }
+
+    match ctx.conventions.building_list {
+        BuildingListLayout::Attila if version >= 12 => {
+            b.set("toggleable", Value::Bool(bool_of(n, "toggleable", false)));
+            b.set("lite", Value::Bool(lite));
+        }
+
+        BuildingListLayout::Rome2 if version >= 12 => {
+            let amount = floats_of(n, "burn_amount").and_then(|v| v.first().copied()).unwrap_or(0.0);
+            b.set("burn_amount", Value::Float(f64::from(amount)));
+        }
+
+        _ => {}
+    }
+
     b
 }
 
@@ -549,13 +572,15 @@ fn seasons_mask(n: &Node) -> i64 {
 /// The inverse of the decompiler's (docs/formats/tile_decompile.md, "Rotations").
 fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "prop_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
-    let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal").filter_map(|p| prop_record(p, extent_z, version)).collect::<Vec<_>>();
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
+    let signed = ctx.conventions.signed_decal_fields(version);
+    let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal").filter_map(|p| prop_record(p, extent_z, version, signed)).collect::<Vec<_>>();
     (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
 }
 
-/// A prop marker record (of the markers version) and its key from a `ProjectedDecalInstance` or `SIMPLE_MESH_INSTANCE`.
-fn prop_record(p: &Placed, extent_z: f32, version: i64) -> Option<(MarkerKey, Node)> {
+/// A prop marker record (of the markers version) and its key from a `ProjectedDecalInstance` or `SIMPLE_MESH_INSTANCE`; `signed`: a
+/// decal's scale fields are signed and its rows' lengths the magnitudes (`TileConventions::signed_decal_fields`).
+fn prop_record(p: &Placed, extent_z: f32, version: i64, signed: bool) -> Option<(MarkerKey, Node)> {
     let n = p.node;
     let decal = match n.class.as_str() {
         "ProjectedDecalInstance" => true,
@@ -570,8 +595,8 @@ fn prop_record(p: &Placed, extent_z: f32, version: i64) -> Option<(MarkerKey, No
     let f = [1.0f32, 1.0, -1.0];
     let mut m = [0.0f64; 16];
     for k in 0..3 {
-        // A decal: |half scale| (version 5: signed); a model: f_k * the signed half scale (f = (1, 1, -1)).
-        let len = if decal && version >= 6 { half[k].abs() } else if decal || k != 2 { half[k] } else { -half[k] };
+        // A decal: |half scale| (Attila's version 5, Rome 2's: signed); a model: f_k * the signed half scale (f = (1, 1, -1)).
+        let len = if decal && signed { half[k].abs() } else if decal || k != 2 { half[k] } else { -half[k] };
         for l in 0..3 {
             // a[k][l] = f_l f_k R[l][k] with R[l][k] = w[l * 4 + k].
             m[k * 4 + l] = f64::from(f[l] * f[k] * w[l * 4 + k] * len);
@@ -607,9 +632,9 @@ fn prop_record(p: &Placed, extent_z: f32, version: i64) -> Option<(MarkerKey, No
     if decal {
         r.set("parallax_scale", Value::Float(f64::from(floats_of(n, "parallax_scale").and_then(|v| v.first().copied()).unwrap_or(0.0))));
         r.set("tiled", Value::Int(i64::from(bool_of(n, "tiled", false))));
-        // Version 5 writes the magnitudes.
+        // Attila's version 5 and Rome 2 write the magnitudes.
         for (k, h) in ["scale_x", "scale_y", "scale_z"].iter().zip(half) {
-            r.set(*k, Value::Float(f64::from(if version >= 6 { h } else { h.abs() })));
+            r.set(*k, Value::Float(f64::from(if signed { h } else { h.abs() })));
         }
     }
 
@@ -620,7 +645,7 @@ fn prop_record(p: &Placed, extent_z: f32, version: i64) -> Option<(MarkerKey, No
 /// matrix holds the world rotation transposed (not mirrored) and the translation (x / 2, y, extent - z / 2); `scale` is TEd's halved.
 fn emitter_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "particle_emitter_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(9);
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "VFXInstance").map(|p| emitter_record(p, extent_z, version)).collect::<Vec<_>>();
     (!records.is_empty()).then(|| markers_doc(NAME, "PARTICLE_EMITTER_MARKER", 618_864, version, records))
 }
@@ -680,7 +705,7 @@ fn emitter_record(p: &Placed, extent_z: f32, version: i64) -> (MarkerKey, Node) 
 /// light is a position (x / 2, y, extent - z / 2) and its parameters.
 fn light_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "point_light_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(3);
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     let mut records = vec![];
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "POINT_LIGHT_INSTANCE") {
         let n = p.node;
@@ -749,7 +774,7 @@ fn polygon_points(p: &Placed, extent_z: f32) -> Vec<f64> {
 /// its first point at the end), grouped by hint type (its number).
 fn ai_hint_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "ai_hint_polyline_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     let mut records = vec![];
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "AI_HINT_POLYGON_INSTANCE") {
         let n = p.node;
@@ -772,7 +797,7 @@ fn ai_hint_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Op
 /// (`PATHFINDING_AREA_LINK_TYPE`: PALT_NONE 0, PALT_GENERIC 1, PALT_FORT 2, written by name).
 fn separator_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "ai_separator_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     let mut records = vec![];
     for p in placed.iter().filter(|p| p.export == "LayerExportType_Normal" && p.node.class == "AISeparatorInstance") {
         let ty = p.node.get("type").and_then(Value::as_str).unwrap_or("PALT_NONE").to_owned();
@@ -790,7 +815,7 @@ fn separator_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> 
 /// intersection 22, wall area 26, entry 30; an edge: street 23, area connection 27, wall 28, palisade 40).
 fn siege_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Option<Document> {
     const NAME: &str = "ai_hint_polyline_list_marker.markers";
-    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or(1);
+    let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     // The placed nodes by address, to find a node's polygons without a scan per node.
     let by_node = by_node(placed);
     let mut records = vec![];
@@ -1381,7 +1406,7 @@ fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes
         let prop_version = ctx.marker_versions.and_then(|f| f(&format!("{name}/props"))).unwrap_or(2);
         let layer = placed.iter().filter(|p| p.export == export).collect::<Vec<_>>();
         let mut unknown_levels = 0;
-        let buildings = layer.iter().filter(|p| p.node.class == "BUILDING_INSTANCE").map(|p| building_record(p, extent_z, ctx, false, &mut unknown_levels)).collect::<Vec<_>>();
+        let buildings = layer.iter().filter(|p| p.node.class == "BUILDING_INSTANCE").map(|p| building_record(p, extent_z, ctx, false, 12, &mut unknown_levels)).collect::<Vec<_>>();
         if unknown_levels > 0 {
             notes.notes.push(format!("{name}: {unknown_levels} damaged buildings without their destruction levels (starting damage 1)"));
         }
@@ -1402,7 +1427,7 @@ fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes
             MarkerKey::Text(s) | MarkerKey::Named(s, _) => s.clone(),
             MarkerKey::Number(v) => v.to_string(),
         };
-        let props = grouped(layer.iter().filter_map(|p| prop_record(p, extent_z, 9)).collect());
+        let props = grouped(layer.iter().filter_map(|p| prop_record(p, extent_z, 9, true)).collect());
         let emitters = grouped(layer.iter().filter(|p| p.node.class == "VFXInstance").map(|p| emitter_record(p, extent_z, 9)).collect());
         let captures = layer
             .iter()

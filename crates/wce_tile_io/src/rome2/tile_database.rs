@@ -259,7 +259,8 @@ fn conversion_params(doc: &XmlDoc, e: usize) -> ConversionParams {
 }
 
 /// A climate. Its textures list only what differs from the defaults (the defaults are the `default` climate's in every shipped file:
-/// reflectivity 0.009, smoothness 0.1); Rome 2's `const_smoothness` is Attila's `lerp_smoothness`.
+/// reflectivity 0.009, smoothness 0.1; the repeat 40.1 m, Attila's reader's default too); Rome 2's `const_smoothness` is Attila's
+/// `lerp_smoothness`. Rome 2 has no outfield repeat: Attila's default (1200.1 m).
 fn climate(doc: &XmlDoc, e: usize) -> Climate {
     let mut c = Climate::default();
     c.set_serialise_version(3);
@@ -282,7 +283,8 @@ fn climate(doc: &XmlDoc, e: usize) -> Climate {
             x.set_lerp_smoothness1(f32_or(doc, t, "const_smoothness1", 0.1));
             x.set_lerp_smoothness2(f32_or(doc, t, "const_smoothness2", 0.1));
             x.set_lerp_smoothness3(f32_or(doc, t, "const_smoothness3", 0.1));
-            x.set_blend_pixel_scale(f32_or(doc, t, "blend_pixel_scale", 0.0));
+            x.set_blend_pixel_scale(f32_or(doc, t, "blend_pixel_scale", 40.099_998));
+            x.set_outfield_blend_pixel_scale(1200.1);
             x
         })
         .collect();
