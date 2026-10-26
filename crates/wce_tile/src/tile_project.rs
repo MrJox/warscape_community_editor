@@ -528,17 +528,59 @@ impl TileProject {
             wrote = true;
         }
 
-        if let (Some(field), Some(base)) = (&self.height, &self.height_png)
+        if let (Some(field), Some(base)) = (&mut self.height, &self.height_png)
             && (self.height_dirty || force_height || (elsewhere && !out_dir.join("height_map_0.png").exists()))
         {
+            // The range follows the heights, as TEd saves them; the entry gets it.
+            let (min, scale) = field.fit_range();
+            if (min, scale) != (field.min_height(), field.scale()) {
+                msg += &format!("height range {:.3} .. {:.3} m (was {:.3} .. {:.3}). ", min, min + scale, field.min_height(), field.min_height() + field.scale());
+                field.set_range(min, scale);
+            }
+
             let png = field.to_png(base);
             let bytes = if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?;
             write("height_map_0.png", &bytes)?;
             msg += if png.has_ancillary { "height_map_0.png saved (source had extra chunks: re-encoded). " } else { "height_map_0.png saved. " };
             wrote = true;
+            msg += &self.save_height_range(out_dir, min, scale)?;
         }
 
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
+    }
+
+    /// The entry's copy next to a tile saved into `out_dir` (the same place under its raw_data), `None` when `out_dir` is not in a kit's
+    /// layout or the tile has no entry.
+    pub fn entry_file_for(&self, out_dir: &Path) -> Option<PathBuf> {
+        let entry = self.entry.as_ref()?;
+        let relative = entry.file().strip_prefix(entry.raw_root()?).ok()?.to_path_buf();
+        Some(kit_raw_root(out_dir)?.join(relative))
+    }
+
+    /// The variation's height range into the entry, and the entry file next to a tile saved into `out_dir` when its text differs; the
+    /// message says what was written.
+    fn save_height_range(&mut self, out_dir: &Path, min: f64, scale: f64) -> Result<String> {
+        self.info.min_height = min;
+        self.info.scale = scale;
+        let target = self.entry_file_for(out_dir);
+        let (Some(entry), Some(v)) = (self.entry.as_mut(), self.variation) else { return Ok(String::new()) };
+        entry.set_height_range(v, min, scale);
+        let Some(target) = target else {
+            return Ok("the tile database entry is not next to it: its height range is not saved. ".to_owned());
+        };
+
+        let bytes = entry.save();
+        if std::fs::read(&target).is_ok_and(|old| old == bytes) {
+            return Ok(String::new());
+        }
+
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+        }
+
+        std::fs::write(&target, &bytes).map_err(|_| format!("could not write {}", target.display()))?;
+        TileIndex::forget_shared();
+        Ok(format!("{} saved. ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
 
     /// Fills in the prefab references' contents from their prefabs (`contents`: a key's group contents; `PrefabLibrary::contents`), as the

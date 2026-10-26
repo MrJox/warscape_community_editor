@@ -185,6 +185,26 @@ impl TileEntry {
         &self.file
     }
 
+    /// The file the entry is from now on (a copy of it was made there).
+    pub fn set_file(&mut self, file: &Path) {
+        self.file = file.to_path_buf();
+    }
+
+    /// A variation's height range (`min_height`, `scale`), written as TEd writes them (`%f`); `false` when the text did not change.
+    pub fn set_height_range(&mut self, variation: usize, min_height: f64, scale: f64) -> bool {
+        let Some(elem) = self.items("VARIATIONS", "VARIATION").get(variation).copied() else { return false };
+        let mut changed = false;
+        for (name, value) in [("min_height", min_height), ("scale", scale)] {
+            let text = format!("{value:.6}");
+            if self.doc.get(elem, name).as_deref() != Some(text.as_str()) {
+                self.doc.set(elem, name, &text);
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     /// The `TILE` element.
     pub fn root(&self) -> usize {
         self.root

@@ -957,6 +957,39 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
     });
 
+    c.add("new_tile", "new_tile <name> [x cells] [y cells] [height m] [density 32|64|128]", "a new battle tile, flat at the height, as a project (Tile > New tile...; defaults 8 8 10, density 128, or 32 above 16 cells), opened", |e, a| {
+        use wce_tile::new_tile;
+        let Some(name) = a.first() else { return fail("usage: new_tile <name> [x cells] [y cells] [height m] [density]") };
+        let name = match new_tile::check_name(name) {
+            Ok(n) => n,
+            Err(err) => return fail(&err),
+        };
+
+        let number = |i: usize, default: f64| a.get(i).map_or(Some(default), |v| v.parse::<f64>().ok());
+        let (Some(x), Some(y), Some(height)) = (number(1, f64::from(new_tile::DEFAULT_CELLS)), number(2, f64::from(new_tile::DEFAULT_CELLS)), number(3, new_tile::DEFAULT_HEIGHT)) else {
+            return fail("the size and height are numbers");
+        };
+
+        let (cells_x, cells_y) = (x as u32, y as u32);
+        let density = match a.get(4) {
+            Some(d) => match d.parse::<u32>() {
+                Ok(d) => d,
+                Err(_) => return fail("the density is 32, 64 or 128"),
+            },
+            None => new_tile::suggested_density(cells_x, cells_y, new_tile::DEFAULT_DENSITY, false),
+        };
+
+        let t = new_tile::NewTile { name, cells_x, cells_y, height, density, seed: new_tile::clock_seed() };
+        with_tile(e, |tool, e| tool.create_tile(e, &t).map_or_else(fail, ok))
+    });
+
+    c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
+        with_tile(e, |t, _| {
+            t.open_new_tile_dialog();
+            ok("the New tile dialog opens")
+        })
+    });
+
     c.add("import_from_kit", "import_from_kit", "open the Assembly Kit's copy of the open project (its next save replaces the project; an extracted tile is extracted again)", |e, _| {
         with_tile(e, |t, e| t.import_from_kit(e).map_or_else(fail, ok))
     });

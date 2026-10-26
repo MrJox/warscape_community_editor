@@ -144,7 +144,20 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
     let variation = project.variation.ok_or("no tile variation")?;
     let hf = project.height.as_ref().ok_or("no height map")?;
     let (map_w, map_h) = (hf.width() as usize, hf.height() as usize);
-    let raw = (0..map_h as u32).flat_map(|y| (0..map_w as u32).map(move |x| hf.raw(x, y))).collect::<Vec<u16>>();
+
+    // The heights as the next save writes them: in the range they are fitted to, which the entry then has.
+    let (min, scale) = hf.fit_range();
+    let raw = hf.quantized(min, scale);
+    let refitted;
+    let entry = if (min, scale) == (hf.min_height(), hf.scale()) {
+        entry
+    } else {
+        let mut e = entry.clone();
+        e.set_height_range(variation, min, scale);
+        refitted = e;
+        &refitted
+    };
+
     let (bw, bh, blend) = read_blend_map(&project.dir.join("blend_map.tif"))?;
     if (bw, bh) != (map_w, map_h) {
         return Err(format!("blend_map.tif is {bw}x{bh}, the height map {map_w}x{map_h}"));

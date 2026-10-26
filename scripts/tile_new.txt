@@ -1,0 +1,19 @@
+# New tile (docs/plans/workflow_review.md): a 2 x 2 battle tile at density 32 made as a project, flat at its height (10 in the height map's
+# units: 5 m in the editor), raised and saved (the height range follows: 10 .. 18, the entry with it), a building added to the empty tile
+# (TEd's defaults) and a layer, saved, opened again. Run with WCE_TILE_WORKSPACE set to a scratch folder (the projects); %WORKSPACE% is it.
+new_tile wce_review_test 2 2 10 32
+frames 5
+assert_height 100 100 5 0.01
+paint raise 100 100 40
+save
+add_building barbarian_fort_straight 60 60
+new_layer Walls
+frames 3
+save
+assert_modified 0
+close_all
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/assembly_kit/wce_review_test/battlefield"
+frames 3
+tile_entry
+tile_tree
+quit

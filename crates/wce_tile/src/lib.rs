@@ -6,6 +6,7 @@ pub mod building_db;
 pub mod height_field;
 pub mod instance_templates;
 pub mod new_instances;
+pub mod new_tile;
 pub mod prefab_refs;
 pub mod prefabs;
 pub mod project_files;
