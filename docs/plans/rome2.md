@@ -47,8 +47,10 @@ Status legend: **done**, **partial**, **todo**.
 - **done** The terrain (surface, blend, composite, resolve; shadows). Open: the variation textures (the index map is not read).
 - **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
 - **done** The sea (the forward ocean; no planar reflection).
-- **todo** The effects (generated shaders), the rivers and water planes (their shaders exist: to check).
-- **todo** Grass and trees (Rome 2's vegetation shaders share the names: to check), decals.
+- **todo** The effects (generated shaders).
+- **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
+  engine's `g_hide_foliage`.
+- **todo** Rivers and water planes: drawn with Attila's passes, not checked against Rome 2's shaders' differences.
 
 ## Phase 3: editor — partial
 

@@ -3,7 +3,8 @@
 `wce_render`'s renderer draws Rome 2 with its own shaders (`fxc/` of `data.pack` and `data_rome2.pack`; the containers' signature is
 0xF8C5DEAD, Attila's 0x075BCD15, otherwise the same v4 layout). The renderer knows the game from its files
 (`Files::game` -> `renderer::game::RenderGame`) and switches the passes that differ. Status 2026-10-26: a Rome 2 tile draws with
-its terrain, buildings, sky, clouds, the sun and its shadows, the sea; the effects are not drawn.
+its terrain, buildings, sky, clouds, the sun and its shadows, the sea, trees, grass and decals; the effects are not
+drawn.
 
 Tools: `shader_info` (wce_d3d11 example: a game's shaders' reflection, `WCE_GAME_KEY=rome_2`), and the scratch scripts
 `fxc2dxbc.py` / `disasm.sh` (vkd3d-compiler's disassembly) under `~/wce_re/scratch/rome2/scripts`.
@@ -69,7 +70,8 @@ No texture arrays: the tiles' maps are accumulated, then textured in screen spac
    albedo is the accumulated weights times `s_diffuse_r` .. `s_diffuse_a`, the normal the groups' normal maps (`s_normal_r` ..) on the
    accumulated one, faded to up with distance (`g_far_tile_distance`); added into the three terrain targets (albedo + alpha, normal,
    gloss 0).
-4. `ps30_terrain_to_gbuffer_ss`: the terrain targets divided by the accumulated alpha, the noise map
+4. `ps30_terrain_to_gbuffer_ss`: the terrain targets divided by the accumulated alpha (the depth read from a copy of the depth channel,
+   `viewz`, as it writes that channel), the noise map
    (`terrain/textures/common/terrain_noise`, `g_noise_params`), the climate's `medium_detail_map.dds` as a normal detail
    (`g_mid_distance_details`: far distance, repeat, strength), into the G-buffer (albedo as sqrt, specular white, z / w).
 
@@ -80,6 +82,22 @@ database's `RENDER_PARAMS` says 9). The game may draw the battle terrain through
 (`terrain_enable_battle_vtex`, `ps30_geom_vtex`). To settle: a frame capture of the game.
 
 Shadows: `vs30_shadow` is `vs30_geom` again; `ps30_shadow` is shared.
+
+## Vegetation and decals
+
+- Trees (`rigidbranchcommon_v3` / `rigidleafcommon_v3`, both techniques): the same instance values in other slots: TEXCOORD0..2 the
+  position's rows, TEXCOORD3 (.xy: tint and wind seed, 1 - dissolve; no burn), TEXCOORD4..6 the LOD position's rows (Attila: TEXCOORD3..5
+  the rows, TEXCOORD6 the values) (`tree_layout`). The leaves' alpha is scaled by saturate(distance^2 * `camera_VS_PS.g_hide_foliage`):
+  0 discards every leaf; the engine's value is not known (1 here: faded within a unit of the camera). Four G-buffer targets, no burn or
+  fire maps. Billboards: `s_diffuse_map` (Attila's `s_diffuse_map_tree`).
+- Grass (`ps30_gbuffer_grass`): another shader than Attila's. It alpha-tests the diffuse (0.35) and the dissolve map, reconstructs the
+  ground under the pixel from the depth and fades the blades into it with distance itself, reading the terrain resolve's inputs
+  (`s_albedo_map`, `s_terrain_normal_map`, `s_terrain_gloss_map` the composite targets, `s_depth_map` the depth copy,
+  `s_mid_distance_detail_map`, `s_noise_map`, `s_shroud`); it writes four targets, opaque (Attila's blends by its alpha).
+- Projected decals: the depth `s_depth_buffer` and the normal `s_gbuffer_normal_wrap` (Attila's `gbuffer_channel_4_sampler`,
+  `s_gbuffer_normal`); two targets written (normal, albedo), no specular.
+- The lists: Rome 2's tiles have the older `<climate>.tree_list` / `default.grass_list` (`wce_formats::old_lists`), not the FASTBIN
+  ones; the tile tool reads them (and, without the kit's vegetation parameters, the lists a decompiled project carries).
 
 ## Sea (`ocean.rs`)
 

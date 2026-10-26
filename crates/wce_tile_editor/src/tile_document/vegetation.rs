@@ -9,6 +9,9 @@
 //! The static VEGETATION_INSTANCEs are list trees in the game, so they are drawn tilted too, and with the model the shown list's climate
 //! converts their key to (`per_climate_tree_conversions.xml`, as BOB writes them into the list).
 //!
+//! A tile without the FASTBIN lists (Rome 2's) has the older ones (`<list>.tree_list`, `wce_formats::old_lists`): the same trees, placed
+//! the same way (none freeform). Without the kit's vegetation parameters, a decompiled project shows the lists carried from the packs.
+//!
 //! A list the tile has no packed file for (a raw tile BOB hasn't processed, or `gen:<list>` asked for) is generated as BOB would
 //! (`wce_tile::vegetation`), from the tile's seeds, height map, saved blend map, exclusion polygons and static trees and the Assembly
 //! Kit's vegetation parameters.
@@ -19,6 +22,7 @@ use std::sync::Arc;
 
 use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::fastbin_lists::{TREE_LIST_EXTENSION, TreeListFile};
+use wce_formats::old_lists::{OldList, OldListKind};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene};
@@ -31,6 +35,13 @@ use super::{TERRAIN, Tile};
 pub const DEFAULT_TREE_LIST: &str = "default";
 
 const SEED: u32 = 0x4971_0ae3;
+
+/// The older tree lists' extension (Rome 2's tiles have no `.tree_list.bin`).
+const OLD_TREE_LIST_EXTENSION: &str = ".tree_list";
+
+/// The folder of a decompiled project its tile's vegetation files are carried in (`wce_tile_io::attila::stage_c::CARRIED_DIR`): the lists
+/// shown when the kit can't generate them (Rome 2's has no vegetation parameters).
+pub(crate) const CARRIED_DIR: &str = "decompiled_vegetation";
 
 /// The prefix of a list generated from the seeds even when the tile has it packed.
 pub const GENERATED_PREFIX: &str = "gen:";
@@ -109,18 +120,21 @@ impl Tile {
     fn find_tree_lists(&self) -> Vec<String> {
         let mut names = Vec::new();
         if let (Some(files), Some(folder)) = (self.files.as_deref(), self.packed_folder()) {
-            for path in files.list(&folder, TREE_LIST_EXTENSION) {
-                let file = &path[folder.len()..];
-                if !file.contains('/') {
-                    names.push(file.trim_end_matches(TREE_LIST_EXTENSION).to_owned());
+            for extension in [TREE_LIST_EXTENSION, OLD_TREE_LIST_EXTENSION] {
+                for path in files.list(&folder, extension) {
+                    let file = &path[folder.len()..];
+                    if !file.contains('/') {
+                        names.push(file.trim_end_matches(extension).to_owned());
+                    }
                 }
             }
         }
 
-        if let Ok(dir) = std::fs::read_dir(&self.project.dir) {
+        let carried = self.generation_params().is_none().then(|| self.project.dir.join(CARRIED_DIR));
+        for dir in std::iter::once(self.project.dir.clone()).chain(carried).filter_map(|d| std::fs::read_dir(d).ok()) {
             for entry in dir.flatten() {
                 let file = entry.file_name().to_string_lossy().to_lowercase();
-                if let Some(name) = file.strip_suffix(TREE_LIST_EXTENSION) {
+                if let Some(name) = file.strip_suffix(TREE_LIST_EXTENSION).or_else(|| file.strip_suffix(OLD_TREE_LIST_EXTENSION)) {
                     names.push(name.to_owned());
                 }
             }
@@ -211,14 +225,18 @@ impl Tile {
         Ok(trees)
     }
 
-    fn read_tree_list(&self, name: &str) -> Option<Vec<u8>> {
-        let file = format!("{name}{TREE_LIST_EXTENSION}");
-        if let Ok(bytes) = std::fs::read(self.project.dir.join(&file)) {
-            return Some(bytes);
-        }
-
-        let path = format!("{}{file}", self.packed_folder()?);
-        self.files.as_deref()?.read(&path).ok()
+    /// A list's file: the FASTBIN one, else the older one (whether it is); in the project, the packs, then (when the kit can't generate it)
+    /// the carried folder.
+    fn read_tree_list(&self, name: &str) -> Option<(Vec<u8>, bool)> {
+        let carried = self.generation_params().is_none().then(|| self.project.dir.join(CARRIED_DIR));
+        [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
+            let file = format!("{name}{extension}");
+            let bytes = std::fs::read(self.project.dir.join(&file))
+                .ok()
+                .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
+                .or_else(|| std::fs::read(carried.as_ref()?.join(&file)).ok())?;
+            Some((bytes, old))
+        })
     }
 
     /// The list the display asks for, decoded once; empty when it is off or missing.
@@ -235,10 +253,17 @@ impl Tile {
         self.trees.name.clone_from(&name);
 
         let packed = if name.starts_with(GENERATED_PREFIX) { None } else { self.read_tree_list(&name) };
-        let trees = match packed.map(|bytes| TreeListFile::decode(&mut Cursor::new(bytes), &None)) {
-            Some(Ok(file)) => list_trees(&file),
+        let decoded = packed.map(|(bytes, old)| {
+            if old {
+                OldList::parse(OldListKind::Tree, &bytes).map(|list| old_list_trees(&list)).map_err(|error| format!("{name}{OLD_TREE_LIST_EXTENSION}: {error}"))
+            } else {
+                TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|file| list_trees(&file)).map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
+            }
+        });
+        let trees = match decoded {
+            Some(Ok(trees)) => trees,
             Some(Err(error)) => {
-                log::warn(format!("{name}{TREE_LIST_EXTENSION}: {error}"));
+                log::warn(error);
                 vec![]
             }
             None => {
@@ -373,6 +398,23 @@ fn list_trees(file: &TreeListFile) -> Vec<ListTree> {
                 freeform: *item.flags() != 0,
                 yaw: (rand >> 16) as f32 * YAW_STEP,
             });
+        }
+    }
+
+    trees
+}
+
+/// The trees of an older list (Rome 2's), as [`list_trees`]: a yaw sequence per model, none freeform.
+fn old_list_trees(list: &OldList) -> Vec<ListTree> {
+    let mut trees = Vec::with_capacity(list.len());
+    for (t, (name, first)) in list.types.iter().enumerate() {
+        let model = String::from_utf8_lossy(name).replace('\\', "/").to_lowercase();
+        let end = list.types.get(t + 1).map_or(list.len(), |(_, next)| *next as usize);
+        let mut rand = SEED;
+        for i in *first as usize..end.min(list.len()) {
+            rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+            let [x, y, z] = list.position(i);
+            trees.push(ListTree { model: model.clone(), x, y, z, scale: list.scale(i).unwrap_or(1.0), freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
         }
     }
 

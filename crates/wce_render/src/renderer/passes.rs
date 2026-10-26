@@ -41,7 +41,7 @@ impl Renderer {
         // The rigid vertex shaders share one layout, the tree ones another.
         let Some(vs) = self.shader(RIGID_VS) else { return };
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
-        let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout()));
+        let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
         self.cbs.set_f("tree_billboard_constants", "g_tint_colours", &[1.0; 12]);
         self.ctx.set_input_layout(Some(&layout));
@@ -332,7 +332,7 @@ impl Renderer {
             self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
 
             let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
-            let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout()));
+            let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
             let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));

@@ -211,7 +211,9 @@ pub(crate) fn rigid_layout() -> Vec<InputElement> {
 /// ([`crate::model_cache::TREE_STRIDE`] bytes: POSITION0 position, 1 LOD position, 2..4 normal / tangent / bitangent, 5 uv, 6 the two LOD
 /// weights, 7 colour and wind weight; bytes 48..52 unused) and the instance (TEXCOORD0..2 the world rows for the position, TEXCOORD3..5 the
 /// ones for the LOD position: the same rows here, TEXCOORD6 (tint and wind seed, 1 - dissolve, burn) = the rigid instance's POSITION4).
-pub(crate) fn tree_layout() -> Vec<InputElement> {
+/// Rome 2's shaders read the same values in another order: TEXCOORD3 (.xy: tint and wind seed, 1 - dissolve; no burn), TEXCOORD4..6 the
+/// LOD position's rows.
+pub(crate) fn tree_layout(game: game::RenderGame) -> Vec<InputElement> {
     let h4 = DXGI_FORMAT_R16G16B16A16_FLOAT;
     let mut el = vec![
         element(c"POSITION", 0, h4, 0, 0, false),
@@ -224,11 +226,18 @@ pub(crate) fn tree_layout() -> Vec<InputElement> {
         element(c"POSITION", 7, h4, 0, 52, false),
     ];
 
-    for i in 0..6 {
-        el.push(element(c"TEXCOORD", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i % 3) * 16, true));
+    // The semantic indices in order: the position's rows, then (Attila) the LOD position's rows and the values, (Rome 2) the values and the
+    // LOD position's rows.
+    let rome2 = game == game::RenderGame::Rome2;
+    for i in 0..7 {
+        let offset = match (rome2, i) {
+            (_, 0..=2) => i * 16,
+            (false, 3..=5) | (true, 4..=6) => (i - if rome2 { 4 } else { 3 }) * 16,
+            _ => 48,
+        };
+        el.push(element(c"TEXCOORD", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, offset, true));
     }
 
-    el.push(element(c"TEXCOORD", 6, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, true));
     el
 }
 
@@ -944,6 +953,10 @@ impl Renderer {
         cbs.set_f("camera_VS_PS", "g_viewport_dimensions", &[fw, fh, 1.0 / fw, 1.0 / fh]);
         cbs.set_f("camera_VS_PS", "g_render_target_dimensions", &[fw, fh, 1.0 / fw, 1.0 / fh]);
         cbs.set_i("camera_VS_PS", "g_num_of_samples", 1);
+
+        // Rome 2's leaves fade near the camera: their alpha is scaled by saturate(distance^2 * g_hide_foliage) (0 hides every leaf). The
+        // engine's value is not known: 1, the leaves within a unit of the camera faded.
+        cbs.set_f("camera_VS_PS", "g_hide_foliage", &[1.0]);
     }
 
     /// The full-screen triangle with a pixel shader.

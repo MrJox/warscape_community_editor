@@ -30,7 +30,7 @@ const R2_RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gb
 const R2_RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
 
 /// The terrain noise of the resolve (`s_noise_map`).
-const NOISE_MAP: &str = "terrain/textures/common/terrain_noise.dds";
+pub(crate) const NOISE_MAP: &str = "terrain/textures/common/terrain_noise.dds";
 
 /// Floats of a blend box instance: P1 the tile's rectangle in the box (x0 z0 x1 z1), P2 the weights of the LF minimum and maximum added to
 /// the height (unused: 0), P3 .. P5 the box's world rows, P6 the rotation index of the tile's maps; padded to 20.
@@ -223,6 +223,12 @@ impl Renderer {
 
         let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
         let Some(il) = self.layout(&res_vs, "terrain_resolve_rome2", &el) else { return };
+
+        // The depth channel is read (the ground's position) and written: read from a copy, which the grass reads too.
+        if let (Some(dst), Some(src)) = (&self.terrain.viewz.tex, &self.gbuffer.channels[3].tex) {
+            ctx.copy_resource(dst, src);
+        }
+
         let rtvs = self.gbuffer.channels.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
         ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
         ctx.set_depth_stencil_state(self.terrain.ds_resolve.as_ref(), 2);
@@ -254,10 +260,11 @@ impl Renderer {
         bind_srv(&ctx, &res_ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
-        bind_srv(&ctx, &res_ps, "s_depth_map", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&ctx, &res_ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_mid_distance_detail_map", detail.as_ref());
         bind_srv(&ctx, &res_ps, "s_noise_map", noise.as_ref());
         bind_srv(&ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
+        (self.terrain.r2_detail, self.terrain.r2_resolved) = (detail, true);
         ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);
         ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ctx.draw(6, 0);

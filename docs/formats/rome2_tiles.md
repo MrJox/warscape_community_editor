@@ -41,7 +41,10 @@ as rpfm's `TileDatabase`, which the decompiler and the editor read, and writes a
 The same files as Attila's (CHMF heights and water, the DDS maps, RMV2 meshes, XML logic, markers, building lists), and:
 
 - no FASTBIN anywhere: no `.tree_list.bin` / `.grass_list.bin`, procedural BMDs, escalation BMDs, civilian files or outfield tents.
-  The vegetation is the older lists (`<climate>.tree_list`, `default.tree_list`, `default.grass_list`);
+  The vegetation is the older lists (`<climate>.tree_list`, `default.tree_list`, `default.grass_list`; `wce_formats::old_lists`: tree
+  records of 10 bytes, half floats x, y, z, a 0, the scale byte (/ 127), two bytes (the first 0 in the files looked at; meaning not
+  known: the trees are put on the terrain); grass records the three half floats), which the tile tool shows (the yaws as the FASTBIN
+  lists');
 - `tile.ted_binary` (TEd's state, 76 bytes mostly) and `non_terrain_buildings.outlines` / `non_terrain_sprawl.outlines` (an
   `OUTLINE_LIST` per building list): carried into the project and written back as they are.
 
