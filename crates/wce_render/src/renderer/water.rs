@@ -17,6 +17,12 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const RIVER_VS: &str = "dx11_sm_3_0_rigidriver.hlsl_vs_vs30_main_battle_river";
 const RIVER_PS: &str = "dx11_sm_3_0_rigidriver.hlsl_ps_ps30_main_battle_river";
+
+/// The pixel shaders with shadows, the variant the game's lighting uses (`DIR_LIGHT_PS`: hardware gather, shader model 5): the same inputs
+/// as the plain ones (so the same vertex shaders), plus `shadowmap_PS`, `g_tShadowBuffer_SM50` and its comparison sampler. The water
+/// receives the shadows of what stands over it, as the game's does with shadows on.
+const RIVER_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidriver.hlsl_ps_ps30_main_battle_river";
+const SEA_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";
 const SEA_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_battle";
 
 /// The "ultra" quality level.
@@ -133,7 +139,12 @@ impl Renderer {
 
         wce_prof!("render.water");
         let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
-        let ps = self.shader(if rivers { RIVER_PS } else { SEA_PS });
+        let ps = match (rivers, self.settings.shadows) {
+            (true, true) => self.shader(RIVER_PS_SHADOWS).or_else(|| self.shader(RIVER_PS)),
+            (true, false) => self.shader(RIVER_PS),
+            (false, true) => self.shader(SEA_PS_SHADOWS).or_else(|| self.shader(SEA_PS)),
+            (false, false) => self.shader(SEA_PS),
+        };
         let (Some(vs), Some(ps)) = (vs, ps) else { return };
         if self.water.ds.is_none() {
             // Geometry is stencil 1: the fog pass covers the sea plane.
@@ -233,6 +244,8 @@ impl Renderer {
         bind_srv(ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
         bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
+        bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
         let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
         let inst_stride = if rivers { 64u32 } else { 96 };
         for e in water.iter().copied() {

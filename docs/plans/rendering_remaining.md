@@ -18,9 +18,10 @@ capture recipe is in docs/re/water.md ("The battle sea of a coastal battle"):
 
 ## Water (from docs/plans/tile_ted_parity.md 4b)
 
-Assumptions in docs/re/water.md ("Assumptions / not verified"): the engine river mesh's uv convention, shadows on water (the
-`sHardShadowBuffer` variants unused), foam and winter ice (no inputs read), `g_refraction_depth` 0.75 at run time, river ends blending
-with neighbours (no fade).
+Settled 2026-10-27 (docs/re/water.md, "Settled"): the river's uv is metres across / along (BOB's vertices, the shader's 0.01 / 0.001),
+the battle river shader has no fade at the ends and no foam, `g_refraction_depth` is 0.75, and the water now takes shadows (the
+`enable_shadows` variants of the river and water plane shaders). Open: winter ice (the engine loads `BattleTerrain/river/ice_diffuse_*`;
+what draws them is being traced).
 
 ## To check in game
 

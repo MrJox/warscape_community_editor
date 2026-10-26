@@ -139,6 +139,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Integrity errors view.
 - Stats view (counts, memory budget).
 
+## Ideas for later (user, 2026-10-27)
+- Move the ground views (colour, blend groups, ground types, protection, water depth) into a quick filter in the viewport, next to the
+  other viewport chips, instead of the Tile panel's Ground section.
+
 ## Decisions
 - The tile's root is its database entry, not the folder of `tile.ted` (2026-10-09).
 - Everything rendered uses the game's shaders; the CPU bake only draws TEd's debug views (2026-10-10).
