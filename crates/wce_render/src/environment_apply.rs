@@ -70,6 +70,13 @@ pub fn apply_environment(e: &EnvironmentParams, cbs: &mut ConstantBuffers) {
     cbs.set_f("luma_stats_buffer", "g_absolute_luma_white_point", &[e.absolute_white_point]);
     cbs.set_f("auto_exposure_buffer", "g_auto_exposure_speed", &[e.auto_exposure_speed]);
 
+    // Rome 2's statistics are in log Y: the same limits as log10 (its shaders raise 10 to them).
+    let log = |v: f32| v.max(1e-6).log10();
+    cbs.set_f("log_Y_stats_buffer", "g_absolute_log_Y_black_point", &[log(e.absolute_black_point)]);
+    cbs.set_f("log_Y_stats_buffer", "g_max_log_Y_black_point", &[log(e.max_black_point)]);
+    cbs.set_f("log_Y_stats_buffer", "g_min_log_Y_white_point", &[log(e.min_white_point)]);
+    cbs.set_f("log_Y_stats_buffer", "g_absolute_log_Y_white_point", &[log(e.absolute_white_point)]);
+
     // The output colorimetry is the game's graphics options (verified: gfx_gamma_setting / gfx_brightness_setting from
     // preferences.script.txt appear unchanged in colorimetry_VS_PS).
     cbs.set_f("colorimetry_VS_PS", "g_brightness", &[e.output_brightness]);

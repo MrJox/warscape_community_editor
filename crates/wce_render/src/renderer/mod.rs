@@ -29,6 +29,7 @@ mod lights;
 mod grass;
 mod draws;
 mod editor;
+pub mod game;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
 mod passes;
 mod post;
@@ -125,6 +126,11 @@ pub(crate) const TM_BLUR_X: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_blur_
 pub(crate) const TM_BLUR_Y: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_blur_y";
 
 /// The game's live path (dump: constant_tone_mapping_buffer = 0); linear out.
+/// Rome 2's luminance statistics: in log Y (CIE log Y xy), from a quarter-size image.
+pub(crate) const TM_R2_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image";
+pub(crate) const TM_R2_LOG_Y: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_rgb_to_hdr_cie_log_y_xy";
+pub(crate) const TM_R2_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_cie_log_y_xy_to_quarter_size_log_y_stats";
+pub(crate) const TM_R2_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_log_y_stats";
 pub(crate) const TM_TONE_MAP: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_basic_tone_mapper";
 pub(crate) const TO_SCREEN_PS: &str = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 
@@ -574,6 +580,8 @@ impl KindIndex {
 }
 
 pub struct Renderer {
+    /// The game whose renderer this is.
+    pub(crate) game: game::RenderGame,
     pub(crate) kinds: KindIndex,
     pub(crate) dev: ID3D11Device,
     pub(crate) ctx: ID3D11DeviceContext,
@@ -701,6 +709,7 @@ impl Renderer {
         cbs.declare("rigid_faction_colours", 64, &BTreeMap::from([("faction_colours".to_owned(), Var { offset: 0, size: 60 })]));
         cbs.set_f("rigid_faction_colours", "faction_colours", &[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]);
         Ok(Self {
+            game: game::RenderGame::of(files.as_ref()),
             dev: dev.clone(),
             ctx: ctx.clone(),
             files,
@@ -1020,8 +1029,14 @@ impl Renderer {
         self.gpu_timer.mark("setup");
 
         // Every cbuffer this frame needs is declared before values are written.
-        for s in [SKY_VS, SKY_GEN_PS, SKY_PS, RIGID_VS, RIGID_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, DIR_LIGHT_PS, TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS,
-            TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y, TM_TONE_MAP, TO_SCREEN_PS, FOG_PS, SHADOW_VS, SHADOW_PS, SUN_VS, SUN_PS, CLOUD_VS, CLOUD_PS, SSAO_PS, SSAO_BLUR_X_PS, SSAO_BLUR_Y_PS]
+        let luma_stats = match self.game {
+            game::RenderGame::Attila => [TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS],
+            game::RenderGame::Rome2 => [TM_R2_DOWN, TM_R2_LOG_Y, TM_R2_STATS, TM_R2_STATS_DOWN],
+        };
+        for s in [SKY_VS, SKY_GEN_PS, SKY_PS, RIGID_VS, RIGID_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, DIR_LIGHT_PS, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y,
+            TM_TONE_MAP, TO_SCREEN_PS, FOG_PS, SHADOW_VS, SHADOW_PS, SUN_VS, SUN_PS, CLOUD_VS, CLOUD_PS, SSAO_PS, SSAO_BLUR_X_PS, SSAO_BLUR_Y_PS]
+            .into_iter()
+            .chain(luma_stats)
         {
             self.shader(s);
         }

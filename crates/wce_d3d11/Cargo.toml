@@ -14,3 +14,4 @@ windows-link.workspace = true
 [dev-dependencies]
 windows-bindgen.workspace = true
 rpfm_lib.workspace = true
+wce_vfs = { path = "../wce_vfs" }
