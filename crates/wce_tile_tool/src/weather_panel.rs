@@ -141,7 +141,11 @@ impl WeatherUi {
         let (loaded, source) = match kit {
             Some(Ok(db)) => (Ok(db), "the kit's environment_map.xml"),
             Some(Err(err)) => (Err(err), "the kit's environment_map.xml"),
-            None => (Self::packs_database(e), "the packs' variation database"),
+            None => match Self::packs_database(e) {
+                Ok(db) => (Ok(db), "the packs' variation database"),
+                // Rome 2 has none: the weather's folders say the same.
+                Err(_) => (Self::folders_database(e), "the packs' weather folders"),
+            },
         };
 
         match loaded {
@@ -172,6 +176,44 @@ impl WeatherUi {
         let vfs = e.vfs().ok_or("the game packs are not mounted")?;
         let bytes = vfs.read(PACKS_DB).map_err(|err| format!("{PACKS_DB}: {err}"))?;
         AssetVariationDb::decode(&mut Cursor::new(bytes), &None).map_err(|err| format!("{PACKS_DB}: {err}"))
+    }
+
+    /// A variation database made from the packs' weather folders, for a game without one (Rome 2):
+    /// `weather/<climate>/[<season>/]<land|sea>/<day|night>/<dry|fog|rain|snow...>/<file>.environment`. The climate folder is the climate
+    /// (`default`: every climate), a season folder `default` (or none) every season.
+    fn folders_database(e: &Editor) -> Result<AssetVariationDb, String> {
+        let vfs = e.vfs().ok_or("the game packs are not mounted")?;
+        const SEASONS: [&str; 4] = ["sp", "su", "au", "wi"];
+        let mut xml = String::from("<environments serialise_version='1'>\n\t<environment_files>\n");
+        let mut n = 0;
+        for path in vfs.list("weather/", ".environment") {
+            let parts = path.split('/').collect::<Vec<_>>();
+            // weather, climate, [season], land|sea, day|night, precipitation, file
+            let (climate, season, rest) = match parts.len() {
+                7 => (parts[1], parts[2], &parts[3..6]),
+                6 => (parts[1], "default", &parts[2..5]),
+                _ => continue,
+            };
+
+            let [battle, time, precipitation] = rest else { continue };
+            if !["land", "sea"].contains(battle) || !["day", "night"].contains(time) {
+                continue;
+            }
+
+            let seasons = if SEASONS.contains(&season) { season.to_owned() } else { SEASONS.join(",") };
+            xml += &format!(
+                "\t\t<environment_file serialise_version='1' filename='{}' map='default_map' climate='{climate}' season='{seasons}' climate_change_index='cc0' precipitation='{precipitation}' time_of_day='{time}' battle_types='{battle}' snow_attrition='snow_attrition_off,snow_attrition_on'/>\n",
+                path.replace('/', "\\")
+            );
+            n += 1;
+        }
+
+        if n == 0 {
+            return Err("no weather files in the packs".to_owned());
+        }
+
+        xml += "\t</environment_files>\n</environments>\n";
+        AssetVariationDb::from_environment_map(&xml).map_err(|err| err.to_string())
     }
 
     /// The files the game picks under the filters that hold the search's words, each once with the number of its variations (a file the
