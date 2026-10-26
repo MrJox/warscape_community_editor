@@ -78,6 +78,16 @@ pub enum TileMode {
     Ground,
 }
 
+/// What the water depth view shows (its tooltip).
+const WATER_VIEW_TIP: &str = "The water's depth over the ground, as BOB works out the tile's water map (hf_water_map.data) from the rivers and \
+    water planes: cyan shallow to dark blue 6 m and deeper, dark where there is no water. The edges of the areas painted as deep water \
+    (ground types) are white, of shallow water yellow: where units can cross is what the painted ground types say, not the water.";
+
+/// What Paint water ground types does (its tooltip).
+const PAINT_WATER_TIP: &str = "Paints the water ground types from the depth: shallow water between the two depths, deep water from the second; \
+    water painted where the water is shallower than the first (or gone) is cleared, other ground types where there is no water are kept. \
+    The defaults come from the kit's river tiles (painted shallow water 0.2 .. 1.25 m deep, deep water 4.4 .. 5.7 m, quartiles). One undo step.";
+
 /// What Snap river ends to link targets does (its tooltip).
 static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!(
     "Moves every river end at the tile's edge whose cell the tile offers as a river link: level with the cell's centre along the edge, and \
@@ -311,6 +321,16 @@ pub struct TileTool {
     /// The image brush setting (read from the settings when first needed).
     pub(crate) image_brush: Option<crate::settings::ImageBrush>,
 
+    /// The water depth view (`water_view.rs`): the tile and version its depth was worked out for, and the version last seen with when it
+    /// started being (the settling after an edit).
+    pub(crate) water_for: Option<(DocumentId, u64)>,
+    pub(crate) water_seen: Option<(DocumentId, u64)>,
+    pub(crate) water_since: f64,
+
+    /// Paint water ground types' depths: shallow water from the first, deep water from the second (metres).
+    pub(crate) water_shallow_m: f32,
+    pub(crate) water_deep_m: f32,
+
     /// The paint brush's Blendmap Filters: each on or off, with its range (kept while off), as TEd's dialog has them.
     pub(crate) filter_height_on: bool,
     pub(crate) filter_height: [f32; 2],
@@ -499,7 +519,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
@@ -903,7 +923,7 @@ impl TileTool {
 
     /// The game's tile data for exported tiles (the packs' databases, buildings and models, the kit's vegetation parameters), read on first
     /// use from the game folder.
-    fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
+    pub(crate) fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
         let dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
         if let Some(g) = self.exported_game.as_ref().filter(|g| g.dir == Path::new(&dir)) {
             return Ok(g.clone());
@@ -1705,17 +1725,51 @@ impl TileTool {
         }
 
         if look.blended {
-            let views = [TerrainView::Colour, TerrainView::BlendGroups, TerrainView::GroundTypes, TerrainView::Protection];
+            let views = [TerrainView::Colour, TerrainView::BlendGroups, TerrainView::GroundTypes, TerrainView::Protection, TerrainView::WaterDepth];
             let mut vi = views.iter().position(|&v| v == look.view).unwrap_or(0) as i32;
             gui::set_next_item_width(160.0);
-            if gui::combo("view##ground", &mut vi, &["colour", "blend groups", "ground types", "protection"]) {
+            if gui::combo("view##ground", &mut vi, &["colour", "blend groups", "ground types", "protection", "water depth"]) {
                 look.view = views[vi as usize];
                 changed = true;
             }
+
+            if gui::is_item_hovered() && look.view == TerrainView::WaterDepth {
+                gui::set_tooltip(WATER_VIEW_TIP);
+            }
         }
 
+        let water_view = look.view == TerrainView::WaterDepth;
         if changed {
             d.tile_mut().set_terrain_look(&mut e.scene, look);
+        }
+
+        // The water depth view: the water ground types painted from the depth.
+        if water_view {
+            gui::set_next_item_width(70.0);
+            gui::drag_float("shallow from (m)##water", &mut self.water_shallow_m, 0.05, 0.0, 20.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Water shallower than this is left unpainted (the water at a river's banks, which lies under the ground or barely over it).");
+            }
+
+            gui::same_line();
+            gui::set_next_item_width(70.0);
+            gui::drag_float("deep from (m)##water", &mut self.water_deep_m, 0.05, 0.0, 50.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Water at least this deep is painted deep water (units cannot cross it); shallower water is shallow water (units wade).");
+            }
+
+            self.water_deep_m = self.water_deep_m.max(self.water_shallow_m);
+            if gui::button("Paint water ground types") {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.status = match d.paint_water_ground_types(self.water_shallow_m, self.water_deep_m) {
+                    Ok(n) => format!("{n} ground type pixel(s) painted from the water depth"),
+                    Err(why) => why,
+                };
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(PAINT_WATER_TIP);
+            }
         }
 
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
@@ -2763,6 +2817,7 @@ impl Tool for TileTool {
 
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
+        self.update_water_depth(e, id);
 
         // The ground types brush paints over the ground types view; the view before comes back after.
         if self.mode == TileMode::Ground && self.view_before_ground.is_none() {

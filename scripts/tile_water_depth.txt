@@ -1,0 +1,25 @@
+# The water depth view and Paint water ground types (Phase 4d of docs/plans/tile_ted_parity.md): %TILE% is a kit river tile
+# (river/2x2_tl_rt/aa). The view works out the depth from stage B's water map; the river at (240, 64) is over 2 m deep; its deep water
+# paint is erased there, and painting the water ground types puts it back; undone. The sea (0 m, over this low tile) and the river ribbons are hidden for the
+# capture %OUT%/water_depth.png. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+tile "%TILE%"
+frames 3
+tile_water off
+tile_sea off
+tile_ground_view water
+frames 10
+assert_water_depth 240 64 2
+brush 10 6 0.5
+paint_ground_type none 240 64 1
+assert_ground_type 240 64 none
+paint_water_types 0.3 2.5
+frames 3
+assert_ground_type 240 64 "deep water"
+cam 0 1.2 200 1
+frames 10
+shot %OUT%/water_depth.png
+frames 2
+undo
+assert_ground_type 240 64 none
+tile_sea on
+quit

@@ -22,7 +22,7 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
+use super::commands::{BrushStepCommand, GroundFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -1985,6 +1985,60 @@ impl TileDocument {
         self.end_stroke();
         self.history.push(Box::new(TextureGroupCommand { slot, before, after: name.to_owned() }));
         Ok(())
+    }
+
+    /// Paints the water ground types from the water depth view's raster (`Tile::water_depth`): shallow water where the water is
+    /// `shallow_m` .. `deep_m` deep, deep water from `deep_m`; a pixel painted as water where the water is shallower than `shallow_m` (or
+    /// there is none) is cleared; other ground types are left where there is no water. One undo entry; returns the pixels changed.
+    /// The kit's river tiles (`water_depth_check`): painted deep water lies 4.4 .. 5.7 m deep (quartiles), shallow 0.2 .. 1.25 m, the
+    /// water left unpainted at its banks 1.25 m under the ground .. 0.8 m deep.
+    ///
+    /// # Errors
+    ///
+    /// No water depth worked out yet, or no ground type map.
+    pub fn paint_water_ground_types(&mut self, shallow_m: f32, deep_m: f32) -> Result<usize, String> {
+        use wce_tile::ground_types::{GROUND_COLOURS, NO_GROUND_TYPE};
+        const DEEP: usize = 6;
+        const SHALLOW: usize = 7;
+
+        let water = self.tile().water_depth.clone().ok_or("the water depth is not worked out yet: show the water depth view")?;
+        self.end_stroke();
+        let t = self.tile_mut();
+        let g = t.project.load_ground()?;
+        let border = (g.width() as usize).saturating_sub(water.w.saturating_sub(1)) / 2;
+        g.begin_edit()?;
+        let mut changed = 0;
+        for j in 0..water.h {
+            for i in 0..water.w {
+                let (x, y) = ((i + border) as u32, (j + border) as u32);
+                if x >= g.width() || y >= g.height() {
+                    continue;
+                }
+
+                let d = water.depth[j * water.w + i];
+                let now = g.rgb(x, y);
+                let is_water = now == GROUND_COLOURS[DEEP] || now == GROUND_COLOURS[SHALLOW];
+                let want = if d.is_finite() && d >= deep_m {
+                    GROUND_COLOURS[DEEP]
+                } else if d.is_finite() && d >= shallow_m {
+                    GROUND_COLOURS[SHALLOW]
+                } else if is_water {
+                    NO_GROUND_TYPE
+                } else {
+                    continue;
+                };
+
+                changed += usize::from(g.set_rgb(x, y, want));
+            }
+        }
+
+        g.end_edit();
+        if changed == 0 {
+            return Ok(0);
+        }
+
+        self.history.push(Box::new(GroundFillCommand { name: "Paint water ground types".to_owned(), first: true }));
+        Ok(changed)
     }
 
     /// The game's texture groups: every climate's (the default climate has them all), sorted.

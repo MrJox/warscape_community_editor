@@ -24,6 +24,86 @@ pub enum TerrainView {
     BlendGroups,
     GroundTypes,
     Protection,
+
+    /// The water's depth over the ground (BOB's water map less its final heights), with the painted water ground types outlined.
+    WaterDepth,
+}
+
+/// The water's depth over the ground on stage B's grid (`w` x `h` vertices over the tile without its border, row j along +z): water
+/// surface less final height, NaN where there is no water (`wce_tile_io::attila::terrain_mesh::water_fields`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaterDepth {
+    pub w: usize,
+    pub h: usize,
+    pub depth: Vec<f32>,
+}
+
+/// The water depth view's colour scale: shallow at 0 m, deep from this many metres.
+pub const WATER_VIEW_DEEP_M: f32 = 6.0;
+
+/// The water depth view (`TerrainView::WaterDepth`) over the tile without its border: dark where there is no water, cyan (shallow) to
+/// dark blue (`WATER_VIEW_DEEP_M` and deeper) over the water; the edges of the areas `ground_type_map.png` paints as deep water in white,
+/// as shallow water in yellow. The ground type map is the bordered tile at the same density (one pixel per vertex).
+pub fn bake_water_depth(req: &BakeRequest, water: &WaterDepth, ground: Option<&GroundTypeField>) -> BakedColour {
+    const DEEP: [u8; 3] = [0, 0, 255];
+    const SHALLOW: [u8; 3] = [93, 255, 255];
+    let (w, h) = (water.w, water.h);
+    let border = ground.map_or(0, |g| (g.width() as usize).saturating_sub(w.saturating_sub(1)) / 2);
+    let painted = |i: usize, j: usize| -> u8 {
+        let Some(g) = ground else { return 0 };
+        let (x, y) = ((i + border) as u32, (j + border) as u32);
+        if x >= g.width() || y >= g.height() {
+            return 0;
+        }
+
+        match g.rgb(x, y) {
+            DEEP => 1,
+            SHALLOW => 2,
+            _ => 0,
+        }
+    };
+
+    let mut rgba = vec![255u8; w * h * 4];
+    let mut wet = 0;
+    for j in 0..h {
+        for i in 0..w {
+            let d = water.depth[j * w + i];
+            let c = if d.is_finite() && d > 0.0 {
+                wet += 1;
+                let f = (d / WATER_VIEW_DEEP_M).clamp(0.0, 1.0);
+                let mix = |a: f32, b: f32| (a + (b - a) * f) as u8;
+                [mix(140.0, 15.0), mix(235.0, 40.0), mix(245.0, 150.0)]
+            } else {
+                [55, 62, 55]
+            };
+
+            // The painted water's edges: a painted pixel with a neighbour painted otherwise.
+            let p = painted(i, j);
+            let edge = p != 0 && [(0, 1), (2, 1), (1, 0), (1, 2)].iter().any(|&(di, dj)| {
+                let (x, y) = ((i + di).wrapping_sub(1), (j + dj).wrapping_sub(1));
+                x < w && y < h && painted(x, y) != p
+            });
+
+            let c = match (edge, p) {
+                (true, 1) => [255, 255, 255],
+                (true, _) => [255, 220, 40],
+                _ => c,
+            };
+
+            rgba[(j * w + i) * 4..(j * w + i) * 4 + 3].copy_from_slice(&c);
+        }
+    }
+
+    let report = if water.depth.iter().all(|d| !d.is_finite()) {
+        "water depth: the tile has no river or water plane".to_owned()
+    } else {
+        format!("water depth: {wet} wet points (cyan shallow .. blue {WATER_VIEW_DEEP_M} m and deeper); painted deep water edged white, shallow yellow")
+    };
+
+    BakedColour {
+        x0: 0.0, z0: 0.0, w_m: req.w_m - 2.0 * (-req.x0), h_m: req.h_m - 2.0 * (-req.z0), w: w as u32, h: h as u32, rgba, climate: "water depth".to_owned(), report,
+        ..Default::default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

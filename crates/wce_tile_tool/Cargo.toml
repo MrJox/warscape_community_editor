@@ -18,6 +18,7 @@ wce_tile = { path = "../wce_tile" }
 wce_tile_editor = { path = "../wce_tile_editor" }
 wce_walls = { path = "../wce_walls" }
 wce_tile_io = { path = "../wce_tile_io" }
+wce_tile_model = { path = "../wce_tile_model" }
 wce_vfs = { path = "../wce_vfs" }
 
 [dev-dependencies]

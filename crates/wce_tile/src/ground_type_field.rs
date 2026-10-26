@@ -114,6 +114,16 @@ impl GroundTypeField {
         Ok(())
     }
 
+    /// Sets one pixel's colour during an edit (alpha 255); false when it had it.
+    ///
+    /// # Panics
+    ///
+    /// No edit is open.
+    pub fn set_rgb(&mut self, x: u32, y: u32, rgb: [u8; 3]) -> bool {
+        let px: Vec<u8> = if self.layer.channels() == 4 { vec![rgb[0], rgb[1], rgb[2], 255] } else { rgb.to_vec() };
+        self.layer.set_pixel(x, y, &px)
+    }
+
     /// Marks the start of an operation for undo.
     ///
     /// # Errors
