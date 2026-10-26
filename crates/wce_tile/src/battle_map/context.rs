@@ -40,6 +40,10 @@ pub struct MapPlacement {
 
     /// The climate the map gives its cells (an index into [`PlacedMap::climates`]: the database's climates; 0 also when none).
     pub climate: u8,
+
+    /// The map names the tile without a variation (Rome 2's, version 6: the game picks one): `variation` is the tile's first, and the
+    /// placement is any variation's.
+    pub any_variation: bool,
 }
 
 impl MapPlacement {
@@ -67,7 +71,7 @@ impl MapPlacement {
 
     /// The same tile location and variation (case and separators ignored).
     pub fn is(&self, location: &str, variation: &str) -> bool {
-        norm(&self.location) == norm(location) && self.variation.eq_ignore_ascii_case(variation)
+        norm(&self.location) == norm(location) && (self.any_variation || self.variation.eq_ignore_ascii_case(variation))
     }
 }
 
@@ -169,7 +173,7 @@ fn split_name(name: &str) -> (String, String) {
 }
 
 /// A name split into (location, variation) and the tile's size when the database knows it.
-type SplitName = (String, String, Option<(i32, i32)>);
+type SplitName = (String, String, Option<(i32, i32)>, bool);
 
 /// Tile sizes and first variations by normalised location, and the split names already seen.
 #[derive(Default)]
@@ -193,22 +197,22 @@ impl PlacedMap {
     fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8) -> MapPlacement {
         if !sizes.names.contains_key(name) {
             // An older map (Rome 2's, version 6) names the tile alone: its first variation (the game's choice is not known).
-            let (location, variation) = match sizes.first_variation.get(&norm(name)) {
-                Some(v) => (name.replace('/', "\\"), v.clone()),
-                None => split_name(name),
+            let ((location, variation), any) = match sizes.first_variation.get(&norm(name)) {
+                Some(v) => ((name.replace('/', "\\"), v.clone()), true),
+                None => (split_name(name), false),
             };
 
             let size = sizes.by_location.get(&norm(&location)).copied();
-            sizes.names.insert(name.to_owned(), (location, variation, size));
+            sizes.names.insert(name.to_owned(), (location, variation, size, any));
         }
 
-        let (location, variation, size) = sizes.names[name].clone();
+        let (location, variation, size, any_variation) = sizes.names[name].clone();
         if size.is_none() && !self.unknown.contains(&location) {
             self.unknown.push(location.clone());
         }
 
         let (w, h) = size.unwrap_or((1, 1));
-        MapPlacement { location, variation, x, y, w, h, rotation: flags & 0xf0, flipped, climate }
+        MapPlacement { location, variation, x, y, w, h, rotation: flags & 0xf0, flipped, climate, any_variation }
     }
 
     /// A placement's climate name (none when the map gives none the database knows).
@@ -321,7 +325,7 @@ impl PlacedMap {
     /// The tiles within `radius` cells of the open tile (`w` x `h` cells) placed at the spot: every placement that overlaps the window and not
     /// the open tile's own cells.
     pub fn context(&self, spot: &Spot, w: i32, h: i32, radius: i32) -> Context {
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: spot.x, y: spot.y, w, h, rotation: spot.rotation, flipped: false, climate: 0 };
+        let me = MapPlacement { location: String::new(), variation: String::new(), x: spot.x, y: spot.y, w, h, rotation: spot.rotation, flipped: false, climate: 0, any_variation: false };
         let r = me.rect();
         let window = [(r[0] - radius).max(0), (r[1] - radius).max(0), (r[2] + radius).min(self.width as i32), (r[3] + radius).min(self.height as i32)];
 
@@ -404,7 +408,7 @@ mod tests {
     use super::*;
 
     fn placed(x: i32, y: i32, w: i32, h: i32, rotation: u16) -> MapPlacement {
-        MapPlacement { location: String::new(), variation: String::new(), x, y, w, h, rotation, flipped: false, climate: 0 }
+        MapPlacement { location: String::new(), variation: String::new(), x, y, w, h, rotation, flipped: false, climate: 0, any_variation: false }
     }
 
     #[test]

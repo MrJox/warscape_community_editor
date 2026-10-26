@@ -106,7 +106,43 @@ impl Game {
             return Err(format!("no pack holds {folder}"));
         }
 
+        // A variation whose maps are the common ones (the sea tiles': `blend_common`, `index_common`, `normal_common`) ships none of them:
+        // they come from the common textures, as the game takes them.
+        for (name, path) in self.common_maps(folder) {
+            if !out.folder.keys().any(|k| k.eq_ignore_ascii_case(name))
+                && let Ok(bytes) = self.files.read(&wce_vfs::normalize(&path))
+            {
+                out.folder.insert(name.to_owned(), Blob::Bytes(bytes.into()));
+            }
+        }
+
         Ok(out)
+    }
+
+    /// The common textures a tile folder's variation uses in place of its own maps (`blend.dds`, `index.dds`, `normal.dds`), from the
+    /// tile database.
+    pub fn common_maps(&self, folder: &str) -> Vec<(&'static str, String)> {
+        let folder = wce_vfs::normalize(folder);
+        let folder = folder.trim_end_matches('/');
+        let Some((location, variation)) = folder.rsplit_once('/') else { return vec![] };
+        let kind = location.strip_prefix("terrain/tiles/").and_then(|r| r.split('/').next()).unwrap_or_default();
+        let Some(db) = self.data.database(kind) else { return vec![] };
+        let norm = |l: &str| l.replace('\\', "/").trim_matches('/').to_lowercase();
+        let Some(v) = db
+            .tiles()
+            .iter()
+            .filter(|t| norm(t.location()) == location)
+            .flat_map(|t| t.variations().iter())
+            .find(|v| v.location().eq_ignore_ascii_case(variation))
+        else {
+            return vec![];
+        };
+
+        [("blend.dds", v.blend_common()), ("index.dds", v.index_common()), ("normal.dds", v.normal_common())]
+            .into_iter()
+            .filter(|(_, p)| !p.is_empty())
+            .map(|(n, p)| (n, p.clone()))
+            .collect()
     }
 
     /// The tile database settings of a kind (`battle`, `campaign`) in the kit's format (`_settings.xml` of `_tile_database`): the kit's
@@ -313,6 +349,14 @@ pub fn save_exported_with(
         written.folder.remove(*name);
     }
 
+    // The maps that are still the common textures the variation names (a sea tile's) are not written: the game takes the common ones.
+    for (name, path) in game.common_maps(&folder) {
+        let common = game.files.read(&wce_vfs::normalize(&path)).ok();
+        if written.folder.get(name).and_then(|b| b.bytes().ok()).is_some_and(|b| common.as_deref() == Some(&b[..])) {
+            written.folder.remove(name);
+        }
+    }
+
     let dir = out.join(&folder);
     let stale = std::fs::read_dir(&dir)
         .into_iter()
@@ -449,8 +493,14 @@ pub fn neighbour_root(game: &Game, root: &Path) -> Result<PathBuf, String> {
 pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) -> Result<PathBuf, String> {
     let folder = format!("{}/{variation}", location.replace('\\', "/").trim_end_matches('/')).to_lowercase();
     let dir = raw.join(&folder);
-    if wce_tile::tile_project::has_tile(&dir) {
+    // A tile decompiled before the common maps were read (a sea tile without its blend map) is decompiled again.
+    let stale = !game.common_maps(&folder).is_empty() && !dir.join("blend_map.tif").is_file();
+    if wce_tile::tile_project::has_tile(&dir) && !stale {
         return Ok(dir);
+    }
+
+    if stale && dir.is_dir() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
 
     let files = game.exported_from_packs(&folder)?;

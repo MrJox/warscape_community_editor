@@ -356,10 +356,10 @@ impl TileTool {
         let (x0, y0) = (c.x.min(0) - 1, c.y.min(0) - 1);
         let (x1, y1) = ((c.x + bw).max(open.width) + 1, (c.y + bh).max(open.height) + 1);
         let placements = vec![
-            MapPlacement { location: info.location.clone(), variation: info.variation.clone(), x: -x0, y: -y0, w: open.width, h: open.height, rotation: 0x10, flipped: false, climate: 0 },
+            MapPlacement { location: info.location.clone(), variation: info.variation.clone(), x: -x0, y: -y0, w: open.width, h: open.height, rotation: 0x10, flipped: false, climate: 0, any_variation: false },
             MapPlacement {
                 location: t.location.clone(), variation: t.variations.first().map(|v| v.location.clone()).unwrap_or_default(), x: c.x - x0, y: c.y - y0, w: t.width,
-                h: t.height, rotation: c.rotation, flipped: false, climate: 0,
+                h: t.height, rotation: c.rotation, flipped: false, climate: 0, any_variation: false,
             },
         ];
         // A flat LF 100 m up: as on an inland map, above the sea (with none the tiles sit 20 m under it, where the game never puts them).

@@ -122,7 +122,8 @@ impl Shared {
         tiles.insert(key.clone(), Slot::Loading);
         drop(tiles);
         let mut dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
-        if let Some(provide) = self.rq.provider.as_ref().filter(|_| !dir.is_dir()) {
+        // The provider (the packs' tiles, decompiled on demand) returns a folder it has at once, and makes a missing or stale one.
+        if let Some(provide) = self.rq.provider.as_ref() {
             match provide(&key.0, &key.1) {
                 Ok(made) => dir = made,
                 Err(e) => wce_foundation::log::info(format!("map context: {}\\{}: {e}", key.0, key.1)),

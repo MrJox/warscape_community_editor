@@ -114,7 +114,10 @@ decompiled, the others noted as lost.
 rectangles; 16-byte cells without the LF height range; the names are tile locations without a variation), `locations.blm` version 7
 (read as 8), `lf_height_map.dds` as Attila's. The tile tool's map context reads the neighbours from a tree in the cache
 (`<cache>/neighbours/rome_2/raw_data`: the whole database's entries in the kit's format, each tile decompiled from the packs the first
-time it is shown).
+time it is shown). The map names a tile without its
+variation, so a placement is any variation's. The sea tiles ship no maps: their variation names common ones (`blend_common`,
+`index_common`, `normal_common`, `terrain/textures/common/`), which the workflow reads from the packs when it decompiles a tile and
+leaves out of a save while they are unchanged.
 
 ## Checks
 

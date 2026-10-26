@@ -916,6 +916,12 @@ impl Renderer {
 
             total += 1;
             if t.material.is_none() || t.nx < 2 || t.nz < 2 || t.heights.is_empty() || !is_ground_world(&e.world) {
+                // Rome 2 has no legacy ground to fall back on: a terrain without a material (still loading, or none made) is left out.
+                if self.game == super::game::RenderGame::Rome2 {
+                    total -= 1;
+                    continue;
+                }
+
                 return false;
             }
 
@@ -1431,10 +1437,10 @@ impl Renderer {
             cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[d.width * units, d.width * units]);
             cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[d.uv_offset]);
             // Rome 2's shader places the window through lf_block_cb's rectangles: uv = (x, z) / size, v = 1 - v, then (u + offset,
-            // offset + 1 - v): Attila's world / size + offset.
+            // (1 - v) - offset): Attila's (x / size + offset, 1 - (z / size + offset)). (A mirrored v went unseen on a flat LF.)
             cbs.set_f("lf_block_cb", "g_height_map_dimension", &[d.n, d.n, 1.0 / d.n, 1.0 / d.n]);
             cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, d.width * units, d.width * units]);
-            cbs.set_f("lf_block_cb", "g_lf_aabb", &[d.uv_offset, 1.0 + d.uv_offset, 1.0, -1.0]);
+            cbs.set_f("lf_block_cb", "g_lf_aabb", &[d.uv_offset, -d.uv_offset, 1.0, 1.0]);
             cbs.set_f("lf_block_cb", "g_normal_lf_aabb", &[0.0, 0.0, 1.0, 1.0]);
 
             // The camera in the group's frame: world' = world - shift; the camera constants are relative to the render origin.
@@ -1449,6 +1455,8 @@ impl Renderer {
             self.bind(ps);
             bind_srv(&self.ctx, vs, "t_low_res_height_map", d.srv.as_ref());
             bind_srv(&self.ctx, vs, "s_low_res_height_map", d.srv.as_ref());
+            // Rome 2's shader filters the LF itself (four samples, its own weights): point samples, else every texel edge is a step.
+            bind_sampler(&self.ctx, vs, "s_low_res_height_map", self.states.s_clamp_point.as_ref());
 
             // The batches: (buffer, patch, stride) -> instance rows.
             let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
