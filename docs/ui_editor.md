@@ -50,7 +50,8 @@ How a layout is drawn (checked against a game screenshot of the Custom Battle sc
 
 * **Pictures with margins are cut in nine**: the four corners keep their size, the edges and the middle stretch, or repeat when the image use is
   `tiled` (the title plaques). The margins are the last floats of the image use (top, right, bottom, left).
-* **Visibility**: the seventh of the twelve flags after a component's offsets is "visible when the layout loads". Tab pages, unit cards and timers the
+* **Visibility**: the seventh of the twelve flags after a component's offsets is "visible when the layout loads" (before version 90 there
+  are thirteen, one more before it, always off in Attila's 27 older layouts and Rome 2's: the eighth; the Inspector names them so). Tab pages, unit cards and timers the
   game shows later have it off; a hidden component hides everything below it (toolbar: *Honour hidden*). Components whose names end in `template`
   are filled in by the game's code (list items, player slots) and are skipped too (*Skip templates*). Both can be overridden per component
   (Fields panel: *Shown in preview*; the file is not changed).

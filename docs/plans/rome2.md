@@ -57,8 +57,8 @@ Status legend: **done**, **partial**, **todo**.
 
 - **done** Tile menu: Save to mod pack; no Save for / Import from Assembly Kit for a game whose kit has no tiles.
 - **done** The weather tool on Rome 2's environments (the test map lit, the default environment `rome_med` day_dry_01).
-- **partial** The UI tool: Rome 2's layouts (version 86) read and write back byte for byte; drawing them is not checked (the two looked
-  at draw nothing: images missing from the packs, or hidden states).
+- **done** The UI tool: Rome 2's layouts (version 86) read and write back byte for byte and draw (before version 90 the visible flag is
+  the eighth of thirteen: every component read as hidden, Attila's older layouts too).
 - **done** Hide what Rome 2's tiles have not (`GameFeatures`: `civilians`, `escalation`, `lite_buildings`): the Create panel's civilian
   and lite building zone entries, the layers' escalation export types. Kept: seasons and snow (Rome 2's weather has seasons and snow
   folders). Procedural BMDs and tents have no UI of their own (the decompiler finds none in Rome 2's tiles).

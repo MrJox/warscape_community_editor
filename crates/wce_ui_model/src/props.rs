@@ -611,13 +611,29 @@ fn bits_group(kind: &str) -> &'static str {
 /// Fields that are padding or only a part of another field.
 fn hidden(kind: &str, it: &Item, v: u32) -> bool {
     match kind {
-        "component" => matches!(it.label.as_str(), "uientry flag 4" | "uientry flag 5" | "uientry flag 6") || (it.tag == "u" && it.label.is_empty() && it.after.is_empty() && it.since == 0),
+        // Before version 90 the converter's flag 7 is the extra flag (the visible one is its flag 8, see `component_def`).
+        "component" => matches!(it.label.as_str(), "uientry flag 4" | "uientry flag 5" | "uientry flag 6")
+            || (v < 90 && it.label == "uientry flag 7")
+            || (it.tag == "u" && it.label.is_empty() && it.after.is_empty() && it.since == 0),
         "state" => v < 116 && matches!(it.label.as_str(), "text label?" | "state stuff 3?") || (it.tag == "u" && it.label.is_empty() && it.since == 0 && it.after.is_empty()),
         _ => false,
     }
 }
 
 pub(crate) fn component_def(it: &Item, v: u32) -> Option<Def> {
+    // Before version 90 the entry has a thirteenth flag, before the visible one (Attila's and Rome 2's layouts: always off): the
+    // converter's flags 8 .. 12 and the unlabelled one after them are the flags 7 .. 12.
+    if v < 90 {
+        let shifted = match (it.label.as_str(), it.after.as_str(), it.since, it.tag.as_str()) {
+            ("", "uientry flag 12", 0, "yes" | "no") => Some("uientry flag 12".to_owned()),
+            (label, ..) => label.strip_prefix("uientry flag ").and_then(|n| n.parse::<u32>().ok()).filter(|n| (8..=12).contains(n)).map(|n| format!("uientry flag {}", n - 1)),
+        };
+        if let Some(label) = shifted {
+            let item = Item { idx: it.idx, tag: it.tag.clone(), value: it.value.clone(), label, after: String::new(), since: 0, nth: it.nth };
+            return component_def(&item, 90);
+        }
+    }
+
     // The fields that have no label of their own are named by the labelled field before them.
     if it.label.is_empty() {
         return match (it.after.as_str(), it.since, it.tag.as_str()) {
