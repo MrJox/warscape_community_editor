@@ -20,7 +20,7 @@ use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile::battle_map::{kit_maps, load_game_map, load_kit_map};
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::TileDocument;
-use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, ContextRequest, Streamer, cache};
+use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, ContextRequest, Streamer, TileProvider, cache};
 use wce_vfs::files::Files;
 
 /// How long a frame spends putting finished chunks on the scene (one at least; the rest wait for the next frames).
@@ -37,6 +37,10 @@ pub enum Job {
 pub struct ContextUi {
     /// The folder of the game's campaign battle map in the packs (the current game's).
     pub game_dir: &'static str,
+
+    /// For a game whose kit has no tiles (Rome 2): the neighbours' tree (a `raw_data` with the whole database's entries) and what makes a
+    /// tile's folder in it (`workflow::neighbour_tile`). See [`Self::raw_of`].
+    pub neighbours: Option<(PathBuf, TileProvider)>,
     pub shown: bool,
     pub maps: Vec<String>,
     pub map: i32,
@@ -93,7 +97,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
@@ -219,16 +223,23 @@ impl ContextUi {
         }
     }
 
+    /// The `raw_data` the context reads (the tile database, the kit's battle maps, the neighbours' folders): the neighbours' tree when
+    /// there is one, else the open tile's kit.
+    pub fn raw_of(&self, d: &TileDocument) -> Option<PathBuf> {
+        self.neighbours.as_ref().map(|(raw, _)| raw.clone()).or_else(|| d.project().raw_root.clone())
+    }
+
     /// The request for the open tile, `None` without a map or a kit.
     pub fn request(&self, d: &TileDocument) -> Option<ContextRequest> {
         let (_, map, _) = self.loaded.as_ref()?;
         let p = d.project();
-        let raw = p.raw_root.clone()?;
+        let raw = self.raw_of(d)?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
             mid: self.mid, far: self.far_ring(), raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
+            provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()),
         })
     }
 
@@ -396,7 +407,7 @@ impl ContextUi {
     fn follow_look(&mut self, e: &mut Editor) {
         let Some(d) = e.docs.find_as::<TileDocument>(self.doc) else { return };
         let look = d.tile().terrain_look().clone();
-        let raw = d.project().raw_root.clone();
+        let raw = self.raw_of(d);
         let Some(s) = self.streamer.as_ref() else { return };
         if s.frame().look != look {
             let doc = self.doc;
@@ -609,7 +620,7 @@ impl ContextUi {
 
     fn draw_section(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
-        let Some(raw) = d.project().raw_root.clone() else {
+        let Some(raw) = self.raw_of(d) else {
             gui::text_disabled("the tile is not in an assembly kit (no neighbours to open)");
             return;
         };

@@ -1302,6 +1302,34 @@ impl TileTool {
         Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.notes.len()))
     }
 
+    /// For a game whose kit has no tiles (Rome 2): the map context's neighbours come from the packs, decompiled on demand into a tree in
+    /// the cache (`workflow::neighbour_root`, written once). Nothing for a game with kit tiles, or once done.
+    pub(crate) fn prepare_neighbours(&mut self, e: &mut Editor) {
+        if e.game().features.kit_tiles || self.context.neighbours.is_some() {
+            return;
+        }
+
+        let game = match self.exported_game(e) {
+            Ok(g) => g,
+            Err(m) => {
+                self.context.status = m;
+                return;
+            }
+        };
+
+        let root = e.settings_ref().paths().cache_dir().join("neighbours").join(game.profile.key);
+        match wce_tile_io::attila::workflow::neighbour_root(&game, &root) {
+            Ok(raw) => {
+                let tree = raw.clone();
+                let provide: wce_tile_editor::tile_document::context::TileProvider =
+                    Arc::new(move |location: &str, variation: &str| wce_tile_io::attila::workflow::neighbour_tile(&game, &tree, location, variation));
+                self.context.neighbours = Some((raw, provide));
+            }
+
+            Err(m) => self.context.status = format!("the neighbours' tiles: {m}"),
+        }
+    }
+
     /// The pack "Save to mod pack" offers: the last one of the game, else `<data>/wce_tiles.pack`.
     fn default_mod_pack(e: &Editor) -> PathBuf {
         let game = e.game();
@@ -1943,6 +1971,7 @@ impl TileTool {
 
         self.draw_entry_section(e, id);
         self.draw_stats_section(e, id);
+        self.prepare_neighbours(e);
         self.context.draw(e, id);
         gui::separator();
         self.draw_placement_section(e, id);

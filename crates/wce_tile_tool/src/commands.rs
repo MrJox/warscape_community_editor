@@ -380,7 +380,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             with_tile(e, |t, e| {
                 use crate::context_panel::{GAME_MAP, load_map, location_names};
-                let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
+                t.prepare_neighbours(e);
+                let Some(raw) = document(e).and_then(|d| t.context.raw_of(d)) else { return fail("the tile is not in a kit") };
                 let files = e.files();
                 let ui = &mut t.context;
                 ui.game_dir = e.game().campaign_battle_map;
@@ -451,7 +452,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add("map_context_async", "map_context_async <map | campaign>", "test: what the Map context section does when shown with a map (reads and builds on the worker thread)", |e, a| {
         let Some(name) = a.first() else { return fail("usage: map_context_async <map | campaign>") };
         with_tile(e, |t, e| {
-            let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) else { return fail("the tile is not in a kit") };
+            t.prepare_neighbours(e);
+            let Some(raw) = document(e).and_then(|d| t.context.raw_of(d)) else { return fail("the tile is not in a kit") };
             let files = e.files();
             let ui = &mut t.context;
             ui.game_dir = e.game().campaign_battle_map;

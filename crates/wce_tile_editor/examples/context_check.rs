@@ -88,7 +88,7 @@ fn main() {
 
     let rq = ContextRequest {
         map: Arc::new(m), spot, cells: (project.info.cells_x as i32, project.info.cells_y as i32), unit: project.unit_scale, near: n(4, 8), mid: n(5, 24),
-        far: n(6, 64), raw_root: raw, look: TerrainLook::default(), trees: true, plain: None, groups: None, cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir),
+        far: n(6, 64), raw_root: raw, look: TerrainLook::default(), trees: true, plain: None, groups: None, cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir), provider: None,
     };
 
     drop(project);

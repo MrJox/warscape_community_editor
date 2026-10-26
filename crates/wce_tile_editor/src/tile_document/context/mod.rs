@@ -76,7 +76,14 @@ pub struct ContextRequest {
 
     /// The folder of the cached templates (none: always open the tiles).
     pub cache: Option<PathBuf>,
+
+    /// For a game whose kit has no tiles (Rome 2): makes a placement's tile folder under `raw_root` (decompiled from the packs) from
+    /// its location and variation, when the folder is missing.
+    pub provider: Option<TileProvider>,
 }
+
+/// Makes a tile's folder from its location and variation (see [`ContextRequest::provider`]).
+pub type TileProvider = Arc<dyn Fn(&str, &str) -> Result<PathBuf, String> + Send + Sync>;
 
 /// A tile location, variation and climate.
 pub type TileKey = (String, String, String);

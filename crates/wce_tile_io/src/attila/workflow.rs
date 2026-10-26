@@ -408,6 +408,55 @@ fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Pat
     Ok(())
 }
 
+/// A tile tree for the map context's neighbours of a game without kit tiles (Rome 2): `<root>/raw_data` with each kind's database
+/// settings and every tile's entry in the kit's format, written once; the tiles' folders are decompiled into it when the context first
+/// needs them ([`neighbour_tile`]). Returns the `raw_data` folder.
+///
+/// # Errors
+///
+/// A file can't be written.
+pub fn neighbour_root(game: &Game, root: &Path) -> Result<PathBuf, String> {
+    let raw = root.join("raw_data");
+    for kind in ["battle", "campaign"] {
+        let Some(db) = game.data.database(kind) else { continue };
+        let dir = raw.join("terrain/tiles").join(kind).join("_tile_database");
+        let settings = dir.join("_settings.xml");
+        if settings.is_file() {
+            continue;
+        }
+
+        let tiles = dir.join("TILES");
+        std::fs::create_dir_all(&tiles).map_err(|e| format!("{}: {e}", tiles.display()))?;
+        for (i, t) in db.tiles().iter().enumerate() {
+            let path = tiles.join(super::decompile::entry_file_name(t.location()));
+            std::fs::write(&path, super::decompile::entry_xml(db, i)).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+
+        // Last: the folder is complete once the settings are there.
+        std::fs::write(&settings, game.kit_settings(kind)?).map_err(|e| format!("{}: {e}", settings.display()))?;
+    }
+
+    Ok(raw)
+}
+
+/// A tile's folder under a [`neighbour_root`] (`location` as the map names it, `terrain\tiles\...\<tile>`, and the variation), decompiled
+/// from the packs the first time.
+///
+/// # Errors
+///
+/// No pack has the tile, or it does not decompile.
+pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) -> Result<PathBuf, String> {
+    let folder = format!("{}/{variation}", location.replace('\\', "/").trim_end_matches('/')).to_lowercase();
+    let dir = raw.join(&folder);
+    if wce_tile::tile_project::has_tile(&dir) {
+        return Ok(dir);
+    }
+
+    let files = game.exported_from_packs(&folder)?;
+    let (dir, _) = open_exported(game, &files, &folder, raw.parent().unwrap_or(raw))?;
+    Ok(dir)
+}
+
 /// [`save_exported_scene`] into a mod pack (created if missing): the exported tile's folder and the tile database's files, the pack's
 /// files below the tile's folder replaced. Returns the tile's folder in the pack and the compile's notes.
 ///

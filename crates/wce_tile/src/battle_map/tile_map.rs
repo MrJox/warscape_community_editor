@@ -7,9 +7,11 @@
 //!   0x700 layers; an empty cell has 0x10); u16 x 2 the origin cell; u8 climate; u8 flipped (the river flow, `calculate_flow`); f32 x 2
 //!   the low-frequency height range); then u32 name count and the names (u16 length + bytes, `<tile location>\<variation location>`).
 //!
-//! The game also reads versions 6 and 7 (16-byte cells, a chunk list in the index): the kit's `main_attila_map/tile_map.tiles` is an old
-//! file of that kind. terrain.pack's (version 9) was built from other sources than the kit's: BOB's fill of the kit map (exact in
-//! `battle_map_check`) differs from it.
+//! The game also reads versions 6 and 7 (the kit's `main_attila_map/tile_map.tiles` is an old file of that kind; Rome 2's
+//! `main_rome_map` is version 6): `tile_map.index` adds a chunk count and the chunks' cell rectangles (x0, y0, x1, y1: 736 of them,
+//! 128 + 16 cells a side, 64 apart); a cell is 16 bytes: i32 index, u16 flags, u16 x 2 the origin cell (as version 9), i16 (-1 mostly;
+//! not known), u8 climate, u8 flipped, u16 0. No low-frequency height range: read as 0. terrain.pack's (version 9) was built from other
+//! sources than the kit's: BOB's fill of the kit map (exact in `battle_map_check`) differs from it.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TileMapCell {
@@ -32,6 +34,9 @@ pub struct TileMap {
 
 const CELL: usize = 20;
 
+/// A cell of versions 6 and 7.
+const OLD_CELL: usize = 16;
+
 fn u16_at(b: &[u8], p: usize) -> u16 {
     u16::from_le_bytes([b[p], b[p + 1]])
 }
@@ -44,33 +49,38 @@ impl TileMap {
 
     /// # Errors
     ///
-    /// Fails on a version other than 9 or a truncated file.
+    /// Fails on a version before 6 or a truncated file.
     pub fn parse(index: &[u8], tiles: &[u8]) -> Result<Self, String> {
         if index.len() < 12 {
             return Err("tile_map.index: truncated".to_owned());
         }
 
         let (version, width, height) = (u32_at(index, 0), u32_at(index, 4), u32_at(index, 8));
-        if version < 8 {
-            return Err(format!("tile_map.index: version {version} (only 8 and later read)"));
+        if version < 6 {
+            return Err(format!("tile_map.index: version {version} (only 6 and later read)"));
         }
 
+        // Versions 6 and 7: 16-byte cells.
+        let size = if version < 8 { OLD_CELL } else { CELL };
         let n = width as usize * height as usize;
-        let mut p = 2 * n * CELL;
+        let mut p = 2 * n * size;
         if tiles.len() < p + 4 {
             return Err("tile_map.tiles: truncated".to_owned());
         }
 
-        let cell = |o: usize| TileMapCell {
-            index: u32_at(tiles, o) as i32,
-            flags: u16_at(tiles, o + 4),
-            origin: [u16_at(tiles, o + 6), u16_at(tiles, o + 8)],
-            climate: tiles[o + 10],
-            flipped: tiles[o + 11],
-            lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))],
+        let cell = |o: usize| {
+            let (index, flags, origin) = (u32_at(tiles, o) as i32, u16_at(tiles, o + 4), [u16_at(tiles, o + 6), u16_at(tiles, o + 8)]);
+            if version < 8 {
+                TileMapCell { index, flags, origin, climate: tiles[o + 12], flipped: tiles[o + 13], lf: [0.0; 2] }
+            } else {
+                TileMapCell {
+                    index, flags, origin, climate: tiles[o + 10], flipped: tiles[o + 11],
+                    lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))],
+                }
+            }
         };
 
-        let layers = [(0..n).map(|i| cell(i * CELL)).collect(), (0..n).map(|i| cell((n + i) * CELL)).collect()];
+        let layers = [(0..n).map(|i| cell(i * size)).collect(), (0..n).map(|i| cell((n + i) * size)).collect()];
         let count = u32_at(tiles, p) as usize;
         p += 4;
         let mut names = Vec::with_capacity(count);
@@ -84,10 +94,10 @@ impl TileMap {
         Ok(Self { version, width, height, layers, names })
     }
 
-    /// The two files: (`tile_map.index`, `tile_map.tiles`).
+    /// The two files: (`tile_map.index`, `tile_map.tiles`), version 9 whatever the version read.
     pub fn write(&self) -> (Vec<u8>, Vec<u8>) {
         let mut index = vec![];
-        for v in [self.version, self.width, self.height] {
+        for v in [9, self.width, self.height] {
             index.extend(v.to_le_bytes());
         }
 

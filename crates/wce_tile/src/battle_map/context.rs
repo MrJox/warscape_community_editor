@@ -171,23 +171,33 @@ fn split_name(name: &str) -> (String, String) {
 /// A name split into (location, variation) and the tile's size when the database knows it.
 type SplitName = (String, String, Option<(i32, i32)>);
 
-/// Tile sizes by normalised location, and the split names already seen.
+/// Tile sizes and first variations by normalised location, and the split names already seen.
 #[derive(Default)]
 struct Sizes {
     by_location: std::collections::HashMap<String, (i32, i32)>,
+    first_variation: std::collections::HashMap<String, String>,
     names: std::collections::HashMap<String, SplitName>,
 }
 
 impl Sizes {
     fn new(db: &TileDatabase) -> Self {
-        Self { by_location: db.tiles.iter().map(|t| (norm(&t.location), (t.width, t.height))).collect(), names: Default::default() }
+        Self {
+            by_location: db.tiles.iter().map(|t| (norm(&t.location), (t.width, t.height))).collect(),
+            first_variation: db.tiles.iter().filter_map(|t| Some((norm(&t.location), t.variations.first()?.location.clone()))).collect(),
+            names: Default::default(),
+        }
     }
 }
 
 impl PlacedMap {
     fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8) -> MapPlacement {
         if !sizes.names.contains_key(name) {
-            let (location, variation) = split_name(name);
+            // An older map (Rome 2's, version 6) names the tile alone: its first variation (the game's choice is not known).
+            let (location, variation) = match sizes.first_variation.get(&norm(name)) {
+                Some(v) => (name.replace('/', "\\"), v.clone()),
+                None => split_name(name),
+            };
+
             let size = sizes.by_location.get(&norm(&location)).copied();
             sizes.names.insert(name.to_owned(), (location, variation, size));
         }
