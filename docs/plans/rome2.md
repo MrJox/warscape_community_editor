@@ -58,7 +58,7 @@ Status legend: **done**, **partial**, **todo**.
 
 ## Phase 3: editor — partial
 
-- **todo** The game selector in the top bar (swap games without the Settings window or the File menu).
+- **done** The game selector in the top bar: the toolbar's first item, a combo of the games (as File > Game).
 - **done** The map context in Rome 2 (user report 2026-10-26, Carthage): a tile the map names without a variation is found as any of its
   variations; the sea tiles' common maps (`blend_common` ...) read from the packs (their ground had no material, and one terrain
   without a material blanked every neighbour: Rome 2 has no legacy ground to fall back on, such a terrain is left out); Rome 2's LF
