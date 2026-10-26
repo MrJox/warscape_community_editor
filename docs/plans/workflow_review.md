@@ -181,3 +181,14 @@ brush: **Normal (Grouped)**, a blur, **Auto-Flange** (a group painted with a gra
 channel set by the slope wherever the brush goes) and **Spline splat** (a channel laid along a chosen spline at its width, in one action;
 wce's "Stroke along the selected line" is near it); traced 2026-10-26, docs/re/terrain.md; the **Influence Map** module (`lf_influence_map.png`, with Subtract) and the nogo map are still Phase 5a items of
 tile_ted_parity.md.
+
+**Done (TEd's paint operations, user 2026-10-26: Auto-Flange and Rock-painting ported, Spline splat's width given to the stroke along a
+line; what each does in its tooltip, since nobody knew):** `wce_tile::blend_field::PaintMode` (`Normal`, `AutoFlange { threshold }`,
+`Rock`; `BlendField::paint_mode`). Auto-Flange is TEd's: the stroke's weight builds up per pixel as TEd's painter's
+(`acc + (1 - acc) * dab`), and the pixel is set from how the stroke found it (`PixelLayer::original`), `flange_pixel`. Rock-painting
+takes TEd's slope curve (`rock_weight`) but, as agreed, follows the brush's strength and falloff and never lowers the texture (TEd's
+ignores the brush and can take rock away). The stroke along a line paints a spline whose points have a `width` as wide as it is there
+(the radius half the width, blended along each segment). The paint brush's Inspector: "mode" (normal / auto-flange / rock painting, a
+tooltip per mode), Auto-Flange's threshold (with its tooltip), the stroke button's tooltip; `Inspector::edit_choice_tips` and
+`Inspector::tooltip` (no-ops but in the ImGui inspector). Command `brush_paint <group> <variation> [normal | flange [threshold] | rock]`;
+`scripts/tile_paint_modes.txt`.

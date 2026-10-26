@@ -40,12 +40,103 @@ impl PaintFilter {
     }
 }
 
+/// What a paint stroke does to the pixels under it (TEd's Blend Map operations; docs/re/terrain.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum PaintMode {
+    /// The channel gains the brush's weight of what the others hold.
+    #[default]
+    Normal,
+
+    /// TEd's Auto-Flange: the channel's texture group with a graded rim of its variations. With the stroke's weight w (it builds up with
+    /// every dab, towards 1): above `threshold` the pixel becomes all the group, its variation sliding from 0 (the brush's edge, a light
+    /// touch) to 3 (its middle, more painting); below it only variation 0 fades in. Set from the pixel as the stroke found it, not added.
+    AutoFlange { threshold: f32 },
+
+    /// TEd's Rock-painting: the channel's weight follows the slope (`rock_weight`: none below about 26 degrees, all from about 72). Unlike
+    /// TEd's (which ignores the brush and can take paint away), wce's moves towards that weight by the brush's weight and never lowers it.
+    Rock,
+}
+
+/// Rock-painting's weight of a slope in degrees (TEd's `Ted::RockPaintOperation`): s = 1 - cos(slope), A = smoothstep(0.1, 0.7, s),
+/// B = smoothstep(0.3, 0.9, s), A (1 - B) + B: 0.01 at 30 degrees, 0.24 at 45, 0.81 at 60, 1 from 72.5.
+pub fn rock_weight(slope_degrees: f64) -> f64 {
+    let smooth = |lo: f64, hi: f64, x: f64| {
+        let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+        (3.0 - 2.0 * t) * t * t
+    };
+
+    let s = 1.0 - slope_degrees.to_radians().cos().clamp(0.0, 1.0);
+    let (a, b) = (smooth(0.1, 0.7, s), smooth(0.3, 0.9, s));
+    a * (1.0 - b) + b
+}
+
+/// Auto-Flange's pixel (TEd's `Ted::PM2::OpBlend2AutoFlange::apply`) from the pixel `source` as the stroke found it and the stroke's weight
+/// `w` there, for texture `group` (its four variations) and `threshold`; `None` leaves the pixel as it is.
+pub fn flange_pixel(source: &[u16; 16], group: usize, w: f64, threshold: f64) -> Option<[u16; 16]> {
+    let g = group.min(3) * 4;
+    let mut out = [0.0f64; 16];
+    if w > threshold {
+        let f = ((w - threshold) / (1.0 - threshold)).clamp(0.0, 1.0);
+        let pos = g as f64 + 3.0 * f;
+        let i = (pos.floor() as usize).min(g + 3);
+        let frac = pos - i as f64;
+        out[i] = 1.0 - frac;
+        if frac > 0.0 && i < g + 3 {
+            out[i + 1] = frac;
+        }
+    } else {
+        let c0 = f64::from(source[g]) / 65535.0;
+        if c0 >= 0.99 || threshold <= 0.0 {
+            return None;
+        }
+
+        let k = (1.0 - w / threshold) / (1.0 - c0);
+        for (o, &v) in out.iter_mut().zip(source) {
+            *o = f64::from(v) / 65535.0 * k;
+        }
+
+        out[g] = w / threshold;
+    }
+
+    Some(quantize(&out))
+}
+
+/// 16 weights (summing about 1) as samples summing to [`FULL`], the largest remainders getting the rounding.
+fn quantize(w: &[f64; 16]) -> [u16; 16] {
+    let sum: f64 = w.iter().sum();
+    let scale = if sum > 0.0 { 65535.0 / sum } else { 0.0 };
+    let mut out = [0u16; 16];
+    let mut frac = [(0.0f64, 0usize); 16];
+    let mut given = 0u32;
+    for (i, &v) in w.iter().enumerate() {
+        let x = v.max(0.0) * scale;
+        out[i] = x.floor() as u16;
+        given += u32::from(out[i]);
+        frac[i] = (x - x.floor(), i);
+    }
+
+    if sum <= 0.0 {
+        out[0] = FULL;
+        return out;
+    }
+
+    frac.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    for &(_, i) in frac.iter().take(65535u32.saturating_sub(given) as usize) {
+        out[i] += 1;
+    }
+
+    out
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlendField {
     /// The file's bytes before the samples (the directory) and after them, verbatim.
     header: Vec<u8>,
     tail: Vec<u8>,
     layer: PixelLayer<u16>,
+
+    /// The open stroke's weight per pixel (y * w + x), built up dab by dab as TEd's painter does: acc + (1 - acc) * the dab's weight.
+    acc: std::collections::HashMap<u64, f32>,
 }
 
 impl BlendField {
@@ -61,7 +152,7 @@ impl BlendField {
 
         let v = tif.pixels.as_chunks::<2>().0[..n * 16].iter().map(|b| u16::from_le_bytes(*b)).collect();
         let tail = tif.pixels[n * 32..].to_vec();
-        Ok(Self { header: tif.header, tail, layer: PixelLayer::new(tif.width, tif.height, 16, v) })
+        Ok(Self { header: tif.header, tail, layer: PixelLayer::new(tif.width, tif.height, 16, v), acc: Default::default() })
     }
 
     /// # Errors
@@ -149,6 +240,15 @@ impl BlendField {
     ///
     /// No edit is open, or no such channel.
     pub fn paint(&mut self, b: &Brush, channel: usize, mask: &dyn Fn(u32, u32) -> bool) -> Result<()> {
+        self.paint_mode(b, channel, PaintMode::Normal, mask, &|_, _| 0.0)
+    }
+
+    /// [`Self::paint`] in a mode: Auto-Flange paints `channel`'s group, Rock-painting reads the slope (degrees) at a pixel from `slope`.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open, or no such channel.
+    pub fn paint_mode(&mut self, b: &Brush, channel: usize, mode: PaintMode, mask: &dyn Fn(u32, u32) -> bool, slope: &dyn Fn(u32, u32) -> f64) -> Result<()> {
         if !self.layer.is_editing() {
             return Err("begin_edit() before editing".to_owned());
         }
@@ -157,6 +257,7 @@ impl BlendField {
             return Err(format!("no blend channel {channel}"));
         }
 
+        let w = u64::from(self.width());
         for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
             let a = b.weight(dx, dy).min(1.0);
             if a <= 0.0 || !mask(x, y) {
@@ -164,7 +265,24 @@ impl BlendField {
             }
 
             let p: [u16; 16] = self.layer.pixel(x, y).try_into().expect("16 weights");
-            self.layer.set_pixel(x, y, &paint_pixel(&p, channel, a));
+            let after = match mode {
+                PaintMode::Normal => Some(paint_pixel(&p, channel, a)),
+                PaintMode::AutoFlange { threshold } => {
+                    let acc = self.acc.entry(u64::from(y) * w + u64::from(x)).or_insert(0.0);
+                    *acc += (1.0 - *acc) * a as f32;
+                    let source: [u16; 16] = self.layer.original(x, y).try_into().expect("16 weights");
+                    flange_pixel(&source, channel / 4, f64::from(*acc), f64::from(threshold))
+                }
+
+                PaintMode::Rock => {
+                    let (c, t) = (f64::from(p[channel]) / 65535.0, rock_weight(slope(x, y)));
+                    (t > c && c < 1.0).then(|| paint_pixel(&p, channel, (t - c) * a / (1.0 - c)))
+                }
+            };
+
+            if let Some(after) = after {
+                self.layer.set_pixel(x, y, &after);
+            }
         }
 
         Ok(())
@@ -176,11 +294,13 @@ impl BlendField {
     ///
     /// An edit is already open.
     pub fn begin_edit(&mut self) -> Result<()> {
+        self.acc.clear();
         if self.layer.begin_edit() { Ok(()) } else { Err("edit already open".to_owned()) }
     }
 
     /// Stores the blocks the open operation changed.
     pub fn end_edit(&mut self) {
+        self.acc.clear();
         self.layer.end_edit();
     }
 
@@ -285,6 +405,26 @@ mod tests {
         assert_eq!(q[9], 32_768);
         assert!((f64::from(q[0]) / f64::from(q[1]) - 1.5).abs() < 1e-3);
         assert_eq!(paint_pixel(&q, 9, 1.0), { let mut f = [0u16; 16]; f[9] = FULL; f });
+    }
+
+    #[test]
+    fn rock_weight_follows_teds_curve() {
+        assert!(rock_weight(20.0) < 1e-9);
+        assert!((rock_weight(45.0) - 0.244).abs() < 0.01);
+        assert!((rock_weight(60.0) - 0.808).abs() < 0.01);
+        assert!((rock_weight(80.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn auto_flange_slides_through_the_group_variations() {
+        let mut p = [0u16; 16];
+        p[0] = FULL;
+        let mid = flange_pixel(&p, 2, 0.5, 0.0).unwrap();
+        assert_eq!((mid[9], mid[10]), (32768, 32767), "half way: between variations 1 and 2 of group 2");
+        assert_eq!(flange_pixel(&p, 2, 1.0, 0.0).unwrap()[11], FULL, "full weight: variation 3");
+        let rim = flange_pixel(&p, 2, 0.25, 0.5).unwrap();
+        assert_eq!((rim[8], rim[0]), (32767, 32768), "under the threshold variation 0 fades in (the tie goes to the lower channel)");
+        assert!(flange_pixel(&rim, 2, 0.1, 0.5).is_some() && flange_pixel(&[0, 0, 0, 0, 0, 0, 0, 0, FULL, 0, 0, 0, 0, 0, 0, 0], 2, 0.1, 0.5).is_none());
     }
 
     #[test]

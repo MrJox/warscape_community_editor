@@ -213,6 +213,42 @@ impl Inspector for ImGuiInspector {
         changed
     }
 
+    fn edit_choice_tips(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String], tips: &[String]) -> bool {
+        self.label(field, label, true);
+        let mut changed = false;
+        let current = usize::try_from(*index).ok();
+        let shown = current.and_then(|i| choices.get(i)).map_or("", String::as_str);
+        if gui::begin_combo(&self.id(field), shown) {
+            for (i, c) in choices.iter().enumerate() {
+                if gui::selectable(c, i as i32 == *index, 0) {
+                    *index = i as i32;
+                    changed = true;
+                }
+
+                if let Some(tip) = tips.get(i).filter(|t| !t.is_empty())
+                    && gui::is_item_hovered()
+                {
+                    gui::set_tooltip(tip);
+                }
+            }
+
+            gui::end_combo();
+        } else if let Some(tip) = current.and_then(|i| tips.get(i)).filter(|t| !t.is_empty())
+            && gui::is_item_hovered()
+        {
+            gui::set_tooltip(tip);
+        }
+
+        self.ended = changed;
+        changed
+    }
+
+    fn tooltip(&mut self, text: &str) {
+        if gui::is_item_hovered() {
+            gui::set_tooltip(text);
+        }
+    }
+
     fn gesture_ended(&mut self) -> bool {
         self.ended
     }
