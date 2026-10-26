@@ -36,6 +36,10 @@ pub struct CompileContext<'a> {
     /// Stage C too (BOB's Vegetation processor: tree and grass lists, procedural BMDs) for a battle tile, with what it needs from the
     /// kit; a decompiled project's carried vegetation is kept while its inputs are unchanged (`stage_c::stage_c_files`).
     pub stage_c: Option<super::stage_c::StageC<'a>>,
+
+    /// Whether a model exists in the game's files: without stage C, the project's static trees go into the older lists only when their
+    /// model exists (`stage_c::older_tree_lists`); none: every model does.
+    pub model_exists: Option<&'a (dyn Fn(&str) -> bool + Sync)>,
 }
 
 /// What a compilation left out or made up, as notes.
@@ -1823,13 +1827,32 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
         files.extend(super::stage_c::carried_files(raw)?);
     }
 
+    // Without parameters the generated trees can't be made again: a changed project's static trees go into the carried older lists
+    // (Rome 2's), the rest as it was.
     if ctx.stage_c.is_none() && !campaign {
         let carried = super::stage_c::carried_files(raw)?;
         if !carried.is_empty() && !super::stage_c::unchanged(raw) {
-            notes.notes.push("stage C: no vegetation parameters (the game's kit has none): the decompiled tile's vegetation files are written as they were, without the project's changes".to_owned());
-        }
+            let any = |_: &str| true;
+            let exists: &dyn Fn(&str) -> bool = match ctx.model_exists {
+                Some(f) => f,
+                None => &any,
+            };
 
-        files.extend(carried);
+            match super::stage_c::older_tree_lists(raw, exists) {
+                Ok((written, more)) => {
+                    notes.notes.extend(more.notes);
+                    notes.notes.push("stage C: no vegetation parameters (the game's kit has none): the generated trees, grass and procedural files written as decompiled".to_owned());
+                    files.extend(written);
+                }
+
+                Err(e) => {
+                    notes.notes.push(format!("stage C: no vegetation parameters, and the project's static trees not added to the lists ({e}): the decompiled tile's vegetation files written as they were"));
+                    files.extend(carried);
+                }
+            }
+        } else {
+            files.extend(carried);
+        }
     }
 
     match made_c {

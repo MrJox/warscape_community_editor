@@ -7,6 +7,7 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
+use wce_formats::old_lists::{OldList, OldListKind, to_half};
 use wce_formats::tile_entry::TileEntry;
 use wce_tile::ted_scene::TedScene;
 use wce_tile::vegetation::{self, GenerationParams, TileInputs, grass::GrassParams};
@@ -536,6 +537,67 @@ pub fn stage_c_files(raw: &Tile, ctx: &StageC) -> Result<(super::stage_b::Files,
         for (name, blob) in files.folder {
             out.push((name.clone(), blob.bytes().map_err(|e| format!("{name}: {e}"))?.to_vec()));
         }
+    }
+
+    Ok((out, notes))
+}
+
+/// The older tree lists (`<list>.tree_list`, version 2) of a game without vegetation parameters (Rome 2), whose generated trees can't be
+/// made again: each carried list keeps its generated trees (on the generator's grid, `decompile::on_generator_grid`) and gets the
+/// project's static trees (`VEGETATION_INSTANCE`s inside an exclusion polygon, as BOB collects them) in place of its old ones, the same in
+/// every list (no per-climate conversions). The other carried files are as they were.
+///
+/// # Errors
+///
+/// The project's inputs don't read, or a carried file doesn't.
+pub fn older_tree_lists(raw: &Tile, model_exists: &dyn Fn(&str) -> bool) -> Result<(super::stage_b::Files, CompileNotes), String> {
+    let mut notes = CompileNotes::default();
+    let (inputs, scene) = inputs(raw, None)?;
+    let statics = vegetation::static_tree_list(&inputs, &vegetation::static_trees(&scene, &inputs), model_exists);
+    let density = inputs.tri_density.max(1);
+    let mut out = vec![];
+    for (name, bytes) in carried_files(raw)? {
+        let list = name.to_lowercase().ends_with(".tree_list").then(|| OldList::parse(OldListKind::Tree, &bytes).ok()).flatten().filter(|l| l.version == 2);
+        let Some(list) = list else {
+            out.push((name, bytes));
+            continue;
+        };
+
+        // Per type: its generated records, then the static trees of its model.
+        let mut types: Vec<(Vec<u8>, Vec<Vec<u8>>)> = vec![];
+        for (t, (type_name, first)) in list.types.iter().enumerate() {
+            let end = list.types.get(t + 1).map_or(list.len(), |(_, next)| *next as usize).min(list.len());
+            let kept = (*first as usize..end)
+                .filter(|&i| {
+                    let [x, _, z] = list.position(i);
+                    super::decompile::on_generator_grid(f64::from(x), f64::from(z), density)
+                })
+                .map(|i| list.record(i).to_vec())
+                .collect();
+            types.push((type_name.clone(), kept));
+        }
+
+        let (before, dropped) = (list.len(), list.len() - types.iter().map(|(_, r)| r.len()).sum::<usize>());
+        for t in &statics {
+            let path = t.path.replace('/', "\\").to_lowercase();
+            let mut record = [t.x, t.y, t.z].iter().flat_map(|v| to_half(*v).to_le_bytes()).collect::<Vec<_>>();
+            record.extend_from_slice(&[0, t.scale_byte, 0, 0]);
+            match types.iter_mut().find(|(n, _)| String::from_utf8_lossy(n).replace('/', "\\").to_lowercase() == path) {
+                Some((_, records)) => records.push(record),
+                None => types.push((path.into_bytes(), vec![record])),
+            }
+        }
+
+        let mut first = 0u32;
+        let mut written = OldList { kind: OldListKind::Tree, version: 2, types: vec![], records: vec![] };
+        for (type_name, records) in types.into_iter().filter(|(_, r)| !r.is_empty()) {
+            written.types.push((type_name, first));
+            first += records.len() as u32;
+            written.records.extend(records.into_iter().flatten());
+        }
+
+        notes.notes.push(format!("stage C: {name}: {} generated trees kept, {dropped} static ones replaced by the project's {} (of {before})", before - dropped, statics.len()));
+        out.push((name, written.write()));
     }
 
     Ok((out, notes))

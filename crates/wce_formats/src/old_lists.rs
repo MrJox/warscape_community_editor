@@ -50,6 +50,38 @@ fn half(bits: u16) -> f32 {
     }
 }
 
+/// The half float nearest to a value (ties to even; out of range: infinity).
+pub fn to_half(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let mant = bits & 0x7F_FFFF;
+    if exp == 0xFF {
+        return sign | 0x7C00 | if mant != 0 { 0x200 } else { 0 };
+    }
+
+    let e = exp - 127 + 15;
+    if e >= 0x1F {
+        return sign | 0x7C00;
+    }
+
+    // The mantissa with its implicit bit, shifted to the half's precision (subnormals shift further), rounded to nearest even.
+    let (m, shift) = if e <= 0 { (mant | 0x80_0000, 14 - e) } else { (mant, 13) };
+    if shift > 24 {
+        return sign;
+    }
+
+    let half = 1u32 << (shift - 1);
+    let mut r = m >> shift;
+    let rest = m & ((1 << shift) - 1);
+    if rest > half || (rest == half && r & 1 == 1) {
+        r += 1;
+    }
+
+    // A carry out of the mantissa steps the exponent (the sum does it).
+    sign | if e <= 0 { r as u16 } else { ((e as u32) << 10) as u16 + r as u16 }
+}
+
 impl OldList {
 
     /// # Errors
@@ -136,6 +168,22 @@ impl OldList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn halves_round_trip() {
+        for v in [0.0f32, 1.0, -2.0, 117.5, 255.875, -6.21875, 0.000_061_035_156, 65504.0] {
+            assert_eq!(half(to_half(v)), v, "{v}");
+        }
+
+        // Subnormals: 1e-7 is 1.68 steps of 2^-24.
+        assert_eq!(to_half(1e-7), 2);
+        assert_eq!(to_half(1e-8), 0);
+
+        // To nearest, ties to even: 1 + 2^-11 is halfway between 1 and 1 + 2^-10.
+        assert_eq!(half(to_half(1.0 + 2f32.powi(-11))), 1.0);
+        assert_eq!(half(to_half(1.0 + 3.0 * 2f32.powi(-11))), 1.0 + 2.0 * 2f32.powi(-10));
+        assert_eq!(to_half(1e6), 0x7C00);
+    }
 
     #[test]
     fn tree_list_round_trip() {

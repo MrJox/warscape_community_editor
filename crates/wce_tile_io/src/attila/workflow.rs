@@ -298,6 +298,7 @@ pub fn save_exported_with(
     ctx.building_thresholds = Some(&thresholds_or_base);
     ctx.stage_b = Some(StageB { raw_data: &kit_raw, models: &models });
     ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC { params, grass: grass.as_ref(), settings: Some(&settings), model_exists: &exists });
+    ctx.model_exists = Some(&exists);
     let (compiled, mut notes) = {
         wce_foundation::wce_prof!("export.compile");
         compile(&raw, &ctx)?
