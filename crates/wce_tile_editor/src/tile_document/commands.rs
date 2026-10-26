@@ -537,3 +537,43 @@ impl Command<Tile> for BrushStepCommand {
         self
     }
 }
+
+/// One of the entry's four texture groups (the blend map's groups) set to another of the game's; the ground's material is made again.
+pub(crate) struct TextureGroupCommand {
+    pub slot: usize,
+    pub before: String,
+    pub after: String,
+}
+
+impl TextureGroupCommand {
+    fn put(&self, t: &mut Tile, name: &str) {
+        if let Some(entry) = t.project.entry.as_mut() {
+            entry.set_texture_group(self.slot, name);
+        }
+
+        t.material_base = None;
+        t.skin = None;
+    }
+}
+
+impl Command<Tile> for TextureGroupCommand {
+    fn name(&self) -> String {
+        format!("Texture group {}: {}", wce_formats::tile_entry::TileEntry::TEXTURE_GROUP_SLOTS[self.slot], self.after)
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.put(t, &self.after.clone());
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        self.put(t, &self.before.clone());
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}

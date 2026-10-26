@@ -131,5 +131,10 @@ button in the toolbar (Ctrl erases: paints the first group's first variation), i
 variation); commands `tile_mode paint`, `paint_ground`, `assert_blend`, `brush`'s fifth number; `scripts/tile_paint.txt` (paint, undo,
 redo, erase, save, reopen).
 
+**Done (the texture group picker):** the Tile panel's entry section has a combo per group (R, G, B, A) listing the game's groups (every
+climate's `TEXTURE` names, `TileDocument::texture_group_names`); `TileEntry::set_texture_group` (an attribute edit, the rest of the entry
+as it was); `TextureGroupCommand` (undoable; the ground's material made again); a save writes the groups into the entry next to the tile
+when they differ there (`TileProject::save_texture_groups`). Command `texture_group <0-3> <name>`; in `scripts/tile_paint.txt`.
+
 **Open:** TEd's debug views (blend groups, ground types) are baked from the file on disk, so they show the paint after a save only (step
 2 needs the ground types one live).

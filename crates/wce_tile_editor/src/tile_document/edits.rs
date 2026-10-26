@@ -21,7 +21,7 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, PlacementItem, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
+use super::commands::{BrushStepCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -1840,6 +1840,36 @@ impl TileDocument {
         self.history.push(Box::new(BrushStepCommand { kind, x, z, settings, dt, stroke, first: true, moved: vec![], where_: HashMap::new() }));
         let version = self.history.version();
         self.tile_mut().stroke_version = version;
+    }
+
+    /// Sets one of the entry's four texture groups (0..4 = red, green, blue, alpha), one undo entry; saved into the entry next to the tile.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no entry, or no such slot.
+    pub fn set_texture_group(&mut self, slot: usize, name: &str) -> Result<(), String> {
+        let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
+        if slot >= 4 {
+            return Err(format!("no texture group {slot} (0..3 = red, green, blue, alpha)"));
+        }
+
+        let g = entry.texture_group();
+        let before = [g.red, g.green, g.blue, g.alpha][slot].clone();
+        if before == name {
+            return Ok(());
+        }
+
+        self.end_stroke();
+        self.history.push(Box::new(TextureGroupCommand { slot, before, after: name.to_owned() }));
+        Ok(())
+    }
+
+    /// The game's texture groups: every climate's (the default climate has them all), sorted.
+    pub fn texture_group_names(&self) -> Vec<String> {
+        let mut names = self.tile().climates().climates.iter().flat_map(|c| c.textures.iter().map(|t| t.name.clone())).collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
     }
 
     pub fn end_stroke(&mut self) {

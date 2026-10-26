@@ -700,6 +700,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("texture_group", "texture_group <0-3> <name>", "set one of the tile entry's four texture groups (red, green, blue, alpha; one undo entry)", |e, a| {
+        let parsed = (a.len() >= 2).then(|| number(&a[0])).flatten();
+        let (Some(d), Some(slot)) = (document(e), parsed) else { return fail("usage: texture_group <0-3> <name>") };
+        if !d.texture_group_names().contains(&a[1]) {
+            return fail(format!("no texture group '{}' in the climates", a[1]));
+        }
+
+        match d.set_texture_group(slot as usize, &a[1]) {
+            Ok(()) => ok(""),
+            Err(m) => fail(m),
+        }
+    });
+
     c.add("tile_select", "tile_select <type | element index> [add]", "select the first instance of a type, or an element by index", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(what) = a.first() else { return fail("usage: tile_select <type | element index> [add]") };
