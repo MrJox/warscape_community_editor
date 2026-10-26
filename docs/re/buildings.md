@@ -155,3 +155,60 @@ centre lies inside the volume's box (in the volume's frame), spawns the volumetr
 
 Check: in a siege battle, watch a wall section collapse from intact to destroyed, and compare with the editor's
 (`tile_edit <elem> destruction_level 2` on an intact wall).
+
+## Wall pieces (2026-10-24)
+
+From `models2.pack` and the logic files (`Cs2Parsed` version 11) of every straight in the game's and TDD's packs; used by the procedural
+walls (`crates/wce_walls`, docs/plans/procedural_walls.md).
+
+- **Files and rows:** as above, plus `battlefield_buildings` (category `fort_wall`, hit points, `destruct_thresholds`, `model`) and
+  `models_building` (below). rpfm_lib writes `Cs2Parsed`, `RigidModel` and the DB tables; both families' base files write back byte for
+  byte.
+- **Frame** (`barbarian_fort_straight`): x 0..20 along the wall, outer side -z (palisade, hard collision and outer strip at z -1.8..-2.8),
+  ground y = 0, mesh buried to y = -2. A mesh's vertices are stored around its material's pivot (`v_pivot`, its box's centre, e.g.
+  (10.0, 3.6, 4.2)): the logic file's frame is vertex + pivot, and `min_bb` / `max_bb` are in it. The walls are long triangles (20 m
+  along x; 24 m in the 15 m rubble).
+- **Walkway = platforms** (flags `false, true, false`). Barbarian straight: flat at y = 8, z -2.4..2.3; the inner earth bank in four
+  sloped strips down to y = 4 at z = 11.5 (units walk onto it from the ground, in game). `_step_up_a`: flat 0..2 at 8 m, a ramp 2..5 to
+  10.5 m, flat 5..15, a ramp 15..18 to 13 m, flat 18..20 (about 40 degrees); **the stairs are only visual**, the pathfinding surface is
+  a slope.
+- **Joining:** no pipes, docking lines or docking points in the logic files of the 8 m pieces; pieces join because their platforms meet
+  at the ends (x = 0 and 20). In game (2026-10-24) units walk from a bent piece onto vanilla neighbours.
+- **Firing lines** (`ef_lines`): 8 m, per metre a `HighWall` line on the walkway (0.5 m, facing -z) and two `Overflow` (60 intact, 58
+  damaged, 0 destroyed). 15 m: `LowWall`, `Crenel{Left,Right}{Inner,Outer}`, `Overflow`.
+- **Collision:** `hard01` (the palisade's footprint, ragged when damaged), `ground_ad` (a line at z = -2.5). **`orange_thingies`**: per
+  level a 2D x/z outline (vertex type 2), the footprint a building stands on (8 m: the palisade's; 15 m: z -2..10.5).
+- **Levels:** intact (5 platforms), damaged (17), destroyed (28: the breach's rubble ramp; no collision, no firing lines). The destroyed
+  level attaches the bridging columns (`_right` at x = 0, `_left` at x = 20); the intact one a `torch_ground_post`. Step pieces
+  (`barbarian_fort_step_up_a` / `_down_a`) have only intact and damaged levels, no rubble.
+- **Zones** (`zone_tech.xml`): one region, the footprint rectangle x -0.2..20.2, z -2..2.5.
+
+### The `models_building` row
+
+Columns `display_path`, `key`, `logic_file`, `unknown`, `EFLines`, `DockingLines` (the kit's table has others).
+
+- `logic_file`: `buildings\<key>\<key>_tech.cs2.parsed`, the file the game reads (a copy must point at its own).
+- `EFLines` (bytes): u32 count; per line a name (u16 length, UTF-16), u32 action, start, end, direction (3 f32 each, the direction a
+  unit vector). Barbarian straight: 118 (60 intact, 58 damaged).
+- `DockingLines` (bytes), **where ladders and towers dock**: u32 count; per line a name, start, end, direction in x / z (2 f32 each,
+  facing out). A straight has one along its outer face (barbarian (19.93, -2.5) to (0.07, -2.5); 15 m (10, 0) to (-10, 0)); CA's curves
+  a polyline of short ones (`barbarian_fort_curve_20m_radius` 6 of ~5 m, `_60m_radius` 3 of ~10 m, the kinks 4); **step pieces none**;
+  gateways two of 0.26 m.
+
+The rows of `barbarian_fort_straight` and `roman_fort_straight_with_doors_a` are the same in `data.pack` and TDD's main pack; TDD's
+`@tdd_dev_buildings` overrides `barbarian_fort_straight`'s files (one more platform when damaged) but not its row.
+
+**Docking is only valid on aligned pieces** (in game, 2026-10-24): ladders and towers docked onto generated walls whose joints were off
+(a piece leaving a gate at 18.8 degrees; bastions 0.23-0.36 units and 0.8-1.2 degrees off) but units could not cross onto them. The game's
+walls never turn at a joint, only inside a piece (kinks, curves). The exact rule is not known; exact joints fix it.
+
+### The families
+
+| Family | Bases | Frame | Walkway | Way up | Height changes | Levels |
+|---|---|---|---|---|---|---|
+| 8 m (earth bank + palisade) | `barbarian_fort_straight`, `{eastern,sassanid,western}_fort_small_wall_straight`, TDD `khazad_fort_wall_small_straight`, `mordor_fort_small_wall_straight` | x 0..20, one piece | y 8, z -2.4..2.3 | the bank's sloped platforms behind | `_step_up_a` / `_step_down_a` (5 m, two 2.5 m ramps) | 3 |
+| 15 m (stone) | `{roman,eastern,sassanid,greek,egyptian,persian}_fort_straight`, TDD `{easterling,gondorean,gondor}_fort_straight` | x -10..10; piece01 the wall, piece02 / 03 the walkway's end strips (x -10..-8, 8..10, z 0.5..3, 2 levels) | y 15, z 0.5..9 | none in the straight: `_straight_with_doors_a` has 6 `WallDoorTeleport` pipes (inner door at the ground, z 13, to the walkway, z 6..8), the towers 6 more | only `_straight_stepped_up/down_10m_square_bastion_a` (a bastion with a 10 m ramp, 15 to 25 m, over ~12 m, inner side) | 3 (end strips 2) |
+| TDD Rohan (timber) | `rohan_wall_straight` (+ `_ladders`, `_ladders_attacker`, `_ladders_definitive`, `_bastion`, `_step_up`) | x -10..10, 4 m thick | y 10, z -2..2, 16 platforms of 5 x 1 m | `_ladders*`: 4-5 `SiegeLadder2` pipes | `_step_up` (10 to 15 m) | 1 |
+| TDD cliff | `persian_cliff_fort_straight` | x -10..10 | y 15, 2 platforms | ? | ? | 1, no firing lines |
+
+`gondor_fort_straight`'s frame is x -10.5..10.8 (pieces overlap their neighbours).

@@ -29,6 +29,8 @@ Not yet: shadow cascades (split count 0 = unshadowed), SSAO (white), clouds (`cl
 | 3 `gbuffer_channel_4` | z / w | R32F (assumption) |
 | 4 | per-instance value (rigidcommon VS t0 lookup) | R32F (assumption) |
 
+Render target formats, verified later (2026-10-08, the dumps): G-buffer A8R8G8B8 and R32F, HDR A16B16G16R16F, SSAO R16F.
+
 Colour textures (diffuse, specular) are sampled through sRGB views (assumption: the sqrt/square packing only makes sense for linear albedo).
 
 ## Vertex/instance input (rigidcommon vs30_main), verified
@@ -343,6 +345,13 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
   structure exactly (w row a unit vector perpendicular to the light, y row parallel to it with n / f = 0.896, the depth row minus half
   the w row along the light with n / depth = 0.753, x row perpendicular to both with 1 / sin(theta) = 2.89). Not snapped to texels
   (the game does not either). The corners at the largest angle land at x = 1 / cos(theta) (the 1 / sin scale), as in the game.
+- Shadow instability (the game's too: flicker and "retreat", worse at low fps), causes from the code, not isolated in captures:
+  stale split distances (the cascades are scaled to the depth buffer analysis, min / max visible depth, read back two frames late as
+  ported, the game's own latency not verified, and converted with the current camera: zooming in at low fps, the first cascade starts
+  past the nearest geometry and the near shadows come back over the next frames); and the per-frame fit (warp and tight box refitted
+  every frame, not snapped to texels: edges crawl). A shader patch can't fix either (matrices and splits come from the CPU), only widen
+  the cascade blend / end fade. In the game: the `warp_shadows` / `split_d0..3` tweakables (if a release build can set them), or a DLL
+  patch of the split setup (fn 0x11784c00).
 - SSAO jitter texture: generator not found; the pattern is removed by the blur, so the HBAO sample content stays. Leads (2026-10-18):
   the SSAO view (vtable 0x11c9d758, resources fn 0x11766de0) makes it at view +0x7c, 256 x 256, flags 0xa0 (0x20 = CPU-written, as
   against 0x84 for render targets), the first supported of two formats (fn 0x11759bb0), no initial data; its draw (fn 0x11729660) binds

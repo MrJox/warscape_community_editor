@@ -149,3 +149,20 @@ step 4); carried as files: the terrain meshes (2,809), loading screens (194), `t
 Notes from the gate: rpfm_lib invents an `id` (u64, random) for trees and capture locations that is not in the files; the model sets it
 to 0 (a re-read is the same model, the bytes prove no `id` is data). `building_list.xml` has the root of the binary list: the writer picks
 the codec by the file's name first.
+
+## Map-level files (not decoded; tilemaps are a later scope, docs/plans/tile.md)
+
+What the 2026-10-06 survey found about the files BOB_Terrain, Terry and the campaign tools write per map:
+
+- `tile_map.index`: u32 9, width, height. `terrain.tile_list`: u32 11, then a u16-prefixed path table (campaign: 13 MB, 41 sets, 371
+  variations). `tile_map.tiles` embeds heap pointers, so BOB itself does not reproduce it: compare it structurally only.
+- `lf_height_map.data`: CHMF (above); `lf_height_map.dds`, `lf_sea_height_map.dds`: TEd/BOB's uncompressed DDS template
+  (docs/formats/image_encoders.md).
+- `locations.blm` (+ `.mask0`, `.mask1`): `BLMF` version 8, holds the `ROME_*` climate names.
+- `.terry`: XML, ECS entities (`ECBattleCatchmentArea`, deployment zones; 25 MB for TDD's battle map), written by Terry / TWeak, which
+  also run BOB_Terrain's actions.
+- `explicit_tiles.txt`: lines `x,y,tile_path,rotation`. Also per map: `config.xml`, `casloadersettings` (a boost archive), `.tmd`
+  (World Machine), `<map>.agf`, `map_info.xml`.
+- Campaign: `map.hex` (written by CA's CAIME tool; `map_data_config.xml` gives slots and ports) feeds BOB's campaign processor
+  (`map_data.esf`, `pathfinding.ppd`, `trade_routes.ptd`, `borders.pbd`, lookup `.tga`, `dynamic_resources.esf`). Out of scope for tiles
+  (user, 2026-10-08).

@@ -1,4 +1,4 @@
-//! A wall's layout cut into pieces and each piece made from the base (docs/plans/procedural_walls.md, "The generator"; phase 2).
+//! A wall's layout cut into pieces and each piece made from the base (docs/plans/procedural_walls.md, "Design (as built)"; phase 2).
 //!
 //! - **Pieces:** between corners, a stretch is cut into pieces as near the base's length as divides it (one base each, scaled along x
 //!   by the stretch's length over theirs).

@@ -1,261 +1,118 @@
-# Tile tool: TEd feature parity plan (2026-10-09)
+# Tile tool: TEd feature parity
 
-> **Status (2026-10-10, after Phase 4a / 4b and the read-only part of 6a; the user said go for Phase 4 and the links view).**
-> - Phases 0, 0b, 1, 2 done; Phase 3 done in two steps: the first version baked the colour on the CPU, and on 2026-10-10 (rule: everything rendered uses the game's shaders) the ground is drawn by the game's own terrain passes (`rigidterrain` `vs30_geom_new` + `ps30_geom` / `ps_depth`, `vs30_blend` + `ps30_blend`, `ps30_terrain_to_gbuffer_ss`; `docs/re/terrain.md`, "The tool's terrain pass"). Open: neighbour tiles / alpha feather, far maps, season mixing, in-game comparison (the user postponed it).
-> - Phase 4: 4a spike (`docs/re/water.md`), 4b rendering (river ribbons, sea / lake plane; since 2026-10-10 drawn by the game's own shaders) done (since 2026-10-19 the sea is TEd's: a plane at 0 m on every tile, a view toggle kept in wce.ini, rivers at their splines' stored heights); 4c spline editor and 4d water-aware terrain not started. Phase 6a read-only links view done (`docs/re/tile_links.md`); the editors, validator, neighbour preview and overview are next.
+**Status (2026-10-26).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
+render, terrain did not look like the game, some buildings stood at the wrong height, and "what else does TEd have". Phases 0, 0b,
+1, 2, 3, 4a / 4b, 7 are done, and so are most of 4c, 5 and 6. What is left is the TEd tools below. The editor itself is described in
+`docs/editor.md` ("Tile tool"); what each `tile.ted` element type can do (create / edit / draw / export) is in
+`docs/tile_entity_types.md`. Findings are in `docs/formats/tile_ted.md` (placement, layer flags, TEd's modules, Property Editor),
+`docs/formats/tile_database.md` (the entry), `docs/re/terrain.md`, `docs/re/water.md` and `docs/re/tile_links.md`.
 
-Written after the user's report on the Tile tool in `wce.exe`:
-
-1. Layers show, but cannot be moved, hidden, renamed, removed or created.
-2. Water and rivers do not render.
-3. Terrain is not rendered like the game: textures ignore the climate, no blending between terrain layers.
-4. Some buildings sit at the wrong height. TEd has placement modes (snapped to the terrain, or free).
-5. Check what else TEd has that the Tile tool lacks.
-
-Method: read `tools/tile`, `docs/re/terrain.md`, `docs/formats/tile_ted.md`, the kit's `TEd.AssemblyKit.exe` (strings: module names, actions, class names), `binaries/scripts/public_ted.script`, `_tile_database/_settings.xml`, and the `osgiliath_test` kit tile. **The app was not run** (it must not take focus on the user's PC), so the causes below come from the code and the data; Phase 0 confirms each with a scripted run before anything is changed.
-
-## Findings
-
-### 0. The tile database entry is the root of a tile (user correction, 2026-10-09)
-A tile is not "a folder with a `tile.ted`": its root is its entry in the tile database, `_tile_database/TILES/<set>_<tile>.xml` (the user calls it the tile xml; `tile_database.bin` is BOB's compiled form of all of them). The entry says where everything is and holds what the tile is:
-- **Path to the files:** `TILE@location` (`terrain\tiles\battle\assembly_kit\osgiliath_test`) + `VARIATION@location` (`battlefield`; a settlement has several, e.g. `minor`, `medium`, `major`) + `tile.ted`, `height_map_0.png`, `blend_map.tif`, normal and BOB files in that leaf folder. No attribute names the `.ted` file itself; the leaf folder is the variation, so `tile.ted` is always at `<location>\<variation>\tile.ted`.
-- **Size and class:** `width` x `height` in cells (128 m), `tile_set`, `mask`, `scalable`, `random_rotatable`, `requires_infield_lodding`, `encampable`, `custom_alpha_blend_texture`, `custom_blend_tile`.
-- **Colour from the database:** `red` / `green` / `blue` on the TILE (and again per VARIATION): the tile's colour used by the map tools (tile_map / Terry) and the editor's tile list.
-- **Ground:** `TEXTURE_GROUP` red / green / blue / alpha (the four blend layers by group name).
-- **Height map:** per variation `min_height`, `scale` (metres of the 16-bit range), `raw_data_tri_density` (mesh density for BOB), `overlap_border_size` (cells of overlap with the neighbours: the 128 m border of the height map).
-- **Normal map:** per variation `normal_strength`, `normal_common`, plus `blend_common` / `index_common` (shared maps when the tile has none of its own).
-- **Links:** `TILE_LINK_TARGETS` and `TILE_LINKS` (section 4b).
-Today the Tile tool is built the other way round: `TileProject::open(tile_dir)` takes the folder that holds `tile.ted`, then `find_tile_info` ([tile_project.cpp:26](../../tools/tile/tile_project.cpp)) parses all 699 entries of `TILES/` one after the other until one matches the folder's `location`, and keeps only `width`, `height`, `min_height` and `scale`. Everything else in the entry (colour, normal strength, overlap, texture groups, links, the other variations) is dropped, a `tile.ted` outside the kit gets no height scale at all, and the entry cannot be seen or edited. Consequences for the other findings: the height-to-metres mapping (section 4) must come from the entry (and `_settings.xml`: `lf_height`, `vertical_offset`), the terrain textures from its `TEXTURE_GROUP`, the neighbour blend from `overlap_border_size` and the links, and the tile colour from the entry.
-**Revision:** the entry becomes the document's root (Phase 0b): a `TileEntry` (lossless `XmlDoc`, like `TedScene`) owns the paths and every field above; opening a tile means choosing an entry and a variation (a tile browser listing `TILES/*.xml` of the kit, with an index instead of a scan; `Open > Tile` and `--tile <entry or folder>`), and opening a bare `tile.ted` or a folder stays as a fallback that looks the entry up from the path and warns when there is none. The tile document then has parts: entry xml, `tile.ted`, height map, blend / normal maps; saving writes only the parts that changed, and `tile_database.bin` is rebuilt from the entries by the byte-exact builder when an entry changed.
-
-### 1. Layers
-- `TileTool::draw_layers_panel` / `draw_layer_node` ([tile_tool.cpp:651](../../tools/tile/tile_tool.cpp)) only offers a right-click menu per node (New layer inside, Move selected here, Rename in a sub-menu, Delete). The only checkboxes are per **instance type**, not per layer.
-- `OIF_VISIBLE` / `OIF_ACTIVE` / `OIF_DRAGGABLE` live in each element's `flags`. `TedScene::visible()` and `set_flag()` exist but **nothing calls them**: neither the document, the renderer nor picking looks at the flags, and no UI writes them. So hide is not possible at all, and a layer that is hidden in TEd is shown here.
-- No drag and drop (reparent / reorder), no multi-select, no F2 / Del on a layer, no "move selection to layer" button, no lock.
-- The Layers panel is docked as a tab behind the shared Outliner (`default_layout`: both in `left`), and the Outliner shows the tile's tree read-only (its context menu is for documents only). A user working in the Outliner has none of the layer actions. That fits the report.
-- Possible bug to verify in Phase 0: the Rename sub-menu opens an `InputText` inside a menu, whose popup can close on the first click; the right-click menu may also fail while the item is not hovered after a rebuild (`###n%d` ids change when structure edits shift element indices).
-
-**Live check (wce.exe on the kit's `osgiliath_test` tile, scripted mouse, 2026-10-09):**
-- Opening the tile puts the Layers panel under the Outliner with the "Instance types" list (about 25 rows) expanded on top; the actual layer tree is below the fold and has to be scrolled to (mouse wheel). The Outliner shows the sample-map document first.
-- The right-click menu works: *New layer inside* added a layer (History: `Add layer`), *Delete layer and contents* removed `rivers` with its two river splines at once (`Delete LayerInstance`, 14 -> 13 layers, no confirmation), *Rename* opens a sub-menu with the name in a text field. So create / rename / delete are reachable but poorly: right-click does not select the node (so *Move selected here* is missing from the menu unless something else is selected), there is no visibility eye, no lock, no icons, no drag and drop. The scripted run cannot type, so rename's typing was not exercised.
-- Terrain is flat olive without any texture; the river is not visible (the 2 `SplineRiverInstance` only show as overlay lines). The viewport shows 34k buildings as real models and boxes for 38 of 233 keys.
-- **Gizmo:** with a building selected (`eastern_fort_straight`, `MSM_FREEFORM`), the translate gizmo is drawn but very small next to the building's bounds. A left-drag aimed at its red arrow **orbited the camera** instead and added no History entry: reproduced once, the aim may have missed the thin arrow, but the rule that makes any miss an orbit is in `libs/editor/viewport.cpp` (left drag orbits when `!over_gizmo && !tool_drag_ && !claims`). Likely causes to check in Phase 1: gizmo size (ImGuizmo default is a tenth of the viewport; it needs a size set from the object / a constant screen size), `over_gizmo` being read from the previous frame's state on the press frame, hit-test slop of the thin arrows, and selections whose `item_transform` fails (layers, instances in groups). Fix direction: larger handles with a grab margin, plane handles, and a left-drag that starts on empty space only orbits when Alt (or the right button) is held while a gizmo is shown.
-- TEd (`TEd.AssemblyKit.exe`) launches from `assembly_kit/binaries` and opens a new 8x8 battle tile with its tool windows (Property Editor, Brush Falloff Editor, Blendmap Filters, Building Selector, Prefab Selector); its main window opened behind the user's fullscreen game, so TEd's own behaviour is **not yet observed**.
-
-**TEd reference (the user's two screenshots of `tdd_dunedain_city_osgiliath/minor` in TEd, 2026-10-09):**
-- **Layer panel:** TEd's *Property Editor* has a **Scene** tab (the layer tree: *Main Camera* at the top, then Walls > Standard_Walls, Fort_Logic, rivers, Buildings, Barricades, fields, streets, Gondorian Buildings, ...) and a **Settings** tab (Building Settings, Sky Settings, Vegetation settings, Drawing Settings, Application Settings, Application Startup Settings, compass_content, Grid and Snapping Settings, skin, Tile Settings). Every row has a layer icon, an **eye** (visible) and a **cursor arrow** (selectable) at the right edge; in the shot Fort_Logic, rivers, Barricades and streets have both greyed. Under the tree a *Name / Value* property grid shows the selected item's properties. So TEd's two per-layer toggles are visibility and selectability (lock), as the plan's Phase 1 assumes (`OIF_VISIBLE`, `OIF_DRAGGABLE`: confirm by toggling in TEd and diffing the saved `.ted`). Note: the `rivers` layer is greyed out, yet the river water is drawn: the water in the shot does not come from the spline layer's visibility (the baked water / the terrain), to be checked.
-- **Toolbar:** three mode tabs **Select / Create / Paint**; under them *Selection shape* (Rectangle), *Selection Mode* (Translate; the transform mode), *Coordinate Space* (World / Local) and numeric **X / Y / Z** fields to type an exact transform of the selection. A compass strip sits at the top of the viewport, an fps counter bottom right (4 fps on this tile), a row of small mode icons bottom left (sky / time of day, view toggles). Menus: File, Edit, Environment, Tools. Floating panels: Property Editor, Brush Falloff Editor.
-- **Reference render:** the terrain has per-surface textures blended in the city (cobbles, dirt, trampled mud, grass towards the outfield), a visible river with water, an outfield (hills and fields beyond the tile edge), sky and fog, fires and smoke VFX playing, and lit, shadowed buildings. This is what Phase 3 and 4 compare against (TEd and the game share the engine; confirm against an in-game shot when available).
-
-### 2. Water and rivers
-- Nothing in the codebase draws water. `SplineRiverInstance` / `SEGMENTED_SPLINE_INSTANCE` are only listed as instance types (a small marker or nothing); the renderer has no water pass, and the terrain has no sea level.
-- The data exists in the kit tile: `tile.ted` has the river instances with points (`width`, `foam_amount`, `alpha_fade`, `flow_speed`, `controlIn`, `controlOut`, `terrain_offset`), TEd also writes `river_spline0.xml` / `river_spline1.xml` next to it (`<SEGMENTED_SPLINE><SPLINE><POINT0 width x y z foam_amount alpha_fade flow_speed>..`, Bezier-style, 4 points per segment). BOB outputs `hf_water_map.data`. `ground_type_map.png` carries `GT_SHALLOW_WATER` / `GT_DEEP_WATER`. Sea tiles (`sea`, `sea_coast`, `river_mouth`) have a water level and a sea surface (`HDUTILITYLIB::SEA::SURFACE` in TEd, `ps_sea_geom` in the terrain shaders).
-
-### 3. Terrain
-- The tile terrain is the **interim** pass: one tiled diffuse through `rigidstandard` ([docs/re/terrain.md](../re/terrain.md), "What the interim terrain pass does and does not"). It reads no blend map, no climate, no normal map.
-- What a tile has (kit `osgiliath_test/battlefield`): `blend_map.tif` (RGBA, 4 layer weights, 52 MB), `ground_type_map.png`, `height_map_0.png`, `protection_map.dds`, BOB's `final_alpha.dds`, `final_heights.dds`, `tile_normal.tga` (plus `index.dds`, `blend.dds` in BOB output).
-- The four layers are named in `_tile_database/TILES/<tile>.xml`: `<TEXTURE_GROUP red='settlement_1' green='settlement_2' blue='settlement_3' alpha='forest'/>` (already parsed in `tile_database`). `_tile_database/_settings.xml` has one `<CLIMATE name=...>` per climate (`ROME_Continental`, `ROME_Med`, `ROME_Atlantic`, `ROME_Desert`, `ROME_EasternDesert`, `ROME_Destruct`, ...) with a `<TEXTURES>` list (per-texture `lerp_smoothness0..3`, `lerp_reflectivity0..3`, ...) and `texture_set`; the textures themselves are under `terrain/textures/battle/<climate>/`. So the missing link is: **climate -> texture set -> the texture of each of the 4 groups**, not the blend map itself. The climate of a tile is not stored in the tile (it comes from the map's `climate_map.png`; out of scope), so the tool needs a climate selector, which also drives the weather picker.
-- `docs/re/terrain.md` already holds the verified shader structure (depth pass + per-tile material pass using blend/index/alpha/normal maps and texture arrays) and the open items: draw order and blend state, depth convention, patch layout, which file feeds which sampler, `ps_mapping_array` filling.
-- "No blending" most likely means the blend between the 4 ground layers (the blend map) and the detail/normal layers, which are all missing today. Blending **between** neighbouring tiles is map-level (tile_map / Terry) and stays out of scope.
-
-### 4. Building height
-- `surface_mode` is never read (`grep` finds it only in the scene's snippets for new layers and polygons). Every instance is placed at the `position` y it has in the file and never re-snapped.
-- In the `osgiliath_test` tile (buildings): 25,724 `MSM_LANDSCAPE` and 8,440 `MSM_FREEFORM`; vegetation 14.5k / 13k; decals 9k / 23.5k; most groups (`UserInstanceGroup`) 33.6k landscape / 7.3k freeform. `lf_offset` is `0` everywhere in the two tiles checked.
-- Measured on the top-level buildings of that tile with a quick script (mapping `min_height + scale * v / 65535`, which may differ from the tool's): the landscape ones follow the height map exactly (a constant offset, spread under 1 cm), the freeform ones scatter from -17.4 to -1.5 m relative to it. That supports the reading *landscape = y follows the terrain (TEd re-snaps it when the terrain changes), freeform = y is absolute*. Consequences in the tool: after a height brush stroke landscape instances float or sink; "Drop to terrain" cannot set a mode; the world matrix of an instance inside a group depends on the group's mode; freeform instances that should sit on a platform are fine only by luck. The constant offset also suggests the height-to-metres mapping is tile dependent (`vertical_offset=20` in `_settings.xml` is a candidate): check with the oracle below before blaming the mode.
-- Oracle: TEd's own export `building_list.xml` (stage A, in `working_data`) holds the world transform of every building as TEd computed it. Comparing it with `TileDocument::world_matrix` over every tile of the kit gives an exact, corpus-wide error report per surface mode, nesting depth and type.
-
-### 4b. Tile links (the user: important; moved into scope on 2026-10-09)
-Tile links are how a tile says which tiles may sit next to it and where it joins them. They live in the tile database (`_tile_database/TILES/<tile>.xml`, and `tile_database.bin`), not in `tile.ted`, and TEd edits them in its tile dialogs (classes `TileLinkEditor`, `TileLinkTargetEditor`, `TileModule_TilePropertiesDialog`, `TileModule_DatabaseManagementDialog`). The tile tool today parses them only inside `tile_database` (byte-exact) and shows nothing.
-- `TILE_LINK_TARGET tile_set x y`: this tile **offers** a join of kind `tile_set` at its edge cell (x, y) (cells are 128 m; the Osgiliath test tile has river targets at (0, 3) and (7, 4), i.e. a river enters on the west edge and leaves on the east edge of an 8 x 8 tile).
-- `TILE_LINK link_set x y base_x base_y is_entry blend_size no_offline_blend test`: a **rule** that the cell (x, y) outside or inside the tile (x = -1 or x = width is the neighbour column) must (`TLT_EQUALS`, 1,512 in the kit) or must not (`TLT_NOT_EQUALS`, 242) belong to `link_set` (`sea` 908, `river` 209, `roads` 194, `sea_coast` 182, `roads_stone` 104, `roads_mountain` 54, `river_shallow` 51, `cliff_custom` 48); `base_x/base_y` is the cell of this tile the rule belongs to, `is_entry` marks entries, `blend_size` (pixels, 64 in the example) is how far the neighbour's terrain is blended into this tile at that edge, `no_offline_blend` turns the BOB pre-blend off, `blend_quad` is empty in every shipped file.
-- The one-cell (128 m) border of the height map (see `docs/formats/tile_ted.md`) is the overlap with the neighbours (`overlap_border_size="1"` in the VARIATION): it is where the neighbour's height and ground blend across the edge. That is the "terrain blending" of the game between tiles, so Phase 3 has to handle it (the border cells are already read), not only the four layers inside the tile.
-- The river splines have to leave through the target cells: `SplineRiverInstance` end points sit on the tile's edge at the target cell, with the width and height the neighbour tile expects. A check for that belongs next to the spline editor.
-- What is needed: (a) **view** links and targets on the tile (edge cells coloured by link set, with the rule text), (b) **edit** them (add / remove / change set, cell, test, blend size) as an edit of the tile database entry, saved to `TILES/<tile>.xml` and `tile_database.bin` (the builder is byte-exact already), (c) **validate** a tile against its links (river / road / coast points at the target cells, border heights equal to the neighbours' for every neighbour tile that would be placed by the rules), (d) **preview a neighbour**: load a tile that satisfies a link and show it next to this one so the blend and the seam can be checked (rendering of the overlap in Phase 3), (e) a link overview (which tiles can follow this one on each edge).
-
-### 5. What TEd has (from `public_ted.script`'s `add_module` list and the executable)
-`ai_hint_view`, `building_view`, `campaign_tile_view`, `capture_point_view`, `castle_view`, `deployment_zone_view`, `effects_view`, `efline_editor_view`, `hardoutline_view`, `marker_view`, `point_light_view`, `polygon_editor_view`, `prop_view`, `ship_view`, `sky_view`, `spline_editor_view`, `stats_view`, `terrain_decal_view`, `vegetation_painting_view`, `zone_editor_view`, `projectile_firer`, and the classes `TileModule` (New tile, Load tile, Save tile as, Resize tile, Tile properties, Database management, Integrity errors, New tile set), `SEA_MODULE`, `SPLINE_MODULE`, `UnitsModule`, `SiegeAIModule`, `AISeparatorModule`, `CaptureLocationModule`, `CivilianDeploymentZoneModule`, `LiteBuildingZoneModule`, `PrefabModule`, `ProjectedDecalModule`, `VFXModule`, `SkyModuleSettings`, `UtilsModule` (generate buildings map, create zone outlines), brush tools (`FalloffBrush`, `ImageBrush`, Brush Falloff Editor, Load Brush, Spline Paint Stroke, Spline Segment brush, Spline Road), `GROUND_TYPE` painting (`GBP_GROUND_TYPE1..5`), climate and season option boxes (`CLIMATE_CONDITIONS`, `SEASON_*`, weather auto generator), saved selections, compass, ground plane, undo actions per tool, grid / angle snap (6 m / 90 degrees in `public_ted.script`).
-
-Gap table (Tile tool today -> TEd):
-
-| TEd feature | State in the Tile tool | Phase |
+| Area | State | Where |
 |---|---|---|
-| Layer tree: visibility, lock, rename, reorder, create, delete, export type (Normal/Escalation1..3) | create/rename/delete/move-selection exist but are hard to reach; no visibility, lock, reorder; escalation export type not editable | 1 |
-| Select / Create / Paint mode tabs, selection shape (rectangle etc.), transform mode, World / Local space, numeric X / Y / Z entry for the selection, compass, Settings tab (grid and snapping, drawing, tile settings) | one tool mode combo, gizmo toolbar, Inspector position fields in scene units | 1 (gizmo, numeric entry), 5g |
-| Placement modes landscape / freeform, `lf_offset`, re-snap on terrain edit | not modelled | 2 |
-| Terrain: blend map layers by climate, normal, detail, ground types | interim single texture | 3 |
-| Water: rivers (splines), sea, lakes | none | 4 |
-| Spline editor (rivers, roads): add / move / delete points, tangents, width, foam | none | 4c |
-| Terrain painting: ground type, blend layers, spline stroke, image brush, falloff editor | only 5 height brushes (raise, lower, smooth, flatten, level) | 5a |
-| Vegetation painting, trees/grass seeds, exclusion polygons | exclusion polygons only (as polygons) | 5b |
-| Terrain decals / projected decals (`ProjectedDecalInstance`, 310k in the corpus) | drawn as small markers; no preview, no placement tool | 5c |
-| Buildings: catalogue browser from `battlefield_buildings`, tech level / burn / destruction preview, castle / wall tools | add by key text box; no preview of destruction levels | 5d |
-| Prefabs / `UserInstanceGroup` (group, ungroup, instance of group) | groups shown as layers; no create / ungroup | 5d |
-| Props (`SIMPLE_MESH_INSTANCE`), VFX instances (preview), point lights | markers only | 5e |
-| Zones: deployment, capture locations, civilian shelters / deployment, no-go / go, siege AI nodes / edges, AI separator, lite building zones | no-go / go / AI hints polygons only; the rest are markers | 5f |
-| Tile identity: database entry as the root (paths, colour, size, ground groups, height / normal parameters per variation), tile browser, variation chooser | opens a folder, scans 699 entries to guess width / height / min_height / scale, drops the rest | 0b |
-| Tile links and link targets (TileLinkEditor, TileLinkTargetEditor): view, edit, validate, neighbour preview, edge blend | parsed in `tile_database` only, not shown or editable | 6a |
-| Tile module: New tile, resize, properties (min height, scale), database management, integrity errors, Save as | open and save; New tile (a project, battle) and the height range fitted on save (plans/workflow_review.md) | 6 |
-| Export to the game: stage A (`building_list.xml`, markers, bmd_data) + BOB stages B / C | planned in `tile_editor` PLAN Phases 4-9, not built in wce | 7 |
-| Selection: box select, saved selections, select by type, select same key, filters, invert, lock | click and shift-click | 5g |
-| Snap: grid and angle with tolerance, snap to other objects, align / distribute, move along normal, copy / paste, multi-item gizmo | grid snap and 15 degree rotate step; single item | 5g |
-| Stats view (counts, memory budget), integrity checker | type counts in the Layers panel | 6 |
-| Sky / time-of-day view | weather preview (Phase 7 of wce) | done |
-| Ships, projectile firer, units module (test armies) | not needed for authoring | skipped |
+| 0 Repros, oracle, TEd probes | done: repro scripts, `placement_check` (`crates/wce_tile_editor/examples/placement_check.rs`, TEd's `building_list.xml` as the oracle), the flag / placement probes in TEd, the link-semantics spike | `docs/formats/tile_ted.md` |
+| 0b Tile entry as the root | done: `TileEntry`, `TileIndex`, Tiles panel, open by entry / folder / `tile.ted` | `docs/formats/tile_database.md`, `docs/editor.md` |
+| 1 Layers and scene graph | done: Scene panel (eye = `OIF_VISIBLE`, cursor arrow = `OIF_ACTIVE`), structure commands, export type, gizmo fix, W / E / R, snap toggle. The shared Outliner shows the tile tree read-only (accepted) | `docs/editor.md` ("Scene panel") |
+| 2 Placement and heights | done: landscape / freeform rules, strokes carry landscape instances, oracle exact; stale entries fixed by `TileProject::calibrate_from_final_heights` | `docs/formats/tile_ted.md`, `docs/editor.md` ("Placement") |
+| 3 Terrain | done with the game's shaders (3a, 3b, 3d; 3c largely); 3e partial: the season combo picks the textures | `docs/re/terrain.md`; map-level terrain: `map_context_todo.md` |
+| 4 Water | 4a, 4b done; 4c mostly (points, handles, insert / prepend, per-point values, `river_spline*.xml` written on save) | `docs/re/water.md`; rendering leftovers: `rendering_remaining.md` |
+| 5b-5f Tools | vegetation brush and sets, procedural trees / grass, decals, Create panel with preview, prefabs (group / ungroup), props, VFX, point lights, every zone type | `docs/tile_entity_types.md`; walls: `procedural_walls.md`; siege AI generation: `siege_ai.md` |
+| 5g Selection | multi-item gizmo, type filters | `docs/editor.md` |
+| 6a Links | read-only view (list and cells on the ground) | `docs/re/tile_links.md` |
+| 6b Tile module | New tile (Tile > New tile..., a project); height range fitted on save | `workflow_review.md` |
+| 7 Export | done (`save_exported`, stages A-C) | `tile_roundtrip.md` |
 
-Not carried over on purpose (unchanged scope): campaign map files, tile_map / Terry, units / ships / projectile testing.
+## Open
 
-## Phases (order: smallest user-visible breakage first)
+### Phase 0 / 3 / 4 gate
+- An in-game reference shot of a fixed tile / camera / climate (a settlement tile, a river tile, a sea tile), to compare the terrain
+  and water against. None has been supplied; the terrain and water shots are compared only run against run.
 
-Every phase ends with a report and waits for your go, as agreed for the earlier phases. Rules that apply to all: edits stay text splices on the lossless XmlDoc; the corpus round trip (`roundtrip`, `scene_check`, `unit_tests`, `xml_splice_check`), the render gates and the cross-tool gate must still pass; scripted runs must not take the focus; builds go to `build/work`.
+### Phase 1
+- Gizmo at a constant screen size. Partly done: the handles are 0.16 of the clip height (were 0.1) and do not scale with the
+  object; there are no plane handles beyond ImGuizmo's own.
 
-### Phase 0: reproduce and measure (about 1 day)
-1. A scripted repro per complaint (commands exist: `new_layer`, `move_to_layer`, plus new ones where missing) and a screenshot of the Layers panel and the Outliner docked as in the default layout, to see what the user sees.
-2. `cli/placement_check`: for each kit tile, compare `TileDocument::world_matrix` with TEd's `building_list.xml` (and markers payloads) and print the error by `surface_mode`, depth in groups, and type. This is the oracle for Phase 2. Confirm the height mapping (`min_height`, `scale`, `vertical_offset`) from the same data.
-3. A reference shot of the same tile and camera in the game (the user supplies one, or a battle on the tile is captured) for Phases 3 and 4.
-4. Write down what each reproduction showed; adjust the phases below if a cause turned out different.
+### Phase 2
+- Viewport tint for freeform instances. Model entities have no per-entity tint in the renderer. The Inspector shows the mode and the
+  Placement section counts the instances.
+- The 15 stacked crates of `osgiliath_test` (freeform groups nested under a landscape group, up to 2.70 m off in TEd's export). TEd's
+  rule for stacked groups is not plain composition; the tool shows the file's y.
 
-### Phase 0b: the tile entry as the root of a tile (about 1 week; before Phase 2 because heights, colours and links come from it)
-1. `TileEntry`: lossless parse and byte-exact save of `_tile_database/TILES/*.xml` (the corpus gate: 699 files round trip), typed access to every attribute and child listed in section 0, variations as a list, links and targets as lists.
-2. Open by entry: an index of the kit's `TILES/` (built once and cached by size and mtime, no per-open scan), a tile browser panel (search by set / tile name, colour swatch, size, variation list) and a variation chooser; the `tile` command, `--tile` and `Open` accept an entry, a folder or a `tile.ted` (the last two resolve their entry from the path and warn when there is none). The paths of `tile.ted`, `height_map_0.png`, `blend_map.tif` and the normal map come from the entry's `location` chain.
-3. Show the entry in the Tile panel (read-only first): colour, size in cells and metres, `TEXTURE_GROUP`s, per-variation `min_height` / `scale` / `normal_strength` / `overlap_border_size` / `raw_data_tri_density`, links and targets. Height and normal values used for rendering come from here, not from constants in the code. Editable fields follow in Phase 6 (they change the database, so they need the entry write-back and the `tile_database.bin` rebuild).
-4. Re-check the height mapping against `_settings.xml` (`lf_height`, `vertical_offset`) and the entry values with the Phase 0 oracle.
-**Gate:** entry round trip over the 699 files; `tdb_build` still 0 bytes differ; open-by-entry gives the same document as open-by-folder for every kit tile that has an entry (same heights, same instance count); a `tile.ted` copy outside the kit opens with a warning and no height scale.
+### Phase 3
+- 3e season mixing: the season combo picks one season's textures (sections (1, 1, 0)); whether the game mixes seasons or
+  climate-change states on a tile (`g_remapped_season`, `g_climate_change_index`) is open (`docs/re/terrain.md`, "Seasons and snow"
+  and "Assumptions / open"). Settle it with the in-game shot.
 
-### Phase 1: layers and scene-graph editing (about 1 week)
-1. **Shared tree widget, laid out like TEd's Scene tab** (layer icon, name, then an eye and a cursor-arrow column at the right edge, greyed when off; *Main Camera* row at the top; a Name / Value property grid below). The Outliner gets what the Layers panel has and more, so that both tools use it: per-node eye (visibility), selectable / lock, context menu from the document (`Document::outline` nodes carry actions), inline rename (F2 / double click), Delete, drag and drop to reparent or reorder (above / into / below), multi-select with Ctrl / Shift, "New layer" button, "Move selection here". The tile document supplies the actions; the weather tool can adopt them later. The separate Layers panel keeps only the per-type filters and the escalation export type.
-2. **Flags.** Visibility writes `OIF_VISIBLE`, lock writes the flag TEd uses for it (`OIF_DRAGGABLE`; verified by toggling in TEd on a scratch copy and diffing the `.ted`). A hidden layer hides every descendant in the renderer and in picking (the document's markers and model entities check the effective visibility, cached per element and updated by splice); hidden does not mean excluded from export. Locked items are not picked and not moved by the gizmo.
-3b. **Gizmo and mouse rules** (reported by the user: gizmo tools do not work, the camera rotates): **cause found in Phase 0: ImGuizmo's `CanActivate()` refuses while an ImGui item is hovered, and the viewport's `InvisibleButton` covers the image: the press has to reach the gizmo (allow overlap / own hit test) before anything else;** constant-screen-size gizmo with a larger default and a hit margin, translate plane handles, `over_gizmo` taken from this frame's hit test before the camera gets the press, a left-drag that misses the gizmo selects (box select) instead of orbiting while a gizmo is shown, orbit on the right button / Alt+left only in Select mode, `W` / `E` / `R` for move / rotate / scale as in TEd, snap toggle, and a gizmo test in the scripted gate (a drag on each axis moves the item along it).
-3. **Structure commands** as splice commands with undo / redo: create (also at root and "group selection into a new layer"), rename (layer and instance), delete (with a confirm when it has more than N children), reparent / reorder (keeps the element text, only moves it), duplicate layer. Selection hints after each (the element indices shift).
-4. **Escalation / export type** (`LayerExportType_Normal|Escalation1..3`) as a combo on a layer.
-5. Fix the interaction bugs found in Phase 0 (popup ids stable across structural edits: key the tree by an element identity that survives splices).
-**Gate:** scripted run for each action; the saved `tile.ted` differs from the source only in the expected spans (`span_diff.py`); undo returns the original bytes; the existing tile gates unchanged.
+### Phase 4
+- 4c: flip a river's direction.
+- 4c: snap river end points to the link target cells (`docs/re/tile_links.md`: x along +x, y from the +z edge).
+- 4c: check river ends against the entry's targets (osgiliath: both ends lie on the target cells).
+- 4d: water map / shallow-deep view (`hf_water_map.data`, `GT_SHALLOW_WATER` / `GT_DEEP_WATER` in `ground_type_map.png`; neither is
+  read yet, `docs/re/water.md`). The river bed stays as authored (BOB carves it).
+- Water rendering (river uv, shadows on water, foam / ice, `g_refraction_depth`, river ends blending with neighbours, battle sea mesh):
+  `rendering_remaining.md`.
 
-### Phase 2: placement modes and heights (about 1 week; needs Phase 0 data)
+### Phase 5a: terrain painting
+Today: the height brushes (raise, lower, smooth, flatten, level). Writes need the kit-exact encoders (`blend_map.tif`,
+`ground_type_map.png`, `nogo.png`, `lf_influence_map.png`; `docs/formats/image_encoders.md`); one undo entry per stroke.
+- Blend layer brush (the four `TEXTURE_GROUP` channels, 16 weights per pixel as read in Phase 3).
+- Ground type brush (TEd's `GBP_GROUND_TYPE1..5`).
+- Brush falloff editor (TEd's Brush Falloff Editor window) and image brush (`ImageBrush`, Load Brush).
+- Spline paint stroke (TEd's Spline Paint Stroke / Spline Segment brush).
+- Height brushes: noise, stamp, import PNG.
+- Nogo map and LF-influence map painting.
 
-**Revised after Phase 0 (see "Phase 0 findings"):** the world matrix already equals TEd's export (0.0001 m, 0.00 degrees, y exact; 357,666 buildings, 73 tiles), so items 1 and 2 shrink to: model `surface_mode` / `lf_offset` for editing, look at the 15 stacked crates and at the five tiles whose landscape buildings do not fit the entry's `min_height` / `scale` (`dead_marshes` 1x1 / 2x2, `lothlorien` 1x1 / 2x2 / 4x4; arbitrate with `final_heights.dds`), and turn `placement_check` into the gate. The re-snap rule when the terrain changes needs the TEd probe.
-1. Model `surface_mode` and `lf_offset` in `TileDocument` (Index gets a per-element mode and the effective mode through groups, as the oracle shows TEd computes it).
-2. Match TEd's `building_list.xml` world positions: fix the world matrix until the oracle error is ~0 for the corpus, including the height mapping if Phase 0 shows it is wrong for some tiles (this may be the "some buildings are wrong" cause by itself).
-3. Behaviour: landscape instances follow the terrain: `Drop to terrain`, moving with the gizmo or `G` keeps them on the ground, a **height brush stroke re-snaps** landscape instances inside the brushed area (one undo entry with the stroke); freeform instances keep their y and can be moved vertically (gizmo Y, numeric field).
-4. UI: Inspector combo "Placement: Landscape / Freeform" (+ `lf_offset`), a Tile-panel toggle for new objects, a batch "Set placement" for the selection / layer, a "Report instances off the terrain" tool (landscape instances more than e.g. 0.5 m from the ground) and a viewport tint for freeform.
-5. New objects take the mode of the object they are copied from (duplicate) or the Tile panel default (add building).
-**Gate:** `placement_check` max error under a tolerance agreed after Phase 0 (TEd writes `%.6f`) over the whole kit; the render shot of the Rome / Osgiliath tile unchanged except for the corrected buildings.
+### Phase 5b
+- Exclusion polygons as brushes (paint the area instead of drawing the polygon).
 
-### Phase 3: battle terrain rendering (the largest; about 3-4 weeks, in steps with a shot each)
-3a **Data.** Loaders for `blend_map.tif` (uncompressed TIFF, the kit writer is known), `ground_type_map.png`, the BOB maps when present (`final_alpha.dds`, `final_heights.dds`, `index.dds`, `blend.dds`, `tile_normal.tga` / `final_normal_map.dds`); a CPU fallback that builds what the shader needs from the editable inputs (height map -> normals; blend map) so an edited tile does not need BOB. Parse `_settings.xml` `<CLIMATE>` blocks next to the existing `tile_database` code and the tile's `TEXTURE_GROUP`.
-3b **Climate model.** A climate selector in the Tile panel (the 8 kit climates + TDD ones found in the database), default from the weather picker's map; it picks the `texture_set` and the texture of each group: `climate -> group name (settlement_1, forest, ...) -> terrain/textures/battle/<climate>/..._diffuse / _normal / _spec`. Verify the file naming from the pack and from `terrain.md`'s `ps_mapping_array` (open item); changing the climate re-binds the textures live.
-3c **Pixel-close pass** per `docs/re/terrain.md`: the surface pass (depth) and the material pass with the four blended layers, index map slice selection, per-layer UV scale (`blend_pixel_scale`), normal blend, mid / near distance detail, light params, written into the G-buffer. First the simple version that gives the right look (4-layer weighted diffuse + normal), then the engine's exact blend. Open items from `terrain.md` get answered by a full dump (Task Manager, `dump_cbs.py`; RenderDoc crashes the game) of the same tile in a battle, and by the GLSL listings.
-3d **Ground type and protection overlays** (debug views TEd has): ground types, protection map, blend channels, wireframe; each a toggle in the Tile menu.
-3e Season handling (`SEASON_*`, `g_remapped_season`) as a combo once the base is right.
-**Gate:** a capture of a fixed tile / camera / climate compared against the in-game reference (tolerance agreed per step, as for the weather shots), plus render regression for the existing weather and tile shots (only the terrain region may change, re-baselined explicitly).
+### Phase 5d: building catalogue
+- Key search UI beyond the typed key (search `battlefield_buildings`).
+- Thumbnails from the models.
+- Tech level, destruction and burn preview.
 
-### Phase 4: water and rivers (about 2-3 weeks)
-4a **Spike**: the river / water shaders (`fxc/glsl_*water*`, `ps_sea_geom`), their cbuffers and textures (normal maps, foam, flow), river mesh generation. Output: `docs/re/water.md`.
-4b **Rendering**: sea / lake level (flat plane at the water height clipped by the terrain; ground type deep / shallow), then river ribbons: sample the `SplineRiverInstance` points (Bezier with `controlIn` / `controlOut`), width, flow speed and foam along the length, `terrain_offset`, alpha fade at the ends; animated with the shared `Clock`, lit by the environment (sun, sky reflection).
-4c **Spline editor**: add / move / delete points and tangents in the viewport and the Inspector (width, foam, flow, alpha fade), insert point, flip direction, snap end points to tile links; keep `river_spline*.xml` consistent (TEd writes it at save; to be confirmed whether it is derived or a second source).
-4d **Water-aware terrain**: a river bed carved by the height map stays as authored (BOB does the carving); show the water map and shallow / deep colouring.
-**Gate:** shot against the in-game reference on a river tile and a sea tile; splice edits only touch the edited points.
+### Phase 5e
+- Point-light radius gizmo (the radius is an Inspector value only).
 
-### Phase 5: remaining TEd tools (each is small and independent; order by use)
-a. Terrain painting: ground type brush (5 types), blend layer brush with the falloff editor and image brush, undo per stroke (writes `ground_type_map.png`, `blend_map.tif` with the kit-exact encoders).
-b. Vegetation painting and seeds (`Vegetation generation_seed`), exclusion polygons as brushes.
-c. Decal tool with preview (`ProjectedDecalInstance`: key, scale, parallax, tiled), place on terrain.
-d. Building catalogue (search by `battlefield_buildings`, thumbnails from the models, tech level / destruction / burn preview), prefab group / ungroup, castle / wall helpers.
-e. Props, VFX preview (shared particle code), point lights with a radius gizmo.
-f. Zone family: deployment, capture locations, civilian shelters / deployment, siege AI nodes and edges, AI separator, lite building zones, as polygon / point tools with their own validation (integrity check list).
-g. Selection and transform tools: box select, select same type / key, invert, saved selections, filters, copy / paste, align, multi-item gizmo, snap tolerance, camera bookmarks.
+### Phase 5f
+- Draw a civilian shelter's target in the viewport.
+- Draw a siege AI edge's nodes (pick the two nodes in the viewport).
+- Road splat painting: needs RE first (what TEd writes and what reads it).
 
-### Phase 6: tile module and tile links (about 2-3 weeks)
-6a. **Tile links** (section 4b; the entry model, the browser and the read-only entry panel are Phase 0b, so the links already show there), in this order: link view in the viewport first (link sets coloured on the edge cells of the viewport, link and target list in the Tile panel with the rule text), then the editors for `TILE_LINK` / `TILE_LINK_TARGET` as edits of the tile's database entry (saved to `TILES/<tile>.xml` by text splice and to `tile_database.bin` through the byte-exact builder, one undo entry per edit, the document gets a second modified part), then the validator (river / road / coast end points on the target cells, border heights against neighbours) and the neighbour preview.
-6b. New tile (size, set, variation), Save as, resize, tile properties (`min_height`, `scale`, texture groups), tile database management, integrity errors view, stats view.
-**Gate:** the tile database round trip (`tdb_build`, 0 bytes differ) after link edits that are undone; an edited link appears in the rebuilt `tile_database.bin` and nowhere else; validator results on the kit tiles match TEd's integrity errors dialog where it reports any.
+### Phase 5g: selection and transform
+- Box select (TEd's selection shape).
+- Select by type / key in the UI (`tile_select_all` exists only as a command).
+- Invert selection; saved selections.
+- Copy / paste.
+- Align / distribute.
+- Camera bookmarks.
+- Snap tolerance; move along the normal.
+- Piece-to-piece snapping from the buildings' `_tech.cs2.parsed` (collision, platforms, attachments; `docs/re/buildings.md`).
 
-### Phase 7: export
-Stage A exporter (`building_list.xml`, markers, bmd data, zone outlines) and BOB stages B / C, as in `docs/plans/tile.md` Phases 4 to 9, with real BOB as the oracle. Not a prerequisite of Phases 1 to 5.
+### Phase 6a: tile links
+- Editors for `TILE_LINK` / `TILE_LINK_TARGET` as edits of the entry: text splice on `TILES/<tile>.xml`, rebuild of
+  `tile_database.bin` with the byte-exact builder, one undo entry per edit.
+- Validator: road / coast end points on the target cells, border heights equal to the neighbours' for every neighbour the rules
+  would allow. Its results should match TEd's integrity errors where TEd reports any.
+- Link overview: which tiles can follow this one on each edge.
+- Neighbour candidates preview: load a tile that satisfies a link and show it next to this one (the map context of the Tile panel
+  shows neighbours from a map; this is from the links).
+- Open semantics: `base_x / base_y` (osgiliath's rules have base (1, 0)), `is_entry`.
 
-## Reverse engineering: how much (decided 2026-10-09)
-No full decompile of TEd or the kit DLLs. The method that worked for BOB stays: black-box first (run TEd / BOB on scratch copies, diff inputs and outputs, `building_list.xml` and BOB outputs as oracles), then **targeted, time-boxed static spikes (about a day each) only when the black-box result does not settle a question**:
-- Terrain draw order, blend state and depth convention (Phase 3): `empire.retail.dll` with the existing disassembly scripts and the `Attila.h` header, not TEd.
-- Placement re-snap rules for landscape / freeform inside groups, `lf_offset` (Phase 2): a look at TEd's snapping code, only if the `building_list.xml` oracle and the probes in TEd do not give the rule.
-- Tile link rule semantics (`TLT_NOT_EQUALS`, `base_x/base_y`, `is_entry`, `blend_size`): strings and the consumers' code in BOB_Terrain and TEd's link dialogs (Phase 6a).
-Not by reading code: river and water mesh generation and the water map (derive from BOB's inputs and outputs over the kit's river and sea tiles), brush algorithms (measure strokes in TEd), the UI (screenshots and use). Notes record formats, behaviour and constants in `docs/re/` and `docs/formats/`, never copied code or game assets.
+### Phase 6b: tile module
+- Save As as TEd's *Save tile as* (new name, variation, entry). The generic File > Save as... only writes the tile to another
+  folder.
+- Resize tile.
+- Tile properties editing UI (`min_height`, `scale`, texture groups, colour, flags; the entry panel is read-only).
+- Tile database management (TEd's Database management dialog; new tile set).
+- Integrity errors view.
+- Stats view (counts, memory budget).
 
-## Risks
-- **Phase 3 is the long pole.** The terrain material pass has open engine questions (blend state, depth convention, sampler sources). Mitigation: the simple blended version first; each step has a shot against the game.
-- **Climate is not in the tile.** The selector is a tool setting; a wrong guess looks like a rendering bug. The panel shows which climate and texture set are in use.
-- **Flag semantics (lock, active)** are inferred from names; confirm by toggling in TEd on a scratch copy and diffing before shipping.
-- **Surface-mode semantics** are inferred from data; the `building_list.xml` oracle settles it (Phase 0 and 2).
-- **Big tiles** (45 MB Osgiliath): the tree must stay virtualised and the visibility cache incremental (the performance pass rules still hold).
-
-## Decisions (user, 2026-10-09)
-- The tile's root is its database entry (`_tile_database/TILES/*.xml`: location chain to `tile.ted`, links, height and normal map info, colour), not the folder of `tile.ted`: Phase 0b, section 0.
-- Phase order is left to me: 0, 0b, then 1 and 2, then the Phase 3 / 4 spikes alongside the tile links view (6a, read-only), then 3, 4, the rest of 6a, then 5 and 6b, 7 last.
-- Phase 5 is all of it (every TEd tool listed), in the order of the plan.
-- Tile links are important and are in scope (section 4b, Phase 6a); the earlier note that blending between tiles is out of scope no longer holds for the tile-edge overlap and the links.
-- Reference material: the two TEd shots of Osgiliath minor; a coast / sea tile and a plain river tile are still welcome (optional).
-
-## Phase 0 findings (2026-10-09)
-
-Scripts: `scripts/repro/*.txt`, run by `scripts/tile_repro.sh <out dir>` on the kit's `osgiliath_test` tile (`WCE_BIN=build/work2/bin/RelWithDebInfo`, non-activating, own settings folder). New helper commands for them: `gizmo_drag <x|y|z> <pixels>` (aims the scripted mouse at the projected handle of the first selected item and drags along the axis) and `cam_info` (camera, item position and history size in the log); `show_panel` also takes a tool panel by its title. Oracle: `cli/placement_check` (`docs/baseline/placement_check.txt`, all 73 kit tiles that have a `building_list.xml`, 45 s).
-
-### The four complaints, reproduced
-1. **Layers** (`layers.txt`, `outliner.txt`). The default layout puts *Layers* behind *Outliner* in the left dock; *Instance types* (24 rows) is on top and the layer tree below it. In the 1584 x 921 window the tree is visible; in smaller windows it is below the fold. Right-click on a layer works (new layer inside, rename sub-menu, delete with contents, no confirmation; History says `Add layer` / `Delete LayerInstance`). Found: **the highlighted tree row is wrong after structural edits** (after *New layer inside* on `rivers` the highlight sits on `Buildings`; after deleting `rivers` it sits on `Escalation 1` while the Inspector says nothing is selected): the node ids and the selection are element indices, which shift. There is no eye, no lock, no drag and drop, and the shared Outliner shows the tile tree read-only (a right-click on it offers nothing). Phase 1 as planned, plus identity keys that survive splices.
-2. **Gizmo** (`gizmo.txt`). A scripted drag aimed at the projected tip of each axis handle of `eastern_fort_straight` orbits the camera (eye moved, item position unchanged, history `0/0`). **Cause found**: `third_party/imguizmo` `CanActivate()` only starts a drag when `!ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()`, and the viewport draws an `InvisibleButton("##viewport")` over the whole image, so the gizmo can never grab. Experiment (not kept, ImGuizmo is back to the original): with that test relaxed, the x drag moved the building +4.24 m and the y drag raised it 2.5 m, one History entry each, the camera did not move; the z handle (pointing at the camera, foreshortened) was missed by the aim. So the fix is in how the viewport hands the press to the gizmo (`SetItemAllowOverlap` / draw the gizmo before the button / an own `IsOver` test), not in handle size alone. The handle is also small (0.1 of the clip height, about 35 px); Phase 1's constant size and larger default still apply. `over_gizmo` itself is taken from the same frame's `IsOver()`, which is right.
-3. **Terrain / water** (`terrain_water.txt`): flat olive terrain (the interim single texture), shadows of the buildings, no river (the two `SplineRiverInstance` are overlay markers only). As planned (Phases 3 and 4).
-4. **Building height**: not a world matrix bug, see below.
-
-### Building placement against TEd's own export (`placement_check`)
-TEd's stage A export `working_data/.../building_list.xml` lists every building with `position_x/y/z`, `position_type='lf_relative'` (the only value in the 373,955 entries), a quaternion and a scale. Over **357,666 buildings of 73 tiles** (the 75,337 other buildings in those tiles are not in the exports: other export types / escalation layers; where the order differs the buildings are matched by key and position):
-- **x, z, rotation and y equal the tool's numbers.** `list_x = world_x`, `list_z = tile length in z - world_z` (the export flips z about the tile's extent: 1024 m for osgiliath_test), the quaternion equals the tool's world rotation matrix as is (max error 0.00 degrees; the z-mirrored reading is 90 degrees off on average), and `list_y = world_y` (absolute metres, in spite of the name `lf_relative`). Max 0.0001 m in x / z, y exact except **15 crates** in `osgiliath_test` (nested freeform groups under a landscape group: up to 2.70 m; TEd's rule for stacked groups is not the plain composition; 15 of 357,666).
-- **The height mapping `min_height + scale * raw / 65535`** (the tile database entry, per variation) **is right**: landscape buildings sit on it with a median of 0.000 m (202,829 buildings; 94 % within 5 cm). The other candidate formula (`raw * lf_height / 65535 - vertical_offset` with 3000 / 20 of `_settings.xml`) is 1,300 m off: it is the campaign LF map's, not the tile's. The constant 17.19 m offset the planning session saw is the parent layer `fields` (position y 17.186932) that its quick script did not add.
-- **Landscape buildings do not all sit on the terrain in the saved data**: 6 % are 5 cm to 5 m above or below it (median 0.39 m; mostly `vines`, `vines_pillar`, `lowfence_*` in Osgiliath: objects snapped onto something other than the bare height map, or placed before a later terrain edit). TEd stores the snapped y and does not re-snap on save or export (the export carries the stored y); what it does when the terrain is edited is not in the data. **Black-box probe pending** (below).
-- **Freeform buildings** are free: median 0.59 m above the terrain, up to 590 m. Nothing to fix in the world matrix.
-- **Five tiles whose landscape buildings do not fit the entry's height numbers**: `tdd_custom_dead_marshes` 1x1 and 2x2, `tdd_custom_lothlorien` 1x1, 2x2 and 4x4 (a per-tile fit of `y = min + scale * raw / 65535` over the landscape buildings gives `scale` 4.4 for an entry that says 17.9, 25.8 for 50.0, ...; the fit list also flags ten tiles with small differences, up to 0.7 m in `min` and 1.3 m in `scale`: the 6 % outliers above pull the Osgiliath, middle_men_city_a and orc_port fits, and `middle_men_city_esgaroth` is a degenerate fit of 71 buildings on flat ground; the other tiles agree with their entry to 5 cm). Either the entry's `min_height` / `scale` is stale against the height map of those tiles (BOB uses the entry), or the buildings were placed against another terrain. This is the one real "buildings at the wrong height" lead; `final_heights.dds` (BOB's output, in the tile folder) can arbitrate. Phase 2 starts there.
-- **Consequence for Phase 2**: the world matrix does not need fixing. What is left: model `surface_mode` for **editing** (landscape instances follow the ground when moved or when the ground changes), look at the 15 crates and the five tiles, and gate the tool with `placement_check` (x / z 0.001 m, rotation 0.01 degrees, y 0.001 m except the 15 crates).
-
-### Layer flags
-The `.ted` of `dunedain_city_osgiliath/minor` against the user's TEd screenshot: `Fort_Logic` and `rivers` have `flags=" "` (empty) and are greyed (eye and cursor arrow) in the Scene tab; `Buildings` has `OIF_VISIBLE` only, `Streets` and `Standard_Walls` `OIF_VISIBLE|OIF_ACTIVE`, instances and groups `OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE`. Consistent with eye = `OIF_VISIBLE`, cursor arrow = `OIF_DRAGGABLE`, and `OIF_ACTIVE` a third thing; the screenshot and the saved file are not guaranteed to be the same save, so the toggle-and-diff probe in TEd is still the way to be sure.
-
-### Not done in Phase 0
-- **TEd black-box probes** (eye / cursor toggle diff, placement mode change, terrain edit re-snap): a game was running (Valheim) and TEd's window opens behind the foreground app; I did not start it. They take about 30 minutes with the user's TEd; I will do them when the user says TEd may take the screen. The third one (move a landscape building after a terrain edit) is the important one.
-- Spikes (TEd's snapping code, tile link semantics): not needed yet; the black-box result decides.
-
-## Phase 0b: what was built (2026-10-09)
-- `libs/formats/tile_entry.*`: `TileEntry`, the lossless entry (`XmlDoc`): typed tile attributes, `texture_group()`, `variations()`, `link_targets()`, `links()`, `raw_root()`, `variation_folder()`, `ted_path()`, `unknown_names()` (nothing is unknown in the 1,852 shipped files), `save()` byte-identical.
-- `libs/formats/tile_index.*`: `TileIndex` over a kit's `raw_data`: one row per `TILES/*.xml` (location, set, size, colour, variations, link counts), cached in `<settings>/tile_index/tile_index_<hash>.tsv` by file size and mtime (a warm start parses nothing; a plain scan is 46 ms for 700 entries and 69 ms for 1,152, so the cache is mostly insurance), `resolve(path)` for a variation folder, a `tile.ted` or a tile folder, `find_name`.
-- `TileProject` is built from the entry: `open(folder | tile.ted | tile folder)` resolves it through the index, `open_entry(xml, variation)` starts from it; it holds `entry`, `variation`, `raw_root`, `warning` and `TileInfo` (now also `normal_strength`, `overlap_border_size`, `raw_data_tri_density`). A tile outside a kit opens with the warning and no height scale, as before. `find_tile_info` is only the indexed resolver now (no scan of 699 files per open).
-- Tool: the **Tiles** panel (left dock, tab next to Layers; kit and kind filters, word filter, colour swatch, size, variations, double-click opens the first one, a button per variation), the entry section of the **Tile** panel (read-only: file, location, colour, size in cells and metres, flags, ground groups, variation chooser, the variations' height / normal / overlap / density / common maps, links and targets as rule text), Tile > Open tile... takes an entry xml, a `tile.ted` or a `.ted`. Commands: `tile <entry xml | name | folder | tile.ted> [variation]` (also `--tile`), `tiles [words]`, `tile_entry`, `assert_entry <field> <value>`, `assert_tiles <n> [words]`.
-- Kit facts found on the way (`docs/formats/tile_database.md`): the battle kit holds 699 battle entries and one stray campaign entry; the campaign kit holds 626 battle entries (copies) and 526 campaign ones, plus a stray `river_mouth_12x33.xml` in its `battle` folder whose location is a campaign one (the only location claimed twice); 494 campaign entries have a BOM and CRLF; `plains/3x1/3x1_aa/height_map_0.png` is not a PNG (CRLF damage in the PNG signature) and fails to open, the same way before and after.
-- Gates: `tile_entry_check` (fast: 1,852 entries round-trip, 0 unknown names, index plain = cold = warm cache, 2,716 variation folders resolve, three kit tiles open identically by folder / tile.ted / entry, the outside-the-kit warning; `--all` in the corpus run: every kit tile with a tile.ted and an entry, 0 differ, 1 cannot be opened (the PNG above, the same error three times)); `tile_entry_script` (`scripts/tile_entry.txt`, render group); `placement_check` (corpus group). `tdb_build` is unchanged (0 bytes differ from BOB's output; the builder was not touched).
-
-## Phase 1: what was built (2026-10-10)
-- **Gizmo** (`third_party/imguizmo`, `libs/editor/viewport.cpp`): `ImGuizmo::SetAllowedItem(viewport button)`, so a press on a handle starts the drag; handles 0.16 of the clip height (were 0.1); while a gizmo is shown a left drag that misses it does not orbit (Alt + left or the right button do). Gate `scripts/tile_gizmo.txt`: x, y and z drags each move the building and make one undo entry, the camera stays (`cam_mark` / `assert_cam_same`), a missing drag does not orbit, a right drag does. Not done from the plan's list: plane handles beyond ImGuizmo's own, box select (Phase 5g), a snap toggle beyond the existing one.
-- **Flags** (`TileDocument`): `Index::state` per element (shown / selectable, inherited from the layers above, computed in the same pass as the transforms), `own_flag`, `shown`, `selectable`, `set_flags` (`TedFlagCommand`: the flags text is replaced, undo restores the bytes; `TedScene::set_flag` writes TEd's format and order). Hidden: no model entities, no marker, no polygon outline, not in the pick grid; locked: entities flagged `locked` (new `Entity::locked`, `RenderScene::pickable`), not in the pick grid, no gizmo. `perf_check` brute-force pick test skips hidden and locked instances like the grid. **Visible change for existing tiles**: the tool now hides what the file hides (osgiliath_test: only Buildings and Gondorian Buildings are drawn, as in TEd).
-- **Structure** (`TedScene::move_elements` / `move_element`, `TileDocument::move_items`, `group_items`, `remove_items`, `duplicate_layer`, `find_layer`, `export_type`): moves keep the world position and orientation, several at once keep their order (all cuts and the insertion are applied from the highest offset down), each is one splice entry with the selection hint before and after.
-- **Scene panel** (`tools/tile/tile_scene_panel.cpp`, replaces the Layers panel; docked left next to the Outliner and Tiles): see `docs/editor.md`. The wrong highlight after structural edits of the old tree is gone (selection is by item, open layers by name path). The shared Outliner still shows the tile tree read-only: layer editing lives in the Scene panel (deviation: the plan wanted the shared Outliner to carry it; the weather tool has no layers to edit, so a tile-only panel was the cheaper and more TEd-like choice, the Outliner can adopt the same row widget later).
-- **Numeric entry**: Inspector `position (world, m)` for instances (TEd's X / Y / Z fields), editable with undo; layers and instances get visible / selectable check boxes and layers an export type combo. A World / Local combo for the transform mode is the gizmo's existing local toggle; TEd's Select / Create / Paint tabs and the Settings tab are Phase 5g.
-- **Gates**: `tile_gizmo.txt`, `tile_layers.txt` (flags, picking of hidden / locked layers with the mouse, every structure command with undo / redo, world positions kept, all undone and saved = the original tile.ted byte for byte), `tile_scene_ui.txt` (eye, cursor, drag and drop, F2, Del with the scripted mouse), all in `scripts/tile_check.sh`.
-
-## Phase 2: what was built (2026-10-10)
-**TEd probe first** (`docs/formats/tile_ted.md`): a landscape instance's x / z typed in TEd's grid puts it on the terrain, a typed y is refused; Landscape -> Freeform keeps y, Freeform -> Landscape writes the terrain height; a changed height map moves every landscape instance (buildings, vegetation, the camera) when TEd saves, freeform ones never move. A plain re-save moves landscape instances by at most 0.7 mm (the height map is re-quantised). So the 6 % of landscape buildings that sit 5 cm - 5 m off the height map in the shipped files, and the five TDD tiles whose heights do not fit the entry's `min_height` / `scale`, were saved with another terrain than the files beside them (TEd would move them on its next save). `lf_offset` is 0 in the kit's TEd-written tiles; in the CA tile `terrain_rugged_hills_desert/1x1/aa` it equals the instance's y (also for freeform ones) and the landscape rocks stand 0.2 - 0.4 m under the height map, so `lf_offset` is not used as an offset (the plan's item 1 is therefore "model surface_mode", not "lf_offset").
-- **Model** (`TileDocument`): `Placement { None, Landscape, Freeform }` per instance from `surface_mode` (a byte per element of the index, patched by the placement command), `placement()`, `landscape_y()` (= the terrain height), `instances_below()`, `set_placement()`, `snap_to_terrain()`, `off_terrain()`, `placement_counts()`.
-- **Rules in the edit paths**: `set_world_metres` (Inspector, `tile_move`, G grab) and `transform_items` (gizmo): for a landscape instance a move in x / z puts it on the terrain at the new place, the same x / z with another y does nothing (no empty undo entry; the tolerance is 0.2 mm, float32 noise of a y drag at 1000 m is 0.06 mm); duplicate and add-building put a landscape copy on the terrain. `TedMoveCommand` and the new `TedPlacementCommand` update the element index at once, so a command that follows in the same frame sees the new position.
-- **Height strokes carry landscape instances** (`BrushStepCommand`): each brush step collects the landscape instances within the brush's square before the step, applies the step and moves each by the change of the height under it (local position through the parent chain), keeps their positions before the first and after the last step, so one undo entry undoes terrain and instances; hidden and locked instances follow, freeform ones are left alone. Only the instances in the brush are touched, so everything else in the file stays byte-identical.
-- **UI**: Inspector `placement` combo (TEd's labels) and a line with the distance from the terrain; Tile panel *Placement* section and the placement combo of new buildings; `Drop to terrain` snaps the selection whatever its mode.
-- **Not done**: a viewport tint for freeform instances (the plan's item 4), because model entities have no per-entity tint in the renderer; the Inspector shows the mode and the Placement section counts them. The 15 stacked crates of Phase 0 (2.7 m off the height map) were not looked at again: the oracle gives the same world matrix for them as TEd, so the tool does not change them.
-- **Gates**: `scripts/tile_placement.txt` in `tile_check.sh` (on the CA tile above: typed x / z and y, both mode switches and undo, batches, snap all, strokes that carry landscape instances and leave freeform ones, duplicate; undo all and save equals the original `tile.ted` and height map), `tile_gizmo.txt` adapted (the y handle does nothing on a landscape building, moves a freeform one), `placement_check` unchanged. A token that starts with `#` in a script line is a comment: element indices are written `"#8"` in scripts.
-
-## Phase 3: what was built (2026-10-10)
-- **3a data**: `blend_map.tif` read as 16 weights per pixel (channel `4 g + v` = texture group g, variation v; measured, `docs/re/terrain.md`); `libs/formats/dds_decode.*` (DXT1 / 3 / 5 and 32-bit RGBA / BGRA, one mip to RGBA8); `libs/formats/tile_climate.*` (the `_settings.xml` climates with their texture lists and `blend_pixel_scale`, the texture path with fall back to the `default` folder and to summer).
-- **3b climate model**: the Tile panel's Ground section (blended on / off, climate, season, view) and the commands `tile_terrain`, `tile_ground_view`; the climate is a tool setting (default ROME_Continental) because the tile does not store it.
-- **3c first pass**: `tools/tile/terrain_bake.*` bakes the blend of the climate's textures into one image over the bordered tile (4 texels per metre, 2048 at most); `Terrain::skin` carries it to the renderer, which gives each 64 x 64 patch its own texture (`ModelCache::terrain`, `make_rgba_texture`). It is the CPU stand-in for the game's blend pass with the same inputs; what it lacks is listed in `docs/re/terrain.md`. Opening a tile costs about a second more (osgiliath 8 x 8: 15 layers, 2048 x 2048 texels).
-- **3d debug views**: blend groups, ground types, protection.
-- **Replaced on 2026-10-10 by the game's shaders** (`libs/render/terrain_pass.cpp`, `tools/tile/terrain_material.*`): the CPU bake only draws TEd's debug views now; the ground colour, the normals (from the live heights), the mid-distance detail and the light parameters come from the game's blend and resolve shaders fed the tile's blend / index / normal maps and the climate's texture arrays; `assert_ground_pixel` is gone (the colour exists only on the GPU; the gate compares captures).
-- **Gates**: `terrain_check` (fast: decoder, climates, a real bake), `tile_terrain.txt` in `tile_check.sh` (two runs, identical captures, blended again = the first one, the looks differ). Two tile shots of `scripts/shots.sh` (monte_rosa, Rome) now show the blended ground: re-baselined, only the terrain changed.
-- **Not done**: 3c's exact per-pixel pass (normals, detail, light params, far blend, edge blend with neighbours: they need the engine's blend state and sampler data, `docs/re/terrain.md` open items), 3e season mixing, and the gate against an in-game reference (none supplied: the plan asks for one).
-
-## Phase 4 and the read-only links view: what was built (2026-10-10)
-- **4a spike** (`docs/re/water.md`): the river and water plane shaders read from their GLSL listings (inputs, textures, what the pixel shader does), the tile's spline data measured (Bezier chain, the landscape / freeform height rule with `terrain_offset`, widths, the tile sets that have a sea plane).
-- **4b rendering**: `Water` payload and `Kind::Water` in the scene; `libs/render/water_pass.cpp` (first an own HLSL pass, replaced on 2026-10-10 by the game's `rigidriver` / `waterplane` / `waterrefraction` shaders: refraction copy, sea before the fog pass, river after it); `TileDocument::rebuild_water` (rivers from the splines, the sea plane); Tile panel *water* check box; `tile_water`, `assert_water`. Still open: the engine's river mesh uv convention, shadows on water, foam / ice, `g_refraction_depth` at run time (see `docs/re/water.md`).
-- **Links view** (6a, first part): `TileDocument::link_cells`, `cell_rect`, `rebuild_links` (cells draped on the ground, coloured by link set), Tile panel *Tile links* section, `tile_links`, `assert_links`, `assert_link_cell`; the cell-row convention measured (`docs/re/tile_links.md`).
-- **Gates**: `tile_water.txt` and `tile_links.txt` in `tile_check.sh` (two runs identical, on differs from off).
-- **Not done**: 4c (editing splines: points, tangents, width, foam, flow in the viewport and Inspector), 4d (water map, shallow / deep colouring from the ground type map), river ends blending with neighbours, ice, 6a's editors / validator / neighbour preview.
+## Decisions
+- The tile's root is its database entry, not the folder of `tile.ted` (2026-10-09).
+- Everything rendered uses the game's shaders; the CPU bake only draws TEd's debug views (2026-10-10).
+- The climate is a tool setting: the tile does not store it.
+- Phase 5 is every TEd tool; tile links are in scope, including the tile-edge overlap.
+- Not carried over: campaign map files, tile_map / Terry, units, ships and projectile testing.
+- Edits are text splices on the lossless XML; undo restores the bytes.
+- Reverse engineering: black box first (TEd / BOB on scratch copies, diffs, `building_list.xml` and BOB outputs as oracles), then
+  short targeted spikes only when that does not settle a question. No full decompile; notes record formats and behaviour, never code.
+- Layer editing lives in the Scene panel; the shared Outliner keeps the tile tree read-only.

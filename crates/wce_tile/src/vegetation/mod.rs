@@ -1,4 +1,4 @@
-//! A tile's procedural vegetation as BOB generates it (stage C of docs/plans/tile.md) from the raw tile (heights, blend map, mask, the seeds
+//! A tile's procedural vegetation as BOB generates it (stage C, docs/plans/tile_roundtrip.md) from the raw tile (heights, blend map, mask, the seeds
 //! and static trees of tile.ted) and the Assembly Kit's vegetation parameters: the trees of `<category>.tree_list.bin` (static trees
 //! included, converted per climate), the props, decals and VFX of `<category>_procedural_bmd_data.bin`, and the grass list.
 //! docs/re/vegetation.md has the RE.
@@ -360,8 +360,8 @@ pub fn generated_props(inputs: &TileInputs, params: &GenerationParams, category:
 }
 
 /// Entries grouped by key, each key's in the order they were added, as BOB's marker tables hold them. The keys go in the order they first
-/// appear; BOB's table (`MARKER_TABLE`: a tree of the key's path parts in a `CA::HashTableNoRemove`, walked by its flat marker iterator)
-/// orders them otherwise, which is not reproduced. The order has no effect in the game.
+/// appear; the writer (`wce_tile_io::attila::stage_c`) puts them in BOB's `MARKER_TABLE` order (`compile::marker_table_order`). The
+/// order has no effect in the game.
 fn by_key<T>(items: impl Iterator<Item = T>, key: impl Fn(&T) -> String) -> Vec<T> {
     let mut groups: Vec<(String, Vec<T>)> = vec![];
     for item in items {

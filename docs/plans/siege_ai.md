@@ -1,105 +1,55 @@
 # Generate SiegeAI (one click)
 
-A button that writes a settlement's whole siege AI layout: the street graph, the wall edges, the fort perimeter, the approach lines and
-the deployment zones. What the game needs and how CA lays it out: docs/re/siege_ai.md. Scene units (su) throughout.
+The Tile menu's **Generate SiegeAI** (after Import from Assembly Kit; `crates/wce_tile_tool/src/tool.rs`, command
+`tile_generate_siege_ai`) writes a settlement's whole siege AI layout: the street graph, the wall edges, the fort perimeter, separators,
+the approach lines and the deployment zones. What the game needs and CA's layouts (incl. encampments, ports, separators):
+[docs/re/siege_ai.md](../re/siege_ai.md). Scene units (su) throughout. The minimap's siege AI view and logging siege problems on save are
+in [editor_todo.md](editor_todo.md).
 
 ## Decisions (user, 2026-10-24)
 
-- **Streets from the free space's skeleton.** Free space: inside the perimeter, minus the no-go regions, the buildings' footprints and the
-  walls. Its medial axis gives the streets; junctions become intersection nodes, plazas (wide spots), capture points and gates area nodes.
-- **Obstacles:** no-go regions and every building's footprint (its logic file's collision outlines), so a tile without no-go over its
-  blocks works too.
-- **Long streets** (over about 300 su, a guide: the AI takes long to walk them) get area nodes along them.
-- **Everything in one click:** street graph, wall edges, fort perimeter, fort approach lines, deployment zones.
-- **Deployment zones** as CA's: defender = the perimeter about 7 su in, its guerrilla-exclusion polygon the perimeter about 150 su out;
-  attacker = a rectangle over the whole map minus the perimeter about 190 su out, its guerrilla-exclusion the same rectangle minus the
-  perimeter about 70 su out. The approach lines (8, tangential) on the attacker zone's inner edge, inside it. **Ports now:** the sea
-  (terrain under 0 m joined to the map's edge) is cut from the attacker zone and the defender zone takes in the water next to the town.
-- **Perimeter found automatically:** walls and no-go regions (and buildings) as a barrier, the outside flood-filled from the map's edge;
-  what is not reached is the settlement, its outline about 12 su out is the perimeter. Inner walls (citadels) stay inside. A town without a
-  closed ring gets the barrier closed (morphological closing, growing radius) until it is closed.
-- **Entry nodes** where a street crosses the perimeter on a stretch with no wall (unwalled towns, harbours).
-- **Output in a new layer `(AUTOGEN) SiegeAI Layout`** (Normal export). Generating again replaces that layer. The old layout goes out of
-  the export: a layer holding only siege AI nodes / edges, fort perimeter / approach / deployment line hints or deployment zones gets
-  `LayerExportType_Off` (TEd's "Don't Export"); such instances in a layer with other content are moved into a `(OLD) SiegeAI Layout`
-  layer set Off. One undo entry. The Scene panel's Export type menu gets Off and Separate.
-- **UI:** a "Generate SiegeAI" button in the Polygons / AI hints panel; the summary and warnings in the status and the log.
-- **Testing:** in the editor (the user). A check example compares the generator with CA's layouts on the kit's tiles.
+- **Streets from the free space's skeleton.** Free space: inside the perimeter, minus no-go regions, buildings' hard collision outlines
+  (not `orange_thingies`; siege barricades left out) and walls. Its medial axis gives the streets; junctions become intersections, plazas,
+  captures and gates areas. Streets over about 300 su get areas along them.
+- **Everything in one click**, one undo entry. Output in a new layer `(AUTOGEN) SiegeAI Layout` (Normal export), replaced when generated
+  again; the old layout goes out of the export (a layer holding only siege AI content set Don't Export, mixed content moved into an
+  `(OLD) SiegeAI Layout` layer set Off). Summary and warnings in the status and the log.
+- **Perimeter found automatically:** walls, no-go and buildings as a barrier, the outside flood-filled from the map's edge; the settlement
+  holds the main capture and every capture within 1000 units; outline about 12 su out. Inner walls stay inside; an open ring is closed
+  (morphological closing) only to tell what is outside.
+- **Deployment zones** as CA's (defender ~7 su in, attacker ~190 su out, guerrilla exclusions 150 / 70), 8 tangential approach lines on
+  the attacker zone's inner edge. **Ports** (perimeter within 40 su of sea: ground under -0.5 m joined to the map's edge): the defender
+  takes the sea within 400 su, the attacker land and sea polygons, deployment lines, beach landings, quay entries.
+- **Encampments:** palisade runs of `siege_barricade_wall_1_encampment`, a `SAET_PALISADE` per run, an entry outside each opening, the
+  inside as a normal street graph (the user's choice; 3 of CA's 4 camps have one big area).
+- **Separators** (`PALT_FORT`) along the perimeter where no wall runs, in towns whose walls cover 30 % of it or more; a check warns when
+  the ring stays open. Wall edges run 8 su past each gate.
+- **Entry nodes** where a street crosses the perimeter with no wall.
 
 ## Design
 
-- **`wce_siege`** (new crate, pure geometry, no document): a raster in su (2 su cells) for the free space, distance transform, flood
-  fill, closing, thinning (medial axis), contour tracing; the generator from an input (the map's bounds, no-go polygons, building
-  footprints, wall pieces with their walkway lines and gate flags, captures, a sea mask) to a layout (nodes, edges, hints, deployment
-  zones, warnings); a checker (each street / connection end in exactly one node box, boxes don't overlap, the street graph connected,
-  every capture in an area, the walls inside the defender zone, the approach lines inside the attacker zone).
-- **Walls:** a fort piece is a building whose logic file has docking lines or gates; its walkway line runs along its frame's x at the
-  middle of its top platforms. Pieces chain end to end (across towers) into runs; a run's line is cut where it enters no-go. `WceWallSpline`s
-  give their layout's walkway line.
-- **Nodes:** box = a rectangle along the street's direction that fits the free space (intersections ~22 su, areas up to ~80 su), boxes
-  never overlap; Boundary = the free space nearest the node (a geodesic split between nodes) within a reach, grown a few su into the
-  obstacles (CA draws it over the building faces).
-- **Edges:** street = the skeleton path between two nodes, its ends ~10 su inside the boxes, its sides the corridor's two faces with a
-  4 su tick into each node; area connection (2 points) between nodes whose Boundaries touch; wall edges on the walkway lines.
-- **`wce_tile_editor` `tile_document/siege.rs`:** the input from the document (no-go, buildings and their logic files, walls, captures,
-  the heights), the layout written into the layer (nodes and deployment groups are instances with polygon children).
+- **`wce_siege`** (pure geometry): a 2 su raster (distance transform, flood fill, closing, thinning, contours); the generator from an input
+  (bounds, no-go, footprints, wall pieces with walkways and gate flags, captures, a sea mask) to a layout; a checker (`check`,
+  `check_captures`); SVG output.
+- **Fort pieces:** buildings with wall firing lines (`Crenel*`, `HighWall`, `LowWall`) or gates, plus raised buildings touching them; wall
+  edges along the middle of their platforms. Procedural walls give their layout's walkway (`wce_walls::scene::walls`).
+- **Nodes:** boxes along the street that fit the free space and never overlap; Boundary a geodesic split of the free space, grown a few su
+  into the obstacles. **Edges:** streets along the skeleton, ends ~10 su inside the boxes, sides on the corridor's faces with 4 su ticks;
+  area connections between touching Boundaries.
+- **Document side:** `wce_tile_editor` `tile_document/siege.rs`.
 
-## What the tile gives the generator (measured on the kit, 2026-10-24)
+## Status (2026-10-26)
 
-- **Obstacles are the buildings' hard collision outlines**, not their `orange_thingies`: those are what a building stands on, and the
-  plazas, temple floors and roads have them (taken as obstacles they covered CA's areas). Buildings without hard outlines (garden walls,
-  decorations) block nothing. The siege barricades are left out: they stand across the streets, CA's graph runs over them.
-- **Fort pieces** have firing positions on a wall (`ef_lines` actions `Crenel*`, `HighWall`, `LowWall`) or a gate (`gates`); raised
-  buildings (platforms 3+ units up) touching them (towers, corners) are part of the fort. Docking lines are not in the logic files (they
-  are in `models_building`).
-- **Wall edges** run along the middle of the fort pieces' platforms (their union thinned to lines), straight through gates. That gives
-  the walkway's middle without knowing the piece: 4.75 units to the city side on the 15 m walls, about 0 on the 8 m ones, as CA's lines.
-- **The settlement** is the inside of the walls and no-go regions around the main capture point and every capture point within 1000
-  units (CA's perimeters hold them all), with the pockets inner walls make. Closing the barrier is only to tell what is outside: the
-  streets it fills stay in.
-- **The sea**: ground under -0.5 m joined to the map's edge; not when the settlement or a capture point is in it (inland towns on low
-  ground).
+Done: `wce_siege`, the document side, the menu item and command, the Export type menu (Separate, Don't Export), encampments, ports,
+separators. On the kit's 73 settlements and camps (`cargo run --release -p wce_tile_editor --example siege_check -- <game> <out> <kit
+tiles>/settlement_* <...>/encampments`, SVGs of ours and CA's, about 3 s a tile, 2026-10-24) every tile gets a layout that exports and
+reads back; counts of entries, palisades, deployment lines, beaches and separators mostly match CA's.
 
-## Encampments, ports and separators (user, 2026-10-24, second round)
+## Open
 
-- **Encampments:** the palisade is CA's `siege_barricade_wall_1_encampment` pieces (the city tiles' street barricades are other keys
-  and stay out). Pieces 10 units apart chain into runs; two run ends facing each other within 70 units are an opening (CA's: ~30 wide,
-  no gate building). Each run gets a `SAET_PALISADE` edge through its pieces, half a piece past its ends. The openings are shut for the
-  settlement's outline; outside each, a strip of ground (24-32 across, 20 deep) is made free and gets an entry node; the inside is the
-  normal street graph (the user's choice; 3 of CA's 4 camps have one big area instead).
-- **Ports** (the town's perimeter within 40 units of the sea): the defender takes the sea within 400 units of the perimeter (and the
-  harbour); the attacker gets the land (190 out of the perimeter, 20 short of the coast) and the sea (190 from the defender's water, 150
-  offshore) as separate additive polygons. Up to 4 `AIH_DEFAULT_DEPLOYMENT_LINE`s in the defender's water, the deepest (up to 280 from
-  land) 220 apart, 250 long across the direction from the town, turned as CA's (cross(end - start, town - start) < 0 in x, z; the approach lines > 0). `AIH_BEACH_LANDING` along the
-  coast where the ground 30 units inland stays under 8 m, inside the town too (the user), up to 5, the nearest the town first, at least
-  60 long; an `AIH_BEACH_LANDING_FORT_APPROACH` 40 inland along each. Up to 3 entries on the quays (streets within 30 of the water,
-  100 apart). The approach lines go on the attacker's zone's inner edge, at sea too.
-- **Separators** (the user: without them the ring is open and the AI fails): `PALT_FORT` `AISeparatorInstance`s along the perimeter
-  where no wall runs (further than 35 units from a wall edge, or off a wall run's end), from the wall line to the wall line, in towns
-  whose walls run along 30 % of the perimeter or more (minor towns' citadels have none, as CA's). A check warns when walls, separators
-  and no-go regions leave the ring open. Wall edges run 8 units past each gate's ends so the line goes through the gates.
-- Not done: wall area nodes (purpose unknown).
-
-## Results on the kit (`siege_check`, 73 vanilla settlements and encampments)
-
-`cargo run --release -p wce_tile_editor --example siege_check -- <game> <out> <kit battle tiles>/settlement_* <...>/encampments` writes
-an SVG of ours and of CA's per tile, and also generates into the document and reads the layout back as the export would see it.
-- Every tile gets a layout. The checks' problems: 2 tiles whose main capture point is in no area (CA's own layouts have the same 2).
-  CA's layouts break the rectangle rule in 34 tiles (an edge's end in no node's rectangle).
-- Encampments: an entry at every opening (8, 4, 6, 6 as CA's), a palisade edge per run (as CA's).
-- Ports: 4 deployment lines and 3-5 beaches where CA has them; also on 6 river or coastal towns CA left without (Ctesiphon,
-  Constantinople, Ravenna small, western_city_a minor, western_port_a medium): a river under 0 m joined to the map's edge looks like
-  sea. Separators: the same count as CA's in 44 tiles, within 1 in 16 more; the ring stays open in 1 (nordic_city_c medium).
-- Warnings: 9 tiles with the street graph in parts (pockets with no gate found between them), 23 closed over gaps (minor towns), 2 with
-  fewer than 3 approach lines (the map's edge), 3 gates with no street behind.
-- Every generated layout is what the document then exports, and its scene reads back.
-- About 3 s per tile.
-
-## Status
-
-- [x] `wce_siege`: raster tools, generator, checker, SVG.
-- [x] Document side: input, output, the old layout out of export, one undo entry.
-- [x] UI: the button (Polygons / AI hints panel), `tile_generate_siege_ai`, Export type menu with Separate and Don't Export.
-- [x] Check example on the kit's vanilla settlements.
-- [x] Encampments (palisade edges, entries), ports (zones, deployment lines, beaches, quay entries), separators.
-- [ ] In game (the user): Edoras, a port, an encampment.
+- [ ] In game (user): Edoras, a port, an encampment.
+- [ ] Rivers below 0 m joined to the map's edge are taken for sea on 6 tiles (among them Ctesiphon, Constantinople, Ravenna small,
+  western_city_a minor, western_port_a medium): ports zones and lines where CA has none.
+- [ ] The ring stays open on nordic_city_c medium (separators).
+- [ ] 9 tiles get the street graph in parts (pockets with no gate found between them).
+- Wall area nodes are not generated: their purpose is an RE question (docs/re/siege_ai.md, Open).

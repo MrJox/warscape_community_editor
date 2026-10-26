@@ -1514,7 +1514,7 @@ struct Zones {
     attacker: Mask,
 }
 
-/// Both alliances' zones (docs/plans/siege_ai.md, "Deployment zones").
+/// Both alliances' zones (docs/plans/siege_ai.md, "Decisions").
 #[allow(clippy::too_many_arguments)]
 fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mask, port: bool, bounds: (P, P), seed: usize) -> Zones {
     let (lo, hi) = bounds;

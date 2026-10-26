@@ -1,4 +1,4 @@
-//! An encampment's palisade (docs/plans/siege_ai.md, "Encampments"): CA's camps ring themselves with `siege_barricade_wall_1_encampment`
+//! An encampment's palisade (docs/plans/siege_ai.md, "Decisions"): CA's camps ring themselves with `siege_barricade_wall_1_encampment`
 //! pieces 10 units apart, in runs; the openings between runs (about 30 units) are the ways in. Each run gets a palisade edge through the
 //! pieces, each opening an entry node outside it.
 

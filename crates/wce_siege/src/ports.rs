@@ -1,4 +1,4 @@
-//! A port's sea lines (docs/plans/siege_ai.md, "Ports"; CA's: docs/re/siege_ai.md): the defender's deployment lines out at sea, and the
+//! A port's sea lines (docs/plans/siege_ai.md, "Decisions"; CA's: docs/re/siege_ai.md): the defender's deployment lines out at sea, and the
 //! beaches an attacker lands on with the lines just inland of them.
 
 use crate::generate::{CELL, remove_spurs, trace};
