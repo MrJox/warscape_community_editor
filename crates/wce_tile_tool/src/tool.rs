@@ -672,8 +672,31 @@ impl TileTool {
             return Err(format!("{file_name} lists no variations"));
         }
 
-        // A project's variation folder holds tile.wce.
+        // A variation the project does not have yet (its entry lists every variation; a save brings one in): it opens from where it comes
+        // from, the kit's copy, or the packs for an extracted tile.
+        let mut entry_xml = entry_xml;
         let mut ted = entry.ted_path(&root, v);
+        let projects = Self::workspace_dir(e).join("raw_data");
+        if !wce_tile::tile_project::has_tile(&entry.variation_folder(&root, v)) && root == projects {
+            let folder = wce_tile_editor::tile_document::kit::tile_folder(&entry.variation_folder(&root, v)).unwrap_or_default();
+            if wce_tile::project_files::is_extracted(&folder) {
+                return self.extract_variation(e, &entry_xml, &folder);
+            }
+
+            let kind = folder.split('/').nth(2).unwrap_or("battle").to_owned();
+            let kit = self.kit_for(e, &kind);
+            let kit_entry = kit.as_ref().zip(entry_xml.strip_prefix(&root).ok()).map(|(kit, rel)| kit.join(rel)).filter(|x| x.is_file());
+            match (kit, kit_entry) {
+                (Some(kit), Some(kit_entry)) if wce_tile::tile_project::has_tile(&kit.join(&folder)) => {
+                    ted = entry.ted_path(&kit, v);
+                    entry_xml = kit_entry;
+                }
+
+                _ => return Err(format!("the project has no {folder} and the Assembly Kit has no copy of it")),
+            }
+        }
+
+        // A project's variation folder holds tile.wce.
         let wce = ted.with_file_name(wce_tile::project_files::WCE_FILE);
         if !ted.exists() && wce.exists() {
             ted = wce;
@@ -687,6 +710,28 @@ impl TileTool {
         let mut msg = opened?;
         if vars.len() > 1 {
             msg += &format!("  (entry {file_name}, variation {} of: {names})", vars[v].location);
+        }
+
+        Ok(msg)
+    }
+
+    /// A variation of an extracted tile that is not in the project yet (`folder`, marked): extracted from the packs and opened. The decompile
+    /// writes the whole entry (`entry_xml`): the project's own numbers come back, this variation's from the decompile.
+    ///
+    /// # Errors
+    ///
+    /// The extraction or the entry's write fails.
+    fn extract_variation(&mut self, e: &mut Editor, entry_xml: &Path, folder: &str) -> Result<String, String> {
+        let before = std::fs::read(entry_xml).map_err(|err| format!("{}: {err}", entry_xml.display()))?;
+        let msg = self.open_exported(e, &wce_tile::project_files::unmark_extracted(folder), None, false)?;
+        let variation = folder.rsplit('/').next().unwrap_or_default();
+        if let (Ok(mut old), Ok(new)) = (TileEntry::parse(before), TileEntry::load(entry_xml))
+            && let (Some(o), Some(n)) = (old.find_variation(variation), new.find_variation(variation))
+        {
+            let v = &new.variations()[n];
+            old.set_height_range(o, v.min_height, v.scale);
+            std::fs::write(entry_xml, old.save()).map_err(|err| format!("{}: {err}", entry_xml.display()))?;
+            TileIndex::forget_shared();
         }
 
         Ok(msg)

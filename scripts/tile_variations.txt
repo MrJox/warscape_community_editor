@@ -1,0 +1,23 @@
+# A tile's other variations once it is a project (its entry lists them all; a save brings each in): a kit tile's ab opens from the kit
+# after aa was saved, its first save puts it in the project, and the entry keeps each variation's own height range; then it opens from
+# the project. Run with WCE_TILE_WORKSPACE set to a scratch folder (the app starts with one document open; close_all closes it too).
+tile attila_steppes_plains_1x1
+frames 3
+paint raise 100 100 200
+save
+tile attila_steppes_plains_1x1 ab
+frames 3
+assert_documents 3
+paint raise 150 150 100
+save
+tile attila_steppes_plains_1x1 ab
+frames 3
+assert_documents 3
+close_all
+tile attila_steppes_plains_1x1 ab
+frames 3
+assert_documents 1
+tile attila_steppes_plains_1x1 ac
+frames 3
+assert_documents 2
+quit

@@ -534,7 +534,7 @@ impl TileProject {
             // The range follows the heights, as TEd saves them; the entry gets it.
             let (min, scale) = field.fit_range();
             if (min, scale) != (field.min_height(), field.scale()) {
-                msg += &format!("height range {:.3} .. {:.3} m (was {:.3} .. {:.3}). ", min, min + scale, field.min_height(), field.min_height() + field.scale());
+                msg += &format!("height range {:.3} .. {:.3} (was {:.3} .. {:.3}). ", min, min + scale, field.min_height(), field.min_height() + field.scale());
                 field.set_range(min, scale);
             }
 
@@ -569,7 +569,11 @@ impl TileProject {
             return Ok("the tile database entry is not next to it: its height range is not saved. ".to_owned());
         };
 
-        let bytes = entry.save();
+        // Only this variation's numbers change in the file there: the others are the ones their own saves wrote.
+        let mut there = if target.is_file() { TileEntry::load(&target).map_err(|error| error.to_string())? } else { entry.clone() };
+        let name = entry.variations().get(v).map(|x| x.location.clone()).unwrap_or_default();
+        there.set_height_range(there.find_variation(&name).unwrap_or(v), min, scale);
+        let bytes = there.save();
         if std::fs::read(&target).is_ok_and(|old| old == bytes) {
             return Ok(String::new());
         }

@@ -408,7 +408,7 @@ mod tests {
         hf.end_edit();
         p.height_dirty = true;
         let (_, msg) = p.save(&dir.clone(), false, false).unwrap();
-        assert!(msg.contains("height range -5.000 .. 130.000 m") && msg.contains("assembly_kit_test_range.xml saved"), "{msg}");
+        assert!(msg.contains("height range -5.000 .. 130.000 ") && msg.contains("assembly_kit_test_range.xml saved"), "{msg}");
 
         let entry = std::fs::read_to_string(t.entry_file(&raw)).unwrap();
         assert!(entry.contains("min_height='-5.000000' scale='135.000000'"), "{entry}");
