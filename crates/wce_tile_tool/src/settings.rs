@@ -82,6 +82,9 @@ pub struct TileSettings {
 
     /// Launch in game (`launch.rs`): the battle the game starts into.
     pub launch: LaunchSettings,
+
+    /// The mod pack "Save to mod pack" wrote last, by game key.
+    pub mod_packs: BTreeMap<String, String>,
 }
 
 /// Where Launch in game puts the tile.
@@ -239,6 +242,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, launch: LaunchSettings::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default() }
     }
 }

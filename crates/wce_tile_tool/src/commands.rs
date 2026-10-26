@@ -363,6 +363,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "save_to_pack", "save_to_pack <mod pack>",
+        "save the open tile, then write it as an exported tile with the tile database's files into the mod pack (created if missing; the pack's files of the tile's folder replaced)",
+        |e, a| {
+            let Some(pack) = a.first() else { return fail("usage: save_to_pack <mod pack>") };
+            let pack = PathBuf::from(pack);
+            with_tile(e, |t, e| t.save_to_pack(e, &pack).map_or_else(fail, ok))
+        },
+    );
+
+    c.add(
         "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [near cells] [mid cells] [far cells]",
         "show the open tile among its neighbours in a battle map, streamed around the camera (waits for the chunks around it); 'campaign' is the game's campaign battle map",
         |e, a| {

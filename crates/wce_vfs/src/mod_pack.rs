@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use rpfm_lib::files::pack::Pack;
-use rpfm_lib::files::{Container, FileType, RFile};
+use rpfm_lib::files::{Container, ContainerPath, FileType, RFile};
 use rpfm_lib::games::pfh_file_type::PFHFileType;
 use rpfm_lib::games::supported_games::SupportedGames;
 
@@ -15,6 +15,16 @@ use crate::GameProfile;
 ///
 /// rpfm doesn't know the game, or the pack can't be read or written.
 pub fn write_file(game: &GameProfile, pack_path: &Path, inside: &str, data: &[u8]) -> Result<(), String> {
+    write_files(game, pack_path, &[], &[(inside.to_owned(), data.to_vec())])
+}
+
+/// Puts files into a mod pack of `game` (paths inside the pack, `/` separated), creating the pack if it does not exist; first the
+/// pack's files below each of `replace` (folders) go, so that what the files replace leaves nothing behind.
+///
+/// # Errors
+///
+/// rpfm doesn't know the game, or the pack can't be read or written.
+pub fn write_files(game: &GameProfile, pack_path: &Path, replace: &[&str], files: &[(String, Vec<u8>)]) -> Result<(), String> {
     let games = SupportedGames::default();
     let info = games.game(game.key).ok_or_else(|| format!("rpfm does not know {}", game.key))?;
     let mut pack = if pack_path.exists() {
@@ -26,7 +36,22 @@ pub fn write_file(game: &GameProfile, pack_path: &Path, inside: &str, data: &[u8
         p
     };
 
-    pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
+    for folder in replace {
+        let prefix = format!("{}/", crate::normalize(folder).trim_end_matches('/'));
+        let gone = pack.files().keys().filter(|p| crate::normalize(p).starts_with(&prefix)).cloned().collect::<Vec<_>>();
+        for path in gone {
+            pack.remove(&ContainerPath::File(path));
+        }
+    }
+
+    for (inside, data) in files {
+        pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
+    }
+
+    if let Some(parent) = pack_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
     pack.save(Some(pack_path), info, &None).map_err(|e| e.to_string())
 }
 

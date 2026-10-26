@@ -1273,6 +1273,42 @@ impl TileTool {
         Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
     }
 
+    /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
+    /// (created if missing; the pack's files of the tile's folder replaced), and remembers the pack for the game.
+    ///
+    /// # Errors
+    ///
+    /// No tile is open, the project can't be saved, the compile fails, or the pack can't be written.
+    pub fn save_to_pack(&mut self, e: &mut Editor, pack: &Path) -> Result<String, String> {
+        let game = self.exported_game(e)?;
+        let id = document_id(e).ok_or("no tile is open")?;
+        if e.docs.find(id).is_some_and(|d| d.modified()) {
+            e.docs.save_one(id)?;
+        }
+
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let dir = d.project().dir.clone();
+        let (scene, _) = wce_tile::project_files::to_ted(d.tile().tscene().save())?;
+        let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
+        for n in &notes.notes {
+            log::info(format!("{folder}: {n}"));
+        }
+
+        let key = e.game().key.to_owned();
+        let path = pack.display().to_string();
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
+            s.mod_packs.insert(key, path);
+        });
+        Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.notes.len()))
+    }
+
+    /// The pack "Save to mod pack" offers: the last one of the game, else `<data>/wce_tiles.pack`.
+    fn default_mod_pack(e: &Editor) -> PathBuf {
+        let game = e.game();
+        let last = e.tool_settings::<TileSettings>(SETTINGS_ID).mod_packs.get(game.key).cloned();
+        last.map(PathBuf::from).unwrap_or_else(|| e.settings_ref().game_dir().unwrap_or_default().join(game.data_dir).join("wce_tiles.pack"))
+    }
+
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
     /// have that kind's tile database, in the settings' order.
     pub(crate) fn kits_for(&self, e: &mut Editor, kind: &str) -> Vec<PathBuf> {
@@ -1841,9 +1877,11 @@ impl TileTool {
             // Where the tile is: the Assembly Kit's copy (saving makes its project) or a project (tile.wce).
             if d.is_project() {
                 gui::text_disabled(&format!("{}  project (tile.wce)", icons::FOLDER));
-                gui::same_line();
-                if gui::small_button("Save for Assembly Kit") {
-                    action = Some(true);
+                if e.game().features.kit_tiles {
+                    gui::same_line();
+                    if gui::small_button("Save for Assembly Kit") {
+                        action = Some(true);
+                    }
                 }
             } else {
                 gui::text_colored(theme::warning(), &format!("{}  Assembly Kit copy", icons::PACKAGE));
@@ -3285,6 +3323,17 @@ impl Tool for TileTool {
             e.status(&msg, false);
         }
 
+        if gui::menu_item("Save to mod pack...", None, false, document(e).is_some())
+            && let Some(pack) = file_dialog(true, &Self::default_mod_pack(e), &[("Mod pack".to_owned(), "*.pack".to_owned())])
+        {
+            let msg = self.save_to_pack(e, &pack).unwrap_or_else(|m| format!("save failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the tile as the game reads it (its folder and the tile database) into a mod pack; the pack's files of the tile's folder are replaced.");
+        }
+
         let label = if self.launch_job.is_some() { "Launch in game (preparing)" } else if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
         if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none() && self.launch_job.is_none()) {
             let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
@@ -3295,24 +3344,27 @@ impl Tool for TileTool {
             gui::set_tooltip("Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.");
         }
 
-        gui::separator();
-        let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
-        if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
-            let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
-            e.status(&msg, false);
-        }
+        // A game without the tiles in its kit (Rome 2) saves into mod packs only.
+        if e.game().features.kit_tiles {
+            gui::separator();
+            let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
+            if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
+                let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
+                e.status(&msg, false);
+            }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
-        }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
+            }
 
-        if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
-            let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
-            e.status(&msg, false);
-        }
+            if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
+                let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
+                e.status(&msg, false);
+            }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.");
+            }
         }
 
         gui::separator();

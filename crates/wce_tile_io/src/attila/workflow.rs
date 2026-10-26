@@ -356,6 +356,39 @@ pub fn save_exported_with(
     Ok((dir, notes))
 }
 
+/// [`save_exported_scene`] into a mod pack (created if missing): the exported tile's folder and the tile database's files, the pack's
+/// files below the tile's folder replaced. Returns the tile's folder in the pack and the compile's notes.
+///
+/// # Errors
+///
+/// As `save_exported`, or the pack can't be read or written.
+pub fn save_exported_to_pack(game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, pack: &Path) -> Result<(String, CompileNotes), String> {
+    let scratch = std::env::temp_dir().join(format!("wce_pack_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
+    let result = (|| {
+        let (dir, notes) = save_exported_scene(game, project_dir, scene, &scratch)?;
+        let folder = dir.strip_prefix(&scratch).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+        let mut files = vec![];
+        let mut pending = vec![scratch.clone()];
+        while let Some(d) = pending.pop() {
+            for entry in std::fs::read_dir(&d).map_err(|e| format!("{}: {e}", d.display()))?.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let inside = path.strip_prefix(&scratch).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                    files.push((inside, std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?));
+                }
+            }
+        }
+
+        files.sort();
+        wce_vfs::mod_pack::write_files(&game.profile, pack, &[&folder], &files)?;
+        Ok((folder, notes))
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    result
+}
+
 /// The variation of `folder` (`terrain/tiles/<kind>/<location...>/<variation>`) in `db` gets `base`'s `min_height`, `scale` and
 /// `raw_data_tri_density`.
 fn keep_height_range(db: &mut TileDatabase, base: &TileDatabase, folder: &str) {

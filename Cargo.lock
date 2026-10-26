@@ -2308,6 +2308,7 @@ dependencies = [
  "wce_foundation",
  "wce_tile",
  "wce_tile_model",
+ "wce_vfs",
 ]
 
 [[package]]

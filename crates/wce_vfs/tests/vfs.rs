@@ -117,3 +117,19 @@ fn an_empty_file_removes_the_file_of_the_packs_below() {
     assert_eq!(vfs.read("fxc/c.fxc").unwrap(), b"new");
     assert_eq!(vfs.read_from(1, "fxc/a.fxc").unwrap(), b"old");
 }
+
+#[test]
+fn files_go_into_a_mod_pack_replacing_their_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = dir.path().join("data/my_tile.pack");
+    let game = &GameProfile::ROME_2;
+    let file = |p: &str, d: &[u8]| (p.to_owned(), d.to_vec());
+    wce_vfs::mod_pack::write_files(game, &pack, &[], &[file("terrain/tiles/battle/a/aa/old.markers", b"1"), file("terrain/tiles/battle/b/aa/x", b"2")]).unwrap();
+    wce_vfs::mod_pack::write_files(game, &pack, &["terrain/tiles/battle/a/aa"], &[file("terrain/tiles/battle/a/aa/new.markers", b"3")]).unwrap();
+
+    let mut config = Config::new(dir.path(), game.clone());
+    config.mod_packs = Some(vec!["my_tile.pack".to_owned()]);
+    let vfs = Vfs::mount(&config).unwrap();
+    assert_eq!(vfs.list("terrain/tiles/", ""), ["terrain/tiles/battle/a/aa/new.markers", "terrain/tiles/battle/b/aa/x"]);
+    assert!(vfs.packs()[0].is_mod);
+}
