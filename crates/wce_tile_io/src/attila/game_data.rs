@@ -47,6 +47,29 @@ pub fn default_schema_path(game: &GameProfile) -> Option<PathBuf> {
     wce_foundation::settings::default_rpfm_schema_path(game)
 }
 
+/// The categories of the buildings (`battlefield_buildings_tables`, given as the tables' bytes, a mod's before the game's), by lower case
+/// key: the first table that has a key wins. Tables that do not decode with the schema are left out.
+///
+/// # Errors
+///
+/// The schema does not load.
+pub fn building_categories(tables: &[Vec<u8>], schema: &Path) -> Result<BTreeMap<String, String>, String> {
+    let schema = Schema::load(schema, None).map_err(|e| format!("{}: {e}", schema.display()))?;
+    let mut out = BTreeMap::new();
+    for bytes in tables {
+        let mut extra = DecodeableExtraData::default();
+        extra.set_schema(Some(&schema));
+        extra.set_table_name(Some("battlefield_buildings_tables"));
+        let Ok(db) = DB::decode(&mut Cursor::new(bytes), &Some(extra)) else { continue };
+        let (Some(k), Some(cat)) = (db.column_position_by_name("key"), db.column_position_by_name("category")) else { continue };
+        for row in db.data().iter() {
+            out.entry(row[k].data_to_string().to_lowercase()).or_insert_with(|| row[cat].data_to_string().into_owned());
+        }
+    }
+
+    Ok(out)
+}
+
 impl GameData {
     /// Reads a game's folder: its own packs and every mod pack of its data folder (the mods first), as the checks see the game.
     ///

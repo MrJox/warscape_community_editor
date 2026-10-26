@@ -33,6 +33,10 @@ pub struct CoverageUi {
 
     pub preview: Option<Preview>,
 
+    /// The buildings' categories from the packs' tables (the mods' too), read on the first run, and why they could not be.
+    categories: Option<std::sync::Arc<std::collections::BTreeMap<String, String>>>,
+    categories_note: String,
+
     /// Generate asked to replace what the layer holds (the question opens on the next frame).
     confirm: bool,
 }
@@ -257,15 +261,46 @@ impl TileTool {
         Ok((rocks, plants))
     }
 
+    /// The buildings' categories of the packs' `battlefield_buildings` tables (read once; empty without rpfm's schema, and the kit's
+    /// tables are what is known then).
+    fn building_categories(&mut self, e: &Editor) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
+        if let Some(c) = &self.coverage.categories {
+            return c.clone();
+        }
+
+        let mut out = std::collections::BTreeMap::new();
+        match (e.files(), crate::tool::walls_schema_path(e).ok()) {
+            (Some(files), Some(schema)) => {
+                let tables = files.list("db/battlefield_buildings_tables/", "").into_iter().filter_map(|p| files.read(&p).ok()).collect::<Vec<_>>();
+                match wce_tile_io::attila::game_data::building_categories(&tables, &schema) {
+                    Ok(c) => out = c,
+                    Err(err) => self.coverage.categories_note = err,
+                }
+            }
+
+            (_, None) => self.coverage.categories_note = "no rpfm schema (schema_att.ron): only the kit's building categories are known".to_owned(),
+            (None, _) => self.coverage.categories_note = "no game files: only the kit's building categories are known".to_owned(),
+        }
+
+        let c = std::sync::Arc::new(out);
+        self.coverage.categories = Some(c.clone());
+        c
+    }
+
     /// Finds the differentials and what goes on them, with the lines that show it.
     fn compute_coverage(&mut self, e: &mut Editor) -> Result<Preview, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
+        let categories = self.building_categories(e);
         let doc = document_id(e).ok_or("no tile is open")?;
         let d = document(e).ok_or("no tile is open")?;
-        let (result, grid, unknown) = run(d, &rocks, &plants, self.coverage.params, self.coverage.seed);
+        let (result, grid, unknown) = run(d, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
         let lines = preview_lines(d, &grid, &result);
         let owner = owners(&grid, &result);
         let mut summary = summary_of(&result);
+        if !self.coverage.categories_note.is_empty() {
+            summary += &format!("\n{}", self.coverage.categories_note);
+        }
+
         if !unknown.is_empty() {
             summary += &format!("\nNo model found for {} (counted 1 m across, 1 m high).", unknown.join(", "));
         }
@@ -284,8 +319,9 @@ impl TileTool {
         };
 
         let settings = CoverageSettings { params: self.coverage.params, seed: self.coverage.seed, rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
+        let categories = self.building_categories(e);
         let Some(d) = document(e) else { return };
-        let (result, _, _) = run(d, &rocks, &plants, settings.params, settings.seed);
+        let (result, _, _) = run(d, &rocks, &plants, &categories, settings.params, settings.seed);
         self.status = match d.apply_coverage(&result, &settings) {
             Ok(c) => format!(
                 "ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\"", c.slopes, c.rocks, c.plants, c.exclusions,
@@ -322,20 +358,25 @@ impl TileTool {
         if let Some(d) = p.result.get(k as usize) {
             let pr = &self.coverage.params;
             gui::set_tooltip(&match d.state {
-                Some(State::Kept) => format!("Slope {}: rise {:.1} m, {:.0} m2; {} rock(s), {} plant(s)", d.number, d.rise, d.area, d.rocks.len(), d.plants.len()),
+                Some(State::Kept) => format!(
+                    "Slope {}: rise {:.1} m, {:.0} m2; {} rock(s), {} plant(s){}", d.number, d.rise, d.area, d.rocks.len(), d.plants.len(),
+                    if d.avoided == 0 { String::new() } else { format!("; goes around {} building(s)", d.avoided) },
+                ),
                 Some(State::TooLow(r)) => format!("Slope {}: left alone, too low ({r:.1} m, the least is {:.1} m)", d.number, pr.min_rise),
                 Some(State::TooSmall(a)) => format!("Slope {}: left alone, too small ({a:.0} m2, the least is {:.0} m2)", d.number, pr.min_area),
-                Some(State::Blocked(_)) => format!("Slope {}: left alone, a building stands on it", d.number),
                 None => String::new(),
             });
         }
     }
 }
 
-/// Runs the generator on the tile: the result, the grid, and the rock keys whose model was not found.
-fn run(d: &TileDocument, rocks: &VegetationSet, plants: &VegetationSet, params: Params, seed: u64) -> (Vec<Differential>, Grid, Vec<String>) {
+/// Runs the generator on the tile (around the buildings of the avoided categories): the result, the grid, and the rock keys whose model was
+/// not found.
+fn run(
+    d: &TileDocument, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
+) -> (Vec<Differential>, Grid, Vec<String>) {
     let grid = d.coverage_grid();
-    let blockers = d.coverage_blockers();
+    let blockers = d.coverage_blockers(&|k: &str| categories.get(&k.to_lowercase()).cloned());
     let mut unknown = vec![];
     let sizes = rocks.entries.iter().map(|en| {
         let s = d.rock_size(&en.key).unwrap_or_else(|| {
@@ -354,10 +395,11 @@ fn run(d: &TileDocument, rocks: &VegetationSet, plants: &VegetationSet, params: 
 fn summary_of(result: &[Differential]) -> String {
     let kept = result.iter().filter(|d| d.kept()).collect::<Vec<_>>();
     let count = |f: fn(&State) -> bool| result.iter().filter(|d| d.state.as_ref().is_some_and(f)).count();
-    let (low, small, blocked) = (count(|s| matches!(s, State::TooLow(_))), count(|s| matches!(s, State::TooSmall(_))), count(|s| matches!(s, State::Blocked(_))));
+    let (low, small) = (count(|s| matches!(s, State::TooLow(_))), count(|s| matches!(s, State::TooSmall(_))));
+    let around = kept.iter().filter(|d| d.avoided != 0).count();
     format!(
-        "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s); left alone: {low} too low, {small} too small, {blocked} with a \
-         building on them.",
+        "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s), {around} of them around buildings; left alone: {low} too \
+         low, {small} too small.",
         result.len(), kept.len(), kept.iter().map(|d| d.rocks.len()).sum::<usize>(), kept.iter().map(|d| d.plants.len()).sum::<usize>(),
         kept.iter().map(|d| d.exclusions.len()).sum::<usize>(),
     )
@@ -555,6 +597,18 @@ fn params_rows(p: &mut Params) -> bool {
     p.plant_density = density / 100.0;
     f("apart", &mut p.plant_spacing, 0.05, 0.1, 50.0, "%.1f m", "The least distance between two plants");
     changed |= range_row("scale##plants", &mut p.plant_scale);
+
+    gui::separator_text("Buildings");
+    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
+        gui::set_next_item_width(160.0);
+        changed |= gui::drag_float(label, v, speed, lo, hi, format);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(tip);
+        }
+    };
+
+    f("clearance", &mut p.building_clearance, 0.05, 0.0, 50.0, "%.1f m", "What every rock and plant keeps from a building's footprint");
+    gui::text_disabled("Gone around: houses, fort walls, towers, gates, bridges. Not rocks, props or ground pieces.");
 
     gui::separator_text("Vegetation exclusion");
     let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {

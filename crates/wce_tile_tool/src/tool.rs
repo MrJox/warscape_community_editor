@@ -3924,7 +3924,7 @@ fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
 
 /// Where rpfm's schema of the current game for the walls' database rows is: `WCE_RPFM_SCHEMA`, (Attila) the settings, rpfm's own for the
 /// game.
-fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
+pub(crate) fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
     let game = e.game();
     let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema.filter(|_| game.key == wce_vfs::GameProfile::ATTILA.key);
     wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
