@@ -615,7 +615,10 @@ fn prop_record(p: &Placed, extent_z: f32, version: i64, signed: bool) -> Option<
     // A model named `water_plane` is flagged (FUN_00502c60 compares the instance's name; 1,184 of the kit's water planes are so
     // named, 8 `Object`).
     let water = !decal && n.get("name").and_then(Value::as_str) == Some("water_plane");
-    r.set("unknown_69", Value::Int(i64::from(water)));
+    // Rome 2's version 4 has no such flag.
+    if version >= 5 {
+        r.set("unknown_69", Value::Int(i64::from(water)));
+    }
     if version >= 6 {
         r.set("seasons", Value::Int(if decal { 15 } else { seasons_mask(n) }));
     }
@@ -1712,12 +1715,17 @@ pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
 
 /// Whether a file a project carries (at its root) goes into the exported tile as it is when no stage makes it: what the decompiler
 /// carries from a binary that nothing reproduces (TEd's state when it exported, the packs' extras) and legacy lists without a TEd source.
+/// Rome 2's: `tile.ted_binary` (TEd's state) and the `.outlines` of its building lists (BOB's, not read back yet).
 pub fn carried_into_export(name: &str) -> bool {
     let n = name.to_lowercase();
     !n.contains('/')
-        && (["vegetation_exclusion.xml", "civilian_deployment.bin", "civilian_shelter.bin", "sound_emitter_list.xml", "tree_random_seed.xml", "loading_screen_radar.jpg"]
-            .contains(&n.as_str())
+        && ([
+            "vegetation_exclusion.xml", "civilian_deployment.bin", "civilian_shelter.bin", "sound_emitter_list.xml", "tree_random_seed.xml", "loading_screen_radar.jpg",
+            "tile.ted_binary",
+        ]
+        .contains(&n.as_str())
             || n.ends_with(".markers")
+            || n.ends_with(".outlines")
             || n.starts_with("building_list")
             || n.starts_with("far_building_list"))
 }
@@ -1809,9 +1817,19 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
         None => {}
     }
 
-    // BOB's Vegetation processor makes nothing for a campaign tile: a decompiled one's carried files go back as they are.
+    // BOB's Vegetation processor makes nothing for a campaign tile: a decompiled one's carried files go back as they are. So do a battle
+    // tile's when the game has no vegetation parameters (Rome 2's kit has none): noted when the project changed since.
     if ctx.stage_c.is_some() && campaign {
         files.extend(super::stage_c::carried_files(raw)?);
+    }
+
+    if ctx.stage_c.is_none() && !campaign {
+        let carried = super::stage_c::carried_files(raw)?;
+        if !carried.is_empty() && !super::stage_c::unchanged(raw) {
+            notes.notes.push("stage C: no vegetation parameters (the game's kit has none): the decompiled tile's vegetation files are written as they were, without the project's changes".to_owned());
+        }
+
+        files.extend(carried);
     }
 
     match made_c {

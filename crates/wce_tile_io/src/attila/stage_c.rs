@@ -476,6 +476,13 @@ impl Fingerprints {
 /// # Errors
 ///
 /// A carried file doesn't read.
+/// Whether a decompiled project's vegetation inputs are as they were decompiled (every kind's stored fingerprint is the project's).
+pub fn unchanged(raw: &Tile) -> bool {
+    let (_, prints) = super::carry::carried(raw, CARRIED_DIR);
+    let stored = (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
+    matches!((stored, Fingerprints::of(raw)), (Some(s), Ok(c)) if [Kind::Trees, Kind::Procedural, Kind::Grass].iter().all(|&k| s.of_kind(k) == c.of_kind(k)))
+}
+
 pub fn carried_files(raw: &Tile) -> Result<super::stage_b::Files, String> {
     let (carried, _) = super::carry::carried(raw, CARRIED_DIR);
     carried.iter().map(|(n, b)| Ok(((*n).to_owned(), b.bytes().map_err(|e| format!("{CARRIED_DIR}/{n}: {e}"))?.to_vec()))).collect()

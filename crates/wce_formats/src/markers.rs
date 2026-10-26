@@ -84,6 +84,8 @@ macro_rules! cat {
 /// The record layout of a class and version, and the kind of its group keys; `None` for what has not been decoded.
 pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> {
     Some(match (class, version) {
+        // Rome 2's version 4: the head without its last flag (the water plane's, `unknown_69`).
+        ("PROP_MARKER", 4) => (cat!([MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68")], DECAL), KeyKind::Wide),
         ("PROP_MARKER", 5) => (cat!(PROP_HEAD, DECAL), KeyKind::Wide),
         ("PROP_MARKER", 6) => (cat!(PROP_HEAD, [U32("seasons")], DECAL), KeyKind::Wide),
         ("PROP_MARKER", 8) => (cat!(PROP_HEAD, [U32("seasons"), Bytes("unknown_74", 3)], DECAL), KeyKind::Wide),
@@ -517,6 +519,25 @@ mod tests {
         for i in 0..2 {
             assert_eq!(record_from_fields("PROP_MARKER", 9, &back.fields(i).unwrap()).unwrap(), back.records[i]);
         }
+    }
+
+    #[test]
+    fn rome_2_prop_version_4_has_five_flags() {
+        let mut model = vec![0u8; 64];
+        model.extend_from_slice(&[0, 0, 0, 0, 0]);
+        let mut decal = model.clone();
+        decal[65] = 1;
+        decal.extend_from_slice(&0.1f32.to_le_bytes());
+        decal.push(0);
+        for v in [30.0f32, 5.0, 30.0] {
+            decal.extend_from_slice(&v.to_le_bytes());
+        }
+
+        let f = file("PROP_MARKER", 4, &[model, decal], None);
+        let back = MarkersFile::parse(&f.write()).unwrap();
+        assert_eq!(back.records.iter().map(Vec::len).collect::<Vec<_>>(), [69, 86]);
+        assert!(back.fields(0).unwrap().iter().all(|(n, _)| *n != "unknown_69"));
+        assert_eq!(record_from_fields("PROP_MARKER", 4, &back.fields(1).unwrap()).unwrap(), back.records[1]);
     }
 
     #[test]
