@@ -133,9 +133,21 @@ pub fn bullet_text(s: &str) {
     call!(sys::igBulletText(c"%s".as_ptr(), c.as_ptr()))
 }
 
+/// Tooltips wrap at this many font sizes, so that a long one stays on the screen.
+const TOOLTIP_WRAP_EMS: f32 = 35.0;
+
+/// A tooltip for the item last drawn, its lines wrapped at [`TOOLTIP_WRAP_EMS`] font sizes (a short one keeps its own width).
 pub fn set_tooltip(s: &str) {
-    let c = cs(s);
-    call!(sys::igSetTooltip(c"%s".as_ptr(), c.as_ptr()))
+    if !call!(sys::igBeginTooltip()) {
+        return;
+    }
+
+    let wrap = call!(sys::igGetFontSize()) * TOOLTIP_WRAP_EMS;
+    call!(sys::igPushTextWrapPos(wrap));
+    let b = s.as_bytes();
+    call!(sys::igTextUnformatted(b.as_ptr().cast(), b.as_ptr().add(b.len()).cast()));
+    call!(sys::igPopTextWrapPos());
+    call!(sys::igEndTooltip())
 }
 
 pub fn calc_text_width(s: &str) -> f32 {
