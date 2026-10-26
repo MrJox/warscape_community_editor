@@ -56,7 +56,7 @@ const LOD_STEPS: f32 = 128.0;
 const MATERIAL_KEEP: u64 = 32;
 
 /// The instance buffer's size.
-const INSTANCE_BYTES: usize = 64 * 4096;
+pub(crate) const INSTANCE_BYTES: usize = 64 * 4096;
 
 /// A patch of a heights buffer: its cells (`cx` x `cz` from cell (pi, pj) * PATCH_CELLS), its height range and its vertex buffer, the 65 x 65
 /// grid of (x, height, z) with x, z in cells of the patch (the game's `vsIn_P0`: geom_new takes the high-frequency height from the vertex).
@@ -114,7 +114,7 @@ pub(crate) struct Placed {
     patches: Vec<PlacedPatch>,
 
     /// The material's blend box: its id, the world box (min x y z, max x y z, scene units) and the rotation index of the material's maps.
-    blend_box: Option<(u64, [f32; 6], f32)>,
+    pub(crate) blend_box: Option<(u64, [f32; 6], f32)>,
 }
 
 /// An LF map on the GPU: a square window of its heights around the camera (R16 unorm, rows from the highest z down, as the shader addresses
@@ -130,7 +130,7 @@ pub(crate) struct LfGpu {
 
     /// The normals rolled for a render origin (the shader reads them at the relative position, wrapping), copied on the GPU from the
     /// unrolled ones (`normal_src`) when the origin moves.
-    normal: Texture,
+    pub(crate) normal: Texture,
     normal_origin: Float3,
     normal_src: Option<ID3D11Texture2D>,
     normal_dst: Option<ID3D11Texture2D>,
@@ -331,11 +331,11 @@ fn rotation_index(w: &Float4x4) -> f32 {
 /// The GPU side of a terrain material.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TerrainMatGpu {
-    blend: Texture,
-    index: Texture,
-    normal: Texture,
-    alpha: Texture,
-    lf_normal: Texture,
+    pub(crate) blend: Texture,
+    pub(crate) index: Texture,
+    pub(crate) normal: Texture,
+    pub(crate) alpha: Texture,
+    pub(crate) lf_normal: Texture,
     black: Texture,
     diffuse: Texture,
     normals: Texture,
@@ -365,11 +365,11 @@ pub(crate) struct TerrainGpuState {
     hf_pending: std::collections::HashSet<usize>,
     hf_made: HashMap<usize, u64>,
     mat_pending: std::collections::HashSet<u64>,
-    placed: BTreeMap<EntityId, Placed>,
-    mat: BTreeMap<u64, TerrainMatGpu>,
+    pub(crate) placed: BTreeMap<EntityId, Placed>,
+    pub(crate) mat: BTreeMap<u64, TerrainMatGpu>,
 
     /// The LF maps by id, and a zero one for the terrains without (what the unused height texture reads).
-    lf: BTreeMap<u64, LfGpu>,
+    pub(crate) lf: BTreeMap<u64, LfGpu>,
     lf_zero: Option<ID3D11ShaderResourceView>,
 
     /// What the geometry was last pruned for: the scene (address), its structure and terrain revisions.
@@ -389,28 +389,33 @@ pub(crate) struct TerrainGpuState {
     grid_ib: BTreeMap<(i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
     pub(crate) viewz: Target,
-    acc: [Target; 3],
+    pub(crate) acc: [Target; 3],
     rt_w: u32,
     rt_h: u32,
-    box_vb: Option<ID3D11Buffer>,
-    box_ib: Option<ID3D11Buffer>,
-    resolve_vb: Option<ID3D11Buffer>,
-    inst_vb: Option<ID3D11Buffer>,
-    ds_depth: Option<ID3D11DepthStencilState>,
+    pub(crate) box_vb: Option<ID3D11Buffer>,
+    pub(crate) box_ib: Option<ID3D11Buffer>,
+    pub(crate) resolve_vb: Option<ID3D11Buffer>,
+    pub(crate) inst_vb: Option<ID3D11Buffer>,
+    pub(crate) ds_depth: Option<ID3D11DepthStencilState>,
     ds_equal: Option<ID3D11DepthStencilState>,
     ds_lequal: Option<ID3D11DepthStencilState>,
-    ds_stencil: Option<ID3D11DepthStencilState>,
-    ds_resolve: Option<ID3D11DepthStencilState>,
+    pub(crate) ds_stencil: Option<ID3D11DepthStencilState>,
+    pub(crate) ds_resolve: Option<ID3D11DepthStencilState>,
 
     /// Snow regions: a snowy tile's boxes mark its pixels 3 (2 | 1), resolved apart with the snow's intensity (3 -> 1).
     ds_stencil_snow: Option<ID3D11DepthStencilState>,
     ds_resolve_snow: Option<ID3D11DepthStencilState>,
-    bs_add: Option<ID3D11BlendState>,
-    rs_front_cull: Option<ID3D11RasterizerState>,
+    pub(crate) bs_add: Option<ID3D11BlendState>,
+    pub(crate) rs_front_cull: Option<ID3D11RasterizerState>,
+
+    /// Rome 2's composite targets (albedo + alpha, normal, gloss) and their size.
+    pub(crate) r2_comp: [Target; 3],
+    pub(crate) r2_w: u32,
+    pub(crate) r2_h: u32,
 }
 
 /// The frustum test of an axis-aligned box against a view-projection matrix (D3D clip volume: -w <= x, y <= w, 0 <= z <= w).
-fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> bool {
+pub(crate) fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> bool {
     (0..6).all(|plane| {
         let p: [f32; 4] = std::array::from_fn(|c| {
             let w = vp.m[3][c];
@@ -954,12 +959,6 @@ impl Renderer {
 
         wce_prof!("render.terrain");
         self.make_terrain_states();
-        let shaders = [GEOM_VS, GEOM_PS, DEPTH_PS, BLEND_VS, BLEND_PS, RESOLVE_VS, RESOLVE_PS].map(|name| self.shader(name));
-        let [Some(geom_vs), Some(geom_ps), Some(depth_ps), Some(blend_vs), Some(blend_ps), Some(res_vs), Some(res_ps)] = shaders else {
-            self.terrain.failed = true;
-            return;
-        };
-
         // The targets.
         if self.terrain.viewz.tex.is_none() || self.terrain.rt_w != self.gbuffer.w || self.terrain.rt_h != self.gbuffer.h {
             self.terrain.viewz = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
@@ -970,6 +969,28 @@ impl Renderer {
             self.terrain.rt_w = self.gbuffer.w;
             self.terrain.rt_h = self.gbuffer.h;
         }
+
+        if self.game == super::game::RenderGame::Rome2 {
+            let ents = self.terrain_surface_entities(scene);
+            let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+            if key != self.terrain.materials_key {
+                self.terrain.materials_key = key;
+                self.update_terrain_materials(&ents);
+            }
+
+            if !ents.is_empty() {
+                null_ps_srvs(&self.ctx, 16);
+                self.draw_terrain_rome2(&ents);
+            }
+
+            return;
+        }
+
+        let shaders = [GEOM_VS, GEOM_PS, DEPTH_PS, BLEND_VS, BLEND_PS, RESOLVE_VS, RESOLVE_PS].map(|name| self.shader(name));
+        let [Some(geom_vs), Some(geom_ps), Some(depth_ps), Some(blend_vs), Some(blend_ps), Some(res_vs), Some(res_ps)] = shaders else {
+            self.terrain.failed = true;
+            return;
+        };
 
         null_ps_srvs(&self.ctx, 16);
         // The clip z / w of the blend boxes' depth map is the G-buffer's own depth channel (the terrain-blend meshes wrote theirs in the geometry pass; the
@@ -1312,7 +1333,7 @@ impl Renderer {
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
-    fn draw_terrain_surface(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
+    pub(crate) fn draw_terrain_surface(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
         self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
         let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);
@@ -1400,6 +1421,12 @@ impl Renderer {
             cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[d.n, d.n, 1.0 / d.n, 1.0 / d.n]);
             cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[d.width * units, d.width * units]);
             cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[d.uv_offset]);
+            // Rome 2's shader places the window through lf_block_cb's rectangles: uv = (x, z) / size, v = 1 - v, then (u + offset,
+            // offset + 1 - v): Attila's world / size + offset.
+            cbs.set_f("lf_block_cb", "g_height_map_dimension", &[d.n, d.n, 1.0 / d.n, 1.0 / d.n]);
+            cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, d.width * units, d.width * units]);
+            cbs.set_f("lf_block_cb", "g_lf_aabb", &[d.uv_offset, 1.0 + d.uv_offset, 1.0, -1.0]);
+            cbs.set_f("lf_block_cb", "g_normal_lf_aabb", &[0.0, 0.0, 1.0, 1.0]);
 
             // The camera in the group's frame: world' = world - shift; the camera constants are relative to the render origin.
             let (rx, rz) = (sx - origin.x, sz - origin.z);
@@ -1412,6 +1439,7 @@ impl Renderer {
             self.bind(vs);
             self.bind(ps);
             bind_srv(&self.ctx, vs, "t_low_res_height_map", d.srv.as_ref());
+            bind_srv(&self.ctx, vs, "s_low_res_height_map", d.srv.as_ref());
 
             // The batches: (buffer, patch, stride) -> instance rows.
             let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
