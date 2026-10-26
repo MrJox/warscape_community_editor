@@ -298,8 +298,35 @@ height map as geom_new, CULL_BACK, the shadow rasterizers' bias (2500, slope 1.8
 
 - **The Blend Map paint module** (constructor `FUN_004867d0`, name `L"Blend Map"`) registers the `QTU::GridPainter` operations
   **Normal**, **Normal (Grouped)**, one more without a name string (`FUN_004833e0`), **Auto-Flange**, **Rock-painting** and **Spline
-  splat**. What Auto-Flange, Rock-painting and Spline splat do was not traced. The **Influence Map** module (`FUN_004891e0`,
-  `L"Influence Map"`, `lf_influence_map.png`) has the operation **Subtract** among others.
+  splat** (below). The **Influence Map** module (`FUN_004891e0`,
+  `L"Influence Map"`, `lf_influence_map.png`) has the operation **Subtract** among others. The operation without a name string is a
+  blur: `QTU::GPOWeightedAverage` (each channel moves towards its neighbourhood's weighted average by the stroke's weight).
+- **How an operation is applied** (`QtToolUtility`: `QTU::GridPainter`, `GPOBase`): an operation is a `GPOBase` with
+  `apply(GridPaintSource const &, float weight, GridPaintTarget &)` (the pixel's 16 channels in, 16 out) and `brush_accumulator()`. The
+  blend operations' accumulator (`FUN_00481560`) is `acc + (1 - acc) * falloff * strength`: during a stroke each pixel's weight builds up
+  towards 1 with every dab, and `apply` gets that weight. Dabs are dropped every `spacing` (a GridPainter property) along the mouse path
+  (`GridPainter::drop`). The Blendmap Filters mask the result (below).
+- **Auto-Flange** (`Ted::PM2::OpBlend2AutoFlange`, `PaintMode2Operations.h`; `apply` = `FUN_00482f40`). Properties: `channel_group` (a
+  texture group g) and `threshold` T (0 when made); a third value, the variations per group (4, inferred: the formula spans exactly the
+  group's four channels). With the stroke weight w:
+  - w > T: f = (w - T) / (1 - T); every channel is set to 0, then at p = 4g + 3f (between the group's variation 0 and 3) the two
+    channels around p get 1 - frac(p) and frac(p). The pixel becomes all group g, its variation sliding from 0 (the brush's edge, the
+    stroke's start) to 3 (its middle, after more dabs).
+  - w <= T: when the group's variation 0 is under 0.99, every channel is scaled by (1 - w / T) / (1 - c0) and variation 0 set to w / T:
+    variation 0 fades in.
+  So a stroke paints a group with a graded rim: variation 0 outside, variation 3 inside ("flange"). It sets values from the stroke's
+  weight; it does not add to them.
+- **Rock-painting** (`Ted::RockPaintOperation`; `apply` = `FUN_004836b0`). One property, `channel` (any of the 16). It ignores the
+  stroke's weight (the argument is overwritten unread): wherever the brush reaches, the channel is set to t(slope) and the other channels
+  are scaled to make room (`(1 - t) / (1 - c)`; nothing is done where the channel is already 1). With s = 1 - n.y (n the terrain normal
+  at the pixel, `clamp`ed), A = smoothstep(0.1, 0.7, s), B = smoothstep(0.3, 0.9, s) (smoothstep = (3 - 2x) x^2 of the clamped
+  ratio), t = A (1 - B) + B: 0 below about 26 degrees, 0.01 at 30, 0.24 at 45, 0.81 at 60, 1 from about 72.5. The channel is set even
+  where t is lower than what is there (it can take rock away on gentle slopes).
+- **Spline splat** (`Ted::SplineBlendPaintOperation` on a spline operation base, `PaintMode2Operations.h`). Properties `spline` (one of
+  the scene's splines), `apply` (an action) and `channel`. Its `apply` per pixel (`FUN_00485060`) is a plain paint: every channel times
+  (1 - w), then the channel + w. Setting `apply` (`FUN_00484890`) walks the chosen spline's segments, builds a quad per segment from its
+  two points and their widths (`FUN_00483950`), paints each through the painter, and makes one undo record: the channel laid along the
+  whole spline at once, as wide as the spline.
 - **Blendmap Filters** (`Ted::BlendFilterDialog`, `BlendFilterDialog.cpp`, constructor `FUN_005c3c00`, made by the Blend Map module): two
   checkable groups, both off when the dialog is made. **Height Filter**: Min Height / Max Height, -1000 .. 1000 (defaults -1000 and
   1000). **Slope Filter**: Min Slope / Max Slope in degrees, 0 .. 90, kept as `cos(min)` / `cos(max)`. Each min / max pair is held
