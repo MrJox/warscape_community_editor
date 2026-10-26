@@ -31,9 +31,8 @@ Status legend: **done**, **partial**, **todo**.
   TEd writes. PROP_MARKER version 4.
 - **done** Rome 2's extra files carried (`tile.ted_binary`, `.outlines`); the vegetation carried without vegetation parameters.
 - **done** Save to mod pack (all games).
-- **partial** Stage B for Rome 2: textures and water are made; the terrain group needs the linking tiles' final heights (todo:
-  decompile the linking tiles into the workspace and make their final heights) and the buildings' raw height-map meshes (Rome 2's
-  kit has no building art: todo, read them from the packs' `.cs2.parsed` if they hold the height-map pieces).
+- **done** Stage B for Rome 2: the linking tiles decompiled into the workspace with their final heights; no building stamps (Rome 2's
+  buildings have no height-map meshes). Open: the port decimates the meshes more than Rome 2's BOB did (3x fewer vertices).
 - **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
 - **todo** GENERIC_MARKER v1 (one file); multi-list capture location files (two tiles).
 - **todo** Stage C for Rome 2: write the older tree / grass lists from the project's trees (the generated ones carried).

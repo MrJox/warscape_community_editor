@@ -280,6 +280,13 @@ pub fn save_exported_with(
 
     let project_raw = project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
     let kit_raw = game.bob_raw_data(project_raw);
+    let mut early_notes = vec![];
+    if game.kit_raw.is_none()
+        && let Err(e) = provide_linking_tiles(game, &raw, &kit_raw)
+    {
+        early_notes.push(format!("the linking tiles for stage B: {e}"));
+    }
+
     let models = |k: &str| game.files.read(k).ok();
     let exists = |k: &str| game.files.owner(k).is_some();
     let settings = kit_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
@@ -295,11 +302,16 @@ pub fn save_exported_with(
         wce_foundation::wce_prof!("export.compile");
         compile(&raw, &ctx)?
     };
-    let (written, _) = {
+    notes.notes.splice(0..0, early_notes);
+    let (mut written, _) = {
         wce_foundation::wce_prof!("export.write_binary");
         let _a = wce_foundation::activity::start("Writing the tile's files");
         TileBinary.write(&compiled).map_err(|e| e.to_string())?
     };
+    for name in game.data.conventions.not_shipped {
+        written.folder.remove(*name);
+    }
+
     let dir = out.join(&folder);
     let stale = std::fs::read_dir(&dir)
         .into_iter()
@@ -354,6 +366,46 @@ pub fn save_exported_with(
     }
 
     Ok((dir, notes))
+}
+
+/// For a game without a kit (Rome 2; BOB's inputs are the workspace's `raw_data`), the linking tiles the project's links blend with: each
+/// one the workspace lacks is decompiled from the packs into it (unmarked: where BOB finds a kit's) with its `final_heights.dds` (its
+/// height map without links, as BOB converts a linking tile first). Once per linking tile.
+///
+/// # Errors
+///
+/// A linking tile is in no pack, or does not decompile.
+fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Path) -> Result<(), String> {
+    use super::bob_tile::{HeightNumbers, InfluenceLinks, dds_r32f, final_heights};
+    let Some(entry) = raw.entry.as_ref() else { return Ok(()) };
+    let linking = super::terrain_mesh::linking_tiles(raw_data);
+    let own = entry.root.get("tile_set").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+    let mut wanted = std::collections::BTreeSet::new();
+    let sets = entry.root.wrapped("TILE_LINKS").iter().filter_map(|l| l.get("link_set").and_then(|v| v.as_str()).map(str::to_owned)).chain([own, "sea".to_owned()]);
+    for set in sets {
+        if let Some(tile) = linking.get(&set).filter(|t| !t.is_empty()) {
+            wanted.insert(tile.replace('\\', "/").to_lowercase());
+        }
+    }
+
+    let workspace = raw_data.parent().unwrap_or(raw_data);
+    for folder in wanted {
+        let dir = raw_data.join(&folder);
+        if dir.join("final_heights.dds").is_file() {
+            continue;
+        }
+
+        let files = game.exported_from_packs(&folder)?;
+        let (dir, _) = open_exported(game, &files, &folder, workspace)?;
+        let tile = TileFiles::from_kit_dir(&dir).map_err(|e| e.to_string())?;
+        let (link, _) = TedProject.read(&tile).map_err(|e| e.to_string())?;
+        let hm = link.map(wce_tile_model::MapKind::Height, 0).ok_or_else(|| format!("{folder}: no height map"))?;
+        let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err(format!("{folder}: the height map is not 16 bit")) };
+        let (f, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &HeightNumbers::of(&link), &InfluenceLinks::default())?;
+        std::fs::write(dir.join("final_heights.dds"), dds_r32f(&f, w, h)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+
+    Ok(())
 }
 
 /// [`save_exported_scene`] into a mod pack (created if missing): the exported tile's folder and the tile database's files, the pack's
