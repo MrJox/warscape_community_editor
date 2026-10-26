@@ -249,8 +249,12 @@ impl Tile {
     /// A step of a paint stroke on the blend map, which covers the bordered tile.
     fn apply_paint(&mut self, channel: usize, x: f32, z: f32, s: &BrushSettings, dt: f32) {
         let p = &mut self.project;
-        let (b, ex, ez) = (p.border_m(), p.extent_x(), p.extent_z());
-        let Ok(blend) = p.load_blend() else { return };
+        let (b, ex, ez, mpp_x, mpp_z, unit) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z(), p.unit_scale);
+        if p.load_blend().is_err() {
+            return;
+        }
+
+        let (Some(blend), height) = (p.blend.as_mut(), p.height.as_ref()) else { return };
         if !self.stroke_open {
             let _ = blend.begin_edit();
             self.stroke_open = true;
@@ -264,7 +268,17 @@ impl Tile {
             falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(),
         };
 
-        let _ = blend.paint(&brush, channel);
+        // TEd's Blendmap Filters: the terrain's height and slope at the pixel's centre, in the editor's metres.
+        let filter = s.filter.filter(|f| f.is_active());
+        let mask = |px: u32, py: u32| -> bool {
+            let (Some(f), Some(hf)) = (filter, height) else { return true };
+            let (hx, hz) = (((f64::from(px) + 0.5) / ppx) / mpp_x, ((f64::from(py) + 0.5) / ppz) / mpp_z);
+            let at = |dx: f64, dz: f64| hf.sample(hx + dx, hz + dz) / unit;
+            let (gx, gz) = ((at(1.0, 0.0) - at(-1.0, 0.0)) / (2.0 * mpp_x), (at(0.0, 1.0) - at(0.0, -1.0)) / (2.0 * mpp_z));
+            f.passes(at(0.0, 0.0), gx.hypot(gz).atan().to_degrees())
+        };
+
+        let _ = blend.paint(&brush, channel, &mask);
     }
 
     /// A step of a ground type stroke on ground_type_map.png, which covers the bordered tile: hard values under the brush.

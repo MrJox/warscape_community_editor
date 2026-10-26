@@ -766,6 +766,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("paint_filter", "paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo", "the paint brush's Blendmap Filters (TEd's): where the paint lands", |e, a| {
+        let usage = "usage: paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo";
+        let range = (a.len() >= 3).then(|| Some([number(&a[1])?, number(&a[2])?])).flatten().filter(|r| r[0] <= r[1]);
+        let what = a.first().cloned().unwrap_or_default();
+        with_tile(e, |t, _| {
+            match (what.as_str(), range) {
+                ("off", _) => (t.filter_height_on, t.filter_slope_on) = (false, false),
+                ("height", Some(r)) => (t.filter_height_on, t.filter_height) = (true, r),
+                ("slope", Some(r)) => (t.filter_slope_on, t.filter_slope) = (true, r),
+                ("nogo", _) => (t.filter_slope_on, t.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]),
+                _ => return fail(usage),
+            }
+
+            t.sync_paint_filter();
+            ok("")
+        })
+    });
+
     c.add("stroke_along", "stroke_along", "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)", |e, _| {
         let sel = primary(e);
         with_tile(e, |t, e| {

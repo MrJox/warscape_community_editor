@@ -166,3 +166,17 @@ brush, any of them, stroked along the selected spline's curve, polygon or line, 
 not an AI hint line; a dab every quarter radius at the most a frame gives; one undo entry). The brush's Inspector: "Stroke along the
 selected line" (select the line first, then pick the brush). Commands `stroke_along`, `brush_paint <group> <variation>`, `brush_ground
 <type>`; `scripts/tile_stroke_along.txt` (a closed no-go square painted and given a road round its edge, undone; a wall spline).
+
+**Done (step 6, the Blendmap Filters):** a short static RE (docs/re/terrain.md, "TEd's blend painting and its Blendmap Filters"): the
+filters are not whole-map passes but a hard 0 / 1 mask on every operation of TEd's Blend Map (and Influence Map) painting: a height range
+and a slope range, each switched on or off, "Use No-Go Range" = the slopes from the game's maximum passable one (30 degrees) to 90. The
+code reads as working; whether TEd's UI breaks it could not be checked without running TEd. wce: `wce_tile::blend_field::PaintFilter`
+(`BlendField::paint` takes a mask), `BrushSettings::filter`; the mask reads the heights in memory at each blend pixel's centre (the
+slope from central differences, in the editor's metres). The paint brush's Inspector has a "Blendmap filters" section (height filter,
+slope filter, Use the no-go range). Command `paint_filter off | height <min> <max> | slope <min> <max> | nogo`;
+`scripts/tile_paint_filter.txt` (a steep bump: the no-go range paints its flanks only, a height range its top only).
+
+**Section 3 is done.** Found on the way, not done (for the user to weigh): TEd's Blend Map module has more operations than the plain
+brush: **Normal (Grouped)** (a group, its variations kept or chosen for you), **Auto-Flange**, **Rock-painting** and **Spline splat**
+(not traced); the **Influence Map** module (`lf_influence_map.png`, with Subtract) and the nogo map are still Phase 5a items of
+tile_ted_parity.md.

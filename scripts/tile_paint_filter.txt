@@ -1,0 +1,26 @@
+# TEd's Blendmap Filters on the paint brush (docs/plans/workflow_review.md, section 3; docs/re/terrain.md): a new 1 x 1 tile at density 128
+# (1 m a pixel, 5 m high in the editor) with a steep bump raised at (64, 64); a wide paint stroke with the no-go slope range (30 .. 90
+# degrees) lands on its flanks only; one with a height range over 15 m on its top only; with the filters off, everywhere. Run with
+# WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_paint_filter_test 1 1 10 128
+frames 5
+brush 12 30 0.7
+paint raise 64 64 60
+assert_height 100 64 5 0.01
+tile_mode paint
+brush 40 6 0.5 0 1
+paint_filter nogo
+paint_ground 1 0 64 64 60
+assert_blend 70 64 1 0 30000
+assert_blend 64 64 1 0 0 0
+assert_blend 90 64 1 0 0 0
+paint_filter off
+paint_filter height 15 1000
+paint_ground 2 0 64 64 60
+assert_blend 64 64 2 0 30000
+assert_blend 90 64 2 0 0 0
+paint_filter off
+paint_ground 3 0 64 64 60
+assert_blend 90 64 3 0 30000
+tile_mode select
+quit
