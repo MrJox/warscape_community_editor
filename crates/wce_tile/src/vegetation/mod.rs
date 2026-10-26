@@ -158,7 +158,12 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
         &refitted
     };
 
-    let (bw, bh, blend) = read_blend_map(&project.dir.join("blend_map.tif"))?;
+    // The painted blend map when the tile has one in memory (as the next save writes it).
+    let (bw, bh, blend) = match &project.blend {
+        Some(b) => (b.width() as usize, b.height() as usize, b.weights().iter().map(|&v| f32::from(v) * (1.0 / 65535.0)).collect()),
+        None => read_blend_map(&project.dir.join("blend_map.tif"))?,
+    };
+
     if (bw, bh) != (map_w, map_h) {
         return Err(format!("blend_map.tif is {bw}x{bh}, the height map {map_w}x{map_h}"));
     }

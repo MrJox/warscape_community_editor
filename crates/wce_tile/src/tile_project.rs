@@ -11,6 +11,7 @@ use wce_formats::tile_entry::TileEntry;
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::wce_prof;
 
+use crate::blend_field::BlendField;
 use crate::height_field::HeightField;
 use crate::project_files::{TED_FILE, TedReport, WCE_FILE, mark_wce_text, strip_prefab_contents_with};
 use crate::ted_scene::TedScene;
@@ -198,6 +199,12 @@ pub struct TileProject {
     pub height: Option<HeightField>,
     pub height_dirty: bool,
 
+    /// blend_map.tif, read when first needed (the ground's material, a paint brush); `None` until then or without one.
+    pub blend: Option<BlendField>,
+
+    /// Write blend_map.tif at the next save.
+    pub blend_dirty: bool,
+
     /// Scene units per metre horizontally.
     pub unit_scale: f64,
 
@@ -348,7 +355,7 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
+            height_dirty: false, blend: None, blend_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
         };
 
         project.river_texts = project.current_river_texts();
@@ -546,7 +553,39 @@ impl TileProject {
             msg += &self.save_height_range(out_dir, min, scale)?;
         }
 
+        if let Some(blend) = &self.blend
+            && (self.blend_dirty || elsewhere)
+        {
+            let target = out_dir.join("blend_map.tif");
+            let bak = out_dir.join("blend_map.tif.bak");
+            if target.exists() && !bak.exists() {
+                std::fs::copy(&target, &bak).map_err(|error| error.to_string())?;
+            }
+
+            blend.write(&target)?;
+            msg += "blend_map.tif saved. ";
+            wrote = true;
+        }
+
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
+    }
+
+    /// The blend map, read from the variation folder the first time.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no blend_map.tif, or it does not read.
+    pub fn load_blend(&mut self) -> Result<&mut BlendField> {
+        if self.blend.is_none() {
+            let path = self.dir.join("blend_map.tif");
+            if !path.exists() {
+                return Err("no blend_map.tif".to_owned());
+            }
+
+            self.blend = Some(BlendField::read(&path)?);
+        }
+
+        Ok(self.blend.as_mut().expect("read above"))
     }
 
     /// The entry's copy next to a tile saved into `out_dir` (the same place under its raw_data), `None` when `out_dir` is not in a kit's
@@ -642,7 +681,7 @@ impl TileProject {
         let mut n = 0;
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || name.ends_with(".bak") || !entry.path().is_file();
+            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some()) || name.ends_with(".bak") || !entry.path().is_file();
             if !skip {
                 std::fs::copy(entry.path(), out_dir.join(&name)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
                 n += 1;
@@ -709,12 +748,16 @@ impl TileProject {
             write("height_map_0.png", &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?)?;
         }
 
+        if let Some(blend) = &self.blend {
+            write("blend_map.tif", &blend.to_bytes())?;
+        }
+
         // The other files, as the project has them.
         let mut others = 0;
         if let Ok(read) = std::fs::read_dir(&self.dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || name.starts_with("river_spline") || name.ends_with(".bak");
+                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some()) || name.starts_with("river_spline") || name.ends_with(".bak");
                 if !ours && entry.path().is_file() && write(&name, &std::fs::read(entry.path()).map_err(|error| error.to_string())?)? {
                     others += 1;
                 }

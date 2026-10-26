@@ -70,24 +70,28 @@ pub enum TileMode {
     Smooth,
     Flatten,
     Level,
+
+    /// Paints the blend map (the ground's textures).
+    Paint,
 }
 
-pub const MODE_NAMES: [&str; 6] = ["select", "raise", "lower", "smooth", "flatten", "level"];
-const MODES: [TileMode; 6] = [TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level];
+pub const MODE_NAMES: [&str; 7] = ["select", "raise", "lower", "smooth", "flatten", "level", "paint"];
+const MODES: [TileMode; 7] = [TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Paint];
 
 impl TileMode {
     pub fn from_index(i: usize) -> Self {
-        MODES[i.min(5)]
+        MODES[i.min(MODES.len() - 1)]
     }
 
     pub fn index(self) -> usize {
         MODES.iter().position(|&m| m == self).unwrap_or(0)
     }
 
-    /// The brush of a terrain mode.
+    /// The brush of a terrain mode (the channel of a paint brush is the tool's, `TileTool::brush_kind`).
     fn brush(self) -> Option<BrushKind> {
         match self {
             Self::Select => None,
+            Self::Paint => Some(BrushKind::Paint(0)),
             Self::Raise => Some(BrushKind::Raise),
             Self::Lower => Some(BrushKind::Lower),
             Self::Smooth => Some(BrushKind::Smooth),
@@ -269,6 +273,10 @@ pub struct TileTool {
     pub(crate) terrain_hit: bool,
     pub(crate) cursor: Float3,
 
+    /// The blend channel the paint brush lays (4 * group + variation), and whether the stroke going on erases (Ctrl: paints channel 0).
+    pub(crate) paint_channel: u8,
+    pub(crate) paint_erase: bool,
+
     // Gestures.
     stroke_active: bool,
     pub(crate) grabbing: bool,
@@ -445,7 +453,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
@@ -548,6 +556,14 @@ pub(crate) fn with_tile(e: &mut Editor, f: impl FnOnce(&mut TileTool, &mut Edito
 impl TileTool {
     pub fn mode(&self) -> TileMode {
         self.mode
+    }
+
+    /// The brush the left button strokes with: the mode's, a paint brush with its channel (channel 0 while erasing).
+    pub(crate) fn brush_kind(&self) -> Option<BrushKind> {
+        match self.mode.brush()? {
+            BrushKind::Paint(_) => Some(BrushKind::Paint(if self.paint_erase { 0 } else { self.paint_channel })),
+            kind => Some(kind),
+        }
     }
 
     pub fn set_mode(&mut self, m: TileMode) {
@@ -2860,7 +2876,9 @@ impl Tool for TileTool {
                     return true;
                 }
 
-                if let Some(kind) = self.mode.brush() {
+                if self.mode.brush().is_some() {
+                    self.paint_erase = ev.ctrl;
+                    let kind = self.brush_kind().expect("a brush mode");
                     let dt = e.clock.dt();
                     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                     if self.terrain_hit && d.project().has_height() {
@@ -2988,7 +3006,7 @@ impl Tool for TileTool {
                     self.on_hover(e, ev);
                     let dt = e.clock.dt();
                     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if let (true, Some(kind)) = (self.terrain_hit, self.mode.brush()) {
+                    if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
                         d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush, dt);
                     }
                 } else if self.point_drag {

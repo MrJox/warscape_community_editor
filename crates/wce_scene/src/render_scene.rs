@@ -208,6 +208,9 @@ pub struct TerrainMaterial {
     /// Changes when `normal` does (the rest of the material is reused then).
     pub normal_id: u64,
 
+    /// Changes when `blend` and `index` do (a paint stroke).
+    pub blend_id: u64,
+
     /// Pack paths per slot; empty is a neutral slice.
     pub diffuse: [String; 16],
     pub normal_tex: [String; 16],
@@ -243,6 +246,7 @@ impl Default for TerrainMaterial {
             alpha: TerrainImage::default(),
             normal: TerrainImage::default(),
             normal_id: 0,
+            blend_id: 0,
             diffuse: Default::default(),
             normal_tex: Default::default(),
             pixel_scale: [40.1; 4],

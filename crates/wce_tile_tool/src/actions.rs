@@ -11,9 +11,10 @@ use wce_tile_editor::tile_document::{Placement, elem_of};
 use crate::tool::{TileMode, TileTool, document, document_id, primary, selected};
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
-const BRUSHES: [(&str, &str); 5] = [
+const BRUSHES: [(&str, &str); 6] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"), (icons::ARROW_BIG_DOWN, "Lower the terrain"), (icons::WAVES, "Smooth the terrain"),
     (icons::MINUS, "Flatten the terrain to a height"), (icons::RULER, "Level the terrain"),
+    (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
 ];
 
 impl TileTool {
@@ -90,8 +91,23 @@ impl TileTool {
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
         ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
-        ins.edit_slider("strength", "strength", &mut self.brush.strength, 0.5, 30.0);
+        if self.mode == TileMode::Paint {
+            ins.edit_slider("opacity", "strength", &mut self.brush.opacity, 0.01, 1.0);
+        } else {
+            ins.edit_slider("strength", "strength", &mut self.brush.strength, 0.5, 30.0);
+        }
+
         ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+        if self.mode == TileMode::Paint {
+            // The entry's four texture groups, each with four variations.
+            let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
+            let names = [g.red, g.green, g.blue, g.alpha].iter().enumerate().map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() }).collect::<Vec<_>>();
+            let (mut group, mut variation) = (i32::from(self.paint_channel / 4), i32::from(self.paint_channel % 4));
+            ins.edit_choice("group", "texture group", &mut group, &names);
+            ins.edit_choice("variation", "variation", &mut variation, &["0", "1", "2", "3"].map(str::to_owned));
+            self.paint_channel = (group.clamp(0, 3) * 4 + variation.clamp(0, 3)) as u8;
+        }
+
         if self.mode == TileMode::Flatten {
             ins.edit_float("flatten", "flatten height (m)", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6);
         }
@@ -215,5 +231,6 @@ fn mode_name(m: TileMode) -> &'static str {
         TileMode::Smooth => "Smooth",
         TileMode::Flatten => "Flatten",
         TileMode::Level => "Level",
+        TileMode::Paint => "Paint",
     }
 }
