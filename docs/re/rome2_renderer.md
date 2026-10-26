@@ -3,7 +3,7 @@
 `wce_render`'s renderer draws Rome 2 with its own shaders (`fxc/` of `data.pack` and `data_rome2.pack`; the containers' signature is
 0xF8C5DEAD, Attila's 0x075BCD15, otherwise the same v4 layout). The renderer knows the game from its files
 (`Files::game` -> `renderer::game::RenderGame`) and switches the passes that differ. Status 2026-10-26: a Rome 2 tile draws with
-its terrain, buildings, sky, clouds, lights and shadows; the sea and the effects are not drawn.
+its terrain, buildings, sky, clouds, the sun and its shadows; the sea and the effects are not drawn.
 
 Tools: `shader_info` (wce_d3d11 example: a game's shaders' reflection, `WCE_GAME_KEY=rome_2`), and the scratch scripts
 `fxc2dxbc.py` / `disasm.sh` (vkd3d-compiler's disassembly) under `~/wce_re/scratch/rome2/scripts`.
@@ -31,9 +31,19 @@ holds the environment's four points as log10 (the shaders raise 10 to them). The
 
 ## Lighting
 
-`directionallight ps30_slm_highdef` adds a cloud shade texture (`cloud_shade_sampler`, `g_cloud_shade_params`), baked shadows
-(`g_tBakedShadowBuffer`, `g_vBakedShadowmap*`) and selects cascades by `g_vSplitDepth` / `g_vShadowRange` instead of Attila's
-`g_split_distances`; it has no `g_apply_environment_specular`. Not set by the renderer yet (zeros): to check against a dump.
+`directionallight ps30_slm_highdef` (`shadowmap_PS` 688 bytes) differs from Attila's:
+
+- cascades: within `g_vShadowRange.x` of view depth, the cascade is the number of `g_vSplitDepth`'s four depths the pixel is past (Attila:
+  `g_split_distances`), blended into the next over `g_fFadeRange` (distances in game units; Attila's are fractions). The renderer sets
+  the split ends of its own cascades, the last one as the range, a fifth of the last split as the fade;
+- baked shadows (`g_tBakedShadowBuffer`; `g_vBakedShadowmapScale` / `Offset` / `Shear` / `Params`): used beyond
+  `g_vBakedShadowmapParams.y` of distance from the camera. Left at zero, every pixel took them (the map unbound: in shadow, the
+  sun gone): the distance is set out of reach;
+- a cloud shade texture (`cloud_shade_sampler`, `g_cloud_shade_params`; `terrain/textures/common/cloud_shade` in the engine's
+  strings): off (`.w` 0);
+- no `g_apply_environment_specular`.
+
+To check against a frame of the game: the cascades' fade, the baked map's use, the cloud shade.
 `weather_shared` is 16 bytes (`g_weather_type`, `g_season_type`, `g_snow_mask`).
 
 ## Weather

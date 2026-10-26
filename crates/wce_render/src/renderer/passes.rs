@@ -444,6 +444,19 @@ impl Renderer {
         self.cbs.set_f("shadowmap_PS", "g_sample_bias", &[0.0]);
         self.cbs.set_f("shadowmap_PS", "g_iSplitCount", &[if self.settings.shadows { 4.0 } else { 0.0 }]);
         self.cbs.set_f("shadowmap_PS", "g_shadow_light_direction", &[light_dir.x, light_dir.y, light_dir.z]);
+
+        // Rome 2's light pass picks the cascade by the number of split ends the pixel is past (g_vSplitDepth), shades nothing beyond the
+        // shadow range, blends cascades over g_fFadeRange (game units: a fifth of the last split here) and has baked shadows (none: their
+        // distance out of reach). docs/re/rome2_renderer.md.
+        if self.game == super::game::RenderGame::Rome2 {
+            let u = self.camera.units;
+            let end = |i: usize| splits.get(i).copied().unwrap_or(0.0) * u;
+            let fade = (end(4) - end(3)) * 0.2;
+            self.cbs.set_f("shadowmap_PS", "g_vSplitDepth", &[end(1), end(2), end(3), end(4)]);
+            self.cbs.set_f("shadowmap_PS", "g_vShadowRange", &[end(4), 0.0, 0.0, 0.0]);
+            self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[fade, fade]);
+            self.cbs.set_f("shadowmap_PS", "g_vBakedShadowmapParams", &[0.0, 1.0e9, 0.0, 1.0]);
+        }
     }
 
     pub(crate) fn pass_fog(&mut self) {
