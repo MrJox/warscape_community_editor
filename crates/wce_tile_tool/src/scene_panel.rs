@@ -584,10 +584,10 @@ fn draw_type_filter(e: &mut Editor, id: wce_scene::render_scene::DocumentId, lab
     }
 }
 
-/// A layer's export types (TEd's "Export" property), the current one ticked.
-fn export_menu(sc: &TedScene, layer: usize, actions: &mut Vec<RowAction>) {
+/// A layer's export types (TEd's "Export" property), the current one ticked; the escalation ones when the game has them.
+fn export_menu(sc: &TedScene, layer: usize, escalation: bool, actions: &mut Vec<RowAction>) {
     let now = own_export(sc, layer);
-    for (kind, label) in EXPORT_TYPES {
+    for (kind, label) in EXPORT_TYPES.into_iter().filter(|(kind, _)| escalation || !kind.starts_with("Escalation") || now == *kind) {
         if gui::menu_item(&format!("{}  {label}", export_icon(kind)), None, now == kind, true) {
             actions.push(RowAction::ExportType(layer, format!("LayerExportType_{kind}")));
         }
@@ -627,6 +627,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     let dl = gui::window_draw_list();
     let window_hovered = gui::is_window_hovered_with_children();
     let sel_all = selected(e);
+    let escalation = e.game().features.escalation;
     let mut actions = vec![];
     let mut pending_drop: Option<(Vec<usize>, usize, Option<usize>)> = None;
     let mut activate = false;
@@ -852,7 +853,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 }
 
                 if sc.type_of(el) == "LayerInstance" && gui::begin_menu("Export") {
-                    export_menu(sc, el, &mut actions);
+                    export_menu(sc, el, escalation, &mut actions);
                     gui::end_menu();
                 }
 
@@ -991,7 +992,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             }
 
             if gui::begin_popup("exportmenu") {
-                export_menu(sc, el, &mut actions);
+                export_menu(sc, el, escalation, &mut actions);
                 gui::end_popup();
             }
 

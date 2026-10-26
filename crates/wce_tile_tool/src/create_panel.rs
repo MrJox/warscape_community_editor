@@ -164,7 +164,14 @@ impl TileTool {
             }
         }
 
-        for (category, kind, drawn) in FIXED.iter().chain([&ROAD, &WALL]) {
+        // The types the game has (Rome 2's tiles have no civilians or lite building zones).
+        let features = e.game().features;
+        let has = |kind: &str| match kind {
+            "CivilianShelter" | "CivilianDeploymentZone" => features.civilians,
+            "LiteBuildingZone" => features.lite_buildings,
+            _ => true,
+        };
+        for (category, kind, drawn) in FIXED.iter().chain([&ROAD, &WALL]).filter(|(_, kind, _)| has(kind)) {
             let make = if *drawn { Make::Draw { kind: (*kind).to_owned() } } else { Make::Place { kind: (*kind).to_owned(), key: String::new() } };
             out.push(entry(*category, crate::entity_types::type_name(kind).to_owned(), make, kind));
         }

@@ -62,6 +62,15 @@ pub struct GameFeatures {
     /// The Assembly Kit has the battle tiles (`raw_data/terrain/tiles`), TEd and the BOB that builds them: tiles are edited as kit
     /// projects and saved for the kit. Without it tiles are read from the packs and saved into mod packs only.
     pub kit_tiles: bool,
+
+    /// The tiles' civilians (`CivilianShelter`, `CivilianDeploymentZone`: Attila's FASTBIN civilian files).
+    pub civilians: bool,
+
+    /// The escalation layers (TEd's `Escalation1..3` export types: Attila's escalation BMDs).
+    pub escalation: bool,
+
+    /// Lite building zones (`LiteBuildingZone`: the building list's `lite` flag, Attila's version 12).
+    pub lite_buildings: bool,
 }
 
 /// A pack in the priority order.
@@ -103,7 +112,7 @@ impl GameProfile {
         rpfm_schema: "schema_att.ron",
         campaign_battle_map: "terrain/battles/main_attila_map",
         default_environment: "weather/charlemagne/med_sp_land_day_dry.environment",
-        features: GameFeatures { kit_tiles: true },
+        features: GameFeatures { kit_tiles: true, civilians: true, escalation: true, lite_buildings: true },
     };
 
     /// Total War: Rome II. Its manifest lists neither the patch packs (`*_rome2.pack`) nor the right sizes, so the packs are rpfm's list.
@@ -128,7 +137,7 @@ impl GameProfile {
         rpfm_schema: "schema_rom2.ron",
         campaign_battle_map: "terrain/battles/main_rome_map",
         default_environment: "weather/rome_med/land/day/dry/day_dry_01.environment",
-        features: GameFeatures { kit_tiles: false },
+        features: GameFeatures { kit_tiles: false, civilians: false, escalation: false, lite_buildings: false },
     };
 
     /// Every supported game, the default first.
