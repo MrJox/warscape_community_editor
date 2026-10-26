@@ -181,6 +181,14 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
         }
     }
 
+    // Rome 2's climates have one detail map, a normal map.
+    for root in [folder.as_str(), "terrain/textures/battle/default"] {
+        let normal = format!("{root}/medium_detail_map.dds");
+        if m.detail_normal.is_empty() && exists(&normal) {
+            m.detail_normal = normal;
+        }
+    }
+
     (wanted, missing)
 }
 
