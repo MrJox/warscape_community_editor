@@ -30,6 +30,7 @@ mod preview;
 pub mod river_links;
 pub mod siege;
 mod grass;
+pub mod ground_coverage;
 mod vegetation;
 mod tech;
 mod view;

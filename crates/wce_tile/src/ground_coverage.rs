@@ -50,6 +50,10 @@ pub struct Params {
     /// Metres between plants.
     pub plant_spacing: f32,
 
+    /// Whether the rocks are scaled at all: a building's scale is the editor's (`project_files::SCALE_ATTR`), and whether Attila honours
+    /// it is not known. Without it every rock is at scale 1.
+    pub scale_rocks: bool,
+
     /// Scale ranges of the rocks at the foot and on the face (a set entry's own range multiplies them).
     pub rock_scale_foot: (f32, f32),
     pub rock_scale_face: (f32, f32),
@@ -84,6 +88,7 @@ impl Default for Params {
             rock_density_face: 1.0 / 25.0,
             plant_density: 1.0 / 15.0,
             plant_spacing: 2.0,
+            scale_rocks: false,
             rock_scale_foot: (0.9, 1.6),
             rock_scale_face: (0.5, 1.0),
             plant_scale: (0.85, 1.15),
@@ -93,6 +98,68 @@ impl Default for Params {
             plant_radius: 1.0,
             exclusion_margin: 2.0,
         }
+    }
+}
+
+impl Params {
+    /// As one attribute's text (`slope_deg=35 min_rise=3 ...`), to keep them with what they made.
+    pub fn to_text(&self) -> String {
+        let mut out = self.numbers().into_iter().map(|(name, v)| format!("{name}={v}")).collect::<Vec<_>>();
+
+        out.push(format!("scale_rocks={}", self.scale_rocks));
+        out.join(" ")
+    }
+
+    /// From [`Self::to_text`]; what is missing or does not read keeps its default.
+    pub fn from_text(text: &str) -> Self {
+        let mut p = Self::default();
+        for (name, value) in text.split_whitespace().filter_map(|kv| kv.split_once('=')) {
+            if name == "scale_rocks" {
+                p.scale_rocks = value == "true";
+            } else if let (Ok(v), Some(slot)) = (value.parse::<f32>(), p.number_mut(name)) {
+                *slot = v;
+            }
+        }
+
+        p
+    }
+
+    const NAMES: [&'static str; 21] = [
+        "slope_deg", "min_rise", "min_area", "foot_up", "foot_out", "top_margin", "rock_density_foot", "rock_density_face", "plant_density",
+        "plant_spacing", "rock_scale_foot_min", "rock_scale_foot_max", "rock_scale_face_min", "rock_scale_face_max", "plant_scale_min",
+        "plant_scale_max", "sink", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
+    ];
+
+    fn numbers(&self) -> Vec<(&'static str, f32)> {
+        let mut c = *self;
+        Self::NAMES.iter().map(|&n| (n, *c.number_mut(n).expect("a number"))).collect()
+    }
+
+    fn number_mut(&mut self, name: &str) -> Option<&mut f32> {
+        Some(match name {
+            "slope_deg" => &mut self.slope_deg,
+            "min_rise" => &mut self.min_rise,
+            "min_area" => &mut self.min_area,
+            "foot_up" => &mut self.foot_up,
+            "foot_out" => &mut self.foot_out,
+            "top_margin" => &mut self.top_margin,
+            "rock_density_foot" => &mut self.rock_density_foot,
+            "rock_density_face" => &mut self.rock_density_face,
+            "plant_density" => &mut self.plant_density,
+            "plant_spacing" => &mut self.plant_spacing,
+            "rock_scale_foot_min" => &mut self.rock_scale_foot.0,
+            "rock_scale_foot_max" => &mut self.rock_scale_foot.1,
+            "rock_scale_face_min" => &mut self.rock_scale_face.0,
+            "rock_scale_face_max" => &mut self.rock_scale_face.1,
+            "plant_scale_min" => &mut self.plant_scale.0,
+            "plant_scale_max" => &mut self.plant_scale.1,
+            "sink" => &mut self.sink,
+            "cluster_distance" => &mut self.cluster_distance,
+            "max_cluster" => &mut self.max_cluster,
+            "plant_radius" => &mut self.plant_radius,
+            "exclusion_margin" => &mut self.exclusion_margin,
+            _ => return None,
+        })
     }
 }
 
@@ -475,6 +542,7 @@ fn populate(input: &Input, d: &mut Differential) {
             let Some(entry) = input.rocks.pick(rnd.unit()) else { break };
             let own = entry.scale.map_or(1.0, |r| rnd.range(r));
             let scale = rnd.range(range) * own;
+            let scale = if p.scale_rocks { scale } else { 1.0 };
             let size = (input.rock_size)(&entry.key);
             let r = size.radius * scale;
             let low = (0..8).map(|k| {
@@ -706,6 +774,23 @@ mod tests {
         let g = step(10.0, 5.0);
         assert_eq!(run(&g, &[], 42), run(&g, &[], 42));
         assert_ne!(run(&g, &[], 42), run(&g, &[], 43));
+    }
+
+    #[test]
+    fn the_parameters_read_back_from_their_text() {
+        let p = Params { slope_deg: 40.5, scale_rocks: true, rock_scale_face: (0.25, 0.75), ..Default::default() };
+        assert_eq!(Params::from_text(&p.to_text()), p);
+        assert_eq!(Params::from_text("min_rise=7 nonsense nope=1"), Params { min_rise: 7.0, ..Default::default() });
+    }
+
+    #[test]
+    fn rocks_are_at_scale_1_unless_scaled() {
+        let g = step(10.0, 5.0);
+        assert!(run(&g, &[], 5).iter().flat_map(|d| &d.rocks).all(|r| r.scale == 1.0));
+        let (rocks, plants) = sets();
+        let params = Params { scale_rocks: true, ..Default::default() };
+        let out = generate(&Input { grid: &g, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
+        assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
     }
 
     #[test]
