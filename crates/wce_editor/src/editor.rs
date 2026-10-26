@@ -205,6 +205,7 @@ impl Editor {
         };
 
         e.frame_cap = e.settings.frame_cap();
+        e.viewport.gizmo_points = e.settings.appearance.gizmo_size;
         crate::commands::register_builtin(&mut e.commands);
         e
     }
@@ -212,6 +213,7 @@ impl Editor {
     /// The display's scale (1 for a high pixel density window, whose fonts Dear ImGui already rasterizes at its density).
     pub fn set_display_scale(&mut self, dpi: f32) {
         self.display_scale = dpi;
+        self.viewport.gizmo_points = self.settings.appearance.gizmo_size * dpi;
         self.applied_appearance = None;
     }
 
@@ -260,6 +262,14 @@ impl Editor {
     }
 
     /// Sets the frame cap (0: no limit) and keeps it in the settings.
+    /// The gizmo's handles' length in points (before the display's scale), kept in the settings.
+    pub fn set_gizmo_size(&mut self, points: f32) {
+        let points = points.clamp(20.0, 300.0);
+        self.settings.appearance.gizmo_size = points;
+        self.viewport.gizmo_points = points * self.display_scale;
+        self.save_settings();
+    }
+
     pub fn set_frame_cap(&mut self, fps: u32) {
         self.frame_cap = fps;
         self.settings.frame_cap = fps;
@@ -1520,6 +1530,20 @@ impl Editor {
             }
 
             gui::menu_item_toggle("Snap", &mut self.viewport.snap);
+            if gui::begin_menu("Gizmo size") {
+                for (size, label) in [(45.0, "Small"), (wce_foundation::settings::DEFAULT_GIZMO_SIZE, "Medium"), (90.0, "Large"), (120.0, "Extra large")] {
+                    if gui::menu_item(label, None, self.settings.appearance.gizmo_size == size, true) {
+                        self.set_gizmo_size(size);
+                    }
+                }
+
+                gui::end_menu();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How long the move / rotate / scale gizmo's handles are on screen: always the same, however far the camera is or however big the object.");
+            }
+
             gui::separator();
             if gui::begin_menu(&format!("{}  Frame rate cap", icons::GAUGE)) {
                 for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {

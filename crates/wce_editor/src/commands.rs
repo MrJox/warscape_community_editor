@@ -629,6 +629,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("gizmo_size", "gizmo_size [points]", "the gizmo's handles' length on screen, in points (kept in the settings); no argument: log it", |e, a| {
+        match a.first() {
+            None => ok(format!("{} points", e.settings_ref().appearance.gizmo_size)),
+            Some(x) => match x.parse::<f32>() {
+                Ok(v) if v > 0.0 => {
+                    e.set_gizmo_size(v);
+                    ok("")
+                }
+
+                _ => fail("usage: gizmo_size [points]"),
+            },
+        }
+    });
+
     c.add("grid", "grid on|off", "viewport grid", |e, a| {
         e.viewport.show_grid = a.first().is_some_and(|x| x == "on");
         ok("")
@@ -796,9 +810,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             let right = normalize(cross(Float3::new(0.0, 1.0, 0.0), fwd));
             let (Some((ox, oy)), Some((rx, ry))) = (vp.project(o), vp.project(o + right)) else { return fail("the item is not in view") };
 
-            // ImGuizmo: the handle is 0.16 of the clip space (in units of half the viewport height) long, along the axis, from the item's origin.
+            // ImGuizmo: the handle is `gizmo_clip` of the clip space (in units of half the viewport height) long, along the axis, from the
+            // item's origin.
             let unit_px = (rx - ox).hypot(ry - oy).max(1e-3);
-            let len = 0.08 * vp.height() as f32 / unit_px;
+            let len = 0.5 * vp.gizmo_clip * vp.height() as f32 / unit_px;
             let (Some((tx, ty)), Some((hx, hy))) = (vp.project(o + axis * (len * 0.7)), vp.project(o + axis * len)) else {
                 return fail("the handle is not in view");
             };

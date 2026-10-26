@@ -164,11 +164,18 @@ pub struct Appearance {
 
     /// The text size in points, before the display's scale.
     pub font_size: f32,
+
+    /// The viewport gizmo's handles, in points before the display's scale: the same on screen whatever the viewport's size, the camera's
+    /// distance or the object's size.
+    pub gizmo_size: f32,
 }
+
+/// [`Appearance::gizmo_size`]'s default: about what the gizmo had as a fixed part (0.16 of the clip space) of a 715-point viewport.
+pub const DEFAULT_GIZMO_SIZE: f32 = 60.0;
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { theme: "dark".to_owned(), font_size: 15.0 }
+        Self { theme: "dark".to_owned(), font_size: 15.0, gizmo_size: DEFAULT_GIZMO_SIZE }
     }
 }
 

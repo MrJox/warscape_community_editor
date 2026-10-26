@@ -54,6 +54,11 @@ pub struct Viewport {
     pub snap_move: f32,
     pub snap_angle: f32,
     pub snap_scale: f32,
+
+    /// The gizmo's handles in points on screen (the settings' `appearance.gizmo_size` times the display's scale), and the part of the
+    /// clip space that made them last frame (ImGuizmo's size).
+    pub gizmo_points: f32,
+    pub gizmo_clip: f32,
     pub show_grid: bool,
     pub hovered: bool,
     pub frames_rendered: u64,
@@ -94,7 +99,7 @@ impl Default for Viewport {
     fn default() -> Self {
         Self {
             orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
+            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -576,6 +581,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         };
 
         let mode = if vp.gizmo_local && vp.gizmo != GizmoMode::Translate { gz::LOCAL } else { gz::WORLD };
+        let gizmo_clip = (2.0 * vp.gizmo_points / size.y.max(1.0)).clamp(0.02, 1.5);
         let mut snap_values = [vp.snap_move; 3];
         if vp.gizmo == GizmoMode::Rotate {
             snap_values[0] = vp.snap_angle;
@@ -595,8 +601,8 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         unsafe {
             gz::ImGuizmo_SetOrthographic(false);
 
-            // Larger than ImGuizmo's default 0.1: the handles of a building in a 100 m view were 35 px.
-            gz::ImGuizmo_SetGizmoSizeClipSpace(0.16);
+            // A fixed length on screen: ImGuizmo's size is a part of the clip space (2 = the viewport's height).
+            gz::ImGuizmo_SetGizmoSizeClipSpace(gizmo_clip);
             gz::ImGuizmo_SetDrawlist(dear_imgui_sys::igGetWindowDrawList() as *mut _);
             gz::ImGuizmo_SetRect(origin.x, origin.y, size.x, size.y);
             gz::ImGuizmo_Manipulate(
@@ -609,6 +615,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
         // ImGuizmo does not change these ids itself: back to what Dear ImGui had.
         gui::set_context_ids(ids);
+        e.viewport.gizmo_clip = gizmo_clip;
         if using_gizmo {
             if !e.viewport.gizmo_was_using {
                 e.viewport.gesture += 1;

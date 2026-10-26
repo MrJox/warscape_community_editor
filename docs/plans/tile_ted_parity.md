@@ -29,11 +29,14 @@ file's order. The editor itself is described in
 
 ### Phase 0 / 3 / 4 gate
 - An in-game reference shot of a fixed tile / camera / climate (a settlement tile, a river tile, a sea tile), to compare the terrain
-  and water against. None has been supplied; the terrain and water shots are compared only run against run.
+  and water against. None has been supplied; the terrain and water shots are compared only run against run. **Deferred** (user,
+  2026-10-26: the user takes the shots later).
 
 ### Phase 1
-- Gizmo at a constant screen size. Partly done: the handles are 0.16 of the clip height (were 0.1) and do not scale with the
-  object; there are no plane handles beyond ImGuizmo's own.
+- Done (2026-10-26): the gizmo at a constant screen size. Its handles are a length in points (settings `appearance.gizmo_size`,
+  default 60, times the display's scale; View > Gizmo size, command `gizmo_size`), turned into ImGuizmo's clip size from the
+  viewport's height every frame, so they keep their size whatever the viewport, the camera's distance or the object; ImGuizmo's plane
+  handles scale with them. `scripts/tile_gizmo_size.txt`.
 
 ### Phase 2
 - Viewport tint for freeform instances. Model entities have no per-entity tint in the renderer. The Inspector shows the mode and the
