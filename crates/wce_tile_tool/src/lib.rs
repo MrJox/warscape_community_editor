@@ -22,6 +22,7 @@ pub mod settings;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;
+mod water_view;
 pub mod weather_panel;
 
 pub use tool::TileTool;

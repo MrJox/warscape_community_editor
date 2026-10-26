@@ -798,6 +798,28 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("paint_water_types", "paint_water_types [shallow from m] [deep from m]", "paint the water ground types from the water depth view's depth (one undo entry; the view must have shown)", |e, a| {
+        let shallow = a.first().and_then(|x| number(x)).unwrap_or(0.3);
+        let deep = a.get(1).and_then(|x| number(x)).unwrap_or(2.5).max(shallow);
+        let Some(d) = document(e) else { return no_tile() };
+        match d.paint_water_ground_types(shallow, deep) {
+            Ok(n) => ok(format!("{n} pixel(s) changed")),
+            Err(why) => fail(why),
+        }
+    });
+
+    c.add("assert_water_depth", "assert_water_depth <x m> <z m> <min m> [max m]", "test: the water depth view's depth at a point of the tile (none: no water)", |e, a| {
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((x, z, lo))) = (document(e), parsed) else { return fail("usage: assert_water_depth <x m> <z m> <min m> [max m]") };
+        let hi = a.get(3).and_then(|v| number(v)).unwrap_or(f32::MAX);
+        let t = d.tile();
+        let Some(w) = t.water_depth() else { return fail("no water depth worked out (show the water view)") };
+        let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
+        let (i, j) = ((x / ex * (w.w - 1) as f32).round() as usize, (z / ez * (w.h - 1) as f32).round() as usize);
+        let Some(&got) = w.depth.get(j.min(w.h - 1) * w.w + i.min(w.w - 1)) else { return fail("outside the tile") };
+        if got.is_finite() && (lo..=hi).contains(&got) { ok(format!("{got:.2} m")) } else { fail(format!("depth {got:.2}, expected {lo} .. {hi}")) }
+    });
+
     c.add("river_check", "river_check", "the rivers against the tile's river link targets: what does not join (logged, one line each)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
         let p = d.river_link_problems();
@@ -2082,9 +2104,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_ground_view", "tile_ground_view colour|groups|ground|protection",
-        "what the ground shows: the blended colour or a debug view of the tile's maps (blend groups, ground types, protection)", |e, a| {
-            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_ground_view colour|groups|ground|protection") };
+        "tile_ground_view", "tile_ground_view colour|groups|ground|protection|water",
+        "what the ground shows: the blended colour or a debug view of the tile's maps (blend groups, ground types, protection, water depth)", |e, a| {
+            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_ground_view colour|groups|ground|protection|water") };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let mut look = d.tile().terrain_look().clone();
             look.blended = true;
@@ -2093,7 +2115,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 "groups" => TerrainView::BlendGroups,
                 "ground" => TerrainView::GroundTypes,
                 "protection" => TerrainView::Protection,
-                _ => return fail("the view is colour, groups, ground or protection"),
+                "water" => TerrainView::WaterDepth,
+                _ => return fail("the view is colour, groups, ground, protection or water"),
             };
 
             d.tile_mut().set_terrain_look(&mut e.scene, look);

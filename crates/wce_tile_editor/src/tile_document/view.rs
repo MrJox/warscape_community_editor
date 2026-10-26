@@ -157,6 +157,21 @@ impl Tile {
         &self.look
     }
 
+    /// The water depth view's raster (the tool works it out from stage B's water map); the view is drawn again when it shows.
+    pub fn set_water_depth(&mut self, scene: &mut RenderScene, depth: Option<crate::terrain_bake::WaterDepth>) {
+        self.water_depth = depth.map(Arc::new);
+        if self.look.view == TerrainView::WaterDepth {
+            self.skin = None;
+            if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
+                self.update_terrain(scene, false);
+            }
+        }
+    }
+
+    pub fn water_depth(&self) -> Option<&crate::terrain_bake::WaterDepth> {
+        self.water_depth.as_deref()
+    }
+
     pub fn set_terrain_look(&mut self, scene: &mut RenderScene, look: TerrainLook) {
         if look == self.look {
             return;
@@ -227,7 +242,7 @@ impl Tile {
 
         // Painted since the view was baked: the ground types at every step of a stroke, the blend groups (a whole bake) when it ends.
         let stale = match self.look.view {
-            TerrainView::GroundTypes => self.project.ground.as_mut().and_then(GroundTypeField::take_changed).is_some(),
+            TerrainView::GroundTypes | TerrainView::WaterDepth => self.project.ground.as_mut().and_then(GroundTypeField::take_changed).is_some(),
             TerrainView::BlendGroups if !self.stroke_open => self.project.blend.as_mut().and_then(BlendField::take_changed).is_some(),
             _ => false,
         };
@@ -257,8 +272,25 @@ impl Tile {
         };
 
         // The maps in memory when read (painted), else their files.
-        if self.look.view == TerrainView::GroundTypes {
+        if matches!(self.look.view, TerrainView::GroundTypes | TerrainView::WaterDepth) {
             let _ = self.project.load_ground();
+        }
+
+        if self.look.view == TerrainView::WaterDepth {
+            let Some(water) = self.water_depth.clone() else {
+                self.terrain_note = "water depth: being worked out (stage B's water map)".to_owned();
+                self.skin_look = TerrainLook::default();
+                return None;
+            };
+
+            let baked = Arc::new(crate::terrain_bake::bake_water_depth(&rq, &water, self.project.ground.as_ref()));
+            let k = self.project.mpp_z() / self.project.mpp_x();
+            self.skin_id = next_id(&SKIN_IDS);
+            let skin = Arc::new(TerrainSkin { x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id });
+            self.skin = Some(skin.clone());
+            self.terrain_note = format!("debug view, {}", baked.report);
+            self.skin_baked = Some(baked);
+            return Some(skin);
         }
 
         let map_view = matches!(self.look.view, TerrainView::GroundTypes | TerrainView::Protection);

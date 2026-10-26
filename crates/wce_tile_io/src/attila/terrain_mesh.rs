@@ -1051,6 +1051,50 @@ pub fn linking_tiles(raw_data: &std::path::Path) -> std::collections::HashMap<St
     text.split("<TILE_SET ").skip(1).filter_map(|t| Some((attr(t, "name")?, attr(t, "linking_tile")?))).collect()
 }
 
+/// The ground and the water of a battle tile on stage B's grid (`w` x `h` vertices of the tile without its border, `t` per 128-metre
+/// cell, row j along +z): BOB's final heights (the height map with the variation's numbers, eased into the linking tiles) and the water
+/// surface `hf_water_map.data` is made from (the rivers' triangles and the water planes rasterised; -1000 where there is no water; `None`
+/// without either). The same calls as [`terrain_files`]; for the editor's water depth view.
+pub struct WaterFields {
+    pub heights: Vec<f32>,
+    pub water: Option<Vec<f32>>,
+    pub w: usize,
+    pub h: usize,
+    pub t: usize,
+}
+
+/// [`WaterFields`] of a raw tile.
+///
+/// # Errors
+///
+/// As [`terrain_files`].
+pub fn water_fields(raw: &wce_tile_model::Tile, raw_data: &std::path::Path, models: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<WaterFields, String> {
+    use super::bob_tile::{HeightNumbers, InfluenceLinks, final_heights};
+    let linking = linking_tiles(raw_data);
+    let links = &InfluenceLinks::of(raw, &linking);
+    let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
+    let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
+    let n = HeightNumbers::of(raw);
+    let t = n.tri_density;
+    if t == 0 || 128 % t != 0 {
+        return Err(format!("raw_data_tri_density {t} does not divide 128"));
+    }
+
+    let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
+    super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
+    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t));
+    let planes = super::compile::instances(raw, "SIMPLE_MESH_INSTANCE");
+    let water = (!river.triangles.is_empty() || !planes.is_empty()).then(|| {
+        let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
+        let mut water = vec![-1000.0f32; w * h];
+        rasterise_into(&mut water, &verts, &river.triangles, w, h, t);
+        super::river::rasterise_water_planes(&mut water, w, h, t, &planes, models);
+        water
+    });
+
+    Ok(WaterFields { heights, water, w, h, t })
+}
+
 /// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2`,
 /// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it) and `terrain_outlines.xml`, from the project's height map, the variation's
 /// numbers, its tile links (the height influence joins them, [`super::tile_links::blend_links`] eases the heights into the linking

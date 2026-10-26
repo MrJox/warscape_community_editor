@@ -71,8 +71,17 @@ file's order. The editor itself is described in
   cell's centre (the Tile panel's Problems section, command `river_check`); `snap_river_ends`: the ends at target cells level with the
   centre, 6 m past the edge unless past it already, handles along, one undo entry (the Problems section's button, `river_snap`).
   `scripts/tile_river_links.txt`; four kit river tiles (straight, fork, 4 x 4 fork, crossing) report nothing.
-- 4d: water map / shallow-deep view (`hf_water_map.data`, `GT_SHALLOW_WATER` / `GT_DEEP_WATER` in `ground_type_map.png`; neither is
-  read yet, `docs/re/water.md`). The river bed stays as authored (BOB carves it).
+- Done (2026-10-27): 4d, the water depth view and Paint water ground types (user's choice). The game's shallow / deep water is the
+  painted ground types (deep water 6, shallow water 7), which the ground types view shows and the ground type brush paints; the view adds
+  where the water is and how deep: `wce_tile_io::attila::terrain_mesh::water_fields` (the calls `terrain_files` makes for
+  `hf_water_map.data`: the rivers' triangles and the water planes over BOB's final heights) on the tile as it is in memory
+  (`wce_tile_tool::water_view`, worked out again once an edit settles), `TerrainView::WaterDepth` / `bake_water_depth` (cyan shallow to
+  dark blue 6 m and deeper, the painted deep water's edges white, shallow yellow), `TileDocument::paint_water_ground_types` (shallow from
+  0.3 m, deep from 2.5 m, water paint cleared where the water is shallower; one undo entry). The thresholds from the kit
+  (`water_depth_check` on six river tiles): painted deep water 4.4 .. 5.7 m deep (quartiles), shallow 0.2 .. 1.25 m, unpainted water at
+  the banks -1.25 .. 0.8 m. Ground section: the view, the two depths, the button (each with its tooltip); commands
+  `tile_ground_view water`, `paint_water_types`, `assert_water_depth`; `scripts/tile_water_depth.txt`. TEd has no water view. The river
+  bed stays as authored (BOB carves it).
 - Water rendering (river uv, shadows on water, foam / ice, `g_refraction_depth`, river ends blending with neighbours, battle sea mesh):
   `rendering_remaining.md`.
 

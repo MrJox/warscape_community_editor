@@ -602,3 +602,40 @@ impl Command<Tile> for TextureGroupCommand {
         self
     }
 }
+
+/// A whole-map edit of the ground type map (the water ground types painted from the depth): undo and redo use the field's own records,
+/// as the brush strokes do; the edit is made before the command is pushed.
+pub(crate) struct GroundFillCommand {
+    pub name: String,
+    pub first: bool,
+}
+
+impl Command<Tile> for GroundFillCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if std::mem::take(&mut self.first) {
+            return;
+        }
+
+        if let Some(g) = &mut t.project.ground {
+            g.redo();
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        if let Some(g) = &mut t.project.ground {
+            g.undo();
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
