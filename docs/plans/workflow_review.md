@@ -103,6 +103,18 @@ them (all the first group, no ground types) and the extraction rebuilds them fro
 variations loses the rest). The texture groups are read-only (the entry is), the material is built once from the file on disk (no live
 redraw), the procedural trees read the saved blend map, and only the height map has stroke undo. Planned as tile_ted_parity.md 5a.
 
-**Questions for the user (TEd's Paint tab):** the blend brush (group + variation? additive or replacing? erase?); ground types (their
-own brush and palette?); what the Brush Falloff Editor, the image brush and Blendmap Filters are used for, and how often; what should
-differ from TEd (paint by texture rather than group / variation, a live preview).
+**Decisions (user, 2026-10-26):**
+
+- **Blend brush:** the user picks a group and a variation (one of the 16 channels); a dab moves weight towards that channel and scales
+  the other 15 down so that the pixel keeps summing to 65535; erasing is painting the base channel.
+- **Ground types:** a brush of their own with a palette of the ground types (`ground_type_map.png`'s colours,
+  `EMPIREUTILITY::ground_type_to_colour`), hard values, no blending, drawn over the ground types debug view.
+- **Texture groups:** editable from a picker in the Tile panel (the game's texture groups); a text splice of the entry, the terrain
+  material rebuilt, undoable.
+- **Live preview with the game's shaders:** the edited rectangle of the blend texture is uploaded during the stroke; one undo entry per
+  stroke.
+- **wce's own brush math, TEd's files:** the dab is not reverse-engineered; what is written goes through the kit-exact encoders.
+- **All of TEd's extras:** the falloff curve editor, the image brush, the spline paint stroke and the Blendmap Filters (which may be broken
+  in TEd: find out what they really do before porting).
+- **Order:** 1) blend brush + live preview + stroke undo, 2) ground type brush, 3) falloff curve editor, 4) image brush, 5) spline paint
+  stroke, 6) Blendmap Filters; the texture group picker alongside.
