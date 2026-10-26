@@ -9,9 +9,10 @@
 //! The conversion to TEd (`to_ted`) applies a feature's polyfill where it has one (what the editor shows becomes what TEd can hold: a
 //! surface mode TEd lacks is written as freeform at the height it computed, ...), and drops what has none, telling what it did.
 //!
-//! An exported tile extracted from the packs gets `_extracted` at the end of its tile's folder (`.../farm_nordic/1x1_extracted/aa`) and of
-//! its entry's location, so that it does not take the place of the kit's tile of the same name; the mark goes away when it is saved for the
-//! kit or the game.
+//! An exported tile extracted from the packs is a project like any other, at its own folder (the kit's tile of the same name and it share
+//! the project); its `tile.wce` is marked `wce_extracted_tile="true"` (`EXTRACTED_ATTR`) so that the tile list can tell it. Projects of
+//! the editor's first versions had `_extracted` at the end of their tile's folder and entry location instead: `migrate_extracted` moves
+//! them.
 
 use crate::ted_scene::TedScene;
 
@@ -27,32 +28,122 @@ pub const WCE_VERSION: u32 = 1;
 /// The root attribute that marks `tile.wce`.
 pub const WCE_VERSION_ATTR: &str = "wce_version";
 
-/// The mark of an extracted tile's folder and location.
-pub const EXTRACTED: &str = "_extracted";
+/// The root attribute of an extracted tile's `tile.wce`.
+pub const EXTRACTED_ATTR: &str = "wce_extracted_tile";
 
-/// A tile folder (`terrain/tiles/<kind>/.../<tile>/<variation>`, `/` or `\` separated) with its tile's folder marked as extracted.
-pub fn mark_extracted(folder: &str) -> String {
-    let f = folder.replace('\\', "/");
-    let f = f.trim_end_matches('/');
-    match f.rsplit_once('/') {
-        Some((tile, variation)) if !tile.ends_with(EXTRACTED) => format!("{tile}{EXTRACTED}/{variation}"),
-        _ => f.to_owned(),
+/// The old mark of an extracted tile's folder and location (`migrate_extracted`).
+const OLD_EXTRACTED: &str = "_extracted";
+
+/// A tile file's text (`tile.wce`) with its root marked as an extracted tile, unless it is.
+pub fn mark_extracted_text(text: Vec<u8>) -> Vec<u8> {
+    if is_extracted_text(&text) {
+        return text;
     }
+
+    let Ok(mut scene) = TedScene::parse_any(text.clone()) else { return text };
+    let doc = scene.doc();
+    let Some(root) = (0..doc.elements().len()).find(|&e| doc.elements()[e].parent.is_none()) else { return text };
+    scene.set_attr(root, EXTRACTED_ATTR, "true");
+    scene.save()
 }
 
-/// A path or a location without the extracted mark (on any of its folders), with its separators kept.
-pub fn unmark_extracted(path: &str) -> String {
+/// Whether a tile file's text has its root marked as an extracted tile (its start tag is read, not the whole text).
+pub fn is_extracted_text(text: &[u8]) -> bool {
+    let Some(start) = text.windows(2).position(|w| w[0] == b'<' && w[1].is_ascii_alphabetic()) else { return false };
+    let end = text[start..].iter().position(|&c| c == b'>').map_or(text.len(), |i| start + i);
+    let tag = String::from_utf8_lossy(&text[start..end]);
+    tag.contains(&format!("{EXTRACTED_ATTR}=\"true\"")) || tag.contains(&format!("{EXTRACTED_ATTR}='true'"))
+}
+
+/// Whether the tile in a variation folder is an extracted one (its `tile.wce`'s start tag).
+pub fn is_extracted_dir(dir: &std::path::Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = std::fs::File::open(dir.join(WCE_FILE)) else { return false };
+    let mut head = vec![];
+    file.take(4096).read_to_end(&mut head).is_ok() && is_extracted_text(&head)
+}
+
+/// What `migrate_extracted` did: the tiles moved, and those left where they are, with why.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Migration {
+    pub moved: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Moves the projects of the old extracted tiles (`<tile>_extracted` folders, `<name>_extracted.xml` entries whose location has the mark)
+/// of a projects' raw_data to their own names: the tile's folder renamed, the entry renamed with its location unmarked, and each variation's
+/// `tile.wce` marked `EXTRACTED_ATTR`. One whose place has a project already, or whose folder is in `busy` (open in the editor), is left as
+/// it is.
+///
+/// # Errors
+///
+/// None so far: a failure on one tile is a skip.
+pub fn migrate_extracted(projects_raw: &std::path::Path, busy: &[std::path::PathBuf]) -> Result<Migration, String> {
+    let mut m = Migration::default();
+    let Ok(kinds) = std::fs::read_dir(projects_raw.join("terrain/tiles")) else { return Ok(m) };
+    for kind in kinds.flatten().map(|k| k.path()).filter(|k| k.is_dir()) {
+        let Ok(read) = std::fs::read_dir(kind.join("_tile_database/TILES")) else { continue };
+        let mut entries = read.flatten().map(|f| f.path()).collect::<Vec<_>>();
+        entries.sort();
+        for entry in entries {
+            let name = entry.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let Some(stem) = name.strip_suffix(&format!("{OLD_EXTRACTED}.xml")) else { continue };
+            match migrate_one(projects_raw, &entry, &format!("{stem}.xml"), busy) {
+                Ok(what) => m.moved.push(what),
+                Err(why) => m.skipped.push(format!("{name}: {why}")),
+            }
+        }
+    }
+
+    if !m.moved.is_empty() {
+        wce_formats::tile_index::TileIndex::forget_shared();
+    }
+
+    Ok(m)
+}
+
+/// One old extracted tile (its entry file, the entry's new name); returns what was done.
+fn migrate_one(projects_raw: &std::path::Path, entry: &std::path::Path, new_name: &str, busy: &[std::path::PathBuf]) -> Result<String, String> {
+    let text = std::fs::read_to_string(entry).map_err(|e| e.to_string())?;
+    let location = wce_formats::tile_entry::TileEntry::parse(text.clone().into_bytes()).map_err(|e| e.to_string())?.location();
+    let old = projects_raw.join(location.replace('\\', "/"));
+    let new = projects_raw.join(unmark_extracted(&location).replace('\\', "/"));
+    let new_entry = entry.with_file_name(new_name);
+    if !location.ends_with(OLD_EXTRACTED) || !old.is_dir() {
+        return Err(format!("no folder {}", old.display()));
+    }
+
+    if new.exists() || new_entry.exists() {
+        return Err(format!("a project is there already ({})", new.display()));
+    }
+
+    if busy.iter().any(|b| b.starts_with(&old)) {
+        return Err("it is open in the editor".to_owned());
+    }
+
+    std::fs::rename(&old, &new).map_err(|e| format!("{} -> {}: {e}", old.display(), new.display()))?;
+    std::fs::write(&new_entry, entry_with_location_mark(&text, false)).map_err(|e| e.to_string())?;
+    std::fs::remove_file(entry).map_err(|e| e.to_string())?;
+    let mut marked = 0;
+    for variation in std::fs::read_dir(&new).map_err(|e| e.to_string())?.flatten().map(|v| v.path()) {
+        let wce = variation.join(WCE_FILE);
+        if let Ok(t) = std::fs::read(&wce) {
+            std::fs::write(&wce, mark_extracted_text(t)).map_err(|e| e.to_string())?;
+            marked += 1;
+        }
+    }
+
+    Ok(format!("{} -> {} ({marked} variation(s))", old.display(), new.display()))
+}
+
+/// A path or a location without the old extracted mark (on any of its folders), with its separators kept.
+fn unmark_extracted(path: &str) -> String {
     path.split_inclusive(['/', '\\'])
         .map(|part| {
             let (name, sep) = part.strip_suffix(['/', '\\']).map_or((part, ""), |n| (n, &part[n.len()..]));
-            format!("{}{sep}", name.strip_suffix(EXTRACTED).unwrap_or(name))
+            format!("{}{sep}", name.strip_suffix(OLD_EXTRACTED).unwrap_or(name))
         })
         .collect()
-}
-
-/// Whether a path has the extracted mark.
-pub fn is_extracted(path: &str) -> bool {
-    path.split(['/', '\\']).any(|p| p.ends_with(EXTRACTED))
 }
 
 /// A tile.ted's text as `tile.wce` (its root marked).
@@ -436,7 +527,7 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     for (e, el) in fresh.elements().iter().enumerate() {
         for a in &el.attrs {
             if a.name.starts_with("wce_") {
-                if a.name != WCE_VERSION_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) {
+                if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) {
                     report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
                 }
 
@@ -475,8 +566,8 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     Ok((out, report))
 }
 
-/// A tile database entry's XML (`<TILE ... location='terrain\tiles\...'>`) with its location's extracted mark set (`mark`) or removed.
-pub fn entry_with_location_mark(entry: &str, mark: bool) -> String {
+/// A tile database entry's XML (`<TILE ... location='terrain\tiles\...'>`) with its location's old extracted mark set (`mark`) or removed.
+fn entry_with_location_mark(entry: &str, mark: bool) -> String {
     let Some(at) = entry.find(" location=") else { return entry.to_owned() };
     let quote_at = at + " location=".len();
     let Some(q) = entry[quote_at..].chars().next().filter(|c| *c == '\'' || *c == '"') else { return entry.to_owned() };
@@ -484,7 +575,7 @@ pub fn entry_with_location_mark(entry: &str, mark: bool) -> String {
     let Some(len) = entry[start..].find(q) else { return entry.to_owned() };
     let location = &entry[start..start + len];
     let new = if mark {
-        if location.ends_with(EXTRACTED) { location.to_owned() } else { format!("{location}{EXTRACTED}") }
+        if location.ends_with(OLD_EXTRACTED) { location.to_owned() } else { format!("{location}{OLD_EXTRACTED}") }
     } else {
         unmark_extracted(location)
     };
@@ -497,12 +588,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_extracted_mark_goes_on_the_tile_folder_and_comes_off_anywhere() {
-        assert_eq!(mark_extracted("terrain/tiles/battle/farm_nordic/1x1/aa"), "terrain/tiles/battle/farm_nordic/1x1_extracted/aa");
-        assert_eq!(mark_extracted("terrain/tiles/battle/farm_nordic/1x1_extracted/aa"), "terrain/tiles/battle/farm_nordic/1x1_extracted/aa");
-        assert_eq!(unmark_extracted("x/raw_data/terrain/tiles/battle/farm_nordic/1x1_extracted/aa"), "x/raw_data/terrain/tiles/battle/farm_nordic/1x1/aa");
-        assert_eq!(unmark_extracted("terrain\\tiles\\battle\\farm_nordic\\1x1_extracted"), "terrain\\tiles\\battle\\farm_nordic\\1x1");
-        assert!(is_extracted("a/1x1_extracted/aa") && !is_extracted("a/1x1/aa"));
+    fn the_extracted_flag_is_on_the_root_and_old_projects_move() {
+        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <scene/>\n</project>\n".to_vec();
+        assert!(!is_extracted_text(&wce));
+        let marked = mark_extracted_text(wce);
+        assert!(is_extracted_text(&marked) && String::from_utf8_lossy(&marked).starts_with("<project version=\"16\" wce_version=\"1\" wce_extracted_tile=\"true\">"));
+        let (ted, report) = to_ted(marked).unwrap();
+        assert!(!String::from_utf8_lossy(&ted).contains("wce_") && report == TedReport::default(), "the flag goes silently");
+
+        // An old extracted project: moved to its own name, its entry too, its variations flagged; one whose place is taken stays.
+        let tmp = tempfile::tempdir().unwrap();
+        let raw = tmp.path().join("raw_data");
+        let tiles = raw.join("terrain/tiles/battle/_tile_database/TILES");
+        std::fs::create_dir_all(&tiles).unwrap();
+        for (tile, taken) in [("farm_nordic", false), ("farm_western", true)] {
+            let old = raw.join(format!("terrain/tiles/battle/{tile}/1x1_extracted/aa"));
+            std::fs::create_dir_all(&old).unwrap();
+            std::fs::write(old.join(WCE_FILE), b"<project version=\"16\" wce_version=\"1\">\n</project>\n").unwrap();
+            let entry = format!("<TILE serialise_version='3' location='terrain\\tiles\\battle\\{tile}\\1x1_extracted' tile_set='{tile}'>\r\n</TILE>\r\n");
+            std::fs::write(tiles.join(format!("{tile}_1x1_extracted.xml")), entry).unwrap();
+            if taken {
+                std::fs::create_dir_all(raw.join(format!("terrain/tiles/battle/{tile}/1x1/aa"))).unwrap();
+            }
+        }
+
+        let m = migrate_extracted(&raw, &[]).unwrap();
+        assert_eq!((m.moved.len(), m.skipped.len()), (1, 1), "{m:?}");
+        let moved = raw.join("terrain/tiles/battle/farm_nordic/1x1/aa");
+        assert!(is_extracted_dir(&moved) && !raw.join("terrain/tiles/battle/farm_nordic/1x1_extracted").exists());
+        let entry = std::fs::read_to_string(tiles.join("farm_nordic_1x1.xml")).unwrap();
+        assert!(entry.contains("location='terrain\\tiles\\battle\\farm_nordic\\1x1'") && !tiles.join("farm_nordic_1x1_extracted.xml").exists());
+        assert!(tiles.join("farm_western_1x1_extracted.xml").exists(), "the taken one stays");
 
         let entry = "<TILE serialise_version='3' location='terrain\\tiles\\battle\\farm_nordic\\1x1' tile_set='farm_nordic'>";
         let marked = entry_with_location_mark(entry, true);

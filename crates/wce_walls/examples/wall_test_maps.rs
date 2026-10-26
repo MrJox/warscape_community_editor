@@ -126,7 +126,7 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
     let folder = format!("terrain/tiles/battle/{tile}");
     println!("== {folder}");
     let exported = game.exported_from_packs(&folder)?;
-    let (project_dir, losses) = open_exported(game, &exported, &folder, workspace, false)?;
+    let (project_dir, losses) = open_exported(game, &exported, &folder, workspace)?;
     println!("decompiled into {} ({} losses noted)", project_dir.display(), losses.notes.len());
 
     let mut project = TileProject::open(&project_dir).map_err(|e| e.to_string())?;

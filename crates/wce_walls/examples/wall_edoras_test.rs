@@ -99,7 +99,7 @@ fn run() -> Result<(), String> {
 
     let folder_path = format!("terrain/tiles/battle/{TILE}");
     let exported = game.exported_from_packs(&folder_path)?;
-    let (project_dir, losses) = open_exported(&game, &exported, &folder_path, Path::new(workspace), false)?;
+    let (project_dir, losses) = open_exported(&game, &exported, &folder_path, Path::new(workspace))?;
     println!("decompiled into {} ({} losses noted)", project_dir.display(), losses.notes.len());
 
     let mut project = TileProject::open(&project_dir).map_err(|e| e.to_string())?;

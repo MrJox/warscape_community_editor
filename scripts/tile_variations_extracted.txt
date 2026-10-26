@@ -4,10 +4,10 @@ open_exported terrain/tiles/battle/farm_western/1x1/aa
 frames 3
 paint raise 100 100 200
 save
-tile "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/farm_western_1x1_extracted.xml" ab
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/farm_western_1x1.xml" ab
 frames 3
 assert_documents 3
-tile "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/farm_western_1x1_extracted.xml" ab
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/farm_western_1x1.xml" ab
 frames 3
 assert_documents 3
 quit

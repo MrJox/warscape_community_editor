@@ -71,6 +71,25 @@ entry or location. The entry was read-only (Phase 6b of tile_ted_parity.md: New 
   packs until their first save brings them in; the project's entry is kept, each save writing only its own variation's numbers;
   `scripts/tile_variations.txt`, `tile_variations_extracted.txt`).
 
+## 2. Extracted tiles without the `_extracted` workaround (user, 2026-10-26)
+
+**Before:** a tile extracted from the packs was decompiled into the projects at `<tile>_extracted` (its folder and its entry's location),
+so that it never took a kit tile's place in the old workspace; Save for Assembly Kit, the game export and the walls' keys took the mark
+off. The renaming caused bugs of its own (names and locations that differ from the game's, entries renamed back and forth).
+
+**Decisions:** no renaming; the extracted tile is a project at its own folder (the kit's tile of that name and it share the project:
+they are the same tile, the kit's source and the game's compiled copy; Import from Assembly Kit still takes the kit's copy); its
+`tile.wce` root is marked `wce_extracted_tile="true"` (a `wce_` attribute: the conversion for TEd and the game drop it), which the
+Tiles panel shows; extracting over a project asks **Open the project / Overwrite / Cancel**; the old `_extracted` projects are moved once,
+by a command (Tile > Migrate old extracted projects), not on open.
+
+**Done:** `project_files::{EXTRACTED_ATTR, mark_extracted_text, is_extracted_text, is_extracted_dir, migrate_extracted}` (the old marks
+kept private for the migration only); `workflow::open_exported` writes at the tile's own folder and entry (no `extracted` argument);
+`save_exported`, Save for Assembly Kit and the walls' keys use the folder as it is; the tool's `open_exported` replaces a project only
+when `fresh` (closing its document, refused with unsaved changes), keeps the other variations' entry numbers, marks the new `tile.wce`;
+`extract_or_ask` and the prompt for the Tiles panel's packs and Tile > Open exported tile...; an extracted project's missing variation is
+extracted (a variation of it is marked) instead of taken from the kit; Import from Assembly Kit reads the mark.
+
 ### Open
 
 - **Units of the terrain height.** TEd's value is written into the height map's units, which wce shows halved (the scene's 2 units a
