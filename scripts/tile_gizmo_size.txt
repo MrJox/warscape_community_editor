@@ -1,0 +1,27 @@
+# The gizmo at a fixed size on screen (Phase 1 of docs/plans/tile_ted_parity.md): the translate handles of a building on a new tile are
+# dragged at 60 and at 120 points (gizmo_drag aims at the handle's tip from the length the viewport drew it with). Run with WCE_TILE_WORKSPACE
+# set to a scratch folder; the size goes back to 60 at the end (it is kept in the settings).
+new_tile wce_gizmo_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 60 60
+frames 5
+tile_select BUILDING_INSTANCE
+focus
+cam 2.2 0.5 40 2
+gizmo translate
+frames 10
+gizmo_size
+assert_history 1 1
+cam_mark
+gizmo_drag z 50
+frames 4
+assert_history 2 2
+assert_cam_same
+gizmo_size 120
+frames 4
+gizmo_drag x -50
+frames 4
+assert_history 3 3
+assert_cam_same
+gizmo_size 60
+quit
