@@ -798,6 +798,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("spline_flip", "spline_flip", "reverse the selected river's or road's direction (one undo entry)", |e, _| {
+        let sel = primary(e);
+        let (Some(d), Some(sel)) = (document(e), sel) else { return fail("select a river or road") };
+        match d.flip_spline(sel) {
+            Ok(()) => ok(""),
+            Err(why) => fail(why),
+        }
+    });
+
     c.add("tint_freeform", "tint_freeform on|off", "the view filter that tints the freeform instances in the viewport", |e, a| {
         let Some(on) = a.first().map(|x| x == "on") else { return fail("usage: tint_freeform on|off") };
         let Some(d) = document(e) else { return no_tile() };

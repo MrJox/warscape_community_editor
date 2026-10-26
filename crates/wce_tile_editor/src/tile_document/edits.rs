@@ -891,6 +891,55 @@ impl TileDocument {
         }
     }
 
+    /// Reverses a spline's direction (a river's flow, a road's way): the points in the other order, each with its own values (`width`,
+    /// `foam_amount`, ...) and its `controlIn` and `controlOut` swapped. Only the points' attribute texts are permuted (no number is
+    /// computed again), so the spline stays exactly where it is and flipping twice gives the file's bytes back. The instance does not move:
+    /// the first point is no longer at its origin, as TEd puts it (a habit, not a rule: 10 of the kit's 132 rivers have it off zero; the
+    /// river files carry world positions). One undo entry. TEd has no such command (wce's).
+    ///
+    /// # Errors
+    ///
+    /// Not a spline, or fewer than 2 points.
+    pub fn flip_spline(&mut self, elem: usize) -> Result<(), String> {
+        if !self.is_spline(elem) {
+            return Err("not a spline".to_owned());
+        }
+
+        let sc = self.tile().tscene();
+        let elems = sc.polygon_points(elem);
+        let n = elems.len();
+        if n < 2 {
+            return Err("a spline needs at least 2 points".to_owned());
+        }
+
+        // Every point's attributes as written, the handles under each other's name.
+        let doc = sc.doc();
+        let texts = elems.iter().map(|&p| {
+            doc.elements()[p].attrs.iter().map(|a| {
+                let name = match a.name.as_str() {
+                    "controlIn" => "controlOut",
+                    "controlOut" => "controlIn",
+                    other => other,
+                };
+
+                (name.to_owned(), doc.get(p, &a.name).unwrap_or_default())
+            }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>();
+
+        let mark = self.begin()?;
+        let sc = self.tscene_mut();
+        for (i, &dst) in elems.iter().enumerate() {
+            for (k, v) in &texts[n - 1 - i] {
+                if sc.doc().get(dst, k).as_deref() != Some(v.as_str()) {
+                    sc.set_attr(dst, k, v);
+                }
+            }
+        }
+
+        self.push_splice("Flip spline".to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        Ok(())
+    }
+
     /// A value of spline points (`width`, `foam_amount`, `alpha_fade`, `flow_speed`, `terrain_offset`): one undo entry, the steps of one
     /// gesture merge.
     pub fn set_spline_value(&mut self, elem: usize, points: &[usize], attr: &str, value: &str, gesture: u64) -> bool {
