@@ -48,6 +48,19 @@ pub trait Inspector {
         let _ = marks;
     }
 
+    /// A tooltip for the next row (its label and its widget): what the property does. The ImGui inspector shows it on hover.
+    fn hint(&mut self, text: &str) {
+        let _ = text;
+    }
+
+    /// The next row's label is drawn dim: the value shown is a default the file does not hold (yet).
+    fn dim_next(&mut self) {}
+
+    /// The printf format of the next float row (`%.6g`: as the file writes it); the default is three decimals.
+    fn format_next(&mut self, format: &str) {
+        let _ = format;
+    }
+
     /// A button, greyed out when not `enabled`; true when it was clicked.
     fn button(&mut self, field: &str, label: &str, enabled: bool) -> bool {
         let _ = (field, label, enabled);

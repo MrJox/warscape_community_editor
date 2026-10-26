@@ -738,6 +738,16 @@ impl Tool for WeatherTool {
         true
     }
 
+    /// An environment or lighting file is inspected by effect (sun, fog, exposure, ...) whatever element is selected; the other files by the
+    /// selected element's attributes.
+    fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        let Some(d) = active_xml(e).filter(|d| d.is_environment()) else { return false };
+        gui::text_colored(theme::dim(), &d.title());
+        gui::text_colored(theme::dim(), "Hover a name for what it does. A dim name is not in the file yet: editing it adds it.");
+        d.inspect_environment(ins);
+        true
+    }
+
     fn activated(&mut self, e: &mut Editor) {
         let Some(vfs) = e.vfs().cloned() else { return };
         let go = read_graphics_options();

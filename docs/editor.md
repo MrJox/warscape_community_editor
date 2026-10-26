@@ -37,6 +37,8 @@ Opens `.environment`, `.lighting` and `.xml` (weather definitions, vfx) from the
 remove attribute) are snapshot commands. Save writes a loose file under the output folder (File > Set output folder, `output_dir`; the game's `data` folder is never touched), re-reads it as
 the new baseline and clears the history, so the saved bytes differ from the pack file in the edited spans only.
 
+The **Inspector** of an `.environment` / `.lighting` file groups its settings by effect (Sun, Ambient light, Sky, Fog, Exposure and tone mapping, Colour grading, Depth of field, Water, Wind and snow, Precipitation node, one Cloud layer per plane, then Other attributes), each with a tooltip (`wce_weather::environment_sections`, `Tool::inspect` of the weather tool; the Properties tab keeps the raw XML tree for everything else). A setting the file lacks shows dim at the value the viewport assumes (`EnvironmentParams::default`) and is added to its element (`Op::AddAttr`) when edited; a number the file writes as an integer stays one while it is whole. Attributes of these elements that no section lists, like the single `low_tones_bias` the battle game ignores, are under Other attributes. A missing element (a `.lighting` has no `SKYGEN`) is not added.
+
 | Old weather_editor feature (`docs/plans/weather_current_state.md`) | Where it is now |
 |---|---|
 | Files browser with filter and categories | **Files** panel (and the shared Assets panel, filtered to the tool's types) |
