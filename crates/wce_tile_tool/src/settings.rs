@@ -90,6 +90,9 @@ pub struct TileSettings {
 
     /// The mod pack "Save to mod pack" wrote last, by game key.
     pub mod_packs: BTreeMap<String, String>,
+
+    /// The ground coverage's last values.
+    pub ground_coverage: GroundCoverage,
 }
 
 /// Where Launch in game puts the tile.
@@ -159,6 +162,15 @@ impl LaunchArmy {
             tile_upgrades: self.tile_upgrades.trim().to_owned(),
         }
     }
+}
+
+/// The ground coverage's window (`ground_coverage_panel.rs`): its parameters (`Params::to_text`; empty: the defaults) and sets.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GroundCoverage {
+    pub params: String,
+    pub rocks: String,
+    pub plants: String,
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -257,6 +269,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default(), ground_coverage: GroundCoverage::default() }
     }
 }

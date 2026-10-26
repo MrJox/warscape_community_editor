@@ -1714,6 +1714,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("ground_coverage", "ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed]", "the ground coverage's window from a script: Preview (prints the summary, draws it) or Generate (replaces \"(AUTOGEN) Ground Coverage\" without asking)", |e, a| {
+        let (Some(what), Some(rocks), Some(plants)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
+            return fail("usage: ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed]");
+        };
+
+        let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
+        with_tile(e, |t, e| t.coverage_for_script(e, &what, &rocks, &plants, seed).map_or_else(fail, ok))
+    });
+
     c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: veg_set_save <name>") };
         with_tile(e, |t, e| {

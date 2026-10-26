@@ -17,7 +17,7 @@ use wce_tile::world_transform::{set_world_position, world_transform};
 use super::draft::{turned, with_root_attr};
 use super::edits::{point_instance, scene_point};
 use super::index::{destruct_number, static_piece};
-use super::{TileDocument, item_of};
+use super::TileDocument;
 
 /// The layer the coverage goes into.
 pub const COVERAGE_LAYER: &str = "(AUTOGEN) Ground Coverage";
@@ -132,7 +132,7 @@ impl TileDocument {
     }
 
     /// Puts a run's result into the coverage layer (made at the end of the scene graph when the tile has none), replacing what it held, and
-    /// keeps the settings on it. One undo entry; the selection afterwards is the layer.
+    /// keeps the settings on it. One undo entry; nothing is selected afterwards (the layer's outline would hide what is in it).
     ///
     /// # Errors
     ///
@@ -142,7 +142,7 @@ impl TileDocument {
         let root = self.tile().tscene().scene_graph().ok_or("this tile has no scene graph")?;
         let texts = self.coverage_texts(result)?;
         let mark = self.begin()?;
-        let outcome = (|| -> Result<(usize, CoverageCounts), String> {
+        let outcome = (|| -> Result<CoverageCounts, String> {
             let layer = match existing {
                 Some(l) => l,
                 None => self.tscene_mut().add_layer(Some(root), COVERAGE_LAYER)?,
@@ -186,12 +186,12 @@ impl TileDocument {
                 counts.exclusions += polygons.len();
             }
 
-            Ok((layer, counts))
+            Ok(counts)
         })();
 
         match outcome {
-            Ok((layer, counts)) => {
-                self.push_splice("Generate ground coverage".to_owned(), mark, vec![], vec![item_of(layer)]);
+            Ok(counts) => {
+                self.push_splice("Generate ground coverage".to_owned(), mark, vec![], vec![]);
                 Ok(counts)
             }
 
