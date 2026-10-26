@@ -798,6 +798,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("river_check", "river_check", "the rivers against the tile's river link targets: what does not join (logged, one line each)", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        let p = d.river_link_problems();
+        ok(if p.is_empty() { "the rivers meet their link targets".to_owned() } else { p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("\n") })
+    });
+
+    c.add("assert_river_problems", "assert_river_problems <count>", "test: how many river link problems the tile has", |e, a| {
+        let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| x.parse::<usize>().ok())) else { return fail("usage: assert_river_problems <count>") };
+        let p = d.river_link_problems();
+        if p.len() == n { ok("") } else { fail(format!("{} problem(s): {}", p.len(), p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("; "))) }
+    });
+
+    c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        match d.snap_river_ends() {
+            Ok(n) => ok(format!("{n} end(s) moved")),
+            Err(why) => fail(why),
+        }
+    });
+
     c.add("spline_flip", "spline_flip", "reverse the selected river's or road's direction (one undo entry)", |e, _| {
         let sel = primary(e);
         let (Some(d), Some(sel)) = (document(e), sel) else { return fail("select a river or road") };

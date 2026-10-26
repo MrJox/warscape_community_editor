@@ -1,0 +1,19 @@
+# Rivers against the link targets (Phase 4c of docs/plans/tile_ted_parity.md): %TILE% is a kit river tile (river/2x2_tl_rt/aa), whose rivers
+# meet their targets; an end dragged off its cell's centre is reported, snapped back (both ends to the cells' centres), and undone.
+# Run with WCE_TILE_WORKSPACE set to a scratch folder.
+tile "%TILE%"
+frames 3
+river_check
+assert_river_problems 0
+tile_select SplineRiverInstance
+frames 2
+tile_drag_point 0 261.8 85
+frames 2
+river_check
+assert_river_problems 1
+river_snap
+assert_river_problems 0
+river_check
+undo
+assert_river_problems 1
+quit
