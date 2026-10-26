@@ -92,9 +92,12 @@ decompiled, the others noted as lost.
 (`_tile_database/<set>.xml`, `_settings.xml` when a texture group was added) into the pack, replacing the pack's files of the folder.
 
 - Stage A (the logic, markers, building lists): compiled from the project.
-- Stage B (BOB's terrain files): carried while their inputs are unchanged. Made again, the textures and water work; the terrain needs
-  the linking tiles' final heights and the buildings' raw height-map meshes, which no Rome 2 kit has: noted, the packs' files stay
-  (a mod pack replaces files, so the tile keeps the game's terrain files).
+- Stage B (BOB's terrain files): carried while their inputs are unchanged, made again otherwise with the Attila port. Its inputs: the
+  workspace's settings, and the linking tiles the project links to, decompiled from the packs into the workspace (unmarked, as a kit's)
+  with their `final_heights.dds` (their height maps without links) the first time a save needs them (`workflow::provide_linking_tiles`).
+  Rome 2's `battlefield_buildings` has no `height_map_mesh`: no building stamps its height into `hf_height_map.data`. No `tile.agf`
+  (`TileConventions::not_shipped`). Known difference: the shipped meshes are decimated less than the port's (roman_city_a/small: 74,719
+  vertices in the game's mesh, 22,590 in ours, from the same `CONVERSION_PARAMS`); no Rome 2 BOB to check against.
 - Stage C (vegetation): Rome 2 has no vegetation parameters: the lists are written as decompiled, noted when the project changed.
 
 ## Checks

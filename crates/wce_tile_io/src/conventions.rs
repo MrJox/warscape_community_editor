@@ -31,6 +31,9 @@ pub struct TileConventions {
     /// The version of the building lists the game's TEd writes.
     pub building_list_version: i64,
 
+    /// The files of BOB's processors the game's tiles have none of (Rome 2's have no `tile.agf`): the compile does not write them.
+    pub not_shipped: &'static [&'static str],
+
     /// The building list versions the game's TEd wrote, first and last (the others are legacy lists, carried as files).
     pub building_list_versions: (i64, i64),
 }
@@ -51,6 +54,7 @@ impl TileConventions {
             ("ai_separator_marker.markers", 1), ("ai_hint_polyline_list_marker.markers", 1),
         ],
         building_list_version: 12,
+        not_shipped: &[],
         building_list_versions: (12, 12),
     };
 
@@ -63,6 +67,7 @@ impl TileConventions {
             ("ai_separator_marker.markers", 1), ("ai_hint_polyline_list_marker.markers", 1),
         ],
         building_list_version: 12,
+        not_shipped: &["tile.agf"],
         building_list_versions: (10, 12),
     };
 
