@@ -421,7 +421,7 @@ fn raise(project: &mut TileProject, at: [f64; 2], radius: f64, metres: f64) -> R
     }).collect::<Vec<_>>();
 
     let (x, z) = (at[0] / unit, at[1] / unit);
-    let brush = Brush { cx: project.pixel_x(x), cy: project.pixel_z(z), radius: radius / unit / project.mpp_x(), strength: 1.0, falloff: 1.0 };
+    let brush = Brush { cx: project.pixel_x(x), cy: project.pixel_z(z), radius: radius / unit / project.mpp_x(), strength: 1.0, falloff: 1.0, curve: None };
     let field = project.height.as_mut().ok_or("the tile has no height map")?;
     field.begin_edit()?;
     field.raise(&brush, metres)?;

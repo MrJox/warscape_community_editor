@@ -701,6 +701,39 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("brush_curve", "brush_curve off | on | <preset> | <distance,weight>...", "the brushes' falloff curve: off (the falloff slider), on, a preset (smooth, linear, plateau, spike, hard) or its points", |e, a| {
+        let Some(first) = a.first() else { return fail("usage: brush_curve off | on | <preset> | <distance,weight>...") };
+        with_tile(e, |t, e| {
+            let mut c = t.brush_curve(e);
+            match first.as_str() {
+                "off" => c.on = false,
+                "on" => c.on = true,
+                name => {
+                    if let Some((_, points)) = wce_tile::falloff::PRESETS.iter().find(|(n, _)| *n == name) {
+                        c.points = points.to_vec();
+                    } else {
+                        let parsed = a.iter().map(|p| p.split_once(',').and_then(|(x, y)| Some([number(x)?, number(y)?]))).collect::<Option<Vec<_>>>();
+                        let Some(points) = parsed else { return fail(format!("not a preset or points: {}", a.join(" "))) };
+                        c.points = wce_tile::falloff::FalloffCurve::from_points(&points).points;
+                    }
+
+                    c.on = true;
+                }
+            }
+
+            t.set_brush_curve(e, c, true);
+            ok("")
+        })
+    });
+
+    c.add("falloff_window", "falloff_window 0|1", "close or open the Brush Falloff window", |e, a| {
+        let on = a.first().is_some_and(|x| x == "1");
+        with_tile(e, |t, _| {
+            t.falloff_open = on;
+            ok("")
+        })
+    });
+
     c.add("paint_ground_type", "paint_ground_type <ground type | none> <x m> <z m> <steps>", "a ground types stroke at a point of the tile with the brush's radius (one undo entry; a name with spaces in quotes)", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();

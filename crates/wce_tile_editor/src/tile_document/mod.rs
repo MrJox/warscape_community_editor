@@ -45,6 +45,7 @@ use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, LfMap, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
 use wce_tile::building_db::BuildingDb;
+use wce_tile::falloff::FalloffLut;
 use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::WorldTransform;
 use wce_vfs::files::Files;
@@ -91,11 +92,14 @@ pub struct BrushSettings {
 
     /// The paint brushes' strength, 0..1: at 1 a second of painting lays 98 % of the paint under the brush's middle.
     pub opacity: f32,
+
+    /// A falloff curve instead of `falloff` (the height and paint brushes).
+    pub curve: Option<FalloffLut>,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5 }
+        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None }
     }
 }
 

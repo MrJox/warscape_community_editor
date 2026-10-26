@@ -7,6 +7,8 @@
 
 use wce_formats::png_file::PngFile;
 
+use crate::falloff::FalloffLut;
+
 pub type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,6 +25,9 @@ pub struct Brush {
 
     /// 0 = hard edge, 1 = smooth bell over the whole radius.
     pub falloff: f64,
+
+    /// A falloff curve instead of `falloff` (the Brush Falloff editor).
+    pub curve: Option<FalloffLut>,
 }
 
 impl Brush {
@@ -33,6 +38,10 @@ impl Brush {
             return 0.0;
         }
 
+        if let Some(c) = &self.curve {
+            return self.strength * c.at(d);
+        }
+
         // Hard edge at falloff 0, cosine bell at falloff 1.
         let bell = 0.5 * (1.0 + (d * std::f64::consts::PI).cos());
         self.strength * (self.falloff * bell + (1.0 - self.falloff))
@@ -41,7 +50,7 @@ impl Brush {
 
 impl Default for Brush {
     fn default() -> Self {
-        Self { cx: 0.0, cy: 0.0, radius: 8.0, strength: 1.0, falloff: 0.5 }
+        Self { cx: 0.0, cy: 0.0, radius: 8.0, strength: 1.0, falloff: 0.5, curve: None }
     }
 }
 

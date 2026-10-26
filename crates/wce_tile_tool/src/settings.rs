@@ -67,6 +67,9 @@ pub struct TileSettings {
     /// The vegetation brush.
     pub veg_brush: VegBrush,
 
+    /// The height and paint brushes' falloff curve (the Brush Falloff window).
+    pub brush_curve: BrushCurve,
+
     /// rpfm's Attila schema (a `schema_att.ron`), for the procedural walls' database rows; none: rpfm's own (`WCE_RPFM_SCHEMA` wins).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpfm_schema: Option<PathBuf>,
@@ -184,6 +187,20 @@ impl Default for VegBrush {
     }
 }
 
+/// The brushes' falloff curve: whether it replaces the falloff slider, and its points (distance from the centre, weight; both 0..1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrushCurve {
+    pub on: bool,
+    pub points: Vec<[f32; 2]>,
+}
+
+impl Default for BrushCurve {
+    fn default() -> Self {
+        Self { on: false, points: wce_tile::falloff::FalloffCurve::default().points }
+    }
+}
+
 /// The weather a tile is lit with and the filters of its list.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -197,6 +214,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), rpfm_schema: None, launch: LaunchSettings::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), rpfm_schema: None, launch: LaunchSettings::default() }
     }
 }

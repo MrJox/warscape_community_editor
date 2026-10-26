@@ -9,6 +9,7 @@ pub mod create_panel;
 pub mod context_panel;
 pub mod entity_types;
 pub mod extract_prompt;
+mod falloff_editor;
 pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;

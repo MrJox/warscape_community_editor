@@ -145,3 +145,11 @@ have `.PNG`). `TileProject::ground` / `load_ground` / `ground_dirty`, written by
 Inspector: radius and the type, "none" or Ctrl erase) switches the view to TEd's ground types view while it is active, the look before
 coming back after. The debug views read the maps in memory: the ground types view is baked again at every step of a stroke, the blend
 groups view when a paint stroke ends. Commands `tile_mode ground`, `paint_ground_type`, `assert_ground_type`; in `scripts/tile_paint.txt`.
+
+**Done (step 3, the falloff curve editor):** `wce_tile::falloff` (a curve through points, distance from the centre -> weight, monotone
+cubic so that it never overshoots between them; five presets; sampled into a 65-entry `FalloffLut` that `Brush::weight` reads instead of
+the falloff slider, so brushes stay `Copy`). The height and paint brushes use it (the ground types brush stays hard). The Brush Falloff
+window (`falloff_editor.rs`; TEd's Brush Falloff Editor, wce's own curve): drag a point, double-click adds one, right-click takes one
+away, the presets; opened from the brush's Inspector (a "falloff curve" switch and "Edit the curve..."); kept in `[tools.tile]
+brush_curve` (written when a drag ends). Commands `brush_curve off | on | <preset> | <distance,weight>...`, `falloff_window 0|1`;
+`scripts/tile_falloff.txt` (the hard and linear curves' heights at 0.8 of the radius).

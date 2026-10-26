@@ -4,6 +4,7 @@
 pub mod battle_map;
 pub mod blend_field;
 pub mod building_db;
+pub mod falloff;
 pub mod ground_type_field;
 pub mod ground_types;
 pub mod height_field;

@@ -186,7 +186,7 @@ impl Tile {
             self.stroke_open = true;
         }
 
-        let mut b = Brush { cx, cy, radius: (f64::from(s.radius_m) / mpp).max(1.0), falloff: f64::from(s.falloff), ..Default::default() };
+        let mut b = Brush { cx, cy, radius: (f64::from(s.radius_m) / mpp).max(1.0), falloff: f64::from(s.falloff), curve: s.curve, ..Default::default() };
         let dt = dt.min(0.05);
         let soft = (f64::from(s.strength) * f64::from(dt) * 0.5).min(1.0);
         let _ = match kind {
@@ -261,7 +261,7 @@ impl Tile {
         let amount = (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0);
         let brush = Brush {
             cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(1.0), strength: amount,
-            falloff: f64::from(s.falloff),
+            falloff: f64::from(s.falloff), curve: s.curve,
         };
 
         let _ = blend.paint(&brush, channel);
