@@ -488,7 +488,7 @@ impl TileTool {
             return;
         }
 
-        if gui::menu_item(&one("New vegetation set from the selected trees...", icons::TREES), None, false, self.trees_selected(e)) {
+        if gui::menu_item(&one("New set from the selected trees or buildings...", icons::TREES), None, false, self.set_keys_selected(e)) {
             self.request_new_vegetation_set();
         }
 

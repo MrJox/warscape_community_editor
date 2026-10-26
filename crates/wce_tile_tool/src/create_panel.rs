@@ -14,6 +14,8 @@ use wce_foundation::math::{Float3, rotation_y, translation};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::{Create, Draft, turned};
 
+use wce_tile::vegetation_sets::SetKind;
+
 use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
 use crate::tool::{SetInUse, TileTool, document, primary};
 
@@ -38,6 +40,14 @@ const WALL: (usize, &str, bool) = (9, wce_tile_editor::tile_document::WALL_SPLIN
 
 /// The keyed types of the first categories.
 const KEYED: [(usize, &str); 5] = [(0, "BUILDING_INSTANCE"), (1, "VEGETATION_INSTANCE"), (2, "ProjectedDecalInstance"), (3, "SIMPLE_MESH_INSTANCE"), (4, "VFXInstance")];
+
+/// The category a set is listed in: Vegetation, or Buildings for a set of buildings.
+fn set_category(kind: SetKind) -> usize {
+    match kind {
+        SetKind::Vegetation => 1,
+        SetKind::Building => 0,
+    }
+}
 
 /// What an entry makes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,9 +76,9 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// The new vegetation set (not saved) as an entry, to place or paint with it.
-    pub fn new_set_entry() -> Self {
-        Self { category: 1, label: "new vegetation set".to_owned(), make: Make::VegSet { name: String::new() }, search: String::new() }
+    /// The new set (not saved) as an entry, to place or paint with it.
+    pub fn new_set_entry(kind: SetKind) -> Self {
+        Self { category: set_category(kind), label: "new set".to_owned(), make: Make::VegSet { name: String::new() }, search: String::new() }
     }
 
     /// Its id in the favourites and the recent entries.
@@ -169,11 +179,12 @@ impl TileTool {
             Entry { category, label, make, search }
         };
 
-        // The vegetation sets, at the top of the vegetation.
+        // The sets, at the top of the vegetation (or of the buildings, a set of buildings).
         for set in self.vegetation_sets(e).iter() {
             let label = if set.folder.is_empty() { format!("set: {}", set.name) } else { format!("set: {}   {}", set.name, set.folder) };
             let keys = set.entries.iter().map(|en| en.key.as_str()).collect::<Vec<_>>().join(" ");
-            out.push(entry(1, label, Make::VegSet { name: set.name.clone() }, &format!("vegetation set {keys}")));
+            let what = if set.kind == SetKind::Building { "building" } else { "vegetation" };
+            out.push(entry(set_category(set.kind), label, Make::VegSet { name: set.name.clone() }, &format!("{what} set {keys}")));
         }
 
         for (category, kind) in KEYED {
@@ -253,12 +264,12 @@ impl TileTool {
                 // No name: the new set, not saved yet.
                 let set = if name.is_empty() { self.scratch_set.clone() } else { self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned() };
                 let Some(set) = set.filter(|s| !s.entries.is_empty()) else {
-                    self.status = format!("the vegetation set {name} has no trees");
+                    self.status = format!("the set {name} is empty");
                     self.making = None;
                     return;
                 };
 
-                let kind = "VEGETATION_INSTANCE";
+                let kind = set.kind.instance_type();
                 let mut d = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
                 d.key = set.pick(self.random.unit()).map(|en| en.key.clone()).unwrap_or_default();
                 self.draft = Some(d);
@@ -454,7 +465,7 @@ impl TileTool {
         if let Some(set) = &set {
             let draft = self.draft.as_mut().ok_or("nothing to place")?;
             if !set.entries.iter().any(|en| en.key == draft.key) {
-                draft.key = set.pick(self.random.unit()).map(|en| en.key.clone()).ok_or("the vegetation set has no trees")?;
+                draft.key = set.pick(self.random.unit()).map(|en| en.key.clone()).ok_or("the set is empty")?;
             }
         }
 
@@ -712,7 +723,7 @@ impl TileTool {
         }
 
         // A set from the selected trees.
-        if self.trees_selected(e) && gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
+        if self.set_keys_selected(e) && gui::small_button(&format!("{}  New set from the selected trees or buildings", icons::TREES)) {
             self.request_new_vegetation_set();
         }
 
@@ -856,8 +867,8 @@ impl TileTool {
     /// popup or take the keyboard from the search.
     fn make_or_add(&mut self, e: &mut Editor, en: &Entry, keep_focus: bool) {
         match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
-            Some(keys) => {
-                self.add_to_new_set(e, &keys);
+            Some((kind, keys)) => {
+                self.add_to_new_set(e, kind, &keys);
                 e.pending_focus = (!keep_focus).then(|| "Inspector".to_owned());
             }
 
@@ -865,11 +876,14 @@ impl TileTool {
         }
     }
 
-    /// What an entry adds to the new vegetation set: a tree, or a set's trees; `None` for anything else.
-    fn set_entries_of(&mut self, e: &mut Editor, en: &Entry) -> Option<Vec<wce_tile::vegetation_sets::SetEntry>> {
+    /// What an entry adds to the new set: a tree or a building, or a set's; `None` for anything else.
+    fn set_entries_of(&mut self, e: &mut Editor, en: &Entry) -> Option<(SetKind, Vec<wce_tile::vegetation_sets::SetEntry>)> {
         match &en.make {
-            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
-            Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
+            Make::Place { kind, key } if !key.is_empty() => {
+                SetKind::of_type(kind).map(|k| (k, vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]))
+            }
+
+            Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| (s.kind, s.entries.clone())),
             _ => None,
         }
     }
@@ -1005,11 +1019,11 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
 
 /// Places or paints a vegetation set from a script, as its Create panel entry does.
 pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Result<(), String> {
-    if !t.vegetation_sets(e).iter().any(|s| s.name == name) {
+    let Some(kind) = t.vegetation_sets(e).iter().find(|s| s.name == name).map(|s| s.kind) else {
         return Err(format!("no vegetation set '{name}'"));
-    }
+    };
 
-    let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, search: String::new() };
+    let en = Entry { category: set_category(kind), label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, search: String::new() };
     t.start_making(e, &en);
     Ok(())
 }

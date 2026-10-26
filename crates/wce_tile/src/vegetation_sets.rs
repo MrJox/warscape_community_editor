@@ -8,6 +8,8 @@
 //!     <entry key="birch.birch_b" weight="1" scale_min="0.8" scale_max="1.1"/>
 //! </VEGETATION_SET>
 //! ```
+//!
+//! A set of buildings (rocks, for the ground coverage) is the same file with `kind="building"` on the root; without it, a set is of trees.
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +25,48 @@ pub struct SetEntry {
     pub scale: Option<(f32, f32)>,
 }
 
-/// A set: its name (the file's), the folder below `vegetation_sets` it is in, its file and its trees.
+/// What a set's keys are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SetKind {
+    #[default]
+    Vegetation,
+    Building,
+}
+
+impl SetKind {
+    /// The kind of a set of keys of this instance type.
+    pub fn of_type(kind: &str) -> Option<Self> {
+        match kind {
+            "VEGETATION_INSTANCE" => Some(Self::Vegetation),
+            "BUILDING_INSTANCE" => Some(Self::Building),
+            _ => None,
+        }
+    }
+
+    /// The instance type its keys are placed as.
+    pub fn instance_type(self) -> &'static str {
+        match self {
+            Self::Vegetation => "VEGETATION_INSTANCE",
+            Self::Building => "BUILDING_INSTANCE",
+        }
+    }
+
+    /// What it holds, for the messages ("trees", "buildings").
+    pub fn things(self) -> &'static str {
+        match self {
+            Self::Vegetation => "trees",
+            Self::Building => "buildings",
+        }
+    }
+}
+
+/// A set: its name (the file's), the folder below `vegetation_sets` it is in, its file, what its keys are and its entries.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VegetationSet {
     pub name: String,
     pub folder: String,
     pub path: PathBuf,
+    pub kind: SetKind,
     pub entries: Vec<SetEntry>,
 }
 
@@ -81,6 +119,7 @@ impl VegetationSet {
             return Err(format!("{}: not a vegetation set", path.display()));
         }
 
+        let kind = if doc.get(0, "kind").is_some_and(|k| k == "building") { SetKind::Building } else { SetKind::Vegetation };
         let num = |e: usize, n: &str| doc.get(e, n).and_then(|v| v.trim().parse::<f32>().ok());
         let entries = (0..els.len()).filter(|&e| els[e].name == "entry").filter_map(|e| {
             let key = doc.get(e, "key").filter(|k| !k.is_empty())?;
@@ -88,12 +127,13 @@ impl VegetationSet {
             Some(SetEntry { key, weight: num(e, "weight").unwrap_or(1.0), scale })
         }).collect();
 
-        Ok(Self { name: name_of(path), folder: folder_of(path, root), path: path.to_path_buf(), entries })
+        Ok(Self { name: name_of(path), folder: folder_of(path, root), path: path.to_path_buf(), kind, entries })
     }
 
     /// The file's text.
     pub fn text(&self) -> Vec<u8> {
-        let mut out = format!("<VEGETATION_SET {}=\"{}\">\n", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
+        let kind = if self.kind == SetKind::Building { " kind=\"building\"" } else { "" };
+        let mut out = format!("<VEGETATION_SET {}=\"{}\"{kind}>\n", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
         for e in &self.entries {
             out += &format!("    <entry key=\"{}\" weight=\"{}\"", e.key, crate::ted_scene::format_number(f64::from(e.weight)));
             if let Some((lo, hi)) = e.scale {
@@ -173,5 +213,18 @@ mod tests {
         assert_eq!(back.pick(0.0).unwrap().key, "oak.oak_a");
         assert_eq!(back.pick(0.74).unwrap().key, "oak.oak_a");
         assert_eq!(back.pick(0.76).unwrap().key, "oak.oak_b");
+        assert_eq!(back.kind, SetKind::Vegetation, "no kind on the root: trees");
+    }
+
+    #[test]
+    fn a_set_of_buildings_keeps_its_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = sets_root(dir.path());
+        let mut set = VegetationSet::from_keys("rocks", ["gaul_rock_01", "gaul_rock_02"]);
+        set.kind = SetKind::Building;
+        set.path = root.join("rocks.wce");
+        set.save().unwrap();
+        assert!(String::from_utf8(set.text()).unwrap().starts_with("<VEGETATION_SET wce_version=\"1\" kind=\"building\">"));
+        assert_eq!(scan(&root)[0].kind, SetKind::Building);
     }
 }

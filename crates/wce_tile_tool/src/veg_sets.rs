@@ -1,13 +1,14 @@
 //! The vegetation sets in the Tile tool (`wce_tile::vegetation_sets`): read from the projects' `raw_data/art/vegetation_sets`, placed and
 //! painted from the Create panel (a key picked by the weights for each tree), made from the selected trees or from scratch (Ctrl + click on
 //! trees: the new set, not saved), and edited in the Inspector while one is in use (a saved one is saved at once). What is placed points to
-//! the set (`SetInUse`), read again for every tree.
+//! the set (`SetInUse`), read again for every tree. A set can be of buildings instead (rocks, for the ground coverage): made the same way
+//! from buildings, placed (not painted) from the Buildings category.
 
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
-use wce_tile::vegetation_sets::{SetEntry, VegetationSet, scan, sets_root};
+use wce_tile::vegetation_sets::{SetEntry, SetKind, VegetationSet, scan, sets_root};
 
 use crate::tool::{SetInUse, TileTool, document, selected};
 
@@ -42,35 +43,49 @@ impl TileTool {
         self.veg_sets_version += 1;
     }
 
-    /// The keys of the selected trees (in the selected groups and layers too), once per tree.
-    fn selected_tree_keys(&self, e: &mut Editor) -> Vec<String> {
+    /// The keys of the selected trees and buildings (in the selected groups and layers too), once per instance.
+    fn selected_set_keys(&self, e: &mut Editor) -> (Vec<String>, Vec<String>) {
         let sel = selected(e);
-        let Some(d) = document(e) else { return vec![] };
+        let Some(d) = document(e) else { return (vec![], vec![]) };
         let sc = d.tile().tscene();
-        d.tile().instances_below(&sel).into_iter().filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE").filter_map(|el| sc.doc().get(el, "key")).collect()
+        let (mut trees, mut buildings) = (vec![], vec![]);
+        for el in d.tile().instances_below(&sel) {
+            let into = match SetKind::of_type(sc.type_of(el)) {
+                Some(SetKind::Vegetation) => &mut trees,
+                Some(SetKind::Building) => &mut buildings,
+                None => continue,
+            };
+
+            into.extend(sc.doc().get(el, "key").filter(|k| !k.is_empty()));
+        }
+
+        (trees, buildings)
     }
 
-    /// A new set from the selected trees (each key weighted by how many there are), in the projects' sets.
+    /// A new set from the selected trees, or the selected buildings (each key weighted by how many there are), in the projects' sets.
     ///
     /// # Errors
     ///
-    /// No name, no tree selected, a set of that name already, or the file can't be written.
+    /// No name, no tree or building selected (or both), a set of that name already, or the file can't be written.
     pub fn new_vegetation_set(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
         let name = set_file_name(name)?;
         if self.vegetation_sets(e).iter().any(|s| s.name.eq_ignore_ascii_case(name)) {
             return Err(format!("a vegetation set '{name}' already exists"));
         }
 
-        let keys = self.selected_tree_keys(e);
-        if keys.is_empty() {
-            return Err("select some trees first".to_owned());
-        }
+        let (kind, keys) = match self.selected_set_keys(e) {
+            (t, b) if t.is_empty() && b.is_empty() => return Err("select some trees or buildings first".to_owned()),
+            (t, b) if !t.is_empty() && !b.is_empty() => return Err("a set is of trees or of buildings: select only one of them".to_owned()),
+            (t, b) if b.is_empty() => (SetKind::Vegetation, t),
+            (_, b) => (SetKind::Building, b),
+        };
 
         let mut set = VegetationSet::from_keys(name, keys.iter().map(String::as_str));
+        set.kind = kind;
         set.path = Self::sets_folder(e).join(format!("{name}.wce"));
         set.save()?;
         self.rescan_vegetation_sets();
-        Ok(format!("vegetation set {name}: {} kind(s) of tree from {} tree(s) ({})", set.entries.len(), keys.len(), set.path.display()))
+        Ok(format!("set {name}: {} kind(s) of {} from {} instance(s) ({})", set.entries.len(), kind.things(), keys.len(), set.path.display()))
     }
 
     /// Asks for the name of a new set from the selected trees (the dialog opens on the next frame).
@@ -79,9 +94,10 @@ impl TileTool {
         self.new_set_open = true;
     }
 
-    /// Whether some trees are selected (the "New vegetation set" action).
-    pub(crate) fn trees_selected(&self, e: &mut Editor) -> bool {
-        !self.selected_tree_keys(e).is_empty()
+    /// Whether some trees or buildings are selected (the "New vegetation set" action).
+    pub(crate) fn set_keys_selected(&self, e: &mut Editor) -> bool {
+        let (t, b) = self.selected_set_keys(e);
+        !t.is_empty() || !b.is_empty()
     }
 
     /// The "New vegetation set" dialog.
@@ -100,7 +116,7 @@ impl TileTool {
             return;
         };
 
-        gui::text_wrapped("A set of the selected trees (each kind weighted by how many there are), saved in the projects' vegetation sets.");
+        gui::text_wrapped("A set of the selected trees, or buildings (each kind weighted by how many there are), saved in the projects' vegetation sets.");
         gui::set_next_item_width(320.0);
         let enter = gui::input_text("Name", Some("the set's file name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
         self.new_set_name = Some(name.clone());
@@ -128,7 +144,7 @@ impl TileTool {
 
         let Some(mut set) = self.set_in_use(e) else { return };
         let before = set.clone();
-        if begin_set_box("##savedset", &format!("Vegetation set {}", set.name), "saved at once") {
+        if begin_set_box("##savedset", &format!("{} set {}", kind_title(set.kind), set.name), "saved at once", set.kind) {
             set_rows(&mut set);
         }
 
@@ -143,10 +159,17 @@ impl TileTool {
         }
     }
 
-    /// Adds trees to the new set (Ctrl + click in the Create panel): a key, or every tree of a set; one there already weighs one more. Then
-    /// places or paints with it, if that is not being done already.
-    pub(crate) fn add_to_new_set(&mut self, e: &mut Editor, keys: &[SetEntry]) {
-        let set = self.scratch_set.get_or_insert_with(VegetationSet::default);
+    /// Adds trees (or buildings) to the new set (Ctrl + click in the Create panel): a key, or every one of a set; one there already weighs
+    /// one more. Then places or paints with it, if that is not being done already. A new set holds one kind: the other is refused.
+    pub(crate) fn add_to_new_set(&mut self, e: &mut Editor, kind: SetKind, keys: &[SetEntry]) {
+        let set = self.scratch_set.get_or_insert_with(|| VegetationSet { kind, ..Default::default() });
+        if set.entries.is_empty() {
+            set.kind = kind;
+        } else if set.kind != kind {
+            self.status = format!("the new set is of {}: save or discard it before making one of {}", set.kind.things(), kind.things());
+            return;
+        }
+
         for k in keys {
             match set.entries.iter_mut().find(|en| en.key == k.key) {
                 Some(en) => en.weight += k.weight,
@@ -159,14 +182,14 @@ impl TileTool {
             self.start_new_set(e);
         }
 
-        self.status = format!("the new vegetation set has {kinds} kind(s) of tree (the Inspector); click the terrain to place, Esc stops");
+        self.status = format!("the new set has {kinds} kind(s) of {} (the Inspector); click the terrain to place, Esc stops", kind.things());
     }
 
     /// The new set (not saved), in its box at the top of the Inspector: its trees, a name to save it with, placing with it, dropping it.
     pub(crate) fn inspect_new_set(&mut self, e: &mut Editor) {
         let Some(mut set) = self.scratch_set.clone() else { return };
         let (mut save, mut use_it, mut drop) = (false, false, false);
-        if begin_set_box("##newset", "New vegetation set", "not saved") {
+        if begin_set_box("##newset", &format!("New {} set", kind_title(set.kind).to_lowercase()), "not saved", set.kind) {
             set_rows(&mut set);
             gui::spacing();
             let mut name = std::mem::take(&mut self.scratch_name);
@@ -215,7 +238,7 @@ impl TileTool {
     /// No name or trees, a set of that name already, or the file can't be written.
     pub fn save_new_set(&mut self, e: &mut Editor) -> Result<String, String> {
         let name = set_file_name(&self.scratch_name)?.to_owned();
-        let mut set = self.scratch_set.clone().filter(|s| !s.entries.is_empty()).ok_or("the new set has no trees")?;
+        let mut set = self.scratch_set.clone().filter(|s| !s.entries.is_empty()).ok_or("the new set is empty")?;
         if self.vegetation_sets(e).iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
             return Err(format!("a vegetation set '{name}' already exists"));
         }
@@ -230,12 +253,13 @@ impl TileTool {
             self.veg_set = Some(SetInUse::Saved(name.clone()));
         }
 
-        Ok(format!("vegetation set {name} saved ({})", set.path.display()))
+        Ok(format!("set {name} saved ({})", set.path.display()))
     }
 
     /// Places or paints with the new set (not saved).
     pub(crate) fn start_new_set(&mut self, e: &mut Editor) {
-        let en = crate::create_panel::Entry::new_set_entry();
+        let kind = self.scratch_set.as_ref().map(|s| s.kind).unwrap_or_default();
+        let en = crate::create_panel::Entry::new_set_entry(kind);
         self.start_making(e, &en);
     }
 }
@@ -255,13 +279,22 @@ fn set_file_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+/// "Vegetation" or "Building", for a set's titles.
+fn kind_title(kind: SetKind) -> &'static str {
+    match kind {
+        SetKind::Vegetation => "Vegetation",
+        SetKind::Building => "Building",
+    }
+}
+
 /// A set's box in the Inspector: framed, so that it reads as one thing (not more of the Inspector's sections), with its title and a note.
-fn begin_set_box(id: &str, title: &str, note: &str) -> bool {
+fn begin_set_box(id: &str, title: &str, note: &str, kind: SetKind) -> bool {
     gui::push_style_color(gui::COL_CHILD_BG, gui::v4(1.0, 1.0, 1.0, 0.035));
     let open = gui::begin_child(id, gui::v2(0.0, 0.0), gui::CHILD_BORDERS | gui::CHILD_AUTO_RESIZE_Y, 0);
     gui::pop_style_color(1);
     if open {
-        gui::text_colored(theme::palette().highlight, &format!("{}  {title}", icons::TREES));
+        let icon = if kind == SetKind::Building { icons::MOUNTAIN } else { icons::TREES };
+        gui::text_colored(theme::palette().highlight, &format!("{icon}  {title}"));
         gui::same_line();
         gui::text_disabled(&format!("({note})"));
     }
@@ -336,6 +369,7 @@ fn set_rows(set: &mut VegetationSet) {
     }
 
     gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
-    gui::text_wrapped("Ctrl + click or Ctrl + Enter on a tree in Create or Shift+A adds it here.");
+    let what = if set.kind == SetKind::Building { "a building" } else { "a tree" };
+    gui::text_wrapped(&format!("Ctrl + click or Ctrl + Enter on {what} in Create or Shift+A adds it here."));
     gui::pop_style_color(1);
 }
