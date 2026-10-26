@@ -402,7 +402,7 @@ mod tests {
         // Below the flat map's range and far above it: the range follows.
         let hf = p.height.as_mut().unwrap();
         hf.begin_edit().unwrap();
-        let b = crate::height_field::Brush { cx: 40.0, cy: 40.0, radius: 6.0, strength: 1.0, falloff: 0.0, curve: None };
+        let b = crate::height_field::Brush { cx: 40.0, cy: 40.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() };
         hf.raise(&b, 120.0).unwrap();
         hf.raise(&crate::height_field::Brush { cx: 90.0, ..b }, -15.0).unwrap();
         hf.end_edit();

@@ -448,7 +448,7 @@ fn main() {
                     let steps = 1 + r.next() % 4;
                     for _ in 0..steps {
                         let (x, z, dt) = (r.f(0.0, 250.0), r.f(0.0, 250.0), r.f(0.005, 0.08));
-                        d.brush_step(kind, x, z, s, dt);
+                        d.brush_step(kind, x, z, s.clone(), dt);
                     }
 
                     if r.next() % 3 != 0 {

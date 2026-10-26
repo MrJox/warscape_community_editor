@@ -280,8 +280,8 @@ mod tests {
         let original = std::fs::read(tmp.path().join("a.tif")).unwrap();
 
         f.begin_edit().unwrap();
-        f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, curve: None }, 6).unwrap();
-        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, curve: None }, 15).unwrap();
+        f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, ..Default::default() }, 6).unwrap();
+        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15).unwrap();
         f.end_edit();
         assert!(f.pixel(63, 64)[6] > 0 && f.pixel(149, 0)[15] == FULL);
         assert_eq!(f.take_changed(), Some((55, 0, 150, 70)));

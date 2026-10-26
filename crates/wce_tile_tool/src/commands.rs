@@ -675,7 +675,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             }
 
             for _ in 0..n as i32 {
-                d.brush_step(kind, x, z, t.brush, 1.0 / 60.0);
+                d.brush_step(kind, x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
             d.end_stroke();
@@ -693,7 +693,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let d = document(e).expect("a tile");
             let kind = BrushKind::Paint((g as u8) * 4 + v as u8);
             for _ in 0..n as i32 {
-                d.brush_step(kind, x, z, t.brush, 1.0 / 60.0);
+                d.brush_step(kind, x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
             d.end_stroke();
@@ -726,6 +726,28 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("brush_image", "brush_image off | <image file> [turn degrees | random]", "the height and paint brushes' image brush (a PNG or DDS whose brightness is the weight)", |e, a| {
+        let Some(first) = a.first().cloned() else { return fail("usage: brush_image off | <image file> [turn degrees | random]") };
+        with_tile(e, |t, e| {
+            let mut b = t.image_brush(e);
+            if first == "off" {
+                b.on = false;
+            } else {
+                (b.on, b.path) = (true, first.clone());
+                match a.get(1).map(String::as_str) {
+                    Some("random") => b.random_angle = true,
+                    Some(deg) => (b.random_angle, b.angle) = (false, number(deg).unwrap_or(0.0)),
+                    None => {}
+                }
+            }
+
+            match t.set_image_brush(e, b) {
+                Ok(()) => ok(""),
+                Err(why) => fail(why),
+            }
+        })
+    });
+
     c.add("falloff_window", "falloff_window 0|1", "close or open the Brush Falloff window", |e, a| {
         let on = a.first().is_some_and(|x| x == "1");
         with_tile(e, |t, _| {
@@ -741,7 +763,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let (Some((x, z, n)), Some(ground)) = (parsed, ground) else { return fail("usage: paint_ground_type <ground type | none> <x m> <z m> <steps>") };
             let d = document(e).expect("a tile");
             for _ in 0..n as i32 {
-                d.brush_step(BrushKind::Ground(ground), x, z, t.brush, 1.0 / 60.0);
+                d.brush_step(BrushKind::Ground(ground), x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
             d.end_stroke();

@@ -10,6 +10,7 @@ pub mod context_panel;
 pub mod entity_types;
 pub mod extract_prompt;
 mod falloff_editor;
+mod image_brush;
 pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;

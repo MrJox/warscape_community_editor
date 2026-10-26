@@ -104,7 +104,7 @@ impl GroundTypeField {
         }
 
         let px: Vec<u8> = if self.layer.channels() == 4 { vec![rgb[0], rgb[1], rgb[2], 255] } else { rgb.to_vec() };
-        let hard = Brush { strength: 1.0, falloff: 0.0, curve: None, ..*b };
+        let hard = Brush { cx: b.cx, cy: b.cy, radius: b.radius, strength: 1.0, falloff: 0.0, ..Default::default() };
         for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
             if hard.weight(dx, dy) > 0.0 {
                 self.layer.set_pixel(x, y, &px);
@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(f.to_bytes().unwrap(), bytes);
 
         f.begin_edit().unwrap();
-        f.paint(&Brush { cx: 10.0, cy: 10.0, radius: 3.0, strength: 0.1, falloff: 1.0, curve: None }, GROUND_COLOURS[8]).unwrap();
+        f.paint(&Brush { cx: 10.0, cy: 10.0, radius: 3.0, strength: 0.1, falloff: 1.0, ..Default::default() }, GROUND_COLOURS[8]).unwrap();
         f.end_edit();
         assert_eq!(f.rgb(10, 12), GROUND_COLOURS[8]);
         assert_eq!(f.rgb(10, 13), [0, 0, 0]);
