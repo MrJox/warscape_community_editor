@@ -844,6 +844,15 @@ impl Editor {
                 self.docs.set_active(id);
                 return Ok(format!("already open: {path}"));
             }
+        } else if let Some(&id) = self.docs.order().iter().find(|&&id| self.docs.find(id).is_some_and(|d| d.opened_from(path))) {
+            // A file on disk: the document it is (another of its files, another path to it) is shown, not opened again.
+            self.docs.set_active(id);
+            if switch_tool && tool != self.active_tool {
+                let tid = self.tool_info[tool].id.clone();
+                self.set_tool(&tid);
+            }
+
+            return Ok(format!("already open: {path}"));
         }
 
         let title = self.tool_info[tool].title.clone();

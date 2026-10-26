@@ -475,6 +475,16 @@ pub struct TileDocument {
 }
 
 /// The item of an element; item 0 is the terrain.
+/// Whether two paths name the same folder (resolved when they exist; else compared by name, case and separators aside).
+fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let key = |p: &std::path::Path| {
+        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        p.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase()
+    };
+
+    key(a) == key(b)
+}
+
 pub fn item_of(elem: usize) -> u64 {
     elem as u64 + 1
 }
@@ -699,6 +709,16 @@ impl Document for TileDocument {
 
     fn source_key(&self) -> String {
         self.tile().project.dir.to_string_lossy().replace('\\', "/").to_lowercase()
+    }
+
+    /// Its folder (any of the files in it, `tile.ted` or `tile.wce`), or the kit's folder whose project it is (opening that kit tile opens
+    /// the project).
+    fn opened_from(&self, path: &str) -> bool {
+        let p = std::path::Path::new(path);
+        let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        let own = &self.tile().project.dir;
+        let project_of = || self.projects_root().zip(kit::tile_folder(dir)).map(|(root, folder)| root.join("raw_data").join(folder));
+        same_folder(dir, own) || project_of().is_some_and(|mirror| same_folder(&mirror, own))
     }
 
     fn item_transform(&self, item: SourceRef) -> Option<Float4x4> {

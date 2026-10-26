@@ -966,7 +966,7 @@ impl TileTool {
         // A kit's tile with a project opened as the project (`open`): say so.
         let opened = document(e).map(|d| d.project().dir.clone());
         Ok(match opened {
-            Some(d) if !path.starts_with(&d) => format!("opened the project {} (tile.wce) of {}", d.display(), path.display()),
+            Some(d) if !path.starts_with(&d) && !msg.starts_with("already open") => format!("opened the project {} (tile.wce) of {}", d.display(), path.display()),
             _ => msg,
         })
     }
