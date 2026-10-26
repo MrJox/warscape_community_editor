@@ -3,7 +3,7 @@
 `wce_render`'s renderer draws Rome 2 with its own shaders (`fxc/` of `data.pack` and `data_rome2.pack`; the containers' signature is
 0xF8C5DEAD, Attila's 0x075BCD15, otherwise the same v4 layout). The renderer knows the game from its files
 (`Files::game` -> `renderer::game::RenderGame`) and switches the passes that differ. Status 2026-10-26: a Rome 2 tile draws with
-its terrain, buildings, sky, clouds, the sun and its shadows; the sea and the effects are not drawn.
+its terrain, buildings, sky, clouds, the sun and its shadows, the sea; the effects are not drawn.
 
 Tools: `shader_info` (wce_d3d11 example: a game's shaders' reflection, `WCE_GAME_KEY=rome_2`), and the scratch scripts
 `fxc2dxbc.py` / `disasm.sh` (vkd3d-compiler's disassembly) under `~/wce_re/scratch/rome2/scripts`.
@@ -81,9 +81,17 @@ database's `RENDER_PARAMS` says 9). The game may draw the battle terrain through
 
 Shadows: `vs30_shadow` is `vs30_geom` again; `ps30_shadow` is shared.
 
+## Sea (`ocean.rs`)
+
+`dx11_sm_3_0_ocean` `vs30_main` / `ps30_main_ultra_water_quality` is a forward pass: one colour target (the lit sea, opaque), drawn
+into the HDR target over the same chunks, surfaces and depth-stencil state as Attila's G-buffer ocean. The same vertex input. Renamed:
+`ocean_VS.g_vs_sea_bed_info` / `ocean_PS.g_ps_sea_bed_info` (Attila's `g_vs_sea_info`), the detail normals' scales and speeds in
+`ocean_PS` (Attila's `OceanSharedConstants`), the sky cube `s_sky` (Attila's `s_environment`), the foam `combined_foam_texture_sampler`
+(`sea/combined_foam.dds`), the sea bed info read by the pixel shader too. `reflection_texture_sampler` is the game's planar reflection,
+which the renderer does not make: black (the sky's reflection comes from the cube). To check against a frame of the game: the
+reflection's share, the colours.
+
 ## Not drawn yet
 
-- The sea: Rome 2's `dx11_sm_3_0_ocean` is a forward pass (one colour target; `reflection_texture_sampler`,
-  `refraction_texture_sampler`, `combined_foam_texture_sampler`, the sky cube, `fog_VS_PS`, `ocean_PS`), not Attila's G-buffer ocean.
 - The effects: Rome 2 draws them with shaders generated per effect (`vfx_<effect>_generated.hlsl`: `ps30_main`, `_high_quality`,
   `distortion`, `overlay`, `shadowmap`), a different particle system from Attila's GPU one. The particle system is made disabled.

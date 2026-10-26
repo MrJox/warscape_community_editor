@@ -584,8 +584,7 @@ pub struct Renderer {
     /// The game whose renderer this is.
     pub(crate) game: game::RenderGame,
 
-    /// That the game's sea / effects can't be drawn was logged.
-    pub(crate) ocean_unsupported_noted: bool,
+    /// That the game's effects can't be drawn was logged.
     pub(crate) particles_unsupported_noted: bool,
     pub(crate) kinds: KindIndex,
     pub(crate) dev: ID3D11Device,
@@ -716,7 +715,6 @@ impl Renderer {
         cbs.set_f("rigid_faction_colours", "faction_colours", &[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]);
         Ok(Self {
             game: game::RenderGame::of(files.as_ref()),
-            ocean_unsupported_noted: false,
             particles_unsupported_noted: false,
             dev: dev.clone(),
             ctx: ctx.clone(),
