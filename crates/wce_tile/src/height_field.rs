@@ -25,6 +25,20 @@ pub struct Brush {
     pub falloff: f64,
 }
 
+impl Brush {
+    /// The brush's weight at an offset (pixels) from its centre: 0 outside the radius.
+    pub fn weight(&self, dx: f64, dy: f64) -> f64 {
+        let d = (dx * dx + dy * dy).sqrt() / self.radius;
+        if d >= 1.0 {
+            return 0.0;
+        }
+
+        // Hard edge at falloff 0, cosine bell at falloff 1.
+        let bell = 0.5 * (1.0 + (d * std::f64::consts::PI).cos());
+        self.strength * (self.falloff * bell + (1.0 - self.falloff))
+    }
+}
+
 impl Default for Brush {
     fn default() -> Self {
         Self { cx: 0.0, cy: 0.0, radius: 8.0, strength: 1.0, falloff: 0.5 }
@@ -189,17 +203,6 @@ impl HeightField {
         a * (1.0 - fy) + b * fy
     }
 
-    fn weight(b: &Brush, dx: f64, dy: f64) -> f64 {
-        let d = (dx * dx + dy * dy).sqrt() / b.radius;
-        if d >= 1.0 {
-            return 0.0;
-        }
-
-        // Hard edge at falloff 0, cosine bell at falloff 1.
-        let bell = 0.5 * (1.0 + (d * std::f64::consts::PI).cos());
-        b.strength * (b.falloff * bell + (1.0 - b.falloff))
-    }
-
     fn touch(&mut self, x: u32, y: u32) {
         if !self.touched {
             (self.tx0, self.ty0, self.tx1, self.ty1, self.touched) = (x, y, x + 1, y + 1, true);
@@ -224,7 +227,7 @@ impl HeightField {
         let y1 = ((b.cy + b.radius).ceil() as i32).min(self.h as i32 - 1);
         for y in y0..=y1 {
             for x in x0..=x1 {
-                let wgt = Self::weight(b, f64::from(x) - b.cx, f64::from(y) - b.cy);
+                let wgt = b.weight(f64::from(x) - b.cx, f64::from(y) - b.cy);
                 if wgt <= 0.0 {
                     continue;
                 }
@@ -410,6 +413,10 @@ impl HeightField {
         self.put(&r, &r.after);
         self.undo.push(r);
         true
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.editing
     }
 
     pub fn can_undo(&self) -> bool {

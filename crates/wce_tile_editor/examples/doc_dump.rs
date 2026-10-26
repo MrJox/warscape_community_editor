@@ -444,7 +444,7 @@ fn main() {
 
                 20 => {
                     let kind = kinds[(r.next() % 5) as usize];
-                    let s = BrushSettings { radius_m: r.f(3.0, 30.0), strength: r.f(1.0, 20.0), falloff: r.f(0.0, 1.0), flatten_height: r.f(-5.0, 20.0) };
+                    let s = BrushSettings { radius_m: r.f(3.0, 30.0), strength: r.f(1.0, 20.0), falloff: r.f(0.0, 1.0), flatten_height: r.f(-5.0, 20.0), ..Default::default() };
                     let steps = 1 + r.next() % 4;
                     for _ in 0..steps {
                         let (x, z, dt) = (r.f(0.0, 250.0), r.f(0.0, 250.0), r.f(0.005, 0.08));

@@ -118,3 +118,18 @@ redraw), the procedural trees read the saved blend map, and only the height map 
   in TEd: find out what they really do before porting).
 - **Order:** 1) blend brush + live preview + stroke undo, 2) ground type brush, 3) falloff curve editor, 4) image brush, 5) spline paint
   stroke, 6) Blendmap Filters; the texture group picker alongside.
+
+**Done (step 1, the blend brush):** `wce_tile::blend_field::BlendField` (the map in memory: the file's bytes before and after the samples
+kept, so an unpainted map is written byte for byte and a painted one differs only in the painted pixels; `paint_pixel` moves the brush's
+weight of the other 15 channels to the painted one, at least one step, largest remainders get the rounding; undo records of the 64 x 64
+blocks a stroke touched; `reduce_pixel` = BOB's blend / index reduction, shared with the material). `TileProject::blend` is read on first
+use (the ground's material, a paint stroke) and written on save when painted (`blend_dirty`; Save for Assembly Kit and Save as write the
+one in memory); the vegetation generator reads it too. `BrushKind::Paint(channel)` goes through the height brushes' stroke and undo
+(`BrushStepCommand`, one entry per stroke, "Paint ground"). The live preview: the stroke patches the material's blend / index maps over
+the changed rectangle (`patch_blend_maps`) and gives them a new `blend_id`, on which the renderer uploads them again. The UI: the Paint
+button in the toolbar (Ctrl erases: paints the first group's first variation), its Inspector (radius, strength, falloff, texture group,
+variation); commands `tile_mode paint`, `paint_ground`, `assert_blend`, `brush`'s fifth number; `scripts/tile_paint.txt` (paint, undo,
+redo, erase, save, reopen).
+
+**Open:** TEd's debug views (blend groups, ground types) are baked from the file on disk, so they show the paint after a save only (step
+2 needs the ground types one live).

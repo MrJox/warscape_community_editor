@@ -71,6 +71,9 @@ pub enum BrushKind {
     Smooth,
     Flatten,
     Level,
+
+    /// Paints a blend map channel (4 * group + variation of the entry's TEXTURE_GROUPs).
+    Paint(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -79,11 +82,14 @@ pub struct BrushSettings {
     pub strength: f32,
     pub falloff: f32,
     pub flatten_height: f32,
+
+    /// The paint brushes' strength, 0..1: at 1 a second of painting lays 98 % of the paint under the brush's middle.
+    pub opacity: f32,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0 }
+        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5 }
     }
 }
 
@@ -389,6 +395,10 @@ pub struct Tile {
     pub(crate) ted_on_disk_edited: bool,
     pub(crate) png_on_disk_edited: bool,
 
+    /// As `saved_height_depth` / `png_on_disk_edited`, for blend_map.tif.
+    pub(crate) saved_blend_depth: usize,
+    pub(crate) blend_on_disk_edited: bool,
+
     // Water entities of the scene (rivers, sea plane), rebuilt when the terrain or the display changed.
     pub(crate) water_entities: Vec<EntityId>,
 
@@ -562,7 +572,7 @@ impl TileDocument {
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
-            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, water_entities: vec![], columns: columns::ColumnState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,
+            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, water_entities: vec![], columns: columns::ColumnState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),

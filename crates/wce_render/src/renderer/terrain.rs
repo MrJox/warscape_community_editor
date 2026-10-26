@@ -233,6 +233,7 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
 
     let mut g = TerrainMatGpu {
         normal_id: m.normal_id,
+        blend_id: m.blend_id,
         blend: img(&m.blend, "blend"),
         index: img(&m.index, "index"),
         normal: img(&m.normal, "normal"),
@@ -339,6 +340,7 @@ pub(crate) struct TerrainMatGpu {
     diffuse: Texture,
     normals: Texture,
     normal_id: u64,
+    blend_id: u64,
     light_params: Option<ID3D11ShaderResourceView>,
 
     /// The material update it was last used in.
@@ -788,6 +790,17 @@ impl Renderer {
     /// The GPU side of a terrain material, made now (the open tile's; a map context's are made on the loading threads, see `terrain_ready`).
     fn build_terrain_material(&mut self, m: &TerrainMaterial) {
         if let Some(have) = self.terrain.mat.get_mut(&m.id) {
+            // A paint stroke only changes the blend and index maps.
+            if have.blend_id != m.blend_id
+                && let (Some(b), Some(i)) = (&m.blend.rgba, &m.index.rgba)
+            {
+                let (b, i) = (make_rgba_texture(&self.dev, m.blend.w, m.blend.h, b, false), make_rgba_texture(&self.dev, m.index.w, m.index.h, i, false));
+                if b.srv.is_some() && i.srv.is_some() {
+                    (have.blend, have.index) = (b, i);
+                    have.blend_id = m.blend_id;
+                }
+            }
+
             // A height stroke only changes the normal map.
             if have.normal_id != m.normal_id
                 && let Some(rgba) = &m.normal.rgba

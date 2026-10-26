@@ -13,7 +13,7 @@ use wce_editor_core::document::{Document, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Double3, Double3x3, Float3, Float4x4};
 use wce_scene::render_scene::SourceRef;
-use wce_tile::height_field::Brush;
+use wce_tile::height_field::{Brush, HeightField};
 use wce_tile::properties::{
     Access, Kind, Prop, RuleContext, format_bool, format_colour, format_float, format_seasons, format_vec2, format_vec3, parse_bool, parse_colour, parse_float,
     parse_int, parse_seasons, parse_vec2, parse_vec3_text,
@@ -167,6 +167,11 @@ impl Tile {
     // ---- height strokes
 
     fn apply_brush(&mut self, kind: BrushKind, x: f32, z: f32, s: &BrushSettings, dt: f32) {
+        if let BrushKind::Paint(channel) = kind {
+            self.apply_paint(usize::from(channel), x, z, s, dt);
+            return;
+        }
+
         let p = &mut self.project;
         let (cx, cy, mpp, unit) = (p.pixel_x(f64::from(x)), p.pixel_z(f64::from(z)), p.mpp_x(), p.unit_scale);
         let Some(hf) = &mut p.height else { return };
@@ -204,13 +209,65 @@ impl Tile {
                 b.strength = soft;
                 hf.set_level_under(&b)
             }
+
+            // `apply_paint`.
+            BrushKind::Paint(_) => Ok(()),
         };
 
         p.height_dirty = true;
     }
 
+    /// Reads the blend map, if not yet.
+    ///
+    /// # Errors
+    ///
+    /// The tile has none, or it does not read.
+    pub fn load_blend(&mut self) -> Result<(), String> {
+        self.project.load_blend().map(|_| ())
+    }
+
+    /// The blend map's pixel at a point of the tile (metres), once the map is read (`None` before, or outside it).
+    pub fn blend_pixel_at(&self, x: f32, z: f32) -> Option<[u16; 16]> {
+        let p = &self.project;
+        let blend = p.blend.as_ref()?;
+        let (b, ex, ez) = (p.border_m(), p.extent_x(), p.extent_z());
+        let px = ((f64::from(x) + b) * f64::from(blend.width()) / (ex + 2.0 * b)).floor();
+        let pz = ((f64::from(z) + b) * f64::from(blend.height()) / (ez + 2.0 * b)).floor();
+        if px < 0.0 || pz < 0.0 || px >= f64::from(blend.width()) || pz >= f64::from(blend.height()) {
+            return None;
+        }
+
+        blend.pixel(px as u32, pz as u32).try_into().ok()
+    }
+
+    /// A step of a paint stroke on the blend map, which covers the bordered tile.
+    fn apply_paint(&mut self, channel: usize, x: f32, z: f32, s: &BrushSettings, dt: f32) {
+        let p = &mut self.project;
+        let (b, ex, ez) = (p.border_m(), p.extent_x(), p.extent_z());
+        let Ok(blend) = p.load_blend() else { return };
+        if !self.stroke_open {
+            let _ = blend.begin_edit();
+            self.stroke_open = true;
+        }
+
+        let (ppx, ppz) = (f64::from(blend.width()) / (ex + 2.0 * b), f64::from(blend.height()) / (ez + 2.0 * b));
+        // At strength 1 a second of painting lays 98 % (1 - e^-4).
+        let amount = (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0);
+        let brush = Brush {
+            cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(1.0), strength: amount,
+            falloff: f64::from(s.falloff),
+        };
+
+        let _ = blend.paint(&brush, channel);
+    }
+
     /// The brush step of a stroke: the landscape instances under the brush move with the terrain (y += the change of the height under each).
     pub(crate) fn apply_brush_following(&mut self, kind: BrushKind, x: f32, z: f32, s: &BrushSettings, dt: f32, moved: &mut Vec<Follow>) {
+        if matches!(kind, BrushKind::Paint(_)) {
+            self.apply_brush(kind, x, z, s, dt);
+            return;
+        }
+
         let r = s.radius_m + 2.0 * self.project.mpp_x() as f32 + 1.0;
         let cands = self.instances.iter().copied().filter(|&e| self.placement(e) == Placement::Landscape).filter_map(|e| {
             let p = self.world_position(e);
@@ -253,18 +310,27 @@ impl Tile {
             return;
         }
 
+        let heights = self.project.height.as_ref().is_some_and(HeightField::is_editing);
         if let Some(h) = &mut self.project.height {
             h.end_edit();
+        }
+
+        if let Some(b) = &mut self.project.blend {
+            b.end_edit();
         }
 
         self.stroke_open = false;
 
         // The walls' layouts follow the ground.
-        self.polygons_dirty |= self.has_walls();
+        self.polygons_dirty |= heights && self.has_walls();
     }
 
     fn height_modified(&self) -> bool {
         self.project.height.as_ref().is_some_and(|h| h.edit_depth() != self.saved_height_depth)
+    }
+
+    fn blend_modified(&self) -> bool {
+        self.project.blend.as_ref().is_some_and(|b| b.edit_depth() != self.saved_blend_depth)
     }
 
     fn save_scene_needed(&self) -> bool {
@@ -1750,7 +1816,12 @@ impl TileDocument {
 
     /// A step of a height stroke: begins the stroke on the first step; `end_stroke` when the mouse goes up (also done by undo / redo and save).
     pub fn brush_step(&mut self, kind: BrushKind, x: f32, z: f32, settings: BrushSettings, dt: f32) {
-        if !self.tile().project.has_height() {
+        let ready = match kind {
+            BrushKind::Paint(_) => self.tile_mut().project.load_blend().is_ok(),
+            _ => self.tile().project.has_height(),
+        };
+
+        if !ready {
             return;
         }
 
@@ -1803,8 +1874,10 @@ impl TileDocument {
 
         let height_dirty = t.height_modified() || t.png_on_disk_edited || (elsewhere && t.project.has_height());
         let force_scene = t.save_scene_needed() || elsewhere;
+        let blend_dirty = t.blend_modified() || t.blend_on_disk_edited;
         let t = self.tile_mut();
         t.project.height_dirty = height_dirty;
+        t.project.blend_dirty = blend_dirty;
         let (wrote, msg) = t.project.save(&out, force_scene, false)?;
         if let Some(dir) = into_project {
             self.moved_to_project(dir);
@@ -1817,6 +1890,9 @@ impl TileDocument {
             t.png_on_disk_edited = t.height_modified();
             t.saved_height_depth = t.project.height.as_ref().map_or(0, |h| h.edit_depth());
             t.project.height_dirty = false;
+            t.blend_on_disk_edited = t.blend_modified();
+            t.saved_blend_depth = t.project.blend.as_ref().map_or(0, |b| b.edit_depth());
+            t.project.blend_dirty = false;
             t.project.river_texts = t.project.current_river_texts();
             self.history.mark_saved();
         }

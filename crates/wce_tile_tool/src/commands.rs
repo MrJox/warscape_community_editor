@@ -622,8 +622,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level", "what the left mouse button does in the viewport", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level") };
+    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level|paint", "what the left mouse button does in the viewport", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint") };
         let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
         with_tile(e, |t, _| {
             t.set_mode(TileMode::from_index(i));
@@ -631,8 +631,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("brush", "brush <radius m> [strength] [falloff] [flatten height m]", "set the terrain brush", |e, a| {
-        let Some(r) = a.first().and_then(|x| number(x)) else { return fail("usage: brush <radius m> [strength] [falloff] [flatten height m]") };
+    c.add("brush", "brush <radius m> [strength] [falloff] [flatten height m] [paint strength 0-1]", "set the terrain brush", |e, a| {
+        let Some(r) = a.first().and_then(|x| number(x)) else { return fail("usage: brush <radius m> [strength] [falloff] [flatten height m] [paint strength 0-1]") };
         with_tile(e, |t, _| {
             t.brush.radius_m = r.clamp(1.0, 500.0);
             if let Some(v) = a.get(1).and_then(|x| number(x)) {
@@ -645,6 +645,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             if let Some(v) = a.get(3).and_then(|x| number(x)) {
                 t.brush.flatten_height = v;
+            }
+
+            if let Some(v) = a.get(4).and_then(|x| number(x)) {
+                t.brush.opacity = v.clamp(0.0, 1.0);
             }
 
             ok("")
@@ -675,6 +679,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             d.end_stroke();
             ok("")
+        })
+    });
+
+    c.add("paint_ground", "paint_ground <group 0-3> <variation 0-3> <x m> <z m> <steps>", "a paint stroke of the ground's textures at a point of the tile, with the brush's radius, strength and falloff (one undo entry)", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 5).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+            let Some((g, v, x, z, n)) = parsed.filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1)) else {
+                return fail("usage: paint_ground <group 0-3> <variation 0-3> <x m> <z m> <steps>");
+            };
+
+            let d = document(e).expect("a tile");
+            let kind = BrushKind::Paint((g as u8) * 4 + v as u8);
+            for _ in 0..n as i32 {
+                d.brush_step(kind, x, z, t.brush, 1.0 / 60.0);
+            }
+
+            d.end_stroke();
+            if d.tile().blend_pixel_at(x, z).is_none() { fail("no blend map there") } else { ok("") }
         })
     });
 
@@ -2210,6 +2232,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let tol = a.get(3).and_then(|v| number(v)).unwrap_or(0.01);
         let got = d.tile().terrain_height(x, z);
         if (got - h).abs() <= tol { ok("") } else { fail(format!("height {got:.4}, expected {h:.4}")) }
+    });
+
+    c.add("assert_blend", "assert_blend <x m> <z m> <group 0-3> <variation 0-3> <min weight 0-65535> [max weight]", "test: a blend map weight at a point", |e, a| {
+        let parsed = (a.len() >= 5).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+        let (Some(d), Some((x, z, g, v, lo))) = (document(e), parsed) else { return fail("usage: assert_blend <x m> <z m> <group> <variation> <min weight> [max weight]") };
+        let hi = a.get(5).and_then(|v| number(v)).unwrap_or(65535.0);
+        if let Err(why) = d.tile_mut().load_blend() {
+            return fail(why);
+        }
+
+        let Some(p) = d.tile().blend_pixel_at(x, z) else { return fail("no blend map read there") };
+        let got = f32::from(p[(g as usize).min(3) * 4 + (v as usize).min(3)]);
+        if (lo..=hi).contains(&got) { ok("") } else { fail(format!("weight {got}, expected {lo} .. {hi}")) }
     });
 
     c.add("assert_selected_type", "assert_selected_type <type>", "test: the primary selected element has this type", |e, a| {

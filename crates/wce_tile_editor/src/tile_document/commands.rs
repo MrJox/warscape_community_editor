@@ -467,6 +467,7 @@ impl Command<Tile> for BrushStepCommand {
             BrushKind::Smooth => "Smooth",
             BrushKind::Flatten => "Flatten",
             BrushKind::Level => "Level",
+            BrushKind::Paint(_) => return "Paint ground".to_owned(),
         };
 
         format!("Terrain {n}")
@@ -478,7 +479,11 @@ impl Command<Tile> for BrushStepCommand {
             t.apply_brush_following(self.kind, self.x, self.z, &self.settings, self.dt, &mut self.moved);
         } else {
             t.end_stroke_edit();
-            if let Some(h) = &mut t.project.height {
+            if let BrushKind::Paint(_) = self.kind {
+                if let Some(b) = &mut t.project.blend {
+                    b.redo();
+                }
+            } else if let Some(h) = &mut t.project.height {
                 h.redo();
             }
 
@@ -488,7 +493,11 @@ impl Command<Tile> for BrushStepCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         t.end_stroke_edit();
-        if let Some(h) = &mut t.project.height {
+        if let BrushKind::Paint(_) = self.kind {
+            if let Some(b) = &mut t.project.blend {
+                b.undo();
+            }
+        } else if let Some(h) = &mut t.project.height {
             h.undo();
         }
 

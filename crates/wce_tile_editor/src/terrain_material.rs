@@ -16,7 +16,9 @@ use wce_foundation::wce_prof;
 use wce_scene::render_scene::{TerrainImage, TerrainMaterial};
 use wce_vfs::files::Files;
 
-use crate::terrain_bake::{TerrainLook, group_names, read_blend_map};
+use wce_tile::blend_field::{BlendField, reduce_pixel};
+
+use crate::terrain_bake::{TerrainLook, group_names};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialRequest {
@@ -53,28 +55,26 @@ fn flat_normal() -> TerrainImage {
     TerrainImage { w: 1, h: 1, rgba: Some(Arc::new(vec![255, 127, 0, 127])) }
 }
 
-/// The material and one line for the log / the panel. The normal map is left flat: set it with [`terrain_normal_image`].
+/// The material and one line for the log / the panel, from the tile's blend map. The normal map is left flat: set it with
+/// [`terrain_normal_image`].
 ///
 /// # Errors
 ///
-/// The tile has no usable blend map, or none of the climate's textures exists.
-pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, files: &dyn Files) -> Result<(TerrainMaterial, String), String> {
+/// None of the climate's textures exists.
+pub fn build_terrain_material(rq: &MaterialRequest, blend: &BlendField, climates: &ClimateList, files: &dyn Files) -> Result<(TerrainMaterial, String), String> {
     wce_prof!("tile.terrain_material");
-    let blend = read_blend_map(&rq.folder.join("blend_map.tif"))?;
-    let (bw, bh) = (blend.w, blend.h);
+    let (bw, bh) = (blend.width(), blend.height());
     let mut m = TerrainMaterial { id: rq.id, x0: rq.x0, z0: rq.z0, x1: rq.x1, z1: rq.z1, y0: rq.y0 - 20.0, y1: rq.y1 + 200.0, ..Default::default() };
 
     // Blend / index maps (BOB's reduction of the 16 weights).
     let n = bw as usize * bh as usize;
     let mut blend_px = vec![0u8; n * 4];
     let mut index_px = vec![0u8; n * 4];
+    let weights = blend.weights();
     blend_px.par_chunks_mut(4).zip(index_px.par_chunks_mut(4)).enumerate().for_each(|(i, (b, ix))| {
-        let p = &blend.weights[i * 16..i * 16 + 16];
-        for g in 0..4 {
-            let s = f64::from(p[g * 4]) + f64::from(p[g * 4 + 1]) + f64::from(p[g * 4 + 2]) + f64::from(p[g * 4 + 3]);
-            b[g] = q8(s / 65535.0);
-            ix[g] = if s > 0.0 { q8((f64::from(p[g * 4 + 1]) + 2.0 * f64::from(p[g * 4 + 2]) + 3.0 * f64::from(p[g * 4 + 3])) / s / 3.0) } else { 0 };
-        }
+        let (bb, ii) = reduce_pixel(&weights[i * 16..i * 16 + 16]);
+        b.copy_from_slice(&bb);
+        ix.copy_from_slice(&ii);
     });
 
     let peak = blend.peaks();
@@ -96,6 +96,26 @@ pub fn build_terrain_material(rq: &MaterialRequest, climates: &ClimateList, file
     );
 
     Ok((m, report))
+}
+
+/// The blend / index maps of a material made from `blend` again over a rectangle of its pixels (exclusive end), after a paint stroke. The
+/// maps must be the blend map's size.
+pub fn patch_blend_maps(m: &mut TerrainMaterial, blend: &BlendField, (x0, y0, x1, y1): (u32, u32, u32, u32)) {
+    let w = blend.width();
+    if m.blend.w != w || m.blend.h != blend.height() || m.index.w != w || m.index.h != blend.height() {
+        return;
+    }
+
+    let (Some(bp), Some(ip)) = (m.blend.rgba.as_mut(), m.index.rgba.as_mut()) else { return };
+    let (bp, ip) = (Arc::make_mut(bp), Arc::make_mut(ip));
+    for y in y0..y1.min(blend.height()) {
+        for x in x0..x1.min(w) {
+            let (b, i) = reduce_pixel(blend.pixel(x, y));
+            let at = (y as usize * w as usize + x as usize) * 4;
+            bp[at..at + 4].copy_from_slice(&b);
+            ip[at..at + 4].copy_from_slice(&i);
+        }
+    }
 }
 
 /// A material with another climate's (or season's) textures: its maps kept, its slots filled again for `look` (the groups are the

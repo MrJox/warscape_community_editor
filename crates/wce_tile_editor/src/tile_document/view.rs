@@ -18,7 +18,7 @@ use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 use super::index::{matrix_of, style_of};
 use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
-use crate::terrain_material::{MaterialRequest, build_terrain_material, terrain_normal_image};
+use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, terrain_normal_image};
 
 #[derive(Clone, Copy)]
 struct RiverPoint {
@@ -295,8 +295,14 @@ impl Tile {
                 return None;
             };
 
+            if let Err(why) = self.project.load_blend() {
+                self.terrain_note = format!("plain tiled texture: {why}");
+                return None;
+            }
+
             let p = &self.project;
             let h = p.height.as_ref().expect("a height map");
+            let blend = p.blend.as_ref().expect("read above");
             let (x0, z0, x1, z1) = self.blend_area();
             self.material_id = next_id(&MATERIAL_IDS);
             let rq = MaterialRequest {
@@ -304,7 +310,12 @@ impl Tile {
                 look: self.look.clone(), id: self.material_id,
             };
 
-            match build_terrain_material(&rq, self.climates(), files.as_ref()) {
+            let built = build_terrain_material(&rq, blend, self.climates(), files.as_ref());
+            if let Some(b) = self.project.blend.as_mut() {
+                b.take_changed();
+            }
+
+            match built {
                 Ok((m, report)) => {
                     self.terrain_note = format!("blended ground: {report}");
                     log::info(format!("terrain: {}", self.terrain_note));
@@ -320,6 +331,16 @@ impl Tile {
                     return None;
                 }
             }
+        }
+
+        // Painted since: the maps again over what changed.
+        if let Some(b) = self.project.blend.as_mut()
+            && let Some(rect) = b.take_changed()
+            && let Some(base) = self.material_base.as_mut()
+        {
+            let m = Arc::make_mut(base);
+            patch_blend_maps(m, self.project.blend.as_ref().expect("taken above"), rect);
+            m.blend_id = next_id(&NORMAL_IDS);
         }
 
         self.ground_info = self.ground_info_base.clone();

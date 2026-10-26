@@ -166,7 +166,7 @@ impl W {
 
 fn write_material(w: &mut W, m: &TerrainMaterial) {
     let TerrainMaterial {
-        x0, z0, x1, z1, y0, y1, blend, index, normal, alpha, normal_id: _, diffuse, normal_tex, pixel_scale, outfield_scale, mid_strength, smoothness, reflectivity,
+        x0, z0, x1, z1, y0, y1, blend, index, normal, alpha, normal_id: _, blend_id: _, diffuse, normal_tex, pixel_scale, outfield_scale, mid_strength, smoothness, reflectivity,
         detail_colour, detail_normal, id: _,
     } = m;
     for v in [x0, z0, x1, z1, y0, y1] {
