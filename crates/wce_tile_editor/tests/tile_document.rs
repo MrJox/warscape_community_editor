@@ -86,7 +86,7 @@ fn a_stroke_interrupted_by_another_edit_is_two_entries_with_their_own_heights() 
     let heights = || -> fn(&TileDocument) -> Vec<u16> { |d| d.project().height.as_ref().unwrap().samples().to_vec() };
     let h0 = heights()(&d);
     let s = BrushSettings::default();
-    d.brush_step(BrushKind::Raise, 40.0, 40.0, s, 0.05);
+    d.brush_step(BrushKind::Raise, 40.0, 40.0, s.clone(), 0.05);
     let h1 = heights()(&d);
     assert_ne!(h1, h0);
 

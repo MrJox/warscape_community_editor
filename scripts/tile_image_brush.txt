@@ -1,0 +1,17 @@
+# The image brush (docs/plans/workflow_review.md, section 3): a new 2 x 2 tile at density 32 (4 m a pixel, 5 m high in the editor) raised
+# for 30 steps (3 m at full weight) with a picture white on its left half and black on its right (%IMAGE%): the left of the stroke rises,
+# the right does not; turned half a turn, the other way round; the brush back to the falloff. Run with WCE_TILE_WORKSPACE set to a scratch
+# folder.
+new_tile wce_image_brush_test 2 2 10 32
+frames 5
+brush 20 6 0.5
+brush_image "%IMAGE%" 0
+paint raise 100 100 30
+assert_height 88 100 8 0.05
+assert_height 112 100 5 0.01
+brush_image "%IMAGE%" 180
+paint raise 100 160 30
+assert_height 88 160 5 0.01
+assert_height 112 160 8 0.05
+brush_image off
+quit

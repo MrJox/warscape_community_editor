@@ -44,6 +44,7 @@ use wce_formats::tile_climate::ClimateList;
 use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, LfMap, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
+use wce_tile::brush_image::BrushImage;
 use wce_tile::building_db::BuildingDb;
 use wce_tile::falloff::FalloffLut;
 use wce_tile::tile_project::TileProject;
@@ -83,7 +84,7 @@ pub enum BrushKind {
 /// `BrushKind::Ground`'s eraser: no ground type (black).
 pub const GROUND_ERASE: u8 = u8::MAX;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BrushSettings {
     pub radius_m: f32,
     pub strength: f32,
@@ -95,11 +96,22 @@ pub struct BrushSettings {
 
     /// A falloff curve instead of `falloff` (the height and paint brushes).
     pub curve: Option<FalloffLut>,
+
+    /// An image brush instead of the falloff or the curve (the height and paint brushes), and its turn in degrees.
+    pub image: Option<Arc<BrushImage>>,
+    pub image_angle: f32,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None }
+        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0 }
+    }
+}
+
+impl BrushSettings {
+    /// The image and its turn as a `Brush` takes them.
+    pub fn brush_image(&self) -> Option<(Arc<BrushImage>, f64)> {
+        self.image.clone().map(|i| (i, f64::from(self.image_angle).to_radians()))
     }
 }
 

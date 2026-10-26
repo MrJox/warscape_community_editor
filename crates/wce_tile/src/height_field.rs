@@ -5,13 +5,16 @@
 //! work in pixels; every edit goes through an undo record holding the touched rectangle, so edit + undo restores the exact samples (and the
 //! PNG bytes, through the kit-exact encoder).
 
+use std::sync::Arc;
+
 use wce_formats::png_file::PngFile;
 
+use crate::brush_image::BrushImage;
 use crate::falloff::FalloffLut;
 
 pub type Result<T> = std::result::Result<T, String>;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Brush {
     /// Centre in pixels.
     pub cx: f64,
@@ -28,11 +31,19 @@ pub struct Brush {
 
     /// A falloff curve instead of `falloff` (the Brush Falloff editor).
     pub curve: Option<FalloffLut>,
+
+    /// An image brush and its turn (radians): its brightness over the square the radius spans is the weight (instead of the falloff or the
+    /// curve).
+    pub image: Option<(Arc<BrushImage>, f64)>,
 }
 
 impl Brush {
     /// The brush's weight at an offset (pixels) from its centre: 0 outside the radius.
     pub fn weight(&self, dx: f64, dy: f64) -> f64 {
+        if let Some((image, angle)) = &self.image {
+            return self.strength * image.at(dx, dy, self.radius, *angle);
+        }
+
         let d = (dx * dx + dy * dy).sqrt() / self.radius;
         if d >= 1.0 {
             return 0.0;
@@ -50,7 +61,7 @@ impl Brush {
 
 impl Default for Brush {
     fn default() -> Self {
-        Self { cx: 0.0, cy: 0.0, radius: 8.0, strength: 1.0, falloff: 0.5, curve: None }
+        Self { cx: 0.0, cy: 0.0, radius: 8.0, strength: 1.0, falloff: 0.5, curve: None, image: None }
     }
 }
 

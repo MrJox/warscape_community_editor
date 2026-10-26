@@ -153,3 +153,10 @@ window (`falloff_editor.rs`; TEd's Brush Falloff Editor, wce's own curve): drag 
 away, the presets; opened from the brush's Inspector (a "falloff curve" switch and "Edit the curve..."); kept in `[tools.tile]
 brush_curve` (written when a drag ends). Commands `brush_curve off | on | <preset> | <distance,weight>...`, `falloff_window 0|1`;
 `scripts/tile_falloff.txt` (the hard and linear curves' heights at 0.8 of the radius).
+
+**Done (step 4, the image brush):** `wce_tile::brush_image::BrushImage` (a PNG, grey / grey + alpha / RGB / RGBA, 8 or 16 bit, or a DDS
+the decoder reads; the weight is the luminance times the alpha; bilinear over the square the brush's radius spans, turned by an angle).
+`Brush::image` replaces the falloff and the curve (so `Brush` and `BrushSettings` are `Clone` now, the image shared by an `Arc`); the
+height and paint brushes use it. The Inspector: "image brush", the file, Load image..., the turn or a random turn at every step; kept in
+`[tools.tile] brush_image`. Command `brush_image off | <file> [degrees | random]`; `scripts/tile_image_brush.txt` (%IMAGE%: a picture
+white on its left half: the stroke rises on one side only, the other after half a turn).

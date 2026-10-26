@@ -1,7 +1,10 @@
 //! The Tile tool's actions outside its panels: the terrain brushes and the snapping in the toolbar (the brush's settings in the Inspector
 //! while one is active), and what can be done to the selection, in the viewport's right-click menu and in the Edit menu.
 
+use std::path::Path;
+
 use wce_editor::editor::Editor;
+use wce_editor::steam_detect::file_dialog;
 use wce_editor::{gui, icons};
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
@@ -91,6 +94,8 @@ impl TileTool {
 
         let mut curve = self.brush_curve(e);
         let mut curve_changed = false;
+        let mut image = self.image_brush(e);
+        let (image_before, mut load_image) = (image.clone(), false);
         let Some(d) = document(e) else { return false };
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
@@ -109,14 +114,25 @@ impl TileTool {
         }
 
         if self.mode != TileMode::Ground {
-            // The falloff slider, or the curve of the Brush Falloff window.
-            curve_changed = ins.edit_bool("curve", "falloff curve", &mut curve.on);
-            if !curve.on {
-                ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
-            }
+            // An image as the brush, else the falloff slider or the curve of the Brush Falloff window.
+            ins.edit_bool("image", "image brush", &mut image.on);
+            if image.on {
+                let name = Path::new(&image.path).file_name().map_or_else(|| "(none)".to_owned(), |n| n.to_string_lossy().into_owned());
+                ins.text("image_file", "image", &name);
+                load_image = ins.button("load_image", "Load image...", true);
+                ins.edit_bool("random_angle", "random turn", &mut image.random_angle);
+                if !image.random_angle {
+                    ins.edit_slider("angle", "turn (deg)", &mut image.angle, 0.0, 360.0);
+                }
+            } else {
+                curve_changed = ins.edit_bool("curve", "falloff curve", &mut curve.on);
+                if !curve.on {
+                    ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+                }
 
-            if ins.button("edit_curve", if self.falloff_open { "Close the curve editor" } else { "Edit the curve..." }, true) {
-                self.falloff_open = !self.falloff_open;
+                if ins.button("edit_curve", if self.falloff_open { "Close the curve editor" } else { "Edit the curve..." }, true) {
+                    self.falloff_open = !self.falloff_open;
+                }
             }
         }
 
@@ -143,6 +159,19 @@ impl TileTool {
         ins.text("cursor", "cursor", &cursor);
         if curve_changed {
             self.set_brush_curve(e, curve, true);
+        }
+
+        if load_image {
+            let filters = [("Grey image (PNG, DDS)".to_owned(), "*.png *.dds".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
+            if let Some(p) = file_dialog(false, Path::new(&image.path), &filters) {
+                image.path = p.display().to_string();
+            }
+        }
+
+        if image != image_before
+            && let Err(why) = self.set_image_brush(e, image)
+        {
+            e.status(&format!("image brush: {why}"), true);
         }
 
         true
