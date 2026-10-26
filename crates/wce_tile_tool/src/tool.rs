@@ -2189,7 +2189,7 @@ impl TileTool {
         }
     }
 
-    /// The tile's database entry, read-only: where it is, what the tile is, the ground groups, the variation's height / normal values, the
+    /// The tile's database entry: where it is, what the tile is, the ground's texture groups (editable), the variation's height / normal values, the
     /// links.
     fn draw_entry_section(&mut self, e: &mut Editor, id: DocumentId) {
         if !gui::collapsing_header("Tile database entry", gui::TREE_DEFAULT_OPEN) {
@@ -2229,8 +2229,29 @@ impl TileTool {
             gui::text(&format!("custom blend tile: {}", en.custom_blend_tile()));
         }
 
+        // The ground's four texture groups (the blend map's groups; the paint brush lays their variations).
         let g = en.texture_group();
-        gui::text(&format!("ground groups  R {}  G {}  B {}  A {}", g.red, g.green, g.blue, g.alpha));
+        let names = d.texture_group_names();
+        let mut set_group = None;
+        gui::text("texture groups");
+        for (slot, (label, now)) in ["R", "G", "B", "A"].iter().zip([&g.red, &g.green, &g.blue, &g.alpha]).enumerate() {
+            gui::same_line();
+            gui::set_next_item_width(90.0);
+            if gui::begin_combo(&format!("##texgroup{slot}"), now) {
+                for n in &names {
+                    if gui::selectable(n, n == now, 0) && n != now {
+                        set_group = Some((slot, n.clone()));
+                    }
+                }
+
+                gui::end_combo();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{label}: the blend map's group {}; saved into the entry next to the tile", slot + 1));
+            }
+        }
+
         let mut reopen = None;
         if vars.len() > 1 {
             gui::set_next_item_width(160.0);
@@ -2292,6 +2313,15 @@ impl TileTool {
             }
 
             gui::tree_pop();
+        }
+
+        if let Some((slot, name)) = set_group {
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            if let Err(m) = d.set_texture_group(slot, &name) {
+                e.status(&m, true);
+            }
+
+            return;
         }
 
         if let Some(i) = reopen {

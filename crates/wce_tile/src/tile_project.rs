@@ -553,6 +553,7 @@ impl TileProject {
             msg += &self.save_height_range(out_dir, min, scale)?;
         }
 
+        msg += &self.save_texture_groups(out_dir)?;
         if let Some(blend) = &self.blend
             && (self.blend_dirty || elsewhere)
         {
@@ -624,6 +625,30 @@ impl TileProject {
         std::fs::write(&target, &bytes).map_err(|_| format!("could not write {}", target.display()))?;
         TileIndex::forget_shared();
         Ok(format!("{} saved. ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
+    }
+
+    /// The entry's texture groups into the entry file next to a tile saved into `out_dir`, when they differ there; the message says what
+    /// was written.
+    fn save_texture_groups(&mut self, out_dir: &Path) -> Result<String> {
+        let (Some(entry), Some(target)) = (self.entry.as_ref(), self.entry_file_for(out_dir)) else { return Ok(String::new()) };
+        if !target.is_file() {
+            return Ok(String::new());
+        }
+
+        let mut there = TileEntry::load(&target).map_err(|error| error.to_string())?;
+        let groups = entry.texture_group();
+        let mut changed = false;
+        for (slot, name) in [&groups.red, &groups.green, &groups.blue, &groups.alpha].into_iter().enumerate() {
+            changed |= there.set_texture_group(slot, name);
+        }
+
+        if !changed {
+            return Ok(String::new());
+        }
+
+        std::fs::write(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
+        TileIndex::forget_shared();
+        Ok(format!("{} saved (texture groups). ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
 
     /// Fills in the prefab references' contents from their prefabs (`contents`: a key's group contents; `PrefabLibrary::contents`), as the

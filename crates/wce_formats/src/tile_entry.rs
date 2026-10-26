@@ -320,6 +320,21 @@ impl TileEntry {
         }).unwrap_or_default()
     }
 
+    /// The names of the TEXTURE_GROUP attributes, in the order of the blend map's groups.
+    pub const TEXTURE_GROUP_SLOTS: [&'static str; 4] = ["red", "green", "blue", "alpha"];
+
+    /// Sets one of the four texture groups (0..4 = red, green, blue, alpha); false when nothing changed or there is no such slot or
+    /// TEXTURE_GROUP element.
+    pub fn set_texture_group(&mut self, slot: usize, name: &str) -> bool {
+        let (Some(attr), Some(elem)) = (Self::TEXTURE_GROUP_SLOTS.get(slot), self.child(self.root, "TEXTURE_GROUP")) else { return false };
+        if self.doc.get(elem, attr).as_deref() == Some(name) {
+            return false;
+        }
+
+        self.doc.set(elem, attr, name);
+        true
+    }
+
     pub fn variations(&self) -> Vec<TileVariation> {
         self.items("VARIATIONS", "VARIATION").into_iter().map(|c| TileVariation {
             elem: c,
