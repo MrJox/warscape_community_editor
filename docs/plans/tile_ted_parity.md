@@ -2,7 +2,10 @@
 
 **Status (2026-10-26).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
 render, terrain did not look like the game, some buildings stood at the wrong height, and "what else does TEd have". Phases 0, 0b,
-1, 2, 3, 4a / 4b, 7 are done, and so are most of 4c, 5 and 6. What is left is the TEd tools below. The editor itself is described in
+1, 2, 3, 4a / 4b, 7 are done, and so are most of 4c, 5 and 6; most of 5a (terrain painting) and part of 6b were done by the workflow
+review (`workflow_review.md`, branch `workflow-review`). What is left is the TEd tools below. **This plan is to be finished on the
+`workflow-review` branch before that branch is merged** (user, 2026-10-26); the items are worked through one at a time, in this
+file's order. The editor itself is described in
 `docs/editor.md` ("Tile tool"); what each `tile.ted` element type can do (create / edit / draw / export) is in
 `docs/tile_entity_types.md`. Findings are in `docs/formats/tile_ted.md` (placement, layer flags, TEd's modules, Property Editor),
 `docs/formats/tile_database.md` (the entry), `docs/re/terrain.md`, `docs/re/water.md` and `docs/re/tile_links.md`.
@@ -15,10 +18,11 @@ render, terrain did not look like the game, some buildings stood at the wrong he
 | 2 Placement and heights | done: landscape / freeform rules, strokes carry landscape instances, oracle exact; stale entries fixed by `TileProject::calibrate_from_final_heights` | `docs/formats/tile_ted.md`, `docs/editor.md` ("Placement") |
 | 3 Terrain | done with the game's shaders (3a, 3b, 3d; 3c largely); 3e partial: the season combo picks the textures | `docs/re/terrain.md`; map-level terrain: `map_context_todo.md` |
 | 4 Water | 4a, 4b done; 4c mostly (points, handles, insert / prepend, per-point values, `river_spline*.xml` written on save) | `docs/re/water.md`; rendering leftovers: `rendering_remaining.md` |
+| 5a Terrain painting | height brushes; blend brush with a live preview, texture groups, ground type brush, falloff curve editor, image brush, stroke along a line (at a spline's width), TEd's Blendmap Filters, Auto-Flange and Rock-painting | `workflow_review.md` (section 3), `docs/re/terrain.md` |
 | 5b-5f Tools | vegetation brush and sets, procedural trees / grass, decals, Create panel with preview, prefabs (group / ungroup), props, VFX, point lights, every zone type | `docs/tile_entity_types.md`; walls: `procedural_walls.md`; siege AI generation: `siege_ai.md` |
 | 5g Selection | multi-item gizmo, type filters | `docs/editor.md` |
 | 6a Links | read-only view (list and cells on the ground) | `docs/re/tile_links.md` |
-| 6b Tile module | New tile (Tile > New tile..., a project); height range fitted on save | `workflow_review.md` |
+| 6b Tile module | New tile (Tile > New tile..., a project); height range fitted on save; texture groups edited in the Tile panel | `workflow_review.md` |
 | 7 Export | done (`save_exported`, stages A-C) | `tile_roundtrip.md` |
 
 ## Open
@@ -52,14 +56,13 @@ render, terrain did not look like the game, some buildings stood at the wrong he
   `rendering_remaining.md`.
 
 ### Phase 5a: terrain painting
-Today: the height brushes (raise, lower, smooth, flatten, level). Writes need the kit-exact encoders (`blend_map.tif`,
-`ground_type_map.png`, `nogo.png`, `lf_influence_map.png`; `docs/formats/image_encoders.md`); one undo entry per stroke.
-- Blend layer brush (the four `TEXTURE_GROUP` channels, 16 weights per pixel as read in Phase 3).
-- Ground type brush (TEd's `GBP_GROUND_TYPE1..5`).
-- Brush falloff editor (TEd's Brush Falloff Editor window) and image brush (`ImageBrush`, Load Brush).
-- Spline paint stroke (TEd's Spline Paint Stroke / Spline Segment brush).
+Done: the height brushes, the blend brush, the ground type brush, the falloff curve editor, the image brush, the stroke along a line,
+the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 3). Left:
 - Height brushes: noise, stamp, import PNG.
-- Nogo map and LF-influence map painting.
+- Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
+  Subtract among its operations, `docs/re/terrain.md`).
+- TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's
+  average by the stroke's weight).
 
 ### Phase 5b
 - Exclusion polygons as brushes (paint the area instead of drawing the polygon).
@@ -101,7 +104,7 @@ Today: the height brushes (raise, lower, smooth, flatten, level). Writes need th
 - Save As as TEd's *Save tile as* (new name, variation, entry). The generic File > Save as... only writes the tile to another
   folder.
 - Resize tile.
-- Tile properties editing UI (`min_height`, `scale`, texture groups, colour, flags; the entry panel is read-only).
+- Tile properties editing UI (`min_height`, `scale`, colour, flags; the texture groups are edited already).
 - Tile database management (TEd's Database management dialog; new tile set).
 - Integrity errors view.
 - Stats view (counts, memory budget).
