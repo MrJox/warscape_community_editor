@@ -52,6 +52,9 @@ Status legend: **done**, **partial**, **todo**.
 ## Phase 3: editor — partial
 
 - **done** Tile menu: Save to mod pack; no Save for / Import from Assembly Kit for a game whose kit has no tiles.
+- **done** The weather tool on Rome 2's environments (the test map lit, the default environment `rome_med` day_dry_01).
+- **partial** The UI tool: Rome 2's layouts (version 86) read and write back byte for byte; drawing them is not checked (the two looked
+  at draw nothing: images missing from the packs, or hidden states).
 - **todo** Hide what Rome 2 has not: seasons and snow, procedural BMDs, escalation layers, civilian zones, tents (`GameFeatures`).
 - **todo** Instance templates and the Create panel's defaults from Rome 2's data (`scripts/re/instance_templates.py` needs a kit).
 - **todo** Siege AI and procedural walls once their branches are merged: the wall bases and the siege classes per game.

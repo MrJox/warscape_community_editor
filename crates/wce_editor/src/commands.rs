@@ -963,6 +963,15 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         e.setup(dir).map_or_else(fail, ok)
     });
 
+    c.add("game", "game [key]", "switch to another game (File > Game: the documents close, asking about unsaved ones); no key: the current game and the others", |e, a| {
+        let Some(key) = a.first() else {
+            let all = wce_vfs::GameProfile::ALL.iter().map(|g| g.key).collect::<Vec<_>>().join(", ");
+            return ok(format!("{} ({all})", e.game().key));
+        };
+
+        e.switch_game(key).map(|()| format!("{} (mounted: {})", e.game().display_name, e.is_mounted())).map_or_else(fail, ok)
+    });
+
     c.add("assert_mounted", "assert_mounted 0|1", "test: the game packs are (not) mounted", |e, a| {
         let want = a.first().is_none_or(|x| x != "0");
         let mounted = e.is_mounted();
