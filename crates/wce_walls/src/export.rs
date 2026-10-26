@@ -285,7 +285,7 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
     let lowered = lower_walls(&mut scene, &ground, files, schema, &key_prefix(&folder), None)?;
-    let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
+    let (ted, _) = wce_tile::project_files::to_ted_keeping(scene.save(), &[wce_tile::project_files::SCALE_ATTR])?;
     let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
     let base_of = |k: &str| bases.get(k).cloned();
     let (dir, compiled) = save_exported_with(game, project_dir, Some(ted), out, &base_of)?;
@@ -339,7 +339,7 @@ pub fn save_walls_to_pack(game: &Game, files: &dyn Files, schema: &Schema, proje
     let mut scene = TedScene::parse_any(scene)?;
     let prefix = key_prefix(&folder);
     let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, None)?;
-    let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
+    let (ted, _) = wce_tile::project_files::to_ted_keeping(scene.save(), &[wce_tile::project_files::SCALE_ATTR])?;
     let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
     let base_of = |k: &str| bases.get(k).cloned();
     let (folder, mut pack_files, compiled) = wce_tile_io::attila::workflow::exported_pack_files(game, project_dir, Some(ted), &base_of)?;

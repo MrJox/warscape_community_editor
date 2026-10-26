@@ -234,9 +234,9 @@ impl TedScene {
         parse_vec3(&self.doc.get(elem, "orientation")?, "euler")
     }
 
-    /// scale="vector(..)" or a plain number (uniform).
+    /// scale="vector(..)" or a plain number (uniform); a building's is the editor's `wce_scale` (`project_files::SCALE_ATTR`).
     pub fn scale(&self, elem: usize) -> Option<Double3> {
-        let v = self.doc.get(elem, "scale")?;
+        let v = self.doc.get(elem, "scale").or_else(|| self.doc.get(elem, crate::project_files::SCALE_ATTR))?;
         parse_vec3(&v, "vector").or_else(|| strtod_prefix(&v).map(|(d, _)| Double3::new(d, d, d)))
     }
 

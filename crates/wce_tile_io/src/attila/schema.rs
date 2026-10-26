@@ -43,7 +43,7 @@ impl Schema for TedSchema {
             | "facing_direction" | "far_distance" | "flag_facing" | "flow_speed" | "foam_amount" | "focal_length" | "glow_amount"
             | "ground_height" | "near_distance" | "opacity" | "orthographic_height" | "parallax_scale" | "radius" | "random_offset"
             | "rank_distance" | "roll" | "step_size" | "subdivision_length" | "terrain_offset" | "vertical_fov" | "width"
-            | "zone_skirt_distance" | "wall_tolerance" | "wall_access_every" | "wall_defence_every" => FLOAT,
+            | "zone_skirt_distance" | "wall_tolerance" | "wall_access_every" | "wall_defence_every" | "wce_scale" => FLOAT,
 
             "animation_type" | "building_tech_level" | "capture_location" | "civilian_amount" | "civilian_type" | "database_type"
             | "deployment_category" | "deployment_polygon_type" | "deployment_type" | "DOF_focus" | "export_type" | "falloff_type"

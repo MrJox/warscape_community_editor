@@ -567,7 +567,7 @@ impl Tile {
                     };
                 }
 
-                if let Some(r) = raw("scale") {
+                if let Some(r) = raw("scale").or_else(|| raw(wce_tile::project_files::SCALE_ATTR)) {
                     let r = text(r);
                     if let Some(s3) = parse_triple(&r, "vector") {
                         l.scale = Some([s3[0] as f32, s3[1] as f32, s3[2] as f32]);
