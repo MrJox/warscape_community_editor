@@ -603,6 +603,9 @@ pub struct TileTool {
     /// the item left out. Made again only when one of those changes, not on every frame the mouse moves.
     snap_outlines: std::cell::RefCell<Option<((DocumentId, u64, u64, Option<usize>), Arc<Vec<(Vec<Float3>, bool)>>)>>,
 
+    /// The ground coverage's window.
+    pub(crate) coverage: crate::ground_coverage_panel::CoverageUi,
+
     /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
     pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
     pub(crate) bridge_overlay: bool,
@@ -994,6 +997,7 @@ impl Default for TileTool {
             share_notice_open: false,
             scratch_set: None,
             scratch_name: String::new(),
+            coverage: Default::default(),
             snap_outlines: Default::default(),
             bridge_check: None,
             bridge_overlay: true,
@@ -2336,6 +2340,8 @@ impl TileTool {
             }
         }
 
+        self.coverage_overlay(d, &mut o);
+
         if t.display().show_border {
             let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
             let white = overlay_colour(0.9, 0.9, 0.9, 1.0);
@@ -2957,6 +2963,17 @@ impl TileTool {
         self.draw_links_section(e, id);
         gui::separator();
         self.draw_problems_section(e, id);
+        gui::separator();
+        if gui::collapsing_header("Experimental", 0) {
+            if gui::button(&format!("{}  Ground coverage...", icons::MOUNTAIN)) {
+                self.open_coverage();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Rocks and plants on the tile's steep slopes, generated into their own layer");
+            }
+        }
+
         gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
@@ -5203,6 +5220,7 @@ impl Tool for TileTool {
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
+        self.draw_coverage_window(e);
     }
 
     fn fixes(&self) -> Vec<std::sync::Arc<dyn wce_editor::fixes::Fix>> {
@@ -5619,6 +5637,7 @@ impl Tool for TileTool {
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);
+        self.coverage_tooltip(e);
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {

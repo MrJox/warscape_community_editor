@@ -18,6 +18,7 @@ pub mod extract_prompt;
 mod falloff_editor;
 pub mod flip_tool;
 mod gesture;
+pub mod ground_coverage_panel;
 pub mod ground_views;
 mod height_import_dialog;
 mod image_brush;
