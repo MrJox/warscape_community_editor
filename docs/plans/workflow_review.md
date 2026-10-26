@@ -51,6 +51,9 @@ entry or location. The entry was read-only (Phase 6b of tile_ted_parity.md: New 
   entries; wce's export (`save_exported`) already merges the project's entry into the mod's `tile_database.bin` (docs/formats/tile_workflow.md);
   Save for Assembly Kit writes the entry into the kit's `TILES`, from which BOB compiles. A project's database would never be read.
 
+- **The terrain height keeps TEd's meaning** (user, 2026-10-26): the value goes into the height map's units, which wce shows halved (the
+  scene's 2 units a metre): a new tile at 10 shows 5 m in wce, as every kit tile shows half its entry's numbers.
+
 ### Done (branch `workflow-review`)
 
 - `wce_tile::new_tile`: the values, the checks (name, limits, an existing tile in the projects, the kit's raw_data or working_data), TEd's
@@ -90,8 +93,16 @@ when `fresh` (closing its document, refused with unsaved changes), keeps the oth
 `extract_or_ask` and the prompt for the Tiles panel's packs and Tile > Open exported tile...; an extracted project's missing variation is
 extracted (a variation of it is marked) instead of taken from the kit; Import from Assembly Kit reads the mark.
 
-### Open
+## 3. Ground texture painting (next; started 2026-10-26)
 
-- **Units of the terrain height.** TEd's value is written into the height map's units, which wce shows halved (the scene's 2 units a
-  metre): a new tile at 10 shows 5 m in wce (`assert_height`, the Inspector), as every kit tile shows half its entry's numbers. wce keeps
-  TEd's meaning (the same input makes the same files as TEd); the dialog could say it, or take metres.
+**What wce does today:** displays the ground with the game's terrain shaders (`blend_map.tif`: 16 weights per pixel, channel 4 g + v =
+texture group g, variation v, summing to 65535; the entry's four `TEXTURE_GROUP`s; the climate and season the user picks) and TEd's
+debug views (colour, blend groups, ground types, protection). It edits none of it: `blend_map.tif` and `ground_type_map.png` pass
+through on save, Save for Assembly Kit and the export (compiled to BOB's `blend.dds`, `index.dds`, `ground_types.dds`); New tile writes
+them (all the first group, no ground types) and the extraction rebuilds them from the game's maps (a group that mixed more than two
+variations loses the rest). The texture groups are read-only (the entry is), the material is built once from the file on disk (no live
+redraw), the procedural trees read the saved blend map, and only the height map has stroke undo. Planned as tile_ted_parity.md 5a.
+
+**Questions for the user (TEd's Paint tab):** the blend brush (group + variation? additive or replacing? erase?); ground types (their
+own brush and palette?); what the Brush Falloff Editor, the image brush and Blendmap Filters are used for, and how often; what should
+differ from TEd (paint by texture rather than group / variation, a live preview).
