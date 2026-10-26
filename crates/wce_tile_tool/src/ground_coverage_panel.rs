@@ -11,7 +11,7 @@ use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
-use wce_tile::ground_coverage::{Differential, Grid, Input, Params, RockSize, State, generate};
+use wce_tile::ground_coverage::{Differential, Grid, Input, Params, RockSize, Seat, State, generate};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings};
@@ -523,6 +523,17 @@ fn params_rows(p: &mut Params) -> bool {
         gui::text_colored(theme::warning(), "Experimental: the game may show them at scale 1.");
     }
 
+    let mut seat = Seat::ALL.iter().position(|&s| s == p.seat).unwrap_or(1) as i32;
+    gui::set_next_item_width(160.0);
+    if gui::combo("stands on", &mut seat, &["the ground at its centre", "the mean ground under it", "the lowest ground under it"]) {
+        p.seat = Seat::ALL[seat as usize];
+        changed = true;
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip("The ground a rock's base is put on. The lowest never lets its downhill side float, but buries big rocks on steep faces.");
+    }
+
     let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
         gui::set_next_item_width(160.0);
         changed |= gui::drag_float(label, v, speed, lo, hi, format);
@@ -532,8 +543,11 @@ fn params_rows(p: &mut Params) -> bool {
     };
 
     let mut sink = p.sink * 100.0;
-    f("sunk", &mut sink, 0.5, 0.0, 90.0, "%.0f %% of its height", "How much of each rock goes under the lowest ground around it");
+    f("sunk", &mut sink, 0.5, 0.0, 90.0, "%.0f %% of its height", "How much of each rock goes under the ground it stands on");
     p.sink = sink / 100.0;
+    let mut visible = p.min_visible * 100.0;
+    f("at least visible", &mut visible, 0.5, 0.0, 100.0, "%.0f %% of its height", "How much of each rock stays over the ground at its centre, whatever the rest says");
+    p.min_visible = visible / 100.0;
 
     gui::separator_text("Plants");
     let mut density = p.plant_density * 100.0;
