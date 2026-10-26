@@ -250,6 +250,7 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     wce_prof!("viewport.render");
     let outline_style = e.selection_outline_style();
     let selection = e.selection_entities();
+    let tint = e.tint_entities();
     let Some(r) = e.renderer.as_mut() else { return };
     if e.scene.environment.active.is_none() {
         // Nothing lights the scene yet: the default environment with the player's output settings.
@@ -260,6 +261,7 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     let vp = &mut e.viewport;
     r.settings.show_grid = vp.show_grid;
     r.settings.selection = selection;
+    (r.settings.tinted, r.settings.tint_colour) = tint;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     e.clock.tick();
     r.settings.deterministic = e.clock.fixed_step();
@@ -327,6 +329,7 @@ pub fn surfaces_below(e: &mut Editor, center: wce_foundation::math::Float3, size
 pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool {
     let outline_style = e.selection_outline_style();
     let selection = e.selection_entities();
+    let tint = e.tint_entities();
     let Some(r) = e.renderer.as_mut() else { return false };
     if w < 16 || h < 16 {
         return false;
@@ -348,6 +351,7 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     r.restart_temporal();
     r.settings.show_grid = e.viewport.show_grid;
     r.settings.selection = selection;
+    (r.settings.tinted, r.settings.tint_colour) = tint;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
     for _ in 0..frames {
         clock.tick();
