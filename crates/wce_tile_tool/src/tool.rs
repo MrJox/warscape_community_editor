@@ -78,6 +78,15 @@ pub enum TileMode {
     Ground,
 }
 
+/// What Snap river ends to link targets does (its tooltip).
+static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!(
+    "Moves every river end at the tile's edge whose cell the tile offers as a river link: level with the cell's centre along the edge, and \
+     {} m past the edge unless it is past it already (as the kit's rivers end, so that the neighbour's river meets it). The ends' handles move \
+     with them; their height stays. An end already within a few metres of its cell's centre is centred too. Ends at cells without a river \
+     link are left alone. One undo step.",
+    wce_tile_editor::tile_document::river_links::RIVER_END_OVERSHOOT_M
+));
+
 /// What the Tint freeform view filter does (its tooltip).
 const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
      instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
@@ -399,6 +408,9 @@ pub struct TileTool {
     /// The Problems section's trees, and the (tile, history, structure) they were found for.
     problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
 
+    /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
+    river_problems: Option<((DocumentId, u64, u64), Vec<(Option<usize>, String)>)>,
+
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
 
@@ -490,7 +502,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -1825,21 +1837,61 @@ impl TileTool {
         let stamp = (id, d.history().version(), d.tile().structure_version());
         if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) {
             self.problems = Some((stamp, d.trees_outside_exclusions()));
+            self.river_problems = Some((stamp, d.river_link_problems()));
         }
 
         let trees = self.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
-        let title = if trees.is_empty() { "Problems (none)###problems".to_owned() } else { format!("{}  Problems ({})###problems", icons::TRIANGLE_ALERT, trees.len()) };
+        let rivers = self.river_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let n = trees.len() + rivers.len();
+        let title = if n == 0 { "Problems (none)###problems".to_owned() } else { format!("{}  Problems ({n})###problems", icons::TRIANGLE_ALERT) };
         if !gui::collapsing_header(&title, 0) {
             return;
         }
 
-        if trees.is_empty() {
-            gui::text_disabled("Nothing the game would leave out.");
+        if n == 0 {
+            gui::text_disabled("Nothing the game would leave out, and the rivers meet their link targets.");
             return;
         }
 
-        gui::text_wrapped(&format!("{} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out. Put them inside one (or draw one around them).", trees.len()));
         let mut pick = None;
+        if !rivers.is_empty() {
+            gui::text_wrapped(&format!("{} river link problem(s): the rivers must end just past the edge, level with the centre of the cells the tile offers as river links, for the neighbours' rivers to meet them.", rivers.len()));
+            for (i, (el, msg)) in rivers.iter().enumerate() {
+                if gui::selectable(&format!("{}  {msg}##river{i}", icons::WAVES), false, 0) {
+                    pick = *el;
+                }
+            }
+
+            if gui::button("Snap river ends to link targets") {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.status = match d.snap_river_ends() {
+                    Ok(0) => "no river end at a target cell needed moving".to_owned(),
+                    Ok(k) => format!("{k} river end(s) snapped to their link targets"),
+                    Err(why) => why,
+                };
+
+                return;
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&RIVER_SNAP_TIP);
+            }
+
+            if trees.is_empty() {
+                if let Some(el) = pick {
+                    e.selection.set(SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
+                    let _ = wce_editor_core::command_registry::CommandRegistry::run(e, "focus");
+                }
+
+                return;
+            }
+
+            gui::separator();
+        }
+
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+
+        gui::text_wrapped(&format!("{} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out. Put them inside one (or draw one around them).", trees.len()));
         let sc = d.tile().tscene();
         for &el in trees.iter().take(200) {
             let p = d.tile().world_position(el);

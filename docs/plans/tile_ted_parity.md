@@ -65,8 +65,12 @@ file's order. The editor itself is described in
   handles swapped; nothing recomputed, so the spline does not move and two flips give the bytes back; the first point is no longer at the
   instance's origin, TEd's habit only), the spline section's "Flip direction" button, command `spline_flip`, `scripts/tile_spline_flip.txt`.
   TEd has no such command.
-- 4c: snap river end points to the link target cells (`docs/re/tile_links.md`: x along +x, y from the +z edge).
-- 4c: check river ends against the entry's targets (osgiliath: both ends lie on the target cells).
+- Done (2026-10-27): 4c, river ends against the link targets (`tile_document/river_links.rs`). Measured on the kit's 187 river ends at
+  an edge: all on a `river` target cell, 0.1 .. 12.4 m past the edge (median 5.8), at most 4.8 m off the cell's centre along it.
+  `river_link_problems`: a river target without an end at it, an end at an edge cell that is no target, an end more than 8 m off its
+  cell's centre (the Tile panel's Problems section, command `river_check`); `snap_river_ends`: the ends at target cells level with the
+  centre, 6 m past the edge unless past it already, handles along, one undo entry (the Problems section's button, `river_snap`).
+  `scripts/tile_river_links.txt`; four kit river tiles (straight, fork, 4 x 4 fork, crossing) report nothing.
 - 4d: water map / shallow-deep view (`hf_water_map.data`, `GT_SHALLOW_WATER` / `GT_DEEP_WATER` in `ground_type_map.png`; neither is
   read yet, `docs/re/water.md`). The river bed stays as authored (BOB carves it).
 - Water rendering (river uv, shadows on water, foam / ice, `g_refraction_depth`, river ends blending with neighbours, battle sea mesh):
