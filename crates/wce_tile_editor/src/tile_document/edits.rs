@@ -414,8 +414,8 @@ impl TileDocument {
         true
     }
 
-    /// A new building copied from a template building (or the first one of the tile). `mode` None: it has the template's placement; a
-    /// landscape one is put on the terrain at `at`.
+    /// A new building copied from a template building (or the first one of the tile; a tile without any gets TEd's defaults, as the Create
+    /// panel places it). `mode` None: it has the template's placement; a landscape one is put on the terrain at `at`.
     ///
     /// # Errors
     ///
@@ -435,8 +435,10 @@ impl TileDocument {
         }
 
         let sc = self.tile().tscene();
-        let tmpl = template_elem.filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE").or_else(|| sc.find_all("BUILDING_INSTANCE").first().copied())
-            .ok_or("no BUILDING_INSTANCE to use as a template in this tile")?;
+        let Some(tmpl) = template_elem.filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE").or_else(|| sc.find_all("BUILDING_INSTANCE").first().copied()) else {
+            return self.add_building_from_defaults(key, at, mode, into);
+        };
+
         let mark = self.begin()?;
         let mut copy = self.tscene_mut().duplicate(tmpl)?;
         if let Some(into) = into.filter(|&l| self.tile().layer_of(copy) != Some(l)) {
@@ -461,6 +463,23 @@ impl TileDocument {
 
         self.push_splice(format!("Add {key}"), mark, vec![template_elem.map_or(0, item_of)], vec![item_of(copy)]);
         Ok(copy)
+    }
+
+    /// A new building with TEd's defaults (`instance_templates`) in `into` (`None`: the scene graph), at `at` (the origin by default).
+    ///
+    /// # Errors
+    ///
+    /// No scene graph to put it in.
+    fn add_building_from_defaults(&mut self, key: &str, at: Option<Float3>, mode: Placement, into: Option<usize>) -> Result<usize, String> {
+        let mut d = super::draft::Draft::new("BUILDING_INSTANCE", key);
+        if mode != Placement::None {
+            d.attrs.insert("surface_mode".to_owned(), if mode == Placement::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" }.to_owned());
+        }
+
+        let text = self.draft_text(&d).ok_or("no building key")?;
+        let into = into.or(self.tile().tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a building to")?;
+        let on_terrain = mode != Placement::Freeform;
+        self.place_text(&format!("Add {key}"), &text, into, at.unwrap_or(Float3::new(0.0, 0.0, 0.0)), None, on_terrain)
     }
 
     /// A polygon from world points in `layer` (`None`: the scene graph).

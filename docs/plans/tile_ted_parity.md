@@ -94,7 +94,7 @@ Gap table (Tile tool today -> TEd):
 | Zones: deployment, capture locations, civilian shelters / deployment, no-go / go, siege AI nodes / edges, AI separator, lite building zones | no-go / go / AI hints polygons only; the rest are markers | 5f |
 | Tile identity: database entry as the root (paths, colour, size, ground groups, height / normal parameters per variation), tile browser, variation chooser | opens a folder, scans 699 entries to guess width / height / min_height / scale, drops the rest | 0b |
 | Tile links and link targets (TileLinkEditor, TileLinkTargetEditor): view, edit, validate, neighbour preview, edge blend | parsed in `tile_database` only, not shown or editable | 6a |
-| Tile module: New tile, resize, properties (min height, scale), database management, integrity errors, Save as | open and save only | 6 |
+| Tile module: New tile, resize, properties (min height, scale), database management, integrity errors, Save as | open and save; New tile (a project, battle) and the height range fitted on save (plans/workflow_review.md) | 6 |
 | Export to the game: stage A (`building_list.xml`, markers, bmd_data) + BOB stages B / C | planned in `tile_editor` PLAN Phases 4-9, not built in wce | 7 |
 | Selection: box select, saved selections, select by type, select same key, filters, invert, lock | click and shift-click | 5g |
 | Snap: grid and angle with tolerance, snap to other objects, align / distribute, move along normal, copy / paste, multi-item gizmo | grid snap and 15 degree rotate step; single item | 5g |

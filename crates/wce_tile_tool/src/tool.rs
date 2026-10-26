@@ -242,6 +242,10 @@ pub struct TileTool {
     pub(crate) new_set_name: Option<String>,
     pub(crate) new_set_open: bool,
 
+    /// The "New tile" dialog (and whether it opens on the next frame).
+    pub(crate) new_tile: Option<crate::new_tile_dialog::NewTileDialog>,
+    pub(crate) new_tile_open: bool,
+
     /// The new vegetation set (not saved; Ctrl + click on trees in the Create panel) and the name it will be saved with.
     pub(crate) scratch_set: Option<wce_tile::vegetation_sets::VegetationSet>,
     pub(crate) scratch_name: String,
@@ -339,7 +343,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -858,7 +862,7 @@ impl TileTool {
 
     /// The kit a tile of `kind` (`battle`, `campaign`) is saved for: the first of the kits the Tiles panel lists (not the projects) that has
     /// that kind's tile database.
-    fn kit_for(&self, e: &mut Editor, kind: &str) -> Option<PathBuf> {
+    pub(crate) fn kit_for(&self, e: &mut Editor, kind: &str) -> Option<PathBuf> {
         let projects = Self::workspace_dir(e).join("raw_data");
         self.kit_roots(e).into_iter().filter(|r| *r != projects).find(|r| r.join("terrain/tiles").join(kind).join("_tile_database").is_dir())
     }
@@ -2348,12 +2352,21 @@ impl Tool for TileTool {
         wce_foundation::wce_prof!("tile.panel.create");
         self.draw_create_panel(e);
         self.draw_new_set_popup(e);
+        self.draw_new_tile_dialog(e);
         self.draw_quick_add(e);
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {
         if !gui::begin_menu("Tile") {
             return;
+        }
+
+        if gui::menu_item("New tile...", None, false, true) {
+            self.open_new_tile_dialog();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
         }
 
         if gui::menu_item("Open tile...", None, false, true) {

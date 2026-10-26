@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+md-5 = "0.10"
 rayon = "1"
 wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }

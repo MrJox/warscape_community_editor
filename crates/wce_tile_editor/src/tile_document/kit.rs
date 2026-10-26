@@ -111,6 +111,11 @@ impl TileDocument {
     pub(crate) fn moved_to_project(&mut self, dir: PathBuf) {
         let raw = wce_tile::tile_project::kit_raw_root(&dir);
         let p = &mut self.tile_mut().project;
+        let entry_file = p.entry_file_for(&dir);
+        if let (Some(entry), Some(file)) = (p.entry.as_mut(), entry_file) {
+            entry.set_file(&file);
+        }
+
         p.dir = dir;
         p.raw_root = raw;
     }

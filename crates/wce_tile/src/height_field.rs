@@ -1,8 +1,9 @@
 //! The tile height map as the editor edits it: height_map_0.png (16-bit grey) <-> metres.
 //!
 //! metres = min_height + raw / 65535 * scale, with min_height and scale taken from the tile's VARIATION in the tile database (TILES/*.xml).
-//! Brushes work in pixels and change `raw`; every edit goes through an undo record holding the touched rectangle, so edit + undo restores
-//! the exact samples (and the PNG bytes, through the kit-exact encoder).
+//! The heights are kept in metres, so brushes are not bound by the range; saving fits the range to them as TEd does (`fit_range`). Brushes
+//! work in pixels; every edit goes through an undo record holding the touched rectangle, so edit + undo restores the exact samples (and the
+//! PNG bytes, through the kit-exact encoder).
 
 use wce_formats::png_file::PngFile;
 
@@ -36,17 +37,26 @@ struct Record {
     y0: u32,
     x1: u32,
     y1: u32,
-    before: Vec<u16>,
-    after: Vec<u16>,
+    before: Vec<f32>,
+    after: Vec<f32>,
 }
+
+/// TEd's height range of a map that is flat (every sample the same): the range is `[h, h + 50]` (`TerrainIO.cpp`, docs/formats/tile_ted.md).
+pub const FLAT_SCALE: f64 = 50.0;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HeightField {
     w: u32,
     h: u32,
+
+    /// The range the samples are stored with in the file: the entry's min_height / scale as the map was read, or as it was last fitted.
     min: f64,
     scale: f64,
-    raw: Vec<u16>,
+
+    /// The heights in metres, as offsets from `base` (the min_height they were read with): 32-bit floats keep a sample within 1e-7 of the
+    /// range, far below a 16-bit step. Edits are not bound by the range: the range follows the heights when the map is saved (`fit_range`).
+    base: f64,
+    v: Vec<f32>,
     editing: bool,
 
     /// Touched rectangle of the open edit (exclusive end).
@@ -57,7 +67,7 @@ pub struct HeightField {
     touched: bool,
 
     /// Copy of the samples at `begin_edit`.
-    snapshot: Vec<u16>,
+    snapshot: Vec<f32>,
     undo: Vec<Record>,
     redo: Vec<Record>,
 }
@@ -72,16 +82,32 @@ impl HeightField {
             return Err("height map must be 16-bit grey".to_owned());
         }
 
-        let raw = png.pixels.as_chunks::<2>().0.iter().take(png.width as usize * png.height as usize).map(|p| u16::from_be_bytes(*p)).collect();
-        Ok(Self { w: png.width, h: png.height, min: min_height, scale, raw, ..Default::default() })
+        let v = png.pixels.as_chunks::<2>().0.iter().take(png.width as usize * png.height as usize).map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32).collect();
+        Ok(Self { w: png.width, h: png.height, min: min_height, scale, base: min_height, v, ..Default::default() })
     }
 
-    /// Replaces the pixels of `base` (header, chunk layout stay) and returns a PNG that `write` encodes with the kit encoder.
+    /// A flat map at `metres`, with the range TEd gives it (`[metres, metres + FLAT_SCALE]`, every sample 0).
+    pub fn flat(w: u32, h: u32, metres: f64) -> Self {
+        Self { w, h, min: metres, scale: FLAT_SCALE, base: metres, v: vec![0.0; w as usize * h as usize], ..Default::default() }
+    }
+
+    /// The samples as 16-bit values of the range (min_height, scale), rounded to nearest and clamped.
+    pub fn quantized(&self, min_height: f64, scale: f64) -> Vec<u16> {
+        self.v.iter().map(|&o| quantize(self.base + f64::from(o), min_height, scale)).collect()
+    }
+
+    /// Replaces the pixels of `base` (header, chunk layout stay) with the samples in the field's range and returns a PNG that `write`
+    /// encodes with the kit encoder.
     pub fn to_png(&self, base: &PngFile) -> PngFile {
         let mut p = base.clone();
-        p.pixels = self.raw.iter().flat_map(|r| r.to_be_bytes()).collect();
+        p.pixels = self.quantized(self.min, self.scale).iter().flat_map(|r| r.to_be_bytes()).collect();
         p.pixels_edited = true;
         p
+    }
+
+    /// A blank 16-bit grey PNG of the field's size, for [`Self::to_png`].
+    pub fn blank_png(&self) -> PngFile {
+        PngFile { width: self.w, height: self.h, bit_depth: 16, color_type: 0, ..Default::default() }
     }
 
     pub fn width(&self) -> u32 {
@@ -92,12 +118,13 @@ impl HeightField {
         self.h
     }
 
+    /// The 16-bit sample in the field's range.
     pub fn raw(&self, x: u32, y: u32) -> u16 {
-        self.raw[y as usize * self.w as usize + x as usize]
+        self.to_raw(self.metres(x, y))
     }
 
     pub fn metres(&self, x: u32, y: u32) -> f64 {
-        self.to_metres(self.raw(x, y))
+        self.base + f64::from(self.v[y as usize * self.w as usize + x as usize])
     }
 
     pub fn to_metres(&self, r: u16) -> f64 {
@@ -106,14 +133,40 @@ impl HeightField {
 
     /// Clamped, rounded to nearest.
     pub fn to_raw(&self, m: f64) -> u16 {
-        let r = (m - self.min) / self.scale * 65535.0;
-        r.clamp(0.0, 65535.0).round() as u16
+        quantize(m, self.min, self.scale)
     }
 
-    /// Another min_height / scale for the same samples (before any edit: the undo records hold samples, not metres).
+    /// Another min_height / scale for the same 16-bit samples (before any edit: the samples are read again with these numbers).
     pub fn recalibrate(&mut self, min_height: f64, scale: f64) {
+        let raw = self.quantized(self.min, self.scale);
+        self.v = raw.iter().map(|&r| (f64::from(r) / 65535.0 * scale) as f32).collect();
+        self.base = min_height;
         self.min = min_height;
         self.scale = scale;
+    }
+
+    /// The range the heights are stored with from now on (the heights stay).
+    pub fn set_range(&mut self, min_height: f64, scale: f64) {
+        self.min = min_height;
+        self.scale = scale;
+    }
+
+    /// The range TEd saves the heights with (`TerrainIO.cpp`): min_height = the lowest sample, scale = the highest minus the lowest, no padding
+    /// (a flat map: `FLAT_SCALE`). While the lowest and highest samples are within half a step of the field's range, that range is kept, so
+    /// that a map that was not edited is saved with the numbers it was read with, bytes and entry unchanged.
+    pub fn fit_range(&self) -> (f64, f64) {
+        let (lo, hi) = self.v.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &o| (lo.min(o), hi.max(o)));
+        if self.v.is_empty() {
+            return (self.min, self.scale);
+        }
+
+        let (lo, hi) = (self.base + f64::from(lo), self.base + f64::from(hi));
+        let half_step = self.scale.abs() / 65535.0 * 0.5;
+        if (lo - self.min).abs() <= half_step && (hi - (self.min + self.scale)).abs() <= half_step {
+            return (self.min, self.scale);
+        }
+
+        (lo, if hi > lo { hi - lo } else { FLAT_SCALE })
     }
 
     pub fn min_height(&self) -> f64 {
@@ -159,7 +212,8 @@ impl HeightField {
         self.ty1 = self.ty1.max(y + 1);
     }
 
-    fn apply(&mut self, b: &Brush, f: impl Fn(&Self, i32, i32, f64, u16) -> u16) -> Result<()> {
+    /// Runs `f` over the samples under the brush: (field, x, y, weight, offset now) -> the new offset (metres above `base`).
+    fn apply(&mut self, b: &Brush, f: impl Fn(&Self, i32, i32, f64, f64) -> f64) -> Result<()> {
         if !self.editing {
             return Err("begin_edit() before editing".to_owned());
         }
@@ -176,10 +230,10 @@ impl HeightField {
                 }
 
                 let i = y as usize * self.w as usize + x as usize;
-                let before = self.raw[i];
-                let after = f(self, x, y, wgt, before);
+                let before = self.v[i];
+                let after = f(self, x, y, wgt, f64::from(before)) as f32;
                 if after != before {
-                    self.raw[i] = after;
+                    self.v[i] = after;
                     self.touch(x as u32, y as u32);
                 }
             }
@@ -188,13 +242,13 @@ impl HeightField {
         Ok(())
     }
 
-    /// Adds metres (negative lowers); results are clamped to the representable range.
+    /// Adds metres (negative lowers).
     ///
     /// # Errors
     ///
     /// No edit is open.
     pub fn raise(&mut self, b: &Brush, metres: f64) -> Result<()> {
-        self.apply(b, |s, _, _, w, cur| s.to_raw(s.to_metres(cur) + metres * w))
+        self.apply(b, |_, _, _, w, cur| cur + metres * w)
     }
 
     /// Blends towards the local average (of the samples before this stroke step).
@@ -203,7 +257,7 @@ impl HeightField {
     ///
     /// No edit is open.
     pub fn smooth(&mut self, b: &Brush) -> Result<()> {
-        let src = self.raw.clone();
+        let src = self.v.clone();
         let (w, h) = (self.w as i32, self.h as i32);
         self.apply(b, |_, x, y, wgt, cur| {
             let (mut sum, mut n) = (0.0, 0);
@@ -220,8 +274,7 @@ impl HeightField {
             }
 
             let avg = sum / f64::from(n);
-            let cur = f64::from(cur);
-            (cur + (avg - cur) * wgt.min(1.0)).round() as u16
+            cur + (avg - cur) * wgt.min(1.0)
         })
     }
 
@@ -231,8 +284,8 @@ impl HeightField {
     ///
     /// No edit is open.
     pub fn flatten(&mut self, b: &Brush, target_metres: f64) -> Result<()> {
-        let target = f64::from(self.to_raw(target_metres));
-        self.apply(b, |_, _, _, w, cur| (f64::from(cur) + (target - f64::from(cur)) * w.min(1.0)).round() as u16)
+        let target = target_metres - self.base;
+        self.apply(b, |_, _, _, w, cur| cur + (target - cur) * w.min(1.0))
     }
 
     /// Flattens to the height at the brush centre.
@@ -281,12 +334,12 @@ impl HeightField {
                     continue;
                 }
 
-                let (target, k) = (m0 + (m1 - m0) * t, 1.0 - d / width);
+                let (target, k) = (m0 + (m1 - m0) * t - self.base, 1.0 - d / width);
                 let i = y as usize * self.w as usize + x as usize;
-                let cur = self.raw[i];
-                let after = (f64::from(cur) + (f64::from(self.to_raw(target)) - f64::from(cur)) * k).round() as u16;
+                let cur = self.v[i];
+                let after = (f64::from(cur) + (target - f64::from(cur)) * k) as f32;
                 if after != cur {
-                    self.raw[i] = after;
+                    self.v[i] = after;
                     self.touch(x as u32, y as u32);
                 }
             }
@@ -307,7 +360,7 @@ impl HeightField {
 
         self.editing = true;
         self.touched = false;
-        self.snapshot = self.raw.clone();
+        self.snapshot = self.v.clone();
         Ok(())
     }
 
@@ -327,7 +380,7 @@ impl HeightField {
             for x in self.tx0..self.tx1 {
                 let i = y as usize * self.w as usize + x as usize;
                 r.before.push(self.snapshot[i]);
-                r.after.push(self.raw[i]);
+                r.after.push(self.v[i]);
             }
         }
 
@@ -336,11 +389,11 @@ impl HeightField {
         self.snapshot.clear();
     }
 
-    fn put(&mut self, r: &Record, values: &[u16]) {
+    fn put(&mut self, r: &Record, values: &[f32]) {
         let mut it = values.iter();
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
-                self.raw[y as usize * self.w as usize + x as usize] = *it.next().expect("a value per touched sample");
+                self.v[y as usize * self.w as usize + x as usize] = *it.next().expect("a value per touched sample");
             }
         }
     }
@@ -367,7 +420,14 @@ impl HeightField {
         self.undo.len()
     }
 
-    pub fn samples(&self) -> &[u16] {
-        &self.raw
+    /// The 16-bit samples in the field's range.
+    pub fn samples(&self) -> Vec<u16> {
+        self.quantized(self.min, self.scale)
     }
+}
+
+/// A height as a 16-bit sample of the range (min_height, scale): rounded to nearest, clamped.
+fn quantize(m: f64, min_height: f64, scale: f64) -> u16 {
+    let r = (m - min_height) / scale * 65535.0;
+    r.clamp(0.0, 65535.0).round() as u16
 }
