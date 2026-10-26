@@ -66,6 +66,11 @@ entry or location. The entry was read-only (Phase 6b of tile_ted_parity.md: New 
 - `add_building` on a tile without buildings makes one with TEd's defaults (`instance_templates`) instead of failing.
 - Tile > New tile... (`wce_tile_tool::new_tile_dialog`) and the command `new_tile <name> [x] [y] [height] [density]`; the tile opens.
 
+- Old bugs fixed on the way (user, 2026-10-26): opening a tile that is open shows it instead of a second document (`Document::opened_from`,
+  `scripts/tile_reopen.txt`); a kit or extracted tile's other variations open once the tile is a project (they open from the kit or the
+  packs until their first save brings them in; the project's entry is kept, each save writing only its own variation's numbers;
+  `scripts/tile_variations.txt`, `tile_variations_extracted.txt`).
+
 ### Open
 
 - **Units of the terrain height.** TEd's value is written into the height map's units, which wce shows halved (the scene's 2 units a

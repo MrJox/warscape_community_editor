@@ -89,8 +89,8 @@ impl TileDocument {
         Some(root.join("raw_data").join(tile_folder(&self.project().dir)?))
     }
 
-    /// Before the first save of a kit's tile: its database entry goes into the projects (the files go with the save). Returns the project's
-    /// folder.
+    /// Before the first save of a kit's tile: its database entry goes into the projects (the files go with the save), unless the project has
+    /// it (another variation of the tile was saved before: its entry is the project's). Returns the project's folder.
     ///
     /// # Errors
     ///
@@ -100,7 +100,10 @@ impl TileDocument {
         let target = self.project_folder().ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
         let folder = tile_folder(&target).unwrap_or_default();
         let to_raw = root.join("raw_data");
-        if let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone()) {
+        let has_entry = self.project().entry_file_for(&target).is_some_and(|f| f.is_file());
+        if let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone())
+            && !has_entry
+        {
             copy_entry(entry.file(), &from_raw, &to_raw, &kind_of(&folder), None)?;
         }
 
@@ -111,9 +114,13 @@ impl TileDocument {
     pub(crate) fn moved_to_project(&mut self, dir: PathBuf) {
         let raw = wce_tile::tile_project::kit_raw_root(&dir);
         let p = &mut self.tile_mut().project;
+        // The entry is the project's from now on (the kit's numbers of the other variations may differ from the project's).
         let entry_file = p.entry_file_for(&dir);
         if let (Some(entry), Some(file)) = (p.entry.as_mut(), entry_file) {
-            entry.set_file(&file);
+            match wce_formats::tile_entry::TileEntry::load(&file) {
+                Ok(own) => *entry = own,
+                Err(_) => entry.set_file(&file),
+            }
         }
 
         p.dir = dir;
