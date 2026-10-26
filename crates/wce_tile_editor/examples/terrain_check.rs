@@ -137,7 +137,7 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
         h_m: project.extent_z() + 2.0 * b, ..Default::default()
     };
 
-    let a = bake_terrain_colour(&rq, &cl, &vfs);
+    let a = bake_terrain_colour(&rq, None, &cl, &vfs);
     g.check(a.is_ok(), &format!("the bake succeeds ({})", a.as_ref().err().cloned().unwrap_or_default()));
     let Ok(a) = a else { return Ok(()) };
     g.check(
@@ -153,19 +153,19 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
     }
 
     g.check(seen.len() > 20, &format!("the ground colour is not flat ({} distinct sample values)", seen.len()));
-    let again = bake_terrain_colour(&rq, &cl, &vfs);
+    let again = bake_terrain_colour(&rq, None, &cl, &vfs);
     g.check(again.is_ok_and(|x| x.rgba == a.rgba), "two bakes are byte-identical");
 
     // Another climate and season give another image.
     let mut rq2 = rq.clone();
     rq2.look.climate = "ROME_Desert".to_owned();
     rq2.look.season = "au".to_owned();
-    g.check(bake_terrain_colour(&rq2, &cl, &vfs).is_ok_and(|o| o.rgba != a.rgba && o.w == a.w), "another climate and season give another image");
+    g.check(bake_terrain_colour(&rq2, None, &cl, &vfs).is_ok_and(|o| o.rgba != a.rgba && o.w == a.w), "another climate and season give another image");
 
     // An unknown climate falls back to the default textures instead of failing.
     let mut rq3 = rq.clone();
     rq3.look.climate = "no_such_climate".to_owned();
-    let fallback = bake_terrain_colour(&rq3, &cl, &vfs);
+    let fallback = bake_terrain_colour(&rq3, None, &cl, &vfs);
     g.check(fallback.is_ok(), &format!("an unknown climate falls back to default ({})", fallback.err().unwrap_or_default()));
     println!("bake: {}", a.report);
     Ok(())

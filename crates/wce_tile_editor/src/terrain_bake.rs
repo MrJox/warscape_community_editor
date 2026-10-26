@@ -5,15 +5,15 @@
 //! terrain patches' textures. This is the CPU stand-in for the game's blend pass (docs/re/terrain.md): the same inputs and the same weights,
 //! baked once per tile / climate / season instead of evaluated per pixel; it carries no normal detail and no mid-distance layers yet.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use rayon::prelude::*;
 use wce_formats::dds_decode::{Rgba8Image, dds_decode_mip, dds_info};
-use wce_formats::image_containers::TiffFile;
-use wce_formats::png_file::PngFile;
 use wce_formats::tile_climate::{ClimateList, climate_texture_path};
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_foundation::{log, wce_prof};
+use wce_tile::blend_field::BlendField;
+use wce_tile::ground_type_field::GroundTypeField;
 use wce_vfs::files::Files;
 
 /// What the ground shows: the blended colour, or one of TEd's debug views of the tile's maps (Phase 3d).
@@ -110,47 +110,6 @@ impl Default for BakeRequest {
     }
 }
 
-/// A blend map: 16 little-endian 16-bit weights per pixel (group * 4 + variation).
-pub(crate) struct BlendMap {
-    pub w: u32,
-    pub h: u32,
-    pub weights: Vec<u16>,
-}
-
-impl BlendMap {
-    pub fn at(&self, pixel: usize, channel: usize) -> u16 {
-        self.weights[pixel * 16 + channel]
-    }
-
-    /// The largest weight of every channel.
-    pub fn peaks(&self) -> [u32; 16] {
-        let mut peak = [0u32; 16];
-        for p in self.weights.as_chunks::<16>().0 {
-            for (m, &v) in peak.iter_mut().zip(p) {
-                *m = (*m).max(u32::from(v));
-            }
-        }
-
-        peak
-    }
-}
-
-/// Reads blend_map.tif.
-pub(crate) fn read_blend_map(path: &Path) -> Result<BlendMap, String> {
-    if !path.exists() {
-        return Err("no blend_map.tif".to_owned());
-    }
-
-    let tif = std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| TiffFile::parse(&b).map_err(|e| e.to_string())).map_err(|e| format!("blend_map.tif: {e}"))?;
-    let n = tif.width as usize * tif.height as usize;
-    if tif.samples_per_pixel != 16 || tif.bits_per_sample != 16 || tif.width == 0 || tif.height == 0 || tif.pixels.len() < n * 32 {
-        return Err("blend_map.tif is not 16 samples of 16 bits per pixel".to_owned());
-    }
-
-    let weights = tif.pixels.as_chunks::<2>().0[..n * 16].iter().map(|b| u16::from_le_bytes(*b)).collect();
-    Ok(BlendMap { w: tif.width, h: tif.height, weights })
-}
-
 struct Layer {
     /// 0..15 = group * 4 + variation.
     channel: usize,
@@ -190,10 +149,20 @@ pub(crate) fn group_names(g: &TileTextureGroup) -> [&str; 4] {
 /// # Errors
 ///
 /// The tile has no usable blend map, or no texture was found at all.
-pub fn bake_terrain_colour(req: &BakeRequest, climates: &ClimateList, files: &dyn Files) -> Result<BakedColour, String> {
+pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climates: &ClimateList, files: &dyn Files) -> Result<BakedColour, String> {
     wce_prof!("tile.terrain_bake");
-    let blend = read_blend_map(&req.blend_map)?;
-    let (bw, bh) = (blend.w, blend.h);
+    // The map in memory (painted), else the file.
+    let read;
+    let blend = match blend {
+        Some(b) => b,
+        None => {
+            read = if req.blend_map.exists() { BlendField::read(&req.blend_map)? } else { return Err("no blend_map.tif".to_owned()) };
+            &read
+        }
+    };
+
+    let (bw, bh) = (blend.width(), blend.height());
+    let weights = blend.weights();
 
     // The layers with weight somewhere: (group g, variation v) = channel 4g + v.
     let peak = blend.peaks();
@@ -307,8 +276,8 @@ pub fn bake_terrain_colour(req: &BakeRequest, climates: &ClimateList, files: &dy
                 }
 
                 let c = l.channel;
-                let (a, b) = (f32::from(blend.at(px(x0, y0), c)), f32::from(blend.at(px(x1, y0), c)));
-                let (cc, d) = (f32::from(blend.at(px(x0, y1), c)), f32::from(blend.at(px(x1, y1), c)));
+                let (a, b) = (f32::from(weights[px(x0, y0) * 16 + c]), f32::from(weights[px(x1, y0) * 16 + c]));
+                let (cc, d) = (f32::from(weights[px(x0, y1) * 16 + c]), f32::from(weights[px(x1, y1) * 16 + c]));
                 let (top, bot) = (a + (b - a) * tx, cc + (d - cc) * tx);
                 wgt[k] = top + (bot - top) * ty;
                 sum += wgt[k];
@@ -352,30 +321,21 @@ pub fn bake_terrain_colour(req: &BakeRequest, climates: &ClimateList, files: &dy
 /// # Errors
 ///
 /// The file is missing or unreadable.
-pub fn bake_terrain_map_view(req: &BakeRequest) -> Result<BakedColour, String> {
+pub fn bake_terrain_map_view(req: &BakeRequest, ground: Option<&GroundTypeField>) -> Result<BakedColour, String> {
     if req.look.view == TerrainView::GroundTypes {
-        let p = req.folder.join("ground_type_map.png");
-        if !p.exists() {
-            return Err("no ground_type_map.png".to_owned());
-        }
-
-        let png = std::fs::read(&p).map_err(|e| e.to_string()).and_then(|b| PngFile::parse(&b).map_err(|e| e.to_string())).map_err(|e| format!("ground_type_map.png: {e}"))?;
-        if png.bit_depth != 8 || (png.color_type != 6 && png.color_type != 2) {
-            return Err("ground_type_map.png is not 8-bit RGB(A)".to_owned());
-        }
-
-        let bpp = png.bytes_per_pixel();
-        let n = png.width as usize * png.height as usize;
-        let mut rgba = vec![255u8; n * 4];
-        let mut nonzero = 0;
-        for i in 0..n {
-            let s = &png.pixels[i * bpp..i * bpp + 3];
-            rgba[i * 4..i * 4 + 3].copy_from_slice(s);
-            if s[0] | s[1] | s[2] != 0 {
-                nonzero += 1;
+        // The map in memory (painted), else the file.
+        let read;
+        let ground = match ground {
+            Some(g) => g,
+            None => {
+                let p = req.folder.join("ground_type_map.png");
+                read = if p.exists() { GroundTypeField::read(&p)? } else { return Err("no ground_type_map.png".to_owned()) };
+                &read
             }
-        }
+        };
 
+        let rgba = ground.rgba();
+        let nonzero = rgba.as_chunks::<4>().0.iter().filter(|p| p[0] | p[1] | p[2] != 0).count();
         let report = if nonzero != 0 {
             format!("ground types: the map's RGB as stored ({nonzero} pixels set)")
         } else {
@@ -383,7 +343,7 @@ pub fn bake_terrain_map_view(req: &BakeRequest) -> Result<BakedColour, String> {
         };
 
         return Ok(BakedColour {
-            x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: png.width, h: png.height, rgba, climate: "ground types".to_owned(), report, ..Default::default()
+            x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ground.width(), h: ground.height(), rgba, climate: "ground types".to_owned(), report, ..Default::default()
         });
     }
 

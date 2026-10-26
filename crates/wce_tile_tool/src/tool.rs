@@ -19,9 +19,9 @@ use wce_foundation::math::{Float3, dot, length};
 use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
-use wce_tile_editor::terrain_bake::TerrainView;
+use wce_tile_editor::terrain_bake::{TerrainLook, TerrainView};
 use wce_tile_editor::tile_document::siege::AUTOGEN_LAYER;
-use wce_tile_editor::tile_document::{WALL_SPLINE, WallLayout, BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{GROUND_ERASE, WALL_SPLINE, WallLayout, BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
@@ -73,10 +73,15 @@ pub enum TileMode {
 
     /// Paints the blend map (the ground's textures).
     Paint,
+
+    /// Paints ground_type_map.png (the ground types).
+    Ground,
 }
 
-pub const MODE_NAMES: [&str; 7] = ["select", "raise", "lower", "smooth", "flatten", "level", "paint"];
-const MODES: [TileMode; 7] = [TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Paint];
+pub const MODE_NAMES: [&str; 8] = ["select", "raise", "lower", "smooth", "flatten", "level", "paint", "ground"];
+const MODES: [TileMode; 8] = [
+    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Paint, TileMode::Ground,
+];
 
 impl TileMode {
     pub fn from_index(i: usize) -> Self {
@@ -92,6 +97,7 @@ impl TileMode {
         match self {
             Self::Select => None,
             Self::Paint => Some(BrushKind::Paint(0)),
+            Self::Ground => Some(BrushKind::Ground(GROUND_ERASE)),
             Self::Raise => Some(BrushKind::Raise),
             Self::Lower => Some(BrushKind::Lower),
             Self::Smooth => Some(BrushKind::Smooth),
@@ -277,6 +283,11 @@ pub struct TileTool {
     pub(crate) paint_channel: u8,
     pub(crate) paint_erase: bool,
 
+    /// The ground type the ground types brush paints (`wce_tile::ground_types`), and the tile and look the ground types view replaced
+    /// while it is active.
+    pub(crate) ground_type: u8,
+    view_before_ground: Option<(DocumentId, TerrainLook)>,
+
     // Gestures.
     stroke_active: bool,
     pub(crate) grabbing: bool,
@@ -453,7 +464,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, stroke_active: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
@@ -562,6 +573,7 @@ impl TileTool {
     pub(crate) fn brush_kind(&self) -> Option<BrushKind> {
         match self.mode.brush()? {
             BrushKind::Paint(_) => Some(BrushKind::Paint(if self.paint_erase { 0 } else { self.paint_channel })),
+            BrushKind::Ground(_) => Some(BrushKind::Ground(if self.paint_erase { GROUND_ERASE } else { self.ground_type })),
             kind => Some(kind),
         }
     }
@@ -2642,6 +2654,19 @@ impl Tool for TileTool {
             // The Scene tree in front, not the Tiles list.
             self.browse_focus_frames = 0;
             self.scene_focus_frames = 3;
+        }
+
+        // The ground types brush paints over the ground types view; the view before comes back after.
+        if self.mode == TileMode::Ground && self.view_before_ground.is_none() {
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let look = d.tile().terrain_look().clone();
+            self.view_before_ground = Some((id, look.clone()));
+            d.tile_mut().set_terrain_look(&mut e.scene, TerrainLook { blended: true, view: TerrainView::GroundTypes, ..look });
+        } else if self.mode != TileMode::Ground
+            && let Some((doc, look)) = self.view_before_ground.take()
+            && let Some(d) = e.docs.find_as_mut::<TileDocument>(doc)
+        {
+            d.tile_mut().set_terrain_look(&mut e.scene, look);
         }
 
         drop_gone_from_selection(e);

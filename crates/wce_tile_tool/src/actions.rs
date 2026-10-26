@@ -6,15 +6,17 @@ use wce_editor::{gui, icons};
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
 use wce_scene::render_scene::SourceRef;
-use wce_tile_editor::tile_document::{Placement, elem_of};
+use wce_tile::ground_types::GROUND_TYPES;
+use wce_tile_editor::tile_document::{GROUND_ERASE, Placement, elem_of};
 
 use crate::tool::{TileMode, TileTool, document, document_id, primary, selected};
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
-const BRUSHES: [(&str, &str); 6] = [
+const BRUSHES: [(&str, &str); 7] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"), (icons::ARROW_BIG_DOWN, "Lower the terrain"), (icons::WAVES, "Smooth the terrain"),
     (icons::MINUS, "Flatten the terrain to a height"), (icons::RULER, "Level the terrain"),
     (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
+    (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
 ];
 
 impl TileTool {
@@ -91,13 +93,23 @@ impl TileTool {
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
         ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
-        if self.mode == TileMode::Paint {
+        if self.mode == TileMode::Ground {
+            // Hard values: no strength or falloff. The eraser is Ctrl, or "none".
+            let mut names = vec!["none (erase)".to_owned()];
+            names.extend(GROUND_TYPES.iter().map(|(n, _)| (*n).to_owned()));
+            let mut i = if self.ground_type == GROUND_ERASE { 0 } else { i32::from(self.ground_type) + 1 };
+            ins.edit_choice("ground_type", "ground type", &mut i, &names);
+            self.ground_type = if i <= 0 { GROUND_ERASE } else { (i - 1).min(GROUND_TYPES.len() as i32 - 1) as u8 };
+        } else if self.mode == TileMode::Paint {
             ins.edit_slider("opacity", "strength", &mut self.brush.opacity, 0.01, 1.0);
         } else {
             ins.edit_slider("strength", "strength", &mut self.brush.strength, 0.5, 30.0);
         }
 
-        ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+        if self.mode != TileMode::Ground {
+            ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+        }
+
         if self.mode == TileMode::Paint {
             // The entry's four texture groups, each with four variations.
             let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
@@ -232,5 +244,6 @@ fn mode_name(m: TileMode) -> &'static str {
         TileMode::Flatten => "Flatten",
         TileMode::Level => "Level",
         TileMode::Paint => "Paint",
+        TileMode::Ground => "Ground types",
     }
 }

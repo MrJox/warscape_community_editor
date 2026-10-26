@@ -13,6 +13,7 @@ use wce_editor_core::document::{Document, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Double3, Double3x3, Float3, Float4x4};
 use wce_scene::render_scene::SourceRef;
+use wce_tile::ground_types::{GROUND_COLOURS, NO_GROUND_TYPE};
 use wce_tile::height_field::{Brush, HeightField};
 use wce_tile::properties::{
     Access, Kind, Prop, RuleContext, format_bool, format_colour, format_float, format_seasons, format_vec2, format_vec3, parse_bool, parse_colour, parse_float,
@@ -172,6 +173,11 @@ impl Tile {
             return;
         }
 
+        if let BrushKind::Ground(ground) = kind {
+            self.apply_ground(ground, x, z, s);
+            return;
+        }
+
         let p = &mut self.project;
         let (cx, cy, mpp, unit) = (p.pixel_x(f64::from(x)), p.pixel_z(f64::from(z)), p.mpp_x(), p.unit_scale);
         let Some(hf) = &mut p.height else { return };
@@ -210,8 +216,8 @@ impl Tile {
                 hf.set_level_under(&b)
             }
 
-            // `apply_paint`.
-            BrushKind::Paint(_) => Ok(()),
+            // `apply_paint`, `apply_ground`.
+            BrushKind::Paint(_) | BrushKind::Ground(_) => Ok(()),
         };
 
         p.height_dirty = true;
@@ -261,9 +267,48 @@ impl Tile {
         let _ = blend.paint(&brush, channel);
     }
 
+    /// A step of a ground type stroke on ground_type_map.png, which covers the bordered tile: hard values under the brush.
+    fn apply_ground(&mut self, ground: u8, x: f32, z: f32, s: &BrushSettings) {
+        let p = &mut self.project;
+        let (b, ex, ez) = (p.border_m(), p.extent_x(), p.extent_z());
+        let Ok(map) = p.load_ground() else { return };
+        if !self.stroke_open {
+            let _ = map.begin_edit();
+            self.stroke_open = true;
+        }
+
+        let rgb = GROUND_COLOURS.get(usize::from(ground)).copied().unwrap_or(NO_GROUND_TYPE);
+        let (ppx, ppz) = (f64::from(map.width()) / (ex + 2.0 * b), f64::from(map.height()) / (ez + 2.0 * b));
+        let brush = Brush { cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(0.5), ..Default::default() };
+        let _ = map.paint(&brush, rgb);
+    }
+
+    /// The ground type map's colour at a point of the tile (metres), once the map is read (`None` before, or outside it).
+    pub fn ground_rgb_at(&self, x: f32, z: f32) -> Option<[u8; 3]> {
+        let p = &self.project;
+        let map = p.ground.as_ref()?;
+        let (b, ex, ez) = (p.border_m(), p.extent_x(), p.extent_z());
+        let px = ((f64::from(x) + b) * f64::from(map.width()) / (ex + 2.0 * b)).floor();
+        let pz = ((f64::from(z) + b) * f64::from(map.height()) / (ez + 2.0 * b)).floor();
+        if px < 0.0 || pz < 0.0 || px >= f64::from(map.width()) || pz >= f64::from(map.height()) {
+            return None;
+        }
+
+        Some(map.rgb(px as u32, pz as u32))
+    }
+
+    /// Reads the ground type map, if not yet.
+    ///
+    /// # Errors
+    ///
+    /// The tile has none, or it does not read.
+    pub fn load_ground(&mut self) -> Result<(), String> {
+        self.project.load_ground().map(|_| ())
+    }
+
     /// The brush step of a stroke: the landscape instances under the brush move with the terrain (y += the change of the height under each).
     pub(crate) fn apply_brush_following(&mut self, kind: BrushKind, x: f32, z: f32, s: &BrushSettings, dt: f32, moved: &mut Vec<Follow>) {
-        if matches!(kind, BrushKind::Paint(_)) {
+        if matches!(kind, BrushKind::Paint(_) | BrushKind::Ground(_)) {
             self.apply_brush(kind, x, z, s, dt);
             return;
         }
@@ -319,6 +364,10 @@ impl Tile {
             b.end_edit();
         }
 
+        if let Some(g) = &mut self.project.ground {
+            g.end_edit();
+        }
+
         self.stroke_open = false;
 
         // The walls' layouts follow the ground.
@@ -331,6 +380,10 @@ impl Tile {
 
     fn blend_modified(&self) -> bool {
         self.project.blend.as_ref().is_some_and(|b| b.edit_depth() != self.saved_blend_depth)
+    }
+
+    fn ground_modified(&self) -> bool {
+        self.project.ground.as_ref().is_some_and(|g| g.edit_depth() != self.saved_ground_depth)
     }
 
     fn save_scene_needed(&self) -> bool {
@@ -1818,6 +1871,7 @@ impl TileDocument {
     pub fn brush_step(&mut self, kind: BrushKind, x: f32, z: f32, settings: BrushSettings, dt: f32) {
         let ready = match kind {
             BrushKind::Paint(_) => self.tile_mut().project.load_blend().is_ok(),
+            BrushKind::Ground(_) => self.tile_mut().project.load_ground().is_ok(),
             _ => self.tile().project.has_height(),
         };
 
@@ -1905,9 +1959,11 @@ impl TileDocument {
         let height_dirty = t.height_modified() || t.png_on_disk_edited || (elsewhere && t.project.has_height());
         let force_scene = t.save_scene_needed() || elsewhere;
         let blend_dirty = t.blend_modified() || t.blend_on_disk_edited;
+        let ground_dirty = t.ground_modified() || t.ground_on_disk_edited;
         let t = self.tile_mut();
         t.project.height_dirty = height_dirty;
         t.project.blend_dirty = blend_dirty;
+        t.project.ground_dirty = ground_dirty;
         let (wrote, msg) = t.project.save(&out, force_scene, false)?;
         if let Some(dir) = into_project {
             self.moved_to_project(dir);
@@ -1923,6 +1979,9 @@ impl TileDocument {
             t.blend_on_disk_edited = t.blend_modified();
             t.saved_blend_depth = t.project.blend.as_ref().map_or(0, |b| b.edit_depth());
             t.project.blend_dirty = false;
+            t.ground_on_disk_edited = t.ground_modified();
+            t.saved_ground_depth = t.project.ground.as_ref().map_or(0, |g| g.edit_depth());
+            t.project.ground_dirty = false;
             t.project.river_texts = t.project.current_river_texts();
             self.history.mark_saved();
         }

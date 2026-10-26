@@ -260,12 +260,7 @@ fn blend_map(binary: &Tile) -> Option<Raster> {
     Some(Raster { width: w, height: h, channels: 16, samples: Samples::U16(out) })
 }
 
-/// `EMPIREUTILITY::ground_type_to_colour`: the colour TEd paints a ground type with in `ground_type_map.png` (index = the `ground_types`
-/// table's `enum_value`); black is no ground type.
-pub(crate) const GROUND_COLOURS: [[u8; 3]; 13] = [
-    [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
-    [255, 96, 0], [255, 100, 100], [255, 255, 255], [255, 255, 0], [64, 0, 0],
-];
+pub(crate) use wce_tile::ground_types::GROUND_COLOURS;
 
 /// `EMPIREUTILITY::ground_type_from_texture_group` (any other name: grass, with BOB's assert).
 pub(crate) fn ground_type_of_group(name: &str) -> u8 {

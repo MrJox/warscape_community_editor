@@ -12,6 +12,7 @@ use wce_formats::tile_index::TileIndex;
 use wce_foundation::wce_prof;
 
 use crate::blend_field::BlendField;
+use crate::ground_type_field::GroundTypeField;
 use crate::height_field::HeightField;
 use crate::project_files::{TED_FILE, TedReport, WCE_FILE, mark_wce_text, strip_prefab_contents_with};
 use crate::ted_scene::TedScene;
@@ -205,6 +206,13 @@ pub struct TileProject {
     /// Write blend_map.tif at the next save.
     pub blend_dirty: bool,
 
+    /// ground_type_map.png, read when first needed (the ground types brush or debug view), and whether the next save writes it.
+    pub ground: Option<GroundTypeField>,
+    pub ground_dirty: bool,
+
+    /// Its file name as read (`ground_type_map.png` in some case).
+    pub ground_file: String,
+
     /// Scene units per metre horizontally.
     pub unit_scale: f64,
 
@@ -355,7 +363,7 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, blend: None, blend_dirty: false, unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
+            height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
         };
 
         project.river_texts = project.current_river_texts();
@@ -568,7 +576,49 @@ impl TileProject {
             wrote = true;
         }
 
+        if let Some(ground) = &self.ground
+            && (self.ground_dirty || elsewhere)
+        {
+            let target = out_dir.join(&self.ground_file);
+            let bak = out_dir.join(format!("{}.bak", self.ground_file));
+            if target.exists() && !bak.exists() {
+                std::fs::copy(&target, &bak).map_err(|error| error.to_string())?;
+            }
+
+            std::fs::write(&target, ground.to_bytes()?).map_err(|_| format!("could not write {}", target.display()))?;
+            msg += &format!("{} saved. ", self.ground_file);
+            wrote = true;
+        }
+
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
+    }
+
+    /// The ground type map's file name in the variation folder: `ground_type_map.png` in any case (BOB's own tiles have
+    /// `ground_type_map.PNG`).
+    fn ground_file_name(&self) -> String {
+        std::fs::read_dir(&self.dir).ok().and_then(|read| {
+            read.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case("ground_type_map.png"))
+        }).unwrap_or_else(|| "ground_type_map.png".to_owned())
+    }
+
+    /// The ground type map, read from the variation folder the first time.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no ground_type_map.png, or it does not read.
+    pub fn load_ground(&mut self) -> Result<&mut GroundTypeField> {
+        if self.ground.is_none() {
+            let name = self.ground_file_name();
+            let path = self.dir.join(&name);
+            if !path.exists() {
+                return Err("no ground_type_map.png".to_owned());
+            }
+
+            self.ground = Some(GroundTypeField::read(&path)?);
+            self.ground_file = name;
+        }
+
+        Ok(self.ground.as_mut().expect("read above"))
     }
 
     /// The blend map, read from the variation folder the first time.
@@ -706,7 +756,8 @@ impl TileProject {
         let mut n = 0;
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some()) || name.ends_with(".bak") || !entry.path().is_file();
+            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
+                || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.ends_with(".bak") || !entry.path().is_file();
             if !skip {
                 std::fs::copy(entry.path(), out_dir.join(&name)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
                 n += 1;
@@ -777,12 +828,17 @@ impl TileProject {
             write("blend_map.tif", &blend.to_bytes())?;
         }
 
+        if let Some(ground) = &self.ground {
+            write(&self.ground_file, &ground.to_bytes()?)?;
+        }
+
         // The other files, as the project has them.
         let mut others = 0;
         if let Ok(read) = std::fs::read_dir(&self.dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some()) || name.starts_with("river_spline") || name.ends_with(".bak");
+                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
+                    || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.starts_with("river_spline") || name.ends_with(".bak");
                 if !ours && entry.path().is_file() && write(&name, &std::fs::read(entry.path()).map_err(|error| error.to_string())?)? {
                     others += 1;
                 }

@@ -3,50 +3,27 @@
 //!
 //! A dab moves a pixel's weight towards one channel and scales the other 15 down, so that the pixel keeps summing to 65535 (wce's own brush:
 //! TEd's is not reverse-engineered, its files are what is kept). The file's bytes before and after the samples are kept as read, so a map that
-//! was not painted is written back byte for byte, and a painted one differs only in the painted samples. Undo records hold the 64 x 64 pixel
-//! blocks a stroke touched (a 64 x 64 tile's map is 2.3 GB: no whole copies).
+//! was not painted is written back byte for byte, and a painted one differs only in the painted samples. Undo: `PixelLayer`'s block records.
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
 use wce_formats::image_containers::TiffFile;
 
 use crate::height_field::Brush;
+use crate::pixel_layer::PixelLayer;
 
 pub type Result<T> = std::result::Result<T, String>;
 
 /// The sum of a pixel's weights.
 pub const FULL: u16 = u16::MAX;
 
-/// Pixels a side of an undo block.
-const BLOCK: u32 = 64;
-
-/// The blocks a stroke changed: their samples before and after.
-#[derive(Clone, Debug, Default, PartialEq)]
-struct Record {
-    blocks: Vec<(u32, Vec<u16>, Vec<u16>)>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlendField {
-    w: u32,
-    h: u32,
-
     /// The file's bytes before the samples (the directory) and after them, verbatim.
     header: Vec<u8>,
     tail: Vec<u8>,
-    v: Vec<u16>,
-
-    editing: bool,
-
-    /// The open edit's blocks as they were at its start.
-    saved: HashMap<u32, Vec<u16>>,
-    undo: Vec<Record>,
-    redo: Vec<Record>,
-
-    /// The rectangle changed since the display last took it (exclusive end).
-    changed: Option<(u32, u32, u32, u32)>,
+    layer: PixelLayer<u16>,
 }
 
 impl BlendField {
@@ -62,7 +39,7 @@ impl BlendField {
 
         let v = tif.pixels.as_chunks::<2>().0[..n * 16].iter().map(|b| u16::from_le_bytes(*b)).collect();
         let tail = tif.pixels[n * 32..].to_vec();
-        Ok(Self { w: tif.width, h: tif.height, header: tif.header, tail, v, ..Default::default() })
+        Ok(Self { header: tif.header, tail, layer: PixelLayer::new(tif.width, tif.height, 16, v) })
     }
 
     /// # Errors
@@ -84,7 +61,7 @@ impl BlendField {
         let file = std::fs::File::create(path).map_err(fail)?;
         let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
         out.write_all(&self.header).map_err(fail)?;
-        for row in self.v.chunks(self.w as usize * 16) {
+        for row in self.layer.values().chunks(self.width() as usize * 16) {
             let bytes = row.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<_>>();
             out.write_all(&bytes).map_err(fail)?;
         }
@@ -95,36 +72,36 @@ impl BlendField {
 
     /// The file's bytes (as [`Self::write`] writes them).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.header.len() + self.v.len() * 2 + self.tail.len());
+        let v = self.layer.values();
+        let mut out = Vec::with_capacity(self.header.len() + v.len() * 2 + self.tail.len());
         out.extend_from_slice(&self.header);
-        out.extend(self.v.iter().flat_map(|s| s.to_le_bytes()));
+        out.extend(v.iter().flat_map(|s| s.to_le_bytes()));
         out.extend_from_slice(&self.tail);
         out
     }
 
     pub fn width(&self) -> u32 {
-        self.w
+        self.layer.width()
     }
 
     pub fn height(&self) -> u32 {
-        self.h
+        self.layer.height()
     }
 
     /// The 16 weights of a pixel.
     pub fn pixel(&self, x: u32, y: u32) -> &[u16] {
-        let i = (y as usize * self.w as usize + x as usize) * 16;
-        &self.v[i..i + 16]
+        self.layer.pixel(x, y)
     }
 
     /// All the weights, 16 per pixel, row by row.
     pub fn weights(&self) -> &[u16] {
-        &self.v
+        self.layer.values()
     }
 
     /// The largest weight of every channel.
     pub fn peaks(&self) -> [u32; 16] {
         let mut peak = [0u32; 16];
-        for p in self.v.as_chunks::<16>().0 {
+        for p in self.weights().as_chunks::<16>().0 {
             for (m, &v) in peak.iter_mut().zip(p) {
                 *m = (*m).max(u32::from(v));
             }
@@ -133,48 +110,14 @@ impl BlendField {
         peak
     }
 
-    fn block_of(&self, x: u32, y: u32) -> u32 {
-        (y / BLOCK) * self.w.div_ceil(BLOCK) + x / BLOCK
-    }
-
-    fn block_rect(&self, b: u32) -> (u32, u32, u32, u32) {
-        let per_row = self.w.div_ceil(BLOCK);
-        let (x0, y0) = ((b % per_row) * BLOCK, (b / per_row) * BLOCK);
-        (x0, y0, (x0 + BLOCK).min(self.w), (y0 + BLOCK).min(self.h))
-    }
-
-    fn block_samples(&self, b: u32) -> Vec<u16> {
-        let (x0, y0, x1, y1) = self.block_rect(b);
-        let mut out = Vec::with_capacity(((x1 - x0) * (y1 - y0) * 16) as usize);
-        for y in y0..y1 {
-            let i = (y as usize * self.w as usize + x0 as usize) * 16;
-            out.extend_from_slice(&self.v[i..i + (x1 - x0) as usize * 16]);
-        }
-
-        out
-    }
-
-    fn put_block(&mut self, b: u32, samples: &[u16]) {
-        let (x0, y0, x1, y1) = self.block_rect(b);
-        let n = (x1 - x0) as usize * 16;
-        for (k, y) in (y0..y1).enumerate() {
-            let i = (y as usize * self.w as usize + x0 as usize) * 16;
-            self.v[i..i + n].copy_from_slice(&samples[k * n..(k + 1) * n]);
-        }
-
-        self.mark(x0, y0, x1, y1);
-    }
-
-    fn mark(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
-        self.changed = Some(match self.changed {
-            None => (x0, y0, x1, y1),
-            Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
-        });
+    /// Whether something changed since `take_changed` was last called.
+    pub fn changed(&self) -> bool {
+        self.layer.changed()
     }
 
     /// The rectangle changed since the last call (exclusive end), `None` when nothing changed.
     pub fn take_changed(&mut self) -> Option<(u32, u32, u32, u32)> {
-        self.changed.take()
+        self.layer.take_changed()
     }
 
     /// Paints `channel` (0..16) under the brush: per pixel, the brush's weight (0..1) of what the other channels hold moves to it.
@@ -183,7 +126,7 @@ impl BlendField {
     ///
     /// No edit is open, or no such channel.
     pub fn paint(&mut self, b: &Brush, channel: usize) -> Result<()> {
-        if !self.editing {
+        if !self.layer.is_editing() {
             return Err("begin_edit() before editing".to_owned());
         }
 
@@ -191,43 +134,14 @@ impl BlendField {
             return Err(format!("no blend channel {channel}"));
         }
 
-        let x0 = ((b.cx - b.radius).floor() as i64).max(0) as u32;
-        let x1 = ((b.cx + b.radius).ceil() as i64).min(i64::from(self.w) - 1);
-        let y0 = ((b.cy - b.radius).floor() as i64).max(0) as u32;
-        let y1 = ((b.cy + b.radius).ceil() as i64).min(i64::from(self.h) - 1);
-        if x1 < 0 || y1 < 0 {
-            return Ok(());
-        }
-
-        let (x1, y1) = (x1 as u32, y1 as u32);
-        let (mut tx0, mut ty0, mut tx1, mut ty1) = (u32::MAX, u32::MAX, 0, 0);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let a = b.weight(f64::from(x) - b.cx, f64::from(y) - b.cy).min(1.0);
-                if a <= 0.0 {
-                    continue;
-                }
-
-                let i = (y as usize * self.w as usize + x as usize) * 16;
-                let p: [u16; 16] = self.v[i..i + 16].try_into().expect("16 weights");
-                let after = paint_pixel(&p, channel, a);
-                if after == p {
-                    continue;
-                }
-
-                let block = self.block_of(x, y);
-                if !self.saved.contains_key(&block) {
-                    let samples = self.block_samples(block);
-                    self.saved.insert(block, samples);
-                }
-
-                self.v[i..i + 16].copy_from_slice(&after);
-                (tx0, ty0, tx1, ty1) = (tx0.min(x), ty0.min(y), tx1.max(x + 1), ty1.max(y + 1));
+        for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
+            let a = b.weight(dx, dy).min(1.0);
+            if a <= 0.0 {
+                continue;
             }
-        }
 
-        if tx1 > tx0 {
-            self.mark(tx0, ty0, tx1, ty1);
+            let p: [u16; 16] = self.layer.pixel(x, y).try_into().expect("16 weights");
+            self.layer.set_pixel(x, y, &paint_pixel(&p, channel, a));
         }
 
         Ok(())
@@ -239,62 +153,28 @@ impl BlendField {
     ///
     /// An edit is already open.
     pub fn begin_edit(&mut self) -> Result<()> {
-        if self.editing {
-            return Err("edit already open".to_owned());
-        }
-
-        self.editing = true;
-        self.saved.clear();
-        Ok(())
+        if self.layer.begin_edit() { Ok(()) } else { Err("edit already open".to_owned()) }
     }
 
     /// Stores the blocks the open operation changed.
     pub fn end_edit(&mut self) {
-        if !self.editing {
-            return;
-        }
-
-        self.editing = false;
-        if self.saved.is_empty() {
-            return;
-        }
-
-        let mut blocks = std::mem::take(&mut self.saved).into_iter().map(|(b, before)| {
-            let after = self.block_samples(b);
-            (b, before, after)
-        }).collect::<Vec<_>>();
-
-        blocks.sort_by_key(|b| b.0);
-        self.undo.push(Record { blocks });
-        self.redo.clear();
+        self.layer.end_edit();
     }
 
     pub fn is_editing(&self) -> bool {
-        self.editing
+        self.layer.is_editing()
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(r) = self.undo.pop() else { return false };
-        for (b, before, _) in &r.blocks {
-            self.put_block(*b, before);
-        }
-
-        self.redo.push(r);
-        true
+        self.layer.undo()
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(r) = self.redo.pop() else { return false };
-        for (b, _, after) in &r.blocks {
-            self.put_block(*b, after);
-        }
-
-        self.undo.push(r);
-        true
+        self.layer.redo()
     }
 
     pub fn edit_depth(&self) -> usize {
-        self.undo.len()
+        self.layer.edit_depth()
     }
 }
 

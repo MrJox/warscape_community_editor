@@ -1,6 +1,7 @@
 # Ground texture painting (docs/plans/workflow_review.md, section 3): a new 2 x 2 tile at density 32 (blend map 128 x 128 over the bordered
 # 512 m: 4 m a pixel), all of the first group; painted with group 2's variation 3 (one undo entry), undone, redone, erased with group 1's
-# variation 0 at the edge of the stroke; the alpha texture group set to snow (undone, redone); saved, closed and opened again. Run with WCE_TILE_WORKSPACE set to a scratch folder (%WORKSPACE%).
+# variation 0 at the edge of the stroke; the alpha texture group set to snow (undone, redone); ground types painted (road, deep water,
+# undone, redone, erased) in the ground types view; saved, closed and opened again. Run with WCE_TILE_WORKSPACE set to a scratch folder (%WORKSPACE%).
 new_tile wce_paint_test 2 2 10 32
 frames 5
 assert_blend 100 100 0 0 65535
@@ -25,6 +26,24 @@ assert_entry ground_alpha rock
 redo
 frames 3
 assert_entry ground_alpha snow
+tile_mode ground
+frames 3
+assert_ground_type 100 100 none
+brush 10 6 0.5 0 1
+paint_ground_type road 150 150 3
+paint_ground_type "deep water" 170 150 3
+assert_ground_type 150 150 road
+assert_ground_type 170 150 "deep water"
+undo
+assert_ground_type 170 150 none
+assert_ground_type 150 150 road
+redo
+assert_ground_type 170 150 "deep water"
+paint_ground_type none 150 150 1
+assert_ground_type 150 150 none
+frames 3
+tile_mode select
+frames 3
 assert_modified 1
 save
 assert_modified 0
@@ -34,4 +53,6 @@ frames 3
 assert_blend 100 100 2 3 30000
 assert_blend 200 200 0 0 65535
 assert_entry ground_alpha snow
+assert_ground_type 170 150 "deep water"
+assert_ground_type 150 150 none
 quit

@@ -21,9 +21,10 @@ use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::{Document, SaveTarget};
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::math::Float3;
+use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::world_transform::world_transform;
 use wce_tile_editor::terrain_bake::TerrainView;
-use wce_tile_editor::tile_document::{BrushKind, Placement, TileDocument};
+use wce_tile_editor::tile_document::{BrushKind, GROUND_ERASE, Placement, TileDocument};
 
 use wce_tile::property_enums::WALL_BASE;
 use crate::tool::{HINTS, MODE_NAMES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
@@ -622,8 +623,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level|paint", "what the left mouse button does in the viewport", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint") };
+    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level|paint|ground", "what the left mouse button does in the viewport", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint|ground") };
         let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
         with_tile(e, |t, _| {
             t.set_mode(TileMode::from_index(i));
@@ -697,6 +698,21 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             d.end_stroke();
             if d.tile().blend_pixel_at(x, z).is_none() { fail("no blend map there") } else { ok("") }
+        })
+    });
+
+    c.add("paint_ground_type", "paint_ground_type <ground type | none> <x m> <z m> <steps>", "a ground types stroke at a point of the tile with the brush's radius (one undo entry; a name with spaces in quotes)", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
+            let ground = a.first().and_then(|n| if n == "none" { Some(GROUND_ERASE) } else { GROUND_TYPES.iter().position(|(g, _)| g == n).map(|i| i as u8) });
+            let (Some((x, z, n)), Some(ground)) = (parsed, ground) else { return fail("usage: paint_ground_type <ground type | none> <x m> <z m> <steps>") };
+            let d = document(e).expect("a tile");
+            for _ in 0..n as i32 {
+                d.brush_step(BrushKind::Ground(ground), x, z, t.brush, 1.0 / 60.0);
+            }
+
+            d.end_stroke();
+            if d.tile().ground_rgb_at(x, z).is_none() { fail("no ground type map there") } else { ok("") }
         })
     });
 
@@ -2258,6 +2274,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Some(p) = d.tile().blend_pixel_at(x, z) else { return fail("no blend map read there") };
         let got = f32::from(p[(g as usize).min(3) * 4 + (v as usize).min(3)]);
         if (lo..=hi).contains(&got) { ok("") } else { fail(format!("weight {got}, expected {lo} .. {hi}")) }
+    });
+
+    c.add("assert_ground_type", "assert_ground_type <x m> <z m> <ground type | none>", "test: the ground type painted at a point", |e, a| {
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_ground_type <x m> <z m> <ground type | none>") };
+        if let Err(why) = d.tile_mut().load_ground() {
+            return fail(why);
+        }
+
+        let Some(rgb) = d.tile().ground_rgb_at(x, z) else { return fail("no ground type map there") };
+        let got = GROUND_TYPES.iter().find(|(_, c)| *c == rgb).map_or(if rgb == [0, 0, 0] { "none" } else { "?" }, |(n, _)| *n);
+        if got == a[2] { ok("") } else { fail(format!("ground type {got} ({rgb:?})")) }
     });
 
     c.add("assert_selected_type", "assert_selected_type <type>", "test: the primary selected element has this type", |e, a| {
