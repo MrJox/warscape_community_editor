@@ -33,7 +33,7 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Save to mod pack (all games).
 - **done** Stage B for Rome 2: the linking tiles decompiled into the workspace with their final heights; no building stamps (Rome 2's
   buildings have no height-map meshes). Open: the port decimates the meshes more than Rome 2's BOB did (3x fewer vertices).
-- **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
+- **dropped** Byte-exact building lists: the string table order of Rome 2's tool is not a model found (formats doc, "Building lists"); the values are the same, the game reads strings by index.
 - **done** GENERIC_MARKER v1 (one file: read, written back byte for byte, carried along).
 - **done** Multi-list capture location files (two tiles): the other lists carried, written after the project's. PARTICLE_EMITTER_MARKER v4's float in `unknown_64` (the effect's scale?)
   comes back an ulp off from the text.

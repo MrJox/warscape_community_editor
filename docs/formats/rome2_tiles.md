@@ -79,9 +79,12 @@ list of Rome 2 (decompiled to instances); the compiler writes the decompiled fil
 Rome 2's TEd wrote each building's `scale` as the length of each axis of its matrix in memory: 1 within a few ulps, which the
 project's text cannot carry (the compile writes 1; `tile_decompile_check` counts it apart).
 
-Re-encoded with rpfm, a Rome 2 list has the same values but not always the same bytes: Rome 2 writes its ASCII string table in index
-order (rpfm in the order of Attila's string hash map) and pads some block sizes to five bytes at other places than rpfm's model of
-Attila's 1 MiB write buffer.
+Re-encoded with rpfm, a Rome 2 list has the same values but not always the same bytes (147 of 530 lists of the packs the same,
+2026-10-26). Some write their ASCII string table in index order (rpfm's `strings_in_index_order`); most of the others (295, the same
+size) only order the table otherwise: neither index order nor the games' string hash map (rpfm's hash and growth, other initial sizes
+and growths, nor MSVC's `unordered_map` with FNV-1a, give it). The rest are 11 to 39 bytes shorter in ours: block sizes padded to five
+bytes elsewhere than rpfm's model of Attila's 1 MiB write buffer. The game looks strings up by their index: the order and the padding
+change no value.
 
 ### Capture locations
 
