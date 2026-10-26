@@ -53,6 +53,12 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   and table files in `@wce_proc_data.pack`).
 - **Siege AI:** Generate SiegeAI reads the walls' layouts (`tile_document/siege.rs` via `wce_walls::scene::walls`), so the AI layout
   follows any wall when regenerated (docs/plans/siege_ai.md).
+- **Mod packs and other games** (2026-10-26): Save to mod pack of a tile with walls (`export::save_walls_to_pack`) lowers the walls,
+  compiles the project as the mod pack save does (`workflow::exported_pack_files`) and puts the tile's files, its tile database files, the
+  pieces and their rows (`db/<table>/<key prefix>`) into the user's pack in place of what it had of the tile (`pack::replace_in_pack`).
+  The packs are written for the game of the files (its rpfm key). The Inspector lists the bases the mounted packs have whole
+  (`profile::available_bases`): Rome 2 has five (barbarian, roman, greek, egyptian and persian forts); a Rome 2 tile with a roman and a
+  greek wall passes `wall_pack_check <pack> schema_rom2.ron rome_2`.
 
 ## Status (2026-10-26)
 
@@ -77,6 +83,7 @@ polyfill. Checks:
 - [ ] **In game (user):** record the docking fix (`solver::straighten`, eb1fc15): units cross from docked ladders and towers onto
   generated walls; one Edoras wall pack checked in game end to end.
 - [ ] **TEd (user):** TEd lists and draws the pieces from `@wce_proc_data.pack`, and its export of the tile works with them.
+- [ ] **In game (user), Rome 2:** the pieces' frames and walkways are Attila's measures of the same models; a Rome 2 wall checked in game.
 - [ ] A thin dark sliver at the bottom edge of one 8 m stair (desert hills render).
 - [ ] A cache sharing pieces between walls that fit, for pack size (a bent piece is 1.6-3.7 times its base).
 - Deferred by decision: collapse animations, terrain shaping.

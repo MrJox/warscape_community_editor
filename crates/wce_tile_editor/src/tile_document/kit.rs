@@ -294,7 +294,8 @@ impl TileDocument {
                 // No walls (any more): the tile's old pieces leave the pack.
                 if let Some(w) = w {
                     let prefix = wce_walls::export::key_prefix(&folder);
-                    wce_walls::pack::replace_in_proc_pack(&w.data.join(wce_walls::pack::PROC_PACK), "attila", &prefix, vec![], vec![])?;
+                    let game = w.files.game().map_or("attila", |g| g.key);
+                    wce_walls::pack::replace_in_proc_pack(&w.data.join(wce_walls::pack::PROC_PACK), game, &prefix, vec![], vec![])?;
                 }
 
                 self.project().save_for_kit_scene(&target, text, vec![])?
