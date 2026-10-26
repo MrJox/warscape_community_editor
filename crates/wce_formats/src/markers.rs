@@ -113,6 +113,8 @@ pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> 
             ]),
             KeyKind::Wide,
         ),
+        // Rome 2's (one file, custom_tile/2x2/front_end_scene_final): a key (`BMD_GM_FRONTEND_CHARACTER`), a position, two bytes.
+        ("GENERIC_MARKER", 1) => (&[Str("key"), F32("x"), F32("y"), F32("z"), Bytes("unknown_12", 2)], KeyKind::Wide),
         ("AI_HINT_POLYLINE_MARKER", 1) => (&[Points("points")], KeyKind::U32),
         ("AI_HINT_POLYLINE_LIST_MARKER", 1) => (&[PointLists("polylines")], KeyKind::U32),
         ("AI_SEPARATOR_MARKER", 1) => (&[Points("points")], KeyKind::Narrow),

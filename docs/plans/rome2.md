@@ -34,7 +34,9 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Stage B for Rome 2: the linking tiles decompiled into the workspace with their final heights; no building stamps (Rome 2's
   buildings have no height-map meshes). Open: the port decimates the meshes more than Rome 2's BOB did (3x fewer vertices).
 - **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
-- **todo** GENERIC_MARKER v1 (one file); multi-list capture location files (two tiles).
+- **done** GENERIC_MARKER v1 (one file: read, written back byte for byte, carried along).
+- **todo** Multi-list capture location files (two tiles). PARTICLE_EMITTER_MARKER v4's float in `unknown_64` (the effect's scale?)
+  comes back an ulp off from the text.
 - **done** Stage C for Rome 2: the project's static trees into every older tree list (the generated ones kept); the decompiler reads
   them back from `default.tree_list`. Open: the grass list follows no edit (no grass parameters).
 - **done** The campaign battle map context for Rome 2: `tile_map` version 6 (16-byte cells; names without the variation: the tile's
@@ -62,7 +64,8 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Hide what Rome 2's tiles have not (`GameFeatures`: `civilians`, `escalation`, `lite_buildings`): the Create panel's civilian
   and lite building zone entries, the layers' escalation export types. Kept: seasons and snow (Rome 2's weather has seasons and snow
   folders). Procedural BMDs and tents have no UI of their own (the decompiler finds none in Rome 2's tiles).
-- **todo** Instance templates and the Create panel's defaults from Rome 2's data (`scripts/re/instance_templates.py` needs a kit).
+- **done** Instance templates: none needed of Rome 2 (its projects are TEd scenes as Attila's, compiled with Rome 2's conventions); an
+  effect without a known scale gets the type's default.
 - **todo** Siege AI and procedural walls once their branches are merged: the wall bases and the siege classes per game.
 
 ## Validation without TEd
