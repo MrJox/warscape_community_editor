@@ -3,7 +3,8 @@
 //!
 //!   cargo run --release -p wce_tile_editor --example siege_check -- <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack]
 //!
-//! A tile folder is a variation's (holding tile.ted) or any folder above: every tile.ted under it is taken.
+//! A tile folder is a variation's (holding tile.ted, or tile.wce: a project's, Rome 2's extracted tiles) or any folder above: every one
+//! under it is taken. `$WCE_GAME_KEY` picks the game.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use wce_vfs::files::Files;
 use wce_vfs::{Config, GameProfile, Vfs};
 
 fn tiles(dir: &Path, out: &mut Vec<PathBuf>) {
-    if dir.join("tile.ted").exists() {
+    if wce_tile::tile_project::has_tile(dir) {
         out.push(dir.to_path_buf());
         return;
     }
@@ -37,7 +38,8 @@ fn main() -> Result<(), String> {
         return Err("usage: siege_check <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack]".to_owned());
     };
 
-    let mut config = Config::new(PathBuf::from(game), GameProfile::ATTILA);
+    // `$WCE_GAME_KEY` picks the game (Attila by default).
+    let mut config = Config::new(PathBuf::from(game), GameProfile::from_env().clone());
     config.mod_packs = mods.map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());
     let files: Arc<dyn Files> = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
