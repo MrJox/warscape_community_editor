@@ -1926,6 +1926,55 @@ impl TileDocument {
         names
     }
 
+    /// The brush stroked along a spline, polygon or line (TEd's Spline Paint Stroke): dabs a quarter of the radius apart along its curve
+    /// (a closed polygon round to its first point), one undo entry; returns the dabs.
+    ///
+    /// # Errors
+    ///
+    /// The element is not a spline, polygon or line, or has fewer than two points.
+    pub fn stroke_along(&mut self, kind: BrushKind, elem: usize, settings: &BrushSettings) -> Result<usize, String> {
+        let t = self.tile();
+        if !t.is_polygon(elem) {
+            return Err("select a spline, polygon or line to stroke along".to_owned());
+        }
+
+        let mut path = if self.is_spline(elem) { t.spline_world_curve(elem) } else { t.polygon_world_points(elem) };
+        let closed = !self.is_spline(elem) && t.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
+        if closed && path.len() > 2 {
+            path.push(path[0]);
+        }
+
+        if path.len() < 2 {
+            return Err("the line has fewer than two points".to_owned());
+        }
+
+        // A dab every quarter radius, each with the most a frame gives (`apply_brush` takes at most 0.05 s).
+        let spacing = (settings.radius_m * 0.25).max(0.25);
+        let mut dabs = vec![(path[0].x, path[0].z)];
+        let mut left = spacing;
+        for w in path.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let len = (b.x - a.x).hypot(b.z - a.z);
+            let mut at = 0.0;
+            while len - at >= left {
+                at += left;
+                let f = at / len;
+                dabs.push((a.x + (b.x - a.x) * f, a.z + (b.z - a.z) * f));
+                left = spacing;
+            }
+
+            left -= len - at;
+        }
+
+        self.end_stroke();
+        for &(x, z) in &dabs {
+            self.brush_step(kind, x, z, settings.clone(), 0.05);
+        }
+
+        self.end_stroke();
+        Ok(dabs.len())
+    }
+
     pub fn end_stroke(&mut self) {
         if !self.tile().stroke_open {
             return;

@@ -96,7 +96,9 @@ impl TileTool {
         let mut curve_changed = false;
         let mut image = self.image_brush(e);
         let (image_before, mut load_image) = (image.clone(), false);
+        let sel = primary(e);
         let Some(d) = document(e) else { return false };
+        let line = sel.filter(|&s| d.tile().is_polygon(s));
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
         ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
@@ -157,6 +159,21 @@ impl TileTool {
         };
 
         ins.text("cursor", "cursor", &cursor);
+
+        // TEd's Spline Paint Stroke: the brush along the selected spline, polygon or line.
+        let along = ins.button("stroke_along", "Stroke along the selected line", line.is_some());
+        if along
+            && let (Some(line), Some(kind)) = (line, self.brush_kind())
+        {
+            let d = document(e).expect("a tile");
+            let msg = match d.stroke_along(kind, line, &self.brush) {
+                Ok(n) => format!("stroked along the line: {n} dabs"),
+                Err(why) => why,
+            };
+
+            e.status(&msg, false);
+        }
+
         if curve_changed {
             self.set_brush_curve(e, curve, true);
         }
