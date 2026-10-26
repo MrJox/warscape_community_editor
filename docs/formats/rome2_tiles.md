@@ -56,7 +56,7 @@ The same files as Attila's (CHMF heights and water, the DDS maps, RMV2 meshes, X
 | PARTICLE_EMITTER_MARKER | 3 (empty), 4, 5 | as Attila's 4 and 5 |
 | POINT_LIGHT_MARKER | 1 (empty), 2 | |
 | AI hint polyline / list, separator | 1 | as Attila's |
-| GENERIC_MARKER | 1 | one file with records (`custom_tile/2x2/front_end_scene_final`): not decoded |
+| GENERIC_MARKER | 1 | one file (`custom_tile/2x2/front_end_scene_final`): records of a key (`BMD_GM_FRONTEND_CHARACTER`), x, y, z (f32) and two bytes; carried along (no TEd type known) |
 
 A decal's scale (prop markers): in Attila from version 6 the fields are signed and the rows' lengths their magnitudes; in Rome 2, at
 every version, the fields are magnitudes and the rows carry the sign (Attila's version 5). `TileConventions::signed_decal_fields`.
