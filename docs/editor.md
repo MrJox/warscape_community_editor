@@ -48,7 +48,7 @@ the new baseline and clears the history, so the saved bytes differ from the pack
 | View modes (HDR, albedo, normal, depth, ...) | **Weather scene** bar and `view <n>` |
 | Sample map seed and count, re-roll | **Weather scene** bar, `sample`, `reroll` |
 | Graphics options (gamma, brightness, SSAO, DOF, shadows, vignette, flare) | **Settings** menu (read from `preferences.script.txt`) |
-| Weather selection database: Pick and Edit tabs, `.xml` and `.bin` | **Selection > Weather picker** (`WeatherPicker`, `VariationEditor`), `picker`, `pick k=v`, `vdb-script` |
+| Weather selection database: Pick and Edit tabs (flag bits, categories and values with the game's locked unless Expert, clone a map / climate, coverage grid, conditions grid, problems for the game, undo), Open / Save / Save As / Convert `.xml` and `.bin` (docs/re/variation_db.md) | **Selection > Weather picker** (`WeatherPicker`, `VariationEditor`), `picker`, `pick k=v`, `vdb-script` |
 | CLI `--open`, `--open-disk`, `--cam`, `--frames`, `--shot`, `--capture`, `--view`, `--blend`, `--pick`, `--picker`, `--vdb-script`, `--no-flare` | same flags of `wce.exe`; the weather ones are commands of the tool (`--name args` runs the command `name`) |
 
 Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` was removed in Phase 8; the render regression is the `wce.exe` captures (`scripts/shots.sh`). `scripts/weather_check.sh` supersedes `variation_e2e.ps1`.

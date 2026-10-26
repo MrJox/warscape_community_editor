@@ -83,7 +83,7 @@ pick time_of_day=day
 pick battle_types=land
 pick snow_attrition=snow_attrition_off
 assert_candidates %CANDIDATES%
-vdb-script "add-value:climate=ROME_W5;add-variation:weather\w5\test.environment;save:both"
+vdb-script "remove-value:precipitation=storm;add-value:climate=ROME_W5;clone-value:climate=ROME_Med>ROME_W6;add-variation:weather\w5\test.environment;save:both"
 assert_saved warscape_asset_variation_db/warscape_asset_variation_db.xml
 assert_saved warscape_asset_variation_db/warscape_asset_variation_db.bin
 frames 3

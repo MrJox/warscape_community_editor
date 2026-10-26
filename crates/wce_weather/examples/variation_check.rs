@@ -9,7 +9,9 @@
 //!   * decode(bin).to_xml() equals the .xml, or differs only by blank lines (reported).
 //!
 //! Gates on the editing operations (on the database the game uses): adding a value to a category and removing it again gives back the same
-//! database, and while the new value is not queried every one of the condition combinations keeps its candidate list.
+//! database, and while the new value is not queried every one of the condition combinations keeps its candidate list; a clone of each map and
+//! climate finds what its source finds under every condition. Rule gate: what the game makes of the database (variation_rules::check, climates
+//! cross-checked with the battle tile database) has no error.
 //!
 //! Report: referenced files missing from every pack, variations that can never match, conditions (every combination of the category values)
 //! for which the game finds no environment file even after the "default_map" retry, and weather/*.environment files no variation refers to.
@@ -21,6 +23,7 @@ use rpfm_lib::files::asset_variation_db::{AssetVariationDb, Variation, Variation
 use rpfm_lib::files::{Decodeable, Encodeable};
 use wce_foundation::settings::Settings;
 use wce_vfs::{Config, GameProfile, Vfs, normalize};
+use wce_weather::variation_rules;
 
 const BIN: &str = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
 const XML: &str = "warscape_asset_variation_db/warscape_asset_variation_db.xml";
@@ -221,6 +224,67 @@ fn check_editing(original: &AssetVariationDb) -> i32 {
     bad
 }
 
+/// A clone of every map and climate value: every condition with the clone finds what the same condition with the source finds, and removing the
+/// clone gives back the database.
+fn check_clones(original: &AssetVariationDb) -> i32 {
+    let mut bad = 0;
+    for m in original.categories().iter().filter(|m| variation_rules::is_data_category(m.name())) {
+        for from in m.values() {
+            let mut db = original.clone();
+            if let Err(why) = db.clone_value(m.name(), from, "wce_clone") {
+                println!("clone_value({}={from}) failed: {why}", m.name());
+                bad += 1;
+                continue;
+            }
+
+            let mut differ = 0;
+            for_each_combination(original, |q, _| {
+                if q.get(m.name()) != Some(from) {
+                    return;
+                }
+
+                let mut cloned = q.clone();
+                cloned.insert(m.name().clone(), "wce_clone".to_owned());
+                let files = |q: &VariationQuery| db.matches("environment", q).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
+                if files(q) != files(&cloned) {
+                    differ += 1;
+                }
+            });
+
+            if differ != 0 {
+                println!("clone of {}={from}: {differ} conditions find other files than with {from}", m.name());
+                bad += 1;
+            }
+
+            if db.remove_value(m.name(), "wce_clone").is_err() || db != *original {
+                println!("clone_value + remove_value({}={from}) did not restore the database", m.name());
+                bad += 1;
+            }
+        }
+    }
+
+    println!("clone gates: {bad} failures");
+    bad
+}
+
+/// What the game makes of the database (variation_rules::check, with the battle tile database's climates): no finding may be an error.
+fn check_rules(vfs: &Vfs, db: &AssetVariationDb) -> i32 {
+    let climates = vfs.read(variation_rules::BATTLE_TILE_DATABASE).ok().and_then(|b| variation_rules::battle_climates(&b).ok());
+    match &climates {
+        Some(c) => println!("battle tile database climates: {}", c.join(", ")),
+        None => println!("{} not read: climates not cross-checked", variation_rules::BATTLE_TILE_DATABASE),
+    }
+
+    let findings = variation_rules::check(db, climates.as_deref());
+    for f in &findings {
+        println!("  rules {:?}: {}", f.severity, f.text);
+    }
+
+    let errors = findings.iter().filter(|f| f.severity == variation_rules::Severity::Error).count();
+    println!("rule gates: {errors} errors");
+    i32::from(errors != 0 || climates.is_none())
+}
+
 fn run() -> Result<i32, String> {
     let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
     let vfs = Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?;
@@ -242,6 +306,8 @@ fn run() -> Result<i32, String> {
     );
     let mut rc = check_pack_files(&vfs)?;
     rc |= check_editing(&db);
+    rc |= check_clones(&db);
+    rc |= check_rules(&vfs, &db);
 
     let mut referenced = BTreeSet::new();
     let (mut missing, mut impossible) = (0, 0);

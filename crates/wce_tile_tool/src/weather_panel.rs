@@ -99,7 +99,7 @@ impl WeatherUi {
     fn first_dry(&self) -> Option<String> {
         let env = self.env.as_ref()?;
         let query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
-        let files = |query: &BTreeMap<String, String>| env.matches_listed_map("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
+        let files = |query: &BTreeMap<String, String>| env.matches("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
         let named = |f: &String, word: &str| f.to_lowercase().contains(word);
         let mut dry = self.value_of("precipitation", "dry").map(|value| {
             let mut q = query.clone();
@@ -169,7 +169,7 @@ impl WeatherUi {
     pub(crate) fn matching(&self) -> (Vec<(String, usize)>, bool) {
         let Some(env) = &self.env else { return (vec![], false) };
         let query = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
-        let res = env.matches_listed_map("environment", &query);
+        let res = env.matches("environment", &query);
         let mut files: Vec<(String, usize)> = vec![];
         for file in res.variations.iter().map(|v| v.filename()).filter(|f| matches_words(f, &self.search)) {
             let key = normalize(file);
@@ -371,7 +371,7 @@ impl WeatherUi {
             query.insert(category.to_owned(), value.to_owned());
         }
 
-        !env.matches_listed_map("environment", &query).variations.is_empty()
+        !env.matches("environment", &query).variations.is_empty()
     }
 
     /// The weather chips over the viewport: season, precipitation, time of day and climate (a value no file passes is greyed), then the file

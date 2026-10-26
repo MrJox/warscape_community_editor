@@ -30,28 +30,67 @@ CLI `tools/variation_convert.cpp`). Verified on both pairs in the game files:
 `add_value` appends to a category and shifts the later categories' bits; a variation that allowed every existing value of that category
 (and is not flags 0) also allows the new one. `remove_value` drops the bit and shifts later bits down; it refuses when a variation would
 end up with flags 0 (which means "any") and it refuses to remove `default_map`, which the game asks for when nothing matched. More than
-32 values cannot be added. `validate()` reports: more than 32 values, duplicate categories or values, flag bits that belong to no value,
-a category with no allowed value (the variation can never match), a `map` category without `default_map`. The converter and the editor
-refuse to save a database with problems unless forced. Gates (`variation_check`): adding and removing a value restores the database,
-adding a value changes no existing condition's candidates (all 19,200 combinations), removing one keeps the others.
+32 values cannot be added, nor a value another category already has. `clone_value`, `add_category`, `remove_category` (same flags-0
+refusal) and `rename_category` complete the set. `validate()` reports: more than 32 values, duplicate categories or values (also across
+categories), flag bits that belong to no value, a category with no allowed value (the variation can never match), a `map` category
+without `default_map`. The converter and the editor refuse to save a database with problems unless forced. Gates (`variation_check`):
+adding and removing a value restores the database, adding a value changes no existing condition's candidates (all 19,200 combinations),
+removing one keeps the others, a clone of every map and climate finds what its source finds under every condition, and
+`variation_rules::check` reports no error on the game's database.
 
 ## Selection (empire.retail.dll, all decompiled)
 - fn 0x17d9f10 builds the query: map (argument), season (fn 0x1882bc0, "default" without a campaign season), climate (name
   table at battle +0x150, "default" without one), precipitation, time_of_day, climate_change_index, snow_attrition
   (`snow_attrition_on` / `_off`), battle_type, then asks for key `environment` with the "all matches" mode.
 - fns 0x1183c740 / 0x1183c690: the query is the OR of one bit per category, bit = `1 << (index of the value across all metas
-  in file order & 31)`; a value that is not in the lists adds no bit.
-- fn 0x1862300: a variation matches when `flags == 0 || (flags & query) == query`. (Its other mode keeps only the matches with
-  the fewest set bits, fn 0x1818010 = popcount; the battle query does not use it.)
+  in file order & 31)`. The value is looked up **by its name alone**, through the values of all metas in file order (the
+  category of the query is not used), so the first meta that has the name gives the bit. A value that is in no list sets the
+  query's +0x1d flag (re-checked 2026-10-26; the old note "adds no bit" was wrong).
+- fn 0x1862300: if the +0x1d flag is set (fn 0x1017e2a0) the query **matches nothing**; otherwise a variation matches when
+  `flags == 0 || (flags & query) == query`. (Its other mode keeps only the matches with the fewest set bits, fn 0x1818010 =
+  popcount; the battle query does not use it.)
 - fn 0x1180c090: if the first query finds nothing it repeats it with map `default_map`; if there is still nothing no
   environment comes from the database. Otherwise it picks `candidates[random(n)]` with fn 0x10693bf0: the 0x343fd LCG with
-  rejection sampling, i.e. uniform.
+  rejection sampling, i.e. uniform. So an unknown map is rescued by the retry, an unknown value of any other category is not:
+  those battles get no environment from the database.
+
+## What the engine asks for (2026-10-26)
+The loader (fn 0x117ba0b0, called from fn 0x117bf600 with `warscape_asset_variation_db`) reads `meta_data_entries` and `entries`
+generically: no category name, count or value is checked. What is fixed is the query. Its values (strings in the DLL):
+
+| category | values the game sends | source |
+| --- | --- | --- |
+| map | the campaign's map name; `default_map` on the retry | data |
+| season | `sp` `su` `au` `wi` (fn 0x118f6360, battle +0x13c), `default` without a campaign season (+0x140) | code |
+| precipitation | `dry` `rain` `snow` `fog` (table 0x11d209e0; index 4 = `dry`), from the battle setup fn 0x103b7410 | code |
+| time_of_day | `day` / `night` (fn 0x103b7410) | code |
+| climate_change_index | `cc%d` of battle +0x15c (range not traced; the shipped lists have cc0..cc4) | code |
+| snow_attrition | `snow_attrition_on` / `snow_attrition_off` | code |
+| battle_type | `land` / `sea` (fn 0x103b7410) | code |
+| climate | a climate name of the battle tile database (fn 0x118e6860 on the list at +0x24/+0x28 filled from `<CLIMATES>` by fn 0x118b0fd0 / 0x118b10a0, i.e. `terrain/tiles/battle/tile_database.bin`), `default` without one | data |
+
+Consequences: category names change nothing; a value the game sends must be in some list (removing `fog` costs every fog battle
+its weather); values the game never sends (`storm` in both shipped files, new values in the code-fed categories, new categories)
+only take bits; a new climate is asked for once the battle tile database has a climate of that name (and battle maps paint it).
+Value names must be unique over all categories. The 32-bit limit is real (`& 31`: a 33rd value would share bit 0). Both shipped
+databases use 31 bits; the shipped battle tile databases (vanilla kit, TDD packs) have exactly the 8 climates the lists have.
+Encoded in `wce_weather::variation_rules` (the engine's categories, a value's role, `check`).
 
 ## What the editor shows
-Per condition set: the candidate list, whether the `default_map` retry happened, probability 1/n each, which pack provides
+Pick tab, per condition set: the candidate list, whether the `default_map` retry happened, probability 1/n each, which pack provides
 each file (red when no pack has it) and an Open button. For the open `.environment`: the conditions under which the game
 selects it, or that no variation refers to it. The choice of battle conditions (including the climate) is an input of the
 view; how a campaign picks them is not part of it.
+
+Edit tab, the whole file: the 32 flag bits coloured by role (game / data / unused / free); per category its values with bit, how many
+variations allow it and its role, rename / remove (the game's values locked unless Expert is ticked), Clone for maps and climates
+(`clone_value`: a new value every variation allows exactly when it allows the source), add values (data and unused categories; code-fed
+ones in Expert), add / rename / remove categories (Expert, or categories the game never asks for); a coverage grid (season x
+precipitation x time of day for one value of every other category: files the game picks from, `*` = after the default_map retry,
+red = none; a cell lists its files and adds a file for exactly its conditions); the variations with a per-category conditions grid
+(All / None); the file's problems and `variation_rules::check` (climates checked against the packs' battle tile database). Undo /
+Redo. Files: Open (.bin or .xml), Save (both forms into `<output>/warscape_asset_variation_db/`), Save As (format by extension),
+Convert (a file to the other format without opening it); saving is refused when the game would lose weather, unless "save anyway".
 
 ## Findings on the TDD data (variation_check, 2026-10-08)
 239 variations, 0 files missing, 0 variations that can never match, every variation found by its own conditions.
