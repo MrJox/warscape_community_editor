@@ -75,7 +75,9 @@ Status legend: **done**, **partial**, **todo**.
   effect without a known scale gets the type's default.
 - **done** Procedural walls: saved into mod packs (any game), the packs written for the files' game, the bases Rome 2 has
   (docs/plans/procedural_walls.md, "Mod packs and Rome 2"). In game: to confirm.
-- **todo** Siege AI generator on Rome 2's settlements (its classes and markers are Attila's: to check).
+- **done** Siege AI generator on Rome 2's settlements: the same marker files (decompiled and compiled as Attila's); on roman_city_a/small
+  (`WCE_GAME_KEY=rome_2 siege_check <Rome 2> <out> <extracted project>`): 76 fort pieces, 11 areas, 17 streets, 4 wall edges, no problem
+  in ours (CA's own layout: two nodes without a boundary). In game: to confirm.
 
 ## Validation without TEd
 
