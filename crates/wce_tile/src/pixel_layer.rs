@@ -56,6 +56,15 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         &self.v[i..i + self.channels]
     }
 
+    /// The samples of a pixel as they were when the open edit began (as they are now outside an edit, or where it changed nothing).
+    pub fn original(&self, x: u32, y: u32) -> &[T] {
+        let block = self.block_of(x, y);
+        let Some(saved) = self.saved.get(&block) else { return self.pixel(x, y) };
+        let (x0, y0, x1, _) = self.block_rect(block);
+        let i = ((y - y0) as usize * (x1 - x0) as usize + (x - x0) as usize) * self.channels;
+        &saved[i..i + self.channels]
+    }
+
     /// All the samples, row by row.
     pub fn values(&self) -> &[T] {
         &self.v

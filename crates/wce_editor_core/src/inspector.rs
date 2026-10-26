@@ -84,6 +84,17 @@ pub trait Inspector {
     fn edit_bool(&mut self, field: &str, label: &str, v: &mut bool) -> bool;
     fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool;
     fn edit_choice(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String]) -> bool;
+
+    /// [`Self::edit_choice`] with a tooltip per choice (the current one's on the row, each one's on its entry in the list).
+    fn edit_choice_tips(&mut self, field: &str, label: &str, index: &mut i32, choices: &[String], tips: &[String]) -> bool {
+        let _ = tips;
+        self.edit_choice(field, label, index, choices)
+    }
+
+    /// A tooltip on the row drawn last.
+    fn tooltip(&mut self, text: &str) {
+        let _ = text;
+    }
     fn gesture_ended(&mut self) -> bool;
 
     /// A float in `[lo, hi]`: a number box and a slider (TEd's `DoubleBoxSlider`, the widget of every ranged float property).

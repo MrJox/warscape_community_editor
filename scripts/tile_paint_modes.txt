@@ -1,0 +1,39 @@
+# The paint brush's modes from TEd's Blend Map (docs/re/terrain.md) and the stroke along a spline at its width (docs/plans/workflow_review.md,
+# section 3). A new 1 x 1 tile at density 128 (1 m a pixel): a steep bump at (64, 64); rock painting over it lands on its flanks only
+# (next to none on the flat top or the flat ground); Auto-Flange with no threshold over flat ground gives the group's variation 3 at the middle of
+# a long stroke and variation 1 near its edge. Then a river widening from 4 m to 40 m, stroked along: the paint is as wide as the river.
+# Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_paint_modes_test 1 1 10 128
+frames 5
+brush 12 30 0.7
+paint raise 64 64 60
+tile_mode paint
+brush 40 6 0.5 0 1
+brush_paint 3 0 rock
+paint_ground 3 0 64 64 60
+assert_blend 70 64 3 0 20000
+assert_blend 64 64 3 0 0 200
+assert_blend 105 64 3 0 0 200
+brush 10 6 1 0 1
+brush_paint 2 0 flange 0
+paint_ground 2 0 30 110 60
+assert_blend 30 110 2 3 50000
+assert_blend 30 110 0 0 0 0
+assert_blend 38 110 2 1 30000
+assert_blend 38 110 2 3 0 1000
+brush_paint 1 0 normal
+tile_mode select
+add_polygon "SplineRiverInstance||-60,40;110,40"
+frames 2
+spline_value width 4 0
+spline_value width 40 1
+tile_mode paint
+brush 2 6 0.5 0 1
+stroke_along
+assert_blend -50 40 1 0 30000
+assert_blend -50 47 1 0 0 0
+assert_blend 100 40 1 0 30000
+assert_blend 100 55 1 0 10000
+assert_blend 100 64 1 0 0 0
+tile_mode select
+quit

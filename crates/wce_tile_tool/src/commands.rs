@@ -748,11 +748,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("brush_paint", "brush_paint <group 0-3> <variation 0-3>", "what the paint brush lays (the entry's texture group and its variation)", |e, a| {
+    c.add("brush_paint", "brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock]", "what the paint brush lays (the entry's texture group and its variation) and how (TEd's Auto-Flange, Rock-painting)", |e, a| {
+        let usage = "usage: brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock]";
         let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten().filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1));
-        let Some((g, v)) = parsed else { return fail("usage: brush_paint <group 0-3> <variation 0-3>") };
+        let Some((g, v)) = parsed else { return fail(usage) };
+        let threshold = a.get(3).and_then(|x| number(x)).map(|t| t.clamp(0.0, 0.95));
+        let mode = match a.get(2).map(String::as_str) {
+            None | Some("normal") => wce_tile::blend_field::PaintMode::Normal,
+            Some("flange") => wce_tile::blend_field::PaintMode::AutoFlange { threshold: threshold.unwrap_or(0.0) },
+            Some("rock") => wce_tile::blend_field::PaintMode::Rock,
+            Some(_) => return fail(usage),
+        };
+
         with_tile(e, |t, _| {
             t.paint_channel = g as u8 * 4 + v as u8;
+            t.brush.paint_mode = mode;
+            if let wce_tile::blend_field::PaintMode::AutoFlange { threshold } = mode {
+                t.flange_threshold = threshold;
+            }
+
             ok("")
         })
     });

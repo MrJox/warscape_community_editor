@@ -9,10 +9,27 @@ use wce_editor::{gui, icons};
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
 use wce_scene::render_scene::SourceRef;
+use wce_tile::blend_field::PaintMode;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile_editor::tile_document::{GROUND_ERASE, Placement, elem_of};
 
 use crate::tool::{TileMode, TileTool, document, document_id, primary, selected};
+
+/// What each paint mode does (its tooltip): TEd's Blend Map operations as traced in docs/re/terrain.md.
+const PAINT_MODE_TIPS: [&str; 3] = [
+    "Normal: the texture group's variation gains the brush's weight of what the other textures hold.",
+    "Auto-Flange (TEd's): paints the texture group with a graded rim of its four variations. Each pixel builds up a weight while you paint \
+     (more dabs, nearer the brush's middle: higher). Above the threshold the pixel becomes all the group, its variation sliding from 0 \
+     (the brush's edge, a light touch) to 3 (its middle, more painting); below the threshold only variation 0 fades in. It sets the \
+     pixel from how the stroke found it: painting the same spot longer moves it towards variation 3, it does not pile up.",
+    "Rock painting (TEd's): the texture's weight follows the slope under the brush: none below about 26 degrees, 0.24 at 45, 0.8 at 60, \
+     all of it from about 72. Paint a rock texture over cliffs and it lands on the steep parts only. Unlike TEd's, it follows the brush's \
+     strength and falloff and never takes the texture away where there is already more of it than the slope asks for.",
+];
+
+/// Auto-Flange's threshold (its tooltip).
+const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group takes over: under it only variation 0 fades in (a soft rim), over \
+    it the pixel is all the group, variations 0 to 3 from the edge inwards. 0: no rim, the group everywhere the brush touches.";
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
 const BRUSHES: [(&str, &str); 7] = [
@@ -139,12 +156,35 @@ impl TileTool {
         }
 
         if self.mode == TileMode::Paint {
-            // The entry's four texture groups, each with four variations.
+            // What the stroke does: TEd's Blend Map operations (docs/re/terrain.md), explained, since nobody knew what they did.
+            let mut m = match self.brush.paint_mode {
+                PaintMode::Normal => 0,
+                PaintMode::AutoFlange { .. } => 1,
+                PaintMode::Rock => 2,
+            };
+
+            let names = ["normal", "auto-flange", "rock painting"].map(str::to_owned);
+            let tips = PAINT_MODE_TIPS.map(str::to_owned);
+            ins.edit_choice_tips("paint_mode", "mode", &mut m, &names, &tips);
+            self.brush.paint_mode = match m {
+                1 => PaintMode::AutoFlange { threshold: self.flange_threshold },
+                2 => PaintMode::Rock,
+                _ => PaintMode::Normal,
+            };
+
+            // The entry's four texture groups, each with four variations (Auto-Flange picks the variations itself).
             let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
             let names = [g.red, g.green, g.blue, g.alpha].iter().enumerate().map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() }).collect::<Vec<_>>();
             let (mut group, mut variation) = (i32::from(self.paint_channel / 4), i32::from(self.paint_channel % 4));
             ins.edit_choice("group", "texture group", &mut group, &names);
-            ins.edit_choice("variation", "variation", &mut variation, &["0", "1", "2", "3"].map(str::to_owned));
+            if m == 1 {
+                ins.edit_slider("flange_threshold", "threshold", &mut self.flange_threshold, 0.0, 0.95);
+                ins.tooltip(FLANGE_THRESHOLD_TIP);
+                self.brush.paint_mode = PaintMode::AutoFlange { threshold: self.flange_threshold };
+            } else {
+                ins.edit_choice("variation", "variation", &mut variation, &["0", "1", "2", "3"].map(str::to_owned));
+            }
+
             self.paint_channel = (group.clamp(0, 3) * 4 + variation.clamp(0, 3)) as u8;
         }
 
@@ -188,6 +228,11 @@ impl TileTool {
 
         // TEd's Spline Paint Stroke: the brush along the selected spline, polygon or line.
         let along = ins.button("stroke_along", "Stroke along the selected line", line.is_some());
+        ins.tooltip(
+            "The brush, as it is set, stroked along the selected spline, polygon or line in one go (one undo step); a closed polygon all \
+             round. A spline whose points have a width (rivers, roads) is painted as wide as it is at each point, as TEd's Spline splat \
+             does; other lines with the brush's radius. Select the line first, then pick the brush.",
+        );
         if along
             && let (Some(line), Some(kind)) = (line, self.brush_kind())
         {

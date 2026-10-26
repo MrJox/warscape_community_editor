@@ -268,17 +268,23 @@ impl Tile {
             falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(),
         };
 
-        // TEd's Blendmap Filters: the terrain's height and slope at the pixel's centre, in the editor's metres.
-        let filter = s.filter.filter(|f| f.is_active());
-        let mask = |px: u32, py: u32| -> bool {
-            let (Some(f), Some(hf)) = (filter, height) else { return true };
+        // The terrain's height and slope (degrees) at a pixel's centre, in the editor's metres: TEd's Blendmap Filters and Rock-painting.
+        let terrain = |px: u32, py: u32| -> Option<(f64, f64)> {
+            let hf = height?;
             let (hx, hz) = (((f64::from(px) + 0.5) / ppx) / mpp_x, ((f64::from(py) + 0.5) / ppz) / mpp_z);
             let at = |dx: f64, dz: f64| hf.sample(hx + dx, hz + dz) / unit;
             let (gx, gz) = ((at(1.0, 0.0) - at(-1.0, 0.0)) / (2.0 * mpp_x), (at(0.0, 1.0) - at(0.0, -1.0)) / (2.0 * mpp_z));
-            f.passes(at(0.0, 0.0), gx.hypot(gz).atan().to_degrees())
+            Some((at(0.0, 0.0), gx.hypot(gz).atan().to_degrees()))
         };
 
-        let _ = blend.paint(&brush, channel, &mask);
+        let filter = s.filter.filter(|f| f.is_active());
+        let mask = |px: u32, py: u32| -> bool {
+            let Some(f) = filter else { return true };
+            terrain(px, py).is_none_or(|(h, slope)| f.passes(h, slope))
+        };
+
+        let slope = |px: u32, py: u32| terrain(px, py).map_or(0.0, |t| t.1);
+        let _ = blend.paint_mode(&brush, channel, s.paint_mode, &mask, &slope);
     }
 
     /// A step of a ground type stroke on ground_type_map.png, which covers the bordered tile: hard values under the brush.
@@ -1940,49 +1946,76 @@ impl TileDocument {
         names
     }
 
-    /// The brush stroked along a spline, polygon or line (TEd's Spline Paint Stroke): dabs a quarter of the radius apart along its curve
-    /// (a closed polygon round to its first point), one undo entry; returns the dabs.
+    /// The brush stroked along a spline, polygon or line (TEd's Spline Paint Stroke, and its Spline splat's width): dabs a quarter of the
+    /// radius apart along its curve (a closed polygon round to its first point), one undo entry; returns the dabs. A spline whose points
+    /// have a `width` (rivers, roads) is painted as wide as it is there (the radius half the width, the points' widths blended along each
+    /// segment, as TEd's Spline splat lays its channel); other lines with the brush's radius.
     ///
     /// # Errors
     ///
     /// The element is not a spline, polygon or line, or has fewer than two points.
     pub fn stroke_along(&mut self, kind: BrushKind, elem: usize, settings: &BrushSettings) -> Result<usize, String> {
+        const STEPS: usize = 16;
         let t = self.tile();
         if !t.is_polygon(elem) {
             return Err("select a spline, polygon or line to stroke along".to_owned());
         }
 
-        let mut path = if self.is_spline(elem) { t.spline_world_curve(elem) } else { t.polygon_world_points(elem) };
-        let closed = !self.is_spline(elem) && t.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
-        if closed && path.len() > 2 {
+        let spline = self.is_spline(elem);
+        let sc = t.tscene();
+        let closed = if spline { sc.doc().get(elem, "closed").is_some_and(|v| v == "1") } else { sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0") };
+        let mut path = if spline { t.spline_world_curve(elem) } else { t.polygon_world_points(elem) };
+
+        // The points' widths (metres), when they have them, at every sample of the curve.
+        let points = sc.polygon_points(elem);
+        let widths = points.iter().map(|&p| sc.doc().get(p, "width").and_then(|v| wce_formats::c_num::strtod(&v))).collect::<Vec<_>>();
+        let mut radii = if spline && widths.iter().any(Option::is_some) && widths.len() >= 2 {
+            let w = widths.iter().map(|w| w.unwrap_or(0.0) * 0.5).collect::<Vec<_>>();
+            let n = w.len();
+            let segments = if closed && n > 2 { n } else { n - 1 };
+            let mut r = vec![w[0]];
+            for i in 0..segments {
+                let (a, b) = (w[i], w[(i + 1) % n]);
+                r.extend((1..=STEPS).map(|k| a + (b - a) * k as f64 / STEPS as f64));
+            }
+
+            r
+        } else {
+            vec![f64::from(settings.radius_m); path.len()]
+        };
+
+        if !spline && closed && path.len() > 2 {
             path.push(path[0]);
+            radii.push(radii[0]);
         }
 
-        if path.len() < 2 {
+        if path.len() < 2 || radii.len() != path.len() {
             return Err("the line has fewer than two points".to_owned());
         }
 
         // A dab every quarter radius, each with the most a frame gives (`apply_brush` takes at most 0.05 s).
-        let spacing = (settings.radius_m * 0.25).max(0.25);
-        let mut dabs = vec![(path[0].x, path[0].z)];
-        let mut left = spacing;
-        for w in path.windows(2) {
+        let spacing = |r: f64| (r * 0.25).max(0.25);
+        let mut dabs = vec![(path[0].x, path[0].z, radii[0])];
+        let mut left = spacing(radii[0]);
+        for (w, r) in path.windows(2).zip(radii.windows(2)) {
             let (a, b) = (w[0], w[1]);
-            let len = (b.x - a.x).hypot(b.z - a.z);
+            let len = f64::from((b.x - a.x).hypot(b.z - a.z));
             let mut at = 0.0;
             while len - at >= left {
                 at += left;
                 let f = at / len;
-                dabs.push((a.x + (b.x - a.x) * f, a.z + (b.z - a.z) * f));
-                left = spacing;
+                let radius = r[0] + (r[1] - r[0]) * f;
+                dabs.push((a.x + (b.x - a.x) * f as f32, a.z + (b.z - a.z) * f as f32, radius));
+                left = spacing(radius);
             }
 
             left -= len - at;
         }
 
         self.end_stroke();
-        for &(x, z) in &dabs {
-            self.brush_step(kind, x, z, settings.clone(), 0.05);
+        for &(x, z, radius) in &dabs {
+            let s = BrushSettings { radius_m: radius.max(0.25) as f32, ..settings.clone() };
+            self.brush_step(kind, x, z, s, 0.05);
         }
 
         self.end_stroke();
