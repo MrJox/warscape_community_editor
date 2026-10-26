@@ -521,7 +521,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     c.add(
         "veg_set_new",
         "veg_set_new <name>",
-        "a new vegetation set from the selected trees (each kind weighted by how many there are)",
+        "a new vegetation set from the selected trees, or buildings (each kind weighted by how many there are)",
         |e, a| {
             let Some(name) = a.first().cloned() else { return fail("usage: veg_set_new <name>") };
             with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
@@ -531,7 +531,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     c.add(
         "veg_set_add",
         "veg_set_add <key>...",
-        "add trees to the new vegetation set (not saved) and place or paint with it, as Ctrl + click on them in the Create panel does",
+        "add trees (or buildings) to the new set (not saved) and place or paint with it, as Ctrl + click on them in the Create panel does",
         |e, a| {
             if a.is_empty() {
                 return fail("usage: veg_set_add <key>...");
@@ -541,11 +541,16 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 a.iter().map(|k| wce_tile::vegetation_sets::SetEntry { key: k.clone(), weight: 1.0, scale: None }).collect::<Vec<_>>();
             with_tile(e, |t, e| {
                 let trees = t.catalogue(e, "VEGETATION_INSTANCE");
-                if let Some(k) = keys.iter().find(|k| !trees.contains(&k.key)) {
-                    return fail(format!("no tree '{}' in the game's files", k.key));
-                }
+                let buildings = t.catalogue(e, "BUILDING_INSTANCE");
+                let kind = if keys.iter().all(|k| trees.contains(&k.key)) {
+                    wce_tile::vegetation_sets::SetKind::Vegetation
+                } else if keys.iter().all(|k| buildings.contains(&k.key)) {
+                    wce_tile::vegetation_sets::SetKind::Building
+                } else {
+                    return fail("the keys are not all trees or all buildings of the game's files");
+                };
 
-                t.add_to_new_set(e, &keys);
+                t.add_to_new_set(e, kind, &keys);
                 ok(t.status.clone())
             })
         },
