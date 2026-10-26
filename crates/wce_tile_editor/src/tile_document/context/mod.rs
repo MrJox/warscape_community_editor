@@ -268,7 +268,7 @@ impl Frame {
     /// The frame of a request (slow on the campaign map: its LF map; run it away from the UI thread).
     pub fn new(rq: &ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let map = rq.map.clone();
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: rq.spot.x, y: rq.spot.y, w: rq.cells.0, h: rq.cells.1, rotation: rq.spot.rotation, flipped: false, climate: 0 };
+        let me = MapPlacement { location: String::new(), variation: String::new(), x: rq.spot.x, y: rq.spot.y, w: rq.cells.0, h: rq.cells.1, rotation: rq.spot.rotation, flipped: false, climate: 0, any_variation: false };
         let open = me.rect();
         let to_map = me.to_map();
         let from_map = to_map.inverse();

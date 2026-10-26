@@ -58,6 +58,12 @@ Status legend: **done**, **partial**, **todo**.
 
 ## Phase 3: editor — partial
 
+- **todo** The game selector in the top bar (swap games without the Settings window or the File menu).
+- **done** The map context in Rome 2 (user report 2026-10-26, Carthage): a tile the map names without a variation is found as any of its
+  variations; the sea tiles' common maps (`blend_common` ...) read from the packs (their ground had no material, and one terrain
+  without a material blanked every neighbour: Rome 2 has no legacy ground to fall back on, such a terrain is left out); Rome 2's LF
+  window was mirrored in v (unseen on Rome's flat LF); the LF sampled with points (the shader filters it itself).
+
 - **done** Tile menu: Save to mod pack; no Save for / Import from Assembly Kit for a game whose kit has no tiles.
 - **done** The weather tool on Rome 2's environments (the test map lit, the default environment `rome_med` day_dry_01).
 - **done** The UI tool: Rome 2's layouts (version 86) read and write back byte for byte and draw (before version 90 the visible flag is
