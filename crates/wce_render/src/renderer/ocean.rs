@@ -37,6 +37,10 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const OCEAN_VS: &str = "dx11_sm_4_0_ocean.hlsl_vs_vs30_main";
 
+/// Rome 2's (`sm_3_0`; a forward pass).
+const R2_OCEAN_VS: &str = "dx11_sm_3_0_ocean.hlsl_vs_vs30_main";
+const R2_OCEAN_PS: &str = "dx11_sm_3_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
+
 /// The "ultra" quality level.
 const OCEAN_PS: &str = "dx11_sm_4_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
 
@@ -396,21 +400,13 @@ impl Renderer {
             return false;
         }
 
-        // TODO(rome2): Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass of its own (colour, reflection and refraction textures, the
-        // sky cube, fog), not this one: its sea is not drawn yet.
-        if self.game == super::game::RenderGame::Rome2 {
-            if !self.ocean_unsupported_noted {
-                self.ocean_unsupported_noted = true;
-                wce_foundation::log::warn("the sea is not drawn: Rome 2's ocean shaders are not supported yet");
-            }
-
-            return false;
-        }
-
-        let (Some(vs), Some(ps)) = (self.shader(OCEAN_VS), self.shader(OCEAN_PS)) else { return false };
+        // Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass: the lit colour only, its constants and textures named otherwise
+        // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), self.shader(if rome2 { R2_OCEAN_PS } else { OCEAN_PS })) else { return false };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
-        let Some(layout) = self.layout(&vs, "ocean", &el) else { return false };
+        let Some(layout) = self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el) else { return false };
 
         wce_prof!("render.ocean");
         let u = self.camera.units;
@@ -558,6 +554,12 @@ impl Renderer {
         cbs.set_f("ocean_VS", "g_sea_uv_scale", &[sea_uv]);
         cbs.set_f("ocean_VS", "g_swell_uv_scale", &[swell_uv]);
         cbs.set_f("ocean_VS", "g_vs_sea_info", &info);
+        cbs.set_f("ocean_VS", "g_vs_sea_bed_info", &info);
+        cbs.set_f("ocean_PS", "g_ps_sea_bed_info", &info);
+        cbs.set_f("ocean_PS", "g_detail_normal_uv_scale1", &[detail[0]]);
+        cbs.set_f("ocean_PS", "g_detail_normal_uv_scale2", &[detail[1]]);
+        cbs.set_f("ocean_PS", "g_detail_normal_uv_speed1", &[detail[2]]);
+        cbs.set_f("ocean_PS", "g_detail_normal_uv_speed2", &[detail[3]]);
         cbs.set_f("OceanSharedConstants", "g_froth_distortion_speed", &[row.froth_distortion_speed]);
         cbs.set_f("OceanSharedConstants", "g_froth_distortion_amount", &[row.froth_distortion_amount]);
         cbs.set_f("OceanSharedConstants", "g_lowest_wave_trough_y_pos", &[row.wave_trough_y_value]);
@@ -570,7 +572,11 @@ impl Renderer {
         cbs.set_f("OceanSharedConstants", "g_foam_anim_data", &foam_anim);
         self.upload();
 
-        let rtvs = [self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()];
+        let rtvs = if rome2 {
+            vec![self.gbuffer.hdr.rtv.clone()]
+        } else {
+            vec![self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()]
+        };
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), 1);
@@ -609,6 +615,15 @@ impl Renderer {
         bind_srv(ctx, &ps, "ui_colour_overlay_texture_sampler", o.clear.as_ref());
         bind_srv(ctx, &ps, "g_foam_anim_texture", whitecaps.as_ref());
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());
+
+        // Rome 2's names: the sky cube, the foam texture; its planar reflection is not rendered (black: no reflected objects, the sky's
+        // reflection comes from the cube).
+        let sky = if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() };
+        bind_srv(ctx, &ps, "s_sky", sky);
+        bind_srv(ctx, &ps, "combined_foam_texture_sampler", foam.as_ref());
+        bind_srv(ctx, &ps, "reflection_texture_sampler", self.res.black_srv.as_ref());
+        bind_sampler(ctx, &ps, "sea_bed_info_texture_sampler", self.states.s_clamp_linear.as_ref());
+        bind_srv(ctx, &ps, "sea_bed_info_texture_sampler", o.sea_bed.as_ref());
 
         if o.vb.is_some()
             && let Some((ib, count)) = &o.ib

@@ -46,7 +46,8 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Shaders of Rome 2's containers (rpfm); tone mapping in log Y; the S-curve's single biases; the weather from folders.
 - **done** The terrain (surface, blend, composite, resolve; shadows). Open: the variation textures (the index map is not read).
 - **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
-- **todo** The sea (forward ocean), the effects (generated shaders), the rivers and water planes (their shaders exist: to check).
+- **done** The sea (the forward ocean; no planar reflection).
+- **todo** The effects (generated shaders), the rivers and water planes (their shaders exist: to check).
 - **todo** Grass and trees (Rome 2's vegetation shaders share the names: to check), decals.
 
 ## Phase 3: editor — partial
