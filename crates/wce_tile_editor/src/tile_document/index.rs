@@ -793,7 +793,7 @@ impl Tile {
                             value(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(),
                             value("capture_location").as_deref(),
                         );
-                    if let Some(r) = raw("scale").filter(|_| !unscaled) {
+                    if let Some(r) = raw("scale").or_else(|| raw(wce_tile::project_files::SCALE_ATTR)).filter(|_| !unscaled) {
                         let r = text(r);
                         if let Some(s3) = parse_triple(&r, "vector") {
                             l.scale = Some([s3[0] as f32, s3[1] as f32, s3[2] as f32]);
