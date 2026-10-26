@@ -267,22 +267,26 @@ fn check_clones(original: &AssetVariationDb) -> i32 {
     bad
 }
 
-/// What the game makes of the database (variation_rules::check, with the battle tile database's climates): no finding may be an error.
+/// What the game makes of the database (variation_rules::check, with the battle tile database's climates and the campaigns' climate change
+/// phases): both must be read, and no finding may be an error.
 fn check_rules(vfs: &Vfs, db: &AssetVariationDb) -> i32 {
-    let climates = vfs.read(variation_rules::BATTLE_TILE_DATABASE).ok().and_then(|b| variation_rules::battle_climates(&b).ok());
-    match &climates {
-        Some(c) => println!("battle tile database climates: {}", c.join(", ")),
-        None => println!("{} not read: climates not cross-checked", variation_rules::BATTLE_TILE_DATABASE),
+    let facts = variation_rules::GameFacts::read(vfs);
+    if let Some(c) = &facts.climates {
+        println!("battle tile database climates: {}", c.join(", "));
     }
 
-    let findings = variation_rules::check(db, climates.as_deref());
+    if let Some(p) = &facts.climate_phases {
+        println!("climate change phases: {}", p.iter().map(u32::to_string).collect::<Vec<_>>().join(", "));
+    }
+
+    let findings = variation_rules::check(db, &facts);
     for f in &findings {
         println!("  rules {:?}: {}", f.severity, f.text);
     }
 
     let errors = findings.iter().filter(|f| f.severity == variation_rules::Severity::Error).count();
     println!("rule gates: {errors} errors");
-    i32::from(errors != 0 || climates.is_none())
+    i32::from(errors != 0 || facts.climates.is_none() || facts.climate_phases.is_none())
 }
 
 fn run() -> Result<i32, String> {

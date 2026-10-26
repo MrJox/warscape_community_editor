@@ -13,7 +13,7 @@ use wce_editor::editor::Editor;
 use wce_editor::steam_detect::file_dialog;
 use wce_editor::{gui, theme};
 use wce_vfs::{Vfs, normalize};
-use wce_weather::variation_rules::{BATTLE_TILE_DATABASE, battle_climates};
+use wce_weather::variation_rules::GameFacts;
 
 use crate::variation_editor::{VariationEditState, blocks_saving, draw_variation_editor, variation};
 
@@ -122,8 +122,8 @@ pub struct WeatherPicker {
     edit: VariationEditState,
     script: String,
 
-    /// The climates of the battle tile database the packs give the game, when it could be read.
-    tile_climates: Option<Vec<String>>,
+    /// What the packs say about the climates and climate change phases the game sends (read with the database).
+    facts: GameFacts,
 
     /// The Pick tab is selected when the window first shows, unless the Edit tab was asked for first (`select_pick` is the C++ flag).
     pick_shown: bool,
@@ -170,7 +170,7 @@ impl WeatherPicker {
     }
 
     /// Lists every .bin and .xml of the database in the packs and loads the one the game uses (the winning pack's .bin); reads the climates of
-    /// the battle tile database for the checks.
+    /// the facts about the game files for the checks.
     fn load(&mut self, e: &Editor) {
         self.loaded = true;
         self.db = None;
@@ -182,7 +182,7 @@ impl WeatherPicker {
             return;
         };
 
-        self.tile_climates = vfs.read(BATTLE_TILE_DATABASE).ok().and_then(|bytes| battle_climates(&bytes).ok());
+        self.facts = GameFacts::read(vfs);
         let winner = vfs.owner(VDB_BIN);
         let mut use_source = None;
         for &pack in vfs.owners(VDB_BIN) {
@@ -275,7 +275,7 @@ impl WeatherPicker {
 
     /// Why the working copy must not be written, unless "save anyway" is ticked.
     fn refuse_saving(&self, db: &AssetVariationDb) -> Option<String> {
-        (blocks_saving(db, self.tile_climates.as_deref()) && !self.save_anyway)
+        (blocks_saving(db, &self.facts) && !self.save_anyway)
             .then(|| "Not saved: the game would lose weather with this database (see the problems in the Edit tab). Tick \"save anyway\" to write it regardless.".to_owned())
     }
 
@@ -582,7 +582,7 @@ impl WeatherPicker {
         if gui::begin_tab_item("Edit", 0) {
             if let Some(db) = self.db.as_mut() {
                 let before = db.clone();
-                if draw_variation_editor(db, &mut self.edit, vfs.as_deref(), self.tile_climates.as_deref()) {
+                if draw_variation_editor(db, &mut self.edit, vfs.as_deref(), &self.facts) {
                     self.undo.push(before);
                     if self.undo.len() > UNDO_STEPS {
                         self.undo.remove(0);

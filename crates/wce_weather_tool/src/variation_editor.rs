@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use rpfm_lib::files::asset_variation_db::{AssetVariationDb, Variation, VariationQuery};
 use wce_editor::{gui, theme};
 use wce_vfs::{Vfs, normalize};
-use wce_weather::variation_rules::{self, DEFAULT_MAP, Role, Severity};
+use wce_weather::variation_rules::{self, DEFAULT_MAP, GameFacts, Role, Severity};
 
 /// The coverage grid: a row per value of `ROWS`, a column per pair of values of `COLUMNS`.
 const ROWS: &str = "season";
@@ -96,7 +96,7 @@ fn role_label(role: Role) -> (&'static str, [f32; 4]) {
 fn role_tooltip(category: &str, value: &str, role: Role) -> String {
     match role {
         Role::Engine => variation_rules::engine_reason(category, Some(value)),
-        Role::Data => "A name from the game files (a campaign map or a battle climate): free to add, rename and remove.".to_owned(),
+        Role::Data => "From the game files (a campaign map, a battle climate or a climate change phase): free to add, rename and remove.".to_owned(),
         Role::Unused => "The game never sends this value: it only takes a flag bit.".to_owned(),
     }
 }
@@ -117,7 +117,7 @@ fn report<E: ToString>(st: &mut VariationEditState, result: Result<(), E>, done:
 }
 
 /// Draws the editor; true when the database changed this frame.
-pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditState, vfs: Option<&Vfs>, tile_climates: Option<&[String]>) -> bool {
+pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditState, vfs: Option<&Vfs>, facts: &GameFacts) -> bool {
     let mut changed = false;
     gui::checkbox("Expert", &mut st.expert);
     if gui::is_item_hovered() {
@@ -164,7 +164,7 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
         }
     }
 
-    draw_problems(db, tile_climates);
+    draw_problems(db, facts);
     changed
 }
 
@@ -366,7 +366,11 @@ fn draw_clone(db: &mut AssetVariationDb, st: &mut VariationEditState, category: 
     let mut changed = false;
     if (gui::button("Create") || enter) && !st.clone_name.is_empty() {
         let name = st.clone_name.clone();
-        let hint = if category == "climate" { " (the game asks for it once the battle tile database has a climate of that name)" } else { "" };
+        let hint = match category {
+            "climate" => " (the game asks for it once the battle tile database has a climate of that name)",
+            "climate_change_index" => " (the game asks for cc<N> once a campaign has climate change phase N)",
+            _ => "",
+        };
         changed = report(st, db.clone_value(category, &from, &name), format!("Added {name} with the weather of {from}{hint}"));
         if changed {
             st.clone = None;
@@ -697,9 +701,9 @@ fn draw_conditions(db: &mut AssetVariationDb, st: &mut VariationEditState, sel: 
 }
 
 /// The file's own problems, then what the game will make of it (variation_rules::check).
-fn draw_problems(db: &AssetVariationDb, tile_climates: Option<&[String]>) {
+fn draw_problems(db: &AssetVariationDb, facts: &GameFacts) {
     let problems = db.validate();
-    let findings = variation_rules::check(db, tile_climates);
+    let findings = variation_rules::check(db, facts);
     let notes = findings.iter().filter(|f| f.severity == Severity::Info).collect::<Vec<_>>();
     gui::separator();
     if problems.is_empty() && notes.len() == findings.len() {
@@ -728,6 +732,6 @@ fn draw_problems(db: &AssetVariationDb, tile_climates: Option<&[String]>) {
 }
 
 /// True when the game would lose weather with this database: problems of the file or engine values it lacks.
-pub fn blocks_saving(db: &AssetVariationDb, tile_climates: Option<&[String]>) -> bool {
-    !db.validate().is_empty() || variation_rules::check(db, tile_climates).iter().any(|f| f.severity == Severity::Error)
+pub fn blocks_saving(db: &AssetVariationDb, facts: &GameFacts) -> bool {
+    !db.validate().is_empty() || variation_rules::check(db, facts).iter().any(|f| f.severity == Severity::Error)
 }

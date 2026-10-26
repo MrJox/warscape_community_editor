@@ -64,7 +64,7 @@ generically: no category name, count or value is checked. What is fixed is the q
 | season | `sp` `su` `au` `wi` (fn 0x118f6360, battle +0x13c), `default` without a campaign season (+0x140) | code |
 | precipitation | `dry` `rain` `snow` `fog` (table 0x11d209e0; index 4 = `dry`), from the battle setup fn 0x103b7410 | code |
 | time_of_day | `day` / `night` (fn 0x103b7410) | code |
-| climate_change_index | `cc%d` of battle +0x15c (range not traced; the shipped lists have cc0..cc4) | code |
+| climate_change_index | `cc<phase>`: the campaign's current climate change phase (see below); `cc0` outside a campaign | data |
 | snow_attrition | `snow_attrition_on` / `snow_attrition_off` | code |
 | battle_type | `land` / `sea` (fn 0x103b7410) | code |
 | climate | a climate name of the battle tile database (fn 0x118e6860 on the list at +0x24/+0x28 filled from `<CLIMATES>` by fn 0x118b0fd0 / 0x118b10a0, i.e. `terrain/tiles/battle/tile_database.bin`), `default` without one | data |
@@ -74,7 +74,25 @@ its weather); values the game never sends (`storm` in both shipped files, new va
 only take bits; a new climate is asked for once the battle tile database has a climate of that name (and battle maps paint it).
 Value names must be unique over all categories. The 32-bit limit is real (`& 31`: a 33rd value would share bit 0). Both shipped
 databases use 31 bits; the shipped battle tile databases (vanilla kit, TDD packs) have exactly the 8 climates the lists have.
-Encoded in `wce_weather::variation_rules` (the engine's categories, a value's role, `check`).
+Encoded in `wce_weather::variation_rules` (the engine's categories, a value's role, `check` against `GameFacts` read from the packs).
+
+**Climate change index (traced 2026-10-27).** `cc%d` formats `WARSCAPE::TERRAIN_BATTLE_SETTINGS::m_climate_change_index` (battle
++0x15c; the header's field order puts it 0x20 after `m_season` at +0x13c, after `m_climate_index` at +0x150). Its chain:
+- `campaign_climate_change_phases_tables` (columns campaign, phase, climate_art_set, human_imperium_threshold, round_threshold,
+  fertility_factor) gives each campaign a list of `EMPIRECAMPAIGN::CLIMATE_PHASE` {m_phase, m_round_number_threshold,
+  m_human_fame_threhold, m_origin_phase_record}, 0x10 bytes each. The manager keeps the current phase at +4, the list at +0xc/+0x10.
+- fn 0x108002b0 (each turn): from the last phase down to the first, the first one whose `round_threshold` the turn number reaches or
+  whose `human_imperium_threshold` the leading human's imperium (+0xcec) reaches becomes current, only if its phase is higher than the
+  current one (phases only advance); fn 0x107afe50 stores it. fn 0x107b6400 returns `list[current]` (so the phase is also the list
+  index: phases are 0..n-1 in order), 0 for a campaign without phases; the script's `climate_phase_index` (fn 0x10839750) reads the same.
+- fn 0x10b93720 (a campaign battle) passes `list[current].m_phase` (0 without phases) as the 18th argument of fn 0x10da7fc0, which stores
+  it at +0xd8; fn 0x10da8ed0 hands +0xd8 to fn 0x117cd110 as the settings' `m_climate_change_index`. Battles not built from a campaign
+  (fn 0x10da9430) pass 0.
+- A debug variable `terrain_override_climate_change_index` (registered from static data at 0x100bba73) can override it; not followed.
+
+So the values are `cc0` plus `cc<phase>` for every phase of the loaded tables: vanilla bel_attila / main_attila / pro_attila have 0..4,
+cha_attila only 0, TDD's `rom_climate_change_phases` (main_attila_map) 0..4 — exactly the shipped lists' cc0..cc4. A mod that adds
+phase 5 makes the game send `cc5`, which then has to be in the database (`check` reports it; it reads the tables with rpfm's schema).
 
 ## What the editor shows
 Pick tab, per condition set: the candidate list, whether the `default_map` retry happened, probability 1/n each, which pack provides
