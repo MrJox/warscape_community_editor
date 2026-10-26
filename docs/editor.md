@@ -188,7 +188,7 @@ applied settings in `settings_applied`.
 
 The supported games are `wce_foundation::game::GameProfile`s (`ATTILA`, `ROME_2`; docs/plans/rome2.md): what the editor needs to know
 of each (Steam folder, preferences file, rpfm schema, campaign battle map, default environment, where its packs come from, whether its
-kit has the tiles). `game` in the settings names the current one (`Editor::game`). **File > Game** and the Settings window's Game page
+kit has the tiles). `game` in the settings names the current one (`Editor::game`). The toolbar's game combo (its first item), **File > Game** and the Settings window's Game page
 switch it live (`Editor::switch_game`; command `game [key]`): the documents close (the unsaved-changes prompt asks first), each tool drops what was the old
 game's (`Tool::game_changed`), and the game's packs and the renderer are made again; a game not set up yet opens the first-run dialog,
 which has the same choice of game. Each game keeps its own `[games.<id>]` table and projects folder.

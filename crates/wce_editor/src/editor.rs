@@ -1409,6 +1409,30 @@ impl Editor {
     fn draw_toolbar(&mut self) {
         gui::set_cursor_pos_x(gui::cursor_pos_x() + 6.0);
         gui::align_text_to_frame_padding();
+
+        // The game, switched from here as from File > Game (the documents close, asking about unsaved ones).
+        let current = self.game();
+        gui::set_next_item_width(gui::calc_text_size(current.display_name).x + 60.0);
+        if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
+            for game in GameProfile::ALL {
+                if gui::selectable(game.display_name, game.key == current.key, 0)
+                    && game.key != current.key
+                    && let Err(m) = self.switch_game(game.key)
+                {
+                    self.status(&m, true);
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The game the editor works on (switching closes the open documents)");
+        }
+
+        gui::same_line();
+        gui::text_disabled("|");
+        gui::same_line();
         for i in 0..self.tool_info.len() {
             let active = i == self.active_tool;
             if active {
