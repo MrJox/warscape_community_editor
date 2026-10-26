@@ -2422,10 +2422,9 @@ impl TileTool {
             self.browse_roots_time = gui::time();
         }
 
-        if self.browse_roots.is_empty() {
-            gui::text_wrapped("No assembly kit found. Set the game folder (the one with assembly_kit_battle_tilemap) or add Assembly Kits in Settings > Game.");
-            gui::end();
-            return;
+        // Without a kit (or projects) the list is the game's packs: a game whose kit has no tiles (Rome 2) has only those.
+        if self.browse_roots.is_empty() && e.game().features.kit_tiles {
+            gui::text_disabled("No assembly kit found (set the game folder or add Assembly Kits in Settings > Game): the game's packs only.");
         }
 
         // The kits' raw tiles, then the game's packs (exported tiles, decompiled into the workspace when opened).
