@@ -21,6 +21,7 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 pub(crate) const R2_GEOM_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_geom";
 pub(crate) const R2_GEOM_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_geom";
+pub(crate) const R2_SHADOW_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_shadow";
 const R2_BLEND_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_blend";
 const R2_BLEND_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_blend";
 const R2_COMPOSITE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_composite";
@@ -37,7 +38,7 @@ const BOX_FLOATS: usize = 20;
 
 /// The grid vertex (slot 0) and the instance's three world rows (slot 1). The shader also declares NORMAL0 and POSITION4, which it never
 /// reads: they point at the instance too.
-fn geom_layout() -> [InputElement; 6] {
+pub(crate) fn geom_layout() -> [InputElement; 6] {
     [
         element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
         element(c"NORMAL", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, true),

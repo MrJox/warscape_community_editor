@@ -1366,12 +1366,15 @@ impl Renderer {
     /// placement plus a 9 cm lift past 20 m from the camera) and `ps30_shadow` (clip z / w). `view_proj` (the cascade's, scene units) culls the
     /// patches, `relative` (the same of positions relative to the render origin) draws them. Returns the triangles drawn.
     pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4, relative: &Float4x4) -> u64 {
-        let (Some(vs), Some(ps)) = (self.shader(SHADOW_NEW_VS), self.shader(SHADOW_TERRAIN_PS)) else {
+        // Rome 2's shadow vertex shader is its surface one (the LF window through lf_block_cb, two inputs it never reads).
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        let (Some(vs), Some(ps)) = (self.shader(if rome2 { super::terrain_rome2::R2_SHADOW_VS } else { SHADOW_NEW_VS }), self.shader(SHADOW_TERRAIN_PS)) else {
             return 0;
         };
 
         let ents = self.terrain_surface_entities(scene);
-        let Some(il) = self.layout(&vs, "terrain_shadow", &geom_layout()) else { return 0 };
+        let il = if rome2 { self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout()) } else { self.layout(&vs, "terrain_shadow", &geom_layout()) };
+        let Some(il) = il else { return 0 };
         if ents.is_empty() {
             return 0;
         }

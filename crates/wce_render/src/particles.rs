@@ -645,6 +645,11 @@ impl ParticleSystem {
 
     /// The particle system; `read` gives the files of the packs (the editor passes one that prefers open documents).
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, read: Box<VfxReader<'static>>) -> Self {
+        Self::new_for(dev, ctx, read, true)
+    }
+
+    /// [`Self::new`]; `supported` false (a game whose effects this system can't draw, Rome 2's): disabled, without its GPU resources.
+    pub fn new_for(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, read: Box<VfxReader<'static>>, supported: bool) -> Self {
         let mut system = Self {
             dev: dev.clone(),
             ctx: ctx.clone(),
@@ -706,11 +711,14 @@ impl ParticleSystem {
             ds_test: None,
             ds_off: None,
             rs_none: None,
-            enabled: true,
+            enabled: supported,
         };
 
-        system.create_resources();
-        system.build_emitter_gpu();
+        if supported {
+            system.create_resources();
+            system.build_emitter_gpu();
+        }
+
         system
     }
 
