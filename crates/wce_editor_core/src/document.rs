@@ -151,6 +151,11 @@ pub trait Document: Any {
         String::new()
     }
 
+    /// Whether opening `path` (a file or a folder on disk) would open this document again; the open request then activates it instead.
+    fn opened_from(&self, _path: &str) -> bool {
+        false
+    }
+
     /// Cross-tool composition. A document that can light the scene (an .environment or .lighting file) says what it would light it with; any
     /// tool's scene can then be previewed under it.
     fn environment(&self) -> Option<EnvironmentParams> {

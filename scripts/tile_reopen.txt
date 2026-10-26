@@ -1,0 +1,30 @@
+# Opening an open tile again shows it, never a second document: by name, folder, tile folder, tile.ted and entry file; the kit's tile after
+# its first save (it is the project now); a new tile by its tile.wce and its entry. Another tile opens as its own document (the app starts
+# with one document open). Run with WCE_TILE_WORKSPACE set to a scratch folder (%WORKSPACE%); %KIT% is the kit's terrain/tiles/battle.
+tile attila_steppes_plains_1x1
+frames 3
+assert_documents 2
+tile "%KIT%/attila_steppes_plains/1x1/aa"
+tile "%KIT%/attila_steppes_plains/1x1/aa/tile.ted"
+tile "%KIT%/_tile_database/TILES/attila_steppes_plains_1x1.xml"
+tile "%KIT%/attila_steppes_plains/1x1"
+frames 3
+assert_documents 2
+paint raise 100 100 5
+save
+frames 3
+tile attila_steppes_plains_1x1
+tile "%KIT%/attila_steppes_plains/1x1/aa/tile.ted"
+frames 3
+assert_documents 2
+tile attila_steppes_plains_2x1
+frames 3
+assert_documents 3
+new_tile wce_reopen_test 1 1 10 32
+frames 3
+assert_documents 4
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/assembly_kit/wce_reopen_test/battlefield/tile.wce"
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/assembly_kit_wce_reopen_test.xml"
+frames 3
+assert_documents 4
+quit
