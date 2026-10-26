@@ -408,6 +408,38 @@ fn static_chosen(params: &GenerationParams, category: &str, s: &StaticTree, mode
     }
 }
 
+/// The static trees as a list of a game without vegetation parameters (Rome 2: no categories, no conversions), in the list frame: the
+/// model `trees\<species>\<variant>` (the folder of the older lists' paths, `battleterrain\vegetation\trees\shrubs\<variant>` for the key
+/// `shrubs.<variant>`), else `shrubs\<species>\<variant>` when only that exists; trees without a model are left out.
+pub fn static_tree_list(inputs: &TileInputs, statics: &[StaticTree], model_exists: &dyn Fn(&str) -> bool) -> Vec<ListTree> {
+    let chosen = statics
+        .iter()
+        .map(|s| {
+            let (species, variant) = s.key.split_once('.').unwrap_or((&s.key, &s.key));
+            let tree = format!("trees\\{species}\\{variant}");
+            let shrub = format!("shrubs\\{species}\\{variant}");
+            let path = |m: &str| format!("battleterrain/vegetation/{}.rigid_model_v2", m.replace('\\', "/")).to_lowercase();
+            let model = if !model_exists(&path(&tree)) && model_exists(&path(&shrub)) { shrub } else { tree };
+            Chosen {
+                model,
+                x: s.x,
+                y: s.y,
+                size: s.size,
+                min_separation: 0.0,
+                grouping_probability: 0.0,
+                grouping_radius: 0.0,
+                width: 0.0,
+                group: String::new(),
+                include_in_outfield: false,
+                kind: params::TREE,
+                height: s.height,
+                freeform: s.freeform,
+            }
+        })
+        .collect::<Vec<_>>();
+    generate::to_tree_list(inputs, &chosen, model_exists)
+}
+
 /// The generated props of a category (the props of its `_procedural_bmd_data`): the tree generator's props, then the decal generator's
 /// decals (props of type 1), grouped by key ([`by_key`]). The decal generator runs with the decal seed but the trees' density
 /// (`max_trees_per_metre_squared`, not `max_decals`), as BOB does.

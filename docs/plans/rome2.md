@@ -35,7 +35,8 @@ Status legend: **done**, **partial**, **todo**.
   buildings have no height-map meshes). Open: the port decimates the meshes more than Rome 2's BOB did (3x fewer vertices).
 - **todo** Byte-exact building lists (Rome 2's string table order and size padding: an option of rpfm's ESF encoder).
 - **todo** GENERIC_MARKER v1 (one file); multi-list capture location files (two tiles).
-- **todo** Stage C for Rome 2: write the older tree / grass lists from the project's trees (the generated ones carried).
+- **done** Stage C for Rome 2: the project's static trees into every older tree list (the generated ones kept); the decompiler reads
+  them back from `default.tree_list`. Open: the grass list follows no edit (no grass parameters).
 - **done** The campaign battle map context for Rome 2: `tile_map` version 6 (16-byte cells; names without the variation: the tile's
   first one), `locations.blm` version 7; the neighbours decompiled from the packs on demand into the cache
   (`workflow::neighbour_root` / `neighbour_tile`, `ContextRequest::provider`). Open: the neighbours draw coarser than the open tile, the

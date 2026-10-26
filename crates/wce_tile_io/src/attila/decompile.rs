@@ -867,6 +867,38 @@ fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
     (out, generated)
 }
 
+/// [`tree_nodes`] of an older list (`default.tree_list`, Rome 2's: types named by their model with the index of their first record;
+/// half-float positions, the scale byte): its trees off the generator's grid, put on the terrain (the list has no known freeform flag).
+fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
+    let (mut out, mut generated) = (vec![], 0);
+    let Some(recs) = doc.child("records") else { return (out, generated) };
+    let pos = recs.get("position").and_then(Value::as_floats).unwrap_or_default();
+    let scale = recs.get("scale").and_then(Value::as_bytes).unwrap_or_default();
+    let n = pos.len() / 3;
+    let types = doc.children.iter().filter(|c| c.class == "type").collect::<Vec<_>>();
+    for (t, ty) in types.iter().enumerate() {
+        let name = ty.get("name").and_then(Value::as_str).unwrap_or_default();
+        let key = tree_key(name);
+        let first = ty.get("first").and_then(Value::as_int).unwrap_or(0).max(0) as usize;
+        let end = types.get(t + 1).and_then(|n| n.get("first").and_then(Value::as_int)).map_or(n, |e| e.max(0) as usize).min(n);
+        for i in first..end {
+            let p = &pos[3 * i..3 * i + 3];
+            if on_generator_grid(p[0], p[2], density) {
+                generated += 1;
+                continue;
+            }
+
+            let size = scale.get(i).map_or(1.0, |b| f64::from(*b) / 127.0);
+            let own = vec![("key", s(&key)), ("scale", Value::Float(r32(size)))];
+            let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
+            n.set("surface_mode", s("MSM_LANDSCAPE"));
+            out.push(n);
+        }
+    }
+
+    (out, generated)
+}
+
 // ---- logic: polygons, deployment, AI hints, the siege graph
 
 /// The binaries' 2D points (x, z from the far edge, metres) in the scene (2 x, 2 (extent - z)).
@@ -1835,10 +1867,13 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     let lists = ctx.tree_list.map_or(vec!["outfield_tents.tree_list.bin", "default.tree_list.bin"], |l| vec![l]);
     let vegetation = binary.documents.iter().any(|d| super::stage_c::kind_of(&d.name).is_some());
     if vegetation {
-        let doc = lists.iter().find_map(|l| binary.document(l));
+        // A tile without the FASTBIN lists (Rome 2's) has the older default list.
+        let doc = lists.iter().find_map(|l| binary.document(l)).or_else(|| ctx.tree_list.is_none().then(|| binary.document("default.tree_list")).flatten());
         // The generator ran at the database's density (the row's, before the height map's may replace it above).
         let density = vi.map_or(128, |v| *row.variations()[v].raw_data_tri_density()).max(1);
-        let (trees, generated) = doc.map(|d| tree_nodes(&d.root, extent.1, density)).unwrap_or_default();
+        let (trees, generated) = doc
+            .map(|d| if d.root.class == "TREE_LIST" { old_tree_nodes(&d.root, extent.1, density) } else { tree_nodes(&d.root, extent.1, density) })
+            .unwrap_or_default();
         if let Some(doc) = doc.filter(|_| !trees.is_empty() || generated > 0) {
             losses.note(format!(
                 "vegetation: {} static trees of {} as explicit instances; its {generated} generated objects left out (the generation seeds are not in the binary)",

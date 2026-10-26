@@ -370,6 +370,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 conventions: ctx.conventions,
                 stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { raw_data: &raw_data, models: m }),
                 stage_c,
+                model_exists: None,
             };
             // WCE_COMPILE_KIT=1: compile the kit's raw tile instead (TEd's own project: what the export does with it; tiles whose kit is
             // not the shipped version differ, and nested groups add their text's rounding).

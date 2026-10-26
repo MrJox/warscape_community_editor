@@ -101,7 +101,12 @@ decompiled, the others noted as lost.
   Rome 2's `battlefield_buildings` has no `height_map_mesh`: no building stamps its height into `hf_height_map.data`. No `tile.agf`
   (`TileConventions::not_shipped`). Known difference: the shipped meshes are decimated less than the port's (roman_city_a/small: 74,719
   vertices in the game's mesh, 22,590 in ours, from the same `CONVERSION_PARAMS`); no Rome 2 BOB to check against.
-- Stage C (vegetation): Rome 2 has no vegetation parameters: the lists are written as decompiled, noted when the project changed.
+- Stage C (vegetation): Rome 2 has no vegetation parameters, so the generated trees can't be made again. Its lists hold only generated
+  trees (every one on the generator's grid, in the tiles looked at). When the project changed, each carried `<list>.tree_list` keeps its
+  generated trees and gets the project's static trees (the `VEGETATION_INSTANCE`s inside an exclusion polygon, as BOB collects them; the
+  model `battleterrain\vegetation\trees\<species>\<variant>`, no per-climate conversion) in place of its off-grid ones
+  (`stage_c::older_tree_lists`); the grass and the rest are written as decompiled. The decompiler makes the off-grid trees of
+  `default.tree_list` instances, so a saved tile opens with its trees.
 
 ## The campaign's battle map
 
