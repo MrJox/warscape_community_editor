@@ -87,7 +87,8 @@ Attila's 1 MiB write buffer.
 
 `capture_location_list.xml` is Attila's, but an older file of Rome 2 has several `CAPTURE_LOCATION_LIST`s (alternative sets): two
 tiles of the packs in effect (`egyptian_port_b/large`, `hb_carthage/large`) and older copies the patches replace. The first list is
-decompiled, the others noted as lost.
+decompiled; the file is carried in the project (`decompiled_logic/capture_location_list.xml`) and the compile writes its other lists after
+the project's.
 
 ## Saving (docs/formats/tile_workflow.md)
 

@@ -1170,9 +1170,34 @@ fn capture_record(p: &Placed, by_node: &ByNode, extent_z: f32, buildings: &[Opti
     }
 }
 
+/// Where a decompiled project keeps the `capture_location_list.xml` it came from when that has several lists (Rome 2's alternative sets:
+/// TEd writes one): its lists after the first follow the project's.
+pub const CAPTURE_ALTERNATIVES: &str = "decompiled_logic/capture_location_list.xml";
+
+/// The alternative capture location lists a decompiled project carries ([`CAPTURE_ALTERNATIVES`]): the carried file's lists but the
+/// first.
+fn capture_alternatives(raw: &Tile) -> Vec<Node> {
+    let Some(bytes) = raw.files.iter().find(|f| f.path == CAPTURE_ALTERNATIVES).and_then(|f| f.data.bytes().ok().map(|b| b.to_vec())) else { return vec![] };
+    let Ok((root, _, _)) = crate::xml::read(&bytes, &super::tile_binary::Untyped) else { return vec![] };
+    let mut lists = vec![];
+    fn walk(n: &Node, out: &mut Vec<Node>) {
+        for c in &n.children {
+            if c.class == "CAPTURE_LOCATION_LIST" {
+                out.push(c.clone());
+            } else {
+                walk(c, out);
+            }
+        }
+    }
+
+    walk(&root, &mut lists);
+    lists.into_iter().skip(1).collect()
+}
+
 /// `capture_location_list.xml`: the `CaptureLocationInstance`s of the normal layers (the escalation layers' go into their BMDs), linking
-/// into the main list (`buildings`, their `capture_location`s). The facing is written as (cos, -sin).
-fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<String>]) -> Option<(Document, crate::xml::DocStyle)> {
+/// into the main list (`buildings`, their `capture_location`s), then the `alternatives` (a decompiled file's other lists). The facing is
+/// written as (cos, -sin).
+fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<String>], alternatives: Vec<Node>) -> Option<(Document, crate::xml::DocStyle)> {
     use crate::xml::layout::BEFORE_START;
     let by_node = by_node(placed);
     let ted = |v: f32| crate::xml::values::Num::Ted.format(f64::from(v));
@@ -1213,6 +1238,7 @@ fn capture_locations(placed: &[Placed], extent_z: f32, buildings: &[Option<Strin
     list.trivia_mut().layout.push((BEFORE_START, b"\r\n\r\n\t\t".to_vec().into()));
     let mut root = Node::new("CAPTURE_LOCATION_SET");
     root.children.push(list);
+    root.children.extend(alternatives);
     Some((Document { name: "capture_location_list.xml".to_owned(), root }, outline_style()))
 }
 
@@ -1775,7 +1801,7 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
 
     // The main list's buildings' capture locations, for the links.
     let main = capture_names(placed.iter().filter(|p| p.export == "LayerExportType_Normal"));
-    xml.extend(capture_locations(&placed, extent_z, &main));
+    xml.extend(capture_locations(&placed, extent_z, &main, capture_alternatives(raw)));
     docs.extend(civilian_deployment(&placed, extent_z)?);
     docs.extend(civilian_shelters(&placed, extent_z)?);
     for (bin, twin) in escalation_bmds(&placed, extent_z, ctx, &mut notes)? {

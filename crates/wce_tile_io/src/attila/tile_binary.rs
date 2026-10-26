@@ -851,7 +851,7 @@ fn write_dds(name: &str, m: &TileMap, tile: &Tile, own: bool) -> std::result::Re
 // ---- XML
 
 /// Every attribute as text: the XML files of an exported tile are carried by structure, not typed yet.
-struct Untyped;
+pub(crate) struct Untyped;
 
 impl Schema for Untyped {
     fn kind(&self, _: Sym, _: Sym) -> Option<Kind> {
