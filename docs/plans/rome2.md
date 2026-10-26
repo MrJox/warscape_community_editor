@@ -50,7 +50,7 @@ Status legend: **done**, **partial**, **todo**.
 - **todo** The effects (generated shaders).
 - **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
   engine's `g_hide_foliage`.
-- **todo** Rivers and water planes: drawn with Attila's passes, not checked against Rome 2's shaders' differences.
+- **done** Rivers and water planes (forward, as the sea; no planar reflection).
 
 ## Phase 3: editor — partial
 
