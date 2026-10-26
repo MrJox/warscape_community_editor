@@ -396,6 +396,17 @@ impl Renderer {
             return false;
         }
 
+        // TODO(rome2): Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass of its own (colour, reflection and refraction textures, the
+        // sky cube, fog), not this one: its sea is not drawn yet.
+        if self.game == super::game::RenderGame::Rome2 {
+            if !self.ocean_unsupported_noted {
+                self.ocean_unsupported_noted = true;
+                wce_foundation::log::warn("the sea is not drawn: Rome 2's ocean shaders are not supported yet");
+            }
+
+            return false;
+        }
+
         let (Some(vs), Some(ps)) = (self.shader(OCEAN_VS), self.shader(OCEAN_PS)) else { return false };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
