@@ -10,6 +10,7 @@ pub mod building_spline;
 pub mod decal_refit;
 pub mod export_as_prop;
 pub mod falloff;
+pub mod ground_coverage;
 pub mod ground_type_field;
 pub mod ground_types;
 pub mod height_field;
