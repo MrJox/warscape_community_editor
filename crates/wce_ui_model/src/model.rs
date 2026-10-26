@@ -221,14 +221,15 @@ impl UiModel {
         }
     }
 
-    /// The seventh of the twelve flags after the offsets says if the component is visible when the layout loads.
+    /// The seventh of the twelve flags after the offsets says if the component is visible when the layout loads; before version 90 there
+    /// are thirteen, one more before it (always off in Attila's and Rome 2's layouts), and it is the eighth.
     fn own_visible(&self, el: &Element) -> bool {
         if self.version < 55 {
             return true;
         }
 
-        let flags: Vec<&Element> = el.elems().filter(|c| matches!(c.name.as_str(), "yes" | "no" | "byte")).take(12).collect();
-        match flags.get(6) {
+        let flags: Vec<&Element> = el.elems().filter(|c| matches!(c.name.as_str(), "yes" | "no" | "byte")).take(13).collect();
+        match flags.get(if self.version < 90 { 7 } else { 6 }) {
             Some(f) => f.name != "no",
             None => true,
         }
