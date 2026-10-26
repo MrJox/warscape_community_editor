@@ -61,7 +61,10 @@ file's order. The editor itself is described in
   and "Assumptions / open"). Settle it with the in-game shot.
 
 ### Phase 4
-- 4c: flip a river's direction.
+- Done (2026-10-27): 4c, flip a river's (or road's) direction: `TileDocument::flip_spline` (the points' attribute texts permuted, the
+  handles swapped; nothing recomputed, so the spline does not move and two flips give the bytes back; the first point is no longer at the
+  instance's origin, TEd's habit only), the spline section's "Flip direction" button, command `spline_flip`, `scripts/tile_spline_flip.txt`.
+  TEd has no such command.
 - 4c: snap river end points to the link target cells (`docs/re/tile_links.md`: x along +x, y from the +z edge).
 - 4c: check river ends against the entry's targets (osgiliath: both ends lie on the target cells).
 - 4d: water map / shallow-deep view (`hf_water_map.data`, `GT_SHALLOW_WATER` / `GT_DEEP_WATER` in `ground_type_map.png`; neither is

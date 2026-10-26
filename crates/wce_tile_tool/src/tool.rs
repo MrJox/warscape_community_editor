@@ -2442,6 +2442,19 @@ impl TileTool {
         let sc = d.tile().tscene();
         let points = sc.polygon_points(s);
         gui::text(&format!("selected: {} points", points.len()));
+        gui::same_line();
+        if gui::small_button("Flip direction") {
+            self.status = d.flip_spline(s).map_or_else(|why| why, |()| "flipped: the spline runs the other way".to_owned());
+            return;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Reverses the spline: a river flows the other way (a road runs the other way). The points keep their places and values \
+                 (width, foam, flow speed, ...) in the other order, each point's handles swapped; one undo step.",
+            );
+        }
+
         match self.poly_point.filter(|&p| p < points.len()) {
             Some(pt) => gui::text(&format!("point {pt}: drag it or its blue handles, Delete removes, shift+click inserts (beyond an end: grows)")),
             None => gui::text_disabled("click a point to edit it; drag the blue handles to bend; shift+click inserts a point"),

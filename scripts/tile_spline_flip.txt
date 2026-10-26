@@ -1,0 +1,12 @@
+# Flip a river's direction (Phase 4c of docs/plans/tile_ted_parity.md): %TILE% is a kit river tile (river/2x2_tl_rt/aa), opened, its river
+# flipped once, or twice when %SECOND_FLIP% is `spline_flip` (else empty), and saved into the projects (WCE_TILE_WORKSPACE, a scratch folder). Checked outside: one flip reverses the
+# points' world positions and values, two give the river element's bytes back (~/wce_re/scratch/crates_re/py/flipcheck.py did it on
+# 2026-10-27).
+tile "%TILE%"
+frames 3
+tile_select SplineRiverInstance
+spline_flip
+%SECOND_FLIP%
+frames 2
+save
+quit
