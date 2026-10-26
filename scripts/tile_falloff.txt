@@ -1,0 +1,18 @@
+# The brushes' falloff curve (docs/plans/workflow_review.md, section 3): a new 2 x 2 tile at density 32 (4 m a pixel, 5 m high in the
+# editor); raised for 30 steps (3 m at full weight) with the hard curve (full weight at 0.8 of the radius) and with the linear one (0.2
+# there); the curve off again. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_falloff_test 2 2 10 32
+frames 5
+brush 20 6 0.5
+brush_curve hard
+paint raise 100 100 30
+assert_height 100 100 8 0.05
+assert_height 116 100 8 0.05
+undo
+assert_height 116 100 5 0.01
+brush_curve linear
+paint raise 100 100 30
+assert_height 100 100 8 0.05
+assert_height 116 100 5.6 0.05
+brush_curve off
+quit

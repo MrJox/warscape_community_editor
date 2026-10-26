@@ -411,7 +411,7 @@ fn main() {
             let radius = r.d(0.5, 25.0);
             let strength = r.d(0.0, 1.0);
             let falloff = r.d(0.0, 1.0);
-            let b = Brush { cx, cy, radius, strength, falloff };
+            let b = Brush { cx, cy, radius, strength, falloff, curve: None };
             let res: Result<String, String> = (|| {
                 Ok(match op {
                     0..=4 => {

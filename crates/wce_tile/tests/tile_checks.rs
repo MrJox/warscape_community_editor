@@ -166,7 +166,7 @@ fn height_field() {
 
     // 3. Strokes change samples only inside the brush.
     let before = hf.samples().to_vec();
-    let b = Brush { cx: f64::from(hf.width()) * 0.4, cy: f64::from(hf.height()) * 0.6, radius: 20.0, strength: 0.8, falloff: 0.7 };
+    let b = Brush { cx: f64::from(hf.width()) * 0.4, cy: f64::from(hf.height()) * 0.6, radius: 20.0, strength: 0.8, falloff: 0.7, curve: None };
     hf.begin_edit().unwrap();
     hf.raise(&b, 2.5).unwrap();
     hf.end_edit();

@@ -89,6 +89,8 @@ impl TileTool {
             return false;
         }
 
+        let mut curve = self.brush_curve(e);
+        let mut curve_changed = false;
         let Some(d) = document(e) else { return false };
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
@@ -107,7 +109,15 @@ impl TileTool {
         }
 
         if self.mode != TileMode::Ground {
-            ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+            // The falloff slider, or the curve of the Brush Falloff window.
+            curve_changed = ins.edit_bool("curve", "falloff curve", &mut curve.on);
+            if !curve.on {
+                ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
+            }
+
+            if ins.button("edit_curve", if self.falloff_open { "Close the curve editor" } else { "Edit the curve..." }, true) {
+                self.falloff_open = !self.falloff_open;
+            }
         }
 
         if self.mode == TileMode::Paint {
@@ -131,6 +141,10 @@ impl TileTool {
         };
 
         ins.text("cursor", "cursor", &cursor);
+        if curve_changed {
+            self.set_brush_curve(e, curve, true);
+        }
+
         true
     }
 
