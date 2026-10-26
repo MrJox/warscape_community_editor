@@ -60,7 +60,22 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
 - **Inputs from the environment** (already mapped for the other passes): `lighting_VS_PS` (`sun_direction`, `sun_colour`, `g_deep_water_colour`, `g_shallow_water_colour`, `g_sea_bed_light_scatter`, `g_refraction_light_scatter`, `g_hdr_on`, `g_ssr_enabled` = 0 so the cube reflection is used), `fog_VS_PS`, `wind_PS`, `camera_VS_PS`.
 - **Vertex data**: the river vertex is `P0 = (x, y, z, across)`, `P1 = (u, v, flow, fade)`, the instance stream is the identity 3x4 matrix; the shader's low-res height map contribution is switched off (`g_height_map_lf_scale` 0, a black map) because the mesh carries its own world height (the Bezier chain on the terrain / the spline's stored height, see above) and is rebuilt after a height stroke. The sea plane is a quad over the bordered tile at y = 0 with an identity instance.
 - **Textures**: `battleterrain/river/river_normal.dds` (rivers), `sea/water_detail_normal.dds` (sea), the sky cube for `s_sky`, the environment cube for `s_environment`, the refraction copy, the depth channel. Samplers as in `docs/re/samplers.tsv` (normals and cubes linear wrap, refraction and depth point clamp).
-- **Assumptions / not verified against the game** (no in-game reference capture yet): `g_refraction_depth` = 0.75 (what both engine constructors store, fn 0x116d45c0 and 0x117037e0, and what the live game's cbuffer dump shows: `directional_light_PS.g_refraction_depth` 0.75; the dump has `g_refraction_light_scatter` 0.6 and `g_sea_bed_light_scatter` (0.97, 1, 1) for that battle); the **uv convention of the engine's river mesh** (the shader multiplies `P1.xy` by 0.01 / 0.001 and flips with `1 - ...`, which looks like normalised coordinates; the tool puts metres across / along and so the ripple density differs from a river of another width); the river width (full `width` in metres); the shadow variants (`sHardShadowBuffer`: water receiving shadows) are not used; the sea's normal texture (`water_detail_normal`) is the one the battle plane is believed to use; the `ultra` quality level is fixed; ice in winter (`ice_diffuse`), foam (`foam_amount` has no input in the battle shaders), the tile's `hf_water_map` and the ground-type water are not read; the river ends have no fade (the shader reads none).
+- **Settled 2026-10-27** (disassembly of the D3D shaders with vkd3d-compiler; the game's BOB port in `wce_tile_io::attila::river`):
+  - **The river's uv**: `vs30_main_battle_river` writes `uv = P1.xy * (0.01, 0.001)` (flipped as `1 - uv` when the instance's
+    `v5.x >= 1`), and `ps30_main_battle_river` reads only the position (`v1`) and that uv (`v4.xy`, times (5.9, 177) for the normal
+    map). BOB's river vertex (the meshes' type-90 block) is `x, y, z, flow, width across (m), distance along (m), alpha, across (0..1)`:
+    as two float4s, `P1.xy` = metres across and along, which is what the tool feeds. The flow, alpha and across fraction reach the
+    interpolators (`o7`, `o4.zw`) but the battle pixel shader reads none of them: **no fade at the river's ends and no foam** in a
+    battle (the campaign variant `ps30_main_river` is another shader).
+  - **Shadows on water**: the packs ship `enable_shadows_*` variants of `ps30_main_battle_river` and `ps30_battle_ultra_water_quality`
+    with the same inputs plus `shadowmap_PS`, `g_tShadowBuffer_SM50` and a comparison sampler; with shadows on, the tool uses the
+    `hardware_gather_5_0_sm_5_0` ones (the variant of the game's lighting, `DIR_LIGHT_PS`): the water takes the shadows of what stands
+    over it (a bridge's on its river).
+  - `g_refraction_depth` 0.75: the engine's constructors and the live game's cbuffer dump agree.
+- **Still open**: **ice in winter**. No battle water shader has an ice input, but the engine loads `BattleTerrain/river/ice_diffuse_1`
+  and `_2` (a constructor at 0x116c98a0 of empire.retail.dll 1.6.0 keeps them at +0xd4 / +0xd8 of an object whose base is made with
+  "river" and `BattleTerrain/river`); what draws them is being traced. The `ultra` quality level is fixed; the sea's normal texture
+  (`water_detail_normal`) is the one the battle plane is believed to use.
 - **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`cli/fxc_dump <fxc dir> <out> <asm dir>`), not the GLSL.
 
 ## The battle sea of a coastal battle (2026-10-19: decompiled empire.retail.dll + a memory dump)
