@@ -1695,6 +1695,7 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
     let mut notes = CompileNotes::default();
+    let stage_a = wce_foundation::activity::start("Stage A: building lists and markers");
     let mut docs = building_lists(&placed, extent_z, ctx, &mut notes);
     docs.extend(prop_markers(&placed, extent_z, ctx));
     docs.extend(emitter_markers(&placed, extent_z, ctx));
@@ -1734,7 +1735,10 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     // Stages B and C's files read back as the exported tile's parts (maps, documents, files), then merged in. A project a stage cannot
     // take (no blend map, heights not in subtiles) compiles without it, noted.
     let mut files = vec![];
+    drop(stage_a);
     if let Some(b) = &ctx.stage_b {
+        wce_foundation::wce_prof!("export.compile.stage_b");
+        let _a = wce_foundation::activity::start("Stage B: terrain mesh, height, normal, blend and ground type maps");
         match super::stage_b::stage_b_files(raw, b) {
             Ok((f, more)) => {
                 files.extend(f);
@@ -1752,6 +1756,7 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     if let Some(c) = &ctx.stage_c
         && !campaign
     {
+        wce_foundation::wce_prof!("export.compile.stage_c");
         match super::stage_c::stage_c_files(raw, c) {
             Ok((f, more)) => {
                 files.extend(f);

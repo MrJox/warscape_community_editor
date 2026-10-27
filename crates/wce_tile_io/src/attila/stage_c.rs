@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use wce_formats::tile_entry::TileEntry;
 use wce_tile::ted_scene::TedScene;
 use wce_tile::vegetation::{self, GenerationParams, TileInputs, grass::GrassParams};
@@ -290,23 +292,54 @@ impl Outputs {
 /// The project's inputs don't read ([`inputs`]), or a BMD doesn't encode.
 pub fn stage_c_documents(raw: &Tile, ctx: &StageC, which: Outputs) -> Result<(StageCOutput, CompileNotes), String> {
     let mut notes = CompileNotes::default();
-    let (inputs, scene) = inputs(raw, ctx.settings)?;
+    let (inputs, scene) = {
+        wce_foundation::wce_prof!("export.compile.stage_c.inputs");
+        let _a = wce_foundation::activity::start("Stage C: the vegetation's inputs");
+        inputs(raw, ctx.settings)?
+    };
     let seeds = vegetation::seeds(&scene).unwrap_or_default();
     let statics = if which.trees { vegetation::static_trees(&scene, &inputs) } else { vec![] };
     let mut out = StageCOutput { documents: vec![], xml: vec![] };
-    for (category, name) in ctx.params.categories.iter().enumerate() {
-        if which.trees {
+
+    // Each category's trees and procedural BMD, and the grass, on the thread pool (each is generated from its own seeds, so in any order);
+    // the documents are taken in category order, as BOB writes them.
+    let category = |(category, name): (usize, &String)| -> Result<(Option<Document>, Option<(Document, Document)>), String> {
+        let trees = if which.trees {
+            wce_foundation::wce_prof!("export.compile.stage_c.trees");
+            let _a = wce_foundation::activity::start(format!("Stage C: trees of {name}"));
             // An empty category's list is not written (FUN_10033450; BOB's rule `DeleteEmptyClimateTreeLists` then removes a stale one).
             let trees = vegetation::tree_list(&inputs, ctx.params, category, seeds, &statics, ctx.model_exists);
-            if !trees.is_empty() {
-                out.documents.push(tree_list_doc(&format!("{name}.tree_list.bin"), &trees));
-            }
-        }
+            (!trees.is_empty()).then(|| tree_list_doc(&format!("{name}.tree_list.bin"), &trees))
+        } else {
+            None
+        };
 
-        if which.procedural {
+        let procedural = if which.procedural {
+            wce_foundation::wce_prof!("export.compile.stage_c.procedural");
+            let _a = wce_foundation::activity::start(format!("Stage C: props, decals and VFX of {name}"));
             let props = vegetation::generated_props(&inputs, ctx.params, category, seeds);
             let vfx = vegetation::generated_vfx(&inputs, ctx.params, category, seeds);
-            let (bin, twin) = procedural_bmd(name, &props, &vfx)?;
+            Some(procedural_bmd(name, &props, &vfx)?)
+        } else {
+            None
+        };
+
+        Ok((trees, procedural))
+    };
+
+    let grass = || {
+        let params = ctx.grass.filter(|_| which.grass)?;
+        wce_foundation::wce_prof!("export.compile.stage_c.grass");
+        let _a = wce_foundation::activity::start("Stage C: grass");
+        let seed = vegetation::grass_seed(&scene).unwrap_or(0);
+        Some(grass_list_doc(&vegetation::grass::generate_grass(&inputs, params, seed)))
+    };
+
+    let (categories, grass) = rayon::join(|| ctx.params.categories.par_iter().enumerate().map(category).collect::<Vec<_>>(), grass);
+    for c in categories {
+        let (trees, procedural) = c?;
+        out.documents.extend(trees);
+        if let Some((bin, twin)) = procedural {
             out.documents.push(bin);
             out.xml.push(twin.name.clone());
             out.documents.push(twin);
@@ -314,12 +347,8 @@ pub fn stage_c_documents(raw: &Tile, ctx: &StageC, which: Outputs) -> Result<(St
     }
 
     if which.grass {
-        match ctx.grass {
-            Some(params) => {
-                let seed = vegetation::grass_seed(&scene).unwrap_or(0);
-                out.documents.push(grass_list_doc(&vegetation::grass::generate_grass(&inputs, params, seed)));
-            }
-
+        match grass {
+            Some(doc) => out.documents.push(doc),
             None => notes.notes.push("stage C: no max_grass.xml in the kit, no grass list".to_owned()),
         }
     }

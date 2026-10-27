@@ -1,59 +1,60 @@
 # Launch in game (one click)
 
-Tile > **Launch in game**: the open tile, exported, in a battle that the game starts straight into, with the packs the editor has
-enabled. The command line it relies on, and the launches that settled it: [docs/re/game_command_line.md](../re/game_command_line.md).
+Tile > **Launch in game**: the open tile, exported, in a battle that the game starts straight into, with the mod packs it needs. The
+command line it relies on, and the launches that settled it: [docs/re/game_command_line.md](../re/game_command_line.md). What the editor
+does, in detail: docs/editor.md, "Launch in game".
 
-## Status (2026-10-27)
+## Status (2026-10-28)
 
-- **Command line settled** (five launches): `game_startup_mode battle <xml>;` starts the battle with no menu; `mod "<pack>";` loads mod
+- **Command line settled** (six launches): `game_startup_mode battle <xml>;` starts the battle with no menu; `mod "<pack>";` loads mod
   packs (by file name, from `data\` only: an absolute path stops the game); a mod pack's file wins over a working directory's
-  (`add_working_directory` serves only paths no pack has); the first two crashes were a stray movie-type pack in `data\`.
-- A single tile is a battle map on its own (`<battle_map_definition><name>` = the variation folder, test 6), launched through
-  `data\wce_launch.pack` exactly as designed below.
-- **Built** (`crates/wce_tile_tool/src/launch.rs`, `launch_prompt.rs`; docs/editor.md, "Launch in game"): the menu item, the command
-  `tile_launch_game [--dry-run] [--ignore-movie-packs]`, the settings, the checks, the cleanup. Checked: unit tests (the XML as tested, the
-  settlement position against Londinium, the command line, the pack and its marker) and an unattended dry run on plains 8x8 (the pack, the
-  XML with the tile's weather, the command line with the editor's mods; nothing in `data\`).
-- Not yet seen in game: a launch from the menu (the game started by the editor, the pack removed on exit), an edited or new tile (its own
-  files through the pack), a settlement tile alone, the Map context mode, a tile with procedural walls.
-- The wait for the game runs in the Tile tool's update: with another tool active the pack is removed when the Tile tool is next active
-  (or at the next start).
+  (`add_working_directory` serves only paths no pack has); a single tile is a battle map on its own; the first two crashes were a stray
+  movie-type pack in `data\`.
+- **Built:** the menu item, `tile_launch_game [--dry-run] [--ignore-movie-packs] [--async]`, the settings, the checks, the cleanup, the
+  work on a thread with a progress window and its breakdown, loose delivery with the packs the tile needs (default) and the launch pack.
+- **The user launched it from the menu** (2026-10-27, the launch pack): it works; it took 2 to 3 minutes, nearly all of it stage C (the
+  vegetation, one climate after another). Stage C now generates the climates and the grass in parallel: 47 s -> 12 s on plains 8x8, the
+  whole launch about 18 s (the game's tile data, 3 s, once per session); the output is byte for byte the same with one thread and with
+  the pool (41 of 41 files).
+- Checked unattended (dry runs on plains 8x8): the loose files, the packs found (`tdd_pack1_main` for the weather file it overrides,
+  `tdd_pack5_buildings` for a rock texture), the command line, the window. Unit tests: the XML, the settlement position against Londinium,
+  both command lines, the pack and its marker, the asset paths in bytes.
+- Not yet seen in game: a loose launch (that loose files beat the release's packs is expected, the launcher's own
+  `assembly_kit/working_data` works so, but not tested), an edited or new tile, a settlement tile alone, the Map context mode, a tile with
+  procedural walls.
+- The wait for the game runs in the Tile tool's update: with another tool active the launch's files are removed when the Tile tool is
+  next active (or at the next start).
 
 ## Design
 
-1. **Export.** The existing "Save as exported tile" (`TileTool::save_exported`: the tile's packed files, and with procedural walls their
-   buildings) into a staging folder, `<output>/launch/`, cleared each time.
-2. **The launch pack.** The staging folder packed (rpfm_lib, PFH4, type Mod) as `wce_launch.pack` in the game's `data\`: a mod pack
-   wins over loose files, and the game takes mod packs from `data\` only. Mod type, so a pack left behind never loads unless named.
-   The battle XML goes in it too (its path, `script/wce/wce_launch.xml`, is the editor's own).
-3. **The battle XML** (the benchmark's format):
-   - the map: by default **the tile alone**: its variation folder as `<name>` (no `tile_map_position`), `<playable_area>` from the
-     tile's size, the units placed across its centre. As an option (a setting, or a placement picked in the Map context,
-     `wce_tile::battle_map`): the map's folder as `<name>` and the placement's centre as `<tile_map_position>` (fractions of the tile
-     map), for the seams and neighbours. The building level / escalation as `<tile_upgrade>`;
-   - the type from the tile: `land_normal` for a field tile, `settlement_standard` / `settlement_unfortified` for a settlement tile,
-     `<battlefield_owner_alliance_index>` the defender;
-   - the weather chips: `<environment_key>` (the file lighting the tile), `<season>` / `<Season>`, `<time_of_day>`,
-     `<precipitation_type>`, `<Climate>`;
-   - two armies from a preset of **vanilla** factions and units (a mod's units may need packs that are not enabled), `<duration>` long,
-     no battle script.
-4. **Mods:** `mod "wce_launch.pack";` first (first listed wins), then `mod "<pack>";` for each pack enabled in the editor that is in
-   `data\`, in the editor's order. `used_mods.txt` is never touched.
-5. **Launch:** `Attila.exe <mods> show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;` from the game folder,
-   after checks: the game is not already running (it refuses a second instance), Steam is running, the export succeeded, and no
-   non-vanilla **movie-type** pack is in `data\` (read from each pack's header; a warning that lists them, which the user can override).
-   The game takes focus: this is the user's click, not an unattended run.
-6. **Cleanup:** the launch writes only the staging folder and `data\wce_launch.pack`; both are removed when the game exits (the editor
-   waits on the process), or at the next launch and the editor's next start, should the editor be closed first. A `wce_launch.pack`
-   the editor did not write (a marker file inside it) is never touched.
-7. **UI:** Tile > Launch in game (enabled while a tile is open), a command `tile_launch_game [--dry-run]` (dry run: the staging folder
-   and the pack, the command line logged, no game), status and log lines for each step. Settings > Game, *Launch in game*: the army preset.
+1. **Export** ("Save as exported tile", `TileTool::export_inputs` on the main thread, `ExportInputs::run` on the worker) into the launch's
+   own folder, `<output>/launch/<id>` (`d<id>` for a dry run).
+2. **The battle XML** (the benchmark's format, `script/wce/wce_launch.xml`):
+   - the map: by default **the tile alone** (its variation folder as `<name>`, `<playable_area>` from the tile's size, the units across its
+     centre); as an option the Map context's placement in the game's campaign map (`<tile_map_position>` = the placement's centre / the
+     map's size), with `<tile_upgrade>`s for a settlement tile set;
+   - the tile's weather (file, season, precipitation, time of day, climate); one unit a side, vanilla keys by default, no script.
+3. **Delivery** (a setting):
+   - **loose files** (default): the files under `<id>/game`, `add_working_directory "<id>/game/";`, and only the mod packs chosen in the
+     editor that the tile needs (`launch::needs`). A needed pack with a path the tile ships, procedural walls (database rows) or no mounted
+     files switch that launch to the pack, with the reason in the log;
+   - **launch pack**: `data\wce_launch.pack` (type Mod, a marker inside) named first (first listed wins), then every mod pack chosen in the
+     editor.
+4. **Launch:** `Attila.exe <mods> [add_working_directory] show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;`
+   from the game folder, after checks: the game is not running (it refuses a second instance), Steam is, and no non-vanilla movie-type pack
+   is in `data\` (a question: *Launch anyway*). The game takes focus: this is the user's click, not an unattended run.
+5. **Cleanup:** the launch's folder and pack are removed when the game exits (the editor waits on the process); the other launches' folders
+   only when no game runs (a running game reads its loose files there); what an editor closed meanwhile left goes at its next start. A
+   `wce_launch.pack` without the marker is never touched.
+6. **Progress:** steps with their times and the last launch's (`launch.step_seconds`), the step's pieces (`wce_foundation::activity`), the
+   time left, Cancel (the work ends in its own folder; a new launch waits for it).
 
-## Decisions (user, 2026-10-27)
+## Decisions (user)
 
-1. **Map:** the tile alone by default (any tile, painted on a map or not); the Map context's placement as an option. (Revised after
-   test 6; the first answer was the placement, with no launch for an unpainted tile.)
-2. **Delivery:** loose, unless loose loses to the mod packs. It does (test 4 of game_command_line.md), so a pack.
+1. **Map** (2026-10-27): the tile alone by default (any tile, painted on a map or not); the Map context's placement as an option.
+2. **Delivery** (2026-10-28): loose files by default, with the mod packs the tile's assets need found by the editor; the launch pack as a
+   setting. (On 2026-10-27 the pack was chosen after test 4; the dependency finder and the per-launch fallback make loose usable.)
 3. **Mods on the command line** (`mod "<pack>";`); `used_mods.txt` is never touched.
-4. **Armies:** a minimal preset, one small unit per side far apart and a long duration; vanilla units by default, editable in Settings.
-   Extra assets go into the launch, removed after every launch.
+4. **Armies:** a minimal preset, one unit a side far apart and a long duration; vanilla units by default, editable in Settings. Extra
+   assets go into the launch, removed after every launch.
+5. **Progress** (2026-10-28): a loader with each step and what it is doing, and how long to wait.

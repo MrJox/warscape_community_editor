@@ -87,11 +87,26 @@ pub enum LaunchMap {
     MapContext,
 }
 
+/// How Launch in game hands the tile to the game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchDelivery {
+    /// Loose files in a working directory (`add_working_directory`), with only the mod packs the tile's assets need: nothing is written
+    /// into the game's folder. A mod pack's file wins over a loose one, so a needed pack that has a path the tile ships switches that
+    /// launch to the pack.
+    #[default]
+    Loose,
+
+    /// A mod pack `data\wce_launch.pack` listed first, with every mod pack chosen in the editor.
+    Pack,
+}
+
 /// The battle of Launch in game: its map and its two armies of one unit each (vanilla keys: a mod's units may need packs that are not
 /// enabled).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LaunchSettings {
+    pub delivery: LaunchDelivery,
     pub map: LaunchMap,
 
     /// The defender (alliance 0, the player) and the attacker: a faction and a unit each.
@@ -105,14 +120,17 @@ pub struct LaunchSettings {
 
     /// tile_upgrades.xml keys of a settlement battle in a map (`level1 escalation3`); empty: none.
     pub tile_upgrades: String,
+
+    /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
+    pub step_seconds: BTreeMap<String, f32>,
 }
 
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
-            map: LaunchMap::default(), defender_faction: "att_fact_western_roman_empire".to_owned(), defender_unit: "att_rom_legio_comitatenses".to_owned(),
+            delivery: LaunchDelivery::default(), map: LaunchMap::default(), defender_faction: "att_fact_western_roman_empire".to_owned(), defender_unit: "att_rom_legio_comitatenses".to_owned(),
             attacker_faction: "att_fact_saxones".to_owned(), attacker_unit: "att_nor_saxon_spears".to_owned(), subculture: "att_sub_cult_roman_west".to_owned(),
-            tile_upgrades: String::new(),
+            tile_upgrades: String::new(), step_seconds: BTreeMap::new(),
         }
     }
 }

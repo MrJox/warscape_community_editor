@@ -1,12 +1,20 @@
 //! Launch in game (docs/plans/launch_in_game.md; the command line: docs/re/game_command_line.md): the open tile, exported, in a battle the
-//! game starts straight into. What the game is given: a mod pack `data\wce_launch.pack` (a mod pack's files win over loose ones, and the
-//! game takes mod packs from `data\` only) with the tile's exported files, the tile database and the battle's XML, and a command line
-//! naming it first (first listed wins), then the mod packs chosen in the editor, then `game_startup_mode battle <xml>;`. The launcher's
-//! `used_mods.txt` is never touched. The pack is removed when the game exits, or at the next launch or start of the editor; it carries a
-//! marker, so a pack of that name the editor did not write is never removed.
+//! game starts straight into, with the tile's exported files, the tile database and the battle's XML. Two ways to hand them over:
+//!
+//! - **loose** (the default): a working directory (`add_working_directory`), with only the mod packs the tile's assets need ([`needs`]).
+//!   A mod pack's file wins over a loose one, so when a needed pack has a path the tile ships (TDD's tile database), that launch uses the
+//!   pack instead;
+//! - **pack**: a mod pack `data\wce_launch.pack` (the game takes mod packs from `data\` only) named first (first listed wins), then the
+//!   mod packs chosen in the editor. It is removed when the game exits, or at the next launch or start of the editor; it carries a marker,
+//!   so a pack of that name the editor did not write is never removed.
+//!
+//! The launcher's `used_mods.txt` is never touched.
 
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Child;
+
+use wce_vfs::{Vfs, normalize};
 
 use crate::settings::{LaunchSettings, TileWeather};
 
@@ -181,15 +189,187 @@ pub fn battle_xml(b: &Battle) -> String {
     x + &format!("\t</battle_map_definition>\n\t<playable_area dimension=\"{playable}\"></playable_area>\n</battle>\n")
 }
 
-/// The game's command line: the launch pack first (first listed wins), then `mods` (the editor's mod packs, file names in `data\`), no
-/// intro movies, and the battle.
-pub fn command_line(mods: &[String]) -> String {
-    let mut c = format!("mod \"{LAUNCH_PACK}\";");
-    for m in mods.iter().filter(|m| !m.eq_ignore_ascii_case(LAUNCH_PACK)) {
-        c += &format!(" mod \"{m}\";");
+/// How the tile reaches the game.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Delivery {
+    /// A working directory of loose files (its path).
+    Loose(PathBuf),
+
+    /// The launch pack in `data\`.
+    Pack,
+}
+
+/// The game's command line: the launch pack first (first listed wins), `mods` (file names in `data\`), the working directory of the
+/// loose files, no intro movies, and the battle.
+pub fn command_line(delivery: &Delivery, mods: &[String]) -> String {
+    let mut c = Vec::new();
+    if *delivery == Delivery::Pack {
+        c.push(format!("mod \"{LAUNCH_PACK}\";"));
     }
 
-    c + &format!(" show_frontend_movies false; game_startup_mode battle {BATTLE_XML};")
+    for m in mods.iter().filter(|m| !m.eq_ignore_ascii_case(LAUNCH_PACK)) {
+        c.push(format!("mod \"{m}\";"));
+    }
+
+    if let Delivery::Loose(dir) = delivery {
+        // As the launcher writes its own: forward slashes, a trailing one.
+        c.push(format!("add_working_directory \"{}/\";", dir.to_string_lossy().replace('\\', "/").trim_end_matches('/')));
+    }
+
+    c.push(format!("show_frontend_movies false; game_startup_mode battle {BATTLE_XML};"));
+    c.join(" ")
+}
+
+/// What a launch's loose files need from the mod packs ([`needs`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Needs {
+    /// The mod packs that serve a dependency, highest priority first, with one dependency each serves (why it loads).
+    pub mods: Vec<(String, String)>,
+
+    /// A needed mod pack that also has a path the launch ships, as (pack, path): the pack's file would win over the loose one.
+    pub shadowing: Vec<(String, String)>,
+
+    /// Dependencies read from the editor's loose folders (its own edits, the output folder): the launch carries them.
+    pub overlay: Vec<String>,
+
+    /// The files followed (asset paths in the shipped files, in the models they name, and so on).
+    pub followed: usize,
+}
+
+/// The extensions of files whose bytes are searched for more asset paths (models, technical files, definitions); textures are not.
+const FOLLOW: [&str; 7] = [".rigid_model_v2", ".cs2.parsed", ".variantmeshdefinition", ".xml", ".wsmodel", ".bmd", ".environment"];
+
+/// Asset paths in a file's bytes: runs of path characters (UTF-8, or UTF-16 LE) with a `/` or `\` and an extension, normalized.
+pub fn asset_paths(bytes: &[u8]) -> BTreeSet<String> {
+    let path_char = |c: u8| c.is_ascii_alphanumeric() || b"_-./\\ ".contains(&c);
+    let mut found = BTreeSet::new();
+    let mut take = |run: &[u8]| {
+        let s = String::from_utf8_lossy(run);
+        let s = s.trim().trim_start_matches(['/', '\\']);
+        if s.len() >= 6 && (s.contains('/') || s.contains('\\')) && s.rsplit(['/', '\\']).next().is_some_and(|name| name.contains('.')) {
+            found.insert(normalize(s));
+        }
+    };
+
+    for run in bytes.split(|&c| !path_char(c)) {
+        take(run);
+    }
+
+    // UTF-16 LE: every other byte zero.
+    for start in 0..2 {
+        let narrow: Vec<u8> = bytes[start..].chunks(2).map(|c| if c.len() == 2 && c[1] == 0 && path_char(c[0]) { c[0] } else { 0 }).collect();
+        for run in narrow.split(|&c| c == 0) {
+            take(run);
+        }
+    }
+
+    found
+}
+
+/// The mod packs a launch's loose files need, read from the editor's mounted files (`vfs`: the release, the mod packs chosen in the
+/// editor and its loose folders): the files of the buildings (`rigidmodels/buildings/<key>/`), every asset path in the shipped files and,
+/// in turn, in the models, technical files and definitions those name (`prefixes`: whole folders more, like the climate's ground
+/// textures), the pack each is read from; and the mod packs whose database tables (`tables`, like `models_building_tables`) hold one of
+/// `keys` (the buildings', the armies'). `shipped`: the paths the launch ships, for [`Needs::shadowing`].
+pub fn needs(vfs: &Vfs, shipped: &[(String, Vec<u8>)], buildings: &[String], prefixes: &[String], tables: &[&str], keys: &[String]) -> Needs {
+    let packs = vfs.packs();
+    let mut why: BTreeMap<usize, String> = BTreeMap::new();
+    let mut out = Needs::default();
+    let shipped_paths: HashSet<String> = shipped.iter().map(|(p, _)| normalize(p)).collect();
+
+    // The dependencies, followed breadth first.
+    let mut queue: Vec<String> = vec![];
+    for key in buildings {
+        let _a = wce_foundation::activity::start(format!("Dependencies: the files of building {key}"));
+        queue.extend(vfs.list(&format!("rigidmodels/buildings/{key}/"), "").into_iter().map(str::to_owned));
+    }
+
+    for prefix in prefixes {
+        queue.extend(vfs.list(prefix, "").into_iter().map(str::to_owned));
+    }
+
+    {
+        let _a = wce_foundation::activity::start(format!("Dependencies: asset paths in the {} shipped files", shipped.len()));
+        for (_, bytes) in shipped {
+            queue.extend(asset_paths(bytes));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let followed = wce_foundation::activity::start("Dependencies: following models and definitions to their textures");
+    while let Some(path) = queue.pop() {
+        if shipped_paths.contains(&path) || !seen.insert(path.clone()) {
+            continue;
+        }
+
+        let Some(owner) = vfs.owner(&path) else { continue };
+        let pack = &packs[owner];
+        if pack.loose {
+            out.overlay.push(path.clone());
+        } else if pack.is_mod {
+            why.entry(owner).or_insert_with(|| path.clone());
+        }
+
+        if FOLLOW.iter().any(|x| path.ends_with(x))
+            && let Ok(bytes) = vfs.read(&path)
+        {
+            out.followed += 1;
+            queue.extend(asset_paths(&bytes));
+        }
+    }
+
+    drop(followed);
+
+    // The database rows: a mod pack's table files that hold a key the release's tables lack (a mod's own building or unit; a key of the
+    // release is found in a mod's copy of a whole table too, which it does not need), as its strings are stored: UTF-8 or UTF-16 LE.
+    let in_tables = |i: usize, needle: &(String, Vec<u8>, Vec<u8>)| {
+        tables.iter().flat_map(|t| vfs.list(&format!("db/{t}/"), "")).filter(|p| vfs.owners(p).contains(&i)).any(|p| {
+            vfs.read_from(i, p).is_ok_and(|b| contains(&b, &needle.1) || contains(&b, &needle.2))
+        })
+    };
+
+    let release: Vec<usize> = packs.iter().enumerate().filter(|(_, p)| !p.is_mod && !p.loose).map(|(i, _)| i).collect();
+    let needles: Vec<(String, Vec<u8>, Vec<u8>)> = {
+        let _a = wce_foundation::activity::start("Dependencies: the armies' and buildings' keys in the game's tables");
+        keys.iter()
+            .filter(|k| !k.is_empty())
+            .map(|k| (k.clone(), k.as_bytes().to_vec(), k.encode_utf16().flat_map(u16::to_le_bytes).collect()))
+            .filter(|n| !release.iter().any(|&i| in_tables(i, n)))
+            .collect()
+    };
+
+    for (i, pack) in packs.iter().enumerate().filter(|(_, p)| p.is_mod && !p.loose && !needles.is_empty()) {
+        let _a = wce_foundation::activity::start(format!("Dependencies: the tables of {}", pack.name));
+        'tables: for table in tables {
+            for path in vfs.list(&format!("db/{table}/"), "") {
+                if !vfs.owners(path).contains(&i) {
+                    continue;
+                }
+
+                let Ok(bytes) = vfs.read_from(i, path) else { continue };
+                for (key, utf8, utf16) in &needles {
+                    if contains(&bytes, utf8) || contains(&bytes, utf16) {
+                        why.entry(i).or_insert_with(|| format!("{path}: {key}"));
+                        break 'tables;
+                    }
+                }
+            }
+        }
+    }
+
+    out.mods = why.iter().map(|(&i, path)| (packs[i].name.clone(), path.clone())).collect();
+    for &i in why.keys() {
+        if let Some(path) = shipped_paths.iter().filter(|p| vfs.owners(p).contains(&i)).min() {
+            out.shadowing.push((packs[i].name.clone(), path.clone()));
+        }
+    }
+
+    out.overlay.sort();
+    out
+}
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle)
 }
 
 /// A pack's type from its header (`PFH?` then the type in the low bits of the next u32: 3 mod, 4 movie), if it reads.
@@ -365,8 +545,29 @@ mod tests {
 
     #[test]
     fn command_line_puts_the_launch_pack_first() {
-        let c = command_line(&["tdd_pack1_main_v1.1.0.pack".to_owned(), "wce_launch.pack".to_owned()]);
+        let c = command_line(&Delivery::Pack, &["tdd_pack1_main_v1.1.0.pack".to_owned(), "wce_launch.pack".to_owned()]);
         assert_eq!(c, "mod \"wce_launch.pack\"; mod \"tdd_pack1_main_v1.1.0.pack\"; show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;");
+    }
+
+    #[test]
+    fn command_line_of_loose_files() {
+        let c = command_line(&Delivery::Loose(PathBuf::from(r"C:\out\launch\a1\game\")), &["tdd_pack4_models_v1.1.0.pack".to_owned()]);
+        assert_eq!(
+            c,
+            "mod \"tdd_pack4_models_v1.1.0.pack\"; add_working_directory \"C:/out/launch/a1/game/\"; show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;"
+        );
+    }
+
+    #[test]
+    fn asset_paths_in_bytes() {
+        let mut b = b"\x05\x00rigidmodels/buildings/rock_flat/rock_flat_piece01.rigid_model_v2\x00junk/noext\x00".to_vec();
+        // A UTF-16 string as CA's formats store it: its length first.
+        b.extend([22, 0]);
+        b.extend("Terrain\\Textures\\a.dds".encode_utf16().flat_map(u16::to_le_bytes));
+        let found = asset_paths(&b);
+        assert!(found.contains("rigidmodels/buildings/rock_flat/rock_flat_piece01.rigid_model_v2"));
+        assert!(found.contains("terrain/textures/a.dds"));
+        assert!(!found.iter().any(|p| p.contains("noext")));
     }
 
     #[test]

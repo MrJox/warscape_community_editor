@@ -185,6 +185,32 @@ pub fn dummy(size: Vec2) {
     call!(sys::igDummy(size))
 }
 
+/// A progress bar (`fraction` 0..1; `width` <= 0: the rest of the line) with a text over it.
+pub fn progress_bar(fraction: f32, width: f32, overlay: &str) {
+    let c = cs(overlay);
+    call!(sys::igProgressBar(fraction.clamp(0.0, 1.0), v2(width, 0.0), c.as_ptr()))
+}
+
+/// A turning arc of `radius` (pixels) at the cursor, as an item: work going on that has no measure.
+pub fn spinner(radius: f32, thickness: f32, col: [f32; 4]) {
+    let at = cursor_screen_pos();
+    let c = v2(at.x + radius, at.y + radius);
+    let colour = col32((col[0] * 255.0) as u8, (col[1] * 255.0) as u8, (col[2] * 255.0) as u8, (col[3] * 255.0) as u8);
+    let start = (time() * 6.0) as f32;
+    let dl = window_draw_list();
+    const SEGMENTS: usize = 20;
+    let point = |i: usize| {
+        let a = start + i as f32 / SEGMENTS as f32 * std::f32::consts::PI * 1.5;
+        v2(c.x + a.cos() * (radius - thickness), c.y + a.sin() * (radius - thickness))
+    };
+
+    for i in 0..SEGMENTS {
+        dl.line(point(i), point(i + 1), colour, thickness);
+    }
+
+    dummy(v2(radius * 2.0, radius * 2.0));
+}
+
 pub fn new_line() {
     call!(sys::igNewLine())
 }
