@@ -58,6 +58,7 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
 pub use self::index::style_of;
+pub use self::view::LIGHT_RADIUS_HANDLE;
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
 

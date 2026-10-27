@@ -1329,6 +1329,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         mouse(e, &args, "")
     });
 
+    c.add("light_radius_drag", "light_radius_drag <radius m>", "drag the radius handle of the selected point light with the mouse, to this radius", |e, a| {
+        let el = primary(e);
+        let (Some(d), Some(r)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: light_radius_drag <radius m>") };
+        let Some((from, _)) = el.and_then(|el| d.tile().light_radius_handle(el)) else { return fail("no point light selected") };
+        let c = d.tile().world_position(el.expect("selected"));
+        let to = Float3::new(c.x + r as f32, c.y, c.z);
+        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+        mouse(e, &args, "")
+    });
+
     c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {
@@ -1945,6 +1956,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             }
         },
     );
+
+    c.add("assert_attr_near", "assert_attr_near <element | selected> <attribute> <number> <tolerance>", "test: the element's attribute is a number this close", |e, a| {
+        let selected = primary(e);
+        let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
+        let parsed = (a.len() >= 4).then(|| Some((number(&a[2])?, number(&a[3])?))).flatten();
+        let (Some(d), Some(el), Some((want, tol))) = (document(e), el, parsed) else { return fail("usage: assert_attr_near <element | selected> <attribute> <number> <tolerance>") };
+        match d.tile().tscene().doc().get(el, &a[1]).and_then(|v| v.trim().parse::<f32>().ok()) {
+            Some(v) if (v - want).abs() <= tol => ok(""),
+            Some(v) => fail(format!("{} is {v}, expected {want}", a[1])),
+            None => fail(format!("{} is not a number", a[1])),
+        }
+    });
 
     c.add(
         "assert_piece", "assert_piece <piece> visible|burning <0|1> | model <text> | offset <x> <y> <z> [tolerance]",

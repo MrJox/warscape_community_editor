@@ -1008,6 +1008,9 @@ fn burn_row(p: &PieceProps) -> [f32; 4] {
     [p.burn_amount.clamp(0.0, 1.0), 0.0, 0.0, 0.0]
 }
 
+/// `set_highlight`'s hot point that means a light's radius handle (it is being dragged).
+pub const LIGHT_RADIUS_HANDLE: usize = usize::MAX;
+
 /// POSITION4.w of an opacity (`Tile::opacity_w`).
 fn opacity_w(opacity: f32) -> f32 {
     (opacity.clamp(0.0, 1.0) * 1000.0).round()
@@ -1344,6 +1347,18 @@ impl Tile {
         self.update_wall_previews(scene);
     }
 
+    /// A selected point light's radius handle: where it is (world metres, on the +x side of the light at its height) and the radius (the
+    /// file's value, which the light is drawn with); `None` for anything else.
+    pub fn light_radius_handle(&self, elem: usize) -> Option<(Float3, f32)> {
+        if self.tscene().type_of(elem) != "POINT_LIGHT_INSTANCE" {
+            return None;
+        }
+
+        let r = self.tscene().doc().get(elem, "radius").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0).max(0.0);
+        let p = self.world_position(elem);
+        Some((Float3::new(p.x + r, p.y, p.z), r))
+    }
+
     /// The highlight overlay (the points of a selected polygon, with `polygon_point` hot, and the active tool's overlay) and the selection
     /// outline's mask: the shapes of the selected markers (instances without meshes of their own). The renderer outlines the rest of the
     /// selection from its meshes and overlays.
@@ -1377,6 +1392,18 @@ impl Tile {
                 let h2 = st.size * 0.5;
                 let (lo_y, hi_y) = if st.cross { (p.y, p.y + st.size) } else { (p.y - h2, p.y + h2) };
                 mask.box_solid(Float3::new(p.x - h2, lo_y, p.z - h2), Float3::new(p.x + h2, hi_y, p.z + h2), white);
+            }
+
+            // A point light's radius handle, on the +x side of its reach (the renderer draws the reach of a selected light).
+            if let Some((c, r)) = self.light_radius_handle(e).map(|(h, r)| (Float3::new(h.x - r, h.y, h.z), r)) {
+                let reach = overlay_colour(1.0, 0.85, 0.4, 0.8);
+                let k = Float3::new(c.x + r, c.y, c.z);
+                let (col, s) = (if polygon_point == Some(LIGHT_RADIUS_HANDLE) { hot } else { white }, handle_size * 0.8);
+                h.line(c, k, reach);
+                for (a, b) in [((-s, 0.0), (0.0, -s)), ((0.0, -s), (s, 0.0)), ((s, 0.0), (0.0, s)), ((0.0, s), (-s, 0.0))] {
+                    h.line(Float3::new(k.x + a.0, k.y + a.1, k.z), Float3::new(k.x + b.0, k.y + b.1, k.z), col);
+                    h.line(Float3::new(k.x + a.0, k.y, k.z + a.1), Float3::new(k.x + b.0, k.y, k.z + b.1), col);
+                }
             }
 
             if self.is_polygon(e) {

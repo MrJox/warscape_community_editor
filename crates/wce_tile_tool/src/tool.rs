@@ -340,6 +340,13 @@ pub struct TileTool {
     /// The Create panel's thumbnails.
     pub(crate) thumbs: crate::thumbnails::Thumbnails,
 
+    /// The point light whose radius handle is being dragged, and the drag's undo gesture.
+    light_drag: Option<usize>,
+    light_gesture: u64,
+
+    /// The radius minus where the mouse grabbed the handle (the handle does not jump to the mouse).
+    light_grab: f32,
+
     /// The water depth view (`water_view.rs`): the tile and version its depth was worked out for, and the version last seen with when it
     /// started being (the settling after an edit).
     pub(crate) water_for: Option<(DocumentId, u64)>,
@@ -547,7 +554,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), light_drag: None, light_gesture: 0, light_grab: 0.0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
@@ -2933,7 +2940,8 @@ impl Tool for TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at);
-        d.tile_mut().set_highlight(&mut e.scene, &sel, self.poly_point, handle, &overlay);
+        let hot = if self.light_drag.is_some() { Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE) } else { self.poly_point };
+        d.tile_mut().set_highlight(&mut e.scene, &sel, hot, handle, &overlay);
     }
 
     fn draw_panels(&mut self, e: &mut Editor) {
@@ -3177,9 +3185,23 @@ impl Tool for TileTool {
                     return true;
                 }
 
-                // Select mode: a polygon point handle starts a drag, shift + click near an edge inserts a point.
+                // Select mode: a point light's radius handle starts a drag of the radius.
                 let sel = primary(e);
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if let (Some((o, dir)), Some(sel)) = (ray, sel)
+                    && let Some((k, r)) = d.tile().light_radius_handle(sel)
+                {
+                    let t = dot(k - o, dir);
+                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
+                        let c = d.tile().world_position(sel);
+                        self.light_grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
+                        self.light_drag = Some(sel);
+                        self.light_gesture = d.next_gesture();
+                        return true;
+                    }
+                }
+
+                // A polygon point handle starts a drag, shift + click near an edge inserts a point.
                 let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
                 let pts = d.tile().polygon_world_points(sel);
                 let spline = d.is_spline(sel);
@@ -3298,6 +3320,13 @@ impl Tool for TileTool {
                     if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
                         d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
                     }
+                } else if let Some(light) = self.light_drag {
+                    // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
+                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                    let c = d.tile().world_position(light);
+                    if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
+                        d.set_light_radius(light, at + self.light_grab, self.light_gesture);
+                    }
                 } else if self.point_drag {
                     self.on_hover(e, ev);
                     let sel = primary(e);
@@ -3317,7 +3346,7 @@ impl Tool for TileTool {
                     }
                 }
 
-                self.stroke_active || self.point_drag
+                self.stroke_active || self.point_drag || self.light_drag.is_some()
             }
 
             ViewportEventKind::Release => {
@@ -3332,8 +3361,9 @@ impl Tool for TileTool {
                     d.end_stroke();
                 }
 
-                if self.point_drag {
+                if self.point_drag || self.light_drag.is_some() {
                     self.point_drag = false;
+                    self.light_drag = None;
                     d.history_mut().break_merge();
                 }
 
@@ -3527,4 +3557,17 @@ pub fn wall_summary(l: &WallLayout) -> String {
         "{} wall on {}: {:.0} long, {} corner(s), {} run(s), {} step section(s); ends {} / {}",
         if l.profile.walkway > 10.0 { "15 m" } else { "8 m" }, l.profile.key, l.plan.length, l.plan.corners.len(), l.plan.runs.len(), l.plan.steps.len(), ends[0], ends[1],
     )
+}
+
+/// How far from a light, across, a ray meets the light's horizontal plane (`None` when it does not, ahead).
+fn light_plane_distance(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
+    if dir.y.abs() < 1e-4 {
+        return None;
+    }
+
+    let t = (c.y - o.y) / dir.y;
+    (t > 0.0).then(|| {
+        let p = o + dir * t;
+        (p.x - c.x).hypot(p.z - c.z)
+    })
 }
