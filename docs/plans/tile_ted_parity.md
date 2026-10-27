@@ -125,7 +125,7 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   `scripts/tile_paint_grouped_blur.txt`, unit tests. **Phase 5a is done.**
 
 ### Phase 5b
-- Exclusion polygons as brushes (paint the area instead of drawing the polygon).
+- Moved to "Ideas for later" (user, 2026-10-27): painting polygons with a brush is not a TEd feature.
 
 ### Phase 5d: building catalogue
 - Key search UI beyond the typed key (search `battlefield_buildings`).
@@ -170,6 +170,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Stats view (counts, memory budget).
 
 ## Ideas for later (user, 2026-10-27)
+- Polygons painted with a brush instead of drawn point by point (exclusion polygons, and the no-go areas, which are to be handled as
+  polygons): a new feature, not TEd's; for a future pass.
 - Move the ground views (colour, blend groups, ground types, protection, water depth) into a quick filter in the viewport, next to the
   other viewport chips, instead of the Tile panel's Ground section.
 
