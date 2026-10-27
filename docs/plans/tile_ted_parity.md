@@ -194,7 +194,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Camera bookmarks: done (2026-10-28; wce's). The toolbar's camera button: the tile's saved views (a click goes there, x forgets one),
   the current view saved by a name; kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile
   (`view_save`, `view_go`, `scripts/tile_camera_views.txt`).
-- Piece-to-piece snapping from the buildings' `_tech.cs2.parsed` (collision, platforms, attachments; `docs/re/buildings.md`).
+- Piece-to-piece snapping: done (2026-10-28; wce's). With "snap to points" on, a fort piece grabbed near another's end (within the
+  tolerance, 4 m at 0) joins it: it takes the other's rotation (the outer sides agree) and its low end goes onto the other's high end,
+  or its high end onto the other's low end. The ends are the walls' anchors (the logic file's frame, else the model's x extent;
+  `Tile::snap_piece`, `TileDocument::set_world_transform`; `scripts/tile_piece_snap.txt`). Not done: the logic files' platforms and
+  collision (nothing needed them).
 
 ### Phase 6a: tile links
 - Editors for `TILE_LINK` / `TILE_LINK_TARGET` as edits of the entry: text splice on `TILES/<tile>.xml`, rebuild of

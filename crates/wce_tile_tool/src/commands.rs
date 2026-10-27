@@ -1026,11 +1026,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             }
 
             let d = document(e).expect("a tile");
+            let (raw_x, raw_z) = (x, z);
             let p = t.snap_point(d.tile(), Float3::new(x, 0.0, z), t.grab_elem);
             let (x, z) = (p.x, p.z);
             let y = d.tile().terrain_height(x, z) + t.grab_y_offset as f32;
             if let Some(g) = t.grab_elem {
-                d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture);
+                let piece = if t.snap_vertices { d.tile().snap_piece(g, Float3::new(raw_x, y, raw_z), t.piece_reach()) } else { None };
+                match piece {
+                    Some(w) => d.set_world_transform(g, &w, t.grab_gesture),
+                    None => d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture),
+                };
             }
 
             t.end_grab(e, true);

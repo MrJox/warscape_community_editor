@@ -526,6 +526,15 @@ impl TileDocument {
         true
     }
 
+    /// Puts an instance at a world transform (scene units; `Tile::snap_piece`'s): its local position and orientation in one undo entry, the
+    /// steps of a drag (one `gesture`) merging.
+    pub fn set_world_transform(&mut self, elem: usize, w: &WorldTransform, gesture: u64) -> bool {
+        let pw = parent_transform(self.tile().tscene(), elem);
+        let lp = pw.rotation.transpose() * (w.position - pw.position);
+        let euler = euler_from_matrix(&(pw.rotation.transpose() * w.rotation));
+        self.set_local(elem, Some(lp), Some(euler), gesture)
+    }
+
     /// Metres in the world; keeps the orientation.
     pub fn set_world_metres(&mut self, elem: usize, p_in: Float3, gesture: u64) -> bool {
         let t = self.tile();
