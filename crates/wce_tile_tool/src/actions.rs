@@ -15,6 +15,11 @@ use wce_tile_editor::tile_document::{GROUND_ERASE, Placement, elem_of};
 
 use crate::tool::{TileMode, TileTool, document, document_id, primary, selected};
 
+/// What Level the ground along the selected line does (its tooltip).
+pub(crate) const LEVEL_ALONG_TIP: &str = "TEd's Spline Road: levels the ground under the selected line to the line's own height, as wide as the spline is at each point (a \
+     road's or river's width; other lines: the brush's radius), the brush's falloff making the banks. Buildings standing on the ground \
+     follow it. One undo step.";
+
 /// What each paint mode does (its tooltip): TEd's Blend Map operations as traced in docs/re/terrain.md.
 const PAINT_MODE_TIPS: [&str; 3] = [
     "Normal: the texture group's variation gains the brush's weight of what the other textures hold.",
@@ -233,6 +238,20 @@ impl TileTool {
              round. A spline whose points have a width (rivers, roads) is painted as wide as it is at each point, as TEd's Spline splat \
              does; other lines with the brush's radius. Select the line first, then pick the brush.",
         );
+        let level = ins.button("level_along", "Level the ground along the selected line", line.is_some());
+        ins.tooltip(LEVEL_ALONG_TIP);
+        if level
+            && let Some(line) = line
+        {
+            let d = document(e).expect("a tile");
+            let msg = match d.level_along(line, &self.brush) {
+                Ok(n) => format!("ground levelled along the line: {n} dabs"),
+                Err(why) => why,
+            };
+
+            e.status(&msg, false);
+        }
+
         if along
             && let (Some(line), Some(kind)) = (line, self.brush_kind())
         {

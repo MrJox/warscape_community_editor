@@ -2058,6 +2058,23 @@ impl TileDocument {
     ///
     /// The element is not a spline, polygon or line, or has fewer than two points.
     pub fn stroke_along(&mut self, kind: BrushKind, elem: usize, settings: &BrushSettings) -> Result<usize, String> {
+        self.stroke_along_with(kind, elem, settings, false)
+    }
+
+    /// TEd's Spline Road (the Height Map module's `Spline Road` operation): the ground under the selected line levelled to the line's own
+    /// height, as wide as the spline is at each point (else the brush's radius), the brush's falloff making the banks. TEd moves each height
+    /// inside the road's strip towards the road's height there (`h + (road - h) * w`, its `apply` fn 0x00485160); here a flatten stroke
+    /// along the line whose target at each dab is the line's height there, at full strength. One undo entry; returns the dabs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::stroke_along`].
+    pub fn level_along(&mut self, elem: usize, settings: &BrushSettings) -> Result<usize, String> {
+        let s = BrushSettings { strength: 40.0, ..settings.clone() };
+        self.stroke_along_with(BrushKind::Flatten, elem, &s, true)
+    }
+
+    fn stroke_along_with(&mut self, kind: BrushKind, elem: usize, settings: &BrushSettings, follow_height: bool) -> Result<usize, String> {
         const STEPS: usize = 16;
         let t = self.tile();
         if !t.is_polygon(elem) {
@@ -2098,7 +2115,7 @@ impl TileDocument {
 
         // A dab every quarter radius, each with the most a frame gives (`apply_brush` takes at most 0.05 s).
         let spacing = |r: f64| (r * 0.25).max(0.25);
-        let mut dabs = vec![(path[0].x, path[0].z, radii[0])];
+        let mut dabs = vec![(path[0].x, path[0].z, radii[0], path[0].y)];
         let mut left = spacing(radii[0]);
         for (w, r) in path.windows(2).zip(radii.windows(2)) {
             let (a, b) = (w[0], w[1]);
@@ -2108,7 +2125,7 @@ impl TileDocument {
                 at += left;
                 let f = at / len;
                 let radius = r[0] + (r[1] - r[0]) * f;
-                dabs.push((a.x + (b.x - a.x) * f as f32, a.z + (b.z - a.z) * f as f32, radius));
+                dabs.push((a.x + (b.x - a.x) * f as f32, a.z + (b.z - a.z) * f as f32, radius, a.y + (b.y - a.y) * f as f32));
                 left = spacing(radius);
             }
 
@@ -2116,8 +2133,12 @@ impl TileDocument {
         }
 
         self.end_stroke();
-        for &(x, z, radius) in &dabs {
-            let s = BrushSettings { radius_m: radius.max(0.25) as f32, ..settings.clone() };
+        for &(x, z, radius, y) in &dabs {
+            let mut s = BrushSettings { radius_m: radius.max(0.25) as f32, ..settings.clone() };
+            if follow_height {
+                s.flatten_height = y;
+            }
+
             self.brush_step(kind, x, z, s, 0.05);
         }
 

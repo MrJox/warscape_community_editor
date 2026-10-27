@@ -1,0 +1,20 @@
+# TEd's Spline Road (Phase 5a of docs/plans/tile_ted_parity.md): a new 1 x 1 tile at density 128 (1 m a pixel, 5 m high in the editor), a
+# road spline across it at the ground's height, a hill raised under its middle; levelling along the road brings the road's strip back to
+# the road's height (the brush's radius wide: the new road has no widths) and leaves the hill beside it; one undo entry. Run with
+# WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_level_along_test 1 1 10 128
+frames 5
+add_polygon "SEGMENTED_SPLINE_INSTANCE||16,64;112,64"
+frames 2
+brush 24 30 0.7
+paint raise 64 64 40
+assert_height 64 64 12 100
+assert_height 64 82 8 100
+brush 6 6 0.5
+level_along
+assert_height 64 64 5 0.3
+assert_height 40 64 5 0.3
+assert_height 64 82 8 100
+undo
+assert_height 64 64 12 100
+quit
