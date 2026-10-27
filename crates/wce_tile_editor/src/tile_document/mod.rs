@@ -79,6 +79,9 @@ pub enum BrushKind {
     /// Roughens the ground with fractal noise (`BrushSettings::noise_scale_m`), `strength` metres a second at full weight.
     Noise,
 
+    /// Adds `BrushSettings::stamp_height_m` at full weight, once (a click): the brush's shape (its image, else its falloff) as a height.
+    Stamp,
+
     /// Paints a blend map channel (4 * group + variation of the entry's TEXTURE_GROUPs).
     Paint(u8),
 
@@ -115,13 +118,16 @@ pub struct BrushSettings {
     /// The noise brush's features, metres across.
     pub noise_scale_m: f32,
 
+    /// The stamp's height at its middle (negative: a hollow).
+    pub stamp_height_m: f32,
+
     /// What the paint brush does (normal, TEd's Auto-Flange or Rock-painting).
     pub paint_mode: PaintMode,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0, filter: None, paint_mode: PaintMode::Normal, noise_scale_m: 16.0 }
+        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0, filter: None, paint_mode: PaintMode::Normal, noise_scale_m: 16.0, stamp_height_m: 5.0 }
     }
 }
 

@@ -206,6 +206,11 @@ impl Tile {
                 hf.smooth(&b)
             }
 
+            BrushKind::Stamp => {
+                b.strength = 1.0;
+                hf.raise(&b, f64::from(s.stamp_height_m) * unit)
+            }
+
             BrushKind::Noise => {
                 b.strength = 1.0;
                 hf.noise(&b, f64::from(s.strength * dt) * unit, f64::from(s.noise_scale_m) / mpp)

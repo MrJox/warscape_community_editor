@@ -74,6 +74,9 @@ pub enum TileMode {
     /// Roughens the ground with fractal noise.
     Noise,
 
+    /// Stamps the brush's shape as a height, one click at a time.
+    Stamp,
+
     /// Paints the blend map (the ground's textures).
     Paint,
 
@@ -104,10 +107,10 @@ static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
      instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
 
-pub const MODE_NAMES: [&str; 9] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "paint", "ground"];
-const MODES: [TileMode; 9] = [
-    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Noise, TileMode::Paint,
-    TileMode::Ground,
+pub const MODE_NAMES: [&str; 10] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "stamp", "paint", "ground"];
+const MODES: [TileMode; 10] = [
+    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Noise, TileMode::Stamp,
+    TileMode::Paint, TileMode::Ground,
 ];
 
 impl TileMode {
@@ -131,6 +134,7 @@ impl TileMode {
             Self::Flatten => Some(BrushKind::Flatten),
             Self::Level => Some(BrushKind::Level),
             Self::Noise => Some(BrushKind::Noise),
+            Self::Stamp => Some(BrushKind::Stamp),
         }
     }
 }
@@ -3144,6 +3148,12 @@ impl Tool for TileTool {
                     if self.terrain_hit && d.project().has_height() {
                         self.stroke_active = true;
                         d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+
+                        // A stamp is one click.
+                        if self.mode == TileMode::Stamp {
+                            d.end_stroke();
+                            self.stroke_active = false;
+                        }
                     }
 
                     return true;
