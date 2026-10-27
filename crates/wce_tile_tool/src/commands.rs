@@ -1364,6 +1364,37 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add(
+        "siege_ends", "siege_ends [all | <start> <end>]",
+        "the nodes the selected siege edge joins, as the game joins them (start, end: an element or -); with `all`, how many street and area connection edges of the tile have an end in no node (each edge logged); with two elements (or -), test that",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let t = d.tile();
+            if a.first().is_some_and(|x| x == "all") {
+                let nodes = t.siege_nodes();
+                let edges = t.tscene().find_all("SiegeAIEdgeInstance");
+                let name = |n: Option<usize>| n.map_or_else(|| "-".to_owned(), |n| n.to_string());
+                for &ed in &edges {
+                    if let Some(en) = t.siege_edge_ends_among(ed, &nodes) {
+                        wce_foundation::log::info(format!("siege edge {ed} ({}): start {} end {}", t.tscene().doc().get(ed, "type").unwrap_or_default(), name(en.nodes[0]), name(en.nodes[1])));
+                    }
+                }
+
+                let open = edges.iter().filter(|&&ed| t.siege_edge_ends_among(ed, &nodes).is_some_and(|en| !en.walls && en.nodes.contains(&None))).count();
+                return ok(format!("{open} of {} edges have an end in no node (wall edges not counted)", edges.len()));
+            }
+
+            let Some(ends) = el.and_then(|el| t.siege_edge_ends(el)) else { return fail("no siege edge selected") };
+            let name = |n: Option<usize>| n.map_or_else(|| "-".to_owned(), |n| n.to_string());
+            let got = format!("start {} end {}", name(ends.nodes[0]), name(ends.nodes[1]));
+            match (a.first(), a.get(1)) {
+                (Some(s0), Some(s1)) if got != format!("start {s0} end {s1}") => fail(format!("{got}, expected start {s0} end {s1}")),
+                _ => ok(got),
+            }
+        },
+    );
+
     c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {

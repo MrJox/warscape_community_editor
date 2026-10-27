@@ -1102,6 +1102,7 @@ impl Tile {
         }
 
         self.index_edited(elem);
+        self.edits_seen = self.edits_seen.wrapping_add(1);
         self.refresh_payload(scene, elem);
         if self.first_entity.get(elem).is_some_and(|&f| f != 0) {
             let w = self.drawn_matrix(elem);
@@ -1367,6 +1368,69 @@ impl Tile {
         Some(Float3::new(x, y, z))
     }
 
+    /// The siege overlay of the selection (`set_highlight`): a selected edge's nodes, a selected node's edges. Worked out again only when
+    /// the selection, the structure, an element or the terrain changed.
+    fn siege_highlight(&mut self, selected: &[usize], handle_size: f32) -> Vec<OverlayVertex> {
+        let key = (selected.to_vec(), self.structure_version ^ self.edits_seen.rotate_left(20) ^ self.terrain_version.rotate_left(40), handle_size.to_bits());
+        if let Some((k, lines)) = &self.siege_lines
+            && *k == key
+        {
+            return lines.clone();
+        }
+
+        let mut h = Overlay::default();
+        let lift = |p: Float3| Float3::new(p.x, self.terrain_height(p.x, p.z) + 0.6, p.z);
+        let nodes = if selected.iter().any(|&e| matches!(self.tscene().type_of(e), "SiegeAIEdgeInstance" | "SiegeAINodeInstance")) {
+            self.siege_nodes()
+        } else {
+            vec![]
+        };
+
+        for &e in selected {
+            // A siege edge: the nodes it joins, as the game joins them (the start's rectangle green, the end's blue), a red cross at an end
+            // in no node (not for wall edges: see `SiegeEdgeEnds::walls`).
+            if let Some(ends) = self.siege_edge_ends_among(e, &nodes) {
+                for (k, colour) in [(0, overlay_colour(0.2, 1.0, 0.3, 1.0)), (1, overlay_colour(0.3, 0.6, 1.0, 1.0))] {
+                    match ends.nodes[k].and_then(|n| nodes.iter().find(|x| x.0 == n)) {
+                        Some((_, _, r)) => {
+                            for i in 0..4 {
+                                h.line(lift(r[i]), lift(r[(i + 1) % 4]), colour);
+                            }
+
+                            let c = (r[0] + r[1] + r[2] + r[3]) * 0.25;
+                            h.line(lift(ends.at[k]), lift(c), colour);
+                        }
+
+                        None if ends.walls => {}
+                        None => {
+                            let (p, s) = (lift(ends.at[k]), handle_size * 2.0);
+                            let red = overlay_colour(1.0, 0.15, 0.1, 1.0);
+                            h.line(Float3::new(p.x - s, p.y, p.z - s), Float3::new(p.x + s, p.y, p.z + s), red);
+                            h.line(Float3::new(p.x - s, p.y, p.z + s), Float3::new(p.x + s, p.y, p.z - s), red);
+                        }
+                    }
+                }
+            }
+
+            // A siege node: the Streets of the edges joining it.
+            if self.tscene().type_of(e) == "SiegeAINodeInstance" {
+                let joined = overlay_colour(1.0, 0.85, 0.2, 1.0);
+                for edge in self.tscene().find_all("SiegeAIEdgeInstance") {
+                    if self.siege_edge_ends_among(edge, &nodes).is_some_and(|en| en.nodes.contains(&Some(e)))
+                        && let Some(line) = self.siege_polygon_world(edge)
+                    {
+                        for w in line.windows(2) {
+                            h.line(lift(w[0]), lift(w[1]), joined);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.siege_lines = Some((key, h.lines.clone()));
+        h.lines
+    }
+
     /// A selected point light's radius handle: where it is (world metres, on the +x side of the light at its height) and the radius (the
     /// file's value, which the light is drawn with); `None` for anything else.
     pub fn light_radius_handle(&self, elem: usize) -> Option<(Float3, f32)> {
@@ -1480,6 +1544,8 @@ impl Tile {
             }
         }
 
+        let siege = self.siege_highlight(selected, handle_size);
+        h.lines.extend(siege);
         h.lines.extend_from_slice(&tool_overlay.lines);
         h.triangles.extend_from_slice(&tool_overlay.triangles);
 

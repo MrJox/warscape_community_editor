@@ -167,7 +167,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   colour_2 at the target, and the target's handle drags it over the ground, one undo entry (`Tile::shelter_target`,
   `TileDocument::set_shelter_target`; `shelter_target_drag`, `assert_shelter_target`, `scripts/tile_shelter_target.txt`). Fixed on the
   way: a placed shelter's target stayed near the origin (the draft is built there); it now moves with the placement.
-- Draw a siege AI edge's nodes (pick the two nodes in the viewport).
+- A siege AI edge's nodes: done (2026-10-28). The file has no ids (an edge's nodes come from geometry), so there is nothing to pick:
+  the editor joins them as the game does (`docs/re/siege_ai.md`, "The connection rule") and shows them. A selected edge draws its start
+  (green) and end (blue) nodes' rectangles, joined to the Street's ends, and a red cross at an end in no node (not for wall and palisade
+  edges, matched to wall area nodes only); a selected node draws the Streets of the edges joining it (`Tile::siege_edge_ends`; cached per
+  selection and change). On CA's encampment every area connection joins two nodes. `siege_ends` (`all` logs every edge and counts the
+  open ones), `scripts/tile_siege_ends.txt`.
 - Road splat painting: needs RE first (what TEd writes and what reads it).
 
 ### Phase 5g: selection and transform
