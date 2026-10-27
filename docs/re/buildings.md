@@ -156,6 +156,25 @@ centre lies inside the volume's box (in the volume's frame), spawns the volumetr
 Check: in a siege battle, watch a wall section collapse from intact to destroyed, and compare with the editor's
 (`tile_edit <elem> destruction_level 2` on an intact wall).
 
+## Look properties (2026-10-27)
+
+TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_proj`):
+
+- `Ted::BUILDING_INSTANCE::set_property` (0x41e1a0) stores opacity, dirt_level, bounds_colour, burn, burn_amount, glow_amount,
+  destruction_level, building_tech_level; its property-changed handler (0x41eee0, vtable 0x6a1694 slot 0x2c) passes 6..11 on to each
+  piece, a `Ted::MESH_INSTANCE` (`set_property` 0x420ff0: 7 opacity, 8 burn, 9 burn_amount, 10 glow_amount, 11 dirt_level), and 12
+  (destruction_level) swaps the piece files. 13 (building_tech_level) has no case.
+- A piece's render parameters (0x448010) are the engine's instance parameter block: [0] = opacity times a fade, [2] = burn_amount,
+  [3] = glow_amount, [0x1f] = 0x2000 when the opacity is below 1 (another draw list: the blended forward shaders). `burn` ORs a render
+  flag (0x4480f0). dirt_level is never read for drawing.
+- Warscape packs POSITION4 as (xyz, round(clamp(opacity, 0, 1) * 1000) + a fraction) (0x1025e700 / 0x10262e20); POSITION7 is the
+  block's faction colour ([0x31..0x34]). [2] goes to the instance record next to two other parameters ([0x2b], [0x2a]); the record's
+  path to POSITION5/6 was not followed, and nothing was found reading [3].
+- rigidstandard (`rigid_config_PS`: g_unlit, g_dissolve_enable, g_untextured): `ps30_gbuffer_alpha_test` and `ps30_alpha_blend_40`
+  multiply the diffuse alpha by floor(P4.w) * 0.001, or with g_dissolve_enable keep opacity - dissolve * (1 - opacity) (the
+  screen-tiled `s_dissolve_map`) against the 0.5 test; P6.y brightens, P6.z desaturates.
+- The game export (`BATTLEFIELD_BUILDING`) carries burn (`on_fire`) and the destruction level (`starting_damage`), none of the rest.
+
 ## Wall pieces (2026-10-24)
 
 From `models2.pack` and the logic files (`Cs2Parsed` version 11) of every straight in the game's and TDD's packs; used by the procedural

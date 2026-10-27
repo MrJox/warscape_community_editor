@@ -771,7 +771,7 @@ impl Tile {
                 let seed = ((elem as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 16_777_216.0;
                 [seed, 1.0, 0.0, 1000.0]
             } else {
-                MeshInstance::default().p4
+                [0.0, 0.0, 0.0, self.opacity_w(elem)]
             };
 
             // The building's saved destruction level, unless a piece was given its own this session.
@@ -1034,6 +1034,18 @@ impl Tile {
         let first = self.first_entity.get(elem).copied().unwrap_or(0);
         match self.tscene().type_of(elem) {
             "POINT_LIGHT_INSTANCE" if first != 0 => scene.update_payload(first, Payload::PointLight(self.point_light(elem))),
+            "BUILDING_INSTANCE" | "SIMPLE_MESH_INSTANCE" if first != 0 => {
+                let w = self.opacity_w(elem);
+                for k in 0..u64::from(self.entity_count[elem]) {
+                    let id = first + k as EntityId;
+                    let mi = match scene.find(id).map(|en| &en.payload) {
+                        Some(Payload::MeshInstance(mi)) if mi.p4[3] != w => MeshInstance { p4: [mi.p4[0], mi.p4[1], mi.p4[2], w], ..mi.clone() },
+                        _ => continue,
+                    };
+
+                    scene.update_payload(id, Payload::MeshInstance(mi));
+                }
+            }
             "VFXInstance" => match (first != 0, self.vfx_emitter(elem)) {
                 (true, Some(vfx)) => scene.update_payload(first, Payload::VfxEmitter(vfx)),
                 (true, None) => {
@@ -1053,6 +1065,22 @@ impl Tile {
             },
             _ => {}
         }
+    }
+
+    /// POSITION4.w of a building's or mesh's pieces: its `opacity` as the engine packs it (TEd hands the opacity to the renderer, which
+    /// writes round(opacity * 1000) there, the opacity clamped to 0..1; 1000 is opaque). The alpha-tested G-buffer shaders multiply the
+    /// diffuse alpha by floor(w) * 0.001 before the test. TEd files a building below 1 apart (render flag 0x2000), for the blended forward
+    /// shaders (`ps30_alpha_blend_40` multiplies the alpha the same way); the renderer has no such pass yet, so opaque materials show no fade.
+    fn opacity_w(&self, elem: usize) -> f32 {
+        let o = self.tscene().doc().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
+        (o.clamp(0.0, 1.0) * 1000.0).round()
+    }
+
+    /// The entities of an element's model pieces (consecutive ids; empty when it has none on the scene).
+    pub fn piece_entities(&self, elem: usize) -> std::ops::Range<EntityId> {
+        let first = self.first_entity.get(elem).copied().unwrap_or(0);
+        let n = if first == 0 { 0 } else { u64::from(self.entity_count[elem]) };
+        first..first + n as EntityId
     }
 
     pub(crate) fn refresh_item(&mut self, scene: &mut RenderScene, elem: usize) {

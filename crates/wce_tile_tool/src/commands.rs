@@ -1911,6 +1911,53 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
+        "tile_set_prop", "tile_set_prop <attribute> <value>",
+        "set a property of the selected instance as the Inspector does (one undo entry), by its attribute (opacity, burn, destruction_level, ...)",
+        |e, a| {
+            let el = primary(e);
+            let (Some(d), Some(attr), Some(value)) = (document(e), a.first(), a.get(1)) else { return fail("usage: tile_set_prop <attribute> <value>") };
+            let Some(el) = el.filter(|&el| d.tile().is_instance(el)) else { return fail("no instance selected") };
+            let tag = d.tile().tscene().type_of(el).to_owned();
+            let Some(prop) = wce_tile::properties::schema(&tag).and_then(|s| s.iter().find(|p| p.attr == attr.as_str())) else {
+                return fail(format!("{tag} has no property {attr}"));
+            };
+
+            if !d.set_property(el, prop, value, 0) {
+                return fail("not set");
+            }
+
+            d.history_mut().break_merge();
+            ok("")
+        },
+    );
+
+    c.add(
+        "assert_instance_param", "assert_instance_param <index 0..15> <value> [tolerance]",
+        "test: every model piece of the selected instance draws with this POSITION4..7 value (index 3 is POSITION4.w)",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 2).then(|| Some((a[0].parse::<usize>().ok().filter(|&i| i < 16)?, number(&a[1])?))).flatten();
+            let (Some(d), Some((i, want))) = (document(e), parsed) else { return fail("usage: assert_instance_param <index 0..15> <value> [tolerance]") };
+            let tol = a.get(2).and_then(|v| number(v)).unwrap_or(1e-3);
+            let Some(el) = el else { return fail("nothing selected") };
+            let ids = d.tile().piece_entities(el);
+            if ids.is_empty() {
+                return fail("no model pieces on the scene");
+            }
+
+            for id in ids {
+                let Some(wce_scene::render_scene::Payload::MeshInstance(mi)) = e.scene.find(id).map(|en| &en.payload) else { return fail(format!("entity {id} is no mesh")) };
+                let got = [mi.p4, mi.p5, mi.p6, mi.p7][i / 4][i % 4];
+                if (got - want).abs() > tol {
+                    return fail(format!("entity {id}: {got}, expected {want}"));
+                }
+            }
+
+            ok("")
+        },
+    );
+
+    c.add(
         "tile_report_off_terrain", "tile_report_off_terrain [tolerance m] [layer path]",
         "log the landscape instances that are more than the tolerance (default 0.5) off the terrain, worst first", |e, a| {
             let Some(d) = document(e) else { return no_tile() };
