@@ -57,22 +57,22 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build \
-            -p wce_foundation
-            -p wce_formats
-            -p wce_assets
-            -p wce_vfs
-            -p wce_tile
-            -p wce_tile_editor
+            -p wce_foundation \
+            -p wce_formats \
+            -p wce_assets \
+            -p wce_vfs \
+            -p wce_tile \
+            -p wce_tile_editor \
             -p wce_tile_io
 
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           command: test \
-            -p wce_foundation
-            -p wce_formats
-            -p wce_assets
-            -p wce_vfs
-            -p wce_tile
-            -p wce_tile_editor
+            -p wce_foundation \
+            -p wce_formats \
+            -p wce_assets \
+            -p wce_vfs \
+            -p wce_tile \
+            -p wce_tile_editor \
             -p wce_tile_io
