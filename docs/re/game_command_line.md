@@ -42,8 +42,11 @@ played in battle mode anyway), `gfx_fullscreen` (an "environment variable" kept 
    (`0x80000003`, `Empire.Retail.dll+0x1637eac`, the engine's fatal-error stop; the crash report's stack is all "unknown"). Mod packs
    must be in `data\`, named by file name.
 
-TDD's `foi_battle.xml` has a commented-out `<battle_map_definition><name>terrain/tiles/battle/assembly_kit/battleofthefivearmies/battlefield</name>`:
-a single tile named as the map, without a `tile_map_position`. Untested; if the engine accepts it, a tile painted on no map can be launched.
+6. **A single tile as the map**, delivered as designed (`data\wce_launch.pack` holding `script/wce/wce_launch.xml`, `mod
+   "wce_launch.pack";` listed first, TDD after): `<battle_map_definition><name>terrain/tiles/battle/plains/8x8/8x8_aa</name>` (a
+   variation folder, no `tile_map_position`), `<type>land_normal</type>`, no fortification or settlement elements, `<playable_area
+   dimension="1800">`, the units 800 m apart across the centre: a field battle on that tile, clean exit. (TDD's `foi_battle.xml` has
+   the same form commented out, naming a tile that is in no pack.)
 
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.

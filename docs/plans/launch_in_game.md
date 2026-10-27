@@ -8,8 +8,9 @@ enabled. The command line it relies on, and the launches that settled it: [docs/
 - **Command line settled** (five launches): `game_startup_mode battle <xml>;` starts the battle with no menu; `mod "<pack>";` loads mod
   packs (by file name, from `data\` only: an absolute path stops the game); a mod pack's file wins over a working directory's
   (`add_working_directory` serves only paths no pack has); the first two crashes were a stray movie-type pack in `data\`.
-- Not started: the code. Untested: a single tile as `<battle_map_definition><name>` (TDD has one commented out), which would launch a
-  tile painted on no map.
+- A single tile is a battle map on its own (`<battle_map_definition><name>` = the variation folder, test 6), launched through
+  `data\wce_launch.pack` exactly as designed below.
+- Not started: the code.
 
 ## Design
 
@@ -19,8 +20,10 @@ enabled. The command line it relies on, and the launches that settled it: [docs/
    wins over loose files, and the game takes mod packs from `data\` only. Mod type, so a pack left behind never loads unless named.
    The battle XML goes in it too (its path, `script/wce/wce_launch.xml`, is the editor's own).
 3. **The battle XML** (the benchmark's format):
-   - the map: the placement picked in the Map context (`wce_tile::battle_map`): the map's folder as `<name>`, the placement's centre as
-     `<tile_map_position>` (fractions of the tile map); the building level / escalation as `<tile_upgrade>`;
+   - the map: by default **the tile alone**: its variation folder as `<name>` (no `tile_map_position`), `<playable_area>` from the
+     tile's size, the units placed across its centre. As an option (a setting, or a placement picked in the Map context,
+     `wce_tile::battle_map`): the map's folder as `<name>` and the placement's centre as `<tile_map_position>` (fractions of the tile
+     map), for the seams and neighbours. The building level / escalation as `<tile_upgrade>`;
    - the type from the tile: `land_normal` for a field tile, `settlement_standard` / `settlement_unfortified` for a settlement tile,
      `<battlefield_owner_alliance_index>` the defender;
    - the weather chips: `<environment_key>` (the file lighting the tile), `<season>` / `<Season>`, `<time_of_day>`,
@@ -41,8 +44,8 @@ enabled. The command line it relies on, and the launches that settled it: [docs/
 
 ## Decisions (user, 2026-10-27)
 
-1. **Map:** the placement picked in the Tile panel's Map context, else the first found. A tile painted nowhere cannot launch yet (a
-   generated one-tile map is the tilemap scope, `tile.md`).
+1. **Map:** the tile alone by default (any tile, painted on a map or not); the Map context's placement as an option. (Revised after
+   test 6; the first answer was the placement, with no launch for an unpainted tile.)
 2. **Delivery:** loose, unless loose loses to the mod packs. It does (test 4 of game_command_line.md), so a pack.
 3. **Mods on the command line** (`mod "<pack>";`); `used_mods.txt` is never touched.
 4. **Armies:** a minimal preset, one small unit per side far apart and a long duration; vanilla units by default, editable in Settings.
