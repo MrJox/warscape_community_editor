@@ -15,15 +15,27 @@ instance is refused ("Another instance of %s is running").
 
 | Command | What it does | Checked |
 |---|---|---|
-| `game_startup_mode <battle\|campaign\|campaign_edit\|frontend\|naval> opt:<xml name> opt:<xsd name> opt:<building list>` | the mode the application starts in; `battle <xml>` loads that battle at once, no menu (default xml: `data/TestData/world/DemoLandBattle.xml`) | yes: `game_startup_mode battle script/benchmarks/siegeoflondinium/siegeoflondinium.xml;` went straight into the Londinium siege (vanilla, no mods) |
-| `mod <file name>` | adds a mod pack to the start-up list (the launcher writes `mod "<pack>";`) | not yet |
-| `add_working_directory <directory name>` | "redirect the non-pack (and mod pack) file search": loose files (the launcher adds `assembly_kit/working_data/`) | not yet |
+| `game_startup_mode <battle\|campaign\|campaign_edit\|frontend\|naval> opt:<xml name> opt:<xsd name> opt:<building list>` | the mode the application starts in; `battle <xml>` loads that battle at once, no menu (default xml: `data/TestData/world/DemoLandBattle.xml`); the xml is a VFS path, found in packs and in working directories | yes: the benchmark's XML from data.pack, and a loose XML (`script/wce/wce_launch.xml` under a working directory), both straight into the battle |
+| `mod <file name>` | adds a mod pack to the start-up list (the launcher writes `mod "<pack>";`) | yes: `mod "tdd_pack1_main_v1.1.0.pack";` ... loaded TDD (its units on the loading screen); `used_mods.txt` untouched |
+| `add_working_directory <directory name>` | "redirect the non-pack (and mod pack) file search": loose files (the launcher adds `assembly_kit/working_data/`); an absolute path with `/` and a trailing `/`, quoted, works | yes for a file no pack has; against a mod pack's file of the same path: open (below) |
 | `docudemon` | writes `docudemon.txt` (UTF-16) in the game folder: every tweak with its default, the command library, Lua commands; the game then starts as usual | yes |
 | `import_all_mods`, `exclude_pack_file <pack>`, `set_pack_file_precedence <a> <b>`, `load_pack_files <true\|false>`, `show_paths`, `audit_vfs` | the VFS's pack list and search paths | no |
 | `quit` | quits | no |
 
-Tweaks are set the same way (`<name> <value>;`, untested): `show_frontend_movies` (intro movies, default 1), `gfx_fullscreen`
-(an "environment variable" kept in `scripts/preferences.script.txt`; 0 would test windowed), `win_on_quit_battle`.
+Tweaks are set the same way (`<name> <value>;`): `show_frontend_movies false;` was accepted (the battle started; movies are not
+played in battle mode anyway), `gfx_fullscreen` (an "environment variable" kept in `scripts/preferences.script.txt` as
+`gfx_fullscreen false;`, bool words), `win_on_quit_battle`. The launches did not rewrite `preferences.script.txt`.
+
+## Launch results (2026-10-27)
+
+1. Vanilla, `docudemon; game_startup_mode battle <benchmark xml>;`: the battle loaded, then crashed in the NVIDIA driver
+   (`nvwgf2um.dll+0xa4473b`, a copy loop, no `crash_report`).
+2. TDD by `mod` arguments, loose XML with TDD units: the same crash late in loading.
+3. As 2 with vanilla units, after moving `@tdd_dev_buildings_25_10_2026.pack` (a **movie-type** pack, which loads whatever the mod list
+   says) out of `data\`: loaded and played, clean exit. The crash was that stray pack (the toolkit's known signature), not the command line.
+   A loose `.environment` (red overlay, magenta sky) at the path of a TDD pack's file, named by `<environment_key>`, did **not** show:
+   either the mod pack beat the loose file, or the battle does not take its weather from `<environment_key>`. Open; it matters only for an
+   edited tile that keeps a path a pack also has (a new tile has its own path).
 
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.
