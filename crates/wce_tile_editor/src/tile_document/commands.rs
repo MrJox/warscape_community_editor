@@ -641,3 +641,47 @@ impl Command<Tile> for GroundFillCommand {
         self
     }
 }
+
+/// A whole-map edit of the heights (a height map imported): undo and redo use the height field's records; the landscape instances moved
+/// with the ground go back and forth with them. The edit is made before the command is pushed.
+pub(crate) struct HeightFillCommand {
+    pub name: String,
+    pub first: bool,
+    pub moved: Vec<Follow>,
+}
+
+impl Command<Tile> for HeightFillCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if std::mem::take(&mut self.first) {
+            return;
+        }
+
+        t.end_stroke_edit();
+        if let Some(h) = &mut t.project.height {
+            h.redo();
+        }
+
+        t.put_positions(&self.moved, true);
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        t.end_stroke_edit();
+        if let Some(h) = &mut t.project.height {
+            h.undo();
+        }
+
+        t.put_positions(&self.moved, false);
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        std::iter::once(TERRAIN).chain(self.moved.iter().map(|f| item_of(f.elem))).collect()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}

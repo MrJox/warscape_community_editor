@@ -851,6 +851,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add("import_heights", "import_heights <picture> <black m> <white m> [add]", "a picture's brightness as the tile's heights over the whole height map, replacing them (or added); one undo entry", |e, a| {
+        let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
+        let (Some(d), Some((lo, hi))) = (document(e), parsed) else { return fail("usage: import_heights <picture> <black m> <white m> [add]") };
+        match d.import_height_map(Path::new(&a[0]), lo, hi, a.get(3).is_some_and(|x| x == "add")) {
+            Ok(n) => ok(format!("{n} samples changed")),
+            Err(why) => fail(why),
+        }
+    });
+
     c.add("stamp_height", "stamp_height <m>", "the stamp's height at its middle (negative: a hollow)", |e, a| {
         let Some(v) = a.first().and_then(|x| number(x)) else { return fail("usage: stamp_height <m>") };
         with_tile(e, |t, _| {
