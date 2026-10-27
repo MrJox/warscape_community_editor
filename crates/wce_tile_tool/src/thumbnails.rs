@@ -18,7 +18,7 @@ use wce_foundation::math::{Float3, Float4x4, length, normalize};
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, ViewParams};
 use wce_scene::camera::Camera;
-use wce_scene::environment::{EnvironmentParams, read_graphics_options};
+use wce_scene::environment::read_graphics_options;
 use wce_scene::render_scene::{MeshInstance, Payload, RenderScene, SourceRef};
 
 /// The size of a thumbnail, pixels.
