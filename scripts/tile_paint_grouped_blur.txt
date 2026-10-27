@@ -1,0 +1,21 @@
+# TEd's Normal (Grouped) and blend blur (Phase 5a of docs/plans/tile_ted_parity.md): a new 1 x 1 tile at density 128, all the first group.
+# Grouped at variation 1.25 lays group 2's variations 1 and 2 at 3 : 1 (painted long enough to cover); the blur over the edge between
+# that patch and the rest mixes both sides; one undo entry each. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_grouped_blur_test 1 1 10 128
+frames 5
+tile_mode paint
+brush 20 6 0 0 1
+brush_paint 2 0 grouped 1.25
+paint_ground 2 0 40 64 90
+assert_blend 40 64 2 1 47000 50000
+assert_blend 40 64 2 2 15000 17500
+assert_blend 40 64 0 0 0 200
+brush 8 6 0.5 0 1
+brush_paint 0 0 blur
+paint_ground 0 0 60 64 60
+assert_blend 59 64 0 0 1000 64000
+assert_blend 61 64 2 1 1000 48000
+undo
+assert_blend 61 64 2 1 0 0
+tile_mode select
+quit

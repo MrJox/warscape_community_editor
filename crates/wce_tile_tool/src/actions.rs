@@ -21,7 +21,7 @@ pub(crate) const LEVEL_ALONG_TIP: &str = "TEd's Spline Road: levels the ground u
      follow it. One undo step.";
 
 /// What each paint mode does (its tooltip): TEd's Blend Map operations as traced in docs/re/terrain.md.
-const PAINT_MODE_TIPS: [&str; 3] = [
+const PAINT_MODE_TIPS: [&str; 5] = [
     "Normal: the texture group's variation gains the brush's weight of what the other textures hold.",
     "Auto-Flange (TEd's): paints the texture group with a graded rim of its four variations. Each pixel builds up a weight while you paint \
      (more dabs, nearer the brush's middle: higher). Above the threshold the pixel becomes all the group, its variation sliding from 0 \
@@ -30,7 +30,15 @@ const PAINT_MODE_TIPS: [&str; 3] = [
     "Rock painting (TEd's): the texture's weight follows the slope under the brush: none below about 26 degrees, 0.24 at 45, 0.8 at 60, \
      all of it from about 72. Paint a rock texture over cliffs and it lands on the steep parts only. Unlike TEd's, it follows the brush's \
      strength and falloff and never takes the texture away where there is already more of it than the slope asks for.",
+    "Normal (Grouped) (TEd's): paints the texture group at an in-between variation: 1.3 lays 70 % of variation 1 and 30 % of variation 2, \
+     so that two variations blend smoothly instead of one replacing the other.",
+    "Blur (TEd's blend smoothing): softens the ground's texture edges under the brush; each texture's weight moves towards its average \
+     over the pixels around (2 pixels each way), more the longer you paint. No texture group is needed.",
 ];
+
+/// Normal (Grouped)'s variation (its tooltip).
+const GROUPED_VARIATION_TIP: &str = "Where between the group's variations the paint goes: a whole number is that variation, 1.5 is half variation 1 \
+    and half variation 2.";
 
 /// Auto-Flange's threshold (its tooltip).
 const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group takes over: under it only variation 0 fades in (a soft rim), over \
@@ -168,14 +176,18 @@ impl TileTool {
                 PaintMode::Normal => 0,
                 PaintMode::AutoFlange { .. } => 1,
                 PaintMode::Rock => 2,
+                PaintMode::Grouped { .. } => 3,
+                PaintMode::Blur => 4,
             };
 
-            let names = ["normal", "auto-flange", "rock painting"].map(str::to_owned);
+            let names = ["normal", "auto-flange", "rock painting", "normal (grouped)", "blur"].map(str::to_owned);
             let tips = PAINT_MODE_TIPS.map(str::to_owned);
             ins.edit_choice_tips("paint_mode", "mode", &mut m, &names, &tips);
             self.brush.paint_mode = match m {
                 1 => PaintMode::AutoFlange { threshold: self.flange_threshold },
                 2 => PaintMode::Rock,
+                3 => PaintMode::Grouped { variation: self.grouped_variation },
+                4 => PaintMode::Blur,
                 _ => PaintMode::Normal,
             };
 
@@ -183,8 +195,17 @@ impl TileTool {
             let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
             let names = [g.red, g.green, g.blue, g.alpha].iter().enumerate().map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() }).collect::<Vec<_>>();
             let (mut group, mut variation) = (i32::from(self.paint_channel / 4), i32::from(self.paint_channel % 4));
-            ins.edit_choice("group", "texture group", &mut group, &names);
-            if m == 1 {
+            if m != 4 {
+                ins.edit_choice("group", "texture group", &mut group, &names);
+            }
+
+            if m == 3 {
+                ins.edit_slider("grouped_variation", "variation", &mut self.grouped_variation, 0.0, 3.0);
+                ins.tooltip(GROUPED_VARIATION_TIP);
+                self.brush.paint_mode = PaintMode::Grouped { variation: self.grouped_variation };
+            } else if m == 4 {
+                // The blur needs no channel.
+            } else if m == 1 {
                 ins.edit_slider("flange_threshold", "threshold", &mut self.flange_threshold, 0.0, 0.95);
                 ins.tooltip(FLANGE_THRESHOLD_TIP);
                 self.brush.paint_mode = PaintMode::AutoFlange { threshold: self.flange_threshold };

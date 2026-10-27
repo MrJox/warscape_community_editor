@@ -55,6 +55,41 @@ pub enum PaintMode {
     /// TEd's Rock-painting: the channel's weight follows the slope (`rock_weight`: none below about 26 degrees, all from about 72). Unlike
     /// TEd's (which ignores the brush and can take paint away), wce's moves towards that weight by the brush's weight and never lowers it.
     Rock,
+
+    /// TEd's Normal (Grouped) (`PM2OpBlend2Base`, properties `channel_group` and `flange`): the channel's texture group at a continuous
+    /// variation `variation` (0 .. 3), split between the two variations around it (1.3: 70 % of variation 1, 30 % of 2); every channel
+    /// scaled by 1 - w and the two given w times their share. TEd also gates the weight with a per-pixel function the module hands it (where
+    /// it is 0, the weight is its neighbourhood's average); that function was not traced and is left out.
+    Grouped { variation: f32 },
+
+    /// TEd's blend blur (`QTU::GPOWeightedAverage` "Smooth", radius 2 on the blend map): every channel moves towards its neighbourhood's
+    /// weighted average (Gaussian, `exp(-d^2 / 8)`, normalised) as the stroke found it, by the stroke's weight built up dab by dab.
+    Blur,
+}
+
+/// The blend blur's radius in pixels and kernel (TEd's: `GPOWeightedAverage` built with radius 2, weights `exp(-d^2 / 2^3)`).
+pub const BLUR_RADIUS: i32 = 2;
+
+fn blur_weight(dx: i32, dy: i32) -> f64 {
+    (-f64::from(dx * dx + dy * dy) / 8.0).exp()
+}
+
+/// Normal (Grouped)'s pixel: `p` scaled by 1 - a, and a shared between the group's variations around `variation` (0 .. 3).
+pub fn grouped_pixel(p: &[u16; 16], group: usize, variation: f64, a: f64) -> [u16; 16] {
+    let g = group.min(3) * 4;
+    let v = variation.clamp(0.0, 3.0);
+    let (lo, frac) = (v.floor() as usize, v - v.floor());
+    let mut out = [0.0f64; 16];
+    for (o, &c) in out.iter_mut().zip(p) {
+        *o = f64::from(c) / 65535.0 * (1.0 - a);
+    }
+
+    out[g + lo] += a * (1.0 - frac);
+    if frac > 0.0 {
+        out[g + (lo + 1).min(3)] += a * frac;
+    }
+
+    quantize(&out)
 }
 
 /// Rock-painting's weight of a slope in degrees (TEd's `Ted::RockPaintOperation`): s = 1 - cos(slope), A = smoothstep(0.1, 0.7, s),
@@ -278,6 +313,37 @@ impl BlendField {
                     let (c, t) = (f64::from(p[channel]) / 65535.0, rock_weight(slope(x, y)));
                     (t > c && c < 1.0).then(|| paint_pixel(&p, channel, (t - c) * a / (1.0 - c)))
                 }
+
+                PaintMode::Grouped { variation } => Some(grouped_pixel(&p, channel / 4, f64::from(variation), a)),
+                PaintMode::Blur => {
+                    let acc = self.acc.entry(u64::from(y) * w + u64::from(x)).or_insert(0.0);
+                    *acc += (1.0 - *acc) * a as f32;
+                    let acc = f64::from(*acc);
+                    let source: [u16; 16] = self.layer.original(x, y).try_into().expect("16 weights");
+                    let (mut avg, mut total) = ([0.0f64; 16], 0.0);
+                    for dy in -BLUR_RADIUS..=BLUR_RADIUS {
+                        for dx in -BLUR_RADIUS..=BLUR_RADIUS {
+                            let (nx, ny) = (x as i64 + i64::from(dx), y as i64 + i64::from(dy));
+                            if nx < 0 || ny < 0 || nx >= i64::from(self.width()) || ny >= i64::from(self.height()) {
+                                continue;
+                            }
+
+                            let k = blur_weight(dx, dy);
+                            for (s, &c) in avg.iter_mut().zip(self.layer.original(nx as u32, ny as u32)) {
+                                *s += k * f64::from(c);
+                            }
+
+                            total += k;
+                        }
+                    }
+
+                    let mut out = [0.0f64; 16];
+                    for ((o, &s), &c) in out.iter_mut().zip(&avg).zip(&source) {
+                        *o = f64::from(c) + (s / total - f64::from(c)) * acc;
+                    }
+
+                    Some(quantize(&out))
+                }
             };
 
             if let Some(after) = after {
@@ -405,6 +471,37 @@ mod tests {
         assert_eq!(q[9], 32_768);
         assert!((f64::from(q[0]) / f64::from(q[1]) - 1.5).abs() < 1e-3);
         assert_eq!(paint_pixel(&q, 9, 1.0), { let mut f = [0u16; 16]; f[9] = FULL; f });
+    }
+
+    #[test]
+    fn grouped_splits_between_two_variations() {
+        let mut p = [0u16; 16];
+        p[0] = FULL;
+        let q = grouped_pixel(&p, 1, 1.3, 1.0);
+        assert_eq!(q.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
+        assert!((f64::from(q[5]) / 65535.0 - 0.7).abs() < 1e-4 && (f64::from(q[6]) / 65535.0 - 0.3).abs() < 1e-4 && q[0] == 0);
+        assert_eq!(grouped_pixel(&p, 2, 3.0, 0.5)[11], 32767, "half: the tie goes to the lower channel");
+    }
+
+    #[test]
+    fn the_blur_softens_an_edge() {
+        let (w, h) = (20u32, 5u32);
+        let mut px = vec![0u8; (w * h * 32) as usize];
+        for (i, p) in px.chunks_mut(32).enumerate() {
+            let ch = if (i as u32 % w) < 10 { 0 } else { 4 };
+            p[ch * 2..ch * 2 + 2].copy_from_slice(&FULL.to_le_bytes());
+        }
+
+        let mut bytes = TiffFile::ted_header(w, h);
+        bytes.extend_from_slice(&px);
+        let mut f = BlendField::from_tiff(TiffFile::parse(&bytes).unwrap()).unwrap();
+        f.begin_edit().unwrap();
+        f.paint_mode(&Brush { cx: 10.0, cy: 2.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 0, PaintMode::Blur, &|_, _| true, &|_, _| 0.0).unwrap();
+        f.end_edit();
+        let (l, r) = (f.pixel(9, 2), f.pixel(10, 2));
+        assert!(l[0] < FULL && l[4] > 0 && r[4] < FULL && r[0] > 0, "{l:?} {r:?}");
+        assert_eq!(f.pixel(0, 2)[0], FULL, "outside the brush");
+        assert_eq!(l.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
     }
 
     #[test]
