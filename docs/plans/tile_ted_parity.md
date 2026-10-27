@@ -173,7 +173,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   edges, matched to wall area nodes only); a selected node draws the Streets of the edges joining it (`Tile::siege_edge_ends`; cached per
   selection and change). On CA's encampment every area connection joins two nodes. `siege_ends` (`all` logs every edge and counts the
   open ones), `scripts/tile_siege_ends.txt`.
-- Road splat painting: needs RE first (what TEd writes and what reads it).
+- Road splat painting: done. It is TEd's Spline splat (`docs/re/terrain.md`): a blend channel laid along a spline at its width, which
+  the stroke along a spline does with the spline's width (user, 2026-10-26; Phase 5a). **Phase 5f is done.**
 
 ### Phase 5g: selection and transform
 - Box select (TEd's selection shape).

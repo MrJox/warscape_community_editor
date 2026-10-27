@@ -48,6 +48,5 @@ spline's points), `children`, `camera`, and the modules (`Vegetation`, `Grass`, 
 - Every type is made by the Create panel (`TileDocument::create`) with the kit's defaults: the most common value of each
   attribute over the kit's tiles (`scripts/re/instance_defaults.py` -> `instance_templates.py` -> `wce_tile::instance_templates`), keys typed
   as text.
-- A siege AI edge does not refer to nodes: edges and nodes are exported on their own, each with its boundary polylines.
-- Painting along a road (TEd's Spline Road splat) needs reverse engineering first.
-- Drawing a civilian shelter's target and a siege AI edge's two nodes.
+- A siege AI edge does not refer to nodes: edges and nodes are exported on their own, each with its boundary polylines; the game joins
+  them by geometry, and the editor shows a selected edge's nodes that way (`scripts/tile_siege_ends.txt`).
