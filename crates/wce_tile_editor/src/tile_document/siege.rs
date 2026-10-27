@@ -319,7 +319,94 @@ impl Tile {
     }
 }
 
+/// A siege edge's ends and the nodes they join, as the game joins them (docs/re/siege_ai.md, "The connection rule", `FUN_1027b320`): the
+/// node whose Bounding Box holds the Street's first point is the start, the one holding its last point the end, the last match winning;
+/// street and area connection edges against area, intersection and entry nodes, wall and palisade edges against wall area nodes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SiegeEdgeEnds {
+    /// The Street's first and last points (world metres).
+    pub at: [wce_foundation::math::Float3; 2],
+    pub nodes: [Option<usize>; 2],
+
+    /// A wall or palisade edge: joined to wall area nodes only, which CA's layouts almost never have (2 in the kit), so an end in no
+    /// node is the usual case and not a fault.
+    pub walls: bool,
+}
+
 impl Tile {
+    /// A siege polygon under an instance, by its name (`Street`, `Bounding Box`): its points in world metres (x, z; y 0).
+    fn siege_polygon(&self, e: usize, name: &str) -> Option<Vec<wce_foundation::math::Float3>> {
+        let sc = self.tscene();
+        let u = self.unit();
+        let c = sc.children(e).into_iter().find(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == name)?;
+        let w = world_transform(sc, c);
+        Some(sc.polygon_points(c).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
+            let p = w.position + w.rotation * v;
+            wce_foundation::math::Float3::new((p.x / u) as f32, 0.0, (p.z / u) as f32)
+        }).collect())
+    }
+
+    /// A siege edge's Street (world metres, y 0).
+    pub fn siege_polygon_world(&self, edge: usize) -> Option<Vec<wce_foundation::math::Float3>> {
+        self.siege_polygon(edge, "Street")
+    }
+
+    /// A siege node's rectangle (its Bounding Box's first four points, world metres), `None` without one.
+    pub fn siege_node_rect(&self, node: usize) -> Option<[wce_foundation::math::Float3; 4]> {
+        if self.tscene().type_of(node) != "SiegeAINodeInstance" {
+            return None;
+        }
+
+        let b = self.siege_polygon(node, "Bounding Box")?;
+        b.get(..4).and_then(|b| <[wce_foundation::math::Float3; 4]>::try_from(b).ok())
+    }
+
+    /// The exported siege nodes with a rectangle: element, whether a wall area node, its rectangle.
+    pub fn siege_nodes(&self) -> Vec<(usize, bool, [wce_foundation::math::Float3; 4])> {
+        let sc = self.tscene();
+        sc.find_all("SiegeAINodeInstance").into_iter().filter(|&n| exported(sc, n)).filter_map(|n| {
+            Some((n, sc.doc().get(n, "type").as_deref() == Some("SANT_WALL_AREA"), self.siege_node_rect(n)?))
+        }).collect()
+    }
+
+    /// Which nodes a siege edge joins (`SiegeEdgeEnds`); `None` for anything else or an edge without a Street.
+    pub fn siege_edge_ends(&self, edge: usize) -> Option<SiegeEdgeEnds> {
+        self.siege_edge_ends_among(edge, &self.siege_nodes())
+    }
+
+    /// `siege_edge_ends` against `siege_nodes`' list.
+    pub fn siege_edge_ends_among(&self, edge: usize, nodes: &[(usize, bool, [wce_foundation::math::Float3; 4])]) -> Option<SiegeEdgeEnds> {
+        let sc = self.tscene();
+        if sc.type_of(edge) != "SiegeAIEdgeInstance" {
+            return None;
+        }
+
+        let line = self.siege_polygon(edge, "Street").filter(|l| l.len() >= 2)?;
+        let at = [line[0], line[line.len() - 1]];
+        let walls = matches!(sc.doc().get(edge, "type").as_deref(), Some("SAET_WALL" | "SAET_PALISADE"));
+        let inside = |r: &[wce_foundation::math::Float3; 4], p: wce_foundation::math::Float3| {
+            // In the quad when on the same side of its four edges (it is a rectangle, its points in order).
+            let side = |a: wce_foundation::math::Float3, b: wce_foundation::math::Float3| (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+            let s = [side(r[0], r[1]), side(r[1], r[2]), side(r[2], r[3]), side(r[3], r[0])];
+            s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0)
+        };
+
+        let mut found = [None, None];
+        for (n, wall_area, r) in nodes {
+            if *wall_area != walls {
+                continue;
+            }
+
+            for k in 0..2 {
+                if inside(r, at[k]) {
+                    found[k] = Some(*n);
+                }
+            }
+        }
+
+        Some(SiegeEdgeEnds { at, nodes: found, walls })
+    }
+
     /// The siege layout the tile exports now (CA's, or a generated one): nodes, edges, the perimeter, the approaches, the deployment zones.
     pub fn current_siege_layout(&self) -> Layout {
         let sc = self.tscene();

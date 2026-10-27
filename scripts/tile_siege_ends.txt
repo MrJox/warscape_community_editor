@@ -1,0 +1,23 @@
+# The nodes a siege AI edge joins (Phase 5f of docs/plans/tile_ted_parity.md): no ids in the file, so the editor joins them as the game
+# does (docs/re/siege_ai.md, "The connection rule") and shows them: a selected edge its start (green) and end (blue) nodes' rectangles, a
+# red cross at an end in no node; a selected node the streets of the edges joining it. %TILE% is the kit's
+# encampments/att_encampment_roman_west_8x8/att_encampment_roman_west_8x8 (CA's layout: every area connection joins two nodes, the
+# palisades none, as they are matched to wall area nodes only). Captures %OUT%/siege_edge.png, %OUT%/siege_node.png; not saved.
+tile "%TILE%"
+frames 30
+siege_ends all
+tile_select 3343
+siege_ends 3287 3315
+gizmo none
+cam_look 512 0 512
+cam 2.4 1.2 140 0
+frames 30
+shot %OUT%/siege_edge.png
+frames 5
+tile_select 3245
+siege_ends - -
+tile_select 3287
+frames 30
+shot %OUT%/siege_node.png
+frames 5
+quit
