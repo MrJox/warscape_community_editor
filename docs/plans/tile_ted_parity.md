@@ -144,14 +144,14 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
     fire shader, charred by POSITION6.x = the burn amount (`docs/re/buildings.md`). The editor does the same (`MeshInstance::burning`,
     the fire passes of `GBUFFER_PASSES`, `s_fire_map` = `vfx_fire_diffuse`); `scripts/tile_building_look.txt`. Check the look against
     a burning building in game. `burn` is exported (`on_fire`); `burn_amount` is a preview only.
-  - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Still shown.
+  - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Hidden from the
+    Property Editor (user, 2026-10-28).
   - `dirt_level` never reaches the renderer; `building_tech_level` has no effect in TEd (no case in its property handler, no model
     choice reads it) and is not exported. Both hidden from the Property Editor (user, 2026-10-28); the file keeps them.
   - `destruction_level`: already previewed (the piece files of the level).
 - Every Property Editor row of a building checked (user, 2026-10-27; `scripts/tile_building_props.txt` on hadrians/8x1_lower): each lands
   in its attribute, shows where TEd shows it and undoes; a piece's own rows (visible, opacity, position, destruction level) act on that
-  piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (glow,
-  weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
+  piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
   surface_mode, show_collision, seasons) change nothing in the viewport, as in TEd. Script commands `assert_attr`, `assert_piece`,
   `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials is left for the renderer plan.
 

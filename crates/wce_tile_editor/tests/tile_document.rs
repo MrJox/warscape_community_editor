@@ -234,14 +234,14 @@ fn the_grid_of_a_building_is_teds_and_every_row_edits_the_file() {
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
     let rows = inspect(&mut d, b, None);
     for f in [
-        "flags", "surface_mode", "position", "euler", "key", "opacity", "bounds_colour", "burn", "burn_amount", "glow_amount", "destruction_level",
+        "flags", "surface_mode", "position", "euler", "key", "opacity", "bounds_colour", "burn", "burn_amount", "destruction_level",
         "indestructible", "toggleable", "capture_location",
     ] {
         assert!(rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))), "{f} is in the grid: {rows:?}");
     }
 
     // TEd shows these, wce does not: nothing uses them (docs/re/buildings.md); the file keeps them as they are.
-    for f in ["dirt_level", "building_tech_level"] {
+    for f in ["dirt_level", "glow_amount", "building_tech_level"] {
         assert!(!rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))), "{f} is hidden: {rows:?}");
     }
 
@@ -406,7 +406,7 @@ fn the_pieces_of_a_building_are_its_children_with_their_own_properties() {
         d.inspect(pieces[0], &mut r);
         r.fields
     };
-    for f in ["flags.visible", "surface_mode", "position", "orientation", "scale", "opacity", "burn", "burn_amount", "glow_amount", "bounds_colour", "show_collision", "seasons.Winter", "destruction_level"] {
+    for f in ["flags.visible", "surface_mode", "position", "orientation", "scale", "opacity", "burn", "burn_amount", "bounds_colour", "show_collision", "seasons.Winter", "destruction_level"] {
         assert!(rows.iter().any(|r| r == f), "{f} is in the grid of a piece: {rows:?}");
     }
 
