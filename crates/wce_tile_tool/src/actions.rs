@@ -438,6 +438,28 @@ impl TileTool {
         }
 
         gui::separator();
+        if gui::menu_item(&one("Copy", icons::COPY), Some("Ctrl+C"), false, some) {
+            self.copy_selection(e, false);
+            return;
+        }
+
+        if gui::menu_item(&one("Cut", icons::SCISSORS), Some("Ctrl+X"), false, some) {
+            self.copy_selection(e, true);
+            return;
+        }
+
+        let can_paste = !self.clipboard.is_empty();
+        if gui::menu_item(&one("Paste here", icons::CLIPBOARD), Some("Ctrl+V"), false, can_paste) {
+            self.paste(e, true);
+            return;
+        }
+
+        if gui::menu_item(&one("Paste in place", icons::CLIPBOARD), Some("Ctrl+Shift+V"), false, can_paste) {
+            self.paste(e, false);
+            return;
+        }
+
+        let Some(d) = document(e) else { return };
         if gui::menu_item(&one("Duplicate", icons::COPY), Some("Ctrl+D"), false, some)
             && let Some(s) = sel
             && let Err(err) = d.duplicate(s)

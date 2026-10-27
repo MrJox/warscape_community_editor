@@ -180,7 +180,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Box select (TEd's selection shape).
 - Select by type / key in the UI (`tile_select_all` exists only as a command).
 - Invert selection; saved selections.
-- Copy / paste.
+- Copy / paste: done (2026-10-28). Ctrl+C / Ctrl+X / Ctrl+V (at the mouse: the first item there, the rest around it as they were) /
+  Ctrl+Shift+V (in place), and in the selection menu: into the working layer, one undo entry, the pasted items selected; across the
+  session's tiles (the tool keeps the clipboard). Each item keeps its world rotation; a landscape one stands on the terrain where it
+  lands; a civilian shelter's target goes along (`TileDocument::copy_items`, `paste`, `carry_points`; `copy`, `paste`,
+  `scripts/tile_copy_paste.txt`).
 - Align / distribute: done (2026-10-28; wce's, TEd has none). The selection menu's "Align / distribute": x, z or height (freeform
   only) to the first selected, the lowest, the middle or the highest; even gaps along x or z between the two furthest apart, or on the
   line from the first selected to the last; one undo entry each (`TileDocument::align`, `distribute`, `move_instances`; `align`,

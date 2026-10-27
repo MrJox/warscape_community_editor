@@ -23,7 +23,7 @@ use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
-use super::{AlignTo, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
+use super::{AlignTo, CopiedItem, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
     (r * 180.0 / std::f64::consts::PI) as f32
@@ -614,6 +614,67 @@ impl TileDocument {
         let name = format!("Duplicate {}", self.tile().tscene().type_of(copy));
         self.push_splice(name, mark, vec![item_of(elem)], vec![item_of(copy)]);
         Ok(copy)
+    }
+
+    /// Copies elements (instances, layers, groups; one inside another copied goes with it): each one's text and where it is in the world
+    /// (metres, its world rotation), for `paste` in this tile or another.
+    pub fn copy_items(&self, elems: &[usize]) -> Vec<CopiedItem> {
+        let t = self.tile();
+        let sc = t.tscene();
+        let n = sc.doc().elements().len();
+        let wanted = elems.iter().copied().filter(|&e| e < n && (t.is_instance(e) || (sc.is_layer(e) && sc.type_of(e) != "SCENE_GRAPH"))).collect::<Vec<_>>();
+        wanted.iter().copied().filter(|&e| !wanted.iter().any(|&a| a != e && sc.is_descendant(e, a))).map(|e| {
+            let w = world_transform(sc, e);
+            let u = t.unit();
+            let at = Float3::new((w.position.x / u) as f32, (w.position.y / u) as f32, (w.position.z / u) as f32);
+            CopiedItem { text: sc.element_text(e), at, rotation: w.rotation, landscape: t.placement_of_attr(e) == Placement::Landscape }
+        }).collect()
+    }
+
+    /// Pastes copied elements into `into`, each moved by `offset` (metres; a landscape one stands on the terrain where it lands), in one
+    /// undo entry; the new elements.
+    ///
+    /// # Errors
+    ///
+    /// Nothing to paste, or a text is not an element.
+    pub fn paste(&mut self, items: &[CopiedItem], into: usize, offset: Float3) -> Result<Vec<usize>, String> {
+        if items.is_empty() {
+            return Err("nothing to paste".to_owned());
+        }
+
+        self.check_structure(&[], Some(into))?;
+        let mark = self.begin()?;
+        let result = (|| -> Result<Vec<usize>, String> {
+            let mut out = vec![];
+            for it in items {
+                let g = self.tscene_mut().insert_element_text(into, &it.text)?;
+                let t = self.tile();
+                let u = t.unit();
+                let (x, z) = (it.at.x + offset.x, it.at.z + offset.z);
+                let y = if it.landscape { t.terrain_height(x, z) } else { it.at.y + offset.y };
+                let before = t.tscene().position(g);
+                set_world_position(self.tscene_mut(), g, scene_point(Float3::new(x, y, z), u));
+                set_world_rotation(self.tscene_mut(), g, &it.rotation);
+                self.carry_points(g, before);
+                out.push(g);
+            }
+
+            Ok(out)
+        })();
+
+        match result {
+            Ok(new) => {
+                let name = if new.len() == 1 { format!("Paste {}", self.tile().tscene().type_of(new[0])) } else { format!("Paste {} items", new.len()) };
+                self.push_splice(name, mark, vec![], new.iter().map(|&g| item_of(g)).collect());
+                Ok(new)
+            }
+
+            Err(e) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(e)
+            }
+        }
     }
 
     pub fn remove(&mut self, elem: usize) -> bool {

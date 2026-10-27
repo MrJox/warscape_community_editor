@@ -1757,6 +1757,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| if t.go_to_camera_view(e, &name) { ok("") } else { fail(format!("no view '{name}'")) })
     });
 
+    c.add("copy", "copy [cut]", "copy (or cut) the selection, as Ctrl+C / Ctrl+X", |e, a| {
+        let cut = a.first().is_some_and(|x| x == "cut");
+        with_tile(e, |t, e| {
+            t.copy_selection(e, cut);
+            ok(t.status.clone())
+        })
+    });
+
+    c.add("paste", "paste [<x m> <z m> | inplace]", "paste the copied items: the first at a ground point (the rest around it), or where they were", |e, a| {
+        let at = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        with_tile(e, |t, e| {
+            if let Some((x, z)) = at {
+                let d = document(e).expect("a tile");
+                t.terrain_hit = true;
+                t.snapped_cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+            }
+
+            if t.paste(e, at.is_some()) { ok(t.status.clone()) } else { fail(t.status.clone()) }
+        })
+    });
+
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();

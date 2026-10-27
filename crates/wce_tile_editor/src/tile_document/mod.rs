@@ -579,6 +579,16 @@ pub fn piece_of(item: u64) -> Option<(usize, usize)> {
     (item & PIECE_ITEM != 0).then_some((((item & (PIECE_ITEM - 1)) >> 16) as usize, (item & 0xffff) as usize))
 }
 
+/// An element copied by `TileDocument::copy_items`: its text, where it was (world metres) and its world rotation, and whether it stood on
+/// the terrain (a landscape instance).
+#[derive(Clone, Debug)]
+pub struct CopiedItem {
+    pub text: Vec<u8>,
+    pub at: wce_foundation::math::Float3,
+    pub rotation: wce_foundation::math::Double3x3,
+    pub landscape: bool,
+}
+
 /// Where `TileDocument::align` lines instances up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AlignTo {
