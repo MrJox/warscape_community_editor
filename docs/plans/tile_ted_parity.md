@@ -140,15 +140,18 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
     0x2000, `rigidstandard ps30_alpha_blend_40`), which the renderer does not have: opaque materials show no fade yet. The G-buffer
     dissolve (`g_dissolve_enable`) was tried and dropped: its test (opacity - dissolve * (1 - opacity) >= 0.5) only fades between 0.75
     and 0.5 and hides the building below that.
-  - `burn` sets a render flag (a burning look, not traced further); `burn_amount` and `glow_amount` go to two render parameters whose
-    shader inputs were not found (rigidstandard does not read them); `dirt_level` never reaches the renderer. Not previewed.
-  - `building_tech_level`: no effect in TEd's viewport (its property handler has no case for it, no model choice reads it) and the game
-    export does not carry it. Nothing to preview.
+  - `burn` / `burn_amount`: done (2026-10-28). The game's burning buildings: render flag 0x200 draws the pieces with their material's
+    fire shader, charred by POSITION6.x = the burn amount (`docs/re/buildings.md`). The editor does the same (`MeshInstance::burning`,
+    the fire passes of `GBUFFER_PASSES`, `s_fire_map` = `vfx_fire_diffuse`); `scripts/tile_building_look.txt`. Check the look against
+    a burning building in game. `burn` is exported (`on_fire`); `burn_amount` is a preview only.
+  - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Still shown.
+  - `dirt_level` never reaches the renderer; `building_tech_level` has no effect in TEd (no case in its property handler, no model
+    choice reads it) and is not exported. Both hidden from the Property Editor (user, 2026-10-28); the file keeps them.
   - `destruction_level`: already previewed (the piece files of the level).
 - Every Property Editor row of a building checked (user, 2026-10-27; `scripts/tile_building_props.txt` on hadrians/8x1_lower): each lands
   in its attribute, shows where TEd shows it and undoes; a piece's own rows (visible, opacity, position, destruction level) act on that
-  piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (dirt,
-  burn, glow, tech level, weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
+  piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (glow,
+  weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
   surface_mode, show_collision, seasons) change nothing in the viewport, as in TEd. Script commands `assert_attr`, `assert_piece`,
   `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials is left for the renderer plan.
 

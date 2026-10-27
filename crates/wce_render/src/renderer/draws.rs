@@ -129,12 +129,17 @@ impl Renderer {
 
     /// Draws the visible batches of both sets with the bound shaders (the G-buffer and the shadow cascades share this).
     pub(crate) fn draw_batches(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh) -> bool) -> (u64, u64) {
+        self.draw_batches_burning(sets, viss, firsts, |r, m, _| each(r, m))
+    }
+
+    /// `draw_batches`, telling `each` whether the batch's instances are burning (`DrawSet::batch_burning`).
+    pub(crate) fn draw_batches_burning(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh, bool) -> bool) -> (u64, u64) {
         let (mut instances, mut triangles) = (0u64, 0u64);
         for k in 0..2 {
             let (set, vis) = (sets[k], viss[k]);
             for &b in &vis.active {
                 let m = set.batch_mesh(b);
-                if !each(self, m) {
+                if !each(self, m, set.batch_burning(b)) {
                     continue;
                 }
 
@@ -464,7 +469,7 @@ impl Renderer {
                 params[7] = if snowy { params[7].max(1.0) } else { 0.0 };
             }
 
-            let item = self.draw_lists.draws.add(&m, &e.world, Some(&params), mi.casts_shadow, mi.lod, e.id);
+            let item = self.draw_lists.draws.add_burning(&m, &e.world, Some(&params), mi.casts_shadow, mi.lod, mi.burning, e.id);
             if let Some(slot) = self.draw_lists.item_of_entity.get_mut(e.id as usize) {
                 *slot = item;
             }

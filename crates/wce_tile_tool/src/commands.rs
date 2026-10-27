@@ -1947,12 +1947,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "assert_piece", "assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]",
-        "test: a model piece of the selected instance on the scene: drawn or hidden, its file holds the text, or where it is from the building's own matrix (scene units)",
+        "assert_piece", "assert_piece <piece> visible|burning <0|1> | model <text> | offset <x> <y> <z> [tolerance]",
+        "test: a model piece of the selected instance on the scene: drawn or hidden, burning or not, its file holds the text, or where it is from the building's own matrix (scene units)",
         |e, a| {
             let el = primary(e);
             let (Some(d), Some(el), Some(k), Some(what)) = (document(e), el, a.first().and_then(|x| x.parse::<u64>().ok()), a.get(1)) else {
-                return fail("usage: assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]");
+                return fail("usage: assert_piece <piece> visible|burning <0|1> | model <text> | offset <x> <y> <z> [tolerance]");
             };
 
             let (ids, w) = (d.tile().piece_entities(el), d.tile().drawn_matrix(el));
@@ -1965,6 +1965,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let Some(wce_scene::render_scene::Payload::MeshInstance(mi)) = Some(&en.payload) else { return fail("not a mesh") };
             match (what.as_str(), a.get(2)) {
                 ("visible", Some(v)) => if en.visible == (v == "1") { ok("") } else { fail(format!("visible is {}", en.visible)) },
+                ("burning", Some(v)) => if mi.burning == (v == "1") { ok("") } else { fail(format!("burning is {}", mi.burning)) },
                 ("model", Some(t)) => if mi.model.contains(t.as_str()) { ok("") } else { fail(format!("model is {}", mi.model)) },
                 ("offset", Some(_)) => {
                     let parsed = (a.len() >= 5).then(|| Some((number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
@@ -1978,7 +1979,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     }
                 }
 
-                _ => fail("usage: assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]"),
+                _ => fail("usage: assert_piece <piece> visible|burning <0|1> | model <text> | offset <x> <y> <z> [tolerance]"),
             }
         },
     );

@@ -785,8 +785,16 @@ impl Tile {
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 let p5 = [0.0, 0.0, 0.0, 1.0];
-                let p4 = props.map_or(p4, |p| [p4[0], p4[1], p4[2], opacity_w(p.opacity)]);
-                let e = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, p4, p5, ..Default::default() }), self.source(item_of(elem)));
+                // A building's or a mesh's look (its piece's own once edited): the opacity, and on fire the burn amount (POSITION6.x).
+                let (p4, p6, burning) = if self.tscene().type_of(elem) == "VEGETATION_INSTANCE" {
+                    (p4, [0.0; 4], false)
+                } else {
+                    let look = self.piece_props_or_building(elem, i);
+                    ([p4[0], p4[1], p4[2], opacity_w(look.opacity)], burn_row(&look), look.burn)
+                };
+
+                let mi = MeshInstance { model, lod: true, p4, p5, p6, burning, ..Default::default() };
+                let e = scene.add(layer, world, Payload::MeshInstance(mi), self.source(item_of(elem)));
                 if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
                     en.visible = false;
                 }
@@ -994,6 +1002,12 @@ impl Tile {
     }
 }
 
+/// POSITION6 of a piece: x the burn amount, which the fire shaders char the colour by (TEd hands `burn_amount` to the renderer, the
+/// engine puts it there; in a battle the engine ramps it up while the building burns). The plain shaders do not read x.
+fn burn_row(p: &PieceProps) -> [f32; 4] {
+    [p.burn_amount.clamp(0.0, 1.0), 0.0, 0.0, 0.0]
+}
+
 /// POSITION4.w of an opacity (`Tile::opacity_w`).
 fn opacity_w(opacity: f32) -> f32 {
     (opacity.clamp(0.0, 1.0) * 1000.0).round()
@@ -1186,6 +1200,8 @@ impl Tile {
                 if let Payload::MeshInstance(mi) = &mut en.payload {
                     mi.model = model;
                     mi.p4[3] = opacity_w(p.opacity);
+                    mi.p6 = burn_row(&p);
+                    mi.burning = p.burn;
                 }
             }
 

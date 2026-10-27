@@ -89,21 +89,26 @@ impl Renderer {
         // whose material has no shaders at all is not drawn. With the game's terrain pass, TerrainBlend meshes leave the table: their geometry
         // pass below marks them as terrain pixels, and the terrain pass projects the terrain's material onto them (blend_mesh.rs).
         self.draw_lists.gbuffer_firsts = firsts;
-        let shaders = GBUFFER_PASSES.map(|(_, _, vs, ps, _)| self.shader(vs).zip(self.shader(ps)));
-        let pass_of = |m: &GpuMesh| {
+        let shaders = GBUFFER_PASSES.map(|(_, _, _, vs, ps, _)| self.shader(vs).zip(self.shader(ps)));
+        let pass_in = |m: &GpuMesh, fire: bool| {
+            let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1 && p.2 == fire)?;
+            let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1 && p.2 == fire).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());
+            alpha.or(Some(opaque).filter(|&k| shaders[k].is_some()))
+        };
+
+        // A burning batch takes its material's fire shader (the plain one when the material has none).
+        let pass_of = |m: &GpuMesh, burning: bool| {
             if m.kind == MeshKind::TerrainBlend && blend_in_terrain {
                 return None;
             }
 
-            let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1)?;
-            let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());
-            alpha.or(Some(opaque).filter(|&k| shaders[k].is_some()))
+            burning.then(|| pass_in(m, true)).flatten().or_else(|| pass_in(m, false))
         };
 
         for (pass, pair) in shaders.iter().enumerate() {
             let Some((vs, ps)) = pair.clone() else { continue };
             if !self.env.active {
-                self.gpu_timer.mark(GBUFFER_PASSES[pass].4);
+                self.gpu_timer.mark(GBUFFER_PASSES[pass].5);
             }
 
             let pass_layout = match GBUFFER_PASSES[pass].0 {
@@ -117,8 +122,9 @@ impl Renderer {
 
             let slots = self.slots_of(&ps);
             let mut bound = false;
-            let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m| {
-                if pass_of(m) != Some(pass) {
+            let fire = GBUFFER_PASSES[pass].2;
+            let (instances, triangles) = self.draw_batches_burning([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning| {
+                if pass_of(m, burning) != Some(pass) {
                     return false;
                 }
 
@@ -134,7 +140,8 @@ impl Renderer {
                     }
 
                     r.bind(&ps);
-                    bind_srv(&r.ctx, &ps, "s_fire_map", r.res.black_srv.as_ref());
+                    let fire_map = if fire { r.textures.get(FIRE_MAP, true).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
+                    bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
                     let snow = r.snow_normals_srv();
                     bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
 

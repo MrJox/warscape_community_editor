@@ -76,21 +76,43 @@ pub(crate) const TERRAIN_BLEND_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs
 /// (the ground's colour under the building), which the editor doesn't build.
 pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_gbuffer";
 
-/// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, vertex and pixel shader, GPU timer label.
-/// rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, &str, &str, &str); 12] = [
-    (MeshKind::Standard, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
-    (MeshKind::Standard, true, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
-    (MeshKind::TiledDirtmap, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
-    (MeshKind::TiledDirtmap, true, RIGID_VS, TILED_DIRT_GBUFFER_ALPHA_PS, "gbuffer tiled dirt alpha-tested"),
-    (MeshKind::Dirtmap, false, RIGID_VS, DIRT_GBUFFER_PS, "gbuffer dirt"),
-    (MeshKind::Dirtmap, true, RIGID_VS, DIRT_GBUFFER_ALPHA_PS, "gbuffer dirt alpha-tested"),
-    (MeshKind::AmbientMap, false, RIGID_VS, AMBIENT_MAP_GBUFFER_PS, "gbuffer ambient map"),
-    (MeshKind::AmbientMap, true, RIGID_VS, AMBIENT_MAP_GBUFFER_ALPHA_PS, "gbuffer ambient map alpha-tested"),
-    (MeshKind::TreeBranch, false, TREE_BRANCH_VS, TREE_BRANCH_PS, "gbuffer tree branches"),
-    (MeshKind::TreeLeaf, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
-    (MeshKind::TreeBillboard, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
-    (MeshKind::TerrainBlend, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
+pub(crate) const FIRE_GBUFFER_PS: &str = "dx11_sm_3_0_rigidstandardfire.hlsl_ps_ps30_gbuffer";
+pub(crate) const FIRE_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidstandardfire.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const TILED_DIRT_FIRE_GBUFFER_PS: &str = "dx11_sm_3_0_rigidtileddirtmapfiremesh.hlsl_ps_ps30_gbuffer";
+pub(crate) const TILED_DIRT_FIRE_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidtileddirtmapfiremesh.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const DIRT_BURN_GBUFFER_PS: &str = "dx11_sm_3_0_rigidwithdirtburnmesh.hlsl_ps_ps30_gbuffer";
+pub(crate) const DIRT_BURN_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidwithdirtburnmesh.hlsl_ps_ps30_gbuffer_alpha_test";
+pub(crate) const AMBIENT_MAP_FIRE_GBUFFER_PS: &str = "dx11_sm_3_0_rigidambientmapfiremesh.hlsl_ps_ps30_gbuffer";
+pub(crate) const AMBIENT_MAP_FIRE_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidambientmapfiremesh.hlsl_ps_ps30_gbuffer_alpha_test";
+
+/// The texture the engine binds as `s_fire_map` of the rigid materials (empire.retail.dll sets it up with the blood map).
+pub(crate) const FIRE_MAP: &str = "commontextures/vfx_fire_diffuse.dds";
+
+/// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, burning or not, vertex and pixel shader, GPU
+/// timer label. rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's. A burning instance (the
+/// engine's render flag 0x200: a building on fire, or TEd's `burn`) draws with its material's fire variant, which chars the colour by
+/// POSITION6.x (the burn amount) with embers from `s_fire_map`.
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] = [
+    (MeshKind::Standard, false, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
+    (MeshKind::Standard, true, false, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
+    (MeshKind::TiledDirtmap, false, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
+    (MeshKind::TiledDirtmap, true, false, RIGID_VS, TILED_DIRT_GBUFFER_ALPHA_PS, "gbuffer tiled dirt alpha-tested"),
+    (MeshKind::Dirtmap, false, false, RIGID_VS, DIRT_GBUFFER_PS, "gbuffer dirt"),
+    (MeshKind::Dirtmap, true, false, RIGID_VS, DIRT_GBUFFER_ALPHA_PS, "gbuffer dirt alpha-tested"),
+    (MeshKind::AmbientMap, false, false, RIGID_VS, AMBIENT_MAP_GBUFFER_PS, "gbuffer ambient map"),
+    (MeshKind::AmbientMap, true, false, RIGID_VS, AMBIENT_MAP_GBUFFER_ALPHA_PS, "gbuffer ambient map alpha-tested"),
+    (MeshKind::Standard, false, true, RIGID_VS, FIRE_GBUFFER_PS, "gbuffer burning"),
+    (MeshKind::Standard, true, true, RIGID_VS, FIRE_GBUFFER_ALPHA_PS, "gbuffer burning alpha-tested"),
+    (MeshKind::TiledDirtmap, false, true, RIGID_VS, TILED_DIRT_FIRE_GBUFFER_PS, "gbuffer burning tiled dirt"),
+    (MeshKind::TiledDirtmap, true, true, RIGID_VS, TILED_DIRT_FIRE_GBUFFER_ALPHA_PS, "gbuffer burning tiled dirt alpha-tested"),
+    (MeshKind::Dirtmap, false, true, RIGID_VS, DIRT_BURN_GBUFFER_PS, "gbuffer burning dirt"),
+    (MeshKind::Dirtmap, true, true, RIGID_VS, DIRT_BURN_GBUFFER_ALPHA_PS, "gbuffer burning dirt alpha-tested"),
+    (MeshKind::AmbientMap, false, true, RIGID_VS, AMBIENT_MAP_FIRE_GBUFFER_PS, "gbuffer burning ambient map"),
+    (MeshKind::AmbientMap, true, true, RIGID_VS, AMBIENT_MAP_FIRE_GBUFFER_ALPHA_PS, "gbuffer burning ambient map alpha-tested"),
+    (MeshKind::TreeBranch, false, false, TREE_BRANCH_VS, TREE_BRANCH_PS, "gbuffer tree branches"),
+    (MeshKind::TreeLeaf, false, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
+    (MeshKind::TreeBillboard, false, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
+    (MeshKind::TerrainBlend, false, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
 ];
 
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
