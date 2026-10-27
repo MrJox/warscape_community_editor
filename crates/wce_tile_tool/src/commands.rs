@@ -856,6 +856,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("level_along", "level_along", "TEd's Spline Road: level the ground under the selected line to its height (one undo entry)", |e, _| {
+        let sel = primary(e);
+        with_tile(e, |t, e| {
+            let Some(sel) = sel else { return fail("select a spline, polygon or line") };
+            let Some(d) = document(e) else { return no_tile() };
+            match d.level_along(sel, &t.brush) {
+                Ok(n) => ok(format!("{n} dabs")),
+                Err(why) => fail(why),
+            }
+        })
+    });
+
     c.add("stroke_along", "stroke_along", "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)", |e, _| {
         let sel = primary(e);
         with_tile(e, |t, e| {

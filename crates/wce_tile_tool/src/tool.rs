@@ -2529,6 +2529,16 @@ impl TileTool {
         let points = sc.polygon_points(s);
         gui::text(&format!("selected: {} points", points.len()));
         gui::same_line();
+        if gui::small_button("Level the ground") {
+            self.status = d.level_along(s, &self.brush).map_or_else(|why| why, |n| format!("ground levelled along the spline: {n} dabs"));
+            return;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(crate::actions::LEVEL_ALONG_TIP);
+        }
+
+        gui::same_line();
         if gui::small_button("Flip direction") {
             self.status = d.flip_spline(s).map_or_else(|why| why, |()| "flipped: the spline runs the other way".to_owned());
             return;

@@ -91,7 +91,15 @@ file's order. The editor itself is described in
 ### Phase 5a: terrain painting
 Done: the height brushes, the blend brush, the ground type brush, the falloff curve editor, the image brush, the stroke along a line,
 the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 3). Left:
-- Height brushes: noise, stamp, import PNG.
+- TEd's height tools (2026-10-27, its Height Map module fn 0x00487d50): Add, Subtract, Smooth (a blur), Set (`PM2OpFalloffSet0`) and
+  Spline Road; wce has the first four (raise, lower, smooth, flatten / level). Noise, stamp and PNG import are not TEd's: wce additions
+  the user asked for (2026-10-27).
+- Done (2026-10-27): **Spline Road** (`Ted::SplineBlendPaintOperation`'s height twin: `apply` fn 0x00485160 moves a height inside the
+  road's strip towards the road's height there, `h + (road - h) * w`): `TileDocument::level_along`, a flatten stroke along the selected
+  line whose target at each dab is the line's height there, as wide as the spline (else the brush's radius), the brush's falloff for
+  the banks, full strength; landscape instances follow. The brush Inspector's and the spline section's "Level the ground" buttons
+  (tooltips), command `level_along`, `scripts/tile_level_along.txt`.
+- Height brushes (wce's): noise, stamp, import PNG.
 - Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
   Subtract among its operations, `docs/re/terrain.md`).
 - TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's
