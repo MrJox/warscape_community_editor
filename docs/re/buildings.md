@@ -174,6 +174,17 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   multiply the diffuse alpha by floor(P4.w) * 0.001, or with g_dissolve_enable keep opacity - dissolve * (1 - opacity) (the
   screen-tiled `s_dissolve_map`) against the 0.5 test; P6.y brightens, P6.z desaturates.
 - The game export (`BATTLEFIELD_BUILDING`) carries burn (`on_fire`) and the destruction level (`starting_damage`), none of the rest.
+- Burning, in the game (empire.retail.dll, 2026-10-28): a burning building's render parameter [2] (the one TEd's `burn_amount` sets) is
+  ramped by the time since the fire started (0x10438340, 0x10525250; the tweakers `BURN_SHADER_AMOUNT` 0.3,
+  `BUILDING_LITE_BURN_SHADER_AMOUNT` 0.3, `BUILDING_LITE_MAX_BURN_SHADER_AMOUNT` 1.0) and render flag 0x200 is set. The flag draws the
+  pieces with their material's fire variant (`rigidstandardfire`, `rigidtileddirtmapfiremesh`, `rigidambientmapfiremesh`,
+  `rigidwithdirtburnmesh`; G-buffer and alpha-test shaders), which char the colour by POSITION6.x with embers from `s_fire_map`
+  (`commontextures/vfx_fire_diffuse`, bound with the blood map by 0x117c3830). So [2] is POSITION6.x. A tile's `burn` starts the battle
+  with the building on fire (`on_fire`); its `burn_amount` is TEd's preview only (the game ramps its own). Attila's building models have
+  no burning meshes (material 56: none in the 5639 building models).
+- Glow: TEd's `glow_amount` goes to parameter [3], which no rigid instance path of the kit's engine reads, and the export does not carry
+  it. The game's glows are its unit and deployable highlights (`UNIT_GLOW_INTENSITY_SELECTION`, `..._MOUSEOVER`,
+  `DEPLOYABLE_GLOW_INTENSITY_...`), its own parameters (POSITION6.y brightens). `glow_amount` does nothing in TEd or the game.
 
 ## Wall pieces (2026-10-24)
 

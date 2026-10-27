@@ -101,6 +101,9 @@ struct Batch {
     model: Arc<GpuModel>,
     lod: usize,
     mesh: usize,
+
+    /// Its instances are burning: the G-buffer pass draws them with their material's fire shader.
+    burning: bool,
 }
 
 /// One view's request.
@@ -176,8 +179,9 @@ pub struct DrawSet {
 
     // Models and batches.
     models: Vec<ModelEntry>,
-    /// Model address -> model index; the batches keep the models alive, so an address stays unique.
-    model_of: HashMap<usize, u32>,
+    /// (Model address, burning) -> model index; the batches keep the models alive, so an address stays unique. The burning instances of
+    /// a model have batches of their own.
+    model_of: HashMap<(usize, bool), u32>,
     batch: Vec<Batch>,
 }
 
@@ -249,8 +253,13 @@ impl DrawSet {
         if b.lod == 0 { &b.model.meshes[b.mesh] } else { &b.model.lods[b.lod - 1].meshes[b.mesh] }
     }
 
-    fn model_index(&mut self, m: &Arc<GpuModel>) -> u32 {
-        if let Some(&index) = self.model_of.get(&(Arc::as_ptr(m) as usize)) {
+    /// Whether a batch's instances are burning.
+    pub fn batch_burning(&self, batch: u32) -> bool {
+        self.batch[batch as usize].burning
+    }
+
+    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool) -> u32 {
+        if let Some(&index) = self.model_of.get(&(Arc::as_ptr(m) as usize, burning)) {
             return index;
         }
 
@@ -269,7 +278,7 @@ impl DrawSet {
             me.lod_first.push(me.lod_batch.len() as u32);
             for mesh in 0..meshes.len() {
                 me.lod_batch.push(self.batch.len() as u32);
-                self.batch.push(Batch { model: m.clone(), lod, mesh });
+                self.batch.push(Batch { model: m.clone(), lod, mesh, burning });
             }
 
             me.lod_distance.push(if distance > 0.0 { distance } else { f32::INFINITY });
@@ -284,13 +293,19 @@ impl DrawSet {
 
         let index = self.models.len() as u32;
         self.models.push(me);
-        self.model_of.insert(Arc::as_ptr(m) as usize, index);
+        self.model_of.insert((Arc::as_ptr(m) as usize, burning), index);
         index
     }
 
     /// Adds an item; `params` are POSITION4..7, `None` for the engine's defaults. Returns the item's index.
     pub fn add(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, entity: EntityId) -> u32 {
-        let mi = self.model_index(model);
+        self.add_burning(model, world, params, casts_shadow, lod, false, entity)
+    }
+
+    /// `add`, burning or not (the fire shaders).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_burning(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, burning: bool, entity: EntityId) -> u32 {
+        let mi = self.model_index(model, burning);
         let me = &self.models[mi as usize];
         let c = world.transform_point(me.centre);
         let sphere = [c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()];

@@ -40,6 +40,10 @@ the range by the camera's movement since the measurement; 3. an optional stable-
 
 ## Smaller items
 
+- `s_fire_map` of the plain rigid G-buffer shaders: rigidstandard samples it when `cb1[1].y == 1` (a weather type: wet streaks scrolled
+  by time); the engine binds `commontextures/vfx_fire_diffuse` there for every rigid material, the renderer binds black outside the
+  burning passes. Find the weather type, then bind it everywhere.
+
 - Blended forward pass for rigid meshes (from docs/plans/tile_ted_parity.md 5d): a building below opacity 1 is filed apart by the engine
   (render flag 0x2000) and drawn through the blended forward shaders (`rigidstandard ps30_alpha_blend_40`, `rigid_forward_lighting`),
   which multiply the alpha by floor(POSITION4.w) * 0.001. The renderer has none of them: faded buildings with opaque materials show no

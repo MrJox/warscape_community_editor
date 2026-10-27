@@ -191,7 +191,7 @@ fn write_material(w: &mut W, m: &TerrainMaterial) {
 
 fn write_payload(w: &mut W, p: &Payload) -> bool {
     match p {
-        Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4, p5, p6, p7 }) => {
+        Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4, p5, p6, p7, burning: _ }) => {
             w.u8(1);
             w.str(model);
             w.bool(*casts_shadow);
@@ -411,7 +411,7 @@ fn read_payload(r: &mut R) -> Result<Payload, String> {
     Ok(match r.u8()? {
         1 => {
             let (model, casts_shadow, lod) = (r.str()?, r.bool()?, r.bool()?);
-            Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4: r.f32_array()?, p5: r.f32_array()?, p6: r.f32_array()?, p7: r.f32_array()? })
+            Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4: r.f32_array()?, p5: r.f32_array()?, p6: r.f32_array()?, p7: r.f32_array()?, burning: false })
         }
 
         2 => Payload::Decal(Decal { model: r.str()?, tiled: r.bool()?, opacity: r.f32()?, parallax: r.f32()? }),

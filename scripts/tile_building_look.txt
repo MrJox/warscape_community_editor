@@ -1,4 +1,4 @@
-# A building's look properties (Phase 5d of docs/plans/tile_ted_parity.md): opacity goes to POSITION4.w as the engine packs it
+# A building's look properties (Phase 5d of docs/plans/tile_ted_parity.md): burn and burn_amount draw it burning (below); opacity goes to POSITION4.w as the engine packs it
 # (round(opacity * 1000)), set and undone through the Inspector (`tile_edit`). Two captures, %OUT%/opacity_1.png and %OUT%/opacity_05.png (only
 # alpha-tested materials fade until the renderer has the blended forward pass). Run with WCE_TILE_WORKSPACE set to a scratch folder.
 new_tile wce_look_test 2 2 10 32
@@ -26,4 +26,22 @@ assert_instance_param 3 334
 undo
 frames 3
 assert_instance_param 3 1000
+
+# burn: the pieces draw with their material's fire shader, charred by burn_amount (POSITION6.x); %OUT%/burn_1.png, %OUT%/burn_03.png.
+assert_piece 0 burning 0
+tile_edit selected burn true
+frames 10
+assert_piece 0 burning 1
+assert_instance_param 8 1
+shot %OUT%/burn_1.png
+frames 5
+tile_edit selected burn_amount 0.3
+frames 10
+assert_instance_param 8 0.3
+shot %OUT%/burn_03.png
+frames 5
+undo
+undo
+frames 3
+assert_piece 0 burning 0
 quit
