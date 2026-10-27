@@ -129,7 +129,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 
 ### Phase 5d: building catalogue
 - Key search UI beyond the typed key: done, the Create panel searches every valid key by words.
-- Thumbnails from the models (wce-only, user 2026-10-27): to do.
+- Thumbnails from the models (wce-only, user 2026-10-27): done. The Create panel's tooltip of a building, tree, model or prefab shows its
+  models (what the placing preview draws) rendered alone by a renderer of the panel's own, under the editor's weather; made when hovered
+  or for the whole filtered list ("Make thumbnails of the list"), kept as PNGs in the cache folder per game folder
+  (`wce_tile_tool::thumbnails`; `thumbnail` script command, `scripts/tile_thumbnails.txt`).
 - The look properties, traced in TEd and the kit's Warscape.dll (2026-10-27, `docs/re/buildings.md` "Look properties"):
   - `opacity`: done. TEd hands it to the renderer, which packs round(opacity * 1000) into POSITION4.w; the pieces draw with it
     (`Tile::opacity_w`, kept up when the Inspector sets it; `tile_set_prop`, `assert_instance_param`, `scripts/tile_building_look.txt`).

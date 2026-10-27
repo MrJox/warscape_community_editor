@@ -1605,6 +1605,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| crate::create_panel::make_for_script(t, e, &what, &key).map_or_else(fail, |()| ok("")))
     });
 
+    c.add(
+        "thumbnail", "thumbnail <building | type | prefab> <key> [copy to.png]",
+        "ask for the Create panel thumbnail of an entry; ok with its file once it is made (wait frames and call again), copied when asked",
+        |e, a| {
+            let (Some(what), Some(key)) = (a.first().cloned(), a.get(1).cloned()) else { return fail("usage: thumbnail <building | type | prefab> <key> [copy to.png]") };
+            let copy = a.get(2).cloned();
+            with_tile(e, |t, e| match crate::create_panel::thumbnail_for_script(t, e, &what, &key) {
+                Ok(Some(file)) => match copy.map(|to| std::fs::copy(&file, to)) {
+                    Some(Err(err)) => fail(err.to_string()),
+                    _ => ok(file.display().to_string()),
+                },
+
+                Ok(None) => fail("not made yet"),
+                Err(err) => fail(err),
+            })
+        },
+    );
+
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();

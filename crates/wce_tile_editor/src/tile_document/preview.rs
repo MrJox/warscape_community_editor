@@ -140,10 +140,24 @@ impl Tile {
 
     /// The preview's parts from the text: every instance of it, relative to its root element.
     fn build_preview(&mut self, text: &[u8]) {
-        let Ok(mini) = TedScene::parse_any(text.to_vec()) else { return };
+        let (items, lines) = self.preview_parts(text);
+        self.preview.items = items;
+        self.preview.lines = lines;
+    }
+
+    /// The models `text` draws (an element as `insert_element_text` takes it), in metres around its root element: what a thumbnail shows.
+    pub fn model_parts(&self, text: &[u8]) -> Vec<(Float4x4, MeshInstance)> {
+        self.preview_parts(text).0.into_iter().filter_map(|it| match it.payload {
+            Payload::MeshInstance(mi) => Some((it.local, mi)),
+            _ => None,
+        }).collect()
+    }
+
+    fn preview_parts(&self, text: &[u8]) -> (Vec<PreviewItem>, Vec<(Float3, Float3)>) {
+        let Ok(mini) = TedScene::parse_any(text.to_vec()) else { return (vec![], vec![]) };
         let unit = self.unit();
         let els = mini.doc().elements();
-        let Some(root) = (0..els.len()).find(|&e| els[e].parent.is_none()) else { return };
+        let Some(root) = (0..els.len()).find(|&e| els[e].parent.is_none()) else { return (vec![], vec![]) };
         let origin = world_transform(&mini, root).position;
         let mut items = vec![];
         let mut lines = vec![];
@@ -211,8 +225,7 @@ impl Tile {
             }
         }
 
-        self.preview.items = items;
-        self.preview.lines = lines;
+        (items, lines)
     }
 
     /// A building's standing pieces: the document's when it uses the key, else its folder's intact pieces.
