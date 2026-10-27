@@ -29,7 +29,8 @@ file's order. The editor itself is described in
 
 ### Phase 0 / 3 / 4 gate
 - An in-game reference shot of a fixed tile / camera / climate (a settlement tile, a river tile, a sea tile), to compare the terrain
-  and water against. None has been supplied; the terrain and water shots are compared only run against run. **Deferred** (user,
+  and water against; with it, a winter battle on a river map (is the river frozen?) and, if possible, a RenderDoc / PIX capture of a
+  coastal battle (the sea's radial mesh and sea bed texture). None has been supplied; the terrain and water shots are compared only run against run. **Deferred** (user,
   2026-10-26: the user takes the shots later).
 
 ### Phase 1
@@ -82,8 +83,10 @@ file's order. The editor itself is described in
   the banks -1.25 .. 0.8 m. Ground section: the view, the two depths, the button (each with its tooltip); commands
   `tile_ground_view water`, `paint_water_types`, `assert_water_depth`; `scripts/tile_water_depth.txt`. TEd has no water view. The river
   bed stays as authored (BOB carves it).
-- Water rendering (river uv, shadows on water, foam / ice, `g_refraction_depth`, river ends blending with neighbours, battle sea mesh):
-  `rendering_remaining.md`.
+- Water rendering (2026-10-27): the river's uv, fade, foam and `g_refraction_depth` settled from the shaders, the water takes shadows
+  (`rendering_remaining.md`, docs/re/water.md "Settled"). **Deferred to the in-game checks** (with the reference shots): winter ice (the
+  engine's ice textures belong to a terrain node water mode next to the campaign's; does a winter battle freeze its river?), and the
+  battle sea's radial mesh and sea bed texture (GPU-only: a RenderDoc / PIX capture of a coastal battle, docs/re/water.md).
 
 ### Phase 5a: terrain painting
 Done: the height brushes, the blend brush, the ground type brush, the falloff curve editor, the image brush, the stroke along a line,
