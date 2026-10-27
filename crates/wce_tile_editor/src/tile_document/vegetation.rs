@@ -73,7 +73,7 @@ pub(crate) struct TreeList {
 impl Tile {
 
     /// The matrix an instance's model is drawn with: [`Tile::world_matrix`], tilted to the terrain for a tree.
-    pub(crate) fn drawn_matrix(&self, elem: usize) -> Float4x4 {
+    pub fn drawn_matrix(&self, elem: usize) -> Float4x4 {
         let w = self.world_matrix(elem);
         if self.tscene().type_of(elem) != "VEGETATION_INSTANCE" {
             return w;

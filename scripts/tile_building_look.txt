@@ -1,5 +1,5 @@
 # A building's look properties (Phase 5d of docs/plans/tile_ted_parity.md): opacity goes to POSITION4.w as the engine packs it
-# (round(opacity * 1000)), set and undone through the Inspector's path. Two captures, %OUT%/opacity_1.png and %OUT%/opacity_05.png (only
+# (round(opacity * 1000)), set and undone through the Inspector (`tile_edit`). Two captures, %OUT%/opacity_1.png and %OUT%/opacity_05.png (only
 # alpha-tested materials fade until the renderer has the blended forward pass). Run with WCE_TILE_WORKSPACE set to a scratch folder.
 new_tile wce_look_test 2 2 10 32
 frames 5
@@ -12,17 +12,17 @@ frames 20
 assert_instance_param 3 1000
 shot %OUT%/opacity_1.png
 frames 5
-tile_set_prop opacity 0.5
+tile_edit selected opacity 0.5
 frames 10
 assert_instance_param 3 500
 shot %OUT%/opacity_05.png
 frames 5
-tile_set_prop opacity 0.334
-frames 3
-assert_instance_param 3 334
 undo
 frames 3
-assert_instance_param 3 500
+assert_instance_param 3 1000
+tile_edit selected opacity 0.334
+frames 3
+assert_instance_param 3 334
 undo
 frames 3
 assert_instance_param 3 1000

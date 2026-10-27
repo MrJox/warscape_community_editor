@@ -40,6 +40,11 @@ the range by the camera's movement since the measurement; 3. an optional stable-
 
 ## Smaller items
 
+- Blended forward pass for rigid meshes (from docs/plans/tile_ted_parity.md 5d): a building below opacity 1 is filed apart by the engine
+  (render flag 0x2000) and drawn through the blended forward shaders (`rigidstandard ps30_alpha_blend_40`, `rigid_forward_lighting`),
+  which multiply the alpha by floor(POSITION4.w) * 0.001. The renderer has none of them: faded buildings with opaque materials show no
+  fade, and alpha-blended materials (alpha_mode 2) draw opaque. Needs the forward lighting cbuffers (sun, shadows, env cube).
+
 - GPU timer: `perf` shows "no GPU timing yet" (`crates/wce_render/src/gpu_timer.rs:196`); find why.
 - Engine items (docs/re/renderer.md, "Remaining engine items"): the env cube's top-face cloud colour (needs the EnvMapGen draw traced or
   a dump); the SSAO jitter texture's generator; the cloud columns' spawn interval (assumed, `wce_scene` clouds.rs:255).

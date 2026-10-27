@@ -145,6 +145,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   - `building_tech_level`: no effect in TEd's viewport (its property handler has no case for it, no model choice reads it) and the game
     export does not carry it. Nothing to preview.
   - `destruction_level`: already previewed (the piece files of the level).
+- Every Property Editor row of a building checked (user, 2026-10-27; `scripts/tile_building_props.txt` on hadrians/8x1_lower): each lands
+  in its attribute, shows where TEd shows it and undoes; a piece's own rows (visible, opacity, position, destruction level) act on that
+  piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (dirt,
+  burn, glow, tech level, weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
+  surface_mode, show_collision, seasons) change nothing in the viewport, as in TEd. Script commands `assert_attr`, `assert_piece`,
+  `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials is left for the renderer plan.
 
 ### Phase 5e
 - Point-light radius gizmo (the radius is an Inspector value only).
