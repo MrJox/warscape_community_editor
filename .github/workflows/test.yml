@@ -31,10 +31,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install local dependencies
+      - name: Install Wine and Vulkan dependencies
         shell: bash
         run: |
-          sudo apt update -y && sudo apt install -y dxvk
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32 wine64 wget unzip \
+            libvulkan1 libvulkan1:i386 mesa-vulkan-drivers
+
+      - name: Install DXVK
+        run: |
+          DXVK_VERSION=3.1.1
+          wget -q "https://github.com/doitsujin/dxvk/releases/download/v${DXVK_VERSION}/dxvk-${DXVK_VERSION}.tar.gz" \
+            -O /tmp/dxvk.tar.gz
+          mkdir -p /tmp/dxvk
+          tar -xzf /tmp/dxvk.tar.gz -C /tmp/dxvk
+
+          export WINEPREFIX="$HOME/.wine"
+          wineboot -u
+          cd /tmp/dxvk/dxvk-${DXVK_VERSION}
+          chmod +x setup_dxvk.sh
+          ./setup_dxvk.sh install
 
       - name: Build libs and server
         uses: actions-rs/cargo@v1
