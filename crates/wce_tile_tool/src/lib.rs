@@ -10,6 +10,8 @@ pub mod context_panel;
 pub mod entity_types;
 pub mod extract_prompt;
 pub mod kit_prompt;
+pub mod launch;
+pub mod launch_prompt;
 pub mod new_tile_dialog;
 pub mod placement_modes;
 pub mod prefab_panel;

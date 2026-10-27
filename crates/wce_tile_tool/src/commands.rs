@@ -339,6 +339,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
+        "tile_launch_game", "tile_launch_game [--dry-run] [--ignore-movie-packs]",
+        "Launch in game (docs/plans/launch_in_game.md): export the open tile into data\\wce_launch.pack with a battle on it and start the game \
+         straight into that battle, with the editor's mod packs (used_mods.txt untouched; the pack is removed when the game exits). --dry-run: \
+         the pack and the battle's XML into <output>/launch, the command line in the log, no game",
+        |e, a| {
+            let dry = a.iter().any(|x| x == "--dry-run");
+            let ignore = a.iter().any(|x| x == "--ignore-movie-packs");
+            with_tile(e, |t, e| t.launch_in_game(e, dry, ignore, false).map_or_else(fail, ok))
+        },
+    );
+
+    c.add(
         "save_exported", "save_exported [output folder]",
         "save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: the output folder)",
         |e, a| {

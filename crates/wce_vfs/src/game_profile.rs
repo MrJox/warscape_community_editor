@@ -22,6 +22,9 @@ pub struct GameProfile {
 
     /// DLC packs the manifest doesn't list. They're searched before the manifest's packs.
     pub extra_vanilla: &'static [&'static str],
+
+    /// The game's executable, in the game's folder (started with the folder as its working directory; docs/re/game_command_line.md).
+    pub exe: &'static str,
 }
 
 /// A pack in the priority order.
@@ -54,6 +57,7 @@ impl GameProfile {
         used_mods_file: "used_mods.txt",
         manifest_file: "manifest.txt",
         extra_vanilla: &["charlemagne.pack", "belisarius.pack", "blood.pack", "slavs.pack"],
+        exe: "Attila.exe",
     };
 
     /// Returns the packs of the game in priority order: the enabled mods in the order the launcher lists them (first listed wins),

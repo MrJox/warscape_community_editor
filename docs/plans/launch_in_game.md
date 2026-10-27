@@ -10,7 +10,14 @@ enabled. The command line it relies on, and the launches that settled it: [docs/
   (`add_working_directory` serves only paths no pack has); the first two crashes were a stray movie-type pack in `data\`.
 - A single tile is a battle map on its own (`<battle_map_definition><name>` = the variation folder, test 6), launched through
   `data\wce_launch.pack` exactly as designed below.
-- Not started: the code.
+- **Built** (`crates/wce_tile_tool/src/launch.rs`, `launch_prompt.rs`; docs/editor.md, "Launch in game"): the menu item, the command
+  `tile_launch_game [--dry-run] [--ignore-movie-packs]`, the settings, the checks, the cleanup. Checked: unit tests (the XML as tested, the
+  settlement position against Londinium, the command line, the pack and its marker) and an unattended dry run on plains 8x8 (the pack, the
+  XML with the tile's weather, the command line with the editor's mods; nothing in `data\`).
+- Not yet seen in game: a launch from the menu (the game started by the editor, the pack removed on exit), an edited or new tile (its own
+  files through the pack), a settlement tile alone, the Map context mode, a tile with procedural walls.
+- The wait for the game runs in the Tile tool's update: with another tool active the pack is removed when the Tile tool is next active
+  (or at the next start).
 
 ## Design
 

@@ -109,6 +109,18 @@ pub(crate) struct TreeRow {
     pub kids: usize,
 }
 
+/// A tile saved as an exported tile (`TileTool::export_to`).
+pub(crate) struct Exported {
+    /// The exported folder (`<out>/terrain/tiles/...`).
+    pub dir: PathBuf,
+
+    /// The pack of a tile with procedural walls (the tile, its database and the walls' pieces and rows).
+    pub pack: Option<PathBuf>,
+
+    /// The compile's notes (in the log).
+    pub notes: usize,
+}
+
 pub struct TileTool {
     pub status: String,
     pub(crate) mode: TileMode,
@@ -254,6 +266,13 @@ pub struct TileTool {
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
 
+    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
+    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
+    pub(crate) launched: Option<crate::launch::Running>,
+    pub(crate) launch_swept: bool,
+    pub(crate) launch_prompt: Option<Vec<String>>,
+    pub(crate) launch_prompt_open: bool,
+
     /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
     browse_extracted: std::collections::HashSet<String>,
 
@@ -354,7 +373,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -951,6 +970,19 @@ impl TileTool {
     ///
     /// No tile is open, the project can't be saved, or the compile fails.
     pub fn save_exported(&mut self, e: &mut Editor, out: &Path) -> Result<String, String> {
+        let x = self.export_to(e, out)?;
+        Ok(match &x.pack {
+            Some(pack) => format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", x.dir.display(), pack.display(), x.notes),
+            None => format!("saved as an exported tile in {} ({} notes in the log)", x.dir.display(), x.notes),
+        })
+    }
+
+    /// [`Self::save_exported`]'s work: the exported folder, the pack of a tile with procedural walls, the count of notes (logged).
+    ///
+    /// # Errors
+    ///
+    /// As `save_exported`.
+    pub(crate) fn export_to(&mut self, e: &mut Editor, out: &Path) -> Result<Exported, String> {
         let game = self.exported_game(e)?;
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
@@ -973,7 +1005,7 @@ impl TileTool {
                 log::info(format!("{}: {n}", saved.display()));
             }
 
-            return Ok(format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", saved.display(), pack.display(), notes.len()));
+            return Ok(Exported { dir: saved, pack: Some(pack), notes: notes.len() });
         }
 
         let (scene, _) = wce_tile::project_files::to_ted(text)?;
@@ -982,7 +1014,7 @@ impl TileTool {
             log::info(format!("{}: {n}", saved.display()));
         }
 
-        Ok(format!("saved as an exported tile in {} ({} notes in the log)", saved.display(), notes.notes.len()))
+        Ok(Exported { dir: saved, pack: None, notes: notes.notes.len() })
     }
 
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
@@ -2377,6 +2409,33 @@ impl Tool for TileTool {
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the VFX boxes", &mut s.show_vfx_boxes);
         settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
+
+        gui::separator_text("Launch in game");
+        settings_window::label("Map");
+        if gui::radio_button("The tile alone", s.launch.map == crate::settings::LaunchMap::Tile) {
+            s.launch.map = crate::settings::LaunchMap::Tile;
+        }
+
+        gui::same_line();
+        if gui::radio_button("The Map context's placement", s.launch.map == crate::settings::LaunchMap::MapContext) {
+            s.launch.map = crate::settings::LaunchMap::MapContext;
+        }
+
+        settings_window::help("The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.");
+        for (label, value, hint) in [
+            ("Defender faction", &mut s.launch.defender_faction, "att_fact_western_roman_empire"),
+            ("Defender unit", &mut s.launch.defender_unit, "att_rom_legio_comitatenses"),
+            ("Attacker faction", &mut s.launch.attacker_faction, "att_fact_saxones"),
+            ("Attacker unit", &mut s.launch.attacker_unit, "att_nor_saxon_spears"),
+            ("Subculture", &mut s.launch.subculture, "att_sub_cult_roman_west"),
+            ("Tile upgrades", &mut s.launch.tile_upgrades, "level1 escalation3 (a settlement in the map)"),
+        ] {
+            settings_window::label(label);
+            gui::set_next_item_width(-1.0);
+            gui::input_text(&format!("##launch {label}"), Some(hint), value, 256, 0);
+        }
+
+        settings_window::help("One unit a side. Vanilla keys are safest: a mod's units may need packs that are not enabled.");
         if s != before {
             draft.set_tool(SETTINGS_ID, &s);
         }
@@ -2422,6 +2481,7 @@ impl Tool for TileTool {
     }
 
     fn update(&mut self, e: &mut Editor) {
+        self.update_launch(e);
         let Some(id) = document_id(e) else {
             // The last tile closed: its weather goes with it.
             if self.camera_set_for != 0 {
@@ -2543,6 +2603,7 @@ impl Tool for TileTool {
         self.draw_new_tile_dialog(e);
         self.draw_extract_prompt(e);
         self.draw_kit_prompt(e);
+        self.draw_launch_prompt(e);
         self.draw_quick_add(e);
     }
 
@@ -2590,6 +2651,16 @@ impl Tool for TileTool {
             let out = e.output_dir();
             let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("save failed: {m}"));
             e.status(&msg, false);
+        }
+
+        let label = if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
+        if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none()) {
+            let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.");
         }
 
         gui::separator();

@@ -56,6 +56,16 @@ fn matches_words(file: &str, search: &str) -> bool {
 }
 
 impl WeatherUi {
+    /// The open tile's weather: its file and its list's filters.
+    pub(crate) fn choice(&self) -> &TileWeather {
+        &self.choice
+    }
+
+    /// The tile the choice is for (the document's `source_key`).
+    pub(crate) fn tile(&self) -> &str {
+        &self.tile
+    }
+
     /// A tile became the one the tool works on: read its kit's environment map, take up its remembered weather (or the filters of its look),
     /// and light it.
     pub(crate) fn tile_changed(&mut self, e: &mut Editor, id: DocumentId) {
