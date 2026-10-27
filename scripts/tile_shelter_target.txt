@@ -1,0 +1,27 @@
+# A civilian shelter's target (Phase 5f of docs/plans/tile_ted_parity.md): a selected shelter shows a line over the ground to where its
+# civilians run (colour_1 to colour_2) with a handle at the target; dragging the handle moves `target` over the ground (TEd's drag), one
+# undo entry. A shelter placed on a new tile (its target 10 m along +z); capture %OUT%/shelter_target.png. Run with WCE_TILE_WORKSPACE set.
+new_tile wce_shelter_test 2 2 10 32
+frames 5
+cam_look 60 5 65
+cam 2.4 1.1 45 5
+frames 5
+start_making CivilianShelter
+frames 3
+tile_click_ground 60 60
+frames 5
+key Escape
+tile_select CivilianShelter
+gizmo none
+frames 5
+assert_shelter_target 60 70 0.3
+assert_history 1 1
+shelter_target_drag 70 72
+frames 10
+assert_shelter_target 70 72 0.5
+assert_history 2 2
+shot %OUT%/shelter_target.png
+frames 5
+undo
+assert_shelter_target 60 70 0.3
+quit

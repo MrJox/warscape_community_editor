@@ -38,7 +38,7 @@ fn attr_hash(attr: &str) -> u64 {
     attr.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)) & 0xff_ffff
 }
 
-fn parent_transform(sc: &TedScene, elem: usize) -> WorldTransform {
+pub(crate) fn parent_transform(sc: &TedScene, elem: usize) -> WorldTransform {
     sc.doc().elements()[elem].parent.map(|p| world_transform(sc, p)).unwrap_or_default()
 }
 
@@ -2658,6 +2658,19 @@ impl TileDocument {
         if ins.gesture_ended() {
             self.history.break_merge();
         }
+    }
+
+    /// Moves a civilian shelter's target to a world point (TEd drags it over the ground), as the Inspector's `target` row writes it; the
+    /// steps of a drag (one `gesture`) merge into one undo entry.
+    pub fn set_shelter_target(&mut self, elem: usize, at: Float3, gesture: u64) -> bool {
+        if self.tile().tscene().type_of(elem) != "CivilianShelter" {
+            return false;
+        }
+
+        let Some(prop) = wce_tile::properties::schema("CivilianShelter").and_then(|s| s.iter().find(|p| p.attr == "target")) else { return false };
+        let pw = parent_transform(self.tile().tscene(), elem);
+        let v = pw.rotation.transpose() * (scene_point(at, self.tile().unit()) - pw.position);
+        self.set_property(elem, prop, &wce_tile::properties::format_vec3([v.x as f32, v.y as f32, v.z as f32]), gesture)
     }
 
     /// Sets a point light's radius as the Inspector's slider does (clamped to its range, `[0, 1000]`); the steps of a drag (one `gesture`)

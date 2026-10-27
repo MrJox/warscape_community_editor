@@ -1011,6 +1011,9 @@ fn burn_row(p: &PieceProps) -> [f32; 4] {
 /// `set_highlight`'s hot point that means a light's radius handle (it is being dragged).
 pub const LIGHT_RADIUS_HANDLE: usize = usize::MAX;
 
+/// `set_highlight`'s hot point that means a civilian shelter's target handle (it is being dragged).
+pub const SHELTER_TARGET_HANDLE: usize = usize::MAX - 1;
+
 /// POSITION4.w of an opacity (`Tile::opacity_w`).
 fn opacity_w(opacity: f32) -> f32 {
     (opacity.clamp(0.0, 1.0) * 1000.0).round()
@@ -1347,6 +1350,23 @@ impl Tile {
         self.update_wall_previews(scene);
     }
 
+    /// A civilian shelter's target (TEd's TERRAIN_LINE_INSTANCE: where the civilians run to) in world metres: the file's point (in the
+    /// shelter's parent frame, as its position), on the ground when the shelter stands on it. `None` for anything else.
+    pub fn shelter_target(&self, elem: usize) -> Option<Float3> {
+        let t = self;
+        if t.tscene().type_of(elem) != "CivilianShelter" {
+            return None;
+        }
+
+        let v = t.tscene().doc().get(elem, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))?;
+        let pw = super::edits::parent_transform(t.tscene(), elem);
+        let w = pw.position + pw.rotation * v;
+        let u = t.unit();
+        let (x, z) = ((w.x / u) as f32, (w.z / u) as f32);
+        let y = if t.placement(elem) == super::Placement::Landscape { t.terrain_height(x, z) } else { (w.y / u) as f32 };
+        Some(Float3::new(x, y, z))
+    }
+
     /// A selected point light's radius handle: where it is (world metres, on the +x side of the light at its height) and the radius (the
     /// file's value, which the light is drawn with); `None` for anything else.
     pub fn light_radius_handle(&self, elem: usize) -> Option<(Float3, f32)> {
@@ -1392,6 +1412,33 @@ impl Tile {
                 let h2 = st.size * 0.5;
                 let (lo_y, hi_y) = if st.cross { (p.y, p.y + st.size) } else { (p.y - h2, p.y + h2) };
                 mask.box_solid(Float3::new(p.x - h2, lo_y, p.z - h2), Float3::new(p.x + h2, hi_y, p.z + h2), white);
+            }
+
+            // A civilian shelter's run to its target: a line over the ground from colour_1 at the shelter to colour_2 at the target, and the
+            // target's handle (TEd drags it over the ground).
+            if let Some(to) = self.shelter_target(e) {
+                let from = self.world_position(e);
+                let colour = |k: &str, d: [f32; 4]| self.tscene().doc().get(e, k).and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or(d);
+                let (c1, c2) = (colour("colour_1", [0.0, 1.0, 0.0, 0.8]), colour("colour_2", [1.0, 0.0, 0.0, 0.8]));
+                let landscape = self.placement(e) == super::Placement::Landscape;
+                let at = |f: f32| {
+                    let p = from + (to - from) * f;
+                    Float3::new(p.x, if landscape { self.terrain_height(p.x, p.z) } else { p.y } + 0.3, p.z)
+                };
+
+                const STEPS: usize = 32;
+                for k in 0..STEPS {
+                    let (f0, f1) = (k as f32 / STEPS as f32, (k + 1) as f32 / STEPS as f32);
+                    let m = (f0 + f1) * 0.5;
+                    let c: [f32; 4] = std::array::from_fn(|i| c1[i] + (c2[i] - c1[i]) * m);
+                    h.line(at(f0), at(f1), overlay_colour(c[0], c[1], c[2], c[3].max(0.5)));
+                }
+
+                let k = Float3::new(to.x, to.y + 0.3, to.z);
+                let (col, s) = (if polygon_point == Some(SHELTER_TARGET_HANDLE) { hot } else { white }, handle_size);
+                h.line(Float3::new(k.x - s, k.y, k.z), Float3::new(k.x + s, k.y, k.z), col);
+                h.line(Float3::new(k.x, k.y, k.z - s), Float3::new(k.x, k.y, k.z + s), col);
+                h.line(k, Float3::new(k.x, k.y + s * 1.5, k.z), col);
             }
 
             // A point light's radius handle, on the +x side of its reach (the renderer draws the reach of a selected light).

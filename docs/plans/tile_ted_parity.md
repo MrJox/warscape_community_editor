@@ -162,7 +162,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   `light_radius_drag`, `assert_attr_near`, `scripts/tile_light_radius.txt`). **Phase 5e is done.**
 
 ### Phase 5f
-- Draw a civilian shelter's target in the viewport.
+- Draw a civilian shelter's target: done (2026-10-28). TEd's TERRAIN_LINE_INSTANCE has two viewport handles (its mouse handler at
+  0x46c910: 1 moves the position, 2 the target, over the ground). A selected shelter shows a line over the ground from colour_1 at it to
+  colour_2 at the target, and the target's handle drags it over the ground, one undo entry (`Tile::shelter_target`,
+  `TileDocument::set_shelter_target`; `shelter_target_drag`, `assert_shelter_target`, `scripts/tile_shelter_target.txt`). Fixed on the
+  way: a placed shelter's target stayed near the origin (the draft is built there); it now moves with the placement.
 - Draw a siege AI edge's nodes (pick the two nodes in the viewport).
 - Road splat painting: needs RE first (what TEd writes and what reads it).
 

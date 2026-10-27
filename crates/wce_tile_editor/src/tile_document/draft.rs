@@ -198,7 +198,20 @@ impl TileDocument {
             let t = self.tile();
             let y = if on_terrain { t.terrain_height(at.x, at.z) } else { at.y };
             let p = scene_point(wce_foundation::math::Float3::new(at.x, y, at.z), t.unit());
+            let before = self.tile().tscene().position(g);
             set_world_position(self.tscene_mut(), g, p);
+
+            // A civilian shelter's target is a point of its own (in the same frame as the position): it goes along.
+            let sc = self.tile().tscene();
+            if sc.type_of(g) == "CivilianShelter"
+                && let (Some(before), Some(after)) = (before, sc.position(g))
+                && let Some(target) = sc.doc().get(g, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
+            {
+                let v = target + (after - before);
+                let text = format!("vector({},{},{})", wce_tile::ted_scene::format_number(v.x), wce_tile::ted_scene::format_number(v.y), wce_tile::ted_scene::format_number(v.z));
+                self.tscene_mut().set_attr(g, "target", &text);
+            }
+
             Ok(g)
         })();
 
