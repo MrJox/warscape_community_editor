@@ -71,6 +71,9 @@ pub enum TileMode {
     Flatten,
     Level,
 
+    /// Roughens the ground with fractal noise.
+    Noise,
+
     /// Paints the blend map (the ground's textures).
     Paint,
 
@@ -101,9 +104,10 @@ static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
      instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
 
-pub const MODE_NAMES: [&str; 8] = ["select", "raise", "lower", "smooth", "flatten", "level", "paint", "ground"];
-const MODES: [TileMode; 8] = [
-    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Paint, TileMode::Ground,
+pub const MODE_NAMES: [&str; 9] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "paint", "ground"];
+const MODES: [TileMode; 9] = [
+    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Noise, TileMode::Paint,
+    TileMode::Ground,
 ];
 
 impl TileMode {
@@ -126,6 +130,7 @@ impl TileMode {
             Self::Smooth => Some(BrushKind::Smooth),
             Self::Flatten => Some(BrushKind::Flatten),
             Self::Level => Some(BrushKind::Level),
+            Self::Noise => Some(BrushKind::Noise),
         }
     }
 }

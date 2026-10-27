@@ -274,6 +274,17 @@ impl HeightField {
         self.apply(b, |_, _, _, w, cur| cur + metres * w)
     }
 
+    /// Adds fractal noise (four octaves of value noise, -1 .. 1, features `scale` pixels across), `metres` at full weight: the same pattern
+    /// wherever the brush goes (a function of the pixel), so that dabs deepen the same bumps.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn noise(&mut self, b: &Brush, metres: f64, scale: f64) -> Result<()> {
+        let scale = scale.max(1.0);
+        self.apply(b, |_, x, y, w, cur| cur + metres * w * fractal_noise(f64::from(x) / scale, f64::from(y) / scale))
+    }
+
     /// Blends towards the local average (of the samples before this stroke step).
     ///
     /// # Errors
@@ -453,8 +464,68 @@ impl HeightField {
     }
 }
 
+/// Four octaves of value noise at (x, y) (one lattice cell a unit at the first octave), -1 .. 1, the octaves halving in weight.
+pub fn fractal_noise(x: f64, y: f64) -> f64 {
+    fn hash(i: i64, j: i64) -> f64 {
+        let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+    }
+
+    fn value(x: f64, y: f64) -> f64 {
+        let (i, j) = (x.floor() as i64, y.floor() as i64);
+        let (fx, fy) = (x - x.floor(), y - y.floor());
+        let s = |t: f64| t * t * (3.0 - 2.0 * t);
+        let (sx, sy) = (s(fx), s(fy));
+        let a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * sx;
+        let b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * sx;
+        a + (b - a) * sy
+    }
+
+    let (mut sum, mut amp, mut freq, mut norm) = (0.0, 1.0, 1.0, 0.0);
+    for octave in 0..4 {
+        // Each octave shifted, so that the lattices do not line up.
+        let shift = f64::from(octave) * 17.31;
+        sum += amp * value(x * freq + shift, y * freq - shift);
+        norm += amp;
+        amp *= 0.5;
+        freq *= 2.0;
+    }
+
+    sum / norm
+}
+
 /// A height as a 16-bit sample of the range (min_height, scale): rounded to nearest, clamped.
 fn quantize(m: f64, min_height: f64, scale: f64) -> u16 {
     let r = (m - min_height) / scale * 65535.0;
     r.clamp(0.0, 65535.0).round() as u16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_noise_is_bounded_repeatable_and_not_flat() {
+        let samples = (0..4000).map(|i| fractal_noise(f64::from(i % 63) * 0.37, f64::from(i / 63) * 0.41)).collect::<Vec<_>>();
+        assert!(samples.iter().all(|v| (-1.0..=1.0).contains(v)));
+        assert_eq!(fractal_noise(3.3, -7.1), fractal_noise(3.3, -7.1));
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let spread = samples.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / samples.len() as f64;
+        assert!(mean.abs() < 0.1 && spread.sqrt() > 0.1, "mean {mean}, deviation {}", spread.sqrt());
+    }
+
+    #[test]
+    fn a_noise_stroke_roughens_inside_the_brush_only() {
+        let mut f = HeightField::flat(64, 64, 10.0);
+        f.begin_edit().unwrap();
+        f.noise(&Brush { cx: 32.0, cy: 32.0, radius: 12.0, strength: 1.0, falloff: 0.5, ..Default::default() }, 4.0, 4.0).unwrap();
+        f.end_edit();
+        let inside = (24..40).flat_map(|y| (24..40).map(move |x| (x, y))).map(|(x, y)| (f.metres(x, y) - 10.0).abs()).fold(0.0, f64::max);
+        assert!(inside > 0.5, "inside {inside}");
+        assert_eq!(f.metres(2, 2), 10.0);
+        assert!(f.undo() && f.metres(32, 32) == 10.0);
+    }
 }

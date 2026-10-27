@@ -76,6 +76,9 @@ pub enum BrushKind {
     Flatten,
     Level,
 
+    /// Roughens the ground with fractal noise (`BrushSettings::noise_scale_m`), `strength` metres a second at full weight.
+    Noise,
+
     /// Paints a blend map channel (4 * group + variation of the entry's TEXTURE_GROUPs).
     Paint(u8),
 
@@ -109,13 +112,16 @@ pub struct BrushSettings {
     /// TEd's Blendmap Filters on the paint brush (the height and slope where it lands); `None` lets everything through.
     pub filter: Option<PaintFilter>,
 
+    /// The noise brush's features, metres across.
+    pub noise_scale_m: f32,
+
     /// What the paint brush does (normal, TEd's Auto-Flange or Rock-painting).
     pub paint_mode: PaintMode,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0, filter: None, paint_mode: PaintMode::Normal }
+        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0, filter: None, paint_mode: PaintMode::Normal, noise_scale_m: 16.0 }
     }
 }
 

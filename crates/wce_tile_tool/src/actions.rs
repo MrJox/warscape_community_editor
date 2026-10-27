@@ -37,9 +37,10 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
     it the pixel is all the group, variations 0 to 3 from the edge inwards. 0: no rim, the group everywhere the brush touches.";
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
-const BRUSHES: [(&str, &str); 7] = [
+const BRUSHES: [(&str, &str); 8] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"), (icons::ARROW_BIG_DOWN, "Lower the terrain"), (icons::WAVES, "Smooth the terrain"),
     (icons::MINUS, "Flatten the terrain to a height"), (icons::RULER, "Level the terrain"),
+    (icons::MOUNTAIN, "Roughen the terrain with noise: the same pattern wherever the brush goes, deeper the longer you paint"),
     (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
     (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
 ];
@@ -223,6 +224,11 @@ impl TileTool {
             ins.edit_float("flatten", "flatten height (m)", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6);
         }
 
+        if self.mode == TileMode::Noise {
+            ins.edit_slider("noise_scale", "feature size (m)", &mut self.brush.noise_scale_m, 2.0, 200.0);
+            ins.tooltip("How far apart the noise's bumps are: small for rough, stony ground, large for rolling hills. The strength is metres a second at the brush's middle.");
+        }
+
         let cursor = if self.terrain_hit {
             format!("{:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, d.tile().terrain_height(self.cursor.x, self.cursor.z))
         } else {
@@ -393,6 +399,7 @@ fn mode_name(m: TileMode) -> &'static str {
         TileMode::Smooth => "Smooth",
         TileMode::Flatten => "Flatten",
         TileMode::Level => "Level",
+        TileMode::Noise => "Noise",
         TileMode::Paint => "Paint",
         TileMode::Ground => "Ground types",
     }
