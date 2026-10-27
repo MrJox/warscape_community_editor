@@ -1,0 +1,21 @@
+# The stamp (Phase 5a of docs/plans/tile_ted_parity.md, wce's): a new 1 x 1 tile at density 128 (1 m a pixel, 5 m high in the editor).
+# A stamp of 8 m with the falloff's shape raises the middle to 13 m once (a second click another 8); with the image brush (%IMAGE%: white
+# on its left half) only the left half rises; a hollow of -3 m. One undo entry each. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_stamp_test 1 1 10 128
+frames 5
+brush 20 6 1
+stamp_height 8
+paint stamp 40 40 1
+assert_height 40 40 13 0.05
+assert_height 70 40 5 0.01
+brush_image "%IMAGE%" 0
+paint stamp 90 90 1
+assert_height 84 90 12.5 13.05
+assert_height 96 90 5 0.01
+brush_image off
+stamp_height -3
+paint stamp 40 100 1
+assert_height 40 100 2 0.05
+undo
+assert_height 40 100 5 0.01
+quit

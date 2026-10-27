@@ -656,10 +656,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("paint", "paint raise|lower|smooth|flatten|level|noise <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
+    c.add("paint", "paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
-            let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level|noise <x m> <z m> <steps>") };
+            let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps>") };
             let kind = match a[0].as_str() {
                 "raise" => BrushKind::Raise,
                 "lower" => BrushKind::Lower,
@@ -667,6 +667,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 "flatten" => BrushKind::Flatten,
                 "level" => BrushKind::Level,
                 "noise" => BrushKind::Noise,
+                "stamp" => BrushKind::Stamp,
                 other => return fail(format!("unknown brush '{other}'")),
             };
 
@@ -848,6 +849,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             Ok(()) => ok(""),
             Err(why) => fail(why),
         }
+    });
+
+    c.add("stamp_height", "stamp_height <m>", "the stamp's height at its middle (negative: a hollow)", |e, a| {
+        let Some(v) = a.first().and_then(|x| number(x)) else { return fail("usage: stamp_height <m>") };
+        with_tile(e, |t, _| {
+            t.brush.stamp_height_m = v;
+            ok("")
+        })
     });
 
     c.add("tint_freeform", "tint_freeform on|off", "the view filter that tints the freeform instances in the viewport", |e, a| {

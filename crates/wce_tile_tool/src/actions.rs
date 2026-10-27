@@ -37,10 +37,11 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
     it the pixel is all the group, variations 0 to 3 from the edge inwards. 0: no rim, the group everywhere the brush touches.";
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
-const BRUSHES: [(&str, &str); 8] = [
+const BRUSHES: [(&str, &str); 9] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"), (icons::ARROW_BIG_DOWN, "Lower the terrain"), (icons::WAVES, "Smooth the terrain"),
     (icons::MINUS, "Flatten the terrain to a height"), (icons::RULER, "Level the terrain"),
     (icons::MOUNTAIN, "Roughen the terrain with noise: the same pattern wherever the brush goes, deeper the longer you paint"),
+    (icons::IMAGE, "Stamp a shape into the terrain, one click at a time: the image brush's picture (else the brush's falloff) raised to the stamp's height"),
     (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
     (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
 ];
@@ -224,6 +225,11 @@ impl TileTool {
             ins.edit_float("flatten", "flatten height (m)", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6);
         }
 
+        if self.mode == TileMode::Stamp {
+            ins.edit_float("stamp_height", "stamp height (m)", &mut self.brush.stamp_height_m, 0.1, -500.0, 500.0);
+            ins.tooltip("What a click adds at the brush's middle (negative: a hollow); the rest follows the brush's shape: the image brush's picture when it is on, else the falloff.");
+        }
+
         if self.mode == TileMode::Noise {
             ins.edit_slider("noise_scale", "feature size (m)", &mut self.brush.noise_scale_m, 2.0, 200.0);
             ins.tooltip("How far apart the noise's bumps are: small for rough, stony ground, large for rolling hills. The strength is metres a second at the brush's middle.");
@@ -400,6 +406,7 @@ fn mode_name(m: TileMode) -> &'static str {
         TileMode::Flatten => "Flatten",
         TileMode::Level => "Level",
         TileMode::Noise => "Noise",
+        TileMode::Stamp => "Stamp",
         TileMode::Paint => "Paint",
         TileMode::Ground => "Ground types",
     }

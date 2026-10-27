@@ -102,7 +102,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Done (2026-10-27): the **noise brush** (wce's): `HeightField::noise` / `fractal_noise` (four octaves of value noise, -1 .. 1, a function
   of the pixel so that dabs deepen the same bumps), `BrushKind::Noise`, the toolbar's mountain button (Noise mode), its feature size in
   the Inspector (tooltip), `paint noise`, `scripts/tile_noise.txt`, unit tests.
-- Height brushes (wce's): stamp, import PNG.
+- Done (2026-10-27): the **stamp** (wce's): `BrushKind::Stamp` adds `stamp_height_m` at full weight once per click, in the brush's shape
+  (the image brush's picture when on, else the falloff); negative for a hollow. The toolbar's picture button (Stamp mode), its height in
+  the Inspector (tooltip), commands `stamp_height`, `paint stamp`, `scripts/tile_stamp.txt`.
+- Height (wce's): import a height map PNG.
 - Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
   Subtract among its operations, `docs/re/terrain.md`).
 - TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's

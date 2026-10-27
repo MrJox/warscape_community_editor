@@ -468,6 +468,7 @@ impl Command<Tile> for BrushStepCommand {
             BrushKind::Flatten => "Flatten",
             BrushKind::Level => "Level",
             BrushKind::Noise => "Noise",
+            BrushKind::Stamp => "Stamp",
             BrushKind::Paint(_) => return "Paint ground".to_owned(),
             BrushKind::Ground(_) => return "Paint ground types".to_owned(),
         };
