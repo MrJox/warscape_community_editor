@@ -70,6 +70,42 @@ impl Tile {
         v
     }
 
+    /// Piece-to-piece snapping (Phase 5g of docs/plans/tile_ted_parity.md; wce's): where a fort piece (a wall building) goes when it is
+    /// moved to `at` (world metres) near another one's end. It takes the other's rotation (the outer sides agree, the wall runs on) and its
+    /// low end goes onto the other's high end, or its high end onto the other's low end: the pair of ends nearest, within `reach` metres.
+    /// The position (scene units) and the world rotation; `None` when no end is near or `elem` is no fort piece.
+    pub fn snap_piece(&self, elem: usize, at: Float3, reach: f32) -> Option<WorldTransform> {
+        let sc = self.tscene();
+        let key = sc.doc().get(elem, "key")?;
+        if !key.to_lowercase().contains("_fort_") {
+            return None;
+        }
+
+        let (lo, hi) = self.frame_extent(&key)?;
+        let u = self.unit();
+        let own = wce_tile::world_transform::world_transform(sc, elem);
+        let p = Double3::new(f64::from(at.x) * u, own.position.y, f64::from(at.z) * u);
+        let mut best: Option<(f64, WorldTransform)> = None;
+        for a in self.wall_anchors().into_iter().filter(|a| a.elem != elem) {
+            let other = wce_tile::world_transform::world_transform(sc, a.elem);
+            let rot = other.rotation;
+            let x_axis = rot * Double3::new(1.0, 0.0, 0.0);
+            let anchor = Double3::new(a.at[0], a.at[1], a.at[2]);
+
+            // Which of the other's ends this is: its high end (+x) takes the piece's low end, its low end the piece's high end.
+            let d = anchor - other.position;
+            let own_end = if d.x * x_axis.x + d.z * x_axis.z > 0.0 { lo } else { hi };
+            let position = anchor - rot * Double3::new(own_end, 0.0, 0.0);
+            let end_now = p + own.rotation * Double3::new(own_end, 0.0, 0.0);
+            let dist = (end_now.x - anchor.x).hypot(end_now.z - anchor.z) / u;
+            if dist <= f64::from(reach) && best.as_ref().is_none_or(|b| dist < b.0) {
+                best = Some((dist, WorldTransform { position, rotation: rot }));
+            }
+        }
+
+        best.map(|b| b.1)
+    }
+
     /// The ends of the fort buildings (`wce_walls::scene::anchors`), their frames from [`Tile::frame_extent`].
     pub fn wall_anchors(&self) -> Vec<Anchor> {
         wce_walls::scene::anchors(self.tscene(), &|k| self.frame_extent(k))

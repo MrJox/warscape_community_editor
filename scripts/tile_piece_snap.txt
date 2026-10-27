@@ -1,0 +1,25 @@
+# Piece-to-piece snapping (Phase 5g of docs/plans/tile_ted_parity.md; wce's): with "snap to points" on, a fort piece grabbed near another's
+# end joins it: it takes the other's rotation and its low end goes onto the other's high end, or its high end onto the other's low end.
+# barbarian_fort_straight's frame is 0 .. 20 scene units (10 m) along its x. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_piece_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 60 60
+add_building barbarian_fort_straight 90 90
+frames 60
+tile_select 8
+rotate 30
+assert_history 3 3
+snap vertices on tolerance 0
+# Near the first's high end (70, 60): it continues the wall along +x.
+grab_to 71 61
+assert_world_xz 70 60 0.01
+assert_attr selected orientation euler(0,0,0)
+assert_history 4 4
+# Near the first's low end (60, 60) with its own high end: it runs on along -x.
+grab_to 49 59
+assert_world_xz 50 60 0.01
+# Far from any end: no snapping.
+grab_to 100 100
+assert_world_xz 100 100 0.01
+snap vertices off
+quit

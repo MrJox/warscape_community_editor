@@ -1486,7 +1486,18 @@ impl TileTool {
             let n = d.tile().terrain_normal(gx, gz);
             let k = if d.tile().placement(g) == wce_tile_editor::tile_document::Placement::Freeform { self.grab_normal_offset } else { 0.0 };
             let at = Float3::new(gx + n.x as f32 * k, gy + n.y as f32 * k, gz + n.z as f32 * k);
-            d.set_world_metres(g, at, self.grab_gesture);
+
+            // Snap to points: a fort piece joins the nearest end of another (it takes that one's rotation), within the tolerance (4 m at 0).
+            let piece = if self.snap_vertices { d.tile().snap_piece(g, Float3::new(self.cursor.x, gy, self.cursor.z), self.piece_reach()) } else { None };
+            match piece {
+                Some(w) => {
+                    d.set_world_transform(g, &w, self.grab_gesture);
+                }
+
+                None => {
+                    d.set_world_metres(g, at, self.grab_gesture);
+                }
+            }
 
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
@@ -1515,6 +1526,11 @@ impl TileTool {
         self.grabbing = true;
         self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
+    }
+
+    /// How near a fort piece's end must come to another's to join it: the snap tolerance, 4 m when it is 0.
+    pub(crate) fn piece_reach(&self) -> f32 {
+        if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 4.0 }
     }
 
     /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point (snap to vertices; not `skip`'s own),
