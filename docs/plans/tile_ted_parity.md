@@ -191,7 +191,9 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   (onto the nearest instance or polygon point within the tolerance, 1.5 m at 0), for the grab and now the placing too (it did not
   snap before). While grabbing, PageUp / PageDown move a freeform item along the ground's normal (0.25 m; Shift: 1 m). `snap`,
   `scripts/tile_snap.txt`. Not done: snap to edges, the angle tolerance, horizontal / vertical snap.
-- Camera bookmarks.
+- Camera bookmarks: done (2026-10-28; wce's). The toolbar's camera button: the tile's saved views (a click goes there, x forgets one),
+  the current view saved by a name; kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile
+  (`view_save`, `view_go`, `scripts/tile_camera_views.txt`).
 - Piece-to-piece snapping from the buildings' `_tech.cs2.parsed` (collision, platforms, attachments; `docs/re/buildings.md`).
 
 ### Phase 6a: tile links
