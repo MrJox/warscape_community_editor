@@ -1,0 +1,16 @@
+# Camera bookmarks (Phase 5g of docs/plans/tile_ted_parity.md, wce's): a view of a tile saved by name, the camera moved away, and put
+# back on it; kept in the settings by the tile's folder. Run with WCE_TILE_WORKSPACE and WCE_SETTINGS_DIR set to scratch folders.
+new_tile wce_views_test 2 2 10 32
+frames 5
+cam_look 30 5 40 60 5 90
+frames 2
+view_save gate
+cam_mark
+cam_look 100 50 100 120 5 120
+frames 2
+assert_cam_moved
+view_go gate
+frames 2
+assert_cam_same
+expect_fail view_go nowhere
+quit

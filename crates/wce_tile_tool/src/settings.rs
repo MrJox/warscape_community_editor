@@ -73,6 +73,9 @@ pub struct TileSettings {
     /// The image brush.
     pub brush_image: ImageBrush,
 
+    /// Each tile's saved camera views (bookmarks), by the tile's folder (lower case, `/` separators).
+    pub camera_views: BTreeMap<String, Vec<CameraView>>,
+
     /// rpfm's Attila schema (a `schema_att.ron`), for the procedural walls' database rows; none: rpfm's own (`WCE_RPFM_SCHEMA` wins).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpfm_schema: Option<PathBuf>,
@@ -225,8 +228,17 @@ pub struct TileWeather {
     pub query: BTreeMap<String, String>,
 }
 
+/// A saved camera view of a tile: where the camera is and what it looks at (world metres).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraView {
+    pub name: String,
+    pub eye: [f32; 3],
+    pub target: [f32; 3],
+}
+
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), rpfm_schema: None, launch: LaunchSettings::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, launch: LaunchSettings::default() }
     }
 }

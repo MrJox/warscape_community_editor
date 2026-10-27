@@ -1742,6 +1742,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} moved", d.distribute(&all, axis)))
     });
 
+    c.add("view_save", "view_save <name>", "save the camera as a view of the open tile (the toolbar's camera views)", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: view_save <name>") };
+        with_tile(e, |t, e| t.save_camera_view(e, &name).map_or_else(|| no_tile(), |i| ok(format!("view {i}"))))
+    });
+
+    c.add("view_go", "view_go <name>", "put the camera on a saved view of the open tile", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: view_go <name>") };
+        with_tile(e, |t, e| if t.go_to_camera_view(e, &name) { ok("") } else { fail(format!("no view '{name}'")) })
+    });
+
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();

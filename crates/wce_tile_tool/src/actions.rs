@@ -89,6 +89,9 @@ impl TileTool {
             gui::same_line();
         }
 
+        self.draw_camera_views_button(e);
+        gui::same_line();
+
         // The snapping: a button lit while it is on, its settings in a popup.
         let snapping = self.snap_grid || self.snap_vertices;
         if snapping {

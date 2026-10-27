@@ -21,6 +21,7 @@ pub mod prefab_panel;
 pub mod scene_panel;
 pub mod settings;
 mod thumbnails;
+mod camera_views;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;
