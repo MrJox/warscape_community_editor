@@ -128,9 +128,20 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Moved to "Ideas for later" (user, 2026-10-27): painting polygons with a brush is not a TEd feature.
 
 ### Phase 5d: building catalogue
-- Key search UI beyond the typed key (search `battlefield_buildings`).
-- Thumbnails from the models.
-- Tech level, destruction and burn preview.
+- Key search UI beyond the typed key: done, the Create panel searches every valid key by words.
+- Thumbnails from the models (wce-only, user 2026-10-27): to do.
+- The look properties, traced in TEd and the kit's Warscape.dll (2026-10-27, `docs/re/buildings.md` "Look properties"):
+  - `opacity`: done. TEd hands it to the renderer, which packs round(opacity * 1000) into POSITION4.w; the pieces draw with it
+    (`Tile::opacity_w`, kept up when the Inspector sets it; `tile_set_prop`, `assert_instance_param`, `scripts/tile_building_look.txt`).
+    The alpha-tested G-buffer shaders fade with it. Below 1 TEd files the building for the blended forward shaders (render flag
+    0x2000, `rigidstandard ps30_alpha_blend_40`), which the renderer does not have: opaque materials show no fade yet. The G-buffer
+    dissolve (`g_dissolve_enable`) was tried and dropped: its test (opacity - dissolve * (1 - opacity) >= 0.5) only fades between 0.75
+    and 0.5 and hides the building below that.
+  - `burn` sets a render flag (a burning look, not traced further); `burn_amount` and `glow_amount` go to two render parameters whose
+    shader inputs were not found (rigidstandard does not read them); `dirt_level` never reaches the renderer. Not previewed.
+  - `building_tech_level`: no effect in TEd's viewport (its property handler has no case for it, no model choice reads it) and the game
+    export does not carry it. Nothing to preview.
+  - `destruction_level`: already previewed (the piece files of the level).
 
 ### Phase 5e
 - Point-light radius gizmo (the radius is an Inspector value only).
