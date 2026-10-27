@@ -339,3 +339,12 @@ height map as geom_new, CULL_BACK, the shadow rasterizers' bias (2500, slope 1.8
   virtual, not an operation's). TEd's height is the terrain point's y (the scene's units).
 - `MAXIMUM_PASSABLE_SLOPE_ANGLE_DEGREES` (EmpireUtility, `GroundTypeField.cpp`, "Sets the slope which defines no go regions"): a config
   variable, default **30** degrees.
+
+## `lf_influence_map.png` and `nogo.png` (2026-10-27)
+
+BOB_Tile's processor (fn 0x100095b0, its declared inputs and outputs) takes `lf_influence_map.png` when the tile has one and declares
+`final_lf_influence.dds` (written into the raw folder: 460 kit tiles have one), and takes `nogo.png` when present. Nothing downstream
+reads `final_lf_influence.dds`: the compiled tile does not hold it (wce's byte-exact compile does not read the influence map), BOB_Battle
+names neither file, and empire.retail.dll names no LF influence (only the campaign AI's influence maps). Every shipped tile's influence
+map is 1 everywhere. The no-go areas the game gets are `terrain_outlines.xml` (from the final heights' slopes, `docs/formats/tile_compile.md`)
+and the NOGO polygons. Neither map is worth painting (Phase 5a item closed).
