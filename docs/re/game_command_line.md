@@ -34,8 +34,16 @@ played in battle mode anyway), `gfx_fullscreen` (an "environment variable" kept 
 3. As 2 with vanilla units, after moving `@tdd_dev_buildings_25_10_2026.pack` (a **movie-type** pack, which loads whatever the mod list
    says) out of `data\`: loaded and played, clean exit. The crash was that stray pack (the toolkit's known signature), not the command line.
    A loose `.environment` (red overlay, magenta sky) at the path of a TDD pack's file, named by `<environment_key>`, did **not** show:
-   either the mod pack beat the loose file, or the battle does not take its weather from `<environment_key>`. Open; it matters only for an
-   edited tile that keeps a path a pack also has (a new tile has its own path).
+   either the mod pack beat the loose file, or the battle does not take its weather from `<environment_key>`.
+4. **Loose against a mod pack:** the Londinium XML loose at `script/foi_fords_of_isen/foi_battle.xml`, a path `tdd_pack1_main` also has
+   (TDD's Fords of Isen battle, the same format): the game loaded Fords of Isen. **A mod pack's file wins over a working directory's.**
+   Loose files serve only paths no pack has.
+5. **`mod` with an absolute path** (a pack outside `data\`, listed first): the game stopped at start-up on a breakpoint exception
+   (`0x80000003`, `Empire.Retail.dll+0x1637eac`, the engine's fatal-error stop; the crash report's stack is all "unknown"). Mod packs
+   must be in `data\`, named by file name.
+
+TDD's `foi_battle.xml` has a commented-out `<battle_map_definition><name>terrain/tiles/battle/assembly_kit/battleofthefivearmies/battlefield</name>`:
+a single tile named as the map, without a `tile_map_position`. Untested; if the engine accepts it, a tile painted on no map can be launched.
 
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.
