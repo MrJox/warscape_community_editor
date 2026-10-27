@@ -177,9 +177,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   the stroke along a spline does with the spline's width (user, 2026-10-26; Phase 5a). **Phase 5f is done.**
 
 ### Phase 5g: selection and transform
-- Box select (TEd's selection shape).
-- Select by type / key in the UI (`tile_select_all` exists only as a command).
-- Invert selection; saved selections.
+- Selection tools: done (2026-10-28). B, then a drag: box select (TEd's Frustum selection; the shown, selectable instances whose position
+  is inside; Shift adds, Ctrl takes away). The selection menu's Select: box select, all of the primary's type, all with its key,
+  everything, invert, and selections saved by name for the session (out of date once the tile's structure changes)
+  (`selection_tools.rs`; `box_select`, `select_by`, `selection_save`, `selection_restore`, `scripts/tile_selection_tools.txt`).
+  **Phase 5g is done.**
 - Copy / paste: done (2026-10-28). Ctrl+C / Ctrl+X / Ctrl+V (at the mouse: the first item there, the rest around it as they were) /
   Ctrl+Shift+V (in place), and in the selection menu: into the working layer, one undo entry, the pasted items selected; across the
   session's tiles (the tool keeps the clipboard). Each item keeps its world rotation; a landscape one stands on the terrain where it

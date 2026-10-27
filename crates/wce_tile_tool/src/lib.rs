@@ -22,6 +22,7 @@ pub mod scene_panel;
 pub mod settings;
 mod thumbnails;
 mod camera_views;
+mod selection_tools;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;

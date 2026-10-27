@@ -1007,6 +1007,7 @@ pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
 pub const KEY_DOWN_ARROW: i32 = sys::ImGuiKey_DownArrow;
 pub const KEY_PAGE_UP: i32 = sys::ImGuiKey_PageUp;
 pub const KEY_C: i32 = sys::ImGuiKey_C;
+pub const KEY_B: i32 = sys::ImGuiKey_B;
 pub const KEY_V: i32 = sys::ImGuiKey_V;
 pub const KEY_X: i32 = sys::ImGuiKey_X;
 pub const KEY_PAGE_DOWN: i32 = sys::ImGuiKey_PageDown;
