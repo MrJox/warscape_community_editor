@@ -110,8 +110,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   layout; black and white at the heights given; replace or add; landscape instances follow; one undo entry, `HeightFillCommand`), Tile >
   Import height map... (a dialog with tooltips, black / white starting at the tile's lowest / highest heights), command
   `import_heights`, `scripts/tile_import_heights.txt`.
-- Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
-  Subtract among its operations, `docs/re/terrain.md`).
+- Closed (user, 2026-10-27): **nogo map and LF-influence map painting**, not needed. Nothing the game reads depends on them: BOB_Tile's
+  processor (fn 0x100095b0) takes `lf_influence_map.png` when present and writes `final_lf_influence.dds` into the raw folder (460 kit
+  tiles have one), which nothing downstream reads (not the tile compile, which wce reproduces byte for byte without it; not BOB_Battle;
+  not the game, whose DLL names no LF influence); every shipped tile's influence map is 1 everywhere. `nogo.png` is an input BOB lists
+  when present; the no-go areas the game gets are `terrain_outlines.xml` (the final heights' slopes) and the NOGO polygons. **No-go
+  areas are to be handled as polygons** (user): the NOGO_REGION_POLYGON_INSTANCEs (drawn today; painting them as brushes is Phase 5b).
 - TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's
   average by the stroke's weight).
 
