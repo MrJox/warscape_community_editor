@@ -75,7 +75,8 @@ pub enum Rule {
     /// Greyed out, the value is shown.
     ReadOnly,
 
-    /// Never in the grid (`lf_offset`, `behaviour_delegate`, and what only a command changes).
+    /// Never in the grid (`lf_offset`, `behaviour_delegate`, and what only a command changes). Also wce's choice for what TEd shows but
+    /// nothing uses: `dirt_level` (never reaches the renderer) and `building_tech_level` (no effect, not exported); docs/re/buildings.md.
     Hidden,
 
     /// Only for a building of the category `fort_wall` (`BUILDING_INSTANCE::property_flags` of TEd: `weak_wall`, `ai_breachable`).
@@ -136,13 +137,13 @@ macro_rules! polygon {
 const BUILDING: &[Prop] = base3d![
     p("key", Kind::Text),
     p("opacity", Kind::Slider(0.0, 1.0)),
-    p("dirt_level", Kind::Slider(0.0, 1.0)),
+    ruled("dirt_level", Kind::Slider(0.0, 1.0), Rule::Hidden),
     p("bounds_colour", Kind::Colour),
     p("burn", Kind::Bool),
     p("burn_amount", Kind::Slider(0.0, 1.0)),
     p("glow_amount", Kind::Slider(0.0, 1.0)),
     p("destruction_level", Kind::DestructionLevel),
-    p("building_tech_level", Kind::Enum(en::TECH_LEVEL)),
+    ruled("building_tech_level", Kind::Enum(en::TECH_LEVEL), Rule::Hidden),
     ruled("weak_wall", Kind::Bool, Rule::FortWall),
     ruled("ai_breachable", Kind::Bool, Rule::FortWall),
     p("indestructible", Kind::Bool),
@@ -158,7 +159,7 @@ const SIMPLE_MESH: &[Prop] = base3d![
     p("burn", Kind::Bool),
     p("burn_amount", Kind::Slider(0.0, 1.0)),
     p("glow_amount", Kind::Slider(0.0, 1.0)),
-    p("dirt_level", Kind::Slider(0.0, 1.0)),
+    ruled("dirt_level", Kind::Slider(0.0, 1.0), Rule::Hidden),
     p("bounds_colour", Kind::Colour),
     p("show_collision", Kind::Bool),
     p("seasons", Kind::Seasons),

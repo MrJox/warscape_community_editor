@@ -45,9 +45,11 @@ undo
 frames 3
 assert_instance_param 3 1000
 
-tile_edit selected dirt_level 0.25
-assert_attr selected dirt_level 0.25
-undo
+# dirt_level and building_tech_level are not in the panel (nothing uses them, docs/re/buildings.md); the file keeps them.
+expect_fail tile_edit selected dirt_level 0.25
+assert_attr selected dirt_level 1
+expect_fail tile_edit selected building_tech_level "Tech level 3"
+assert_attr selected building_tech_level TL_TECH_LEVEL1
 tile_edit selected bounds_colour 0,1,0,1
 assert_attr selected bounds_colour argb(0.0,1.0,0.0,1.0)
 undo
@@ -63,9 +65,6 @@ undo
 tile_edit selected destruction_level 2
 assert_attr selected destruction_level 2
 frames 5
-undo
-tile_edit selected building_tech_level "Tech level 3"
-assert_attr selected building_tech_level TL_TECH_LEVEL3
 undo
 tile_edit selected weak_wall true
 assert_attr selected weak_wall true
