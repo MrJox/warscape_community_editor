@@ -579,6 +579,17 @@ pub fn piece_of(item: u64) -> Option<(usize, usize)> {
     (item & PIECE_ITEM != 0).then_some((((item & (PIECE_ITEM - 1)) >> 16) as usize, (item & 0xffff) as usize))
 }
 
+/// Where `TileDocument::align` lines instances up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlignTo {
+    Min,
+    Centre,
+    Max,
+
+    /// The first of the instances (the primary selection).
+    First,
+}
+
 /// The properties of one building piece (`BUILDING_PIECE_INSTANCE`). TEd makes the pieces when it loads a building and does not write them to
 /// the tile (a BUILDING_INSTANCE has no children in any tile.ted): what is edited here lasts for the session. The values a new piece has are
 /// what TEd shows for one.

@@ -993,20 +993,41 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("grab_to", "grab_to <x m> <z m>", "the G grab: put the selected instance on the ground at a point (grid snap applies)", |e, a| {
+    c.add(
+        "snap", "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off]",
+        "the snapping of the grab and the placing (the toolbar's grid popup); no argument: log it",
+        |e, a| {
+            with_tile(e, |t, _| {
+                let mut i = 0;
+                while i + 1 < a.len() {
+                    let on = a[i + 1] == "on";
+                    match a[i].as_str() {
+                        "grid" => t.snap_grid = on,
+                        "vertices" => t.snap_vertices = on,
+                        "size" => t.grid_m = number(&a[i + 1]).unwrap_or(t.grid_m),
+                        "tolerance" => t.snap_tolerance = number(&a[i + 1]).unwrap_or(t.snap_tolerance).max(0.0),
+                        other => return fail(format!("unknown snap setting {other}")),
+                    }
+
+                    i += 2;
+                }
+
+                ok(format!("grid {} size {} tolerance {} vertices {}", t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices))
+            })
+        },
+    );
+
+    c.add("grab_to", "grab_to <x m> <z m>", "the G grab: put the selected instance on the ground at a point (the snapping applies)", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-            let Some((mut x, mut z)) = parsed else { return fail("usage: grab_to <x m> <z m>") };
+            let Some((x, z)) = parsed else { return fail("usage: grab_to <x m> <z m>") };
             if !t.begin_grab(e) {
                 return fail("nothing selected");
             }
 
-            if t.snap_grid && t.grid_m > 0.01 {
-                x = (x / t.grid_m).round() * t.grid_m;
-                z = (z / t.grid_m).round() * t.grid_m;
-            }
-
             let d = document(e).expect("a tile");
+            let p = t.snap_point(d.tile(), Float3::new(x, 0.0, z), t.grab_elem);
+            let (x, z) = (p.x, p.z);
             let y = d.tile().terrain_height(x, z) + t.grab_y_offset as f32;
             if let Some(g) = t.grab_elem {
                 d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture);
@@ -1688,6 +1709,38 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             })
         },
     );
+
+    c.add("align", "align <x | z | height> <first | min | centre | max>", "line the selected instances up, as the selection menu's Align does", |e, a| {
+        let all = selected(e);
+        let axis = match a.first().map(String::as_str) {
+            Some("x") => 0,
+            Some("height") => 1,
+            Some("z") => 2,
+            _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
+        };
+        use wce_tile_editor::tile_document::AlignTo;
+        let to = match a.get(1).map(String::as_str) {
+            Some("first") => AlignTo::First,
+            Some("min") => AlignTo::Min,
+            Some("centre") => AlignTo::Centre,
+            Some("max") => AlignTo::Max,
+            _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
+        };
+        let Some(d) = document(e) else { return no_tile() };
+        ok(format!("{} moved", d.align(&all, axis, to)))
+    });
+
+    c.add("distribute", "distribute <x | z | line>", "space the selected instances evenly, as the selection menu's Distribute does", |e, a| {
+        let all = selected(e);
+        let axis = match a.first().map(String::as_str) {
+            Some("x") => Some(0),
+            Some("z") => Some(2),
+            Some("line") => None,
+            _ => return fail("usage: distribute <x | z | line>"),
+        };
+        let Some(d) = document(e) else { return no_tile() };
+        ok(format!("{} moved", d.distribute(&all, axis)))
+    });
 
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {

@@ -66,7 +66,7 @@ impl TileTool {
     pub(crate) fn place_point(&self) -> (Float3, bool) {
         match (self.modes.unwrap_or_default().0, self.surface_hit) {
             (SurfaceMode::Entity, Some(h)) => (h.point, false),
-            _ => (self.cursor, true),
+            _ => (self.snapped_cursor, true),
         }
     }
 

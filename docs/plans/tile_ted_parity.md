@@ -181,9 +181,17 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Select by type / key in the UI (`tile_select_all` exists only as a command).
 - Invert selection; saved selections.
 - Copy / paste.
-- Align / distribute.
+- Align / distribute: done (2026-10-28; wce's, TEd has none). The selection menu's "Align / distribute": x, z or height (freeform
+  only) to the first selected, the lowest, the middle or the highest; even gaps along x or z between the two furthest apart, or on the
+  line from the first selected to the last; one undo entry each (`TileDocument::align`, `distribute`, `move_instances`; `align`,
+  `distribute`, `scripts/tile_align.txt`).
+- Snapping: done (2026-10-28), after TEd's names (`Ted::GRID_SETTINGS`: `grid_snap_tolerance`, `angle_snap_tolerance`,
+  `horizontal_snap`, `vertical_snap`, `snap_mode` = `SF_SNAP_TO_GRID / ANGLE / EDGES / VERTICES`; their code was not traced). The grid
+  popup has a tolerance (0: the grid always snaps; above, an axis snaps only that close to a grid line, a magnet) and "snap to points"
+  (onto the nearest instance or polygon point within the tolerance, 1.5 m at 0), for the grab and now the placing too (it did not
+  snap before). While grabbing, PageUp / PageDown move a freeform item along the ground's normal (0.25 m; Shift: 1 m). `snap`,
+  `scripts/tile_snap.txt`. Not done: snap to edges, the angle tolerance, horizontal / vertical snap.
 - Camera bookmarks.
-- Snap tolerance; move along the normal.
 - Piece-to-piece snapping from the buildings' `_tech.cs2.parsed` (collision, platforms, attachments; `docs/re/buildings.md`).
 
 ### Phase 6a: tile links

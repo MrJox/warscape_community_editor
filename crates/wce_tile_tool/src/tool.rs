@@ -238,6 +238,18 @@ pub struct TileTool {
     pub(crate) brush: BrushSettings,
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
+
+    /// TEd's grid_snap_tolerance: 0 snaps to the grid always; above, an axis snaps only when within this of a grid line (metres).
+    pub(crate) snap_tolerance: f32,
+
+    /// TEd's SF_SNAP_TO_VERTICES: onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0).
+    pub(crate) snap_vertices: bool,
+
+    /// The cursor on the ground with the snapping applied (what placing uses).
+    pub(crate) snapped_cursor: Float3,
+
+    /// A grab's offset along the surface normal (PageUp / PageDown; freeform items only), metres.
+    pub(crate) grab_normal_offset: f32,
     pub(crate) angle_step: f32,
 
     // The off-terrain report of the Tile panel.
@@ -542,7 +554,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, angle_step: 15.0,
+            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -1434,22 +1446,24 @@ impl TileTool {
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
+            let snapped = self.snap_point(d.tile(), hit, self.grab_elem);
+            self.snapped_cursor = Float3::new(snapped.x, d.tile().terrain_height(snapped.x, snapped.z), snapped.z);
         }
 
         if let (true, true, Some(g)) = (self.grabbing, self.terrain_hit, self.grab_elem) {
-            let (mut gx, mut gz) = (self.cursor.x, self.cursor.z);
-            if self.snap_grid && self.grid_m > 0.01 {
-                gx = (gx / self.grid_m).round() * self.grid_m;
-                gz = (gz / self.grid_m).round() * self.grid_m;
-            }
+            let (gx, gz) = (self.snapped_cursor.x, self.snapped_cursor.z);
 
-            // Entity: Above: on what is under the mouse; else at the height it had above the terrain.
+            // Entity: Above: on what is under the mouse; else at the height it had above the terrain. A freeform one moved along the
+            // normal (PageUp / PageDown) is offset along the terrain's normal there.
             let gy = match (self.modes.unwrap_or_default().0, self.surface_hit) {
                 (crate::settings::SurfaceMode::Entity, Some(h)) => h.point.y,
                 _ => d.tile().terrain_height(gx, gz) + self.grab_y_offset as f32,
             };
 
-            d.set_world_metres(g, Float3::new(gx, gy, gz), self.grab_gesture);
+            let n = d.tile().terrain_normal(gx, gz);
+            let k = if d.tile().placement(g) == wce_tile_editor::tile_document::Placement::Freeform { self.grab_normal_offset } else { 0.0 };
+            let at = Float3::new(gx + n.x as f32 * k, gy + n.y as f32 * k, gz + n.z as f32 * k);
+            d.set_world_metres(g, at, self.grab_gesture);
 
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
@@ -1472,11 +1486,55 @@ impl TileTool {
         let p = d.tile().world_position(el);
         self.grab_elem = Some(el);
         self.grab_y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
+        self.grab_normal_offset = 0.0;
         self.grab_history = d.history().position();
         self.grab_gesture = d.next_gesture();
         self.grabbing = true;
-        self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel".to_owned();
+        self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
+    }
+
+    /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point (snap to vertices; not `skip`'s own),
+    /// else to the grid (each axis, within the tolerance when there is one).
+    pub(crate) fn snap_point(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>) -> Float3 {
+        if self.snap_vertices {
+            let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
+            let mut best = (reach * reach, None);
+            let mut try_point = |q: Float3| {
+                let d2 = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z);
+                if d2 < best.0 {
+                    best = (d2, Some(q));
+                }
+            };
+
+            for &e in t.instances() {
+                if Some(e) == skip || !t.shown(e) {
+                    continue;
+                }
+
+                if t.is_polygon(e) {
+                    t.polygon_world_points(e).into_iter().for_each(&mut try_point);
+                } else {
+                    try_point(t.world_position(e));
+                }
+            }
+
+            if let Some(q) = best.1 {
+                return Float3::new(q.x, p.y, q.z);
+            }
+        }
+
+        if self.snap_grid && self.grid_m > 0.01 {
+            let g = self.grid_m;
+            let axis = |v: f32| {
+                let s = (v / g).round() * g;
+                if self.snap_tolerance > 0.0 && (s - v).abs() > self.snap_tolerance { v } else { s }
+            };
+
+            return Float3::new(axis(p.x), p.y, axis(p.z));
+        }
+
+        p
     }
 
     pub fn end_grab(&mut self, e: &mut Editor, commit: bool) {
@@ -1528,6 +1586,16 @@ impl TileTool {
                 self.stop_making();
             } else if self.mode != TileMode::Select {
                 self.mode = TileMode::Select;
+            }
+        }
+
+        // While grabbing: PageUp / PageDown move a freeform item along the ground's normal (a quarter metre; Shift: a metre).
+        if self.grabbing {
+            let step = if io.KeyShift { 1.0 } else { 0.25 };
+            let dk = if gui::is_key_pressed(gui::KEY_PAGE_UP, true) { step } else if gui::is_key_pressed(gui::KEY_PAGE_DOWN, true) { -step } else { 0.0 };
+            if dk != 0.0 {
+                self.grab_normal_offset += dk;
+                self.status = format!("grab: {:+.2} m along the ground's normal", self.grab_normal_offset);
             }
         }
 
