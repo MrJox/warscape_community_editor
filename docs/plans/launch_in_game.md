@@ -9,9 +9,9 @@ enabled. The command line it relies on: [docs/re/game_command_line.md](../re/gam
   benchmark's XML from data.pack).
 - Not checked yet (test 2, one launch): a battle XML on disk or loose rather than in a pack; `add_working_directory` for the exported
   tile and whether it wins over the mod packs; `mod "<pack>";` on the command line; `gfx_fullscreen 0;` and `show_frontend_movies 0;`.
-- Design below; the open questions at the end are the user's.
+- Design below; the decisions at the end are the user's.
 
-## Design (proposed)
+## Design
 
 1. **Export.** The existing "Save as exported tile" (`TileTool::save_exported`: the tile's packed files, and with procedural walls their
    buildings in a pack) into a staging folder of its own, `<output>/launch/`, cleared each time.
@@ -37,10 +37,10 @@ enabled. The command line it relies on: [docs/re/game_command_line.md](../re/gam
    staging folder and logs the command line without starting the game), status and log lines for each step. Options in Settings > Game
    (*Launch in game*): the delivery, windowed, skip intro movies, the army preset.
 
-## Open questions
+## Decisions (user, 2026-10-27)
 
-1. **Which map** for a tile painted in several places (the Map context's choice, or the first), and for a new tile painted nowhere (a
+1. **Map:** the placement picked in the Tile panel's Map context, else the first found. A tile painted nowhere cannot launch yet (a
    generated one-tile map is the tilemap scope, `tile.md`).
-2. **Loose or pack.**
-3. **Mods on the command line or `used_mods.txt`.**
-4. **The armies:** factions and units (fixed preset, from the editor's packs, an empty battle with one unit to walk around).
+2. **Delivery:** loose (`add_working_directory`); a pack only if test 2 shows loose files lose to the mod packs.
+3. **Mods on the command line** (`mod "<pack>";`); `used_mods.txt` is never touched.
+4. **Armies:** a minimal preset, one small unit per side far apart and a long duration; factions and units editable in Settings.
