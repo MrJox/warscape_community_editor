@@ -76,7 +76,8 @@ pub enum Rule {
     ReadOnly,
 
     /// Never in the grid (`lf_offset`, `behaviour_delegate`, and what only a command changes). Also wce's choice for what TEd shows but
-    /// nothing uses: `dirt_level` (never reaches the renderer) and `building_tech_level` (no effect, not exported); docs/re/buildings.md.
+    /// nothing uses: `dirt_level` (never reaches the renderer), `glow_amount` (read by nothing) and `building_tech_level` (no effect, not exported);
+    /// docs/re/buildings.md.
     Hidden,
 
     /// Only for a building of the category `fort_wall` (`BUILDING_INSTANCE::property_flags` of TEd: `weak_wall`, `ai_breachable`).
@@ -141,7 +142,7 @@ const BUILDING: &[Prop] = base3d![
     p("bounds_colour", Kind::Colour),
     p("burn", Kind::Bool),
     p("burn_amount", Kind::Slider(0.0, 1.0)),
-    p("glow_amount", Kind::Slider(0.0, 1.0)),
+    ruled("glow_amount", Kind::Slider(0.0, 1.0), Rule::Hidden),
     p("destruction_level", Kind::DestructionLevel),
     ruled("building_tech_level", Kind::Enum(en::TECH_LEVEL), Rule::Hidden),
     ruled("weak_wall", Kind::Bool, Rule::FortWall),
@@ -158,7 +159,7 @@ const SIMPLE_MESH: &[Prop] = base3d![
     p("opacity", Kind::Slider(0.0, 1.0)),
     p("burn", Kind::Bool),
     p("burn_amount", Kind::Slider(0.0, 1.0)),
-    p("glow_amount", Kind::Slider(0.0, 1.0)),
+    ruled("glow_amount", Kind::Slider(0.0, 1.0), Rule::Hidden),
     ruled("dirt_level", Kind::Slider(0.0, 1.0), Rule::Hidden),
     p("bounds_colour", Kind::Colour),
     p("show_collision", Kind::Bool),

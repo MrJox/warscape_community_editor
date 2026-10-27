@@ -2434,7 +2434,6 @@ impl TileDocument {
         ins.edit_slider("opacity", "opacity", &mut p.opacity, 0.0, 1.0);
         ins.edit_bool("burn", "burn", &mut p.burn);
         ins.edit_slider("burn_amount", "burn_amount", &mut p.burn_amount, 0.0, 1.0);
-        ins.edit_slider("glow_amount", "glow_amount", &mut p.glow_amount, 0.0, 1.0);
         ins.edit_color4("bounds_colour", "bounds_colour", &mut p.bounds_colour);
         ins.edit_bool("show_collision", "show_collision", &mut p.show_collision);
         ins.edit_checks("seasons", "seasons", &["Winter", "Spring", "Summer", "Autumn"], &mut p.seasons);
