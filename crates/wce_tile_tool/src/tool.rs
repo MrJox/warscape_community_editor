@@ -340,6 +340,10 @@ pub struct TileTool {
     /// The radius minus where the mouse grabbed the handle (the handle does not jump to the mouse).
     light_grab: f32,
 
+    /// The civilian shelter whose target handle is being dragged, and the drag's undo gesture.
+    target_drag: Option<usize>,
+    target_gesture: u64,
+
     /// The water depth view (`water_view.rs`): the tile and version its depth was worked out for, and the version last seen with when it
     /// started being (the settling after an edit).
     pub(crate) water_for: Option<(DocumentId, u64)>,
@@ -543,7 +547,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), light_drag: None, light_gesture: 0, light_grab: 0.0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
@@ -2920,7 +2924,13 @@ impl Tool for TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at);
-        let hot = if self.light_drag.is_some() { Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE) } else { self.poly_point };
+        let hot = if self.light_drag.is_some() {
+            Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE)
+        } else if self.target_drag.is_some() {
+            Some(wce_tile_editor::tile_document::SHELTER_TARGET_HANDLE)
+        } else {
+            self.poly_point
+        };
         d.tile_mut().set_highlight(&mut e.scene, &sel, hot, handle, &overlay);
     }
 
@@ -3181,6 +3191,19 @@ impl Tool for TileTool {
                     }
                 }
 
+                // A civilian shelter's target handle starts a drag of the target over the ground.
+                if let (Some((o, dir)), Some(sel)) = (ray, sel)
+                    && let Some(k) = d.tile().shelter_target(sel)
+                {
+                    let k = Float3::new(k.x, k.y + 0.3, k.z);
+                    let t = dot(k - o, dir);
+                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
+                        self.target_drag = Some(sel);
+                        self.target_gesture = d.next_gesture();
+                        return true;
+                    }
+                }
+
                 // A polygon point handle starts a drag, shift + click near an edge inserts a point.
                 let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
                 let pts = d.tile().polygon_world_points(sel);
@@ -3300,6 +3323,12 @@ impl Tool for TileTool {
                     if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
                         d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
                     }
+                } else if let Some(shelter) = self.target_drag {
+                    self.on_hover(e, ev);
+                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                    if self.terrain_hit {
+                        d.set_shelter_target(shelter, self.cursor, self.target_gesture);
+                    }
                 } else if let Some(light) = self.light_drag {
                     // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
                     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
@@ -3326,7 +3355,7 @@ impl Tool for TileTool {
                     }
                 }
 
-                self.stroke_active || self.point_drag || self.light_drag.is_some()
+                self.stroke_active || self.point_drag || self.light_drag.is_some() || self.target_drag.is_some()
             }
 
             ViewportEventKind::Release => {
@@ -3341,9 +3370,10 @@ impl Tool for TileTool {
                     d.end_stroke();
                 }
 
-                if self.point_drag || self.light_drag.is_some() {
+                if self.point_drag || self.light_drag.is_some() || self.target_drag.is_some() {
                     self.point_drag = false;
                     self.light_drag = None;
+                    self.target_drag = None;
                     d.history_mut().break_merge();
                 }
 

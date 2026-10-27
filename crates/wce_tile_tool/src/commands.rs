@@ -1340,6 +1340,30 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         mouse(e, &args, "")
     });
 
+    c.add("shelter_target_drag", "shelter_target_drag <x m> <z m>", "drag the target handle of the selected civilian shelter with the mouse to a ground point", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: shelter_target_drag <x m> <z m>") };
+        let Some(from) = el.and_then(|el| d.tile().shelter_target(el)) else { return fail("no civilian shelter selected") };
+        let from = Float3::new(from.x, from.y + 0.3, from.z);
+        let to = Float3::new(x, d.tile().terrain_height(x, z), z);
+        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+        mouse(e, &args, "")
+    });
+
+    c.add("assert_shelter_target", "assert_shelter_target <x m> <z m> [tolerance]", "test: the selected civilian shelter's target is at this ground point", |e, a| {
+        let el = primary(e);
+        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_shelter_target <x m> <z m> [tolerance]") };
+        let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.5);
+        match el.and_then(|el| d.tile().shelter_target(el)) {
+            Some(t) if (t.x - x).abs() <= tol && (t.z - z).abs() <= tol => ok(""),
+            Some(t) => fail(format!("target at {:.2} {:.2}", t.x, t.z)),
+            None => fail("no civilian shelter selected"),
+        }
+    });
+
     c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {
