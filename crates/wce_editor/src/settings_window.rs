@@ -395,14 +395,16 @@ impl Editor {
 
         let Some(d) = self.settings_window.draft.as_mut() else { return };
         gui::separator_text("Assembly Kit and projects");
-        let detected = d.assembly_kit_dir().map_or_else(|| "none found in the game folder".to_owned(), |k| k.display().to_string());
-        let mut kit = d.game_mut().assembly_kit.clone();
-        if folder_field("Assembly Kit", &mut kit, &detected) {
-            d.game_mut().assembly_kit = kit;
+        label("Assembly Kits");
+        folder_list("assembly_kits", &mut d.game_mut().assembly_kits);
+        env_note("WCE_ASSEMBLY_KIT");
+        if d.game_settings().assembly_kits.is_empty() {
+            gui::set_cursor_pos_x(LABEL_WIDTH);
+            let detected = d.detected_assembly_kit().map_or_else(|| "none found in the game folder".to_owned(), |k| k.display().to_string());
+            gui::text_disabled(&format!("In use: {detected}"));
         }
 
-        env_note("WCE_ASSEMBLY_KIT");
-        help("The folder with raw_data. The tools read it; only \"Save for Assembly Kit\" writes to it, as TEd and the kit's tools read files.");
+        help("Folders with raw_data; the first one wins where several have the same tile or prefab. The tools read them; only \"Save for Assembly Kit\" writes to one (it asks which when several fit), as TEd and the kit's tools read files. With none listed, the kit in the game folder is used.");
         let default_projects = d.projects_dir().display().to_string();
         let mut projects = d.game_mut().projects.clone();
         if folder_field("Projects", &mut projects, &default_projects) {

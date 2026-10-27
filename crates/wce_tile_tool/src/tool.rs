@@ -250,6 +250,10 @@ pub struct TileTool {
     pub(crate) extract_prompt: Option<crate::extract_prompt::ExtractPrompt>,
     pub(crate) extract_prompt_open: bool,
 
+    /// The question which of several kits "Save for Assembly Kit" writes to (`kit_prompt.rs`).
+    pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
+    pub(crate) kit_prompt_open: bool,
+
     /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
     browse_extracted: std::collections::HashSet<String>,
 
@@ -350,7 +354,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -465,9 +469,8 @@ impl TileTool {
         self.draw_pts.clear();
     }
 
-    /// The raw_data folders the tile browser lists: `$WCE_TILE_KITS` (';' separated, for the tests), else the game's Assembly Kit (and the
-    /// campaign tile map kit beside a battle tile map kit, a development install) and the projects in the kit's layout (`tile.wce` tiles,
-    /// extracted ones among them).
+    /// The raw_data folders the tile browser lists: `$WCE_TILE_KITS` (';' separated, for the tests), else the game's Assembly Kits
+    /// (`Settings::assembly_kit_raw_dirs`) that have tiles, and the projects in the kit's layout (`tile.wce` tiles, extracted ones among them).
     pub fn kit_roots(&self, e: &mut Editor) -> Vec<PathBuf> {
         // The index of the kits' tile database entries keeps its rows in the cache folder between runs.
         TileIndex::set_cache_dir(&e.settings_ref().paths().cache_dir().join("tile_index"));
@@ -475,16 +478,8 @@ impl TileTool {
             return kits.split(';').filter(|k| !k.is_empty()).map(PathBuf::from).collect();
         }
 
-        let mut roots = vec![];
-        if let Some(kit) = e.settings_ref().assembly_kit_dir() {
-            let mut kits = vec![kit.clone()];
-            if kit.file_name().is_some_and(|n| n == "assembly_kit_battle_tilemap") {
-                kits.push(kit.with_file_name("assembly_kit_campaign_tilemap"));
-            }
-
-            roots.extend(kits.into_iter().map(|k| k.join("raw_data")).filter(|raw| raw.join("terrain").join("tiles").is_dir()));
-        }
-
+        let mut roots = e.settings_ref().assembly_kit_raw_dirs();
+        roots.retain(|raw| raw.join("terrain").join("tiles").is_dir());
         let projects = Self::workspace_dir(e).join("raw_data");
         if projects.join("terrain").join("tiles").is_dir() {
             roots.insert(0, projects);
@@ -705,15 +700,19 @@ impl TileTool {
             }
 
             let kind = folder.split('/').nth(2).unwrap_or("battle").to_owned();
-            let kit = self.kit_for(e, &kind);
-            let kit_entry = kit.as_ref().zip(entry_xml.strip_prefix(&root).ok()).map(|(kit, rel)| kit.join(rel)).filter(|x| x.is_file());
-            match (kit, kit_entry) {
-                (Some(kit), Some(kit_entry)) if wce_tile::tile_project::has_tile(&kit.join(&folder)) => {
+            // The first kit that has the tile and its entry.
+            let rel = entry_xml.strip_prefix(&root).ok().map(Path::to_path_buf);
+            let found = self.kits_for(e, &kind).into_iter().find_map(|kit| {
+                let kit_entry = kit.join(rel.as_ref()?);
+                (kit_entry.is_file() && wce_tile::tile_project::has_tile(&kit.join(&folder))).then_some((kit, kit_entry))
+            });
+            match found {
+                Some((kit, kit_entry)) => {
                     ted = entry.ted_path(&kit, v);
                     entry_xml = kit_entry;
                 }
 
-                _ => return Err(format!("the project has no {folder} and the Assembly Kit has no copy of it")),
+                None => return Err(format!("the project has no {folder} and no Assembly Kit has a copy of it")),
             }
         }
 
@@ -986,15 +985,49 @@ impl TileTool {
         Ok(format!("saved as an exported tile in {} ({} notes in the log)", saved.display(), notes.notes.len()))
     }
 
-    /// The kit a tile of `kind` (`battle`, `campaign`) is saved for: the first of the kits the Tiles panel lists (not the projects) that has
-    /// that kind's tile database.
-    pub(crate) fn kit_for(&self, e: &mut Editor, kind: &str) -> Option<PathBuf> {
+    /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
+    /// have that kind's tile database, in the settings' order.
+    pub(crate) fn kits_for(&self, e: &mut Editor, kind: &str) -> Vec<PathBuf> {
         let projects = Self::workspace_dir(e).join("raw_data");
-        self.kit_roots(e).into_iter().filter(|r| *r != projects).find(|r| r.join("terrain/tiles").join(kind).join("_tile_database").is_dir())
+        self.kit_roots(e).into_iter().filter(|r| *r != projects && r.join("terrain/tiles").join(kind).join("_tile_database").is_dir()).collect()
     }
 
-    /// "Save for Assembly Kit": the open tile (saved first when modified) as TEd reads it, into `kit_raw` (a raw_data folder) or the kit of its
-    /// kind.
+    /// The first of [`Self::kits_for`].
+    pub(crate) fn kit_for(&self, e: &mut Editor, kind: &str) -> Option<PathBuf> {
+        self.kits_for(e, kind).into_iter().next()
+    }
+
+    /// The kind (`battle`, `campaign`) of the open tile, from its folder under terrain/tiles.
+    fn open_tile_kind(e: &mut Editor) -> Result<String, String> {
+        let d = document(e).ok_or("no tile is open")?;
+        let folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
+        Ok(folder.split('/').nth(2).unwrap_or("battle").to_owned())
+    }
+
+    /// "Save for Assembly Kit" from the menus and buttons: into the only kit that fits, or after asking which of several (`kit_prompt.rs`).
+    pub fn save_for_kit_ask(&mut self, e: &mut Editor) -> Result<String, String> {
+        let kind = Self::open_tile_kind(e)?;
+        let kits = self.kits_for(e, &kind);
+        if kits.len() > 1 {
+            return Ok(self.ask_kit(crate::kit_prompt::KitSave::Tile, kits));
+        }
+
+        self.save_for_kit(e, None)
+    }
+
+    /// "Save for Assembly Kit" of a prefab from the buttons: into the only kit there is, or after asking which of several.
+    pub fn save_prefab_for_kit_ask(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
+        let projects = Self::workspace_dir(e).join("raw_data");
+        let kits = self.kit_roots(e).into_iter().filter(|r| *r != projects).collect::<Vec<_>>();
+        if kits.len() > 1 {
+            return Ok(self.ask_kit(crate::kit_prompt::KitSave::Prefab(key.to_owned()), kits));
+        }
+
+        self.save_prefab_for_kit(e, key, None)
+    }
+
+    /// "Save for Assembly Kit": the open tile (saved first when modified) as TEd reads it, into `kit_raw` (a raw_data folder) or the first kit
+    /// of its kind.
     ///
     /// # Errors
     ///
@@ -1005,9 +1038,7 @@ impl TileTool {
             e.docs.save_one(id)?;
         }
 
-        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
-        let folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
-        let kind = folder.split('/').nth(2).unwrap_or("battle").to_owned();
+        let kind = Self::open_tile_kind(e)?;
         let kit = match kit_raw {
             Some(k) => k,
             None => self.kit_for(e, &kind).ok_or("no Assembly Kit (set it in the game's settings)")?,
@@ -1050,11 +1081,13 @@ impl TileTool {
         }
 
         let kind = kit_folder.split('/').nth(2).unwrap_or("battle").to_owned();
-        let kit = self.kit_for(e, &kind).ok_or("no Assembly Kit (set it in the game's settings)")?;
-        let dir = kit.join(&kit_folder);
-        if !wce_tile::tile_project::has_tile(&dir) {
-            return Err(format!("the Assembly Kit has no {kit_folder}"));
+        let kits = self.kits_for(e, &kind);
+        if kits.is_empty() {
+            return Err("no Assembly Kit (set it in the game's settings)".to_owned());
         }
+
+        // The first kit that has the tile.
+        let dir = kits.iter().map(|k| k.join(&kit_folder)).find(|d| wce_tile::tile_project::has_tile(d)).ok_or_else(|| format!("no Assembly Kit has {kit_folder}"))?;
 
         // TEd has the walls' pieces, the project the walls: the pieces go and the walls come back (edits of the pieces in TEd are lost).
         let walls = e.docs.find_as::<TileDocument>(id).map(TileDocument::wall_texts).unwrap_or_default();
@@ -1395,7 +1428,7 @@ impl TileTool {
 
         match action {
             Some(true) => {
-                let msg = self.save_for_kit(e, None).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
+                let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
                 e.status(&msg, false);
             }
 
@@ -1779,28 +1812,31 @@ impl TileTool {
         }
 
         if self.browse_roots.is_empty() {
-            gui::text_wrapped("No assembly kit found. Set the game folder (the one with assembly_kit_battle_tilemap) or the tile kits in Settings.");
+            gui::text_wrapped("No assembly kit found. Set the game folder (the one with assembly_kit_battle_tilemap) or add Assembly Kits in Settings > Game.");
             gui::end();
             return;
         }
 
         // The kits' raw tiles, then the game's packs (exported tiles, decompiled into the workspace when opened).
         const PACKS_LABEL: &str = "game packs (exported tiles)";
-        // The projects are named so; a kit by its folder.
+        // The projects are named so; a kit by its folder, or by its whole path when several kits have a folder of that name.
         let projects_raw = Self::workspace_dir(e).join("raw_data");
-        let kit_label = |r: &Path| {
-            if r == projects_raw {
+        let folder_name = |r: &Path| r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let kit_labels = self.browse_roots.iter().map(|r| {
+            if *r == projects_raw {
                 return "projects (tile.wce)".to_owned();
             }
 
-            r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
-        };
+            let name = folder_name(r);
+            let twins = self.browse_roots.iter().filter(|o| **o != projects_raw && folder_name(o) == name).count();
+            if twins > 1 { r.parent().unwrap_or(r).display().to_string() } else { name }
+        }).collect::<Vec<_>>();
         self.browse_kit = self.browse_kit.min(self.browse_roots.len());
         let packs = self.browse_kit == self.browse_roots.len();
         gui::set_next_item_width(220.0);
-        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_label(&self.browse_roots[self.browse_kit]) }) {
-            for (i, r) in self.browse_roots.iter().enumerate() {
-                if gui::selectable(&kit_label(r), i == self.browse_kit, 0) {
+        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_labels[self.browse_kit].clone() }) {
+            for (i, label) in kit_labels.iter().enumerate() {
+                if gui::selectable(label, i == self.browse_kit, 0) {
                     self.browse_kit = i;
                 }
             }
@@ -2317,8 +2353,20 @@ impl Tool for TileTool {
         let mut s: TileSettings = draft.tool(SETTINGS_ID);
         let before = s.clone();
         // The folders are the game's (Settings > Game): shown here for reference.
-        settings_window::label("Assembly Kit");
-        gui::text_disabled(&draft.assembly_kit_dir().map_or_else(|| "none (set it in the game's settings)".to_owned(), |k| k.display().to_string()));
+        settings_window::label("Assembly Kits");
+        let kits = draft.assembly_kit_dirs();
+        if kits.is_empty() {
+            gui::text_disabled("none (set them in the game's settings)");
+        }
+
+        for (i, kit) in kits.iter().enumerate() {
+            if i > 0 {
+                gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
+            }
+
+            gui::text_disabled(&kit.display().to_string());
+        }
+
         settings_window::label("Tile projects");
         gui::text_disabled(&draft.kit_projects_dir().display().to_string());
         settings_window::help("Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.");
@@ -2494,6 +2542,7 @@ impl Tool for TileTool {
         self.draw_new_set_popup(e);
         self.draw_new_tile_dialog(e);
         self.draw_extract_prompt(e);
+        self.draw_kit_prompt(e);
         self.draw_quick_add(e);
     }
 
@@ -2546,7 +2595,7 @@ impl Tool for TileTool {
         gui::separator();
         let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
         if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
-            let msg = self.save_for_kit(e, None).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
+            let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
             e.status(&msg, false);
         }
 
