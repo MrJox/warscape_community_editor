@@ -20,6 +20,7 @@ pub mod placement_modes;
 pub mod prefab_panel;
 pub mod scene_panel;
 pub mod settings;
+mod thumbnails;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;

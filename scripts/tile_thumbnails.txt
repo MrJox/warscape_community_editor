@@ -1,0 +1,14 @@
+# The Create panel's thumbnails (Phase 5d of docs/plans/tile_ted_parity.md, wce's): a building, a tree and a model are asked for, made in
+# the background by a renderer of their own (the models load first) and kept in the cache folder; copied to %OUT%/thumb_*.png. Run with
+# WCE_TILE_WORKSPACE and WCE_SETTINGS_DIR set to scratch folders (the cache is the settings folder's).
+new_tile wce_thumb_test 2 2 10 32
+frames 5
+expect_fail thumbnail building barbarian_fort_straight
+expect_fail thumbnail VEGETATION_INSTANCE %TREE%
+expect_fail thumbnail building %HOUSE%
+frames 400
+thumbnail building barbarian_fort_straight %OUT%/thumb_wall.png
+thumbnail VEGETATION_INSTANCE %TREE% %OUT%/thumb_tree.png
+thumbnail building %HOUSE% %OUT%/thumb_house.png
+expect_fail thumbnail ProjectedDecalInstance whatever
+quit

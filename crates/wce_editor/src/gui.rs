@@ -137,6 +137,15 @@ pub fn bullet_text(s: &str) {
 const TOOLTIP_WRAP_EMS: f32 = 35.0;
 
 /// A tooltip for the item last drawn, its lines wrapped at [`TOOLTIP_WRAP_EMS`] font sizes (a short one keeps its own width).
+/// A tooltip of anything (`end_tooltip` after it); false when it is not shown.
+pub fn begin_tooltip() -> bool {
+    call!(sys::igBeginTooltip())
+}
+
+pub fn end_tooltip() {
+    call!(sys::igEndTooltip())
+}
+
 pub fn set_tooltip(s: &str) {
     if !call!(sys::igBeginTooltip()) {
         return;

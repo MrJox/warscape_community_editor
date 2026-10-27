@@ -450,11 +450,83 @@ impl TileTool {
         self.create.shown_for = stamp;
     }
 
-    /// A row of the list: the entry, lit while it is made, its star at the right. Returns (clicked, star clicked).
-    fn create_row(&self, en: &Entry, favourite: bool, uid: &str) -> (bool, bool) {
+    /// The models an entry places, for its thumbnail: a building, a tree, a model or a prefab (nothing for the others).
+    fn thumbnail_parts(&mut self, e: &mut Editor, en: &Entry) -> Vec<(wce_foundation::math::Float4x4, wce_scene::render_scene::MeshInstance)> {
+        let text = match &en.make {
+            Make::Place { kind, key } if !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE") => {
+                document(e).and_then(|d| d.draft_text(&Draft::new(kind, key)))
+            }
+
+            Make::Prefab { key } => {
+                let lib = self.prefab_library(e);
+                lib.load(key).map(|p| wce_tile_editor::tile_document::prefab_reference_text(&p.group_text, key)).ok()
+            }
+
+            _ => None,
+        };
+
+        match (text, document(e)) {
+            (Some(text), Some(d)) => d.tile().model_parts(&text),
+            _ => vec![],
+        }
+    }
+
+    /// Whether an entry can have a thumbnail.
+    fn has_thumbnail(en: &Entry) -> bool {
+        match &en.make {
+            Make::Place { kind, key } => !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE"),
+            Make::Prefab { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// An entry's thumbnail when it is ready; asks for it when it was never made (`first`: before the others).
+    fn thumbnail(&mut self, e: &mut Editor, en: &Entry, first: bool) -> Option<wce_editor::images::ImageRef> {
+        let dir = crate::thumbnails::cache_dir(e);
+        if self.thumbs.dir != dir {
+            self.thumbs = crate::thumbnails::Thumbnails::default();
+            self.thumbs.dir = dir;
+        }
+
+        let id = en.id();
+        if let Some(img) = self.thumbs.get(e, &id) {
+            return Some(img);
+        }
+
+        if !self.thumbs.known(&id) {
+            let parts = self.thumbnail_parts(e, en);
+            self.thumbs.request(&id, parts, first);
+        }
+
+        None
+    }
+
+    /// The tooltip of the entry under the mouse: its thumbnail, or why there is none yet.
+    fn thumbnail_tooltip(&mut self, e: &mut Editor, en: &Entry) {
+        if !Self::has_thumbnail(en) {
+            return;
+        }
+
+        let img = self.thumbnail(e, en, true);
+        if !gui::begin_tooltip() {
+            return;
+        }
+
+        match img {
+            Some(img) => gui::image(img.id, gui::v2(img.w as f32, img.h as f32)),
+            None if self.thumbs.failed(&en.id()) => gui::text_disabled("no model to show"),
+            None => gui::text_disabled("making the thumbnail..."),
+        }
+
+        gui::end_tooltip();
+    }
+
+    /// A row of the list: the entry, lit while it is made, its star at the right. Returns (clicked, star clicked, hovered).
+    fn create_row(&self, en: &Entry, favourite: bool, uid: &str) -> (bool, bool, bool) {
         let on = self.making.as_deref() == Some(en.label.as_str());
         let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
         let clicked = gui::selectable_sized(&format!("{}  {}##{uid}", en.icon(), en.label), on, 0, gui::v2(width, 0.0));
+        let hovered = gui::is_item_hovered();
         gui::same_line();
         gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
         let colour = if favourite {
@@ -466,7 +538,7 @@ impl TileTool {
         gui::push_style_color(gui::COL_TEXT, colour);
         let star = gui::small_button(&format!("{}##star{uid}", icons::STAR));
         gui::pop_style_color(2);
-        (clicked, star)
+        (clicked, star, hovered)
     }
 
     /// The Create panel.
@@ -532,8 +604,27 @@ impl TileTool {
         let (favourites, recent) = self.create_marks(e);
         let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
 
+        // Thumbnails of the list (made in the background, kept in the cache folder).
+        if self.thumbs.busy() {
+            gui::text_disabled(&format!("{}  thumbnails: {} of {}", icons::IMAGE, self.thumbs.made, self.thumbs.asked));
+            gui::same_line();
+            if gui::small_button("Cancel##thumbs") {
+                self.thumbs.cancel();
+            }
+        } else if gui::small_button(&format!("{}  Make thumbnails of the list", icons::IMAGE)) {
+            let rows = self.create.shown.iter().flatten().copied().filter(|&i| Self::has_thumbnail(&entries[i])).collect::<Vec<_>>();
+            for i in rows {
+                self.thumbnail(e, &entries[i], false);
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Renders a picture of every building, tree, model and prefab the list shows (filter it first: there are thousands), kept in the cache folder. Hover an entry to see its picture; one hovered without a picture is made then.");
+        }
+
         let mut start = first;
         let mut star = None;
+        let mut hovered = None;
         if gui::begin_child("createlist", gui::v2(0.0, 0.0), 0, 0) {
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
             for (title, icon, ids) in [("Favourites", icons::STAR, &favourites), ("Recent", icons::HISTORY, &recent)] {
@@ -545,9 +636,13 @@ impl TileTool {
                 if gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
                     for i in rows {
                         let en = &entries[i];
-                        let (c, s) = self.create_row(en, favourites.contains(&en.id()), &format!("{title}{i}"));
+                        let (c, s, h) = self.create_row(en, favourites.contains(&en.id()), &format!("{title}{i}"));
                         if c {
                             start = Some(i);
+                        }
+
+                        if h {
+                            hovered = Some(i);
                         }
 
                         if s {
@@ -581,9 +676,13 @@ impl TileTool {
                 gui::clipped(rows.len(), |r| {
                     let i = rows[r];
                     let en = &entries[i];
-                    let (cl, s) = self.create_row(en, favourites.contains(&en.id()), &i.to_string());
+                    let (cl, s, h) = self.create_row(en, favourites.contains(&en.id()), &i.to_string());
                     if cl {
                         start = Some(i);
+                    }
+
+                    if h {
+                        hovered = Some(i);
                     }
 
                     if s {
@@ -593,6 +692,10 @@ impl TileTool {
 
                 gui::tree_pop();
             }
+        }
+
+        if let Some(i) = hovered {
+            self.thumbnail_tooltip(e, &entries[i]);
         }
 
         gui::end_child();
@@ -733,6 +836,27 @@ impl TileTool {
 }
 
 /// Places what the Create panel makes now from a script: `kind` (a type, `building` with a key, `prefab` with its key).
+/// Script: asks for an entry's thumbnail (`building`, a keyed type or `prefab`, and its key); its file when it is made.
+pub fn thumbnail_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let make = match what {
+        "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
+        "prefab" => Make::Prefab { key: key.to_owned() },
+        kind => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
+    };
+
+    let en = Entry { category: 0, label: key.to_owned(), make, search: String::new() };
+    if !TileTool::has_thumbnail(&en) {
+        return Err(format!("{what} has no thumbnails"));
+    }
+
+    t.thumbnail(e, &en, true);
+    if t.thumbs.failed(&en.id()) {
+        return Err(format!("no model to show for {key}"));
+    }
+
+    Ok(t.thumbs.file(&en.id()))
+}
+
 pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) -> Result<(), String> {
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
