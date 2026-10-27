@@ -34,7 +34,7 @@ jobs:
       - name: Install local dependencies
         shell: bash
         run: |
-          sudo apt update -y && sudo apt install -y wine-dxvk
+          sudo apt update -y && sudo apt install -y dxvk
 
       - name: Build libs and server
         uses: actions-rs/cargo@v1
