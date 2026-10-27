@@ -1,0 +1,42 @@
+# Snapping (Phase 5g of docs/plans/tile_ted_parity.md): the grid always, the grid within a tolerance (a magnet per axis), onto points
+# (instances, polygon points) within the tolerance, and a freeform grab moved along the ground's normal (PageUp). Run with
+# WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_snap_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 40 50
+add_building barbarian_fort_straight 70 62
+frames 10
+tile_select 8
+snap grid on size 6 tolerance 0
+grab_to 61 59
+assert_world_xz 60 60 0.01
+snap tolerance 0.5
+grab_to 61 59.7
+assert_world_xz 61 60 0.01
+snap grid off vertices on tolerance 2
+grab_to 40.8 51.2
+assert_world_xz 40 50 0.01
+grab_to 44 54
+assert_world_xz 44 54 0.01
+snap vertices off tolerance 0
+
+# Along the normal: a freeform building grabbed and lifted a quarter metre twice (the new tile is flat at 5 m: straight up).
+tile_edit selected surface_mode Freeform
+assert_attr selected surface_mode MSM_FREEFORM
+cam_look 50 5 50
+cam 2.4 1.0 60 5
+frames 5
+tile_click_ground 50 52
+frames 3
+key G
+frames 4
+key PageUp
+frames 4
+key PageUp
+frames 4
+tile_click_ground 50 52
+frames 5
+tile_select 8
+assert_world_xz 50 52 0.3
+assert_world 50 5.5 51.87 0.2
+quit

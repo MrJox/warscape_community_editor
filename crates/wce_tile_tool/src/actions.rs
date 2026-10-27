@@ -90,7 +90,8 @@ impl TileTool {
         }
 
         // The snapping: a button lit while it is on, its settings in a popup.
-        if self.snap_grid {
+        let snapping = self.snap_grid || self.snap_vertices;
+        if snapping {
             gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
         }
 
@@ -98,18 +99,28 @@ impl TileTool {
             gui::open_popup("tile_snap");
         }
 
-        if self.snap_grid {
+        if snapping {
             gui::pop_style_color(1);
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Snapping of the grab (G) and of the placing, and the turn of Ctrl+R / R");
+            gui::set_tooltip("Snapping of the grab (G) and of the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
         }
 
         if gui::begin_popup("tile_snap") {
             gui::checkbox("snap to grid", &mut self.snap_grid);
             gui::set_next_item_width(120.0);
             gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
+            gui::checkbox("snap to points", &mut self.snap_vertices);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("TEd's Snap to vertices: what is grabbed or placed goes onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0). Before the grid.");
+            }
+
+            gui::set_next_item_width(120.0);
+            gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("TEd's snap tolerance. 0: the grid always snaps. Above 0: an axis snaps only when it is this close to a grid line (a magnet), and points snap within it.");
+            }
             gui::set_next_item_width(120.0);
             gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
             gui::end_popup();
@@ -378,6 +389,46 @@ impl TileTool {
             if gui::menu_item("Snap the landscape ones to the terrain", None, false, true) {
                 let n = d.snap_to_terrain(&all, false);
                 self.status = format!("{n} landscape item(s) snapped");
+            }
+
+            gui::end_menu();
+        }
+
+        // Align / distribute the selected instances (the first selected is the one others line up with).
+        let several = all.len() >= 2;
+        if gui::begin_menu_enabled("Align / distribute", several) {
+            use wce_tile_editor::tile_document::AlignTo;
+            for (axis, name) in [(0, "x"), (2, "z"), (1, "height")] {
+                if gui::begin_menu(&format!("Align {name}")) {
+                    for (to, label) in [(AlignTo::First, "to the first selected"), (AlignTo::Min, "to the lowest"), (AlignTo::Centre, "to the middle"), (AlignTo::Max, "to the highest")] {
+                        if gui::menu_item(label, None, false, true) {
+                            let n = d.align(&all, axis, to);
+                            self.status = format!("aligned {name}: {n} moved");
+                        }
+                    }
+
+                    gui::end_menu();
+                }
+
+                if axis == 1 && gui::is_item_hovered() {
+                    gui::set_tooltip("The freeform ones only: a landscape instance stands on the terrain.");
+                }
+            }
+
+            gui::separator();
+            for (axis, label, tip) in [
+                (Some(0), "Distribute along x", "Even gaps along x between the two furthest apart; the rest keep their order and their z."),
+                (Some(2), "Distribute along z", "Even gaps along z between the two furthest apart; the rest keep their order and their x."),
+                (None, "Distribute on a line", "Even gaps on the straight line from the first selected to the last; the rest are put on it, in their order along it."),
+            ] {
+                if gui::menu_item(label, None, false, all.len() >= 3) {
+                    let n = d.distribute(&all, axis);
+                    self.status = format!("distributed: {n} moved");
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(tip);
+                }
             }
 
             gui::end_menu();

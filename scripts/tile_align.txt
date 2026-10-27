@@ -1,0 +1,38 @@
+# Align / distribute (Phase 5g of docs/plans/tile_ted_parity.md): four buildings on a new tile are lined up on z to the first selected,
+# spaced evenly along x, then put on the line from the first to the last; each one undo entry. Run with WCE_TILE_WORKSPACE set.
+new_tile wce_align_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 40 50
+add_building barbarian_fort_straight 70 62
+add_building barbarian_fort_straight 52 41
+add_building barbarian_fort_straight 100 80
+frames 10
+tile_select_all BUILDING_INSTANCE
+assert_history 4 4
+align z first
+assert_history 5 5
+tile_select 8
+assert_world_xz 70 50 0.01
+tile_select 10
+assert_world_xz 100 50 0.01
+tile_select_all BUILDING_INSTANCE
+distribute x
+assert_history 6 6
+tile_select 9
+assert_world_xz 60 50 0.01
+tile_select 8
+assert_world_xz 80 50 0.01
+undo
+undo
+tile_select 8
+assert_world_xz 70 62 0.01
+tile_select_all BUILDING_INSTANCE
+distribute line
+tile_select 9
+assert_world_xz 60 60 0.01
+tile_select 8
+assert_world_xz 80 70 0.01
+undo
+tile_select 9
+assert_world_xz 52 41 0.01
+quit

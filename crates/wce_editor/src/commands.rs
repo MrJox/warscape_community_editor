@@ -850,7 +850,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down>", "press a key combination (held for two frames), as the keyboard would", |e, a| {
+        "key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down|PageUp|PageDown>", "press a key combination (held for two frames), as the keyboard would", |e, a| {
             let Some(combo) = a.first() else { return fail("usage: key Ctrl+1") };
             let mut rest = combo.as_str();
             let mut mods = vec![];
@@ -890,6 +890,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 Some(sys::ImGuiKey_UpArrow)
             } else if l == "down" {
                 Some(sys::ImGuiKey_DownArrow)
+            } else if l == "pageup" {
+                Some(sys::ImGuiKey_PageUp)
+            } else if l == "pagedown" {
+                Some(sys::ImGuiKey_PageDown)
             } else if b.len() >= 2 && (b[0] == b'F' || b[0] == b'f') {
                 let n = atoi(&rest[1..]);
                 (1..=12).contains(&n).then(|| sys::ImGuiKey_F1 + n - 1)
