@@ -47,6 +47,12 @@ played in battle mode anyway), `gfx_fullscreen` (an "environment variable" kept 
    variation folder, no `tile_map_position`), `<type>land_normal</type>`, no fortification or settlement elements, `<playable_area
    dimension="1800">`, the units 800 m apart across the centre: a field battle on that tile, clean exit. (TDD's `foi_battle.xml` has
    the same form commented out, naming a tile that is in no pack.)
+7. **Loose against the release's packs** (the editor's loose delivery, 2026-10-28): TDD's `dunedain_city_cair_andros/small` alone, its files
+   and a `tile_database.bin` listing every TDD tile loose, with `tdd_pack1` and `tdd_pack5` only: the battle loaded nearly to the end, then
+   an access violation (`Empire.Retail.dll+0x1c3b50`, a getter on a null object; the caller, `+0x181e380`, builds something over a
+   -100..1000 height range: the battle's terrain was missing). The dump held no TDD tile name but the XML's: the game had read
+   `tiles.pack`'s database, not the loose one. **The release's packs win over loose files too**, and a tile's database is always in
+   `tiles.pack`, so a tile reaches the game only in a pack.
 
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.

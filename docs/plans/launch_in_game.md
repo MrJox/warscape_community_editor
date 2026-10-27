@@ -19,9 +19,10 @@ does, in detail: docs/editor.md, "Launch in game".
 - Checked unattended (dry runs on plains 8x8): the loose files, the packs found (`tdd_pack1_main` for the weather file it overrides,
   `tdd_pack5_buildings` for a rock texture), the command line, the window. Unit tests: the XML, the settlement position against Londinium,
   both command lines, the pack and its marker, the asset paths in bytes.
-- Not yet seen in game: a loose launch (that loose files beat the release's packs is expected, the launcher's own
-  `assembly_kit/working_data` works so, but not tested), an edited or new tile, a settlement tile alone, the Map context mode, a tile with
-  procedural walls.
+- **Loose files do not work for a tile** (2026-10-28, the user's launch of TDD's Cair Andros, game_command_line.md test 7): the release's
+  `tiles.pack` has the tile database and wins over the loose one, the game finds no terrain and crashes. The shadowing check now counts the
+  release's packs, so a tile falls back to the pack; the pack is the default again; loose stays as a setting for files no pack has.
+- Not yet seen in game: an edited or new tile, a settlement tile alone in the pack, the Map context mode, a tile with procedural walls.
 - The wait for the game runs in the Tile tool's update: with another tool active the launch's files are removed when the Tile tool is
   next active (or at the next start).
 
@@ -35,11 +36,11 @@ does, in detail: docs/editor.md, "Launch in game".
      map's size), with `<tile_upgrade>`s for a settlement tile set;
    - the tile's weather (file, season, precipitation, time of day, climate); one unit a side, vanilla keys by default, no script.
 3. **Delivery** (a setting):
-   - **loose files** (default): the files under `<id>/game`, `add_working_directory "<id>/game/";`, and only the mod packs chosen in the
-     editor that the tile needs (`launch::needs`). A needed pack with a path the tile ships, procedural walls (database rows) or no mounted
-     files switch that launch to the pack, with the reason in the log;
-   - **launch pack**: `data\wce_launch.pack` (type Mod, a marker inside) named first (first listed wins), then every mod pack chosen in the
-     editor.
+   - **launch pack** (default): `data\wce_launch.pack` (type Mod, a marker inside) named first (first listed wins), then every mod
+     pack chosen in the editor;
+   - **loose files**: the files under `<id>/game`, `add_working_directory "<id>/game/";`, and only the mod packs chosen in the editor
+     that the tile needs (`launch::needs`). A pack that loads (the release's or a needed mod) with a path the tile ships (always the tile
+     database), procedural walls or no mounted files switch that launch to the pack, with the reason in the log.
 4. **Launch:** `Attila.exe <mods> [add_working_directory] show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;`
    from the game folder, after checks: the game is not running (it refuses a second instance), Steam is, and no non-vanilla movie-type pack
    is in `data\` (a question: *Launch anyway*). The game takes focus: this is the user's click, not an unattended run.
@@ -52,8 +53,8 @@ does, in detail: docs/editor.md, "Launch in game".
 ## Decisions (user)
 
 1. **Map** (2026-10-27): the tile alone by default (any tile, painted on a map or not); the Map context's placement as an option.
-2. **Delivery** (2026-10-28): loose files by default, with the mod packs the tile's assets need found by the editor; the launch pack as a
-   setting. (On 2026-10-27 the pack was chosen after test 4; the dependency finder and the per-launch fallback make loose usable.)
+2. **Delivery** (2026-10-28): the user asked for loose files by default, with the mod packs the tile needs; the first loose launch showed
+   the release's packs win over loose files (test 7), so the pack is the default again and loose falls back to it for a tile.
 3. **Mods on the command line** (`mod "<pack>";`); `used_mods.txt` is never touched.
 4. **Armies:** a minimal preset, one unit a side far apart and a long duration; vanilla units by default, editable in Settings. Extra
    assets go into the launch, removed after every launch.
