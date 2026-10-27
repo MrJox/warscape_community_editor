@@ -1778,6 +1778,53 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "select_by", "select_by <type | key | everything | invert>",
+        "select as the selection menu's Select does: all of the primary's type or key, everything shown, or the inverse",
+        |e, a| {
+            let what = a.first().cloned().unwrap_or_default();
+            with_tile(e, |t, e| {
+                match what.as_str() {
+                    "type" => t.select_like_primary(e, false),
+                    "key" => t.select_like_primary(e, true),
+                    "everything" => t.select_everything(e),
+                    "invert" => t.invert_selection(e),
+                    _ => return fail("usage: select_by <type | key | everything | invert>"),
+                }
+
+                ok(t.status.clone())
+            })
+        },
+    );
+
+    c.add("selection_save", "selection_save <name>", "save the selection under a name for the session", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: selection_save <name>") };
+        with_tile(e, |t, e| if t.save_selection(e, &name) { ok("") } else { fail(t.status.clone()) })
+    });
+
+    c.add("selection_restore", "selection_restore <name>", "select a saved selection again", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: selection_restore <name>") };
+        with_tile(e, |t, e| if t.restore_selection(e, &name) { ok(t.status.clone()) } else { fail(t.status.clone()) })
+    });
+
+    c.add(
+        "box_select", "box_select <x0 m> <z0 m> <x1 m> <z1 m>",
+        "B and a drag with the mouse from one ground point's pixel to another's (the box select)",
+        |e, a| {
+            let parsed = (a.len() >= 4).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
+            let Some((x0, z0, x1, z1)) = parsed else { return fail("usage: box_select <x0 m> <z0 m> <x1 m> <z1 m>") };
+            let Some(d) = document(e) else { return no_tile() };
+            let (p0, p1) = (Float3::new(x0, d.tile().terrain_height(x0, z0), z0), Float3::new(x1, d.tile().terrain_height(x1, z1), z1));
+            let (Some((sx0, sy0)), Some((sx1, sy1))) = (e.viewport.project(p0), e.viewport.project(p1)) else { return fail("not in view") };
+            with_tile(e, |t, _| {
+                t.box_select = crate::selection_tools::BoxSelect { armed: true, ..Default::default() };
+                ok("")
+            });
+            let args = ["drag".to_owned(), format!("{sx0:.1}"), format!("{sy0:.1}"), format!("{sx1:.1}"), format!("{sy1:.1}"), "6".to_owned()];
+            mouse(e, &args, "")
+        },
+    );
+
     c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();

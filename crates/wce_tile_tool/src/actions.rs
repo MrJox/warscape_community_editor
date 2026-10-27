@@ -366,12 +366,18 @@ impl TileTool {
         let sel = primary(e);
         let all = selected(e);
         let some = sel.is_some();
-        let Some(d) = document(e) else { return };
+        if document(e).is_none() {
+            return;
+        }
+
         let one = |label: &str, icon: &str| format!("{icon}  {label}");
         if gui::menu_item(&one("Grab on the ground", icons::GRAB), Some("G"), false, some) {
             self.begin_grab(e);
             return;
         }
+
+        self.select_menu(e);
+        let Some(d) = document(e) else { return };
 
         if gui::menu_item(&one("Drop to the terrain", icons::ARROW_DOWN_TO_LINE), None, false, some) {
             let n = d.snap_to_terrain(&all, true);

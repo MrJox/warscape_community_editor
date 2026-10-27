@@ -1,0 +1,37 @@
+# Selection tools (Phase 5g of docs/plans/tile_ted_parity.md): box select (B, a drag), all of the primary's type or key, everything, the
+# inverse, a selection saved and restored (and out of date once something is added). Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_select_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 40 40
+add_building barbarian_fort_straight 60 60
+add_building barbarian_fort_gate 90 90
+start_making POINT_LIGHT_INSTANCE
+cam_look 64 5 64
+cam 2.4 1.4 150 5
+frames 5
+tile_click_ground 100 40
+frames 3
+key Escape
+frames 3
+select none
+box_select 30 30 75 75
+frames 3
+assert_selected 2
+tile_select 7
+select_by key
+assert_selected 2
+select_by type
+assert_selected 3
+select_by everything
+assert_selected 4
+tile_select POINT_LIGHT_INSTANCE
+select_by invert
+assert_selected 3
+selection_save buildings
+select none
+selection_restore buildings
+assert_selected 3
+add_building barbarian_fort_straight 20 100
+frames 3
+expect_fail selection_restore buildings
+quit
