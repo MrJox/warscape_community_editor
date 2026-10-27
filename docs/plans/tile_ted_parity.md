@@ -116,8 +116,13 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   not the game, whose DLL names no LF influence); every shipped tile's influence map is 1 everywhere. `nogo.png` is an input BOB lists
   when present; the no-go areas the game gets are `terrain_outlines.xml` (the final heights' slopes) and the NOGO polygons. **No-go
   areas are to be handled as polygons** (user): the NOGO_REGION_POLYGON_INSTANCEs (drawn today; painting them as brushes is Phase 5b).
-- TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's
-  average by the stroke's weight).
+- Done (2026-10-27): TEd's **Normal (Grouped)** (`PM2OpBlend2Base`, properties `channel_group` and `flange`; `apply` fn 0x00482ad0):
+  a group painted at a continuous variation, split between the two around it (`PaintMode::Grouped`, `grouped_pixel`); TEd's gate on the
+  weight (a per-pixel function the module hands it: where 0, the weight is its neighbourhood's average) was not traced and is left out.
+  And its **blur** (`GPOWeightedAverage` "Smooth" built with radius 2 on the blend map, 3 on the height map; weights `exp(-d^2 / 8)`, fn
+  0x004814b0): `PaintMode::Blur`, each channel towards that average as the stroke found it, by the stroke's built-up weight. The paint
+  brush's mode choice (tooltips), the Grouped variation slider, `brush_paint ... grouped [v] | blur`,
+  `scripts/tile_paint_grouped_blur.txt`, unit tests. **Phase 5a is done.**
 
 ### Phase 5b
 - Exclusion polygons as brushes (paint the area instead of drawing the polygon).
