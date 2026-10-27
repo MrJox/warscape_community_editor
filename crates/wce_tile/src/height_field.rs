@@ -285,6 +285,30 @@ impl HeightField {
         self.apply(b, |_, x, y, w, cur| cur + metres * w * fractal_noise(f64::from(x) / scale, f64::from(y) / scale))
     }
 
+    /// Sets one sample to a height (metres, absolute) during an edit.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open, or no such sample.
+    pub fn set_metres(&mut self, x: u32, y: u32, metres: f64) -> Result<()> {
+        if !self.editing {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        if x >= self.w || y >= self.h {
+            return Err("no such sample".to_owned());
+        }
+
+        let i = y as usize * self.w as usize + x as usize;
+        let v = (metres - self.base) as f32;
+        if self.v[i] != v {
+            self.v[i] = v;
+            self.touch(x, y);
+        }
+
+        Ok(())
+    }
+
     /// Blends towards the local average (of the samples before this stroke step).
     ///
     /// # Errors

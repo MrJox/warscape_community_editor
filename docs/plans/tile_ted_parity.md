@@ -105,7 +105,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Done (2026-10-27): the **stamp** (wce's): `BrushKind::Stamp` adds `stamp_height_m` at full weight once per click, in the brush's shape
   (the image brush's picture when on, else the falloff); negative for a hollow. The toolbar's picture button (Stamp mode), its height in
   the Inspector (tooltip), commands `stamp_height`, `paint stamp`, `scripts/tile_stamp.txt`.
-- Height (wce's): import a height map PNG.
+- Done (2026-10-27): **import a height map picture** (wce's): `Tile::import_heights` / `TileDocument::import_height_map` (the picture
+  read as the image brush reads it: grey or colour PNG, 8 or 16 bit, or DDS; stretched over the whole height map, `height_map_0.png`'s
+  layout; black and white at the heights given; replace or add; landscape instances follow; one undo entry, `HeightFillCommand`), Tile >
+  Import height map... (a dialog with tooltips, black / white starting at the tile's lowest / highest heights), command
+  `import_heights`, `scripts/tile_import_heights.txt`.
 - Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
   Subtract among its operations, `docs/re/terrain.md`).
 - TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's

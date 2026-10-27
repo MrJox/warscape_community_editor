@@ -22,7 +22,7 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, GroundFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
+use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -334,6 +334,56 @@ impl Tile {
     /// The tile has none, or it does not read.
     pub fn load_ground(&mut self) -> Result<(), String> {
         self.project.load_ground().map(|_| ())
+    }
+
+    /// The heights from a picture (`BrushImage`: grey or colour PNG, 8 or 16 bit, or DDS; its brightness 0..1) stretched over the whole height
+    /// map (the bordered tile, `height_map_0.png`'s layout: an edited copy of it comes back where it was): black at `low_m`, white at
+    /// `high_m` (metres as the editor shows them), replacing the heights or added to them. The landscape instances move with the ground. One
+    /// undo entry; returns the samples changed.
+    pub(crate) fn import_heights(&mut self, image: &wce_tile::brush_image::BrushImage, low_m: f32, high_m: f32, add: bool) -> Result<(usize, Vec<Follow>), String> {
+        let unit = self.project.unit_scale;
+        let cands = self.instances.iter().copied().filter(|&e| self.placement(e) == Placement::Landscape).map(|e| {
+            let p = self.world_position(e);
+            (e, p.x, p.z, self.terrain_height(p.x, p.z))
+        }).collect::<Vec<_>>();
+
+        let hf = self.project.height.as_mut().ok_or("the tile has no height map")?;
+        let (w, h) = (hf.width(), hf.height());
+        hf.begin_edit()?;
+        let mut changed = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let g = image.sample((f64::from(x) + 0.5) / f64::from(w), (f64::from(y) + 0.5) / f64::from(h));
+                let m = (f64::from(low_m) + g * f64::from(high_m - low_m)) * unit;
+                let target = if add { hf.metres(x, y) + m } else { m };
+                if (target - hf.metres(x, y)).abs() > 1e-9 {
+                    hf.set_metres(x, y, target)?;
+                    changed += 1;
+                }
+            }
+        }
+
+        hf.end_edit();
+        self.project.height_dirty = true;
+        let mut moved = vec![];
+        for (e, cx, cz, before) in cands {
+            let dh = self.terrain_height(cx, cz) - before;
+            if dh.abs() < 1e-6 {
+                continue;
+            }
+
+            let Some(old) = self.tscene().position(e) else { continue };
+            let after = self.local_for_world_y(e, f64::from(self.world_position(e).y) + f64::from(dh));
+            let before_text = self.tscene().doc().get(e, "position");
+            self.project.scene.set_position(e, after);
+            moved.push(Follow { elem: e, before: old, after, before_text });
+        }
+
+        for f in &moved {
+            self.index_edited(f.elem);
+        }
+
+        Ok((changed, moved))
     }
 
     /// The brush step of a stroke: the landscape instances under the brush move with the terrain (y += the change of the height under each).
@@ -2048,6 +2098,32 @@ impl TileDocument {
         }
 
         self.history.push(Box::new(GroundFillCommand { name: "Paint water ground types".to_owned(), first: true }));
+        Ok(changed)
+    }
+
+    /// The tile's lowest and highest heights (metres as the editor shows them), `None` without a height map.
+    pub fn height_span(&self) -> Option<(f32, f32)> {
+        let p = &self.tile().project;
+        let hf = p.height.as_ref()?;
+        let (lo, scale) = hf.fit_range();
+        Some(((lo / p.unit_scale) as f32, ((lo + scale) / p.unit_scale) as f32))
+    }
+
+    /// Imports a height map picture (`Tile::import_heights`): one undo entry; returns the samples changed.
+    ///
+    /// # Errors
+    ///
+    /// The picture does not read, or the tile has no height map.
+    pub fn import_height_map(&mut self, path: &std::path::Path, low_m: f32, high_m: f32, add: bool) -> Result<usize, String> {
+        let image = wce_tile::brush_image::BrushImage::read(path)?;
+        self.end_stroke();
+        let (changed, moved) = self.tile_mut().import_heights(&image, low_m, high_m, add)?;
+        if changed == 0 && moved.is_empty() {
+            return Ok(0);
+        }
+
+        let name = format!("Import height map {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        self.history.push(Box::new(HeightFillCommand { name, first: true, moved }));
         Ok(changed)
     }
 

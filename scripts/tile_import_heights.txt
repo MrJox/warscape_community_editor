@@ -1,0 +1,15 @@
+# Import a height map picture (Phase 5a of docs/plans/tile_ted_parity.md, wce's): a new 1 x 1 tile at density 128 (a 384-pixel height
+# map with its border); %IMAGE% is a 384 x 384 grey gradient, black on the left to white on the right, imported between 0 and 20 m:
+# the tile's west edge (a third of the way across) is about 6.7 m, its east edge 13.3 m. Added again as a 1 m offset (black and white
+# both 1); undone twice, the tile is flat at 5 m. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_import_heights_test 1 1 10 128
+frames 5
+import_heights "%IMAGE%" 0 20
+assert_height 0 64 6.7 0.15
+assert_height 128 64 13.3 0.15
+import_heights "%IMAGE%" 1 1 add
+assert_height 128 64 14.3 0.15
+undo
+undo
+assert_height 64 64 5 0.01
+quit
