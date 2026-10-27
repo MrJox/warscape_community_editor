@@ -31,6 +31,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install local dependencies
+        shell: bash
+        run: |
+          apt update && apt install wine-dxvk
+
       - name: Build libs and server
         uses: actions-rs/cargo@v1
         with:
