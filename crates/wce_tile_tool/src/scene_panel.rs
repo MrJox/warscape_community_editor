@@ -1139,7 +1139,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             PrefabAction::SaveForKit(el) => {
                 let key = e.docs.find_as::<TileDocument>(id).and_then(|d| tool.prefab_of(d, el));
                 match key {
-                    Some(k) => tool.save_prefab_for_kit(e, &k),
+                    Some(k) => tool.save_prefab_for_kit_ask(e, &k),
                     None => Err("not a copy of a prefab".to_owned()),
                 }
             }

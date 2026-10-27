@@ -76,6 +76,44 @@ fn settings_file() {
     assert!(dir.path().join("settings.toml.bad").exists());
 }
 
+#[test]
+fn assembly_kits() {
+    let dir = tempfile::tempdir().unwrap();
+    let make = |name: &str| {
+        let kit = dir.path().join(name);
+        std::fs::create_dir_all(kit.join("raw_data")).unwrap();
+        kit
+    };
+    let (a, b, battle) = (make("a"), make("b"), make("assembly_kit_battle_tilemap"));
+    let campaign = make("assembly_kit_campaign_tilemap");
+
+    // The old single kit becomes the first of the list, once.
+    let paths = Paths::in_dir(&dir.path().join("config"));
+    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    std::fs::write(paths.settings_file(), format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string())).unwrap();
+    let mut settings = Settings::load(paths.clone());
+    assert_eq!(settings.assembly_kit_dirs(), [a.clone(), b.clone()]);
+    settings.save().unwrap();
+    let text = std::fs::read_to_string(paths.settings_file()).unwrap();
+    assert!(text.contains("assembly_kits") && !text.contains("assembly_kit ="), "{text}");
+    assert_eq!(Settings::load(paths.clone()).assembly_kit_dirs(), [a.clone(), b.clone()]);
+
+    // A kit with no raw_data is skipped; the battle tile map kit brings the campaign one; no kit is listed twice.
+    let none = dir.path().join("none");
+    settings.game_mut().assembly_kits = vec![none, battle.clone(), b.clone(), b.clone()];
+    assert_eq!(settings.assembly_kit_raw_dirs(), [battle.join("raw_data"), campaign.join("raw_data"), b.join("raw_data")]);
+
+    // Nothing listed: the kit in the game folder.
+    let game = dir.path().join("game");
+    std::fs::create_dir_all(game.join("assembly_kit/raw_data")).unwrap();
+    settings.game_mut().assembly_kits.clear();
+    assert!(settings.assembly_kit_dirs().is_empty());
+    settings.game_mut().dir = Some(game.clone());
+    assert_eq!(settings.assembly_kit_dirs(), [game.join("assembly_kit")]);
+    settings.game_mut().assembly_kits = vec![a.clone()];
+    assert_eq!(settings.assembly_kit_dirs(), [a]);
+}
+
 // TODO(pre-release): remove with the settings' `legacy` module.
 #[test]
 fn settings_from_the_old_ini() {

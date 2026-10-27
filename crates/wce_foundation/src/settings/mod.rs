@@ -133,9 +133,13 @@ pub struct GameSettings {
     /// Mod pack file names in the data folder, read on top of the game's release packs.
     pub mod_packs: Vec<String>,
 
-    /// The Assembly Kit (the folder that holds `raw_data`): files kept as TEd and BOB read them, read by the tools and written only by
-    /// "Save for Assembly Kit"; none: the kit found in the game folder.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The Assembly Kits (each the folder that holds `raw_data`): files kept as TEd and BOB read them, read by the tools and written only by
+    /// "Save for Assembly Kit"; the first one wins where a tile or a prefab is in several. None: the kit found in the game folder.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assembly_kits: Vec<PathBuf>,
+
+    /// TODO(pre-release): the old single Assembly Kit, read only to move it into `assembly_kits` (`Settings::load`).
+    #[serde(skip_serializing)]
     pub assembly_kit: Option<PathBuf>,
 
     /// The game's projects: `assembly_kit/` (the editor's own files in the kit's layout, like the tiles' `tile.wce`) and `loose/` (loose files
@@ -258,6 +262,15 @@ impl Settings {
             }
         }
 
+        // TODO(pre-release): the old single Assembly Kit becomes the first of the list.
+        for g in settings.games.values_mut() {
+            if let Some(old) = g.assembly_kit.take()
+                && !g.assembly_kits.contains(&old)
+            {
+                g.assembly_kits.insert(0, old);
+            }
+        }
+
         settings.paths = paths;
         settings
     }
@@ -310,15 +323,37 @@ impl Settings {
         env_list("WCE_OVERLAY").map_or_else(|| self.game_settings().overlay_folders, |v| v.into_iter().map(PathBuf::from).collect())
     }
 
-    /// The Assembly Kit: `$WCE_ASSEMBLY_KIT`, else the file's, else the kit in the game folder (`assembly_kit`, or the battle tile map kit of
-    /// a development install). `None`: no kit.
-    pub fn assembly_kit_dir(&self) -> Option<PathBuf> {
-        if let Some(k) = env_value("WCE_ASSEMBLY_KIT").map(PathBuf::from).or_else(|| self.game_settings().assembly_kit) {
-            return Some(k);
-        }
-
+    /// The kit in the game folder (`assembly_kit`, or the battle tile map kit of a development install), if there is one.
+    pub fn detected_assembly_kit(&self) -> Option<PathBuf> {
         let game = self.game_dir()?;
         ["assembly_kit", "assembly_kit_battle_tilemap"].iter().map(|k| game.join(k)).find(|k| k.join("raw_data").is_dir())
+    }
+
+    /// The Assembly Kits, the first one wins: `$WCE_ASSEMBLY_KIT` (`;` separated), else the file's, else the kit in the game folder
+    /// ([`Self::detected_assembly_kit`]). Empty: no kit.
+    pub fn assembly_kit_dirs(&self) -> Vec<PathBuf> {
+        let listed = env_list("WCE_ASSEMBLY_KIT").map_or_else(|| self.game_settings().assembly_kits, |v| v.into_iter().map(PathBuf::from).collect());
+        if listed.is_empty() { self.detected_assembly_kit().into_iter().collect() } else { listed }
+    }
+
+    /// The `raw_data` folders of the Assembly Kits ([`Self::assembly_kit_dirs`]) that have one, in their order. A development install's
+    /// battle tile map kit brings the campaign tile map kit beside it.
+    pub fn assembly_kit_raw_dirs(&self) -> Vec<PathBuf> {
+        let mut kits = vec![];
+        for kit in self.assembly_kit_dirs() {
+            let campaign = kit.file_name().is_some_and(|n| n == "assembly_kit_battle_tilemap").then(|| kit.with_file_name("assembly_kit_campaign_tilemap"));
+            kits.push(kit);
+            kits.extend(campaign);
+        }
+
+        let mut raws: Vec<PathBuf> = vec![];
+        for raw in kits.into_iter().map(|k| k.join("raw_data")).filter(|raw| raw.is_dir()) {
+            if !raws.contains(&raw) {
+                raws.push(raw);
+            }
+        }
+
+        raws
     }
 
     /// The game's projects folder: `$WCE_PROJECTS`, else the file's, else `<data folder>/projects/<game>`.

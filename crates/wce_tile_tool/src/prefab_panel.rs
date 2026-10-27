@@ -5,6 +5,7 @@
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
@@ -439,15 +440,20 @@ impl TileTool {
         Ok(format!("saved {}", path.display()))
     }
 
-    /// "Save for Assembly Kit" of a prefab: its file as TEd reads it in the kit's art/prefabs (the prefabs placed in it baked).
+    /// "Save for Assembly Kit" of a prefab: its file as TEd reads it in the art/prefabs of `kit_raw` (a raw_data folder) or of the first kit
+    /// (the prefabs placed in it baked).
     ///
     /// # Errors
     ///
     /// No such prefab, no kit, or the file can't be written.
-    pub fn save_prefab_for_kit(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
+    pub fn save_prefab_for_kit(&mut self, e: &mut Editor, key: &str, kit_raw: Option<PathBuf>) -> Result<String, String> {
         let lib = self.prefab_library(e);
         let projects = Self::workspace_dir(e).join("raw_data");
-        let kit = self.kit_roots(e).into_iter().find(|r| *r != projects).ok_or("no Assembly Kit (set it in the game's settings)")?;
+        let kit = match kit_raw {
+            Some(k) => k,
+            None => self.kit_roots(e).into_iter().find(|r| *r != projects).ok_or("no Assembly Kit (set it in the game's settings)")?,
+        };
+
         let (path, report) = lib.save_for_kit(key, &prefabs::prefab_root(&kit))?;
         for line in report.polyfilled.iter().chain(&report.dropped) {
             log::info(format!("Save prefab for Assembly Kit: {line}"));

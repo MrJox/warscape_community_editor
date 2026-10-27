@@ -1401,7 +1401,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("prefab_save_kit", "prefab_save_kit <key>", "write a prefab as TEd reads it into the Assembly Kit's art/prefabs (the prefabs placed in it baked)", |e, a| {
         let Some(key) = a.first().cloned() else { return fail("usage: prefab_save_kit <key>") };
-        with_tile(e, |t, e| t.save_prefab_for_kit(e, &key).map_or_else(fail, ok))
+        with_tile(e, |t, e| t.save_prefab_for_kit(e, &key, None).map_or_else(fail, ok))
     });
 
     c.add("prefab_save", "prefab_save <name> [folder]", "save the selected instance group as a new prefab (renamed after it)", |e, a| {
