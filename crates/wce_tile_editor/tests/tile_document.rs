@@ -234,10 +234,15 @@ fn the_grid_of_a_building_is_teds_and_every_row_edits_the_file() {
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
     let rows = inspect(&mut d, b, None);
     for f in [
-        "flags", "surface_mode", "position", "euler", "key", "opacity", "dirt_level", "bounds_colour", "burn", "burn_amount", "glow_amount", "destruction_level",
-        "building_tech_level", "indestructible", "toggleable", "capture_location",
+        "flags", "surface_mode", "position", "euler", "key", "opacity", "bounds_colour", "burn", "burn_amount", "glow_amount", "destruction_level",
+        "indestructible", "toggleable", "capture_location",
     ] {
         assert!(rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))), "{f} is in the grid: {rows:?}");
+    }
+
+    // TEd shows these, wce does not: nothing uses them (docs/re/buildings.md); the file keeps them as they are.
+    for f in ["dirt_level", "building_tech_level"] {
+        assert!(!rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))), "{f} is hidden: {rows:?}");
     }
 
     // TEd shows these for a fort wall only.
@@ -256,8 +261,6 @@ fn the_grid_of_a_building_is_teds_and_every_row_edits_the_file() {
     assert_eq!(d.tile().tscene().doc().get(b, "burn").as_deref(), Some("true"));
     inspect(&mut d, b, Some(("bounds_colour", Edit::Colour([0.5, 1.0, 0.0, 1.0]))));
     assert_eq!(d.tile().tscene().doc().get(b, "bounds_colour").as_deref(), Some("argb(0.5,1.0,0.0,1.0)"));
-    inspect(&mut d, b, Some(("building_tech_level", Edit::Choice(2))));
-    assert_eq!(d.tile().tscene().doc().get(b, "building_tech_level").as_deref(), Some("TL_TECH_LEVEL3"));
     inspect(&mut d, b, Some(("key", Edit::Text("tower".to_owned()))));
     assert_eq!(d.tile().tscene().doc().get(b, "key").as_deref(), Some("tower"));
 
@@ -403,7 +406,7 @@ fn the_pieces_of_a_building_are_its_children_with_their_own_properties() {
         d.inspect(pieces[0], &mut r);
         r.fields
     };
-    for f in ["flags.visible", "surface_mode", "position", "orientation", "scale", "opacity", "burn", "burn_amount", "glow_amount", "dirt_level", "bounds_colour", "show_collision", "seasons.Winter", "destruction_level"] {
+    for f in ["flags.visible", "surface_mode", "position", "orientation", "scale", "opacity", "burn", "burn_amount", "glow_amount", "bounds_colour", "show_collision", "seasons.Winter", "destruction_level"] {
         assert!(rows.iter().any(|r| r == f), "{f} is in the grid of a piece: {rows:?}");
     }
 
