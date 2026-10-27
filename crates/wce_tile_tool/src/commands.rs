@@ -1929,23 +1929,57 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "tile_set_prop", "tile_set_prop <attribute> <value>",
-        "set a property of the selected instance as the Inspector does (one undo entry), by its attribute (opacity, burn, destruction_level, ...)",
+        "assert_attr", "assert_attr <element | selected> <attribute> <value | ->",
+        "test: the element's attribute in the tile has this text (`-`: it is not written)",
+        |e, a| {
+            let selected = primary(e);
+            let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
+            let (Some(d), Some(el), Some(attr), Some(_)) = (document(e), el, a.get(1), a.get(2)) else { return fail("usage: assert_attr <element | selected> <attribute> <value | ->") };
+            let want = a[2..].join(" ");
+            let got = d.tile().tscene().doc().get(el, attr);
+            match got {
+                Some(v) if v == want => ok(""),
+                None if want == "-" => ok(""),
+                Some(v) => fail(format!("{attr} is '{v}', expected '{want}'")),
+                None => fail(format!("{attr} is not written, expected '{want}'")),
+            }
+        },
+    );
+
+    c.add(
+        "assert_piece", "assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]",
+        "test: a model piece of the selected instance on the scene: drawn or hidden, its file holds the text, or where it is from the building's own matrix (scene units)",
         |e, a| {
             let el = primary(e);
-            let (Some(d), Some(attr), Some(value)) = (document(e), a.first(), a.get(1)) else { return fail("usage: tile_set_prop <attribute> <value>") };
-            let Some(el) = el.filter(|&el| d.tile().is_instance(el)) else { return fail("no instance selected") };
-            let tag = d.tile().tscene().type_of(el).to_owned();
-            let Some(prop) = wce_tile::properties::schema(&tag).and_then(|s| s.iter().find(|p| p.attr == attr.as_str())) else {
-                return fail(format!("{tag} has no property {attr}"));
+            let (Some(d), Some(el), Some(k), Some(what)) = (document(e), el, a.first().and_then(|x| x.parse::<u64>().ok()), a.get(1)) else {
+                return fail("usage: assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]");
             };
 
-            if !d.set_property(el, prop, value, 0) {
-                return fail("not set");
+            let (ids, w) = (d.tile().piece_entities(el), d.tile().drawn_matrix(el));
+            let id = ids.start + k as wce_scene::render_scene::EntityId;
+            if !ids.contains(&id) {
+                return fail(format!("no piece {k} on the scene"));
             }
 
-            d.history_mut().break_merge();
-            ok("")
+            let Some(en) = e.scene.find(id) else { return fail("no such entity") };
+            let Some(wce_scene::render_scene::Payload::MeshInstance(mi)) = Some(&en.payload) else { return fail("not a mesh") };
+            match (what.as_str(), a.get(2)) {
+                ("visible", Some(v)) => if en.visible == (v == "1") { ok("") } else { fail(format!("visible is {}", en.visible)) },
+                ("model", Some(t)) => if mi.model.contains(t.as_str()) { ok("") } else { fail(format!("model is {}", mi.model)) },
+                ("offset", Some(_)) => {
+                    let parsed = (a.len() >= 5).then(|| Some((number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+                    let Some((x, y, z)) = parsed else { return fail("usage: assert_piece <piece> offset <x> <y> <z> [tolerance]") };
+                    let tol = a.get(5).and_then(|v| number(v)).unwrap_or(0.01);
+                    let got = [en.world.m[0][3] - w.m[0][3], en.world.m[1][3] - w.m[1][3], en.world.m[2][3] - w.m[2][3]];
+                    if (got[0] - x).abs() <= tol && (got[1] - y).abs() <= tol && (got[2] - z).abs() <= tol {
+                        ok("")
+                    } else {
+                        fail(format!("offset {:.3} {:.3} {:.3}", got[0], got[1], got[2]))
+                    }
+                }
+
+                _ => fail("usage: assert_piece <piece> visible <0|1> | model <text> | offset <x> <y> <z> [tolerance]"),
+            }
         },
     );
 

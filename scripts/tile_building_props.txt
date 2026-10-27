@@ -1,0 +1,119 @@
+# Every Property Editor row of a building does its job (Phase 5d of docs/plans/tile_ted_parity.md): each is edited as the panel would
+# (`tile_edit`), lands in the tile's attribute as TEd writes it, shows where TEd shows it (hidden, not pickable, the opacity in the pieces'
+# POSITION4.w), and undoes; then a piece's own rows. %TILE% is a kit tile with fort walls (custom_tile/hadrians/8x1_lower: weak_wall, ai_breachable and dockable are
+# rows of fort walls only); it is not saved.
+tile "%TILE%"
+frames 30
+tile_select_all BUILDING_INSTANCE western_fort_small_wall_straight
+frames 5
+
+tile_edit selected flags visible=false
+assert_attr selected flags " OIF_ACTIVE|OIF_DRAGGABLE"
+assert_shown selected 0
+undo
+assert_shown selected 1
+tile_edit selected flags active=false
+assert_selectable selected 0
+undo
+assert_selectable selected 1
+tile_edit selected flags draggable=false
+assert_attr selected flags " OIF_VISIBLE|OIF_ACTIVE"
+undo
+
+tile_edit selected surface_mode "Landscape: Above"
+assert_attr selected surface_mode MSM_LANDSCAPE
+undo
+assert_attr selected surface_mode MSM_FREEFORM
+
+# Degrees in the panel, radians at full precision in tile.wce (TEd's precision is applied when the tile is converted for it).
+tile_edit selected orientation 0,1,0
+assert_attr selected orientation euler(0,0.017453292519943295,0)
+undo
+
+tile_edit selected key western_fort_small_wall_step_up_a
+assert_attr selected key western_fort_small_wall_step_up_a
+frames 30
+undo
+frames 10
+assert_attr selected key western_fort_small_wall_straight
+
+tile_edit selected opacity 0.5
+assert_attr selected opacity 0.5
+frames 3
+assert_instance_param 3 500
+undo
+frames 3
+assert_instance_param 3 1000
+
+tile_edit selected dirt_level 0.25
+assert_attr selected dirt_level 0.25
+undo
+tile_edit selected bounds_colour 0,1,0,1
+assert_attr selected bounds_colour argb(0.0,1.0,0.0,1.0)
+undo
+tile_edit selected burn true
+assert_attr selected burn true
+undo
+tile_edit selected burn_amount 0.5
+assert_attr selected burn_amount 0.5
+undo
+tile_edit selected glow_amount 0.5
+assert_attr selected glow_amount 0.5
+undo
+tile_edit selected destruction_level 2
+assert_attr selected destruction_level 2
+frames 5
+undo
+tile_edit selected building_tech_level "Tech level 3"
+assert_attr selected building_tech_level TL_TECH_LEVEL3
+undo
+tile_edit selected weak_wall true
+assert_attr selected weak_wall true
+undo
+tile_edit selected ai_breachable false
+assert_attr selected ai_breachable false
+undo
+tile_edit selected dockable false
+assert_attr selected dockable false
+undo
+tile_edit selected indestructible true
+assert_attr selected indestructible true
+undo
+tile_edit selected toggleable true
+assert_attr selected toggleable true
+undo
+tile_edit selected capture_location cl_test
+assert_attr selected capture_location cl_test
+undo
+assert_attr selected capture_location -
+
+# A piece's own rows (TEd's BUILDING_PIECE_INSTANCE: not written to the tile, kept for the session): it hides, fades, moves and breaks
+# alone; a building edit hands the look values on to it again.
+tile_edit selected piece 0 flags visible=false
+frames 2
+assert_piece 0 visible 0
+tile_edit selected piece 0 flags visible=true
+frames 2
+assert_piece 0 visible 1
+tile_edit selected piece 0 opacity 0.25
+frames 2
+assert_instance_param 3 250
+tile_edit selected opacity 0.75
+frames 2
+assert_instance_param 3 750
+undo
+frames 2
+assert_instance_param 3 1000
+tile_edit selected piece 0 position 2,0,0
+frames 2
+# Model units (two to the metre, as the scene position): 1 m along the wall.
+assert_piece 0 offset 1 0 0 0.05
+tile_edit selected piece 0 position 0,0,0
+tile_edit selected piece 0 destruction_level 2
+frames 2
+assert_piece 0 model destruct03
+tile_edit selected piece 0 destruction_level 0
+frames 2
+assert_piece 0 model destruct01
+assert_modified 0
+quit

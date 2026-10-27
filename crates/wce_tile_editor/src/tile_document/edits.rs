@@ -2410,7 +2410,7 @@ impl TileDocument {
         ins.text("owner", "building", &owner);
         ins.text("mesh", "mesh", &file);
 
-        let mut p = self.tile().piece_props.get(&(e, k)).cloned().unwrap_or_default();
+        let mut p = self.tile().piece_props_or_building(e, k);
         let before = p.clone();
 
         let mut flags = [p.visible, p.active, p.draggable];

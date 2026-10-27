@@ -785,6 +785,7 @@ impl Tile {
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 let p5 = [0.0, 0.0, 0.0, 1.0];
+                let p4 = props.map_or(p4, |p| [p4[0], p4[1], p4[2], opacity_w(p.opacity)]);
                 let e = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, p4, p5, ..Default::default() }), self.source(item_of(elem)));
                 if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
                     en.visible = false;
@@ -993,6 +994,11 @@ impl Tile {
     }
 }
 
+/// POSITION4.w of an opacity (`Tile::opacity_w`).
+fn opacity_w(opacity: f32) -> f32 {
+    (opacity.clamp(0.0, 1.0) * 1000.0).round()
+}
+
 /// A POINT_LIGHT_INSTANCE's light from its attributes (`phase`: its animation's, see `light_phase`); the preview draws one too.
 pub(crate) fn point_light_of(doc: &wce_formats::xml_doc::XmlDoc, elem: usize, phase: f32) -> PointLight {
     let num = |k: &str, d: f32| doc.get(elem, k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
@@ -1034,18 +1040,6 @@ impl Tile {
         let first = self.first_entity.get(elem).copied().unwrap_or(0);
         match self.tscene().type_of(elem) {
             "POINT_LIGHT_INSTANCE" if first != 0 => scene.update_payload(first, Payload::PointLight(self.point_light(elem))),
-            "BUILDING_INSTANCE" | "SIMPLE_MESH_INSTANCE" if first != 0 => {
-                let w = self.opacity_w(elem);
-                for k in 0..u64::from(self.entity_count[elem]) {
-                    let id = first + k as EntityId;
-                    let mi = match scene.find(id).map(|en| &en.payload) {
-                        Some(Payload::MeshInstance(mi)) if mi.p4[3] != w => MeshInstance { p4: [mi.p4[0], mi.p4[1], mi.p4[2], w], ..mi.clone() },
-                        _ => continue,
-                    };
-
-                    scene.update_payload(id, Payload::MeshInstance(mi));
-                }
-            }
             "VFXInstance" => match (first != 0, self.vfx_emitter(elem)) {
                 (true, Some(vfx)) => scene.update_payload(first, Payload::VfxEmitter(vfx)),
                 (true, None) => {
@@ -1072,8 +1066,7 @@ impl Tile {
     /// diffuse alpha by floor(w) * 0.001 before the test. TEd files a building below 1 apart (render flag 0x2000), for the blended forward
     /// shaders (`ps30_alpha_blend_40` multiplies the alpha the same way); the renderer has no such pass yet, so opaque materials show no fade.
     fn opacity_w(&self, elem: usize) -> f32 {
-        let o = self.tscene().doc().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
-        (o.clamp(0.0, 1.0) * 1000.0).round()
+        opacity_w(self.tscene().doc().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0))
     }
 
     /// The entities of an element's model pieces (consecutive ids; empty when it has none on the scene).
@@ -1163,7 +1156,7 @@ impl Tile {
                 continue;
             }
 
-            let p = self.piece_props.get(&(elem, k)).cloned().unwrap_or_default();
+            let p = self.piece_props_or_building(elem, k);
             let id = first + k as EntityId;
             scene.update_world(id, self.world_matrix(elem) * piece_local(&p));
             let Some(base) = self.model_of(elem).and_then(|m| m.pieces.get(k)).cloned() else { continue };
@@ -1192,6 +1185,7 @@ impl Tile {
                 en.visible = p.visible;
                 if let Payload::MeshInstance(mi) = &mut en.payload {
                     mi.model = model;
+                    mi.p4[3] = opacity_w(p.opacity);
                 }
             }
 

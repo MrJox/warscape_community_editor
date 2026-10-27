@@ -278,7 +278,7 @@ impl Tile {
 
         let Some(n) = self.model_of(elem).filter(|m| m.ok).map(|m| m.pieces.len().min(0xffff)) else { return };
         for k in 0..n {
-            let mut p = self.piece_props.get(&(elem, k)).cloned().unwrap_or_default();
+            let mut p = self.piece_props_or_building(elem, k);
             match attr {
                 "opacity" => p.opacity = parse_float(text).unwrap_or(p.opacity),
                 "dirt_level" => p.dirt_level = parse_float(text).unwrap_or(p.dirt_level),
@@ -293,6 +293,28 @@ impl Tile {
                 self.piece_props.insert((elem, k), p);
                 self.piece_pending.push((elem, k));
             }
+        }
+    }
+
+    /// A piece's properties: what was edited of it, else its defaults with the building's look (TEd's pieces take the building's opacity,
+    /// dirt, burn and glow when it loads).
+    pub fn piece_props_or_building(&self, elem: usize, piece: usize) -> super::PieceProps {
+        use wce_tile::properties::{parse_bool, parse_colour, parse_float};
+        if let Some(p) = self.piece_props.get(&(elem, piece)) {
+            return p.clone();
+        }
+
+        let doc = self.tscene().doc();
+        let f = |k: &str, d: f32| doc.get(elem, k).and_then(|v| parse_float(&v)).unwrap_or(d);
+        let d = super::PieceProps::default();
+        super::PieceProps {
+            opacity: f("opacity", d.opacity),
+            dirt_level: f("dirt_level", d.dirt_level),
+            burn_amount: f("burn_amount", d.burn_amount),
+            glow_amount: f("glow_amount", d.glow_amount),
+            burn: doc.get(elem, "burn").is_some_and(|v| parse_bool(&v)),
+            bounds_colour: doc.get(elem, "bounds_colour").and_then(|v| parse_colour(&v)).unwrap_or(d.bounds_colour),
+            ..d
         }
     }
 
