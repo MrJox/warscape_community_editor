@@ -2660,6 +2660,24 @@ impl TileDocument {
         }
     }
 
+    /// Sets a point light's radius as the Inspector's slider does (clamped to its range, `[0, 1000]`); the steps of a drag (one `gesture`)
+    /// merge into one undo entry. False for anything but a point light.
+    pub fn set_light_radius(&mut self, elem: usize, radius: f32, gesture: u64) -> bool {
+        if self.tile().tscene().type_of(elem) != "POINT_LIGHT_INSTANCE" {
+            return false;
+        }
+
+        let Some(prop) = wce_tile::properties::schema("POINT_LIGHT_INSTANCE").and_then(|s| s.iter().find(|p| p.attr == "radius")) else { return false };
+        let (lo, hi) = match prop.kind {
+            Kind::Slider(lo, hi) => (lo, hi),
+            _ => (0.0, f32::MAX),
+        };
+
+        // A hundredth of a metre is as fine as a drag goes.
+        let r = ((radius.clamp(lo, hi) * 100.0).round() / 100.0).clamp(lo, hi);
+        self.set_property(elem, prop, &wce_tile::properties::format_float(r), gesture)
+    }
+
     /// Sets a property's attribute (and its twin): one undo entry, the steps of a drag merge. An attribute the element lacks is added by a text
     /// splice (that entry does not merge).
     pub fn set_property(&mut self, elem: usize, prop: &Prop, value: &str, gesture: u64) -> bool {

@@ -128,7 +128,7 @@ Note: the editor draws a building at its `destruct01` pieces unless its destruct
 - **Editor.** `Payload::PointLight` per shown instance (colour, colour_scale, colour_min, radius, the animation, its speeds and the game's
   phase from the light's index among the tile's lights, hidden ones included (visibility is the editor's only); always smooth); the light pass (`renderer/lights.rs`) after the directional
   light: a cube around each light's sphere, back faces, no depth test, stencil = geometry, instanced per falloff, the colour animated with
-  the frame clock. The window lights give small warm pools at night and are faint by day. Selecting a light draws its radius as a box.
+  the frame clock. The window lights give small warm pools at night and are faint by day. Selecting a light draws its reach (a circle of its radius in each axis plane); in the tile tool a handle on it drags the radius.
   Not drawn: shadow-casting lights (only the XML definitions can ask for them).
 
 ## Test map

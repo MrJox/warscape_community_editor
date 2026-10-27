@@ -407,13 +407,28 @@ impl Renderer {
             let [r, g, b, a] = self.settings.selection_colour;
             let yellow = overlay_colour(r, g, b, a);
             for &id in &self.settings.selection {
-                // The light's reach.
+                // The light's reach: a circle of its radius in each axis plane.
                 if let Some(e) = scene.find(id).filter(|e| scene.drawable(e))
                     && let Payload::PointLight(l) = &e.payload
                 {
                     let c = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
-                    let r = Float3::new(l.radius, l.radius, l.radius);
-                    sel.box_wire(c - r, c + r, yellow);
+                    let r = l.radius;
+                    let at = |a: f32, plane: usize| {
+                        let (u, v) = (r * a.cos(), r * a.sin());
+                        match plane {
+                            0 => Float3::new(c.x + u, c.y, c.z + v),
+                            1 => Float3::new(c.x + u, c.y + v, c.z),
+                            _ => Float3::new(c.x, c.y + u, c.z + v),
+                        }
+                    };
+
+                    const SEGMENTS: usize = 64;
+                    for plane in 0..3 {
+                        for k in 0..SEGMENTS {
+                            let (a0, a1) = (k as f32 / SEGMENTS as f32 * std::f32::consts::TAU, (k + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU);
+                            sel.line(at(a0, plane), at(a1, plane), yellow);
+                        }
+                    }
                 }
             }
 

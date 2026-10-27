@@ -156,7 +156,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials is left for the renderer plan.
 
 ### Phase 5e
-- Point-light radius gizmo (the radius is an Inspector value only).
+- Point-light radius gizmo: done (2026-10-28). A selected light shows its reach as three circles (the renderer's selection overlay,
+  instead of the box) and, in the tile tool's Select mode, a handle on the +x side: dragging it sets `radius` on the light's horizontal
+  plane, through the Inspector's property (clamped to `[0, 1000]`), one undo entry per drag (`TileDocument::set_light_radius`;
+  `light_radius_drag`, `assert_attr_near`, `scripts/tile_light_radius.txt`). **Phase 5e is done.**
 
 ### Phase 5f
 - Draw a civilian shelter's target in the viewport.

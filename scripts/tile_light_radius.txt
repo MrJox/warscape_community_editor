@@ -1,0 +1,32 @@
+# The point light radius gizmo (Phase 5e of docs/plans/tile_ted_parity.md): a selected light shows its reach as three circles with a
+# handle on the +x side; dragging the handle sets `radius` (one undo entry for the drag), which the light is drawn with. A light placed
+# on a new tile; capture %OUT%/light_radius.png. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_light_test 2 2 10 32
+frames 5
+cam_look 60 5 60
+cam 2.4 0.6 30 5
+frames 5
+start_making POINT_LIGHT_INSTANCE
+frames 3
+tile_click_ground 60 60
+frames 5
+key Escape
+tile_select POINT_LIGHT_INSTANCE
+tile_edit selected radius 5
+frames 3
+assert_attr selected radius 5
+cam 2.4 1.1 45 5
+frames 10
+assert_history 2 2
+gizmo none
+shot %OUT%/light_before.png
+frames 5
+light_radius_drag 12
+frames 10
+assert_attr_near selected radius 12 0.3
+assert_history 3 3
+shot %OUT%/light_radius.png
+frames 5
+undo
+assert_attr selected radius 5
+quit
