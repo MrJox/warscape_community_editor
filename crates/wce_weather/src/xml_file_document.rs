@@ -400,7 +400,7 @@ impl Document for XmlFileDocument {
 }
 
 /// Edits the first N components of a value through a fixed-size widget.
-fn edit_array<const N: usize>(f: &mut [f32], edit: impl FnOnce(&mut [f32; N]) -> bool) -> bool {
+pub(crate) fn edit_array<const N: usize>(f: &mut [f32], edit: impl FnOnce(&mut [f32; N]) -> bool) -> bool {
     let mut a = [0.0f32; N];
     for (d, s) in a.iter_mut().zip(f.iter()) {
         *d = *s;

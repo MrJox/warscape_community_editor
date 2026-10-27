@@ -21,6 +21,12 @@ pub struct ImGuiInspector {
 
     /// The marked fields and their notes (`Inspector::mark_fields`), for the current target.
     marks: Vec<(String, String)>,
+
+    /// `Inspector::hint` / `dim_next` for the next row, and the hint of the row being drawn (its widget shows it too).
+    next_hint: String,
+    next_dim: bool,
+    next_format: Option<String>,
+    row_hint: String,
 }
 
 /// The value column starts after the longest label that fits: 40% of the panel, at least 110 px.
@@ -39,7 +45,9 @@ impl ImGuiInspector {
     }
 
     /// A label: in the warning colour with the note as its tooltip when its field is marked.
-    fn draw_label(&self, field: &str, label: &str, disabled: bool) {
+    fn draw_label(&mut self, field: &str, label: &str, disabled: bool) {
+        self.row_hint = std::mem::take(&mut self.next_hint);
+        let dim = std::mem::take(&mut self.next_dim);
         match self.mark(field) {
             Some(note) => {
                 gui::text_colored(crate::theme::warning(), &format!("{} {label}", crate::icons::TRIANGLE_ALERT));
@@ -48,12 +56,26 @@ impl ImGuiInspector {
                 }
             }
 
-            None if disabled => gui::text_disabled(label),
-            None => gui::text(label),
+            None => {
+                if disabled || dim { gui::text_disabled(label) } else { gui::text(label) }
+                self.show_hint();
+            }
         }
     }
 
-    fn label(&self, field: &str, label: &str, full_width: bool) {
+    /// The float format of this row: the one `format_next` asked for, else `default`.
+    fn take_format(&mut self, default: &str) -> String {
+        self.next_format.take().unwrap_or_else(|| default.to_owned())
+    }
+
+    /// The row's hint, when the last item is hovered.
+    fn show_hint(&self) {
+        if !self.row_hint.is_empty() && gui::is_item_hovered() {
+            gui::set_tooltip(&self.row_hint);
+        }
+    }
+
+    fn label(&mut self, field: &str, label: &str, full_width: bool) {
         self.draw_label(field, label, false);
         gui::same_line_at(label_column());
         if full_width {
@@ -63,6 +85,7 @@ impl ImGuiInspector {
 
     fn finish_widget(&mut self) {
         self.ended = gui::is_item_deactivated_after_edit();
+        self.show_hint();
     }
 }
 
@@ -83,6 +106,18 @@ impl Inspector for ImGuiInspector {
         self.marks = marks;
     }
 
+    fn hint(&mut self, text: &str) {
+        self.next_hint = text.to_owned();
+    }
+
+    fn dim_next(&mut self) {
+        self.next_dim = true;
+    }
+
+    fn format_next(&mut self, format: &str) {
+        self.next_format = Some(format.to_owned());
+    }
+
     fn button(&mut self, field: &str, label: &str, enabled: bool) -> bool {
         gui::begin_disabled(!enabled);
         let clicked = gui::small_button(&format!("{label}{}", self.id(field)));
@@ -98,25 +133,26 @@ impl Inspector for ImGuiInspector {
         self.draw_label(field, label, true);
         gui::same_line_at(label_column());
         gui::text(value);
+        self.show_hint();
     }
 
     fn edit_float(&mut self, field: &str, label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32) -> bool {
         self.label(field, label, true);
-        let changed = gui::drag_float(&self.id(field), v, speed, lo, hi, "%.3f");
+        let changed = gui::drag_float(&self.id(field), v, speed, lo, hi, &self.take_format("%.3f"));
         self.finish_widget();
         changed
     }
 
     fn edit_float3(&mut self, field: &str, label: &str, v: &mut [f32; 3], speed: f32) -> bool {
         self.label(field, label, true);
-        let changed = gui::drag_float3(&self.id(field), v, speed, "%.3f");
+        let changed = gui::drag_float3(&self.id(field), v, speed, &self.take_format("%.3f"));
         self.finish_widget();
         changed
     }
 
     fn edit_float2(&mut self, field: &str, label: &str, v: &mut [f32; 2], speed: f32) -> bool {
         self.label(field, label, true);
-        let changed = gui::drag_float2(&self.id(field), v, speed, "%.6g");
+        let changed = gui::drag_float2(&self.id(field), v, speed, &self.take_format("%.6g"));
         self.finish_widget();
         changed
     }
@@ -146,6 +182,7 @@ impl Inspector for ImGuiInspector {
         self.label(field, label, false);
         let changed = gui::checkbox(&self.id(field), v);
         self.ended = changed;
+        self.show_hint();
         changed
     }
 
@@ -172,6 +209,7 @@ impl Inspector for ImGuiInspector {
         }
 
         self.ended = changed;
+        self.show_hint();
         changed
     }
 
@@ -189,6 +227,7 @@ impl Inspector for ImGuiInspector {
         changed |= gui::slider_float(&format!("##{}.slider", self.path(field)), v, lo, hi, "");
         ended |= gui::is_item_deactivated_after_edit();
         self.ended = ended;
+        self.show_hint();
         changed
     }
 
@@ -236,6 +275,8 @@ impl Inspector for ImGuiInspector {
                 changed = true;
                 ended = true;
             }
+
+            self.show_hint();
         }
 
         self.ended = ended;

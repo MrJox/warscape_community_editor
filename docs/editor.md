@@ -37,6 +37,8 @@ Opens `.environment`, `.lighting` and `.xml` (weather definitions, vfx) from the
 remove attribute) are snapshot commands. Save writes a loose file under the output folder (File > Set output folder, `output_dir`; the game's `data` folder is never touched), re-reads it as
 the new baseline and clears the history, so the saved bytes differ from the pack file in the edited spans only.
 
+The **Inspector** of an `.environment` / `.lighting` file groups its settings by effect (Sun, Ambient light, Sky, Fog, Exposure and tone mapping, Colour grading, Depth of field, Water, Wind and snow, Precipitation node, one Cloud layer per plane, then Other attributes), each with a tooltip (`wce_weather::environment_sections`, `Tool::inspect` of the weather tool; the Properties tab keeps the raw XML tree for everything else). A setting the file lacks shows dim at the value the viewport assumes (`EnvironmentParams::default`) and is added to its element (`Op::AddAttr`) when edited; a number the file writes as an integer stays one while it is whole. Attributes of these elements that no section lists, like the single `low_tones_bias` the battle game ignores, are under Other attributes. A missing element (a `.lighting` has no `SKYGEN`) is not added.
+
 | Old weather_editor feature (`docs/plans/weather_current_state.md`) | Where it is now |
 |---|---|
 | Files browser with filter and categories | **Files** panel (and the shared Assets panel, filtered to the tool's types) |
@@ -48,7 +50,7 @@ the new baseline and clears the history, so the saved bytes differ from the pack
 | View modes (HDR, albedo, normal, depth, ...) | **Weather scene** bar and `view <n>` |
 | Sample map seed and count, re-roll | **Weather scene** bar, `sample`, `reroll` |
 | Graphics options (gamma, brightness, SSAO, DOF, shadows, vignette, flare) | **Settings** menu (read from `preferences.script.txt`) |
-| Weather selection database: Pick and Edit tabs, `.xml` and `.bin` | **Selection > Weather picker** (`WeatherPicker`, `VariationEditor`), `picker`, `pick k=v`, `vdb-script` |
+| Weather selection database: Pick and Edit tabs (flag bits, categories and values with the game's locked unless Expert, clone a map / climate, coverage grid, conditions grid, problems for the game, undo), Open / Save / Save As / Convert `.xml` and `.bin` (docs/re/variation_db.md) | **Selection > Weather picker** (`WeatherPicker`, `VariationEditor`), `picker`, `pick k=v`, `vdb-script` |
 | CLI `--open`, `--open-disk`, `--cam`, `--frames`, `--shot`, `--capture`, `--view`, `--blend`, `--pick`, `--picker`, `--vdb-script`, `--no-flare` | same flags of `wce.exe`; the weather ones are commands of the tool (`--name args` runs the command `name`) |
 
 Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` was removed in Phase 8; the render regression is the `wce.exe` captures (`scripts/shots.sh`). `scripts/weather_check.sh` supersedes `variation_e2e.ps1`.

@@ -29,6 +29,23 @@ pub fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+/// rpfm's Attila schema where rpfm keeps it: its config folder (`%APPDATA%\FrodoWazEre\rpfm\config` on Windows, `~/.config/rpfm` on Linux,
+/// `~/Library/Application Support/com.FrodoWazEre.rpfm` on macOS) or the older `<config>/rpfm` layout, then `schemas/schema_att.ron`.
+pub fn default_rpfm_schema_path() -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    let home = var("HOME").or_else(|| var("USERPROFILE"));
+    let config = var("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|h| h.join(".config")));
+    let mut folders = vec![];
+    if let Some(appdata) = var("APPDATA") {
+        folders.push(appdata.join("FrodoWazEre/rpfm/config"));
+        folders.push(appdata.join("rpfm"));
+    }
+
+    folders.extend(config.map(|c| c.join("rpfm")));
+    folders.extend(home.map(|h| h.join("Library/Application Support/com.FrodoWazEre.rpfm")));
+    folders.into_iter().map(|f| f.join("schemas/schema_att.ron")).find(|p| p.is_file())
+}
+
 /// A `;` separated list from the environment.
 fn env_list(name: &str) -> Option<Vec<String>> {
     env_value(name).map(|v| v.split(';').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect())

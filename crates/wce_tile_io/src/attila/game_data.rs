@@ -33,10 +33,7 @@ pub struct GameData {
 
 /// rpfm's Attila schema where rpfm keeps it (`~/.config/rpfm/schemas/schema_att.ron`; on Windows under `%APPDATA%`).
 pub fn default_schema_path() -> Option<PathBuf> {
-    let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    let config = config.or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?;
-    let p = config.join("rpfm/schemas/schema_att.ron");
-    p.is_file().then_some(p)
+    wce_foundation::settings::default_rpfm_schema_path()
 }
 
 impl GameData {
