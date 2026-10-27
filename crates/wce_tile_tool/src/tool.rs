@@ -2481,16 +2481,16 @@ impl Tool for TileTool {
 
         gui::separator_text("Launch in game");
         settings_window::label("Delivery");
+        if gui::radio_button("Launch pack", s.launch.delivery == crate::settings::LaunchDelivery::Pack) {
+            s.launch.delivery = crate::settings::LaunchDelivery::Pack;
+        }
+
+        gui::same_line();
         if gui::radio_button("Loose files", s.launch.delivery == crate::settings::LaunchDelivery::Loose) {
             s.launch.delivery = crate::settings::LaunchDelivery::Loose;
         }
 
-        gui::same_line();
-        if gui::radio_button("Launch pack in data\\", s.launch.delivery == crate::settings::LaunchDelivery::Pack) {
-            s.launch.delivery = crate::settings::LaunchDelivery::Pack;
-        }
-
-        settings_window::help("Loose files: a working directory with only the mod packs the tile's assets need; nothing is written into the game's folder. A mod pack's file wins over a loose one, so when a needed pack has one of the tile's paths (like TDD's tile database), or the tile has procedural walls, that launch uses the pack. Launch pack: data\\wce_launch.pack with every mod pack chosen in the editor, removed when the game exits.");
+        settings_window::help("Loose files lose to the game's packs; a tile falls back to the pack.");
         settings_window::label("Map");
         if gui::radio_button("The tile alone", s.launch.map == crate::settings::LaunchMap::Tile) {
             s.launch.map = crate::settings::LaunchMap::Tile;

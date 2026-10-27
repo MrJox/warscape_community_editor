@@ -226,7 +226,8 @@ pub struct Needs {
     /// The mod packs that serve a dependency, highest priority first, with one dependency each serves (why it loads).
     pub mods: Vec<(String, String)>,
 
-    /// A needed mod pack that also has a path the launch ships, as (pack, path): the pack's file would win over the loose one.
+    /// A pack that loads (the release's, a needed mod) and also has a path the launch ships, as (pack, path): its file wins over the loose
+    /// one.
     pub shadowing: Vec<(String, String)>,
 
     /// Dependencies read from the editor's loose folders (its own edits, the output folder): the launch carries them.
@@ -358,9 +359,12 @@ pub fn needs(vfs: &Vfs, shipped: &[(String, Vec<u8>)], buildings: &[String], pre
     }
 
     out.mods = why.iter().map(|(&i, path)| (packs[i].name.clone(), path.clone())).collect();
-    for &i in why.keys() {
+
+    // The packs that load (the release's, the needed mods) win over loose files: one with a shipped path hides it (the release's
+    // tiles.pack has the tile database, so a tile's own database never reaches the game loose: a crash on 2026-10-28).
+    for (i, pack) in packs.iter().enumerate().filter(|(i, p)| !p.loose && (!p.is_mod || why.contains_key(i))) {
         if let Some(path) = shipped_paths.iter().filter(|p| vfs.owners(p).contains(&i)).min() {
-            out.shadowing.push((packs[i].name.clone(), path.clone()));
+            out.shadowing.push((pack.name.clone(), path.clone()));
         }
     }
 

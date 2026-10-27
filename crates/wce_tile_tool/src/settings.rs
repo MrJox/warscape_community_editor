@@ -91,14 +91,13 @@ pub enum LaunchMap {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchDelivery {
-    /// Loose files in a working directory (`add_working_directory`), with only the mod packs the tile's assets need: nothing is written
-    /// into the game's folder. A mod pack's file wins over a loose one, so a needed pack that has a path the tile ships switches that
-    /// launch to the pack.
+    /// A mod pack `data\wce_launch.pack` named first, with every mod pack chosen in the editor; removed when the game exits.
     #[default]
-    Loose,
-
-    /// A mod pack `data\wce_launch.pack` listed first, with every mod pack chosen in the editor.
     Pack,
+
+    /// Loose files in a working directory (`add_working_directory`), with only the mod packs the tile needs. The game's packs win over
+    /// loose files, and the release's tiles.pack has the tile database, so a tile falls back to the pack (kept for files no pack has).
+    Loose,
 }
 
 /// The battle of Launch in game: its map and its two armies of one unit each (vanilla keys: a mod's units may need packs that are not

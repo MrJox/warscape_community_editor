@@ -151,7 +151,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
         overlay = needs.overlay.clone();
         if loose {
             if let Some((pack, path)) = needs.shadowing.first() {
-                notes.push(format!("{pack}, which the tile needs, also has {path} (a mod pack's file wins over a loose one): the launch pack"));
+                notes.push(format!("{pack} also has {path} (a pack's file wins over a loose one): the launch pack"));
                 loose = false;
             } else {
                 mods = needs.mods.iter().map(|(m, _)| m.clone()).filter(|m| plan.mods.iter().any(|x| x.eq_ignore_ascii_case(m))).collect();
