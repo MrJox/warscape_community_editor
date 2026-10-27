@@ -1,0 +1,49 @@
+# Copy / cut / paste (Phase 5g of docs/plans/tile_ted_parity.md): two buildings copied and pasted at a ground point (the first there, the
+# other as far from it as it was) and in place; a civilian shelter pasted elsewhere takes its target along; cut removes; each one undo
+# entry; a paste into another tile of the session. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_paste_test 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 40 50
+add_building barbarian_fort_straight 60 55
+frames 10
+tile_select_all BUILDING_INSTANCE
+copy
+paste 100 100
+frames 3
+assert_history 3 3
+assert_type_count BUILDING_INSTANCE 4
+assert_selected 2
+tile_select 7
+assert_world_xz 40 50 0.01
+paste inplace
+frames 3
+assert_type_count BUILDING_INSTANCE 6
+undo
+undo
+frames 3
+assert_type_count BUILDING_INSTANCE 2
+
+# A shelter: its target goes with it.
+start_making CivilianShelter
+tile_click_ground 80 80
+frames 3
+key Escape
+tile_select CivilianShelter
+assert_shelter_target 80 90 0.6
+copy cut
+frames 3
+assert_type_count CivilianShelter 0
+paste 120 60
+frames 3
+tile_select CivilianShelter
+assert_shelter_target 120 70 0.6
+
+# Into another tile.
+tile_select_all BUILDING_INSTANCE
+copy
+new_tile wce_paste_test_b 2 2 10 32
+frames 5
+paste 30 30
+frames 3
+assert_type_count BUILDING_INSTANCE 2
+quit
