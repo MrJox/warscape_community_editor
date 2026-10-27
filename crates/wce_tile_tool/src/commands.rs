@@ -656,16 +656,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("paint", "paint raise|lower|smooth|flatten|level <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
+    c.add("paint", "paint raise|lower|smooth|flatten|level|noise <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
-            let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level <x m> <z m> <steps>") };
+            let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level|noise <x m> <z m> <steps>") };
             let kind = match a[0].as_str() {
                 "raise" => BrushKind::Raise,
                 "lower" => BrushKind::Lower,
                 "smooth" => BrushKind::Smooth,
                 "flatten" => BrushKind::Flatten,
                 "level" => BrushKind::Level,
+                "noise" => BrushKind::Noise,
                 other => return fail(format!("unknown brush '{other}'")),
             };
 

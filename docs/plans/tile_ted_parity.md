@@ -99,7 +99,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   line whose target at each dab is the line's height there, as wide as the spline (else the brush's radius), the brush's falloff for
   the banks, full strength; landscape instances follow. The brush Inspector's and the spline section's "Level the ground" buttons
   (tooltips), command `level_along`, `scripts/tile_level_along.txt`.
-- Height brushes (wce's): noise, stamp, import PNG.
+- Done (2026-10-27): the **noise brush** (wce's): `HeightField::noise` / `fractal_noise` (four octaves of value noise, -1 .. 1, a function
+  of the pixel so that dabs deepen the same bumps), `BrushKind::Noise`, the toolbar's mountain button (Noise mode), its feature size in
+  the Inspector (tooltip), `paint noise`, `scripts/tile_noise.txt`, unit tests.
+- Height brushes (wce's): stamp, import PNG.
 - Nogo map and LF-influence map painting (`nogo.png`, `lf_influence_map.png`, the kit-exact encoders; TEd's Influence Map module has
   Subtract among its operations, `docs/re/terrain.md`).
 - TEd's Normal (Grouped) blend operation (not traced) and its blur (`GPOWeightedAverage`: each channel towards its neighbourhood's

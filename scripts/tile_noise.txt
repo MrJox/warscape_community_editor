@@ -1,0 +1,13 @@
+# The noise brush (Phase 5a of docs/plans/tile_ted_parity.md, wce's): a new 1 x 1 tile at density 128, roughened at its middle; %OUT%/noise.png
+# shows it (the unit tests in wce_tile's height_field check the noise's range and that the ground outside the brush stays). Run with
+# WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_noise_test 1 1 10 128
+frames 5
+brush 40 8 0.6
+paint noise 64 64 90
+assert_height 5 5 5 0.01
+cam 0.6 0.55 110 5
+frames 10
+shot %OUT%/noise.png
+frames 2
+quit

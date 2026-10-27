@@ -206,6 +206,11 @@ impl Tile {
                 hf.smooth(&b)
             }
 
+            BrushKind::Noise => {
+                b.strength = 1.0;
+                hf.noise(&b, f64::from(s.strength * dt) * unit, f64::from(s.noise_scale_m) / mpp)
+            }
+
             BrushKind::Flatten => {
                 b.strength = soft;
                 hf.flatten(&b, f64::from(s.flatten_height) * unit)
