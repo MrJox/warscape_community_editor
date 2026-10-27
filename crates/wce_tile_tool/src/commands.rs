@@ -1334,7 +1334,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let (Some(d), Some(r)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: light_radius_drag <radius m>") };
         let Some((from, _)) = el.and_then(|el| d.tile().light_radius_handle(el)) else { return fail("no point light selected") };
         let c = d.tile().world_position(el.expect("selected"));
-        let to = Float3::new(c.x + r as f32, c.y, c.z);
+        let to = Float3::new(c.x + r, c.y, c.z);
         let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
         let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
         mouse(e, &args, "")
