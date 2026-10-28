@@ -53,6 +53,17 @@ Each editor is a Cargo feature of `wce_app`, so a release builds only the editor
 
 `cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts build with `--all-features`.
 
+## Releases and updates
+
+Pushing a tag `vX.Y.Z` that matches the workspace version (`[workspace.package] version` in `Cargo.toml`) runs
+`.github/workflows/release.yml`: it builds `wce.exe` for Windows and publishes a GitHub release with `wce-X.Y.Z-windows-x64.zip`. A tag with a
+pre-release part (`v0.2.0-beta.1`) is published as a pre-release.
+
+The editor looks for a newer release when an interactive session starts (release builds; Settings > General > Updates turns it off or
+includes pre-releases) and from Help > Check for updates. On Windows it downloads the zip with a progress bar, puts its files over the
+running build (the replaced files are renamed `*.wce-old` and deleted on the next start) and offers to restart. Elsewhere it links to the
+release page.
+
 ## Gates
 
 `scripts/gates.sh [out dir] [--corpus] [--render]` runs every gate with fixed inputs and writes one
