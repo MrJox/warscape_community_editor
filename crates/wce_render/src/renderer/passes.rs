@@ -15,6 +15,10 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 /// Battle rows of the split table (dll+0x1c88aa0), indexed by gfx_shadow_quality.
 const SHADOW_ROWS: [[f32; 4]; 4] = [[60.0, 180.0, 180.0, 180.0], [30.0, 90.0, 210.0, 210.0], [30.0, 90.0, 210.0, 450.0], [30.0, 90.0, 210.0, 450.0]];
 
+/// Rome 2's battle cascade lengths (game units) at shadow qualities 4 and 5, the four cascade ones (table dll+0x118ff698; qualities 1-3 have
+/// two or three cascades: 30, 120 and 15, 40, 120).
+const SHADOW_ROW_ROME2: [f32; 4] = [15.0, 35.0, 90.0, 200.0];
+
 /// The atlas quadrants of the four cascades.
 pub(crate) const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5], [0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
 
@@ -271,6 +275,19 @@ impl Renderer {
             slice_near[i] = splits[i] - 0.1 * (splits[i] - splits[i - 1]);
         }
 
+        // Rome 2 (fn 0x114765e0): no depth analysis nor overlap; from the camera's near, its battle row of lengths (game units) of the
+        // four cascade qualities. Its light pass reads x, y unprojected: an ortho fit (shadow_fit::fit_rome2).
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        let u = self.camera.units;
+        if rome2 {
+            splits[0] = n;
+            for i in 1..=4 {
+                splits[i] = splits[i - 1] + SHADOW_ROW_ROME2[i - 1] / u;
+            }
+
+            slice_near.copy_from_slice(&splits[..4]);
+        }
+
         let fade_w = (splits[4] - splits[3]) * 0.2;
         let fade_y = (splits[4] - (far_q - fade_w)).max(1e-4) / fade_w * 0.2;
         // The slices are fitted around the camera relative to the render origin: fitted absolute, 10^5 units from the scene's origin, the
@@ -296,10 +313,36 @@ impl Renderer {
                 inv_view.transform_point(v)
             });
 
+            let tile = (SHADOW_SIZE / 2) as f32;
+            if rome2 {
+                // Fitted in game units (the texel snap is the game's); `light_rel` takes scene units.
+                let fit = shadow_fit::fit_rome2(&pts.map(|p| p * u), light_dir, tile);
+                let g = fit.view_proj;
+                let mut rel = g;
+                for r in &mut rel.m {
+                    for v in r.iter_mut().take(3) {
+                        *v *= u;
+                    }
+                }
+
+                light_rel[c] = rel;
+                light_vp[c] = rel * translation(-o);
+                texel_c[c] = fit.width / u / tile;
+
+                // The atlas (fn 0x1141f840): x scale + offset to the tile's centre (and half a texel), y flipped.
+                let size = SHADOW_SIZE as f32;
+                let (ox, oy) = ((SHADOW_BOUNDS[c][0] * size + 0.5) / size + 0.25, (SHADOW_BOUNDS[c][1] * size + 0.5) / size + 0.25);
+                let mut m = g;
+                m.m[0] = std::array::from_fn(|k| 0.25 * g.m[0][k] + ox * g.m[3][k]);
+                m.m[1] = std::array::from_fn(|k| -0.25 * g.m[1][k] + oy * g.m[3][k]);
+                matrices[c * 16..c * 16 + 16].copy_from_slice(m.data());
+                continue;
+            }
+
             let fit = shadow_fit::fit(&pts, light_dir, view_dir, side, slice_near[c]);
             light_rel[c] = fit.view_proj;
             light_vp[c] = fit.view_proj * translation(-o);
-            texel_c[c] = fit.width / (SHADOW_SIZE / 2) as f32;
+            texel_c[c] = fit.width / tile;
 
             // World -> atlas uv (y down) + depth: the lighting shader's lookup.
             let (bx, by) = (SHADOW_BOUNDS[c][0], SHADOW_BOUNDS[c][1]);
@@ -329,7 +372,13 @@ impl Renderer {
             self.ctx.set_render_targets(&[], self.shadow_map.dsv.as_ref());
             self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
-            self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
+            let (rs_shadow, rs_shadow_terrain) = if rome2 {
+                (self.states.rs_shadow_rome2.clone(), self.states.rs_shadow_terrain_rome2.clone())
+            } else {
+                (self.states.rs_shadow.clone(), self.states.rs_shadow_terrain.clone())
+            };
+
+            self.ctx.set_rasterizer_state(rs_shadow.as_ref());
 
             let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
             let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
@@ -380,9 +429,9 @@ impl Renderer {
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
                 if terrain_material {
-                    self.ctx.set_rasterizer_state(self.states.rs_shadow_terrain.as_ref());
+                    self.ctx.set_rasterizer_state(rs_shadow_terrain.as_ref());
                     self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c]);
-                    self.ctx.set_rasterizer_state(self.states.rs_shadow.as_ref());
+                    self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                     self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
                 }
 
@@ -445,16 +494,16 @@ impl Renderer {
         self.cbs.set_f("shadowmap_PS", "g_iSplitCount", &[if self.settings.shadows { 4.0 } else { 0.0 }]);
         self.cbs.set_f("shadowmap_PS", "g_shadow_light_direction", &[light_dir.x, light_dir.y, light_dir.z]);
 
-        // Rome 2's light pass picks the cascade by the number of split ends the pixel is past (g_vSplitDepth), shades nothing beyond the
-        // shadow range, blends cascades over g_fFadeRange (game units: a fifth of the last split here) and has baked shadows (none: their
-        // distance out of reach). docs/re/rome2_renderer.md.
-        if self.game == super::game::RenderGame::Rome2 {
-            let u = self.camera.units;
-            let end = |i: usize| splits.get(i).copied().unwrap_or(0.0) * u;
-            let fade = (end(4) - end(3)) * 0.2;
+        // Rome 2's light pass picks the cascade by the number of split ends the pixel's view depth (game units) is past, shades nothing
+        // beyond the shadow range, blends a cascade into the next over g_fFadeRange.x and fades out over .y before the last split; its baked
+        // shadows are unused (their distance out of reach). The game's values (fn 0x1147aa90): range `shadow_farz` 360, fade (3, half the
+        // third split), sample bias 0.1 (battle). docs/re/rome2_renderer.md.
+        if rome2 {
+            let end = |i: usize| splits[i] * u;
             self.cbs.set_f("shadowmap_PS", "g_vSplitDepth", &[end(1), end(2), end(3), end(4)]);
-            self.cbs.set_f("shadowmap_PS", "g_vShadowRange", &[end(4), 0.0, 0.0, 0.0]);
-            self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[fade, fade]);
+            self.cbs.set_f("shadowmap_PS", "g_vShadowRange", &[360.0, 0.0, 0.0, 0.0]);
+            self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[3.0, end(3) * 0.5]);
+            self.cbs.set_f("shadowmap_PS", "g_sample_bias", &[0.1]);
             self.cbs.set_f("shadowmap_PS", "g_vBakedShadowmapParams", &[0.0, 1.0e9, 0.0, 1.0]);
         }
     }

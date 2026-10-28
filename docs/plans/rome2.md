@@ -50,7 +50,8 @@ Status legend: **done**, **partial**, **todo**.
 - **done** The terrain (surface, blend, composite, resolve; shadows). The composite is the game's DX11 one (2026-10-28): the index map's
   variations, a repeat per group (RENDER_PARAMS' 9 m where the climate lists none, not 40.1), a gloss per layer. Open: the channel
   swizzle's source, the far composite, the virtual texture path.
-- **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
+- **done** The sun's shadow cascades (2026-10-28): Rome 2's orthographic fit, splits and constants (they were Attila's warped ones,
+  which its light pass cannot read: no shadows at all). **todo** The cloud shade and baked shadows: check against a frame of the game.
 - **done** The sea (the forward ocean; no planar reflection).
 - **partial** The effects (docs/re/rome2_vfx.md): the billboard emitters (`continuous_mesh`, `burst_mesh`) are a port of the game's
   CPU simulation (`vfx_rome2::sim`: its state machines, spawning, update and generator order) drawn with the shaders generated per
@@ -63,7 +64,7 @@ Status legend: **done**, **partial**, **todo**.
   ground's variations and repeats now follow the game (the hill shows rock's pale variation, at 40 m), but it is still browner than the
   game's pale grey; the orange cast was the weather: the editor lit with the `default/` season folder's heavily graded files, the
   game with the battle season's (2026-10-28; the colour matrix and the environment's fields checked against the game, the same); still
-  open: the trees' shadows are faint, the haze. The climate: a tile shown in a map context takes its
+  open: the haze. The climate: a tile shown in a map context takes its
   placement's (`ContextPanel::adopt_climate`, the region's as in the game); alone it is the editor's choice (`ROME_Continental` by
   default).
 - **blocked** A RenderDoc capture of a battle (the light pass, tone map and fog inputs, the ground's textures): Rome 2 is 32-bit and

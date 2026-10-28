@@ -34,9 +34,18 @@ holds the environment's four points as log10 (the shaders raise 10 to them). The
 
 `directionallight ps30_slm_highdef` (`shadowmap_PS` 688 bytes) differs from Attila's:
 
-- cascades: within `g_vShadowRange.x` of view depth, the cascade is the number of `g_vSplitDepth`'s four depths the pixel is past (Attila:
-  `g_split_distances`), blended into the next over `g_fFadeRange` (distances in game units; Attila's are fractions). The renderer sets
-  the split ends of its own cascades, the last one as the range, a fifth of the last split as the fade;
+- cascades: within `g_vShadowRange.x` of view depth (game units), the cascade is the number of `g_vSplitDepth`'s four depths the
+  pixel is past (Attila: `g_split_distances`, with atlas bounds), blended into the next over `g_fFadeRange.x` and faded out over `.y`
+  before the last split. The lookup divides only z by w: the cascade matrices must be orthographic (Attila's LiSPSM fit put every
+  lookup outside the atlas: no shadows at all);
+- the cascades (ShadowMapView, fn 0x114765e0; fit fn 0x11423af0; atlas matrices fn 0x1141f840; constants fn 0x1147aa90): no depth
+  analysis, splits from the camera's near plus the battle row of lengths (shadow qualities 4-5: 15, 35, 90, 200; 1-3: two or three
+  cascades, 30, 120 / 15, 40, 120), no overlap. Light basis x = (L.z, 0, -L.x), y = L x x (`shadowmap_view_quantize`). The box is a
+  square as wide as the slice's longest corner to corner distance (rounded up, plus two texels), its centre snapped to the tile's
+  texels; depth the slice's (at least `shadowmap_min_depth` 1024) ending at its far side, the near clip 1 closer. The atlas matrix:
+  x * 0.5 tile / W + (x0 + 0.5) / W + that, y flipped likewise. `g_vShadowRange` 360 (`shadow_farz`), `g_fFadeRange` (3, half the
+  third split), `g_sample_bias` 0.1 (battle; 0 campaign), the casters' DepthBias 1 and slope 2. The game's atlas at qualities 4-5 is
+  4096 (2048 tiles); ours is 2048 (1024 tiles);
 - baked shadows (`g_tBakedShadowBuffer`; `g_vBakedShadowmapScale` / `Offset` / `Shear` / `Params`): used beyond
   `g_vBakedShadowmapParams.y` of distance from the camera. Left at zero, every pixel took them (the map unbound: in shadow, the
   sun gone): the distance is set out of reach;
@@ -44,7 +53,7 @@ holds the environment's four points as log10 (the shaders raise 10 to them). The
   strings): off (`.w` 0);
 - no `g_apply_environment_specular`.
 
-To check against a frame of the game: the cascades' fade, the baked map's use, the cloud shade.
+To check against a frame of the game: the baked map's use, the cloud shade.
 `weather_shared` is 16 bytes (`g_weather_type`, `g_season_type`, `g_snow_mask`).
 
 ## Weather
