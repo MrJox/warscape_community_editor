@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// The table's name.
 pub const SETTINGS_ID: &str = "ui";
 
+/// The fields about the game's files, kept per game: the packs a project or a layout went to are that game's.
+pub const GAME_FIELDS: &[&str] = &["export_pack", "mod_pack"];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiSettings {

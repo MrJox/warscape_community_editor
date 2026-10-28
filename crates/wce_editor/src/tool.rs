@@ -189,6 +189,12 @@ pub trait Tool: Any {
         false
     }
 
+    /// The fields of the tool's settings table that are about the current game's files (recent files, per-file choices): each game keeps
+    /// its own (`Settings::set_game_fields`). The others are the editor's, the same in every game.
+    fn game_settings_fields(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// The tool's page in the Settings window. It edits `draft`, the window's copy of the settings (the tool's table: `Settings::tool` and
     /// `Settings::set_tool`); OK or Apply put it in place and call `settings_applied`.
     fn draw_settings(&mut self, draft: &mut Settings) {

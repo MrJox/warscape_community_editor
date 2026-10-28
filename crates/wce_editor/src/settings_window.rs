@@ -197,7 +197,7 @@ impl Editor {
     /// Puts the window's copy in place, writes it, and passes on what changed: the frame cap, the packs to mount, the tools' settings.
     pub fn apply_settings_window(&mut self) {
         let Some(mut draft) = self.settings_window.draft.clone() else { return };
-        if let Some(packs) = self.mod_checks_for_game(&draft.game_dir()) {
+        if let Some(packs) = self.mod_checks_for_game(draft.game_profile(), &draft.game_dir()) {
             draft.game_mut().mod_packs = packs;
         }
 
@@ -206,6 +206,18 @@ impl Editor {
         for (id, live) in &self.settings_ref().tools {
             if draft.tools.get(id) == opened.get(id) {
                 draft.tools.insert(id.clone(), live.clone());
+            }
+        }
+
+        // The same for each game's own part of the tools' tables.
+        let opened_games = self.settings_window.opened.as_ref().map(|o| o.games.clone()).unwrap_or_default();
+        for (game, live) in &self.settings_ref().games {
+            let was = opened_games.get(game).map(|g| &g.tools);
+            let draft_game = draft.games.entry(game.clone()).or_default();
+            for (id, table) in &live.tools {
+                if draft_game.tools.get(id) == was.and_then(|t| t.get(id)) {
+                    draft_game.tools.insert(id.clone(), table.clone());
+                }
             }
         }
 
@@ -352,13 +364,7 @@ impl Editor {
     }
 
     fn draw_general_page(&mut self) {
-        let default_output = self.default_output_dir().display().to_string();
         let Some(d) = self.settings_window.draft.as_mut() else { return };
-        gui::separator_text("Saving");
-        folder_field("Output folder", &mut d.output_dir, &default_output);
-        env_note("WCE_OUTPUT_DIR");
-        help("Save writes loose files here, under their path in the packs.");
-
         gui::separator_text("Performance");
         label("Frame rate cap");
         const CAPS: [(u32, &str); 5] = [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")];
@@ -409,10 +415,18 @@ impl Editor {
         }
 
         env_note("WCE_GAME");
+        let default_output = crate::editor::default_output_dir_for(d.game_profile()).display().to_string();
+        let mut output = d.game_mut().output_dir.clone();
+        if folder_field("Output folder", &mut output, &default_output) {
+            d.game_mut().output_dir = output;
+        }
+
+        env_note("WCE_OUTPUT_DIR");
+        help("Save writes this game's loose files here, under their path in the packs (and reads them back as the game's).");
         let game = d.game_dir();
-        if game.as_ref().is_some_and(|g| !g.join(d.game_profile().data_dir).is_dir()) {
+        if let Some(problem) = game.as_ref().and_then(|g| d.game_profile().folder_problem(g)) {
             gui::set_cursor_pos_x(LABEL_WIDTH);
-            gui::text_colored(theme::error(), &format!("{}  no data folder in the game folder", icons::CIRCLE_X));
+            gui::text_colored(theme::error(), &format!("{}  {problem}", icons::CIRCLE_X));
         }
 
         gui::separator_text("Mod packs");
@@ -420,7 +434,8 @@ impl Editor {
         env_note("WCE_MOD_PACKS");
         gui::set_cursor_pos_x(LABEL_WIDTH);
         let game = game.map(|g| g.display().to_string()).unwrap_or_default();
-        self.mod_pack_checks_at(&game, LABEL_WIDTH);
+        let (profile, chosen) = (d.game_profile(), d.mod_packs());
+        self.mod_pack_checks_at(&game, profile, &chosen, LABEL_WIDTH);
 
         let Some(d) = self.settings_window.draft.as_mut() else { return };
         gui::separator_text("Assembly Kit and projects");

@@ -24,11 +24,12 @@ pub struct GameProfile {
     /// Folder of the packs, under the game's folder.
     pub data_dir: &'static str,
 
+    /// The game's executable, in the game's folder: what tells one game's folder from another's (their data folders look alike), and
+    /// what Launch in game starts (with the folder as its working directory; docs/re/game_command_line.md).
+    pub exe: &'static str,
+
     /// File of the launcher listing the enabled mods, under the game's folder: `mod "<name>.pack";` lines, first listed wins.
     pub used_mods_file: &'static str,
-
-    /// The game's executable, in the game's folder (started with the folder as its working directory; docs/re/game_command_line.md).
-    pub exe: &'static str,
 
     /// Which packs are the game's own.
     pub vanilla: VanillaPacks,
@@ -106,8 +107,8 @@ impl GameProfile {
         steam_app_id: 325_610,
         appdata_folder: "Attila",
         data_dir: "data",
-        used_mods_file: "used_mods.txt",
         exe: "Attila.exe",
+        used_mods_file: "used_mods.txt",
         vanilla: VanillaPacks::Manifest { file: "manifest.txt", extra: &["charlemagne.pack", "belisarius.pack", "blood.pack", "slavs.pack"] },
         rpfm_schema: "schema_att.ron",
         campaign_battle_map: "terrain/battles/main_attila_map",
@@ -123,8 +124,8 @@ impl GameProfile {
         steam_app_id: 214_950,
         appdata_folder: "Rome2",
         data_dir: "data",
-        used_mods_file: "used_mods.txt",
         exe: "Rome2.exe",
+        used_mods_file: "used_mods.txt",
         vanilla: VanillaPacks::List(&[
             "blood_rome2.pack", "boot.pack", "data.pack", "data_rome2.pack", "divided.pack", "gaul.pack", "greeks.pack", "invasion.pack",
             "local_en_shared_rome2.pack", "local_cz.pack", "local_en.pack", "local_fr.pack", "local_ge.pack", "local_it.pack", "local_pl.pack",
@@ -151,6 +152,16 @@ impl GameProfile {
     /// The game with a key, or the default one (Attila) for an unknown key.
     pub fn by_key_or_default(key: &str) -> &'static GameProfile {
         Self::by_key(key).unwrap_or(&Self::ATTILA)
+    }
+
+    /// Why `dir` is not this game's folder (no data folder, or another game's: no executable of this game); None when it is.
+    pub fn folder_problem(&self, dir: &std::path::Path) -> Option<String> {
+        if !dir.join(self.data_dir).is_dir() {
+            return Some(format!("{} has no {} folder", dir.display(), self.data_dir));
+        }
+
+        let has_exe = std::fs::read_dir(dir).ok()?.flatten().any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(self.exe));
+        (!has_exe).then(|| format!("{} is not {}'s folder (no {})", dir.display(), self.display_name, self.exe))
     }
 
     /// The game of `$WCE_GAME_KEY` (a key, like `rome_2`), else Attila: the examples and gates use it to choose the game.

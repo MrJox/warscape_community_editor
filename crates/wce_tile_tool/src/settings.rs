@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 /// The table's name.
 pub const SETTINGS_ID: &str = "tile";
 
+/// The fields about the game's files, kept per game: tiles, weathers and Create entries are one game's (the same tile path can be in two
+/// games), and so are the sea states (keys of the game's wind table) and the packs written.
+pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs"];
+
 /// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
 pub const PACKS_SOURCE: &str = "packs";
 
