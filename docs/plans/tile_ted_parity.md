@@ -207,8 +207,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   collision (nothing needed them).
 
 ### Phase 6a: tile links
-- Editors for `TILE_LINK` / `TILE_LINK_TARGET` as edits of the entry: text splice on `TILES/<tile>.xml`, rebuild of
-  `tile_database.bin` with the byte-exact builder, one undo entry per edit.
+- Editors for `TILE_LINK` / `TILE_LINK_TARGET`: done (2026-10-28). The Tile panel's Tile links: the targets and rules listed (a click
+  picks one and looks at its cell), the picked one's fields edited (the link set from the kit's `_settings.xml` tile sets, the cell, must
+  / must not, is_entry, blend size, no_offline_blend, base), adding and removing, each field's meaning in its tooltip; one undo entry each
+  (a typed number is one). `TileEntry::set_links` writes the blocks as the kit writes them and splices them only when they change (all
+  626 kit entries round-trip: `wce_formats --example tile_links_roundtrip`); saving merges them into the entry file next to the tile.
+  `tile_database.bin` needs no rebuild: it is compiled from the entries at export. `link_edit`, `scripts/tile_links_edit.txt`.
 - Validator: road / coast end points on the target cells, border heights equal to the neighbours' for every neighbour the rules
   would allow. Its results should match TEd's integrity errors where TEd reports any.
 - Link overview: which tiles can follow this one on each edge.

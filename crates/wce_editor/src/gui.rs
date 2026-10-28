@@ -819,6 +819,11 @@ pub fn is_item_deactivated_after_edit() -> bool {
     call!(sys::igIsItemDeactivatedAfterEdit())
 }
 
+/// Whether any widget is being used (a field typed in, a slider dragged).
+pub fn is_any_item_active() -> bool {
+    call!(sys::igIsAnyItemActive())
+}
+
 pub fn is_item_activated() -> bool {
     call!(sys::igIsItemActivated())
 }

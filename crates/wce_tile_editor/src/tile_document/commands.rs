@@ -4,6 +4,7 @@
 //! Undo puts the attribute texts an edit replaced back as they were (writing the old numbers again could give other text than the file's,
 //! and the text splices of earlier structural commands must still fit the text).
 
+use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -594,6 +595,60 @@ impl Command<Tile> for TextureGroupCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         self.put(t, &self.before.clone());
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// An edit of the tile's links (its database entry's `TILE_LINK_TARGETS` and `TILE_LINKS`): both lists before and after.
+pub(crate) struct LinksCommand {
+    pub name: String,
+    pub before: (Vec<TileLinkTarget>, Vec<TileLink>),
+    pub after: (Vec<TileLinkTarget>, Vec<TileLink>),
+
+    /// The steps of one field's edit (typing a number) merge.
+    pub gesture: u64,
+}
+
+impl LinksCommand {
+    fn put(t: &mut Tile, v: &(Vec<TileLinkTarget>, Vec<TileLink>)) {
+        if let Some(entry) = t.project.entry.as_mut()
+            && let Err(err) = entry.set_links(&v.0, &v.1)
+        {
+            wce_foundation::log::warn(format!("tile links: {err}"));
+        }
+
+        t.links_dirty = true;
+    }
+}
+
+impl Command<Tile> for LinksCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        Self::put(t, &self.after);
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ 0x4c49_4e4b_0000_0000 } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+        self.after = n.after.clone();
+        true
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        Self::put(t, &self.before);
     }
 
     fn dirty_items(&self) -> Vec<u64> {

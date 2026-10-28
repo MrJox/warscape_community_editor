@@ -1,4 +1,4 @@
-# Tile links (read-only view; findings 2026-10-10)
+# Tile links (findings 2026-10-10; edited since 2026-10-28)
 
 The links of a tile live in its database entry (`TILE_LINK_TARGETS` / `TILE_LINKS`, `docs/formats/tile_database.md`), not in `tile.ted`. Measured on the kit:
 
@@ -10,4 +10,4 @@ The links of a tile live in its database entry (`TILE_LINK_TARGETS` / `TILE_LINK
 - The river splines' end points lie on the target cells (osgiliath: both ends), which is the check the validator of 6a will make.
 
 The tool shows them on the ground: the Tile panel's *Tile links* section lists the entry's targets and rules ("cell (-1, 3) must be river; belongs to cell (1, 0), blend 64 px"; a click looks at the cell), and *show on the ground* draws each cell draped over the terrain, coloured by link set (sea blue, river cyan, roads sand, sea_coast yellow, roads_stone grey, roads_mountain brown, river_shallow aqua, cliff_custom orange; others by a hash), a rule that must not hold with a cross,
-a target with a pole and a ring at the cell's centre, a rule's base cell joined to its cell by a line. Read-only: editing the links, the validator, the neighbour preview and the link overview are the rest of Phase 6a.
+a target with a pole and a ring at the cell's centre, a rule's base cell joined to its cell by a line. The links are edited there too (2026-10-28, `links_editor.rs`); the validator, the neighbour preview and the link overview are the rest of Phase 6a.
