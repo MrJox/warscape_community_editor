@@ -147,6 +147,13 @@ pub trait Tool: Any {
         false
     }
 
+    /// Where the translate gizmo puts `item` (world metres) when its drag asks for `to` (it was at `from`): the tool's snapping. An axis
+    /// that did not move (`to` equals `from` there) is the tool's to leave alone. The default does not snap.
+    fn snap_gizmo_move(&self, editor: &Editor, item: SourceRef, from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
+        let _ = (editor, item, from);
+        to
+    }
+
     /// The tool's commands; they reach the tool through `Editor::with_tool`.
     fn register_commands(&self, commands: &mut CommandRegistry<Editor>) {
         let _ = commands;
