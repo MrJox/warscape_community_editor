@@ -1,0 +1,60 @@
+# A release per version tag: `vX.Y.Z` (the workspace's version) builds the editor for Windows and publishes it as
+# `wce-X.Y.Z-windows-x64.zip`, the files at the zip's root: the name and layout the self-updater (crates/wce_updater) looks for. A tag with
+# a pre-release part (`v0.2.0-beta.1`) makes a GitHub pre-release, offered only to users who ask for betas.
+
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+
+    env:
+      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
+      CARGO_TARGET_DIR: C:\t
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check the tag against the workspace version
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "wce_app") | .version')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::the tag ${GITHUB_REF_NAME} is not the workspace version (v${version}): bump [workspace.package] version first"
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked -p wce_app
+
+      # wce.exe and the SDL3.dll sdl3-sys builds from source (it copies it next to the executable).
+      - name: Package
+        shell: pwsh
+        run: |
+          $dist = New-Item -ItemType Directory -Force dist
+          Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe", "$env:CARGO_TARGET_DIR\release\SDL3.dll" $dist
+          Copy-Item README.md, THIRD_PARTY.md $dist
+          Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Warscape Community Editor ${{ env.VERSION }}
+          files: wce-${{ env.VERSION }}-windows-x64.zip
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

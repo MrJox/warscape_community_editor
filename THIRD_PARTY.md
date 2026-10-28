@@ -32,7 +32,7 @@ configure time into `<build>/_deps` (nothing is committed or redistributed); `wc
 
 ## Rust dependencies
 
-The crates.io dependencies are listed in `Cargo.lock` (all MIT, Apache-2.0 or zlib licensed). Notable: serde, toml and directories (MIT or
+The crates.io dependencies are listed in `Cargo.lock` (MIT, Apache-2.0 or zlib licensed, except a few of the updater's, below). Notable: serde, toml and directories (MIT or
 Apache-2.0) for the settings file and the system's folders; rpfm_lib (MIT) for the packs and
 game formats, windows-core / windows-bindgen (MIT or Apache-2.0) for the D3D11 bindings, and libz-sys (MIT or Apache-2.0) building its bundled
 classic zlib (zlib licence) statically for the kit's PNG encoder. The UI uses dear-imgui-rs / dear-imgui-sys (MIT or Apache-2.0; they build
@@ -42,3 +42,11 @@ The gizmos come from dear-imguizmo-sys (MIT or Apache-2.0), which builds upstrea
 change: the viewport clears its button from Dear ImGui's hovered and active ids around `Manipulate` instead.
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
+
+The self-updater (`crates/wce_updater`) uses ureq (MIT or Apache-2.0) over rustls (Apache-2.0, ISC or MIT) with ring (Apache-2.0 and ISC),
+rustls-webpki and untrusted (ISC), subtle (BSD-3-Clause) and webpki-roots (CDLA-Permissive-2.0: Mozilla's list of root certificates); zip
+(MIT) with zlib-rs (zlib licence) to unpack a release, and semver (MIT or Apache-2.0) to compare versions.
+
+## Windows release
+
+The release zip (`.github/workflows/release.yml`) ships `wce.exe` and the `SDL3.dll` that sdl3-sys builds from SDL's source (zlib licence).
