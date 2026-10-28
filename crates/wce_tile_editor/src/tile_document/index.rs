@@ -12,6 +12,7 @@ use wce_tile::building_db::BuildingDb;
 use wce_tile::ted_scene::{TedScene, parse_vec3};
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
+use crate::climate_db::effective_climates;
 use super::{BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceProps, PieceState, PieceStatus, Placement, TileTypeStyle, Tile};
 
 pub fn style_of(t: &str) -> TileTypeStyle {
@@ -376,15 +377,20 @@ impl Tile {
         self.stroke_open
     }
 
-    /// The kit's _settings.xml, read on first use (empty outside a kit).
+    /// The climates of the tile's kind of database: the packs' tile database (a mod's before the game's) over the kit's `_settings.xml`,
+    /// read on first use (empty outside a kit and the packs).
     pub fn climates(&self) -> &ClimateList {
         self.climates.get_or_init(|| {
             let Some(entry) = &self.project.entry else { return ClimateList::default() };
-            let Some(settings) = entry.file().parent().and_then(|p| p.parent()).map(|p| p.join("_settings.xml")) else { return ClimateList::default() };
-            ClimateList::load(&settings).unwrap_or_else(|e| {
-                log::warn(format!("climates: {e}"));
-                ClimateList::default()
-            })
+            let kit = entry.file().parent().and_then(|p| p.parent()).map(|p| p.join("_settings.xml")).map_or_else(ClimateList::default, |settings| {
+                ClimateList::load(&settings).unwrap_or_else(|e| {
+                    log::warn(format!("climates: {e}"));
+                    ClimateList::default()
+                })
+            });
+
+            let kind = Some(entry.kind()).filter(|k| !k.is_empty()).unwrap_or_else(|| "battle".to_owned());
+            effective_climates(kit, &kind, self.files.as_deref())
         })
     }
 

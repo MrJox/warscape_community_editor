@@ -32,6 +32,8 @@ use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use crate::terrain_bake::TerrainLook;
 use crate::terrain_material::retexture;
 use wce_formats::tile_climate::ClimateList;
+
+use crate::climate_db::effective_climates;
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_vfs::files::Files;
 use template::{BOX_ABOVE, BOX_BELOW, Template};
@@ -306,7 +308,8 @@ impl Frame {
             }
         }
 
-        let climates = ClimateList::load(&rq.raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
+        let kit_climates = ClimateList::load(&rq.raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
+        let climates = effective_climates(kit_climates, "battle", files.as_deref());
         let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
         let mut reach = 0;
         for (i, p) in map.placements.iter().enumerate() {
