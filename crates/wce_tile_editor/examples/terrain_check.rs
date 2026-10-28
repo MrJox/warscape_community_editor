@@ -9,6 +9,9 @@
 //!  3. The bake: the given tile (default: tdd_custom_lothlorien/1x1/aa) bakes with the game's textures: the image covers the bordered tile at
 //!     4 texels per metre, all layers of that tile are found, it is not flat, two bakes are byte-identical, another climate and season give
 //!     another image, and a climate without a group falls back to `default`. Needs the game's packs.
+//!  4. A mod's tile database (TDD's battle and campaign packs, when the data folder has them): the climates are its database over the kit's
+//!     settings, so `mordor_gravel` is in every battle climate and its textures are found; the campaign `default` climate has `mordor_a` and
+//!     its textures come from `terrain/textures/campaign`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -16,7 +19,9 @@ use std::path::{Path, PathBuf};
 use wce_formats::dds_decode::{decode_bc1_block, decode_bc3_alpha_block, dds_decode_mip, dds_info};
 use wce_formats::tile_climate::{ClimateList, climate_texture_path};
 use wce_tile::tile_project::TileProject;
+use wce_tile_editor::climate_db::effective_climates;
 use wce_tile_editor::terrain_bake::{BakeRequest, bake_terrain_colour};
+use wce_vfs::files::Files;
 use wce_vfs::{Config, GameProfile, Vfs};
 
 #[derive(Default)]
@@ -171,6 +176,41 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn test_mod_database(g: &mut Gate, game: &Path, kit: &Path) -> Result<(), String> {
+    let mods = ["tdd_pack2_battles_v1.1.0.pack", "tdd_pack3_campaign_v1.1.0.pack"].map(str::to_owned).into_iter().filter(|m| game.join("data").join(m).is_file()).collect::<Vec<_>>();
+    if mods.len() < 2 {
+        println!("mod database: TDD's battle and campaign packs are not in the data folder, skipped");
+        return Ok(());
+    }
+
+    let mut config = Config::new(game.to_path_buf(), GameProfile::ATTILA);
+    (config.use_mods, config.mod_packs) = (false, Some(mods));
+    let vfs = Vfs::mount(&config).map_err(|e| e.to_string())?;
+    let exists = |p: &str| vfs.exists(p);
+
+    let battle = effective_climates(ClimateList::load(&kit.join("_tile_database").join("_settings.xml")).unwrap_or_default(), "battle", Some(&vfs));
+    g.check(battle.climates.len() == 8, &format!("battle: 8 climates ({})", battle.climates.len()));
+    for c in &battle.climates {
+        let gravel = c.find("mordor_gravel");
+        if c.name != "default" {
+            g.check(gravel.is_some_and(|t| t.blend_pixel_scale > 8.9 && t.blend_pixel_scale < 9.1), &format!("battle {}: mordor_gravel repeats every 9 m", c.name));
+        }
+
+        let path = battle.texture_path(&battle.folder_of(c), "mordor_gravel", 2, "wi", false, exists);
+        g.check(path.is_some_and(|p| p.ends_with("/mordor_gravel/2_su_diffuse.dds")), &format!("battle {}: mordor_gravel 2 is found (summer for winter)", c.name));
+    }
+
+    g.check(battle.find("rome_continental").and_then(|c| c.find("mud")).is_some(), "battle: the kit's groups are still there");
+
+    let campaign_kit = kit.parent().map(|p| p.join("campaign").join("_tile_database").join("_settings.xml")).unwrap_or_default();
+    let campaign = effective_climates(ClimateList::load(&campaign_kit).unwrap_or_default(), "campaign", Some(&vfs));
+    g.check(campaign.find("default").is_some_and(|c| c.find("mordor_a").is_some_and(|t| t.blend_pixel_scale > 619.0)), "campaign: default has mordor_a at 620 m");
+    let path = campaign.texture_path(&campaign.folder_named("wasteland"), "mordor_a", 1, "su", true, exists);
+    g.check(path.as_deref() == Some("terrain/textures/campaign/default/mordor_a/1_su_normal.dds"), &format!("campaign: mordor_a falls back to the campaign default ({path:?})"));
+    println!("mod database: battle {} climates, campaign {} climates", battle.climates.len(), campaign.climates.len());
+    Ok(())
+}
+
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let Some(game) = args.first().map(PathBuf::from) else {
@@ -182,6 +222,11 @@ fn main() {
     let mut g = Gate::default();
     test_dxt(&mut g);
     test_climates(&mut g, &kit.join("_tile_database").join("_settings.xml"));
+    if let Err(e) = test_mod_database(&mut g, &game, &kit) {
+        println!("error: {e}");
+        std::process::exit(1);
+    }
+
     let tile = args.get(1).map_or_else(|| kit.join("tdd_custom_lothlorien").join("1x1").join("aa"), PathBuf::from);
     if let Err(e) = test_bake(&mut g, &game, &tile) {
         println!("error: {e}");

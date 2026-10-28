@@ -68,6 +68,14 @@ pub struct ClimateList {
 
     /// `RENDER_PARAMS blend_pixel_scale`: the repeat Rome 2 gives a texture whose entry has none (fn 0x115bfb40), and a group without one.
     pub blend_pixel_scale: Option<f64>,
+
+    /// The kind of database (`battle`, `campaign`) whose textures the climates name; empty is `battle`.
+    pub kind: String,
+}
+
+/// `terrain/textures/<kind>`; an empty kind is `battle`.
+fn textures_root(kind: &str) -> String {
+    format!("terrain/textures/{}", if kind.is_empty() { "battle" } else { kind })
 }
 
 /// A number attribute: its default when missing, empty or not a number.
@@ -109,7 +117,60 @@ impl ClimateList {
             }).collect();
 
         let blend_pixel_scale = els.iter().position(|el| el.name == "RENDER_PARAMS").and_then(|i| doc.get(i, "blend_pixel_scale")).and_then(|v| strtod(&v));
-        Ok(Self { climates, blend_pixel_scale })
+        Ok(Self { climates, blend_pixel_scale, kind: String::new() })
+    }
+
+    /// This list over `base`: every climate and texture group of this one wins, what only `base` has is added (a climate after this list's,
+    /// a group after the climate's own). A mod's tile database over the kit's settings: the game reads the mod's file alone, the kit
+    /// fills in what a mod's file does not have.
+    #[must_use]
+    pub fn over(mut self, base: Self) -> Self {
+        for base_climate in base.climates {
+            match self.climates.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&base_climate.name)) {
+                Some(climate) => {
+                    for texture in base_climate.textures {
+                        if climate.find(&texture.name).is_none() {
+                            climate.textures.push(texture);
+                        }
+                    }
+
+                    for (mine, theirs) in [(&mut climate.texture_set, base_climate.texture_set), (&mut climate.destruction_climate, base_climate.destruction_climate)] {
+                        if mine.is_empty() {
+                            *mine = theirs;
+                        }
+                    }
+                }
+
+                None => self.climates.push(base_climate),
+            }
+        }
+
+        self.blend_pixel_scale = self.blend_pixel_scale.or(base.blend_pixel_scale);
+        if self.kind.is_empty() {
+            self.kind = base.kind;
+        }
+
+        self
+    }
+
+    /// `terrain/textures/<kind>/default`: the climate every climate falls back to.
+    pub fn default_folder(&self) -> String {
+        format!("{}/default", textures_root(&self.kind))
+    }
+
+    /// `terrain/textures/<kind>/<lower case name>`.
+    pub fn folder_of(&self, climate: &Climate) -> String {
+        format!("{}/{}", textures_root(&self.kind), climate.name.to_ascii_lowercase())
+    }
+
+    /// The folder of a climate by name, case-insensitive; the `default` climate's (also for a name the list does not have).
+    pub fn folder_named(&self, name: &str) -> String {
+        self.find(name).map_or_else(|| self.default_folder(), |c| self.folder_of(c))
+    }
+
+    /// [`climate_texture_path`] for this list's kind of textures.
+    pub fn texture_path(&self, climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+        texture_path_in(&self.default_folder(), climate_folder, group, variation, season, normal, exists)
     }
 
     /// Reads the climates of a settings file; an empty list when the file is missing.
@@ -137,8 +198,13 @@ impl ClimateList {
 /// The texture path of a group's variation: the climate's folder first, then `default`; a season (`su`, `au`, `wi`) falls back to
 /// summer. `exists` tells whether a path is in the packs. `None` when neither folder has it.
 pub fn climate_texture_path(climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+    texture_path_in("terrain/textures/battle/default", climate_folder, group, variation, season, normal, exists)
+}
+
+/// [`climate_texture_path`] falling back to another `default` folder (the campaign's).
+fn texture_path_in(default_folder: &str, climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
     let kind = if normal { "_normal.dds" } else { "_diffuse.dds" };
-    [climate_folder, "terrain/textures/battle/default"].iter()
+    [climate_folder, default_folder].iter()
         .flat_map(|root| [season, "su"].map(|season| format!("{root}/{group}/{variation}_{season}{kind}")))
         .find(|path| exists(path))
 }

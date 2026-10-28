@@ -2498,7 +2498,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             let climates = d.tile().climates();
             if look.blended && climates.find(&look.climate).is_none() && !climates.climates.is_empty() {
-                return fail(format!("no climate '{}' in the kit's _settings.xml", look.climate));
+                return fail(format!("no climate '{}' in the tile database", look.climate));
             }
 
             d.tile_mut().set_terrain_look(&mut e.scene, look);

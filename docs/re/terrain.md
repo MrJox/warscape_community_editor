@@ -259,6 +259,29 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 
 - Debug views (TEd has them): *blend groups* (the four group weights as flat red / green / blue / yellow), *ground types* (the PNG as stored), *protection* (red = 1).
 
+## Mod tile databases: texture groups and climates (2026-10-28)
+
+A mod's `terrain/tiles/<battle|campaign>/tile_database.bin` replaces the game's (a pack's file wins by path), and its `<CLIMATES>` carry the
+texture groups the mod added with their scales and light values. TDD (checked with `tile_climate_dump`): the battle database has `mordor_gravel`
+in every climate but `default` (scale 9, outfield 9, mid 0.7, smoothness 0.1, reflectivity 0.009; `ROME_Atlantic`'s `texture_set` is
+`mordor_gravel`), the campaign one has `mordor_a` and `mordor_b` in `default` (scale 620, smoothness 0.5, reflectivity 0.02) and a `wasteland`
+climate with no groups of its own. The textures are plain files: `terrain/textures/battle/<climate>/mordor_gravel/<v>_su_*.dds` (the pack has
+the group in `default` and in every climate), `terrain/textures/campaign/default/mordor_a/...`.
+
+- **Where the editor reads climates** (`wce_tile_editor::climate_db`): the database in effect for the tile's kind (the VFS's winner of
+  `terrain/tiles/<kind>/tile_database.bin`: mod packs before the game's) over the kit's `_settings.xml` (`ClimateList::over`): the database's
+  climates and groups win, what only the kit has (a group being developed in a kit tile, a climate the mod's file dropped) is added. Exported
+  tiles are decompiled next to a copy of the vanilla `_settings.xml`, which has none of the mod's groups; before this the group had no scale
+  (the shader draws a layer whose scale is 0 as one flat texel) and no light values. The map context reads the battle database the same way.
+- **Campaign tiles** use `terrain/textures/campaign/<climate>/<group>/<v>_<season>_<diffuse|normal>.dds`, falling back to the campaign `default`
+  folder like the battle ones (`ClimateList::kind`, `default_folder`, `folder_of`, `texture_path`). The campaign's climates (`default`,
+  `europe`, `desert`, ...) hold groups only in `default`, so every campaign climate resolves to the same files. **Deviation, with the owner's
+  permission (2026-10-28):** the campaign tile is drawn with the battle terrain shaders (`ps30_blend`), not the campaign's own `terrain.hlsl`
+  path, which is not reverse engineered here.
+- Checked: `terrain_check` (the climates of TDD's packs over the kit; every battle climate finds `mordor_gravel`, the campaign `default` has
+  `mordor_a` at 620 m), a TDD wasteland tile (`tdd_terrain_mordor_wasteland/2x2/aa`) and the campaign `tdd_custom_tiles/mount_doom` opened
+  from the packs draw their groups (16 and 6 textures found).
+
 ## Seasons and snow (2026-10-18)
 
 - **Seasons:** the game has four battle seasons (SEASON_SPRING, SUMMER, AUTUMN, WINTER; texture codes sp / su / au / wi). The texture

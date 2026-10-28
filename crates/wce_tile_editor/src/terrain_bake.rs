@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use rayon::prelude::*;
 use wce_formats::dds_decode::{Rgba8Image, dds_decode_mip, dds_info};
-use wce_formats::tile_climate::{ClimateList, climate_texture_path};
+use wce_formats::tile_climate::ClimateList;
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_foundation::{log, wce_prof};
 use wce_tile::blend_field::BlendField;
@@ -254,7 +254,7 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
     let (out_ppm_x, out_ppm_z) = (f64::from(ow) / req.w_m, f64::from(oh) / req.h_m);
 
     let climate = climates.find(&req.look.climate).or_else(|| climates.find("default"));
-    let folder = climate.map_or_else(|| "terrain/textures/battle/default".to_owned(), |c| c.folder());
+    let folder = climate.map_or_else(|| climates.default_folder(), |c| climates.folder_of(c));
     let groups = group_names(&req.groups);
     let exists = |p: &str| files.exists(p);
 
@@ -278,7 +278,7 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
 
         let ct = climate.and_then(|cl| cl.find(group)).or_else(|| climates.find("default").and_then(|d| d.find(group)));
         let scale = ct.filter(|ct| ct.blend_pixel_scale > 0.5).map_or(40.1, |ct| ct.blend_pixel_scale);
-        let path = if group.is_empty() { None } else { climate_texture_path(&folder, group, (c % 4) as i32, &req.look.season, false, exists) };
+        let path = if group.is_empty() { None } else { climates.texture_path(&folder, group, (c % 4) as i32, &req.look.season, false, exists) };
         let Some(path) = path else {
             missing += 1;
             continue;

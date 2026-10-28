@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use wce_formats::tile_climate::{ClimateList, climate_texture_path};
+use wce_formats::tile_climate::ClimateList;
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{TerrainImage, TerrainMaterial};
@@ -133,7 +133,8 @@ pub fn retexture(base: &TerrainMaterial, groups: &TileTextureGroup, look: &Terra
 /// with the blend map's peaks, how many of the used slots there are and how many have no texture.
 fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &TerrainLook, peak: Option<&[u32; 16]>, climates: &ClimateList, files: &dyn Files) -> (i32, i32) {
     let climate = climates.find(&look.climate).or_else(|| climates.find("default"));
-    let folder = climate.map_or_else(|| "terrain/textures/battle/default".to_owned(), |c| c.folder());
+    let default_folder = climates.default_folder();
+    let folder = climate.map_or_else(|| default_folder.clone(), |c| climates.folder_of(c));
     let def = climates.find("default");
     let groups = group_names(groups);
     let exists = |p: &str| files.exists(p);
@@ -165,8 +166,8 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
                 continue;
             }
 
-            m.diffuse[slot] = climate_texture_path(&folder, group, v as i32, &look.season, false, exists).unwrap_or_default();
-            m.normal_tex[slot] = climate_texture_path(&folder, group, v as i32, &look.season, true, exists).unwrap_or_default();
+            m.diffuse[slot] = climates.texture_path(&folder, group, v as i32, &look.season, false, exists).unwrap_or_default();
+            m.normal_tex[slot] = climates.texture_path(&folder, group, v as i32, &look.season, true, exists).unwrap_or_default();
             if used {
                 wanted += 1;
                 if m.diffuse[slot].is_empty() {
@@ -177,7 +178,7 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
     }
 
     // The detail maps of the climate.
-    for root in [folder.as_str(), "terrain/textures/battle/default"] {
+    for root in [folder.as_str(), default_folder.as_str()] {
         let (colour, normal) = (format!("{root}/medium_detail_map_colour.dds"), format!("{root}/medium_detail_map_normal.dds"));
         if m.detail_colour.is_empty() && exists(&colour) {
             m.detail_colour = colour;
@@ -189,7 +190,7 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
     }
 
     // Rome 2's climates have one detail map, a normal map.
-    for root in [folder.as_str(), "terrain/textures/battle/default"] {
+    for root in [folder.as_str(), default_folder.as_str()] {
         let normal = format!("{root}/medium_detail_map.dds");
         if m.detail_normal.is_empty() && exists(&normal) {
             m.detail_normal = normal;

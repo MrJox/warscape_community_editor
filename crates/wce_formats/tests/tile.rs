@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use wce_formats::c_num::{strtod, strtol};
-use wce_formats::tile_climate::{ClimateList, climate_texture_path};
+use wce_formats::tile_climate::{Climate, ClimateList, climate_texture_path};
 use wce_formats::tile_entry::{TileEntry, normalize_location};
 use wce_formats::tile_index::TileIndex;
 
@@ -72,6 +72,42 @@ fn climates() {
     let exists = |p: &str| p == "terrain/textures/battle/default/rock/2_su_normal.dds";
     assert_eq!(climate_texture_path(&climate.folder(), "rock", 2, "wi", true, exists).as_deref(), Some("terrain/textures/battle/default/rock/2_su_normal.dds"));
     assert_eq!(climate_texture_path(&climate.folder(), "rock", 1, "wi", true, exists), None);
+}
+
+#[test]
+fn climates_of_a_mod_over_the_kit() {
+    let kit = ClimateList::parse(
+        b"<SETTINGS><RENDER_PARAMS blend_pixel_scale='9'/><CLIMATES>\
+        <CLIMATE name='default' texture_set='grass'><TEXTURES><TEXTURE name='rock' blend_pixel_scale='40'/></TEXTURES></CLIMATE>\
+        <CLIMATE name='ROME_Med' texture_set='med'><TEXTURES><TEXTURE name='rock' blend_pixel_scale='20'/><TEXTURE name='mud' blend_pixel_scale='9'/></TEXTURES></CLIMATE>\
+        </CLIMATES></SETTINGS>",
+    ).unwrap();
+    let modded = ClimateList::parse(
+        b"<SETTINGS><CLIMATES><CLIMATE name='ROME_Med'><TEXTURES>\
+        <TEXTURE name='mordor_gravel' blend_pixel_scale='12'/><TEXTURE name='rock' blend_pixel_scale='25'/></TEXTURES></CLIMATE>\
+        <CLIMATE name='ROME_New'/></CLIMATES></SETTINGS>",
+    ).unwrap();
+
+    let list = modded.over(kit);
+    let names = list.climates.iter().map(|c| c.name.as_str()).collect::<Vec<_>>();
+    assert_eq!(names, ["ROME_Med", "ROME_New", "default"]);
+    let med = list.find("rome_med").unwrap();
+    assert_eq!(med.texture_set, "med");
+    let scale = |g: &str| med.find(g).map(|t| t.blend_pixel_scale);
+    assert_eq!((scale("mordor_gravel"), scale("rock"), scale("mud")), (Some(12.0), Some(25.0), Some(9.0)));
+    assert_eq!(list.blend_pixel_scale, Some(9.0));
+}
+
+#[test]
+fn campaign_climates_use_the_campaign_textures() {
+    let list = ClimateList { kind: "campaign".to_owned(), climates: vec![Climate { name: "Europe".to_owned(), ..Default::default() }], ..Default::default() };
+    assert_eq!(list.default_folder(), "terrain/textures/campaign/default");
+    assert_eq!(list.folder_named("europe"), "terrain/textures/campaign/europe");
+    assert_eq!(list.folder_named("nowhere"), "terrain/textures/campaign/default");
+
+    let exists = |p: &str| p == "terrain/textures/campaign/default/mordor_a/1_su_diffuse.dds";
+    assert_eq!(list.texture_path(&list.folder_named("europe"), "mordor_a", 1, "au", false, exists).as_deref(), Some("terrain/textures/campaign/default/mordor_a/1_su_diffuse.dds"));
+    assert_eq!(ClimateList::default().default_folder(), "terrain/textures/battle/default");
 }
 
 #[test]
