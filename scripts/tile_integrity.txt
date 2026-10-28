@@ -1,0 +1,17 @@
+# TEd's scene integrity errors (Phase 6b of docs/plans/tile_ted_parity.md; listed in the Problems section): a no-go region wholly off the
+# tile ("at least one vertex inside the valid area"), a large one with every corner off the tile but covering it (clean: TEd clips the
+# polygon to the tile), a closed one of two points. Five kit tiles (encampment, Hadrian's wall, a city, a terrain and a river tile) come
+# out clean. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_integrity_test 2 2 10 32
+frames 5
+integrity_errors 0
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||400,400;450,400;450,450"
+frames 3
+integrity_errors 1
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||-500,-500;800,-500;800,800;-500,800"
+frames 3
+integrity_errors 1
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||50,50;60,60"
+frames 3
+integrity_errors 2
+quit

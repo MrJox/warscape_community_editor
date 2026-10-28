@@ -53,7 +53,7 @@ impl TileTool {
     /// Reads the kit's and the projects' sets and tiles again.
     pub(crate) fn refresh_tile_database(&mut self, e: &mut Editor) {
         let projects = Self::workspace_dir(e).join("raw_data");
-        let kit = e.settings_ref().assembly_kit_dir().map(|k| k.join("raw_data"));
+        let kit = self.kit_for(e, "battle");
         let ui = self.tile_db.get_or_insert_with(DbUi::default);
         ui.sets.clear();
         ui.tiles.clear();
@@ -82,7 +82,7 @@ impl TileTool {
         let projects = Self::workspace_dir(e).join("raw_data");
         let ours = settings_file(&projects);
         if !ours.is_file() {
-            let kit = e.settings_ref().assembly_kit_dir().map(|k| settings_file(&k.join("raw_data"))).filter(|k| k.is_file()).ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
+            let kit = self.kit_for(e, "battle").map(|k| settings_file(&k)).filter(|k| k.is_file()).ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
             if let Some(dir) = ours.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }

@@ -2626,6 +2626,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add("integrity_errors", "integrity_errors [n]", "log TEd's scene integrity errors of the tile (the Problems section); with n, test that there are that many", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let p = d.tile().integrity_errors();
+        for (el, m) in &p {
+            wce_foundation::log::info(format!("integrity: #{el} {} '{}': {m}", d.tile().tscene().type_of(*el), d.tile().tscene().name(*el)));
+        }
+
+        match a.first().and_then(|v| v.parse::<usize>().ok()) {
+            Some(n) if n != p.len() => fail(format!("{} integrity error(s), expected {n}", p.len())),
+            _ => ok(format!("{} integrity error(s)", p.len())),
+        }
+    });
+
     c.add("link_problems", "link_problems [n]", "log the tile's link problems (the validator); with n, test that there are that many", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let p = d.link_problems();

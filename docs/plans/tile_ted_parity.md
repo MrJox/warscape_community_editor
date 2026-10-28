@@ -258,7 +258,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   a click opens a tile), New tile set into the projects' `_settings.xml` (a colour no other set has; a map picture tells sets apart by
   it), and Save for Assembly Kit carries a set the tile uses into the kit's `_settings.xml` (one line, a `.bak`). New tiles go into a
   set with Save tile as (`wce_tile::tile_sets`, `tile_database.rs`; `tile_set_new`, `tile_database`, `scripts/tile_database.txt`).
-- Integrity errors view.
+- Integrity errors view: done (2026-10-28). TEd's Integrity errors dialog (error, type, name; `FUN_004bb1e0`): the hand-placed trees
+  outside every exclusion zone (the Problems section had it) and each instance's own check: the polygons (`FUN_00452180`: clipped to the
+  tile, at least one part inside, two distinct points for a line, three for a closed one), the siege AI nodes' box and boundary, the
+  edges' street and a street edge's two boundaries, a deployment zone's polygons. Listed in the Problems section with the instance's type
+  and name; a click selects and frames it (`Tile::integrity_errors`; `integrity_errors`, `scripts/tile_integrity.txt`). "Building overlaps
+  with another" has a message in TEd but nothing calls it. Five kit tiles come out clean.
 - Stats view (counts, memory budget).
 
 ## Ideas for later (user, 2026-10-27)
