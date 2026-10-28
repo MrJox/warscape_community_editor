@@ -2721,6 +2721,92 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if (x0 - ex).abs() < 0.01 && (z0 - ez).abs() < 0.01 { ok("") } else { fail(format!("cell corner is {}, {}", f6(x0), f6(z0))) }
     });
 
+    c.add(
+        "tile_tech", "tile_tech [all | none | on|off <kind>... | scope all|selected | range <m> | xray|highest|detect on|off | fill <0..1>]",
+        "the building technology overlays (the chip at the viewport's top right): kinds are collision gates outlines soft footprints platforms pipes formation docking arrows actionfx attached emitters bounds flag; no argument logs the settings", |e, a| {
+            use wce_tile_editor::tile_document::{KINDS, TechKind, TechScope};
+            let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let mut s = d.tile().display().tech.clone();
+            let flag = |w: Option<&String>| match w.map(String::as_str) {
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                _ => None,
+            };
+
+            match a.first().map(String::as_str) {
+                None => {}
+                Some("all") => s.set_all(true),
+                Some("none") => s.set_all(false),
+                Some(w @ ("on" | "off")) => {
+                    for k in &a[1..] {
+                        let Some(kind) = TechKind::from_key(k) else { return fail(format!("no kind {k}: {}", KINDS.map(TechKind::key).join(" "))) };
+                        s.set(kind, w == "on");
+                    }
+                }
+
+                Some("scope") => match a.get(1).map(String::as_str) {
+                    Some("all") => s.scope = TechScope::All,
+                    Some("selected") => s.scope = TechScope::Selected,
+                    _ => return fail("usage: tile_tech scope all|selected"),
+                },
+
+                Some("range") => match a.get(1).and_then(|m| number(m)) {
+                    Some(m) if m > 0.0 => s.distance = m as f32,
+                    _ => return fail("usage: tile_tech range <m>"),
+                },
+
+                Some("fill") => match a.get(1).and_then(|m| number(m)) {
+                    Some(k) => s.fill = (k as f32).clamp(0.0, 1.0),
+                    None => return fail("usage: tile_tech fill <0..1>"),
+                },
+
+                Some(w @ ("xray" | "highest" | "detect")) => {
+                    let Some(on) = flag(a.get(1)) else { return fail(format!("usage: tile_tech {w} on|off")) };
+                    match w {
+                        "xray" => s.xray = on,
+                        "highest" => s.highest = on,
+                        _ => s.detect = on,
+                    }
+                }
+
+                Some(_) => return fail("usage: tile_tech [all | none | on|off <kind>... | scope all|selected | range <m> | xray|highest|detect on|off | fill <0..1>]"),
+            }
+
+            d.tile_mut().display_mut().tech = s.clone();
+            d.tile_mut().tech_changed();
+            let on: Vec<&str> = KINDS.iter().filter(|k| s.on(**k)).map(|k| k.key()).collect();
+            let stats = d.tile().tech_stats();
+            ok(format!(
+                "technology: {} | scope {} within {} m | xray {} | highest {} | detect {} | last drawn: {} building(s), {} line(s), {} collision(s)",
+                if on.is_empty() { "none".to_owned() } else { on.join(" ") },
+                if s.scope == TechScope::All { "all" } else { "selected" }, s.distance, s.xray, s.highest, s.detect, stats.buildings, stats.lines, stats.collisions,
+            ))
+        },
+    );
+
+    c.add(
+        "assert_tech", "assert_tech <buildings> [min lines] [collisions n]",
+        "test: the technology overlay drew this many buildings (after a frame), at least this many lines, and (with collisions) this many overlapping pairs", |e, a| {
+            let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: assert_tech <buildings> [min lines] [collisions n]") };
+            let stats = d.tile().tech_stats();
+            let lines = a.get(1).filter(|x| *x != "collisions").and_then(|x| number(x)).unwrap_or(0.0) as usize;
+            let pairs = a.iter().position(|x| x == "collisions").and_then(|i| a.get(i + 1)).and_then(|x| number(x));
+            if stats.buildings != n as usize {
+                return fail(format!("{} building(s) drawn, expected {}", stats.buildings, n as usize));
+            }
+
+            if stats.lines < lines {
+                return fail(format!("{} line(s) drawn, expected at least {lines}", stats.lines));
+            }
+
+            match pairs {
+                Some(p) if stats.collisions != p as usize => fail(format!("{} collision(s), expected {}", stats.collisions, p as usize)),
+                _ => ok(format!("{} building(s), {} line(s), {} collision(s)", stats.buildings, stats.lines, stats.collisions)),
+            }
+        },
+    );
+
     c.add("tile_water", "tile_water on|off", "show or hide the river water of the open tile", |e, a| {
         let (Some(d), Some(w)) = (document(e), a.first().filter(|w| *w == "on" || *w == "off")) else { return fail("usage: tile_water on|off") };
         d.tile_mut().display_mut().show_water = w == "on";

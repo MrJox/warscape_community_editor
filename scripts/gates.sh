@@ -84,6 +84,7 @@ run tile_decompile    ex wce_tile_io tile_decompile_check "$GAME" --filter weste
 run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asset_variation_db/environment_map.xml"
 # the terrain colour (Phase 3): DXT decoding, the climates of the kit, the blend map baked with the game's textures
 run terrain_check     ex wce_tile_editor terrain_check "$GAME"
+run tech_check ex wce_tile_editor tech_check "$GAME"   # every building logic file reads into the technology overlays' shapes (the building technology chip)
 run tdb_build         ex wce_formats tdb_build "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"

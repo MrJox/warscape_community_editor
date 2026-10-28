@@ -1015,6 +1015,7 @@ impl Tile {
         // Cleared with the layer; rebuilt by the next update_view.
         self.water_entities.clear();
         self.reset_columns();
+        self.reset_tech();
         self.reset_collapses();
         self.water_dirty = true;
         self.links_entity = 0;
@@ -1240,6 +1241,8 @@ impl Tile {
         }
 
         self.columns.dirty = true;
+
+        self.tech.dirty = true;
         for (elem, k) in std::mem::take(&mut self.piece_pending) {
             let Some(first) = self.first_entity.get(elem).copied().filter(|&f| f != 0) else { continue };
             if k >= usize::from(self.entity_count[elem]) {
@@ -1293,6 +1296,7 @@ impl Tile {
     /// The display settings changed: everything shown is rebuilt at the next update.
     pub fn display_changed(&mut self) {
         self.columns.dirty = true;
+        self.tech.dirty = true;
         self.markers_dirty = true;
         self.polygons_dirty = true;
         self.water_dirty = true;
@@ -1331,6 +1335,7 @@ impl Tile {
 
         if !self.stroke_open {
             self.update_columns(scene, layer);
+            self.update_tech(scene, layer, eye);
         }
 
         // The blend groups view is baked again once a paint stroke ends.
@@ -1379,6 +1384,7 @@ impl Tile {
             if sig != self.hidden_signature {
                 self.hidden_signature = sig;
                 self.columns.dirty = true;
+                self.tech.dirty = true;
                 let building = self.idx.type_names.iter().position(|t| t == "BUILDING_INSTANCE");
                 let hidden = self.display.hidden_types.contains("BUILDING_INSTANCE");
                 for &e in &self.instances {
@@ -1539,6 +1545,7 @@ impl Tile {
     pub fn set_highlight(&mut self, scene: &mut RenderScene, selected: &[usize], polygon_point: Option<usize>, handle_size: f32, tool_overlay: &Overlay) {
         wce_prof!("tile.set_highlight");
         self.flush_pieces(scene);
+        self.tech_selection(selected);
         if self.scene_key != scene_key(scene) || self.overlay_entity == 0 {
             return;
         }

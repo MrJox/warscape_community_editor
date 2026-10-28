@@ -1,0 +1,71 @@
+# The building technology overlays (wce_tile_editor tile_document/tech.rs, the chip at the viewport's top right): what the buildings' logic files hold
+# (collision hulls, outlines, platforms, pipes, formation lines, bounds ...) drawn over them, for the buildings in range or the selected ones, and the
+# buildings whose footprints overlap marked. %TILE% is the kit tile assembly_kit/khazad_wall_test, %OUT% a folder for the captures. Nothing is saved.
+tile "%TILE%"
+frames 5
+
+# Off until asked for: nothing is drawn, whatever buildings there are.
+add_building roman_fort_straight 60 60
+add_building roman_fort_straight 90 60
+frames 40
+assert_tech 0
+capture 640x360 "%OUT%/off.png" 4
+
+# Two walls 30 m apart, in range of the camera: every kind that is on is drawn for both.
+cam 0.6 0.7 55 2
+cam_look 75 2 62
+tile_tech scope all
+tile_tech range 400
+tile_tech on collision outlines platforms pipes formation bounds flag
+frames 5
+tile_tech
+assert_tech 2 100
+capture 640x360 "%OUT%/on.png" 4
+
+# Only the selected building: the other one is left out.
+tile_tech scope selected
+frames 3
+assert_tech 1 20
+capture 640x360 "%OUT%/selected.png" 4
+
+# Back to all; turning the kinds off draws nothing (no lines), turning the overlay off removes the entity.
+tile_tech scope all
+tile_tech none
+frames 3
+assert_tech 0
+tile_tech all
+frames 3
+assert_tech 2 200
+capture 640x360 "%OUT%/all.png" 4
+
+# The most destroyed state is a different set of shapes from the standing one.
+tile_tech highest on
+frames 3
+assert_tech 2 1
+capture 640x360 "%OUT%/highest.png" 4
+tile_tech highest off
+
+# Two walls that stand apart do not collide; one moved over the other does (partly over it, then exactly on it: a building put twice).
+tile_tech none
+tile_tech detect on
+frames 3
+assert_tech 2 0 collisions 0
+tile_move -25 0
+frames 3
+assert_tech 2 1 collisions 1
+capture 640x360 "%OUT%/collide.png" 4
+tile_move -5 0
+frames 3
+assert_tech 2 1 collisions 1
+undo
+undo
+frames 3
+assert_tech 2 0 collisions 0
+
+# Hiding the buildings' type hides their technology.
+tile_tech all
+tile_tech detect off
+tile_type BUILDING_INSTANCE off
+frames 3
+assert_tech 0
+quit
