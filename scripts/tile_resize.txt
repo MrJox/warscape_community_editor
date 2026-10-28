@@ -1,0 +1,22 @@
+# Resize tile (Phase 6b of docs/plans/tile_ted_parity.md): a 2 x 2 tile with a hill and a building, resized to 4 x 2 with the old tile
+# centred (one cell, 128 m, along x): the hill and the building move together, the entry is 4 x 2; then cut back to 2 x 2 at cell (-1, 0),
+# the old tile again. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_resize_test 2 2 10 32
+frames 5
+brush 20 1 1
+paint raise 60 60 30
+add_building barbarian_fort_straight 60 60
+frames 5
+mark_height hill 60 60
+assert_height_delta hill 60 60 -0.01 0.01
+resize_tile 4 2
+frames 10
+assert_height_delta hill 188 60 -0.05 0.05
+tile_select BUILDING_INSTANCE
+assert_world_xz 188 60 0.05
+resize_tile 2 2 -1 0
+frames 10
+assert_height_delta hill 60 60 -0.05 0.05
+tile_select BUILDING_INSTANCE
+assert_world_xz 60 60 0.05
+quit

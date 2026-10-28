@@ -2472,7 +2472,8 @@ impl TileDocument {
         }
 
         let height_dirty = t.height_modified() || t.png_on_disk_edited || (elsewhere && t.project.has_height());
-        let force_scene = t.save_scene_needed() || elsewhere;
+        // A splice of attribute edits alone is baked into the scene's text without counting as a modification of it: the history says.
+        let force_scene = t.save_scene_needed() || elsewhere || self.history.modified();
         let blend_dirty = t.blend_modified() || t.blend_on_disk_edited;
         let ground_dirty = t.ground_modified() || t.ground_on_disk_edited;
         let t = self.tile_mut();

@@ -196,6 +196,73 @@ impl TileDocument {
         Ok(format!("saved as {set}/{name}/{variation}: {msg}"))
     }
 
+    /// TEd's Resize Tile (Phase 6b of docs/plans/tile_ted_parity.md): the scene moved by the resize's offset (whole cells; one undo entry,
+    /// saved), the entry's size set, and the maps resized on disk (`wce_tile::resize::resize_maps`, `.resize.bak` beside each). The caller
+    /// opens the tile again (the maps in memory are the old ones). Returns the tile's folder and what was done.
+    ///
+    /// # Errors
+    ///
+    /// No database entry, a size out of 1..64, or a file can't be read or written.
+    pub fn resize_tile(&mut self, r: &wce_tile::resize::Resize) -> Result<(PathBuf, String), String> {
+        use wce_tile::world_transform::{set_world_position, world_transform};
+
+        if !(1..=64).contains(&r.cells.0) || !(1..=64).contains(&r.cells.1) {
+            return Err("a tile is 1 to 64 cells a side".to_owned());
+        }
+
+        let entry = self.project().entry.as_ref().ok_or("the tile has no database entry")?;
+        let old = (entry.width(), entry.height());
+        let px = self.project().height.as_ref().map(|h| h.width()).ok_or("the tile has no height map")?;
+        let density = px / (old.0 + 2);
+
+        // The scene: every instance not inside another one, by the offset (rows of the maps go along +z).
+        self.end_stroke();
+        let t = self.tile();
+        let u = t.unit();
+        let delta = wce_foundation::math::Double3::new(f64::from(r.offset.0) * 128.0 * u, 0.0, f64::from(r.offset.1) * 128.0 * u);
+        let all = t.instances.clone();
+        let set = all.iter().copied().collect::<std::collections::HashSet<_>>();
+        let sc = t.tscene();
+        let top = all.into_iter().filter(|&e| {
+            let mut p = sc.doc().elements()[e].parent;
+            while let Some(q) = p {
+                if set.contains(&q) {
+                    return false;
+                }
+
+                p = sc.doc().elements()[q].parent;
+            }
+
+            true
+        }).collect::<Vec<_>>();
+
+        if delta != wce_foundation::math::Double3::ZERO && !top.is_empty() {
+            let mark = self.begin()?;
+            for &e in &top {
+                let before = self.tile().tscene().position(e);
+                let w = world_transform(self.tile().tscene(), e);
+                set_world_position(self.tscene_mut(), e, w.position + delta);
+                self.carry_points(e, before);
+            }
+
+            self.push_splice("Resize tile: move the scene".to_owned(), mark, vec![], vec![]);
+        }
+
+        self.save_tile(&wce_editor_core::document::SaveTarget::default())?;
+        let dir = self.project().dir.clone();
+
+        // The entry's size, in the project's entry file and in memory.
+        let file = self.project().entry_file_for(&dir).ok_or("the tile's entry is not beside it")?;
+        let mut there = wce_formats::tile_entry::TileEntry::load(&file).map_err(|e| e.to_string())?;
+        there.set_tile_attr("width", &r.cells.0.to_string());
+        there.set_tile_attr("height", &r.cells.1.to_string());
+        std::fs::write(&file, there.save()).map_err(|_| format!("could not write {}", file.display()))?;
+        wce_formats::tile_index::TileIndex::forget_shared();
+
+        let msg = wce_tile::resize::resize_maps(&dir, old, density, r)?;
+        Ok((dir, msg))
+    }
+
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
     /// Files it replaces get a `.bak`. The procedural walls need `walls`: they are
     /// written as their pieces (`wce_walls::export::walls_for_kit`), and a tile without walls takes its old pieces out of the pack.
