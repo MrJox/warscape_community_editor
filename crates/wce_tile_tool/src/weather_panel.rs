@@ -1,5 +1,6 @@
 //! The Tile panel's Weather section: which environment files the game picks for the tile (the kit's environment_map.xml under the filters; for
-//! a tile outside a kit, like an exported one decompiled into the workspace, the packs' variation database),
+//! a tile outside a kit, like an exported one decompiled into the workspace, or with a mod pack that overrides the variation database, the
+//! packs' variation database),
 //! searchable by text, and the one that lights the tile. Nothing here needs the Weather tool: the file is read from the packs (see
 //! `Editor::set_weather_preview`); when the Weather tool has the same file open, the tile follows its edits.
 //!
@@ -134,10 +135,11 @@ impl WeatherUi {
         values.into_iter().find(|v| v.eq_ignore_ascii_case(value))
     }
 
-    /// Which environment files the game picks: the kit's environment_map.xml when the tile is in a kit that has one, else the packs' variation
+    /// Which environment files the game picks: the packs' variation database when a mod pack overrides it (the kit's environment_map.xml is
+    /// the vanilla one, without the mod's weather), else the kit's environment_map.xml when the tile is in a kit that has one, else the packs'
     /// database (an exported tile decompiled into the workspace has no kit around it).
     fn load_database(&mut self, e: &Editor, tile_dir: &Path) {
-        let kit = Self::kit_environment_map(tile_dir);
+        let kit = Self::kit_environment_map(tile_dir).filter(|_| !Self::mod_overrides_database(e));
         let (loaded, source) = match kit {
             Some(Ok(db)) => (Ok(db), "the kit's environment_map.xml"),
             Some(Err(err)) => (Err(err), "the kit's environment_map.xml"),
@@ -169,6 +171,11 @@ impl WeatherUi {
         let p = Path::new(&g[..at + 10]).join("warscape_asset_variation_db").join("environment_map.xml");
         let bytes = std::fs::read(&p).ok()?;
         Some(AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&bytes)).map_err(|err| err.to_string()))
+    }
+
+    /// If the winning variation database is a mod pack's (the vanilla one is what the kit's environment_map.xml was made from).
+    fn mod_overrides_database(e: &Editor) -> bool {
+        e.vfs().is_some_and(|vfs| vfs.owner(PACKS_DB).and_then(|i| vfs.packs().get(i)).is_some_and(|pack| pack.is_mod))
     }
 
     /// The variation database the game uses: the winning pack's .bin.
