@@ -1,3 +1,8 @@
+[build]
+# Intermediates (including SDL3's CMake/MSBuild scratch files) go under the Cargo home, not target/: MSBuild's compiler check fails
+# when the repo path is long. Binaries still land in target/.
+build-dir = "{cargo-cache-home}/build/{workspace-path-hash}"
+
 [env]
 # Match the documented Windows generator and avoid auto-selecting a newer Visual Studio preview.
 CMAKE_GENERATOR_x86_64_pc_windows_msvc = "Visual Studio 17 2022"

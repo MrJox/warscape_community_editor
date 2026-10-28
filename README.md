@@ -13,15 +13,14 @@ rpfm_lib is a path dependency: check out [RPFM](https://github.com/Frodo45127/rp
 
 ### Windows
 
-The `wce` binary builds SDL3 from source. In PowerShell, use a short Cargo target path so SDL's MSBuild compiler check can create
-its temporary files:
+The `wce` binary builds SDL3 from source. Cargo's `build-dir` (set in `.cargo/config.toml`) keeps the intermediates under
+`%USERPROFILE%\.cargo\build`, so a long repo path does not break SDL's MSBuild compiler check (it needs Cargo 1.91 or newer):
 
 ```powershell
-$env:CARGO_TARGET_DIR = Join-Path $env:TEMP "wce-target"
 cargo build --release -p wce_app
 ```
 
-The binary lands at `$env:TEMP\wce-target\release\wce.exe`.
+The binary lands at `target\release\wce.exe`.
 
 ### Linux
 
