@@ -109,6 +109,87 @@ pub(crate) struct TreeRow {
     pub kids: usize,
 }
 
+/// A tile saved as an exported tile (`TileTool::export_to`).
+pub(crate) struct Exported {
+    /// The exported folder (`<out>/terrain/tiles/...`).
+    pub dir: PathBuf,
+
+    /// The pack of a tile with procedural walls (the tile, its database and the walls' pieces and rows).
+    pub pack: Option<PathBuf>,
+
+    /// The compile's notes (in the log).
+    pub notes: usize,
+}
+
+/// An export's inputs (`TileTool::export_inputs`): everything the compile reads, owned, so that it can run on another thread.
+pub(crate) struct ExportInputs {
+    game_dir: PathBuf,
+
+    /// The game's tile data if it was read before (else read by `run`).
+    pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
+    project_dir: PathBuf,
+
+    /// The scene as tile.wce text.
+    text: Vec<u8>,
+
+    /// A tile with procedural walls: the game files and rpfm's schema (its path).
+    walls: Option<(Arc<dyn wce_vfs::files::Files>, PathBuf)>,
+}
+
+impl ExportInputs {
+    /// Whether the tile has procedural walls (exported with their pieces and database rows into a pack).
+    pub fn has_walls(&self) -> bool {
+        self.walls.is_some()
+    }
+
+    /// The game's tile data: the one read before, else read now (slow the first time: the packs' databases, buildings and models).
+    ///
+    /// # Errors
+    ///
+    /// The game's data doesn't read.
+    pub fn game(&mut self) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
+        if let Some(g) = &self.game {
+            return Ok(g.clone());
+        }
+
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::load(&self.game_dir)?);
+        for w in &game.warnings {
+            log::warn(format!("exported tiles: {w}"));
+        }
+
+        self.game = Some(game.clone());
+        Ok(game)
+    }
+
+    /// Compiles the tile into an exported tile under `out` (as `TileTool::save_exported`); also returns the game's tile data, to keep.
+    ///
+    /// # Errors
+    ///
+    /// The game's data or the project doesn't read, the compile fails, or a file can't be written.
+    pub fn run(mut self, out: &Path) -> Result<(Exported, Arc<wce_tile_io::attila::workflow::Game>), String> {
+        let game = self.game()?;
+
+        // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
+        if let Some((files, schema)) = &self.walls {
+            let schema = rpfm_lib::schema::Schema::load(schema, None).map_err(|err| format!("{}: {err}", schema.display()))?;
+            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out)?;
+            for n in &notes {
+                log::info(format!("{}: {n}", saved.display()));
+            }
+
+            return Ok((Exported { dir: saved, pack: Some(pack), notes: notes.len() }, game));
+        }
+
+        let (scene, _) = wce_tile::project_files::to_ted(self.text)?;
+        let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &self.project_dir, Some(scene), out)?;
+        for n in &notes.notes {
+            log::info(format!("{}: {n}", saved.display()));
+        }
+
+        Ok((Exported { dir: saved, pack: None, notes: notes.notes.len() }, game))
+    }
+}
+
 pub struct TileTool {
     pub status: String,
     pub(crate) mode: TileMode,
@@ -254,6 +335,18 @@ pub struct TileTool {
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
 
+    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
+    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
+    pub(crate) launched: Option<crate::launch::Running>,
+    pub(crate) launch_swept: bool,
+    pub(crate) launch_prompt: Option<Vec<String>>,
+    pub(crate) launch_prompt_open: bool,
+
+    /// The launch being prepared on a thread, and whether its window opens on the next frame.
+    pub(crate) launch_job: Option<crate::launch_prompt::LaunchJob>,
+    pub(crate) launch_worker: Option<std::thread::JoinHandle<()>>,
+    pub(crate) launch_progress_open: bool,
+
     /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
     browse_extracted: std::collections::HashSet<String>,
 
@@ -338,7 +431,7 @@ pub struct TileTool {
     pub(crate) context: crate::context_panel::ContextUi,
 
     /// The game's tile data for opening and saving exported tiles (read once per game folder).
-    exported_game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
+    pub(crate) exported_game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
 
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
     browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
@@ -354,7 +447,7 @@ impl Default for TileTool {
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -951,38 +1044,46 @@ impl TileTool {
     ///
     /// No tile is open, the project can't be saved, or the compile fails.
     pub fn save_exported(&mut self, e: &mut Editor, out: &Path) -> Result<String, String> {
-        let game = self.exported_game(e)?;
+        let x = self.export_to(e, out)?;
+        Ok(match &x.pack {
+            Some(pack) => format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", x.dir.display(), pack.display(), x.notes),
+            None => format!("saved as an exported tile in {} ({} notes in the log)", x.dir.display(), x.notes),
+        })
+    }
+
+    /// [`Self::save_exported`]'s work: the exported folder, the pack of a tile with procedural walls, the count of notes (logged).
+    ///
+    /// # Errors
+    ///
+    /// As `save_exported`.
+    pub(crate) fn export_to(&mut self, e: &mut Editor, out: &Path) -> Result<Exported, String> {
+        let inputs = self.export_inputs(e)?;
+        let (x, game) = inputs.run(out)?;
+        self.exported_game = Some(game);
+        Ok(x)
+    }
+
+    /// What an export needs from the editor, taken on the main thread (the tile saved first if it is modified) so that the compile can run
+    /// on another ([`ExportInputs::run`]).
+    ///
+    /// # Errors
+    ///
+    /// No tile or game folder, the project can't be saved, or a tile with procedural walls has no game files or schema.
+    pub(crate) fn export_inputs(&mut self, e: &mut Editor) -> Result<ExportInputs, String> {
+        let game_dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
+        let game = self.exported_game.clone().filter(|g| g.dir == game_dir);
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
-        let modified = d.modified();
-        if modified {
+        if d.modified() {
             e.docs.save_one(id)?;
         }
 
         // The scene as the editor holds it (the prefab references with their contents), as TEd's.
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
-        let dir = d.project().dir.clone();
+        let project_dir = d.project().dir.clone();
         let text = d.tile().tscene().save();
-
-        // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
-        if d.tile().has_walls() {
-            let files = e.files().ok_or("no game files are mounted")?;
-            let schema = walls_schema(e)?;
-            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &dir, text, out)?;
-            for n in &notes {
-                log::info(format!("{}: {n}", saved.display()));
-            }
-
-            return Ok(format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", saved.display(), pack.display(), notes.len()));
-        }
-
-        let (scene, _) = wce_tile::project_files::to_ted(text)?;
-        let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &dir, Some(scene), out)?;
-        for n in &notes.notes {
-            log::info(format!("{}: {n}", saved.display()));
-        }
-
-        Ok(format!("saved as an exported tile in {} ({} notes in the log)", saved.display(), notes.notes.len()))
+        let walls = if d.tile().has_walls() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
+        Ok(ExportInputs { game_dir, game, project_dir, text, walls })
     }
 
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
@@ -2377,6 +2478,44 @@ impl Tool for TileTool {
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the VFX boxes", &mut s.show_vfx_boxes);
         settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
+
+        gui::separator_text("Launch in game");
+        settings_window::label("Delivery");
+        if gui::radio_button("Launch pack", s.launch.delivery == crate::settings::LaunchDelivery::Pack) {
+            s.launch.delivery = crate::settings::LaunchDelivery::Pack;
+        }
+
+        gui::same_line();
+        if gui::radio_button("Loose files", s.launch.delivery == crate::settings::LaunchDelivery::Loose) {
+            s.launch.delivery = crate::settings::LaunchDelivery::Loose;
+        }
+
+        settings_window::help("Loose files lose to the game's packs; a tile falls back to the pack.");
+        settings_window::label("Map");
+        if gui::radio_button("The tile alone", s.launch.map == crate::settings::LaunchMap::Tile) {
+            s.launch.map = crate::settings::LaunchMap::Tile;
+        }
+
+        gui::same_line();
+        if gui::radio_button("The Map context's placement", s.launch.map == crate::settings::LaunchMap::MapContext) {
+            s.launch.map = crate::settings::LaunchMap::MapContext;
+        }
+
+        settings_window::help("The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.");
+        for (label, value, hint) in [
+            ("Defender faction", &mut s.launch.defender_faction, "att_fact_western_roman_empire"),
+            ("Defender unit", &mut s.launch.defender_unit, "att_rom_legio_comitatenses"),
+            ("Attacker faction", &mut s.launch.attacker_faction, "att_fact_saxones"),
+            ("Attacker unit", &mut s.launch.attacker_unit, "att_nor_saxon_spears"),
+            ("Subculture", &mut s.launch.subculture, "att_sub_cult_roman_west"),
+            ("Tile upgrades", &mut s.launch.tile_upgrades, "level1 escalation3 (a settlement in the map)"),
+        ] {
+            settings_window::label(label);
+            gui::set_next_item_width(-1.0);
+            gui::input_text(&format!("##launch {label}"), Some(hint), value, 256, 0);
+        }
+
+        settings_window::help("One unit a side. Vanilla keys are safest: a mod's units may need packs that are not enabled.");
         if s != before {
             draft.set_tool(SETTINGS_ID, &s);
         }
@@ -2422,6 +2561,7 @@ impl Tool for TileTool {
     }
 
     fn update(&mut self, e: &mut Editor) {
+        self.update_launch(e);
         let Some(id) = document_id(e) else {
             // The last tile closed: its weather goes with it.
             if self.camera_set_for != 0 {
@@ -2543,6 +2683,8 @@ impl Tool for TileTool {
         self.draw_new_tile_dialog(e);
         self.draw_extract_prompt(e);
         self.draw_kit_prompt(e);
+        self.draw_launch_prompt(e);
+        self.draw_launch_progress(e);
         self.draw_quick_add(e);
     }
 
@@ -2590,6 +2732,16 @@ impl Tool for TileTool {
             let out = e.output_dir();
             let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("save failed: {m}"));
             e.status(&msg, false);
+        }
+
+        let label = if self.launch_job.is_some() { "Launch in game (preparing)" } else if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
+        if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none() && self.launch_job.is_none()) {
+            let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.");
         }
 
         gui::separator();
@@ -3049,11 +3201,16 @@ impl Tool for TileTool {
 ///
 /// None is found, or it doesn't read.
 fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
-    let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
-    let path = wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
-        .or_else(wce_tile_io::attila::game_data::default_schema_path)
-        .ok_or("the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)")?;
+    let path = walls_schema_path(e)?;
     rpfm_lib::schema::Schema::load(&path, None).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+/// Where rpfm's Attila schema for the walls' database rows is: `WCE_RPFM_SCHEMA`, the settings, rpfm's own.
+fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
+    let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema;
+    wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
+        .or_else(wce_tile_io::attila::game_data::default_schema_path)
+        .ok_or_else(|| "the walls' database rows need rpfm's Attila schema: set rpfm_schema in the [tools.tile] settings (a schema_att.ron rpfm_lib reads)".to_owned())
 }
 
 /// A wall's layout in one line: base, length, corners, runs, steps, attached ends (scene units).

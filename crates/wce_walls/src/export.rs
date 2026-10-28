@@ -292,23 +292,34 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
     notes.extend(compiled.notes);
 
     // The pack: the tile's exported files, the tile database, the pieces, the rows.
-    let mut pack_files = vec![];
-    for (rel, bytes) in files_below(&dir)?.into_iter().filter(|(rel, _)| !NOT_SHIPPED.iter().any(|n| rel.eq_ignore_ascii_case(n))) {
-        pack_files.push((format!("{folder}/{rel}"), bytes));
-    }
-
-    let kind = folder.split('/').nth(2).unwrap_or("battle");
-    let database = out.join("terrain/tiles").join(kind).join("tile_database.bin");
-    if let Ok(b) = std::fs::read(&database) {
-        pack_files.push((format!("terrain/tiles/{kind}/tile_database.bin"), b));
-    }
-
+    let mut pack_files = exported_pack_files(out, &folder)?;
     let walls = lowered.bases.len();
     pack_files.extend(lowered.files);
     let pack = out.join(pack_name(&folder));
     crate::pack::write_pack(&pack, "attila", pack_files, lowered.tables.into_iter().collect())?;
     notes.push(format!("{walls} wall piece(s) generated"));
     Ok((pack, dir, notes))
+}
+
+/// What a pack carries of a tile exported under `out` (`<out>/<folder>`, `folder` like `terrain/tiles/battle/<set>/<tile>/<variation>`): the
+/// files the game reads, by their path in the packs, and the tile database written beside it.
+///
+/// # Errors
+///
+/// A file can't be read.
+pub fn exported_pack_files(out: &Path, folder: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut files = vec![];
+    for (rel, bytes) in files_below(&out.join(folder))?.into_iter().filter(|(rel, _)| !NOT_SHIPPED.iter().any(|n| rel.eq_ignore_ascii_case(n))) {
+        files.push((format!("{folder}/{rel}"), bytes));
+    }
+
+    let kind = folder.split('/').nth(2).unwrap_or("battle");
+    let database = out.join("terrain/tiles").join(kind).join("tile_database.bin");
+    if let Ok(b) = std::fs::read(&database) {
+        files.push((format!("terrain/tiles/{kind}/tile_database.bin"), b));
+    }
+
+    Ok(files)
 }
 
 /// What the compile writes that the game's packs never ship: BOB's list of the tile's buildings and files (`tile.agf`), and TEd's XML

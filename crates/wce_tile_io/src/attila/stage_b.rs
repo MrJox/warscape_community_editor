@@ -15,7 +15,7 @@ use super::compile::CompileNotes;
 #[derive(Clone, Copy)]
 pub struct StageB<'a> {
     pub raw_data: &'a Path,
-    pub models: &'a dyn Fn(&str) -> Option<Vec<u8>>,
+    pub models: &'a (dyn Fn(&str) -> Option<Vec<u8>> + Sync),
 }
 
 /// Files by name, as they go into the exported tile's folder.
@@ -65,6 +65,7 @@ pub fn group_of(name: &str) -> Option<Group> {
 /// What each group is made from, hashed: the entry (all), the blend and ground type maps (textures), the other maps, the buildings'
 /// keys and world matrices, the go outlines and the rivers (terrain), the rivers and the simple meshes (the water planes).
 pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64> {
+    wce_foundation::wce_prof!("stage_b.fingerprints");
     use super::carry::Fnv;
     use wce_tile_model::MapKind;
     let entry = raw.entry.as_ref().map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &super::schema::EntrySchema)).unwrap_or_default();
@@ -121,7 +122,8 @@ pub fn unchanged(raw: &Tile, group: Group) -> bool {
 /// Nothing is carried and nothing can be made (the reason of [`made_files`]).
 pub fn stage_b_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
     let (carried, stored) = super::carry::carried(raw, CARRIED_DIR);
-    let current = fingerprints(raw);
+    // Only a decompiled project stores fingerprints; without them nothing is kept and the project's aren't needed (they hash every map).
+    let current = if stored.is_empty() { Default::default() } else { fingerprints(raw) };
     let has = |g: Group| carried.iter().any(|(n, _)| group_of(n) == Some(g));
     // An unchanged group the binary had no file of stays without one.
     let keep = |g: Group| stored.get(g.name()).is_some_and(|v| current.get(g.name()) == Some(v));
@@ -167,7 +169,18 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), 
 /// The project lacks a blend or height map, or a linking tile's heights are missing.
 pub fn made_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
-    let mut out = super::bob_tile::textures(raw)?;
+    // The textures and the terrain are made from different maps: side by side on the thread pool, their files taken in order.
+    let (textures, terrain) = rayon::join(|| super::bob_tile::textures(raw), || made_terrain(raw, ctx));
+    let mut out = textures?;
+    let (terrain, more) = terrain?;
+    notes.notes.extend(more.notes);
+    out.extend(terrain.into_iter().filter(|(name, _)| !RAW_FOLDER_FILES.contains(&name.as_str())));
+    Ok((out, notes))
+}
+
+/// [`made_files`]' terrain: the building stamps, the meshes, the height fields, the outlines.
+fn made_terrain(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
+    let mut notes = CompileNotes::default();
     let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.raw_data);
     if !missing.is_empty() {
         notes.notes.push(format!(
@@ -178,8 +191,7 @@ pub fn made_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), Str
 
     let angle = super::terrain_mesh::decimation_angle(ctx.raw_data);
     let terrain = super::terrain_mesh::terrain_files(raw, ctx.raw_data, angle, &stamps, ctx.models)?;
-    out.extend(terrain.into_iter().filter(|(name, _)| !RAW_FOLDER_FILES.contains(&name.as_str())));
-    Ok((out, notes))
+    Ok((terrain, notes))
 }
 
 /// The files of a game's `data` folder as BOB's VFS sees them: the packs in name order, the first that holds a path (case aside) wins.

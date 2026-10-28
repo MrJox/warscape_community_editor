@@ -27,6 +27,7 @@ Each open item lives in one plan; the others point to it.
 | [tile_roundtrip.md](docs/plans/tile_roundtrip.md) | the game-neutral tile model, the per-game readers and writers, the decompile and the export (stages A to C), the corpus checks | mostly done |
 | [procedural_walls.md](docs/plans/procedural_walls.md) | walls generated along a drawn spline, exported in a pack | mostly done |
 | [siege_ai.md](docs/plans/siege_ai.md) | Generate SiegeAI: a settlement's siege AI layout in one click | done but in-game tests |
+| [launch_in_game.md](docs/plans/launch_in_game.md) | Launch in game: the open tile exported and the game started straight into a battle on it | built; launched from the menu (pack), loose delivery to try in game |
 | [map_context_todo.md](docs/plans/map_context_todo.md) | map-level terrain: the neighbour tiles, the seams, far maps, the outfield, large-context performance | open |
 | [rendering_remaining.md](docs/plans/rendering_remaining.md) | the rendering gaps of the tile view (sea, water, shadows, engine details) | open |
 | [vegetation_remaining.md](docs/plans/vegetation_remaining.md) | the vegetation port's leftovers | small |

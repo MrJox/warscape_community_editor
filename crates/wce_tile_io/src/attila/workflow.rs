@@ -209,6 +209,7 @@ pub fn save_exported_with(
 ) -> Result<(PathBuf, CompileNotes), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE};
 
+    wce_foundation::wce_prof!("export");
     let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
     let mut files = TileFiles::from_kit_dir(project_dir).map_err(|e| e.to_string())?;
     if let Some(scene) = scene {
@@ -217,7 +218,11 @@ pub fn save_exported_with(
     }
 
     let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| String::from_utf8_lossy(&b).into_owned())).transpose().map_err(|e| e.to_string())?;
-    let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
+    let (raw, _) = {
+        wce_foundation::wce_prof!("export.read_project");
+        let _a = wce_foundation::activity::start("Reading the project (tile.ted, maps, entry)");
+        TedProject.read(&files).map_err(|e| e.to_string())?
+    };
 
     let kit_raw = game.kit_raw_data();
     let models = |k: &str| game.packs.read(k);
@@ -231,8 +236,15 @@ pub fn save_exported_with(
     ctx.building_thresholds = Some(&thresholds_or_base);
     ctx.stage_b = Some(StageB { raw_data: &kit_raw, models: &models });
     ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC { params, grass: grass.as_ref(), settings: Some(&settings), model_exists: &exists });
-    let (compiled, mut notes) = compile(&raw, &ctx)?;
-    let (written, _) = TileBinary.write(&compiled).map_err(|e| e.to_string())?;
+    let (compiled, mut notes) = {
+        wce_foundation::wce_prof!("export.compile");
+        compile(&raw, &ctx)?
+    };
+    let (written, _) = {
+        wce_foundation::wce_prof!("export.write_binary");
+        let _a = wce_foundation::activity::start("Writing the tile's files");
+        TileBinary.write(&compiled).map_err(|e| e.to_string())?
+    };
     let dir = out.join(&folder);
     let stale = std::fs::read_dir(&dir)
         .into_iter()

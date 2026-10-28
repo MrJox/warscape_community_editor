@@ -862,20 +862,33 @@ fn pad<T: Copy>(v: &mut [T], start: usize, end: usize) {
     }
 }
 
-/// A BGRA image as DXT5 blocks (row by row, 16 bytes each: alpha, then colour).
+/// A BGRA image as DXT5 blocks (row by row, 16 bytes each: alpha, then colour). Each block depends on its own pixels only, so the rows of
+/// blocks are compressed on the thread pool and joined in order, and a block met before in the row (a terrain map's are mostly the same
+/// few: one texture's full weight) is taken from the row's cache.
 pub fn compress_dxt5(bgra: &[u8], w: usize, h: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(w.div_ceil(4) * h.div_ceil(4) * 16);
-    for by in (0..h).step_by(4) {
+    use rayon::prelude::*;
+    let row = |by: usize| {
+        let mut out = Vec::with_capacity(w.div_ceil(4) * 16);
+        let mut seen: std::collections::HashMap<[u32; 16], [u8; 16]> = std::collections::HashMap::new();
         for bx in (0..w).step_by(4) {
             let block = read_block(bgra, w, h, bx, by);
-            let alpha = block.map(|p| (p >> 24) as u8);
-            let a = compress_alpha_block(&alpha);
-            let c = compress_rgb_block(&block);
-            for v in [a[0], a[1], c[0], c[1]] {
-                out.extend(v.to_le_bytes());
-            }
-        }
-    }
+            let bytes = *seen.entry(block).or_insert_with(|| {
+                let alpha = block.map(|p| (p >> 24) as u8);
+                let a = compress_alpha_block(&alpha);
+                let c = compress_rgb_block(&block);
+                let mut b = [0u8; 16];
+                for (i, v) in [a[0], a[1], c[0], c[1]].into_iter().enumerate() {
+                    b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+                }
 
-    out
+                b
+            });
+            out.extend(bytes);
+        }
+
+        out
+    };
+
+    let rows: Vec<Vec<u8>> = (0..h.div_ceil(4)).into_par_iter().map(|r| row(r * 4)).collect();
+    rows.concat()
 }

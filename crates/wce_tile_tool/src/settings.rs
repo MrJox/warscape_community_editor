@@ -70,6 +70,68 @@ pub struct TileSettings {
     /// rpfm's Attila schema (a `schema_att.ron`), for the procedural walls' database rows; none: rpfm's own (`WCE_RPFM_SCHEMA` wins).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpfm_schema: Option<PathBuf>,
+
+    /// Launch in game (`launch.rs`): the battle the game starts into.
+    pub launch: LaunchSettings,
+}
+
+/// Where Launch in game puts the tile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchMap {
+    /// The tile alone is the battle map (any tile, painted on a map or not).
+    #[default]
+    Tile,
+
+    /// The Map context's placement in its map (the neighbours and seams), the tile alone without one.
+    MapContext,
+}
+
+/// How Launch in game hands the tile to the game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchDelivery {
+    /// A mod pack `data\wce_launch.pack` named first, with every mod pack chosen in the editor; removed when the game exits.
+    #[default]
+    Pack,
+
+    /// Loose files in a working directory (`add_working_directory`), with only the mod packs the tile needs. The game's packs win over
+    /// loose files, and the release's tiles.pack has the tile database, so a tile falls back to the pack (kept for files no pack has).
+    Loose,
+}
+
+/// The battle of Launch in game: its map and its two armies of one unit each (vanilla keys: a mod's units may need packs that are not
+/// enabled).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaunchSettings {
+    pub delivery: LaunchDelivery,
+    pub map: LaunchMap,
+
+    /// The defender (alliance 0, the player) and the attacker: a faction and a unit each.
+    pub defender_faction: String,
+    pub defender_unit: String,
+    pub attacker_faction: String,
+    pub attacker_unit: String,
+
+    /// The battle's subculture (the settlement's look in a settlement battle).
+    pub subculture: String,
+
+    /// tile_upgrades.xml keys of a settlement battle in a map (`level1 escalation3`); empty: none.
+    pub tile_upgrades: String,
+
+    /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
+    pub step_seconds: BTreeMap<String, f32>,
+}
+
+impl Default for LaunchSettings {
+    fn default() -> Self {
+        Self {
+            delivery: LaunchDelivery::default(), map: LaunchMap::default(), defender_faction: "att_fact_western_roman_empire".to_owned(), defender_unit: "att_rom_legio_comitatenses".to_owned(),
+            attacker_faction: "att_fact_saxones".to_owned(), attacker_unit: "att_nor_saxon_spears".to_owned(), subculture: "att_sub_cult_roman_west".to_owned(),
+            tile_upgrades: String::new(), step_seconds: BTreeMap::new(),
+        }
+    }
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -135,6 +197,6 @@ pub struct TileWeather {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), rpfm_schema: None }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), rpfm_schema: None, launch: LaunchSettings::default() }
     }
 }

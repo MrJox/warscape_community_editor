@@ -535,6 +535,7 @@ fn cut_go_outlines(field: &mut [bool], w: usize, h: usize, go: &[Vec<(f32, f32)>
 }
 
 pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>], mask: &[bool], cells: (usize, usize)) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.terrain_outlines");
     let mut field = no_go(heights, w, h, 2.0, 30.0);
     cut_go_outlines(&mut field, w, h, go);
     let field = blur(&field, w, h);
