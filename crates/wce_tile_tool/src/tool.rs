@@ -125,8 +125,9 @@ pub(crate) struct Exported {
 pub(crate) struct ExportInputs {
     game_dir: PathBuf,
 
-    /// The game's tile data if it was read before (else read by `run`).
+    /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
+    pub(crate) pending: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
     project_dir: PathBuf,
 
     /// The scene as tile.wce text.
@@ -150,6 +151,12 @@ impl ExportInputs {
     pub fn game(&mut self) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
         if let Some(g) = &self.game {
             return Ok(g.clone());
+        }
+
+        // Being read already: waited for.
+        if let Some(Ok(Ok(g))) = self.pending.take().map(|rx| rx.recv()) {
+            self.game = Some(g.clone());
+            return Ok(g);
         }
 
         let game = Arc::new(wce_tile_io::attila::workflow::Game::load(&self.game_dir)?);
@@ -433,6 +440,10 @@ pub struct TileTool {
     /// The game's tile data for opening and saving exported tiles (read once per game folder).
     pub(crate) exported_game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
 
+    /// The game's tile data being read on a thread once a tile is open, so that an export or a launch finds it read.
+    pub(crate) game_preload: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
+    pub(crate) game_preload_tried: bool,
+
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
     browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
 }
@@ -451,7 +462,7 @@ impl Default for TileTool {
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
-            weather: Default::default(), context: Default::default(), exported_game: None, browse_packs: None,
+            weather: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
         }
     }
 }
@@ -836,6 +847,14 @@ impl TileTool {
             return Ok(g.clone());
         }
 
+        // Being read on a thread already: waited for.
+        if let Some(Ok(Ok(g))) = self.game_preload.take().map(|rx| rx.recv())
+            && g.dir == Path::new(&dir)
+        {
+            self.exported_game = Some(g.clone());
+            return Ok(g);
+        }
+
         let game = Arc::new(wce_tile_io::attila::workflow::Game::load(Path::new(&dir))?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
@@ -1083,7 +1102,8 @@ impl TileTool {
         let project_dir = d.project().dir.clone();
         let text = d.tile().tscene().save();
         let walls = if d.tile().has_walls() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
-        Ok(ExportInputs { game_dir, game, project_dir, text, walls })
+        let pending = if game.is_none() { self.game_preload.take() } else { None };
+        Ok(ExportInputs { game_dir, game, pending, project_dir, text, walls })
     }
 
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
