@@ -64,7 +64,9 @@ fn flat_normal() -> TerrainImage {
 pub fn build_terrain_material(rq: &MaterialRequest, blend: &BlendField, climates: &ClimateList, files: &dyn Files) -> Result<(TerrainMaterial, String), String> {
     wce_prof!("tile.terrain_material");
     let (bw, bh) = (blend.width(), blend.height());
-    let mut m = TerrainMaterial { id: rq.id, x0: rq.x0, z0: rq.z0, x1: rq.x1, z1: rq.z1, y0: rq.y0 - 20.0, y1: rq.y1 + 200.0, ..Default::default() };
+    let mut m = TerrainMaterial {
+        id: rq.id, x0: rq.x0, z0: rq.z0, x1: rq.x1, z1: rq.z1, y0: rq.y0 - 20.0, y1: rq.y1 + 200.0, campaign: climates.kind == "campaign", ..Default::default()
+    };
 
     // Blend / index maps (BOB's reduction of the 16 weights).
     let n = bw as usize * bh as usize;

@@ -275,9 +275,19 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   (the shader draws a layer whose scale is 0 as one flat texel) and no light values. The map context reads the battle database the same way.
 - **Campaign tiles** use `terrain/textures/campaign/<climate>/<group>/<v>_<season>_<diffuse|normal>.dds`, falling back to the campaign `default`
   folder like the battle ones (`ClimateList::kind`, `default_folder`, `folder_of`, `texture_path`). The campaign's climates (`default`,
-  `europe`, `desert`, ...) hold groups only in `default`, so every campaign climate resolves to the same files. **Deviation, with the owner's
-  permission (2026-10-28):** the campaign tile is drawn with the battle terrain shaders (`ps30_blend`), not the campaign's own `terrain.hlsl`
-  path, which is not reverse engineered here.
+  `europe`, `desert`, ...) hold groups only in `default`, so every campaign climate resolves to the same files.
+- **There is no separate campaign ground shader** (2026-10-28, DXBC disassembly of `dx11_sm_3_0_rigidterrain*` and `campaignterrain*`). The
+  campaign map's ground goes through the same `rigidterrain.hlsl` passes as the battle's (a campaign tile ships the same blend / index / normal
+  maps and mesh); `campaignterrain.hlsl` holds only `ps30_main_coast` and `ps30_main_trade_route` (the coast strip and trade route geometry),
+  and `rigidterrainblend`, `terrainblend`, `terrain.hlsl` have no campaign entries. The campaign switch is `ps_height_map_cb g_is_campaign`
+  (+124): `ps30_blend`, `ps30_far_blend`, `ps_blend_common_ts` and both vertex shaders have it `[unused]`; **only the resolves
+  (`ps30_terrain_to_gbuffer_ss`, `_ss_lq`, `_ss_infield_lq`, `_ts`) read it**, in `if_z cb4[7].w` around the weather's snow on the ground
+  (the `s_snow_normals` perturbation and the grey / snow lerp: "Snow on the ground" below). So on the campaign map the weather's snow does not
+  whiten the ground (the campaign's snow comes from its own seasonal snow maps). The resolve's other campaign-looking input is `shroud_PS`
+  (`g_shroud_enabled`, `g_campaign_world_bounds`, the shroud map `t9`): fog of war for the whole map, map-level, off in the editor. The tool
+  sets `g_is_campaign` from `TerrainMaterial::campaign` (a tile of the campaign database, `ClimateList::kind`); it is one constant for the
+  whole frame, so any campaign material turns it on. Checked on `tdd_custom_tiles/mount_doom` under `charlemagne/med_wi_land_day_snow_2`: the
+  ground was snow-washed, it now shows its own colours. The map context is battle only and never sets it.
 - Checked: `terrain_check` (the climates of TDD's packs over the kit; every battle climate finds `mordor_gravel`, the campaign `default` has
   `mordor_a` at 620 m), a TDD wasteland tile (`tdd_terrain_mordor_wasteland/2x2/aa`) and the campaign `tdd_custom_tiles/mount_doom` opened
   from the packs draw their groups (16 and 6 textures found).
