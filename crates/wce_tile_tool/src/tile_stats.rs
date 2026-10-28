@@ -51,7 +51,7 @@ impl TileTool {
         let dir = &d.project().dir;
         let mut files = std::fs::read_dir(dir).map(|r| r.flatten().filter_map(|f| Some((f.file_name().to_string_lossy().into_owned(), f.metadata().ok()?.len()))).collect::<Vec<_>>()).unwrap_or_default();
         files.retain(|f| !f.0.ends_with(".bak"));
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|f| std::cmp::Reverse(f.1));
         let disk = files.iter().map(|f| f.1).sum::<u64>();
         if gui::tree_node(&format!("files on disk: {} in {}###stats_files", size(disk), files.len())) {
             for (n, b) in &files {
