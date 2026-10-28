@@ -106,9 +106,69 @@ pub(crate) fn fit(corners: &[Float3; 8], light: Float3, view: Float3, side: Floa
     LightFit { view_proj: m, width: w }
 }
 
+/// Rome 2's fit (fn 0x11423af0, its light basis with `shadowmap_view_quantize` on in fn 0x114765e0): no warp. The light axes are x =
+/// (L.z, 0, -L.x) (horizontal), y = L x x, z = L; the box is a square as wide as the slice's longest corner to corner distance (rounded
+/// up, plus two texels), its centre snapped to whole texels of a `res` wide tile; its depth is the slice's, at least
+/// `shadowmap_min_depth` (1024), ending at the slice's far side, the near plane `shadowmap_near_clip` (1) closer to the sun. Units are the
+/// corners' (the game: game units). Clip x, y in -1..1, depth 0..1.
+pub(crate) fn fit_rome2(corners: &[Float3; 8], light: Float3, res: f32) -> LightFit {
+    let ax = normalize(Float3::new(light.z, 0.0, -light.x));
+    let ay = normalize(cross(light, ax));
+    let az = light;
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for p in corners {
+        for (k, a) in [ax, ay, az].into_iter().enumerate() {
+            let v = dot(*p, a);
+            lo[k] = lo[k].min(v);
+            hi[k] = hi[k].max(v);
+        }
+    }
+
+    let mut span = 0.0f32;
+    for p in corners {
+        for q in corners {
+            span = span.max(length(*p - *q));
+        }
+    }
+
+    let span = span.ceil();
+    let size = span + 2.0 * span / res;
+    let texel = size / res;
+    let depth = (hi[2] - lo[2]).max(1024.0);
+    let zs = hi[2] - depth;
+    let cx = ((lo[0] + hi[0]) * 0.5 / texel).floor() * texel;
+    let cy = ((lo[1] + hi[1]) * 0.5 / texel).floor() * texel;
+
+    // The projection's near bias (the default depth format's): depth = (p . L - zs + nb) / depth.
+    let nb = 6.0e-7;
+    let mut m = Float4x4::IDENTITY;
+    m.m[0] = row(ax * (2.0 / size), -cx * (2.0 / size));
+    m.m[1] = row(ay * (2.0 / size), -cy * (2.0 / size));
+    m.m[2] = row(az * (1.0 / depth), (nb - zs) / depth);
+    LightFit { view_proj: m, width: size }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rome 2's box: every corner inside, w 1, and the centre on the texel grid.
+    #[test]
+    fn rome2_corners_fit() {
+        let light = normalize(Float3::new(0.8, -0.4, -0.44));
+        let view = normalize(Float3::new(-0.7, -0.5, -0.4));
+        let corners = slice(Float3::new(-1225.0, 77.0, 1283.0), view, 15.0, 50.0);
+        let fit = fit_rome2(&corners, light, 1024.0);
+        assert_eq!(fit.view_proj.m[3], [0.0, 0.0, 0.0, 1.0]);
+        for p in corners {
+            let [x, y, z, _] = clip(&fit.view_proj, p);
+            assert!(x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..=1.0).contains(&z), "{x} {y} {z}");
+        }
+
+        let texel = fit.width / 1024.0;
+        let cx = -fit.view_proj.m[0][3] * fit.width / 2.0;
+        assert!((cx / texel - (cx / texel).round()).abs() < 1e-2);
+    }
 
     fn clip(m: &Float4x4, p: Float3) -> [f32; 4] {
         std::array::from_fn(|r| m.m[r][0] * p.x + m.m[r][1] * p.y + m.m[r][2] * p.z + m.m[r][3])
