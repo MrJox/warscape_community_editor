@@ -125,7 +125,7 @@ impl Paths {
 }
 
 /// What a game needs: where it is installed and what is read on top of its own packs.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameSettings {
     /// The installation folder (the one with `data`).
@@ -155,6 +155,16 @@ pub struct GameSettings {
 
     /// Loose folders read before every pack, after the project folder, highest priority first.
     pub overlay_folders: Vec<PathBuf>,
+
+    /// Where "Save" writes loose files (under their in-pack path); none: the editor's default for the game. Per game: the files saved there
+    /// are read back as the game's own (a weather file of one game must not show in another).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_dir: Option<PathBuf>,
+
+    /// The tools' fields that are about this game's files (recent tiles, a tile's weather...): `[games.<id>.tools.<tool>]`. The rest of a
+    /// tool's table is the editor's, in `[tools.<tool>]`; see [`Settings::set_game_fields`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, toml::Table>,
 }
 
 /// How the editor looks.
@@ -197,8 +207,8 @@ pub struct Settings {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub last_tool: String,
 
-    /// Where "Save" writes loose files (under their in-pack path); none: the editor's default.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// TODO(pre-release): the old output folder shared by every game, read only to move it to Attila's table (`Settings::load`).
+    #[serde(skip_serializing)]
     pub output_dir: Option<PathBuf>,
 
     pub appearance: Appearance,
@@ -209,13 +219,17 @@ pub struct Settings {
 
     #[serde(skip)]
     paths: Paths,
+
+    /// Per tool, the fields of its table kept per game (the tools declare them when added).
+    #[serde(skip)]
+    game_fields: BTreeMap<String, &'static [&'static str]>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, appearance: Appearance::default(),
-            games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(),
+            games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
         }
     }
 }
@@ -260,6 +274,15 @@ impl Settings {
                 }
             }
         };
+
+        // TODO(pre-release): the old shared output folder was Attila's (the only game then); the other games get their own default.
+        if let Some(old) = settings.output_dir.take() {
+            let attila = settings.games.entry(GameProfile::ATTILA.key.to_owned()).or_default();
+            if attila.output_dir.is_none() {
+                log::info(format!("the output folder {} is Attila's now; every game has its own", old.display()));
+                attila.output_dir = Some(old);
+            }
+        }
 
         // TODO(pre-release): the old per-game project folder becomes the first overlay folder (its files stay read); `loose` replaces it.
         for (game, g) in &mut settings.games {
@@ -385,9 +408,9 @@ impl Settings {
         self.projects_dir().join("assembly_kit")
     }
 
-    /// `$WCE_OUTPUT_DIR`, else the file's.
+    /// The current game's output folder: `$WCE_OUTPUT_DIR`, else the file's.
     pub fn output_dir(&self) -> Option<PathBuf> {
-        env_value("WCE_OUTPUT_DIR").map(PathBuf::from).or_else(|| self.output_dir.clone())
+        env_value("WCE_OUTPUT_DIR").map(PathBuf::from).or_else(|| self.game_settings().output_dir)
     }
 
     /// `$WCE_FRAME_CAP`, else the file's.
@@ -397,23 +420,70 @@ impl Settings {
 
     // ---- the tools' tables
 
-    /// A tool's settings: its table read as `T`. A missing table, or one that does not read as `T`, gives `T`'s defaults.
+    /// Declares which fields of a tool's table are about the current game's files: they are read from and written to the game's table
+    /// (`[games.<id>.tools.<tool>]`), so that each game keeps its own.
+    pub fn set_game_fields(&mut self, id: &str, fields: &'static [&'static str]) {
+        self.game_fields.insert(id.to_owned(), fields);
+    }
+
+    fn game_fields_of(&self, id: &str) -> &'static [&'static str] {
+        self.game_fields.get(id).copied().unwrap_or(&[])
+    }
+
+    /// A tool's settings: its table with the current game's fields over it, read as `T`. A field the game has no value for yet takes the
+    /// one from before the fields were per game (the shared table). A missing table, or one that does not read as `T`, gives `T`'s defaults.
     pub fn tool<T: DeserializeOwned + Default>(&self, id: &str) -> T {
-        let Some(table) = self.tools.get(id) else { return T::default() };
-        table.clone().try_into().unwrap_or_else(|e| {
+        let mut table = self.tools.get(id).cloned().unwrap_or_default();
+        if let Some(own) = self.games.get(&self.game).and_then(|g| g.tools.get(id)) {
+            for (k, v) in own {
+                table.insert(k.clone(), v.clone());
+            }
+        }
+
+        table.try_into().unwrap_or_else(|e| {
             log::warn(format!("settings: [tools.{id}] does not read ({e}), using its defaults"));
             T::default()
         })
     }
 
-    /// Replaces a tool's table with `value`.
+    /// Replaces a tool's table with `value`: its game fields go to the current game's table, the rest to the shared one.
     pub fn set_tool<T: Serialize>(&mut self, id: &str, value: &T) {
-        match toml::Table::try_from(value) {
-            Ok(table) => {
-                self.tools.insert(id.to_owned(), table);
+        let mut table = match toml::Table::try_from(value) {
+            Ok(table) => table,
+            Err(e) => {
+                log::error(format!("settings: [tools.{id}] can't be written: {e}"));
+                return;
+            }
+        };
+
+        let fields = self.game_fields_of(id);
+        if !fields.is_empty() {
+            // The values from before the fields were per game: every game that has none yet keeps them, once.
+            if let Some(shared) = self.tools.get_mut(id) {
+                let old: Vec<(String, toml::Value)> = fields.iter().filter_map(|f| shared.remove(*f).map(|v| ((*f).to_owned(), v))).collect();
+                if !old.is_empty() {
+                    let current = self.game.clone();
+                    for (key, g) in &mut self.games {
+                        if *key == current {
+                            continue;
+                        }
+
+                        let own = g.tools.entry(id.to_owned()).or_default();
+                        for (k, v) in &old {
+                            own.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                    }
+                }
             }
 
-            Err(e) => log::error(format!("settings: [tools.{id}] can't be written: {e}")),
+            let own = self.game_mut().tools.entry(id.to_owned()).or_default();
+            for f in fields {
+                if let Some(v) = table.remove(*f) {
+                    own.insert((*f).to_owned(), v);
+                }
+            }
         }
+
+        self.tools.insert(id.to_owned(), table);
     }
 }

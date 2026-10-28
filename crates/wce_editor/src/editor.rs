@@ -312,6 +312,7 @@ impl Editor {
 
     pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
         tool.register_commands(&mut self.commands);
+        self.settings.set_game_fields(tool.id(), tool.game_settings_fields());
         self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens() });
         self.tools.push(Some(tool));
     }
@@ -545,7 +546,8 @@ impl Editor {
 
     /// The check list of mod packs (first run and File > Mod packs).
     fn mod_pack_checks(&mut self, game: &str) {
-        self.mod_pack_checks_at(game, gui::cursor_pos_x());
+        let (profile, chosen) = (self.game(), self.selected_mod_packs());
+        self.mod_pack_checks_at(game, profile, &chosen, gui::cursor_pos_x());
     }
 
     /// Builds the check list again from the settings the next time it is drawn.
@@ -553,19 +555,21 @@ impl Editor {
         self.mod_checks_for.clear();
     }
 
-    /// The ticked mod packs, if the check list is the one of `game`.
-    pub(crate) fn mod_checks_for_game(&self, game: &Option<PathBuf>) -> Option<Vec<String>> {
+    /// The ticked mod packs, if the check list is the one of `profile` in the folder `game`.
+    pub(crate) fn mod_checks_for_game(&self, profile: &GameProfile, game: &Option<PathBuf>) -> Option<Vec<String>> {
         let game = game.as_ref().map(|g| g.display().to_string()).unwrap_or_default();
-        (!self.mod_checks_for.is_empty() && self.mod_checks_for == game).then(|| self.checked_mod_packs())
+        (self.mod_checks_for == format!("{}|{game}", profile.key)).then(|| self.checked_mod_packs())
     }
 
-    /// The check list at a cursor x (`game`: the game folder whose data folder is listed).
-    pub(crate) fn mod_pack_checks_at(&mut self, game: &str, x: f32) {
-        if self.mod_checks_for != game {
-            self.mod_checks_for = game.to_owned();
-            let chosen = self.selected_mod_packs();
-            let mut names = self.game().available_mod_packs(Path::new(game));
-            for c in &chosen {
+    /// The check list at a cursor x: the packs of `profile`'s data folder in the game folder `game`, `chosen` ticked (the Settings window
+    /// passes the game it shows, which needn't be the current one).
+    pub(crate) fn mod_pack_checks_at(&mut self, game: &str, profile: &GameProfile, chosen: &[String], x: f32) {
+        // The list is that game's: another game's choice is not carried over (it would be saved as this one's).
+        let key = format!("{}|{game}", profile.key);
+        if self.mod_checks_for != key {
+            self.mod_checks_for = key;
+            let mut names = profile.available_mod_packs(Path::new(game));
+            for c in chosen {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(c)) {
                     names.push(c.clone());
                 }
@@ -650,8 +654,11 @@ impl Editor {
     pub fn start(&mut self) -> bool {
         let game_dir = self.settings.game_dir();
         log::info(format!("Data paths: game={}", game_dir.as_ref().map_or_else(|| "(unset)".to_owned(), |d| d.display().to_string())));
-        let mounted = game_dir.ok_or_else(|| "the game folder is not set".to_owned()).and_then(|dir| {
-            Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())
+        // Another game's folder would mount (the data folders look alike) and show that game as this one.
+        let game = self.game();
+        let mounted = game_dir.ok_or_else(|| "the game folder is not set".to_owned()).and_then(|dir| match game.folder_problem(&dir) {
+            Some(problem) => Err(problem),
+            None => Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string()),
         });
 
         match mounted.and_then(|vfs| {
@@ -683,7 +690,7 @@ impl Editor {
                 log::error(format!("Start failed: {e}"));
                 self.first_run_message = e;
                 if self.first_run_game.is_empty() {
-                    self.first_run_game = self.settings.game_dir().or_else(|| detect_game_folder(self.game())).map(|p| p.display().to_string()).unwrap_or_default();
+                    self.first_run_game = self.first_run_folder(self.game());
                 }
 
                 false
@@ -732,15 +739,11 @@ impl Editor {
 
     /// The output folder when the settings name none.
     pub fn default_output_dir(&self) -> PathBuf {
-        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
-        match self.game().key {
-            "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
-            key => home.join("Documents").join("WCE").join(key).join("out"),
-        }
+        default_output_dir_for(self.game())
     }
 
     pub fn set_output_dir(&mut self, dir: &Path, persist: bool) {
-        self.settings.output_dir = Some(dir.to_path_buf());
+        self.settings.game_mut().output_dir = Some(dir.to_path_buf());
         if persist {
             self.save_settings();
         }
@@ -1722,6 +1725,12 @@ impl Editor {
         Ok(format!("mounted {} packs", self.vfs.as_ref().map_or(0, |v| v.packs().len())))
     }
 
+    /// The folder the first-run dialog offers for `game`: the settings' if it is that game's, else the one in the Steam libraries.
+    fn first_run_folder(&self, game: &GameProfile) -> String {
+        let set = self.settings.game_dir().filter(|d| game.folder_problem(d).is_none());
+        set.or_else(|| detect_game_folder(game)).map(|p| p.display().to_string()).unwrap_or_default()
+    }
+
     /// The first-run dialog's choice of game: choosing one shows its folder (the settings', else the one found in the Steam libraries).
     fn game_combo(&mut self) {
         let current = self.game();
@@ -1732,7 +1741,7 @@ impl Editor {
                     self.settings.game = game.key.to_owned();
                     self.first_run_message.clear();
                     self.mod_checks_reset();
-                    self.first_run_game = self.settings.game_dir().or_else(|| detect_game_folder(game)).map(|p| p.display().to_string()).unwrap_or_default();
+                    self.first_run_game = self.first_run_folder(game);
                 }
             }
 
@@ -1769,9 +1778,10 @@ impl Editor {
         }
 
         gui::same_line();
-        let game_ok = !self.first_run_game.is_empty() && Path::new(&self.first_run_game).join("data").exists();
-        if !game_ok {
-            gui::text_colored(crate::theme::error(), "no data folder in the game folder");
+        let problem = if self.first_run_game.is_empty() { Some("no game folder".to_owned()) } else { self.game().folder_problem(Path::new(&self.first_run_game)) };
+        let game_ok = problem.is_none();
+        if let Some(problem) = problem {
+            gui::text_colored(crate::theme::error(), &problem);
         }
 
         if !self.first_run_message.is_empty() {
@@ -1835,5 +1845,15 @@ impl Editor {
 
     pub fn has_active_tool(&self) -> bool {
         !self.tools.is_empty()
+    }
+}
+
+/// A game's output folder when the settings name none: <Documents>/AttilaWeatherEditor/out for Attila (the old weather editor's),
+/// <Documents>/WCE/<game>/out for the other games.
+pub fn default_output_dir_for(game: &GameProfile) -> PathBuf {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
+    match game.key {
+        "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
+        key => home.join("Documents").join("WCE").join(key).join("out"),
     }
 }

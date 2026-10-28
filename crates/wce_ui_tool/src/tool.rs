@@ -2192,6 +2192,10 @@ impl Tool for UiTool {
         "ui"
     }
 
+    fn game_settings_fields(&self) -> &'static [&'static str] {
+        crate::settings::GAME_FIELDS
+    }
+
     fn title(&self) -> &str {
         "UI"
     }

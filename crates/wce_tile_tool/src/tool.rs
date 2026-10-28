@@ -3003,6 +3003,10 @@ impl Tool for TileTool {
         wce_editor::icons::MAP
     }
 
+    fn game_settings_fields(&self) -> &'static [&'static str] {
+        crate::settings::GAME_FIELDS
+    }
+
     fn has_settings(&self) -> bool {
         true
     }

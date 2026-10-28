@@ -114,6 +114,61 @@ fn assembly_kits() {
     assert_eq!(settings.assembly_kit_dirs(), [a]);
 }
 
+#[test]
+fn settings_per_game() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+
+    // A file from before: one output folder and the tile tool's recent list shared by both games.
+    std::fs::write(paths.settings_file(), r#"
+game = "rome_2"
+output_dir = "/out"
+[games.attila]
+dir = "/games/attila"
+[games.rome_2]
+dir = "/games/rome2"
+[tools.tile]
+kits = ["/recent"]
+show_sea = true
+"#).unwrap();
+    let mut s = Settings::load(paths.clone());
+    s.set_game_fields("tile", &["kits"]);
+
+    // The old output folder is Attila's; the old shared field reads in every game until it is written.
+    assert_eq!(s.output_dir(), None);
+    assert_eq!(s.games["attila"].output_dir.as_deref(), Some(std::path::Path::new("/out")));
+    assert_eq!(s.tool::<ToolSettings>("tile").kits, ["/recent"]);
+
+    // Writing in Rome 2 keeps the old value for Attila, and the editor's own field stays shared.
+    s.set_tool("tile", &ToolSettings { kits: vec!["/rome".to_owned()], show_sea: false });
+    assert_eq!(s.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/rome".to_owned()], show_sea: false });
+    s.game = "attila".to_owned();
+    assert_eq!(s.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/recent".to_owned()], show_sea: false });
+    s.set_tool("tile", &ToolSettings { kits: vec!["/attila".to_owned()], show_sea: true });
+
+    // Saved and read again: each game its own list.
+    s.save().unwrap();
+    let mut loaded = Settings::load(paths);
+    loaded.set_game_fields("tile", &["kits"]);
+    assert_eq!(loaded.tool::<ToolSettings>("tile").kits, ["/attila"]);
+    loaded.game = "rome_2".to_owned();
+    assert_eq!(loaded.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/rome".to_owned()], show_sea: true });
+    assert!(!loaded.tools["tile"].contains_key("kits"));
+}
+
+#[test]
+fn game_folders_tell_games_apart() {
+    use wce_foundation::game::GameProfile;
+    let dir = tempfile::tempdir().unwrap();
+    assert!(GameProfile::ROME_2.folder_problem(dir.path()).is_some_and(|p| p.contains("no data folder")));
+    std::fs::create_dir_all(dir.path().join("data")).unwrap();
+    std::fs::write(dir.path().join("Attila.exe"), b"").unwrap();
+
+    // Attila's folder is not Rome 2's, though its data folder looks the same.
+    assert_eq!(GameProfile::ATTILA.folder_problem(dir.path()), None);
+    assert!(GameProfile::ROME_2.folder_problem(dir.path()).is_some_and(|p| p.contains("Rome2.exe")));
+}
+
 // TODO(pre-release): remove with the settings' `legacy` module.
 #[test]
 fn settings_from_the_old_ini() {

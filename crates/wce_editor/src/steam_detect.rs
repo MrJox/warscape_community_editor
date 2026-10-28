@@ -67,7 +67,7 @@ pub fn steam_library_folders() -> Vec<PathBuf> {
 
 /// The game's folder in a Steam library: <library>/steamapps/common/<the game's folder> with data/data.pack.
 pub fn detect_game_folder(game: &GameProfile) -> Option<PathBuf> {
-    steam_library_folders().into_iter().map(|lib| lib.join("steamapps").join("common").join(game.steam_folder)).find(|g| g.join(game.data_dir).join("data.pack").exists())
+    steam_library_folders().into_iter().map(|lib| lib.join("steamapps").join("common").join(game.steam_folder)).find(|g| g.join(game.data_dir).join("data.pack").exists() && game.folder_problem(g).is_none())
 }
 
 /// The program `name` on $PATH.
