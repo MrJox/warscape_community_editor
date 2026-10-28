@@ -223,6 +223,30 @@ impl TileDatabase {
         Ok(db)
     }
 
+    /// A tile as `load` reads it, from an entry (the open tile's, with its unsaved edits); its id is not one of the database's.
+    pub fn tile_from_entry(&self, e: &wce_formats::tile_entry::TileEntry) -> Tile {
+        let set_of = |name: &str| self.sets.iter().position(|s| s.name == name);
+        Tile {
+            location: e.location(),
+            set: set_of(&e.tile_set()),
+            width: e.width().max(1) as i32,
+            height: e.height().max(1) as i32,
+            colour: [e.red() as f32, e.green() as f32, e.blue() as f32],
+            mask: e.mask().bytes().map(|c| c == b'1').collect(),
+            random_rotatable: e.random_rotatable(),
+            variations: e.variations().iter().map(|v| Variation { location: v.location.clone(), colour: [0.0; 3], barbarian: false }).collect(),
+            links: e.links().iter().map(|l| Link {
+                set: set_of(&l.link_set),
+                x: l.x,
+                y: l.y,
+                test: if l.test == "TLT_EQUALS" { LinkTest::Equals } else { LinkTest::NotEquals },
+                is_entry: l.is_entry,
+            }).collect(),
+            link_targets: e.link_targets().iter().map(|t| LinkTarget { set: set_of(&t.tile_set), x: t.x, y: t.y }).collect(),
+            id: u32::MAX,
+        }
+    }
+
     /// `post_load_fixup`: the sort and the ids.
     fn fix_up(&mut self) {
         self.tiles.sort_by(|a, b| {

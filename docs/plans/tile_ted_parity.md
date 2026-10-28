@@ -221,9 +221,13 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   have their roads painted, 1 of 10 has a road spline) and border heights (the export blends every edge to a profile of the links, so
   neighbours agree: `docs/re/battle_maps.md`, "Tile seams"). TEd has no link checks (its integrity errors are about scene instances).
   `link_problems`.
-- Link overview: which tiles can follow this one on each edge.
-- Neighbour candidates preview: load a tile that satisfies a link and show it next to this one (the map context of the Tile panel
-  shows neighbours from a map; this is from the links).
+- Link overview and neighbour candidates preview: done (2026-10-28). Tile links > Tiles that can follow: for each join (link target) of
+  the tile, every tile of the kit's database at every turn it may take and every place along the tile's edges whose links and the
+  tile's agree as BOB's fill tests them, and that carries the join on (`wce_tile::battle_map::link_candidates`). Checked on the kit's
+  68 settlement maps: all 1,624 neighbours BOB placed against a join of an unturned tile are among its candidates
+  (`--example link_candidates_check`). A click shows one next to the tile through the map context (user: the neighbours were wired there
+  already): a map of the two, on a flat LF 100 m up (`ContextUi::show_map`). The map context shows what one battle map placed around
+  the tile; this shows what the links allow, map or not. `link_candidates`, `scripts/tile_link_candidates.txt`.
 - Open semantics: `base_x / base_y` (osgiliath's rules have base (1, 0)), `is_entry`.
 
 ### Phase 6b: tile module

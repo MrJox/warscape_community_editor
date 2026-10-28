@@ -2560,6 +2560,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("link_candidates", "link_candidates [show <join> <k>]", "find the tiles that can follow the open tile at each join (Tile links); with show, show one in the map context", |e, a| {
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        if a.first().is_some_and(|x| x == "show") {
+            let (Some(j), Some(k)) = (a.get(1).and_then(|v| v.parse().ok()), a.get(2).and_then(|v| v.parse().ok())) else { return fail("usage: link_candidates show <join> <k>") };
+            return with_tile(e, |t, e| t.show_link_candidate(e, id, j, k).map_or_else(fail, ok));
+        }
+
+        with_tile(e, |t, e| match t.find_link_candidates(e, id) {
+            Ok(c) => ok(format!("per join: {c:?}")),
+            Err(err) => fail(err),
+        })
+    });
+
     c.add("link_problems", "link_problems [n]", "log the tile's link problems (the validator); with n, test that there are that many", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let p = d.link_problems();

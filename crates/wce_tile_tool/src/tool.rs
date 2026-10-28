@@ -358,6 +358,11 @@ pub struct TileTool {
     pub(crate) link_sets: Option<(std::path::PathBuf, Vec<String>)>,
     pub(crate) link_typing: bool,
 
+    /// The tiles that can follow (Tile links): for which tile and history version, the open tile as the database reads it, the candidates,
+    /// the database.
+    #[allow(clippy::type_complexity)]
+    pub(crate) link_candidates: Option<((DocumentId, u64), wce_tile::battle_map::tile_db::Tile, Vec<wce_tile::battle_map::link_candidates::Candidate>, std::sync::Arc<wce_tile::battle_map::tile_db::TileDatabase>)>,
+
     /// What Copy / Cut took (any tile of the session can paste it).
     pub(crate) clipboard: Vec<wce_tile_editor::tile_document::CopiedItem>,
 
@@ -576,7 +581,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
@@ -2065,8 +2070,9 @@ impl TileTool {
             d.tile_mut().display_changed();
         }
 
-        // The editor; a click on a link looks at its cell.
+        // The editor; a click on a link looks at its cell. Then the tiles that can follow.
         let look = self.draw_link_editor(e, id);
+        self.draw_link_candidates(e, id);
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         if let (Some((x, y)), false) = (look, fly) {
             let (x0, z0, x1, z1) = d.tile().cell_rect(x, y);
