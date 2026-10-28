@@ -141,7 +141,7 @@ impl TileTool {
     /// The values are out of the dialog's limits, the tile exists, or it can't be written or opened.
     pub fn create_tile(&mut self, e: &mut Editor, t: &NewTile) -> Result<String, String> {
         let projects = Self::workspace_dir(e).join("raw_data");
-        let kit = self.kit_for(e, "battle").and_then(|raw| raw.parent().map(std::path::Path::to_path_buf));
+        let kit = self.battle_database_root(e);
         let dir = new_tile::create(t, &projects, kit.as_deref())?;
         self.open_tile(e, &dir.display().to_string(), "")?;
         Ok(format!("new tile {} ({} x {} cells, {} m, density {}) in {}", t.name, t.cells_x, t.cells_y, t.height, t.density, dir.display()))

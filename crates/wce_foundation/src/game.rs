@@ -45,6 +45,9 @@ pub struct GameProfile {
 
     /// What the game and its Assembly Kit have.
     pub features: GameFeatures,
+
+    /// Launch in game: the test battle's vanilla armies and what the game's battle XML has.
+    pub launch: LaunchFacts,
 }
 
 /// How the game's own packs are found.
@@ -72,6 +75,28 @@ pub struct GameFeatures {
 
     /// Lite building zones (`LiteBuildingZone`: the building list's `lite` flag, Attila's version 12).
     pub lite_buildings: bool,
+
+    /// The weather selection database (`warscape_asset_variation_db`), which picks a battle's environment file. Rome 2's engine has none
+    /// (no such name in its dll): its battles take the environment from the weather folders (`weather/<climate>/...`).
+    pub variation_db: bool,
+}
+
+/// What Launch in game needs to know of a game (docs/re/game_command_line.md): the vanilla keys of its test battle's armies, and the
+/// elements of the battle XML that its engine has (the dll's strings: Rome 2's has neither of the two below).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LaunchFacts {
+    /// The defender's (alliance 0, the player) faction and unit, the attacker's, and the battle's subculture.
+    pub defender_faction: &'static str,
+    pub defender_unit: &'static str,
+    pub attacker_faction: &'static str,
+    pub attacker_unit: &'static str,
+    pub subculture: &'static str,
+
+    /// The alliances' indices: `deployment_area_alliance_index` in an army and `battlefield_owner_alliance_index` in the description.
+    pub alliance_indices: bool,
+
+    /// `tile_upgrade` (tile_upgrades.xml keys) in the map definition of a settlement battle.
+    pub tile_upgrades: bool,
 }
 
 /// A pack in the priority order.
@@ -113,7 +138,16 @@ impl GameProfile {
         rpfm_schema: "schema_att.ron",
         campaign_battle_map: "terrain/battles/main_attila_map",
         default_environment: "weather/charlemagne/med_sp_land_day_dry.environment",
-        features: GameFeatures { kit_tiles: true, civilians: true, escalation: true, lite_buildings: true },
+        features: GameFeatures { kit_tiles: true, civilians: true, escalation: true, lite_buildings: true, variation_db: true },
+        launch: LaunchFacts {
+            defender_faction: "att_fact_western_roman_empire",
+            defender_unit: "att_rom_legio_comitatenses",
+            attacker_faction: "att_fact_saxones",
+            attacker_unit: "att_nor_saxon_spears",
+            subculture: "att_sub_cult_roman_west",
+            alliance_indices: true,
+            tile_upgrades: true,
+        },
     };
 
     /// Total War: Rome II. Its manifest lists neither the patch packs (`*_rome2.pack`) nor the right sizes, so the packs are rpfm's list.
@@ -138,7 +172,17 @@ impl GameProfile {
         rpfm_schema: "schema_rom2.ron",
         campaign_battle_map: "terrain/battles/main_rome_map",
         default_environment: "weather/rome_med/land/day/dry/day_dry_01.environment",
-        features: GameFeatures { kit_tiles: false, civilians: false, escalation: false, lite_buildings: false },
+        features: GameFeatures { kit_tiles: false, civilians: false, escalation: false, lite_buildings: false, variation_db: false },
+        // Rome against the Suebi (keys of the release's factions and main_units tables).
+        launch: LaunchFacts {
+            defender_faction: "rom_rome",
+            defender_unit: "Rom_Hastati",
+            attacker_faction: "rom_suebi",
+            attacker_unit: "Ger_Spear_Levy",
+            subculture: "sc_rom_roman",
+            alliance_indices: false,
+            tile_upgrades: false,
+        },
     };
 
     /// Every supported game, the default first.

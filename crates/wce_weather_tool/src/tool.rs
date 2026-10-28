@@ -898,7 +898,16 @@ impl Tool for WeatherTool {
         }
 
         if gui::begin_menu("Selection") {
-            gui::menu_item_toggle("Weather picker (which environment file the game chooses)", &mut self.picker.open);
+            let game = e.game();
+            if game.features.variation_db {
+                gui::menu_item_toggle("Weather picker (which environment file the game chooses)", &mut self.picker.open);
+            } else {
+                gui::menu_item("Weather picker (which environment file the game chooses)", None, false, false);
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(&crate::picker::no_database(game));
+                }
+            }
+
             gui::end_menu();
         }
 

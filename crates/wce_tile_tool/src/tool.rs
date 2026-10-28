@@ -1360,6 +1360,13 @@ impl TileTool {
         self.kits_for(e, kind).into_iter().next()
     }
 
+    /// The kit (its folder, with `raw_data`) whose battle tile database a new or renamed tile joins (its settings, the names and colours
+    /// taken): the first kit with one; for a game whose kit has no tiles (Rome 2), the packs' database in the kit's format.
+    pub(crate) fn battle_database_root(&mut self, e: &mut Editor) -> Option<PathBuf> {
+        let raw = if e.game().features.kit_tiles { self.kit_for(e, "battle") } else { self.packs_database(e) };
+        raw.and_then(|raw| raw.parent().map(Path::to_path_buf))
+    }
+
     /// The kind (`battle`, `campaign`) of the open tile, from its folder under terrain/tiles.
     fn open_tile_kind(e: &mut Editor) -> Result<String, String> {
         let d = document(e).ok_or("no tile is open")?;
@@ -2986,12 +2993,14 @@ impl Tool for TileTool {
     }
 
     fn game_changed(&mut self, e: &mut Editor) {
-        // Everything but the tool's choices belongs to the old game: the map context, the browser's kits and packs, the prefabs.
+        // Everything but the tool's choices belongs to the old game: the map context, the browser's kits and packs, the prefabs. A launch
+        // being prepared or a launched game goes on (it knows its game), so that its files are removed when it ends.
         self.context.clear(e);
         let old = std::mem::take(self);
         *self = Self {
             mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, angle_step: old.angle_step, left_dock: old.left_dock,
-            right_dock: old.right_dock, ..Self::default()
+            right_dock: old.right_dock, launched: old.launched, launch_job: old.launch_job, launch_worker: old.launch_worker,
+            launch_progress_open: old.launch_progress_open, ..Self::default()
         };
     }
 
@@ -3040,7 +3049,14 @@ impl Tool for TileTool {
 
         settings_window::label("Tile projects");
         gui::text_disabled(&draft.kit_projects_dir().display().to_string());
-        settings_window::help("Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.");
+        if draft.game_profile().features.kit_tiles {
+            settings_window::help("Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.");
+        } else {
+            settings_window::help(&format!(
+                "Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); {}'s tiles come from its packs (extracted there) and go into mod packs (Tile > Save to mod pack): its kit has no battle tiles.",
+                draft.game_profile().display_name
+            ));
+        }
 
         gui::separator_text("New tiles");
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
@@ -3072,20 +3088,31 @@ impl Tool for TileTool {
         }
 
         settings_window::help("The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.");
-        for (label, value, hint) in [
-            ("Defender faction", &mut s.launch.defender_faction, "att_fact_western_roman_empire"),
-            ("Defender unit", &mut s.launch.defender_unit, "att_rom_legio_comitatenses"),
-            ("Attacker faction", &mut s.launch.attacker_faction, "att_fact_saxones"),
-            ("Attacker unit", &mut s.launch.attacker_unit, "att_nor_saxon_spears"),
-            ("Subculture", &mut s.launch.subculture, "att_sub_cult_roman_west"),
-            ("Tile upgrades", &mut s.launch.tile_upgrades, "level1 escalation3 (a settlement in the map)"),
-        ] {
-            settings_window::label(label);
-            gui::set_next_item_width(-1.0);
-            gui::input_text(&format!("##launch {label}"), Some(hint), value, 256, 0);
+
+        // The armies are the game's (Settings > Game shows which): empty keys are its vanilla ones, shown as the hints.
+        let game = draft.game_profile();
+        let facts = game.launch;
+        let mut rows = vec![
+            ("Defender faction", &mut s.launch_army.defender_faction, facts.defender_faction.to_owned()),
+            ("Defender unit", &mut s.launch_army.defender_unit, facts.defender_unit.to_owned()),
+            ("Attacker faction", &mut s.launch_army.attacker_faction, facts.attacker_faction.to_owned()),
+            ("Attacker unit", &mut s.launch_army.attacker_unit, facts.attacker_unit.to_owned()),
+            ("Subculture", &mut s.launch_army.subculture, facts.subculture.to_owned()),
+        ];
+        if facts.tile_upgrades {
+            rows.push(("Tile upgrades", &mut s.launch_army.tile_upgrades, "level1 escalation3 (a settlement in the map)".to_owned()));
         }
 
-        settings_window::help("One unit a side. Vanilla keys are safest: a mod's units may need packs that are not enabled.");
+        for (label, value, hint) in rows {
+            settings_window::label(label);
+            gui::set_next_item_width(-1.0);
+            gui::input_text(&format!("##launch {label}"), Some(&hint), value, 256, 0);
+        }
+
+        settings_window::help(&format!(
+            "{}'s armies: one unit a side; empty keys are the game's vanilla ones (the hints). Vanilla keys are safest: a mod's units may need packs that are not enabled.",
+            game.display_name
+        ));
         if s != before {
             draft.set_tool(SETTINGS_ID, &s);
         }

@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use rpfm_lib::files::pack::Pack as RpfmPack;
 use rpfm_lib::games::supported_games::SupportedGames;
 
-pub use wce_foundation::game::{GameFeatures, GameProfile, PackOrder, PackRef, VanillaPacks};
+pub use wce_foundation::game::{GameFeatures, GameProfile, LaunchFacts, PackOrder, PackRef, VanillaPacks};
 
 pub mod files;
 pub mod generated;

@@ -22,6 +22,9 @@ does, in detail: docs/editor.md, "Launch in game".
 - **Loose files do not work for a tile** (2026-10-28, the user's launch of TDD's Cair Andros, game_command_line.md test 7): the release's
   `tiles.pack` has the tile database and wins over the loose one, the game finds no terrain and crashes. The shadowing check now counts the
   release's packs, so a tile falls back to the pack; the pack is the default again; loose stays as a setting for files no pack has.
+- **Other games** (2026-10-28, with the Rome 2 branch): the executable, data folder, pack format and campaign map are the game's profile's;
+  the armies are kept per game (`launch_army`, empty: the game's vanilla keys) and the battle XML leaves out what the game's engine lacks
+  (Rome 2: the alliances' indices and the tile upgrades; game_command_line.md, "Rome 2"). Rome 2 not launched yet.
 - Not yet seen in game: an edited or new tile, a settlement tile alone in the pack, the Map context mode, a tile with procedural walls.
 - The wait for the game runs in the Tile tool's update: with another tool active the launch's files are removed when the Tile tool is
   next active (or at the next start).

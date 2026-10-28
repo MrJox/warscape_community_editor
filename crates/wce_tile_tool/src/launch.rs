@@ -14,9 +14,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
-use wce_vfs::{Vfs, normalize};
+use wce_vfs::{LaunchFacts, Vfs, normalize};
 
-use crate::settings::{LaunchSettings, TileWeather};
+use crate::settings::{LaunchArmy, TileWeather};
 
 /// The launch pack, in the game's data folder.
 pub const LAUNCH_PACK: &str = "wce_launch.pack";
@@ -91,7 +91,12 @@ pub struct Battle<'a> {
     /// The tile's size in cells.
     pub cells: (u32, u32),
     pub weather: BattleWeather,
-    pub settings: &'a LaunchSettings,
+
+    /// The armies, every key given ([`LaunchArmy::resolved`]).
+    pub army: &'a LaunchArmy,
+
+    /// What the game's battle XML has.
+    pub facts: &'a LaunchFacts,
 }
 
 /// Text for an XML attribute or element.
@@ -101,9 +106,10 @@ fn esc(s: &str) -> String {
 
 /// The battle's XML (the benchmarks' format, as `benchmarks/londinium.benchmark` points at; docs/re/game_command_line.md): one unit a side
 /// across the tile's centre, both deployment areas over the tile, no deployment phase, an hour long, no script. The sizes are those of the
-/// tested 8 x 8 tile (2048 units: playable area 1800, deployment 950 from the centre, units 400 from it) scaled to the tile.
+/// tested 8 x 8 tile (2048 units: playable area 1800, deployment 950 from the centre, units 400 from it) scaled to the tile. The elements
+/// a game's engine lacks are left out (Rome 2's: the alliances' indices, the settlement upgrades).
 pub fn battle_xml(b: &Battle) -> String {
-    let s = b.settings;
+    let s = b.army;
     let half = (f64::from(b.cells.0.max(1)) * CELL_UNITS / 2.0, f64::from(b.cells.1.max(1)) * CELL_UNITS / 2.0);
     let (dx, dy) = ((half.0 * 0.93).round(), (half.1 * 0.93).round());
     let reach = (half.0.min(half.1) * 0.4).round();
@@ -120,7 +126,11 @@ pub fn battle_xml(b: &Battle) -> String {
 
     let alliance = |id: u32, faction: &str, unit: &str, name: &str, y: f64, attacker: bool| {
         let mut a = format!("\t<alliance id=\"{id}\">\n\t\t<army>\n\t\t\t<faction>{}</faction>\n", esc(faction));
-        a += &format!("\t\t\t<deployment_area_alliance_index>{}</deployment_area_alliance_index>\n\t\t\t<deployment_area>\n", 1 - id);
+        if b.facts.alliance_indices {
+            a += &format!("\t\t\t<deployment_area_alliance_index>{}</deployment_area_alliance_index>\n", 1 - id);
+        }
+
+        a += "\t\t\t<deployment_area>\n";
         a += &boundary("standard additive");
         a += &boundary("guerrilla exclusion additive");
         if attacker {
@@ -156,10 +166,13 @@ pub fn battle_xml(b: &Battle) -> String {
     x += &alliance(1, &s.attacker_faction, &s.attacker_unit, "wce_attacker", reach, true);
     x += &format!(
         "\t<battle_description>\n\t\t<time_of_day>{}</time_of_day>\n\t\t<season>{}</season>\n\t\t<precipitation_type>{}</precipitation_type>\n\
-         \t\t<type>{}</type>\n\t\t<duration>3600</duration>\n\t\t<timeout_winning_alliance_index>0</timeout_winning_alliance_index>\n\
-         \t\t<battlefield_owner_alliance_index>0</battlefield_owner_alliance_index>\n",
+         \t\t<type>{}</type>\n\t\t<duration>3600</duration>\n\t\t<timeout_winning_alliance_index>0</timeout_winning_alliance_index>\n",
         w.time_of_day, w.season.0, w.precipitation, if settlement { "settlement_standard" } else { "land_normal" }
     );
+    if b.facts.alliance_indices {
+        x += "\t\t<battlefield_owner_alliance_index>0</battlefield_owner_alliance_index>\n";
+    }
+
     if !s.subculture.is_empty() {
         x += &format!("\t\t<subculture>{}</subculture>\n", esc(&s.subculture));
     }
@@ -178,7 +191,7 @@ pub fn battle_xml(b: &Battle) -> String {
         BattleMap::Tile(folder) => x += &format!("\t\t<name>{}</name>\n", esc(folder)),
         BattleMap::Position { map, x: px, y: py, .. } => {
             x += &format!("\t\t<name>{}</name>\n\t\t<tile_map_position x=\"{px:.6}\" y=\"{py:.6}\">/</tile_map_position>\n", esc(map));
-            if settlement {
+            if settlement && b.facts.tile_upgrades {
                 for u in s.tile_upgrades.split_whitespace() {
                     x += &format!("\t\t<tile_upgrade>{}</tile_upgrade>\n", esc(u));
                 }
@@ -408,31 +421,31 @@ pub fn stray_movie_packs(data: &Path, release: &[String]) -> Vec<String> {
     v
 }
 
-/// Writes the launch pack at `path`: `files` (path in the packs, bytes), the battle's XML and the marker.
+/// Writes the launch pack at `path` for a game (its rpfm key): `files` (path in the packs, bytes), the battle's XML and the marker.
 ///
 /// # Errors
 ///
 /// The pack can't be written.
-pub fn write_launch_pack(path: &Path, mut files: Vec<(String, Vec<u8>)>, xml: &str) -> Result<(), String> {
+pub fn write_launch_pack(path: &Path, game: &str, mut files: Vec<(String, Vec<u8>)>, xml: &str) -> Result<(), String> {
     files.retain(|(p, _)| !p.eq_ignore_ascii_case(BATTLE_XML) && !p.eq_ignore_ascii_case(MARKER));
     files.push((BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
     files.push((MARKER.to_owned(), MARKER_TEXT.to_vec()));
-    wce_walls::pack::write_pack(path, "attila", files, vec![])
+    wce_walls::pack::write_pack(path, game, files, vec![])
 }
 
-/// Removes the launch pack of `data`, if there is one and it is the editor's (it has the marker). Returns what was done, `None` when there
-/// is no pack.
+/// Removes the launch pack of `data` (a game's data folder; `game` its rpfm key), if there is one and it is the editor's (it has the
+/// marker). Returns what was done, `None` when there is no pack.
 ///
 /// # Errors
 ///
 /// A pack of that name without the marker (it is left alone), or it can't be removed (the game has it open).
-pub fn remove_launch_pack(data: &Path) -> Result<Option<String>, String> {
+pub fn remove_launch_pack(data: &Path, game: &str) -> Result<Option<String>, String> {
     let path = data.join(LAUNCH_PACK);
     if !path.is_file() {
         return Ok(None);
     }
 
-    let files = wce_walls::pack::read_pack_files(&path, "attila").map_err(|e| format!("{} left in place: {e}", path.display()))?;
+    let files = wce_walls::pack::read_pack_files(&path, game).map_err(|e| format!("{} left in place: {e}", path.display()))?;
     if !files.iter().any(|(p, _)| p.eq_ignore_ascii_case(MARKER)) {
         return Err(format!("{} is not the editor's launch pack: left in place", path.display()));
     }
@@ -485,9 +498,12 @@ pub fn start(game_dir: &Path, exe: &str, command_line: &str) -> Result<Child, St
     }
 }
 
-/// A launched game: waited for, then its launch pack and staging folder removed.
+/// A launched game: waited for, then its launch pack and staging folder removed (the game's own, whatever game the editor is on then).
 pub struct Running {
     pub child: Child,
+
+    /// The game's rpfm key and data folder.
+    pub game: &'static str,
     pub data: PathBuf,
     pub staging: PathBuf,
 }
@@ -506,7 +522,7 @@ impl Running {
 
     /// Removes the launch pack and the staging folder: what was done.
     pub fn clean_up(&self) -> String {
-        let pack = match remove_launch_pack(&self.data) {
+        let pack = match remove_launch_pack(&self.data, self.game) {
             Ok(Some(m)) => m,
             Ok(None) => "no launch pack to remove".to_owned(),
             Err(e) => e,
@@ -531,10 +547,15 @@ mod tests {
         BattleWeather::from_tile(&w)
     }
 
+    fn attila_army() -> LaunchArmy {
+        LaunchArmy::default().resolved(&wce_vfs::GameProfile::ATTILA.launch)
+    }
+
     #[test]
     fn tile_battle_as_tested() {
-        let s = LaunchSettings::default();
-        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), settings: &s });
+        let s = attila_army();
+        let facts = wce_vfs::GameProfile::ATTILA.launch;
+        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), army: &s, facts: &facts });
         assert!(x.contains("<name>terrain/tiles/battle/plains/8x8/8x8_aa</name>"));
         assert!(!x.contains("tile_map_position"));
         assert!(x.contains("<type>land_normal</type>"));
@@ -545,14 +566,27 @@ mod tests {
         assert!(x.contains("<precipitation_type>dry</precipitation_type>"), "a filter of several values is 'any'");
         assert!(x.contains("<Climate>\n\t\t<name>ROME_Atlantic</name>"));
         assert!(x.contains("<faction>att_fact_western_roman_empire</faction>") && x.contains("<unit_type type=\"att_nor_saxon_spears\"/>"));
+        assert!(x.contains("<deployment_area_alliance_index>1</deployment_area_alliance_index>") && x.contains("<battlefield_owner_alliance_index>"));
         assert_eq!(x.matches("<alliance id=").count(), 2);
     }
 
     #[test]
+    fn rome2_battle_has_its_keys_and_not_attilas_elements() {
+        let game = &wce_vfs::GameProfile::ROME_2;
+        let s = LaunchArmy { tile_upgrades: "level1".to_owned(), ..LaunchArmy::default() }.resolved(&game.launch);
+        let map = BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x: 0.5, y: 0.5, settlement: true };
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), army: &s, facts: &game.launch });
+        assert!(x.contains("<faction>rom_rome</faction>") && x.contains("<unit_type type=\"Rom_Hastati\"/>"));
+        assert!(x.contains("<faction>rom_suebi</faction>") && x.contains("<unit_type type=\"Ger_Spear_Levy\"/>"));
+        assert!(x.contains("<subculture>sc_rom_roman</subculture>") && x.contains("<name>terrain/battles/main_rome_map/</name>"));
+        assert!(!x.contains("deployment_area_alliance_index") && !x.contains("battlefield_owner_alliance_index") && !x.contains("tile_upgrade"));
+    }
+
+    #[test]
     fn settlement_position() {
-        let s = LaunchSettings { tile_upgrades: "level1 escalation3".to_owned(), ..LaunchSettings::default() };
+        let s = LaunchArmy { tile_upgrades: "level1 escalation3".to_owned(), ..attila_army() };
         let map = BattleMap::Position { map: "terrain/battles/main_attila_map/".to_owned(), x: 310.0 / 2032.0, y: 324.0 / 1437.0, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), settings: &s });
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch });
         assert!(x.contains("<tile_map_position x=\"0.152559\" y=\"0.225470\">/</tile_map_position>"));
         assert!(x.contains("<type>settlement_standard</type>") && x.contains("<capture_settlement>"));
         assert!(x.contains("<tile_upgrade>level1</tile_upgrade>\n\t\t<tile_upgrade>escalation3</tile_upgrade>"));
@@ -590,15 +624,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wce_launch_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let pack = dir.join(LAUNCH_PACK);
-        write_launch_pack(&pack, vec![("terrain/tiles/battle/x/y/z/tile.data".to_owned(), vec![1, 2, 3])], "<battle/>").unwrap();
+        write_launch_pack(&pack, "attila", vec![("terrain/tiles/battle/x/y/z/tile.data".to_owned(), vec![1, 2, 3])], "<battle/>").unwrap();
         assert_eq!(pack_type(&pack), Some(3));
         assert!(stray_movie_packs(&dir, &[]).is_empty());
-        assert!(remove_launch_pack(&dir).unwrap().is_some());
+        assert!(remove_launch_pack(&dir, "attila").unwrap().is_some());
         assert!(!pack.exists());
 
         // A pack of that name without the marker is left alone.
         wce_walls::pack::write_pack(&pack, "attila", vec![("a/b.txt".to_owned(), vec![0])], vec![]).unwrap();
-        assert!(remove_launch_pack(&dir).is_err());
+        assert!(remove_launch_pack(&dir, "attila").is_err());
         assert!(pack.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

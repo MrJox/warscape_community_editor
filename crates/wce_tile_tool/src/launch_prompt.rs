@@ -18,7 +18,7 @@ use wce_vfs::{GameProfile, Vfs};
 
 use crate::context_panel::GAME_MAP;
 use crate::launch::{self, Battle, BattleMap, BattleWeather, Delivery, LAUNCH_PACK, Running};
-use crate::settings::{LaunchDelivery, LaunchMap, LaunchSettings, SETTINGS_ID, TileSettings};
+use crate::settings::{LaunchArmy, LaunchDelivery, LaunchMap, LaunchSettings, SETTINGS_ID, TileSettings};
 use crate::tool::{ExportInputs, TileTool, document_id};
 
 /// The staging folder under the output folder: a subfolder per launch (`d…` for a dry run) with the exported tile, the loose files the
@@ -61,6 +61,10 @@ struct Plan {
     weather: BattleWeather,
     settings: LaunchSettings,
 
+    /// The game launched, and its armies (every key given).
+    game: &'static GameProfile,
+    army: LaunchArmy,
+
     /// The battle map when it is a position in a map; `None`: the tile alone (its folder is known after the export).
     position: Option<BattleMap>,
 
@@ -101,12 +105,12 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     let (exported, _) = plan.inputs.run(&plan.staging)?;
     let folder = wce_tile_io::attila::workflow::tile_folder(&exported.dir).ok_or_else(|| format!("{} is not under terrain/tiles/", exported.dir.display()))?;
     let mut files = match &exported.pack {
-        Some(p) => wce_walls::pack::read_pack_files(p, GameProfile::ATTILA.key)?,
+        Some(p) => wce_walls::pack::read_pack_files(p, plan.game.key)?,
         None => wce_walls::export::exported_pack_files(&plan.staging, &folder)?,
     };
 
     let map = plan.position.take().unwrap_or_else(|| BattleMap::Tile(folder.clone()));
-    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), settings: &plan.settings });
+    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), army: &plan.army, facts: &plan.game.launch });
     files.push((launch::BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
 
     // Loose files, with the mod packs their assets need; the pack when loose files would lose to one of them.
@@ -160,7 +164,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
             prefixes.push(plan.weather.environment.clone());
         }
 
-        let s = &plan.settings;
+        let s = &plan.army;
         let mut keys = buildings.clone();
         keys.extend([&s.defender_faction, &s.defender_unit, &s.attacker_faction, &s.attacker_unit].map(|k| k.trim().to_owned()));
         let needs = launch::needs(vfs, &files, &buildings, &prefixes, &KEY_TABLES, &keys);
@@ -217,7 +221,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
 
     let _a = activity::start(format!("Writing the launch pack ({} file(s))", files.len()));
     let pack = plan.staging.join(LAUNCH_PACK);
-    launch::write_launch_pack(&pack, files, &xml)?;
+    launch::write_launch_pack(&pack, plan.game.key, files, &xml)?;
     if let Some(target) = &plan.copy_to {
         let _a = activity::start("Copying the launch pack into the game's data folder");
         std::fs::copy(&pack, target).map_err(|err| format!("{}: {err}", target.display()))?;
@@ -229,6 +233,9 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
 /// A launch being prepared on a thread, and its window.
 pub(crate) struct LaunchJob {
     rx: Receiver<Msg>,
+
+    /// The game it launches (the editor may be on another one by the time it starts).
+    game: &'static GameProfile,
     tile: String,
     dry_run: bool,
     loose: bool,
@@ -311,7 +318,7 @@ impl TileTool {
             return Err("the cancelled launch is still finishing its work: try again in a moment".to_owned());
         }
 
-        let profile = GameProfile::ATTILA;
+        let profile = e.game();
         let game_dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
         let data = game_dir.join(profile.data_dir);
         let id = document_id(e).ok_or("no tile is open")?;
@@ -356,7 +363,7 @@ impl TileTool {
             }
 
             // A pack left by a launch the editor did not see end.
-            if let Some(m) = launch::remove_launch_pack(&data)? {
+            if let Some(m) = launch::remove_launch_pack(&data, profile.key)? {
                 log::info(format!("launch in game: {m} (left by an earlier launch)"));
             }
         }
@@ -367,21 +374,22 @@ impl TileTool {
         let staging = root.join(launch_folder_name(dry_run));
         std::fs::create_dir_all(&staging).map_err(|err| format!("{}: {err}", staging.display()))?;
 
-        let settings = e.tool_settings::<TileSettings>(SETTINGS_ID).launch;
-        let (position, note) = self.launch_position(&location, (info.cells_x, info.cells_y), settings.map);
+        let tile_settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
+        let (settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
+        let (position, note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
         let mods: Vec<String> = e.selected_mod_packs().into_iter().filter(|m| data.join(m).is_file()).collect();
         let before = STEPS.map(|(k, _)| settings.step_seconds.get(k).copied());
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
             inputs: self.export_inputs(e)?, staging: staging.clone(), cells: (info.cells_x, info.cells_y), weather: BattleWeather::from_tile(self.weather.choice()),
-            settings, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
+            settings, game: profile, army, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
         };
 
         activity::clear();
         let now = Instant::now();
         let first = if plan.inputs.game.is_none() { GAME } else { COMPILE };
         let mut job = LaunchJob {
-            rx: channel().1, tile: tile.clone(), dry_run, loose, game_dir, staging, note, started: now, step: first, step_started: now, took: [None; 5], before,
+            rx: channel().1, game: profile, tile: tile.clone(), dry_run, loose, game_dir, staging, note, started: now, step: first, step_started: now, took: [None; 5], before,
         };
 
         if !ask {
@@ -416,7 +424,7 @@ impl TileTool {
     /// The prepared launch: a dry run's report, else (the pack copied into `data\`) the game started.
     fn finish_launch(&mut self, job: &mut LaunchJob, prepared: Result<Prepared, String>) -> Result<String, String> {
         let prepared = prepared?;
-        let profile = GameProfile::ATTILA;
+        let profile = job.game;
         let command = launch::command_line(&prepared.delivery, &prepared.mods);
         log::info(format!("launch in game: {} {command}", profile.exe));
         let mut notes = prepared.notes.join("; ");
@@ -439,12 +447,12 @@ impl TileTool {
         let child = match launch::start(&job.game_dir, profile.exe, &command) {
             Ok(c) => c,
             Err(err) => {
-                let _ = launch::remove_launch_pack(&data);
+                let _ = launch::remove_launch_pack(&data, profile.key);
                 return Err(err);
             }
         };
 
-        self.launched = Some(Running { child, data, staging: job.staging.clone() });
+        self.launched = Some(Running { child, game: profile.key, data, staging: job.staging.clone() });
         Ok(format!(
             "launched {} into a battle on {} ({how}, {} mod pack(s)) in {:.0} s; its files are removed when the game exits",
             profile.exe,
@@ -456,7 +464,7 @@ impl TileTool {
 
     /// The battle's map when it is a position (`LaunchMap::MapContext`: the Map context's placement in the game's campaign map), `None` for
     /// the tile alone; with a note when the placement can't be used (the kit's maps are not in the game's packs).
-    fn launch_position(&self, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
+    fn launch_position(&self, game: &GameProfile, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
         if mode == LaunchMap::Tile {
             return (None, String::new());
         }
@@ -471,7 +479,7 @@ impl TileTool {
         let x = (f64::from(spot.x) + f64::from(w) / 2.0) / f64::from(map.width.max(1));
         let y = (f64::from(spot.y) + f64::from(h) / 2.0) / f64::from(map.height.max(1));
         let set = location.split('/').nth(3).unwrap_or_default();
-        (Some(BattleMap::Position { map: "terrain/battles/main_attila_map/".to_owned(), x, y, settlement: set.starts_with("settlement") }), String::new())
+        (Some(BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x, y, settlement: set.starts_with("settlement") }), String::new())
     }
 
     /// Each frame: once, what an editor closed while its game ran left (the launch pack, the launch folders) is removed when the game is
@@ -480,12 +488,13 @@ impl TileTool {
         if !self.launch_swept {
             self.launch_swept = true;
             if let Some(dir) = e.settings_ref().game_dir() {
-                let data = dir.join(GameProfile::ATTILA.data_dir);
+                let game = e.game();
+                let data = dir.join(game.data_dir);
                 let root = e.output_dir().join(STAGING);
                 let left = data.join(LAUNCH_PACK).is_file() || std::fs::read_dir(&root).is_ok_and(|mut d| d.next().is_some());
-                if left && launch::process_running(GameProfile::ATTILA.exe) != Some(true) {
+                if left && launch::process_running(game.exe) != Some(true) {
                     clear_staging(&root, false);
-                    match launch::remove_launch_pack(&data) {
+                    match launch::remove_launch_pack(&data, game.key) {
                         Ok(Some(m)) => log::info(format!("launch in game: {m} (left by an earlier launch)")),
                         Ok(None) => {}
                         Err(err) => log::warn(format!("launch in game: {err}")),

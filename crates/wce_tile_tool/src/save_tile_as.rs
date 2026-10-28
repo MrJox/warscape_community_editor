@@ -34,7 +34,7 @@ impl TileTool {
 
     /// Saves the open tile as `set/name/variation`; the status says how it went.
     pub(crate) fn save_tile_as(&mut self, e: &mut Editor, id: DocumentId, set: &str, name: &str, variation: &str) -> Result<String, String> {
-        let kit = self.kit_for(e, "battle").and_then(|raw| raw.parent().map(std::path::Path::to_path_buf));
+        let kit = self.battle_database_root(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile")?;
         let msg = d.save_tile_as(set, name, variation, kit.as_deref())?;
         self.status = msg.clone();
