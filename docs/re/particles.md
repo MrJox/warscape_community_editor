@@ -105,7 +105,14 @@ traced in the DLL, marked in the code):
 - CPU emission: rate from EmissionRateCurve (min/max lerp), SpawnAreaBox = centred box size, SpawnSpread = elevation,
   SpawnArc = azimuth, StartTime < 0 pre-warms with the spawn shader's 0.2 s sub-steps. Alive counts agree with the
   dumps (rain 3000/s * 1.4 s * 2 references = 8400 vs 8426 alive).
-- Curve texture: scale min row = scale * (1 - ParticleScaleVariation); colour start -> mid at lerp_time -> end; width 64.
+- Curve texture: colour start -> mid at lerp_time -> end (assumption); width 256 (the scale baker's).
+- Scale rows (verified 2026-10-28, baker fn 0x182c3c0 -> fn 0x182ba40, descriptor: UseSingleScale +0x14c, Start +0x154/+0x158, Mid +0x160/+0x164,
+  End +0x16c/+0x170, MidPointTime +0x178, Variation +0x180): with UseSingleScale, Mid and End are set to Start (x and y stay separate, no
+  copy of x into y), so the scale is constant over the life. Row 0 = curve * (1 - |Variation|), row 1 = curve * (1 + |Variation|), z and w 0;
+  each row is 256 entries (RGBA16F) at t = i / 256, start -> mid for t < MidPointTime, mid -> end from it on (not clamped); the VS blends the
+  rows by the particle's seed (v = 0.0625 + 0.125 * seed) and multiplies by the emitter instance's scale. Rome 2's CPU sim agrees
+  (`vfx_rome2/sim.rs`: size = v + (k v - v) * random, single scale = start only). Visible case: `snow_BTL_detail` (and the ash weathers, which
+  reuse `library_vfx_weather_snow`) has Start 0.05, Mid / End 1.0 with UseSingleScale: 0.05 for the whole life, not growing to 1.0.
 - Emitter instance tint = middle of the reference's tint range; camera-following emitters sit at the camera.
 - Wind: verified, see "Wind" below (src/render/wind.cpp).
 - Not supported yet: non-continuous_mesh emitters (lightning), soft-edge property name,
