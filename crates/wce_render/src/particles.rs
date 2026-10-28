@@ -476,7 +476,7 @@ fn rotate(m: &Float4x4, v: Float3) -> Float3 {
 }
 
 /// A world matrix's rotation without its scale, and the quaternion (x, y, z, w) of it.
-fn rotation_of(w: &Float4x4) -> (Float4x4, [f32; 4]) {
+pub(crate) fn rotation_of(w: &Float4x4) -> (Float4x4, [f32; 4]) {
     let mut r = Float4x4::IDENTITY;
     for c in 0..3 {
         let len = (w.m[0][c] * w.m[0][c] + w.m[1][c] * w.m[1][c] + w.m[2][c] * w.m[2][c]).sqrt().max(1e-12);

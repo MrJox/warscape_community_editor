@@ -593,8 +593,6 @@ pub struct Renderer {
     /// The game whose renderer this is.
     pub(crate) game: game::RenderGame,
 
-    /// That the game's effects can't be drawn was logged.
-    pub(crate) particles_unsupported_noted: bool,
     pub(crate) kinds: KindIndex,
     pub(crate) dev: ID3D11Device,
     pub(crate) ctx: ID3D11DeviceContext,
@@ -635,6 +633,9 @@ pub struct Renderer {
     pub(crate) snow_region: Option<f32>,
     pub(crate) snow_bound: f32,
     pub(crate) particles: ParticleSystem,
+
+    /// Rome 2's effects (its own particle system and per-effect shaders).
+    pub(crate) vfx_rome2: crate::vfx_rome2::Rome2Vfx,
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
     pub(crate) vfx_scene: (usize, u64, u32, u32, u32, u32),
@@ -716,6 +717,8 @@ impl Renderer {
         let particle_files = files.clone();
         let supported = game::RenderGame::of(files.as_ref()) != game::RenderGame::Rome2;
         let particles = ParticleSystem::new_for(dev, ctx, Box::new(move |path: &str| particle_files.read(path)), supported);
+        let vfx_files = files.clone();
+        let vfx_rome2 = crate::vfx_rome2::Rome2Vfx::new(dev, ctx, Box::new(move |path: &str| vfx_files.read(path)));
 
         let mut cbs = ConstantBuffers::default();
 
@@ -724,7 +727,6 @@ impl Renderer {
         cbs.set_f("rigid_faction_colours", "faction_colours", &[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]);
         Ok(Self {
             game: game::RenderGame::of(files.as_ref()),
-            particles_unsupported_noted: false,
             dev: dev.clone(),
             ctx: ctx.clone(),
             files,
@@ -757,6 +759,7 @@ impl Renderer {
             snow_region: None,
             snow_bound: 0.0,
             particles,
+            vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
@@ -998,7 +1001,7 @@ impl Renderer {
     }
 
     fn update_weather(&mut self, env: &EnvironmentParams, time_s: f32) {
-        // Rome 2's effects are not drawn (see the particle pass).
+        // Rome 2's weather particles are not drawn yet (TODO(rome2) in the particle pass); its wind still moves the effects.
         if self.game != game::RenderGame::Rome2 {
             self.particles.set_weather(&env.weather_definition, self.settings.vfx_revision);
         }
@@ -1209,20 +1212,20 @@ impl Renderer {
 
                 _ => None,
             }).collect::<Vec<_>>();
-            if self.game != game::RenderGame::Rome2 {
+            if self.game == game::RenderGame::Rome2 {
+                self.vfx_rome2.set_world_effects(&effects);
+            } else {
                 self.particles.set_world_effects(&effects);
             }
         }
 
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);
-        // TODO(rome2): Rome 2's effects are drawn by shaders generated per effect (`vfx_<effect>_generated.hlsl`), not by the GPU particle
-        // system: they are not drawn yet.
+        // Rome 2's effects: CPU particles drawn by the shaders the game generated per effect (vfx_rome2).
+        // TODO(rome2): its weather particles (the WEATHER definition's vfx) are not drawn yet.
         if self.game == game::RenderGame::Rome2 {
-            if !self.particles_unsupported_noted {
-                self.particles_unsupported_noted = true;
-                wce_foundation::log::warn("the effects (VFX) are not drawn: Rome 2's particle shaders are not supported yet");
-            }
+            wce_prof!("render.particles");
+            self.vfx_rome2.render(&frame, &mut self.lib, read, &mut self.cbs, self.wind.vfx_velocity);
         } else {
             wce_prof!("render.particles");
             self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);

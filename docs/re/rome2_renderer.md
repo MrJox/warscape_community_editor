@@ -119,22 +119,6 @@ the ribbon at its mesh height (+ 0.4, the shader's).
 
 ## Not drawn yet
 
-- The effects. The particle system is made disabled for Rome 2 (`ParticleSystem::new_for(.., false)`, warned once). What a port needs
-  (from `action_vfx_candle_flame_loop`, 2026-10-26):
-  - Rome 2 has no `particle_vfx_*` shaders (Attila's GPU simulation, sort, spawn and draw): its particles are simulated on the CPU and
-    drawn with a vertex and pixel shader generated per effect, `dx11_sm_3_0_vfx_<effect>_generated.hlsl` (`vs30_main`; `ps30_main`,
-    `_main_high_quality`, `_distortion`, `_overlay`, `_shadowmap`, the last four also under the `enable_shadows_*` prefixes): 105
-    effects of the packs' 324 `vfx/*.xml` have them. The XML is an older version of Attila's (UTF-16; `shader_library
-    fx/particle_vfx_library.hlsl`; other emitter properties: `Density`, `Mode`, `Face*`, `SpawnByMesh`, no `EmissionRateCurve` /
-    `SpawnAreaCurve`).
-  - The vertex shader's inputs, one particle each (instanced over a quad's corners): TEXCOORD0 the corner (0..1), POSITION0 (spawn
-    time, lifetime, the emitter's index in the effect, a packed value whose units digit is the texture: `s_diffuse1..4`), POSITION2
-    (position, the current time), POSITION5 (.zw the size), POSITION6 (the colour), TEXCOORD1 (passed on: a normal?); POSITION1, 3, 4
-    unread by this effect. A particle outside (0, lifetime) of age is dropped. The effect's curves (colour and alpha over life) and its
-    UV animation (atlas cells) are constants of the generated code, per emitter index; the orientation (camera facing, axis aligned)
-    too, from `camera_VS_PS.view`.
-  - The pixel shader: the emitter's texture times the colour (premultiplied), lit or not per emitter (`lighting_VS_PS` sun and ambient),
-    faded against `gbuffer_channel_4_sampler`'s depth (soft particles). `cb_vfx` (3280 bytes): the camera's axes, the viewport, and
-    `g_variables` (3200 bytes, unread here).
-  - Not known: the CPU simulation (emission from `Density`, the motion: gravity, deceleration, wind, turbulence) and how the emitters map
-    to the indices. To RE: Rome 2's executable's particle update and its vertex writer.
+- The effects' other views and classes. The billboards are simulated and drawn (docs/re/rome2_vfx.md, `vfx_rome2`) in the DeferredAlpha
+  view; the Distortion, SeaColourOverlay and shadow views, ribbons, spawn spacing and mesh spawning, particle events and the rigid
+  emitters (the effects' point lights) are not, nor Rome 2's weather particles.

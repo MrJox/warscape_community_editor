@@ -434,8 +434,9 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                     f.refs.push(VfxRef {
                         inst_name: text(v, "inst_name"),
                         library: text(v, "vfx_ref"),
-                        scale_min: n("scale_min", 1.0),
-                        scale_max: n("scale_max", 1.0),
+                        // Rome 2 writes one `scale`, and `tint_r`... without a range.
+                        scale_min: n("scale_min", n("scale", 1.0)),
+                        scale_max: n("scale_max", n("scale", 1.0)),
                         pos: [n("pos_x", 0.0), n("pos_y", 0.0), n("pos_z", 0.0)],
                         start_time: n("start_time", 0.0),
                         infinite_life: truthy(&doc.get(v, "infinite_life").unwrap_or_else(|| "true".to_owned())),
@@ -444,8 +445,8 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                             VfxRefEmitter {
                                 name: text(e, "name"),
                                 enable: truthy(&doc.get(e, "enable").unwrap_or_else(|| "true".to_owned())),
-                                tint_min: std::array::from_fn(|k| n(&format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]), 1.0)),
-                                tint_max: std::array::from_fn(|k| n(&format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]), 1.0)),
+                                tint_min: std::array::from_fn(|k| n(&format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
+                                tint_max: std::array::from_fn(|k| n(&format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
                                 particle_lifetime_bias: [n("particle_lifetime_bias_min", 0.0), n("particle_lifetime_bias_max", 0.0)],
                                 emitter_lifetime_bias: [n("emitter_lifetime_bias_min", 0.0), n("emitter_lifetime_bias_max", 0.0)],
                             }

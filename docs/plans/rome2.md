@@ -50,8 +50,10 @@ Status legend: **done**, **partial**, **todo**.
 - **done** The terrain (surface, blend, composite, resolve; shadows). Open: the variation textures (the index map is not read).
 - **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
 - **done** The sea (the forward ocean; no planar reflection).
-- **todo** The effects: Rome 2 simulates particles on the CPU and draws them with shaders generated per effect; the shaders' inputs are
-  known (docs/re/rome2_renderer.md, "Not drawn yet"), the simulation is not (to RE in the game's executable before porting).
+- **partial** The effects (docs/re/rome2_vfx.md): the billboard emitters (`continuous_mesh`, `burst_mesh`) are a port of the game's
+  CPU simulation (`vfx_rome2::sim`: its state machines, spawning, update and generator order) drawn with the shaders generated per
+  effect, sorted as the game sorts (its `std::sort`). Open: the Distortion, SeaColourOverlay and shadow views, ribbons, spawn spacing,
+  SpawnByMesh, particle events, the rigid emitters (point lights), the weather particles; a capture of the game to compare.
 - **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
   engine's `g_hide_foliage`.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
