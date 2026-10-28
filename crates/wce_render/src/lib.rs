@@ -10,6 +10,7 @@ pub mod gpu_timer;
 pub mod image_io;
 pub mod model_cache;
 pub mod particles;
+pub mod vfx_rome2;
 pub mod render_target;
 pub mod sea_surface;
 pub mod renderer;
