@@ -433,6 +433,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 ui.shown = true;
+                ui.adopt_climate(e, id);
+                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
                 let Some(rq) = ui.request(d) else { return fail("no request (no map or no kit)") };
                 let s = wce_tile_editor::tile_document::context::Streamer::new(rq, files);
                 ui.build += 1;

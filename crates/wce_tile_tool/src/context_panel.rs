@@ -223,6 +223,28 @@ impl ContextUi {
         }
     }
 
+    /// The climate of the chosen placement in the map (the region's: what the game draws the tile with); none for a cell entered by hand.
+    pub fn spot_climate(&self) -> Option<String> {
+        let (_, map, _) = self.loaded.as_ref()?;
+        let &i = self.placements.get(self.choice)?;
+        map.climate_of(&map.placements[i]).map(str::to_owned)
+    }
+
+    /// The open tile takes its placement's climate (when the tile's climates have it): the ground and the context's plain tiles then
+    /// match the map's region instead of the editor's default.
+    pub fn adopt_climate(&self, e: &mut Editor, id: DocumentId) {
+        let Some(climate) = self.spot_climate() else { return };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        let mut look = d.tile().terrain_look().clone();
+        if look.climate == climate || d.tile().climates().find(&climate).is_none() {
+            return;
+        }
+
+        look.climate = climate.clone();
+        d.tile_mut().set_terrain_look(&mut e.scene, look);
+        log::info(format!("map context: the tile's ground is its placement's climate, {climate}"));
+    }
+
     /// The `raw_data` the context reads (the tile database, the kit's battle maps, the neighbours' folders): the neighbours' tree when
     /// there is one, else the open tile's kit.
     pub fn raw_of(&self, d: &TileDocument) -> Option<PathBuf> {
@@ -568,6 +590,7 @@ impl ContextUi {
             return;
         }
 
+        self.adopt_climate(e, id);
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         if let Some(rq) = self.request(d) {
             self.start_build(rq, e.files());
