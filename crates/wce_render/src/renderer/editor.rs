@@ -83,6 +83,52 @@ const FRAME_CB: usize = 80;
 /// The size of an overlay vertex.
 const OVERLAY_VERTEX: usize = 16;
 
+/// Overlay vertices in the four batches (triangles / lines with the depth test, then without) in one vertex buffer.
+#[derive(Default)]
+struct OverlayBuffer {
+    vb: Option<ID3D11Buffer>,
+    capacity: usize,
+    first: [u32; 4],
+    count: [u32; 4],
+}
+
+impl OverlayBuffer {
+    fn upload(&mut self, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, batches: &[Vec<OverlayVertex>; 4]) {
+        let total = batches.iter().map(Vec::len).sum::<usize>();
+        self.count = [0; 4];
+        if total == 0 {
+            return;
+        }
+
+        if self.capacity < total {
+            self.capacity = (total + total / 4).max(4096);
+            self.vb = dynamic_buffer(dev, self.capacity * OVERLAY_VERTEX, D3D11_BIND_VERTEX_BUFFER);
+        }
+
+        let mut bytes = Vec::with_capacity(total * OVERLAY_VERTEX);
+        let mut first = [0; 4];
+        for b in 0..4 {
+            first[b] = (bytes.len() / OVERLAY_VERTEX) as u32;
+            bytes.extend(overlay_bytes(&batches[b]));
+        }
+
+        if self.vb.as_ref().is_some_and(|vb| write_dynamic(ctx, vb, &bytes)) {
+            self.first = first;
+            self.count = batches.each_ref().map(|v| v.len() as u32);
+        }
+    }
+}
+
+/// Adds an overlay entity's vertices, in world space, to its batches.
+fn push_overlay(batches: &mut [Vec<OverlayVertex>; 4], e: &wce_scene::render_scene::Entity, o: &Overlay) {
+    let (tris, lines) = if o.depth_test { (0, 1) } else { (2, 3) };
+    batches[lines].extend(o.lines.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+    batches[tris].extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+}
+
+/// The most vertices of the overlays kept apart from the cache because they keep changing (`EditorGpu::ovl_volatile`).
+const VOLATILE_OVERLAY_MAX: usize = 1 << 17;
+
 /// A surface under a pixel (`Renderer::pick_surface`): its world point, its normal, and the entity it belongs to (0: none known).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceHit {
@@ -201,15 +247,25 @@ pub(crate) struct EditorGpu {
     ovl_il: Option<ID3D11InputLayout>,
     pick_il: Option<ID3D11InputLayout>,
     ovl_cb: Option<ID3D11Buffer>,
-    ovl_vb: Option<ID3D11Buffer>,
     pick_cb: Option<ID3D11Buffer>,
-    ovl_vb_capacity: usize,
 
-    /// The scene's overlays transformed to world space, per batch (triangles / lines with the depth test, then without): rebuilt only when the
-    /// scene changed.
-    ovl_cache: [Vec<OverlayVertex>; 4],
+    /// The scene and its overlay revision the overlay cache (`ovl_gpu_cache`) is of.
     ovl_cache_scene: usize,
     ovl_cache_rev: u64,
+
+    /// The scene's structure revision the cache was built at, and the position in its log of changed overlays.
+    ovl_cache_structure: u64,
+    ovl_log_cursor: u64,
+
+    /// The small overlays that changed since the scene's last structural change (the highlight with the brush ring under the mouse): left
+    /// out of the cache and kept apart, so that they don't make the cache (a big tile's polygon cover) be built again.
+    ovl_volatile: std::collections::BTreeSet<EntityId>,
+
+    /// On the GPU, each written only when it changes (the cache is millions of vertices on a big tile): the cache, the small overlays that
+    /// keep changing, and the frame's extras (the grid, the selected lights' reach).
+    ovl_gpu_cache: OverlayBuffer,
+    ovl_gpu_volatile: OverlayBuffer,
+    ovl_gpu_frame: OverlayBuffer,
     ovl_blend: Option<ID3D11BlendState>,
     ovl_ds_test: Option<ID3D11DepthStencilState>,
     ovl_ds_off: Option<ID3D11DepthStencilState>,
@@ -359,31 +415,64 @@ impl Renderer {
             return;
         }
 
-        // Four batches: lines / triangles, with and without the depth test. The scene's overlays are cached between frames; the grid and the
-        // selected lights' reach are added per frame.
+        // Four batches: lines / triangles, with and without the depth test. The scene's overlays are cached between frames, the small ones
+        // that keep changing apart; the grid and the selected lights' reach are made per frame. A structural change puts them all back in
+        // the cache.
         let scene_id = scene as *const RenderScene as usize;
-        if self.editor.ovl_cache_scene != scene_id || self.editor.ovl_cache_rev != scene.revision() {
-            wce_prof!("render.overlay_rebuild");
-            self.editor.ovl_cache_scene = scene_id;
-            self.editor.ovl_cache_rev = scene.revision();
-            for v in &mut self.editor.ovl_cache {
-                v.clear();
-            }
+        let changed = scene.overlays_changed_since(&mut self.editor.ovl_log_cursor);
+        let structural = self.editor.ovl_cache_scene != scene_id || self.editor.ovl_cache_structure != scene.structure_revision() || changed.is_none();
+        let (mut rebuild, mut volatile_changed) = (structural, structural && !self.editor.ovl_volatile.is_empty());
+        if structural {
+            self.editor.ovl_volatile.clear();
+        } else if self.editor.ovl_cache_rev != scene.overlay_revision() {
+            let size = |id: EntityId| scene.find(id).map_or(0, |e| match &e.payload {
+                Payload::Overlay(o) => o.lines.len() + o.triangles.len(),
+                _ => 0,
+            });
 
-            for e in scene.entities() {
-                let Payload::Overlay(o) = &e.payload else { continue };
-                if !scene.drawable(e) || o.selection_mask {
-                    continue;
+            let mut kept_apart = self.editor.ovl_volatile.iter().map(|&id| size(id)).sum::<usize>();
+            for id in changed.unwrap_or_default() {
+                if self.editor.ovl_volatile.contains(&id) {
+                    volatile_changed = true;
+                } else if kept_apart + size(id) <= VOLATILE_OVERLAY_MAX {
+                    kept_apart += size(id);
+                    self.editor.ovl_volatile.insert(id);
+                    (rebuild, volatile_changed) = (true, true);
+                } else {
+                    rebuild = true;
                 }
-
-                // Triangles 0 / 2 and lines 1 / 3, with and without the depth test.
-                let (tris, lines) = if o.depth_test { (0, 1) } else { (2, 3) };
-                self.editor.ovl_cache[lines].extend(o.lines.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
-                self.editor.ovl_cache[tris].extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
             }
         }
 
-        // This frame's extras.
+        self.editor.ovl_cache_rev = scene.overlay_revision();
+        if rebuild {
+            wce_prof!("render.overlay_rebuild");
+            self.editor.ovl_cache_scene = scene_id;
+            self.editor.ovl_cache_structure = scene.structure_revision();
+            let mut batches: [Vec<OverlayVertex>; 4] = Default::default();
+            for e in scene.entities() {
+                let Payload::Overlay(o) = &e.payload else { continue };
+                if scene.drawable(e) && !o.selection_mask && !self.editor.ovl_volatile.contains(&e.id) {
+                    push_overlay(&mut batches, e, o);
+                }
+            }
+
+            self.editor.ovl_gpu_cache.upload(&self.dev, &self.ctx, &batches);
+        }
+
+        if volatile_changed {
+            let mut batches: [Vec<OverlayVertex>; 4] = Default::default();
+            for &id in &self.editor.ovl_volatile {
+                let Some(e) = scene.find(id).filter(|e| scene.drawable(e)) else { continue };
+                let Payload::Overlay(o) = &e.payload else { continue };
+                if !o.selection_mask {
+                    push_overlay(&mut batches, e, o);
+                }
+            }
+
+            self.editor.ovl_gpu_volatile.upload(&self.dev, &self.ctx, &batches);
+        }
+
         let (mut lines_d, mut lines_n) = (vec![], vec![]);
         if self.settings.show_grid {
             let n = (self.settings.grid_half_extent / self.settings.grid_step) as i32;
@@ -435,51 +524,38 @@ impl Renderer {
             lines_n.extend(sel.lines);
         }
 
-        let extra: [&[OverlayVertex]; 4] = [&[], &lines_d, &[], &lines_n];
-        let total = (0..4).map(|b| self.editor.ovl_cache[b].len() + extra[b].len()).sum::<usize>();
-        if total == 0 {
-            return;
-        }
-
-        if self.editor.ovl_vb_capacity < total {
-            self.editor.ovl_vb_capacity = (total * 2).max(4096);
-            self.editor.ovl_vb = dynamic_buffer(&self.dev, self.editor.ovl_vb_capacity * OVERLAY_VERTEX, D3D11_BIND_VERTEX_BUFFER);
-        }
-
-        let (mut first, mut count) = ([0u32; 4], [0u32; 4]);
-        let mut bytes = Vec::with_capacity(total * OVERLAY_VERTEX);
-        for b in 0..4 {
-            first[b] = (bytes.len() / OVERLAY_VERTEX) as u32;
-            bytes.extend(overlay_bytes(&self.editor.ovl_cache[b]));
-            bytes.extend(overlay_bytes(extra[b]));
-            count[b] = (bytes.len() / OVERLAY_VERTEX) as u32 - first[b];
-        }
-
-        let (Some(vb), Some(cb)) = (self.editor.ovl_vb.clone(), self.editor.ovl_cb.clone()) else { return };
-        if !write_dynamic(&self.ctx, &vb, &bytes) {
-            return;
-        }
-
-        write_dynamic(&self.ctx, &cb, &frame_cb(&self.camera.main_view_proj));
+        let frame: [Vec<OverlayVertex>; 4] = [vec![], lines_d, vec![], lines_n];
+        self.editor.ovl_gpu_frame.upload(&self.dev, &self.ctx, &frame);
         let e = &self.editor;
+        let parts = [&e.ovl_gpu_cache, &e.ovl_gpu_volatile, &e.ovl_gpu_frame];
+        if parts.iter().all(|p| p.count.iter().all(|&n| n == 0)) {
+            return;
+        }
+
+        let Some(cb) = e.ovl_cb.clone() else { return };
+        write_dynamic(&self.ctx, &cb, &frame_cb(&self.camera.main_view_proj));
         let topology = [D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST];
         self.ctx.set_render_targets(&[target.rtv().cloned()], self.gbuffer.dsv.as_ref());
         self.ctx.set_viewports(&[viewport(0.0, 0.0, target.width() as f32, target.height() as f32)]);
         self.ctx.set_blend_state(e.ovl_blend.as_ref());
         self.ctx.set_rasterizer_state(e.ovl_rs.as_ref());
         self.ctx.set_input_layout(e.ovl_il.as_ref());
-        self.ctx.set_vertex_buffers(0, &[Some(vb)], &[OVERLAY_VERTEX as u32], &[0]);
         self.ctx.vs_set_shader(e.ovl_vs.as_ref());
         self.ctx.vs_set_constant_buffers(0, &[Some(cb)]);
         self.ctx.ps_set_shader(e.ovl_ps.as_ref());
-        for b in 0..4 {
-            if count[b] == 0 {
-                continue;
-            }
 
-            self.ctx.set_depth_stencil_state(if b < 2 { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
-            self.ctx.set_topology(topology[b]);
-            self.ctx.draw(count[b], first[b]);
+        // Per batch: the cache, the overlays that keep changing, the frame's extras.
+        for b in 0..4 {
+            for p in parts {
+                if p.count[b] == 0 {
+                    continue;
+                }
+
+                self.ctx.set_vertex_buffers(0, &[p.vb.clone()], &[OVERLAY_VERTEX as u32], &[0]);
+                self.ctx.set_depth_stencil_state(if b < 2 { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
+                self.ctx.set_topology(topology[b]);
+                self.ctx.draw(p.count[b], p.first[b]);
+            }
         }
 
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
