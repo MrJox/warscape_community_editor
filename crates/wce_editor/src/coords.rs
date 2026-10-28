@@ -85,6 +85,12 @@ impl GroundProbe {
             .fold(None, |m: Option<f32>, h| Some(m.map_or(h, |m| m.max(h))))
     }
 
+    /// The highest ground of the terrains at a point (metres).
+    pub fn ground_at(&mut self, scene: &RenderScene, x: f32, z: f32) -> Option<f32> {
+        self.refresh(scene);
+        self.ground(scene, x, z)
+    }
+
     /// Where a ray meets the ground first (out to `far`): steps that grow with the distance, then halvings of the step that crossed.
     pub fn hit(&mut self, scene: &RenderScene, eye: Float3, dir: Float3, far: f32) -> Option<Float3> {
         self.refresh(scene);

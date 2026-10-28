@@ -6,7 +6,7 @@
 //! pass then colours the pixels outside the mask within `selection_outline_px` of it: solid where a visible part is near, faint where only
 //! hidden parts are.
 
-use wce_foundation::math::{Float3, Float4x4, look_at_lh, perspective_lh};
+use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 use wce_scene::render_scene::{EntityId, Overlay, OverlayVertex, Payload, RenderScene, overlay_colour};
@@ -337,7 +337,7 @@ impl Renderer {
     }
 
     pub fn view_projection(cam: &Camera, w: u32, h: u32) -> Float4x4 {
-        perspective_lh(cam.fov_y, w as f32 / h as f32, cam.znear, cam.zfar) * look_at_lh(cam.eye, cam.target, Float3::new(0.0, 1.0, 0.0))
+        cam.view_projection(w as f32 / h as f32)
     }
 
     /// A world point to a pixel of a w x h view; `None` when the point is behind the camera.
@@ -818,7 +818,7 @@ impl Renderer {
             frustum: Frustum::from_view_projection(&vp_m),
             eye: params.camera.eye,
             lod_scale: self.settings.lod_scale,
-            min_ratio: if top { 0.0 } else { self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32 },
+            min_ratio: if top || params.camera.is_ortho() { 0.0 } else { self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32 },
             ..Default::default()
         };
 

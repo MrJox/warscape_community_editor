@@ -3,7 +3,6 @@
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons};
-use wce_editor_core::camera_controller::CameraController;
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::camera::Camera;
@@ -45,9 +44,9 @@ impl TileTool {
     /// Puts the camera on a saved view of the open tile, by its name; false when there is none.
     pub(crate) fn go_to_camera_view(&mut self, e: &mut Editor, name: &str) -> bool {
         let Some(v) = self.camera_views(e).and_then(|(_, views)| views.into_iter().find(|v| v.name == name)) else { return false };
-        e.viewport.use_orbit();
-        let cam = Camera { eye: Float3::new(v.eye[0], v.eye[1], v.eye[2]), target: Float3::new(v.target[0], v.target[1], v.target[2]), ..e.viewport.camera() };
-        e.viewport.orbit_mut().set_camera(&cam);
+        let cam = e.viewport.controller().handoff();
+        let cam = Camera { eye: Float3::new(v.eye[0], v.eye[1], v.eye[2]), target: Float3::new(v.target[0], v.target[1], v.target[2]), ..cam };
+        e.viewport.controller().set_camera(&cam);
         true
     }
 

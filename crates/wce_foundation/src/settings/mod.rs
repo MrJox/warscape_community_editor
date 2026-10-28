@@ -191,6 +191,39 @@ impl Default for Appearance {
     }
 }
 
+/// The viewport's camera.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraSettings {
+    /// The camera last used: `total_war`, `top_down` or `walk`.
+    pub mode: String,
+
+    /// 0 (off) .. 1.
+    pub smoothing: f32,
+
+    /// Moving the mouse to the viewport's edge moves the camera.
+    pub edge_scroll: bool,
+
+    /// The game's battle camera height limits.
+    pub game_limits: bool,
+
+    /// The eye stays `ground_clearance` metres above the terrain.
+    pub respect_ground: bool,
+    pub ground_clearance: f32,
+
+    /// The eye stays out of the models' bounding boxes.
+    pub respect_collisions: bool,
+}
+
+impl Default for CameraSettings {
+    fn default() -> Self {
+        Self {
+            mode: "total_war".to_owned(), smoothing: 0.5, edge_scroll: false, game_limits: false, respect_ground: true, ground_clearance: 1.0,
+            respect_collisions: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -212,6 +245,7 @@ pub struct Settings {
     pub output_dir: Option<PathBuf>,
 
     pub appearance: Appearance,
+    pub camera: CameraSettings,
     pub games: BTreeMap<String, GameSettings>,
 
     /// Each tool's own table, read and written with the tool's type (see [`Self::tool`]).
@@ -229,7 +263,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, appearance: Appearance::default(),
-            games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
+            camera: CameraSettings::default(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
         }
     }
 }

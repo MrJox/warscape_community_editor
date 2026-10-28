@@ -377,8 +377,7 @@ impl ContextUi {
             return Some(s.open_centre());
         }
 
-        let cam = e.viewport.camera();
-        let p = if e.viewport.is_fly() { cam.eye } else { cam.target };
+        let p = e.viewport.pivot();
         Some((f64::from(p.x), f64::from(p.z)))
     }
 

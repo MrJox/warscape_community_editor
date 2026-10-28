@@ -378,7 +378,6 @@ impl Renderer {
 
         let Some(src) = self.depth_range.staging[(self.depth_range.frame & 1) as usize].clone() else { return };
         let Some(ms) = map_read(&self.ctx, &src, 0, self.settings.deterministic) else { return };
-        let (zn, zf) = (cam.znear, cam.zfar);
         let (mut lo, mut hi) = (3.4e38f32, 0.0f32);
         for y in (0..self.gbuffer.h as usize).step_by(2) {
             let Some(row) = ms.row(y, self.gbuffer.w as usize * 4) else { break };
@@ -388,7 +387,7 @@ impl Renderer {
                     continue;
                 }
 
-                let z = zn * zf / (zf - d * (zf - zn));
+                let z = cam.linear_depth(d);
                 lo = lo.min(z);
                 hi = hi.max(z);
             }
@@ -406,7 +405,8 @@ impl Renderer {
         let res = self.shader(SSAO_PS);
         let bx = self.shader(SSAO_BLUR_X_PS);
         let by = self.shader(SSAO_BLUR_Y_PS);
-        let (Some(res), Some(bx), Some(by)) = (res, bx, by).into_iter_if(self.settings.ssao) else {
+        // Not for an orthographic view: the HBAO resolve rebuilds view positions with the perspective's focal length.
+        let (Some(res), Some(bx), Some(by)) = (res, bx, by).into_iter_if(self.settings.ssao && !cam.is_ortho()) else {
             if let Some(rtv) = &self.post.ao.rtv {
                 self.ctx.clear_render_target_view(rtv, [1.0; 4]);
             }
