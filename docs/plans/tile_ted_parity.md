@@ -213,8 +213,14 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   (a typed number is one). `TileEntry::set_links` writes the blocks as the kit writes them and splices them only when they change (all
   626 kit entries round-trip: `wce_formats --example tile_links_roundtrip`); saving merges them into the entry file next to the tile.
   `tile_database.bin` needs no rebuild: it is compiled from the entries at export. `link_edit`, `scripts/tile_links_edit.txt`.
-- Validator: road / coast end points on the target cells, border heights equal to the neighbours' for every neighbour the rules
-  would allow. Its results should match TEd's integrity errors where TEd reports any.
+- Validator: done (2026-10-28). The Problems section lists the links as the game would not use them or as the kit never makes them
+  (`wce_tile::link_checks`): a target outside the tile or off its edge, a target without a "must be" rule of its set on the cell just
+  outside it, a rule on the tile's own cell or not just past an edge, a set that is no tile set of the kit (it never matches), twice the
+  same, a cell that must be and must not be the same set; a click picks the link in Tile links. On the kit, 28 of 626 entries have one
+  (`--example link_check`). The rivers' ends were checked already (Phase 4c). Not checked, on purpose: road ends (the kit's road tiles
+  have their roads painted, 1 of 10 has a road spline) and border heights (the export blends every edge to a profile of the links, so
+  neighbours agree: `docs/re/battle_maps.md`, "Tile seams"). TEd has no link checks (its integrity errors are about scene instances).
+  `link_problems`.
 - Link overview: which tiles can follow this one on each edge.
 - Neighbour candidates preview: load a tile that satisfies a link and show it next to this one (the map context of the Tile panel
   shows neighbours from a map; this is from the links).

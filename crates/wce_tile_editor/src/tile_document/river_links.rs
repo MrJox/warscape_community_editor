@@ -115,6 +115,14 @@ impl TileDocument {
         out
     }
 
+    /// The problems of the tile's links themselves (`wce_tile::link_checks`), against the kit's tile sets.
+    pub fn link_problems(&self) -> Vec<wce_tile::link_checks::LinkProblem> {
+        let t = self.tile();
+        let Some(entry) = t.project.entry.as_ref() else { return vec![] };
+        let sets = t.tile_sets.get_or_init(|| entry.raw_root().map(|r| wce_tile::link_checks::kit_tile_sets(&r)).unwrap_or_default());
+        wce_tile::link_checks::link_problems(entry, sets)
+    }
+
     /// Snaps the river ends at the edge onto their target cells (`RiverEnd::snapped`; the handles move with the end, the height stays); ends
     /// at cells that are no target are left alone. One undo entry; returns how many ends moved.
     ///
