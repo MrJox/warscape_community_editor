@@ -26,7 +26,7 @@ impl TileTool {
     /// Inside the Tile database entry section.
     pub(crate) fn draw_tile_properties(&mut self, e: &mut Editor, id: DocumentId) {
         // The minimap's ground colour over the valid cells (baked by the minimap when it is not).
-        let ground = if self.cells_ground && e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.project().has_entry()) { self.minimap.colour_picture(e, id) } else { None };
+        let ground = if self.cells_ground > 0.0 && e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.project().has_entry()) { self.minimap.colour_picture(e, id) } else { None };
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         let Some(entry) = d.project().entry.as_ref() else {
             gui::text_disabled("no tile database entry: no properties");
@@ -81,9 +81,10 @@ impl TileTool {
         }
 
         gui::same_line();
-        gui::checkbox("ground colour##maskground", &mut self.cells_ground);
+        gui::set_next_item_width(120.0);
+        gui::slider_float("ground colour##maskground", &mut self.cells_ground, 0.0, 1.0, "%.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The ground's colour over the cells, faint (the Minimap's colour view: north up, as the cells).");
+            gui::set_tooltip("The ground's colour over the cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.");
         }
 
         let cells = if mask.len() == w * h { mask.bytes().map(|c| c == b'1').collect::<Vec<_>>() } else { vec![true; w * h] };
@@ -115,7 +116,7 @@ impl TileTool {
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
             let uv = |x: f64, z: f64| gui::v2(((x - x0) / pw) as f32, ((z - z0) / ph) as f32);
             let hi = gui::v2(origin.x + w as f32 * side - 1.0, origin.y + h as f32 * side - 1.0);
-            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, 217));
+            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, (self.cells_ground.clamp(0.0, 1.0) * 255.0).round() as u8));
         }
 
         gui::set_cursor_screen_pos(gui::v2(origin.x, origin.y + h as f32 * side + 4.0));
