@@ -1714,7 +1714,12 @@ impl TileTool {
     /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point (snap to vertices; not `skip`'s own),
     /// else to the grid (each axis, within the tolerance when there is one).
     pub(crate) fn snap_point(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>) -> Float3 {
-        if self.snap_vertices {
+        self.snap_axes(t, p, skip, true, true)
+    }
+
+    /// `snap_point` for a move along some axes only (a gizmo handle): the grid snaps the axes asked for, the points need both.
+    pub(crate) fn snap_axes(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>, snap_x: bool, snap_z: bool) -> Float3 {
+        if self.snap_vertices && snap_x && snap_z {
             let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
             let mut best = (reach * reach, None);
             let mut try_point = |q: Float3| {
@@ -1748,7 +1753,7 @@ impl TileTool {
                 if self.snap_tolerance > 0.0 && (s - v).abs() > self.snap_tolerance { v } else { s }
             };
 
-            return Float3::new(axis(p.x), p.y, axis(p.z));
+            return Float3::new(if snap_x { axis(p.x) } else { p.x }, p.y, if snap_z { axis(p.z) } else { p.z });
         }
 
         p
@@ -2879,7 +2884,7 @@ impl Tool for TileTool {
         self.context.clear(e);
         let old = std::mem::take(self);
         *self = Self {
-            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, angle_step: old.angle_step, left_dock: old.left_dock,
+            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, snap_tolerance: old.snap_tolerance, snap_vertices: old.snap_vertices, angle_step: old.angle_step, left_dock: old.left_dock,
             right_dock: old.right_dock, launched: old.launched, launch_job: old.launch_job, launch_worker: old.launch_worker,
             launch_progress_open: old.launch_progress_open, ..Self::default()
         };
@@ -3760,6 +3765,19 @@ impl Tool for TileTool {
             gui::separator();
             self.selection_items(e);
         }
+    }
+
+    fn snap_gizmo_move(&self, e: &Editor, item: wce_scene::render_scene::SourceRef, from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
+        let (Some(d), Some(elem)) = (document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)), wce_tile_editor::tile_document::elem_of(item.item)) else { return to };
+
+        // Only the axes the handle moved: the other stays where it is, off the grid or not.
+        let (snap_x, snap_z) = ((to[0] - from[0]).abs() > 1e-3, (to[2] - from[2]).abs() > 1e-3);
+        if !(snap_x || snap_z) || !d.tile().is_instance(elem) {
+            return to;
+        }
+
+        let p = self.snap_axes(d.tile(), Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
+        [p.x, to[1], p.z]
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {

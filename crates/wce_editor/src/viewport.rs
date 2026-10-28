@@ -595,6 +595,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
     let mut using_gizmo = false;
     let mut over_gizmo_handle = false;
+    let vp_gizmo = e.viewport.gizmo;
     if let Some((primary, world)) = gizmo_target {
         let vp = &e.viewport;
         let cam = vp.camera();
@@ -648,7 +649,17 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
                 e.viewport.gesture += 1;
             }
 
-            let delta = from_gizmo(&m) * inverse(&world);
+            // The tool's snapping (the Tile tool's grid and points) on a translate; the gizmo's own Snap is the step it already took.
+            let mut moved = from_gizmo(&m);
+            if vp_gizmo == GizmoMode::Translate {
+                let (from, to) = ([world.m[0][3], world.m[1][3], world.m[2][3]], [moved.m[0][3], moved.m[1][3], moved.m[2][3]]);
+                let snapped = e.with_active_tool(|t, e| t.snap_gizmo_move(e, primary, from, to)).unwrap_or(to);
+                moved.m[0][3] = snapped[0];
+                moved.m[1][3] = snapped[1];
+                moved.m[2][3] = snapped[2];
+            }
+
+            let delta = moved * inverse(&world);
             let items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc) {

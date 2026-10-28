@@ -39,4 +39,23 @@ frames 5
 tile_select 8
 assert_world_xz 50 52 0.3
 assert_world 50 5.5 51.87 0.2
+
+# The real mouse and the move gizmo: a click places a new building on the grid; a gizmo drag along x snaps x only (z stays off the grid).
+snap grid on size 6 tolerance 0
+start_making building barbarian_fort_straight
+frames 3
+tile_click_ground 51 52
+frames 3
+key Escape
+tile_select 9
+assert_world_xz 54 54 0.01
+tile_select 7
+focus
+cam 2.2 0.5 40 2
+gizmo translate
+frames 10
+gizmo_drag x 50
+frames 4
+assert_world_xz 48 50 0.01
+snap grid off
 quit

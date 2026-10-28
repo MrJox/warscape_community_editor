@@ -107,7 +107,7 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Snapping of the grab (G) and of the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
+            gui::set_tooltip("Snapping of the grab (G), of the move gizmo and of the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
         }
 
         if gui::begin_popup("tile_snap") {
