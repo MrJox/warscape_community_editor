@@ -82,7 +82,7 @@ fn main() {
             GpuLod { meshes: (0..count).map(|_| mesh(&mut rng, false)).collect(), distance }
         }).collect();
 
-        models.push(Arc::new(GpuModel { path: String::new(), meshes, distance, lods, bmin, bmax, decals: vec![] }));
+        models.push(Arc::new(GpuModel { path: String::new(), meshes, distance, lods, bmin, bmax, decals: vec![], top: None }));
     }
 
     let mut ds = DrawSet::default();
