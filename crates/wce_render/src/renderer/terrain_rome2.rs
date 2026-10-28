@@ -1,17 +1,19 @@
-//! Rome 2's terrain colour pipeline (docs/re/rome2_renderer.md, "Terrain"): its rigidterrain.hlsl has no texture arrays. The tiles' maps
-//! are accumulated first, then textured per texture group in screen space:
+//! Rome 2's terrain colour pipeline (docs/re/rome2_renderer.md, "Terrain"). The tiles' maps are accumulated first, then textured per
+//! texture group in screen space:
 //!
 //! 1. surface: vs30_geom + ps30_geom, the terrain grid displaced by the LF height texture (its uv through `lf_block_cb`): z / w into the
 //!    G-buffer's depth channel (+ hardware depth, stencil 2);
 //! 2. per material (a tile's maps and its four texture groups): its boxes through vs30_blend + ps30_blend, which accumulate the tile's blend
-//!    weights, index and normal times its alpha into three targets; then ps30_terrain_composite, full screen, textures the accumulated weights
-//!    with the material's four groups (one diffuse and one normal texture each: `s_diffuse_r` .. `s_normal_a`) and adds albedo, normal and
-//!    alpha into the terrain targets;
+//!    weights, index and normal times its alpha into three targets; then the composite, full screen, textures the accumulated weights and
+//!    adds albedo, normal and gloss into the terrain targets. The game's DX11 composite (ps50_terrain_composite) reads the material's 16
+//!    layers from texture arrays: per group, the accumulated index picks between its four variations (blending the two nearest), each group
+//!    repeats at its own scale and each layer has its own reflectivity / smoothness. ps30_terrain_composite, the fallback, has one texture
+//!    per group (`s_diffuse_r` ..: the first variation), one repeat and no gloss;
 //! 3. resolve: vs30_terrain_to_gbuffer + ps30_terrain_to_gbuffer_ss, full screen: the terrain targets (+ the climate's mid-distance detail
 //!    normal, the noise) become the G-buffer channels of the terrain pixels (stencil 2 -> 1).
 //!
-//! Open: the shaders never read the index map (ps30_blend writes it to a target the composite does not sample), so which of a group's four
-//! variations the game binds is not known; the first one is used.
+//! Open: `g_channel_swizzle` (2 .. 5 fixes a group to a variation; the game's source is not known: 0, the index map, here), the far
+//! composite (ps50_far_terrain_composite) and the terrain's virtual texture path.
 
 use wce_scene::render_scene::{Payload, Terrain};
 
@@ -26,6 +28,10 @@ const R2_BLEND_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_blend";
 const R2_BLEND_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_blend";
 const R2_COMPOSITE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_composite";
 const R2_COMPOSITE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_composite";
+
+/// The DX11 composite (texture arrays, the index map's variations, per-group repeats and per-layer gloss).
+const R2_COMPOSITE50_VS: &str = "dx11_sm_5_0_rigidterrain.hlsl_vs_vs30_terrain_composite";
+const R2_COMPOSITE50_PS: &str = "dx11_sm_5_0_rigidterrain.hlsl_ps_ps50_terrain_composite";
 const R2_RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const R2_RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
 
@@ -99,7 +105,20 @@ impl Renderer {
         // ---- 2. Per material: its boxes accumulated, then textured into the terrain targets.
         let Some(box_il) = self.layout(&blend_vs, "terrain_box_rome2", &box_layout()) else { return };
         let comp_el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
-        let Some(comp_il) = self.layout(&comp_vs, "terrain_composite_rome2", &comp_el) else { return };
+
+        // The DX11 composite when its shaders load, else the ps30 one.
+        let arrays = match (self.shader(R2_COMPOSITE50_VS), self.shader(R2_COMPOSITE50_PS)) {
+            (Some(vs), Some(ps)) => self.layout(&vs, "terrain_composite50_rome2", &comp_el).map(|il| (vs, ps, il)),
+            _ => None,
+        };
+
+        let (comp_vs, comp_ps, comp_il, arrays) = match arrays {
+            Some((vs, ps, il)) => (vs, ps, il, true),
+            None => {
+                let Some(il) = self.layout(&comp_vs, "terrain_composite_rome2", &comp_el) else { return };
+                (comp_vs, comp_ps, il, false)
+            }
+        };
 
         let (u, view_proj, o) = (self.camera.units, self.camera.main_view_proj, self.camera.origin);
         let mut by_material: Vec<(Arc<wce_scene::render_scene::TerrainMaterial>, Option<Arc<wce_scene::render_scene::LfMap>>, Vec<f32>)> = vec![];
@@ -127,6 +146,11 @@ impl Renderer {
         cbs.set_f("ps_height_map_cb", "g_far_tile_distance", &[1.0e9]);
         cbs.set_f("lf_block_cb", "g_lf_aabb", &[0.0, -1.0, 1.0, 1.0]);
         cbs.set_f("lf_block_cb", "g_normal_lf_aabb", &[0.0, 0.0, 1.0, 1.0]);
+
+        // The material's arrays are its own 16 layers: group c's four variations are layers 4c .. 4c + 3 (the game's arrays hold every
+        // group of the climate; the offsets point into them). Swizzle 0: every group's variation from the index map.
+        cbs.set_f("ps_height_map_cb", "g_channel_offsets", &[0.0, 4.0, 8.0, 12.0]);
+        cbs.set_f("ps_height_map_cb", "g_channel_swizzle", &[0.0; 4]);
         let Some(inst_vb) = self.terrain.inst_vb.clone() else { return };
         for (m, lf, boxes) in by_material {
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
@@ -143,6 +167,25 @@ impl Renderer {
             self.cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, world, world]);
             let scale = m.pixel_scale.iter().copied().filter(|s| *s > 0.0).sum::<f32>() / m.pixel_scale.iter().filter(|s| **s > 0.0).count().max(1) as f32;
             self.cbs.set_f("ps_height_map_cb", "g_blend_pixel_scale", &[super::tiling(scale, super::ORIGIN_REACH * u)]);
+            if arrays {
+                // ps_texture_array_cb: g_blend_pixel_scale_array[offset / 4].x is a group's repeat; g_light_params_array[layer] its
+                // (const reflectivity, lerp reflectivity, const smoothness, lerp smoothness) (fn 0x115bfb40's per-variation order). The
+                // material keeps Attila's pair: Rome 2's lerp_reflectivity and const_smoothness (docs/formats/rome2_tiles.md).
+                let mut scales = [0.0f32; 16];
+                for (c, s) in m.pixel_scale.iter().enumerate() {
+                    scales[c * 4] = super::tiling(*s, super::ORIGIN_REACH * u);
+                }
+
+                let mut light = [0.0f32; 64];
+                for layer in 0..16 {
+                    light[layer * 4 + 1] = m.reflectivity[layer];
+                    light[layer * 4 + 2] = m.smoothness[layer];
+                }
+
+                self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &scales);
+                self.cbs.set_f("ps_texture_array_cb", "g_light_params_array", &light);
+            }
+
             self.upload();
 
             let acc = self.terrain.acc.iter().map(|a| a.rtv.clone()).collect::<Vec<_>>();
@@ -181,8 +224,8 @@ impl Renderer {
                 s.textures.get(path, srgb).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
             };
 
-            let diffuse: [Option<ID3D11ShaderResourceView>; 4] = std::array::from_fn(|c| tex(self, &m.diffuse[4 * c], true));
-            let normals: [Option<ID3D11ShaderResourceView>; 4] = std::array::from_fn(|c| tex(self, &m.normal_tex[4 * c], false));
+            let diffuse: [Option<ID3D11ShaderResourceView>; 4] = if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.diffuse[4 * c], true)) };
+            let normals: [Option<ID3D11ShaderResourceView>; 4] = if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.normal_tex[4 * c], false)) };
             let comp = self.terrain.r2_comp.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
             ctx.set_render_targets(&comp, None);
             ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
@@ -193,17 +236,23 @@ impl Renderer {
             self.bind(&comp_ps);
             null_ps_srvs(&ctx, 16);
             ps_samplers(&ctx, &comp_ps, &self.states.s_wrap_aniso);
-            for n in ["s_depth_map", "s_blend_map", "s_normal_map"] {
+            for n in ["s_depth_map", "s_blend_map", "s_normal_map", "s_index_map"] {
                 bind_sampler(&ctx, &comp_ps, n, self.states.s_clamp_point.as_ref());
             }
 
             bind_srv(&ctx, &comp_ps, "s_depth_map", self.gbuffer.channels[3].srv.as_ref());
             bind_srv(&ctx, &comp_ps, "s_blend_map", self.terrain.acc[0].srv.as_ref());
+            bind_srv(&ctx, &comp_ps, "s_index_map", self.terrain.acc[1].srv.as_ref());
             bind_srv(&ctx, &comp_ps, "s_normal_map", self.terrain.acc[2].srv.as_ref());
-            let flat = g.lf_normal.srv.clone();
-            for (c, name) in ["r", "g", "b", "a"].iter().enumerate() {
-                bind_srv(&ctx, &comp_ps, &format!("s_diffuse_{name}"), diffuse[c].as_ref().or(self.res.white_srv.as_ref()));
-                bind_srv(&ctx, &comp_ps, &format!("s_normal_{name}"), normals[c].as_ref().or(flat.as_ref()));
+            if arrays {
+                bind_srv(&ctx, &comp_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
+                bind_srv(&ctx, &comp_ps, "t_normal_array", g.normals.srv.as_ref());
+            } else {
+                let flat = g.lf_normal.srv.clone();
+                for (c, name) in ["r", "g", "b", "a"].iter().enumerate() {
+                    bind_srv(&ctx, &comp_ps, &format!("s_diffuse_{name}"), diffuse[c].as_ref().or(self.res.white_srv.as_ref()));
+                    bind_srv(&ctx, &comp_ps, &format!("s_normal_{name}"), normals[c].as_ref().or(flat.as_ref()));
+                }
             }
 
             ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);

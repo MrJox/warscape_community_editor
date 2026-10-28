@@ -189,9 +189,14 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     let dir = raw.join(folder);
     let database = raw.join("terrain/tiles").join(kind_of(folder)).join("_tile_database");
     written.write_to(&dir, Some(&database.join("TILES"))).map_err(|e| e.to_string())?;
+    // A kit's settings are copied once; without a kit (Rome 2) they are made from the packs' database, so a stale copy (an older
+    // conversion) is made again.
     let settings = database.join("_settings.xml");
-    if !settings.is_file() {
-        std::fs::write(&settings, game.kit_settings(&kind_of(folder))?).map_err(|e| format!("{}: {e}", settings.display()))?;
+    if !settings.is_file() || game.kit_raw.is_none() {
+        let bytes = game.kit_settings(&kind_of(folder))?;
+        if std::fs::read(&settings).ok().as_deref() != Some(bytes.as_slice()) {
+            std::fs::write(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
+        }
     }
 
     // The editor resolves the tile through the workspace's index, which has a new entry now.

@@ -138,8 +138,15 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
     let groups = group_names(groups);
     let exists = |p: &str| files.exists(p);
     let (mut wanted, mut missing) = (0, 0);
+
+    // Rome 2's climates list only the textures that differ: the others repeat every RENDER_PARAMS blend_pixel_scale (fn 0x115bfb40).
+    let rome2 = files.game().is_some_and(|g| g.key == wce_vfs::GameProfile::ROME_2.key);
     for (g, group) in groups.iter().enumerate() {
         let ct = climate.and_then(|c| c.find(group)).or_else(|| def.and_then(|d| d.find(group)));
+        if rome2 && ct.is_none() {
+            m.pixel_scale[g] = climates.blend_pixel_scale.unwrap_or(9.0) as f32;
+        }
+
         if let Some(ct) = ct {
             m.pixel_scale[g] = (if ct.blend_pixel_scale > 0.5 { ct.blend_pixel_scale } else { 40.1 }) as f32;
             m.outfield_scale[g] = ct.outfield_blend_pixel_scale as f32;

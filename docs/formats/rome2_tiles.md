@@ -22,7 +22,10 @@ as rpfm's `TileDatabase`, which the decompiler and the editor read, and writes a
 - `_settings.xml`: `CONVERSION_PARAMS` (`triangle_decimation_*_factor<n>`, Attila's `*_factors<n>`), `RENDER_PARAMS` (fewer than
   Attila's), `TEXTURE_GROUPS` > `GROUP name='group14' red='sand' green='forest' blue='grass' alpha='mud'`, `CLIMATES` > `CLIMATE` >
   `TEXTURE` (no `TEXTURES` wrapper; `const_smoothness<n>` is Attila's `lerp_smoothness<n>`; only what differs from the defaults:
-  reflectivity 0.009, smoothness 0.1, repeat 40.1 m).
+  reflectivity 0.009, smoothness 0.1). A texture without `blend_pixel_scale`, and a group without a `TEXTURE`, repeat every
+  `RENDER_PARAMS blend_pixel_scale` (9 m in the battle database; fn 0x115bfb40), not Attila's 40.1: only `rock` lists its own (40.1).
+  Per variation the game keeps `const_reflectivity`, `lerp_reflectivity`, `const_smoothness`, `lerp_smoothness` (0 when missing), the
+  DX11 composite's `g_light_params_array` entry of the layer.
 - One file per tile set, or several sets in one file: `TILE_DATABASE` > `TILE_SET name red green blue [also_place_tile_set link_as_set
   linking_tile shared_geometry]` > `TILE location masked width height texture_group red_channel .. alpha_channel
   custom_alpha_blend_texture [encampable requires_infield_lodding random_rotatable red green blue]`, with `NEW_MASK data` (the

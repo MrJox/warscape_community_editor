@@ -47,7 +47,9 @@ Status legend: **done**, **partial**, **todo**.
 ## Phase 2: Rome 2's renderer — partial
 
 - **done** Shaders of Rome 2's containers (rpfm); tone mapping in log Y; the S-curve's single biases; the weather from folders.
-- **done** The terrain (surface, blend, composite, resolve; shadows). Open: the variation textures (the index map is not read).
+- **done** The terrain (surface, blend, composite, resolve; shadows). The composite is the game's DX11 one (2026-10-28): the index map's
+  variations, a repeat per group (RENDER_PARAMS' 9 m where the climate lists none, not 40.1), a gloss per layer. Open: the channel
+  swizzle's source, the far composite, the virtual texture path.
 - **todo** The light pass's new inputs (cloud shade, baked shadows, split depths): check against a frame of the game.
 - **done** The sea (the forward ocean; no planar reflection).
 - **partial** The effects (docs/re/rome2_vfx.md): the billboard emitters (`continuous_mesh`, `burst_mesh`) are a port of the game's
@@ -57,9 +59,9 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
   engine's `g_hide_foliage`.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
-- **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): with
-  the eastern desert's ground and weather the hill is still dark rock and grass where the game shows pale limestone (no climate or season
-  gives it: the layers' textures or the variation index map), our colours are more saturated, contrasted and purple than the game's flat
+- **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): the
+  ground's variations and repeats now follow the game (the hill shows rock's pale variation, at 40 m), but it is still browner than the
+  game's pale grey; our colours are more saturated, contrasted and purple than the game's flat
   hazy frame (tone mapping, grading or fog), and the trees' shadows are faint. The climate is a guess (`ROME_Continental` by default):
   take it from the map context's region.
 - **blocked** A RenderDoc capture of a battle (the light pass, tone map and fog inputs, the ground's textures): Rome 2 is 32-bit and

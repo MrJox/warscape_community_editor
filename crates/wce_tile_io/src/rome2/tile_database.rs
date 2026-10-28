@@ -114,7 +114,8 @@ impl Rome2TileDatabase {
         }
 
         if let Some(climates) = children(&doc, root, "CLIMATES").next() {
-            db.set_climates(children(&doc, climates, "CLIMATE").map(|c| climate(&doc, c)).collect());
+            let repeat = Some(*db.render_params().blend_pixel_scale()).filter(|r| *r > 0.0).unwrap_or(40.1);
+            db.set_climates(children(&doc, climates, "CLIMATE").map(|c| climate(&doc, c, repeat)).collect());
         }
 
         for (name, bytes) in &files {
@@ -259,9 +260,9 @@ fn conversion_params(doc: &XmlDoc, e: usize) -> ConversionParams {
 }
 
 /// A climate. Its textures list only what differs from the defaults (the defaults are the `default` climate's in every shipped file:
-/// reflectivity 0.009, smoothness 0.1; the repeat 40.1 m, Attila's reader's default too); Rome 2's `const_smoothness` is Attila's
-/// `lerp_smoothness`. Rome 2 has no outfield repeat: Attila's default (1200.1 m).
-fn climate(doc: &XmlDoc, e: usize) -> Climate {
+/// reflectivity 0.009, smoothness 0.1); a texture without a repeat has RENDER_PARAMS' (`repeat`: fn 0x115bfb40 reads it so); Rome 2's
+/// `const_smoothness` is Attila's `lerp_smoothness`. Rome 2 has no outfield repeat: Attila's default (1200.1 m).
+fn climate(doc: &XmlDoc, e: usize, repeat: f32) -> Climate {
     let mut c = Climate::default();
     c.set_serialise_version(3);
     c.set_name(string(doc, e, "name"));
@@ -283,7 +284,7 @@ fn climate(doc: &XmlDoc, e: usize) -> Climate {
             x.set_lerp_smoothness1(f32_or(doc, t, "const_smoothness1", 0.1));
             x.set_lerp_smoothness2(f32_or(doc, t, "const_smoothness2", 0.1));
             x.set_lerp_smoothness3(f32_or(doc, t, "const_smoothness3", 0.1));
-            x.set_blend_pixel_scale(f32_or(doc, t, "blend_pixel_scale", 40.099_998));
+            x.set_blend_pixel_scale(f32_or(doc, t, "blend_pixel_scale", repeat));
             x.set_outfield_blend_pixel_scale(1200.1);
             x
         })
@@ -564,6 +565,18 @@ mod tests {
     fn database() -> Rome2TileDatabase {
         let files = [(SETTINGS_FILE.to_owned(), SETTINGS.as_bytes().to_vec()), ("river_ford.xml".to_owned(), SET.as_bytes().to_vec())].into_iter().collect();
         Rome2TileDatabase::read(files).unwrap()
+    }
+
+    #[test]
+    fn a_texture_without_a_repeat_has_the_render_params_one() {
+        // fn 0x115bfb40: a TEXTURE's missing blend_pixel_scale is RENDER_PARAMS', not Attila's 40.1.
+        let settings = "<TILE_DATABASE>\r\n\t<RENDER_PARAMS lf_height='3000' blend_pixel_scale='9.000000' />\r\n\t<CLIMATES>\r\n\t\t<CLIMATE name='ROME_Atlantic' texture_set='grass' >\r\n\
+            \t\t<TEXTURE name='mud' const_smoothness0='0.200000' />\r\n\t\t<TEXTURE name='rock' blend_pixel_scale='40.099998' />\r\n\t\t</CLIMATE>\r\n\t</CLIMATES>\r\n</TILE_DATABASE>\r\n";
+        let files = [(SETTINGS_FILE.to_owned(), settings.as_bytes().to_vec())].into_iter().collect();
+        let db = Rome2TileDatabase::read(files).unwrap();
+        let t = db.database.climates()[0].textures();
+        assert_eq!((*t[0].blend_pixel_scale(), *t[0].lerp_smoothness0()), (9.0, 0.2));
+        assert_eq!(*t[1].blend_pixel_scale(), 40.099_998);
     }
 
     #[test]
