@@ -264,7 +264,9 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   edges' street and a street edge's two boundaries, a deployment zone's polygons. Listed in the Problems section with the instance's type
   and name; a click selects and frames it (`Tile::integrity_errors`; `integrity_errors`, `scripts/tile_integrity.txt`). "Building overlaps
   with another" has a message in TEd but nothing calls it. Five kit tiles come out clean.
-- Stats view (counts, memory budget).
+- Stats view: done (2026-10-28). TEd's `stats_view` is only a module name in its scripts (no stats view in its executable) and the
+  game's per-tile budgets are not known, so the Tile panel's Stats shows numbers, no limits: instances by type, building keys and those
+  without a model, the files on disk, what the last frame drew (`tile_stats.rs`). **Phase 6b is done.**
 
 ## Ideas for later (user, 2026-10-27)
 - Polygons painted with a brush instead of drawn point by point (exclusion polygons, and the no-go areas, which are to be handled as

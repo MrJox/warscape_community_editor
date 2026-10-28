@@ -1881,6 +1881,7 @@ impl TileTool {
         }
 
         self.draw_entry_section(e, id);
+        self.draw_stats_section(e, id);
         self.context.draw(e, id);
         gui::separator();
         self.draw_placement_section(e, id);
