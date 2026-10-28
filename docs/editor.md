@@ -196,7 +196,7 @@ of each (Steam folder, preferences file, rpfm schema, campaign battle map, defau
 kit has the tiles). `game` in the settings names the current one (`Editor::game`). The toolbar's game combo (its first item), **File > Game** and the Settings window's Game page
 switch it live (`Editor::switch_game`; command `game [key]`): the documents close (the unsaved-changes prompt asks first), each tool drops what was the old
 game's (`Tool::game_changed`), and the game's packs and the renderer are made again; a game not set up yet opens the first-run dialog,
-which has the same choice of game. Each game keeps its own `[games.<id>]` table and projects folder.
+which has the same choice of game and **Back to <the game before>** (mounted again as it was) to back out. Each game keeps its own `[games.<id>]` table and projects folder.
 
 ### Appearance
 
@@ -209,7 +209,8 @@ its own colours. Appearance > "Dear ImGui's style editor" edits the live style, 
 
 When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it picks the game, fills in the Steam
 library's folder of it (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts
-and starts the active tool.
+and starts the active tool; **Quit** leaves the editor. Its mod pack list (also File > Mod packs and the Settings window's Game page) has a search
+field, and drops the chosen packs that are no longer in the game's data folder (named above the list; saving the settings removes them).
 
 `frame_cap` (View > Frame rate cap, command `frame_cap`, environment `WCE_FRAME_CAP`; default 60, 0 = none) holds an interactive session to that many frames per
 second: rendering the scene as fast as a fast laptop display refreshes kept the GPU at 100 % until it throttled itself (to 180 MHz of 3090 on the RTX 5070 Ti

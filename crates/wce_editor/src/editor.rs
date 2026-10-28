@@ -151,6 +151,13 @@ pub struct Editor {
     first_run_game: String,
     first_run_message: String,
     mod_checks: Vec<(bool, String)>,
+
+    /// The check list's name filter, and the chosen packs it left out because they are no longer in the data folder.
+    mod_filter: String,
+    mod_removed: Vec<String>,
+
+    /// The game that was mounted before a switch to one that is not set up: the first-run dialog offers to go back to it.
+    game_before: Option<&'static GameProfile>,
     mod_checks_for: String,
     mods_popup: bool,
 
@@ -207,7 +214,7 @@ impl Editor {
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), mod_checks: vec![], mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
+            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], game_before: None, mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
@@ -437,6 +444,11 @@ impl Editor {
     /// Makes `game` the current one (its documents closed already): the tools drop what was the old game's, then the game's files are
     /// mounted and the tools activated.
     fn enter_game(&mut self, game: &'static GameProfile) {
+        // Kept until a game mounts: a switch to a game that is not set up can go back.
+        if self.is_mounted() && game.key != self.game().key {
+            self.game_before = Some(self.game());
+        }
+
         self.settings.game = game.key.to_owned();
         self.save_settings();
         self.mod_checks_reset();
@@ -448,6 +460,7 @@ impl Editor {
         self.first_run_game.clear();
         self.first_run_message.clear();
         if self.start() {
+            self.game_before = None;
             self.activate_all_tools();
             self.status(&format!("{}: {}", game.display_name, self.status_text().to_owned()), false);
         }
@@ -620,10 +633,20 @@ impl Editor {
         let key = format!("{}|{game}", profile.key);
         if self.mod_checks_for != key {
             self.mod_checks_for = key;
+            self.mod_filter.clear();
+            self.mod_removed.clear();
             let mut names = profile.available_mod_packs(Path::new(game));
+
+            // A chosen pack that is no longer in the data folder leaves the list (and the settings, when they are saved); with no data
+            // folder there (a wrong game folder) the choice is kept as it is.
+            let data_found = Path::new(game).join(profile.data_dir).is_dir();
             for c in chosen {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(c)) {
-                    names.push(c.clone());
+                    if data_found {
+                        self.mod_removed.push(c.clone());
+                    } else {
+                        names.push(c.clone());
+                    }
                 }
             }
 
@@ -631,18 +654,32 @@ impl Editor {
         }
 
         gui::set_cursor_pos_x(x);
+        if !self.mod_removed.is_empty() {
+            gui::push_text_wrap_pos(x + 560.0);
+            gui::text_disabled(&format!("No longer in the data folder, removed: {}", self.mod_removed.join(", ")));
+            gui::pop_text_wrap_pos();
+            gui::set_cursor_pos_x(x);
+        }
+
         if self.mod_checks.is_empty() {
             gui::text_disabled("No mod packs found in the game's data folder.");
             return;
         }
 
+        gui::set_next_item_width(560.0);
+        gui::input_text("##modfilter", Some("Search packs"), &mut self.mod_filter, 256, 0);
+        let filter = self.mod_filter.to_lowercase();
+        let ticked = self.mod_checks.iter().filter(|(on, _)| *on).count();
+        gui::set_cursor_pos_x(x);
         if gui::begin_child("##modlist", gui::v2(560.0, 180.0), 1, 0) {
-            for (on, name) in self.mod_checks.iter_mut() {
+            for (on, name) in self.mod_checks.iter_mut().filter(|(_, n)| filter.is_empty() || n.to_lowercase().contains(&filter)) {
                 gui::checkbox(name, on);
             }
         }
 
         gui::end_child();
+        gui::set_cursor_pos_x(x);
+        gui::text_disabled(&format!("{ticked} of {} ticked", self.mod_checks.len()));
     }
 
     fn checked_mod_packs(&self) -> Vec<String> {
@@ -1919,6 +1956,23 @@ impl Editor {
         }
 
         gui::end_disabled();
+
+        // Backing out: the game that was open before the switch, or leaving the editor.
+        if let Some(before) = self.game_before.filter(|b| b.key != self.game().key) {
+            gui::same_line();
+            if gui::button(&format!("Back to {}", before.display_name)) {
+                gui::close_current_popup();
+                self.mod_checks_reset();
+                self.enter_game(before);
+            }
+        }
+
+        gui::same_line();
+        if gui::button("Quit") {
+            gui::close_current_popup();
+            self.request_quit(0);
+        }
+
         gui::end_popup();
     }
 
