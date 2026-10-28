@@ -22,7 +22,7 @@ const TEST_TIP: &str = "Must be: a tile can only be put here if the neighbour's 
 const ENTRY_TIP: &str = "For rivers: the game takes the flow of a river tile from the is_entry of its river link on the side it was reached from (the river's flip).";
 const BLEND_TIP: &str = "How many pixels of the neighbour's terrain are blended into this tile at that edge (the kit uses 64 mostly, 16, 24, 128).";
 const OFFLINE_TIP: &str = "Turns off the export's pre-blend at that edge (from the name; not tested).";
-const BASE_TIP: &str = "The cell of this tile the rule belongs to (the kit mostly has 1, 0; what the game does with it is not known).";
+const BASE_TIP: &str = "Only the export's edge blend reads it: an offset in the link set's linking tile (a 1 x 1 tile, turned as it may be) from the link's cell to the cell of this tile where that tile's terrain is blended in. (1, 0): one cell over, the kit's usual; (0, 0): the link's cell. A reading of the code, not checked in game.";
 
 impl TileTool {
     /// The link set names offered (the kit's tile sets, read once per kit), with `current` in them.

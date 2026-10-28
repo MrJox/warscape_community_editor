@@ -228,7 +228,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   (`--example link_candidates_check`). A click shows one next to the tile through the map context (user: the neighbours were wired there
   already): a map of the two, on a flat LF 100 m up (`ContextUi::show_map`). The map context shows what one battle map placed around
   the tile; this shows what the links allow, map or not. `link_candidates`, `scripts/tile_link_candidates.txt`.
-- Open semantics: `base_x / base_y` (osgiliath's rules have base (1, 0)), `is_entry`.
+- Open semantics: done as far as the code goes (2026-10-28, `docs/re/tile_links.md`). `is_entry` is the river's flow (the fill's
+  `calculate_flow`); `base_x / base_y` only the export's edge blend reads: an offset, in the link set's (1 x 1) linking tile turned as it
+  may be, from the link's cell to the cell of the tile where that linking tile's terrain is blended in. Not checked in game; the tooltips
+  say so. **Phase 6a is done.**
 
 ### Phase 6b: tile module
 - Save As as TEd's *Save tile as* (new name, variation, entry). The generic File > Save as... only writes the tile to another
