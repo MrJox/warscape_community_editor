@@ -1,0 +1,12 @@
+# Tile database (Phase 6b of docs/plans/tile_ted_parity.md; TEd's Tile Database Management): a new tile set in the projects' tile
+# database, a tile saved into it (Save tile as), listed under it, and Save for Assembly Kit into %KIT% (a raw_data folder holding a copy
+# of the kit's _settings.xml) carrying the set into that kit's tile database. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_tdb_test 2 2 10 32
+frames 5
+tile_set_new wce_test_set
+expect_fail tile_set_new wce_test_set
+tile_database wce_test_set 0
+save_tile_as wce_test_set tile_one aa
+tile_database wce_test_set 1
+save_for_kit "%KIT%"
+quit

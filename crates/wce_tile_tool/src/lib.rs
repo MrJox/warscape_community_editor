@@ -27,6 +27,7 @@ mod links_editor;
 mod save_tile_as;
 mod resize_tile;
 mod tile_properties;
+mod tile_database;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;

@@ -305,8 +305,23 @@ impl TileDocument {
             wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
         }
 
+        let mut msg = msg;
         if let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone()) {
             copy_entry(entry.file(), &from_raw, kit_raw, &kind_of(&folder))?;
+
+            // The tile sets it uses (its own, its links') that the kit's database lacks (made in the projects: Tile database > New tile set).
+            let mut names = vec![entry.tile_set()];
+            names.extend(entry.link_targets().into_iter().map(|t| t.tile_set));
+            names.extend(entry.links().into_iter().map(|l| l.link_set));
+            names.sort();
+            names.dedup();
+            let (ours, kits) = (wce_tile::tile_sets::settings_file(&from_raw), wce_tile::tile_sets::settings_file(kit_raw));
+            if ours != kits && ours.is_file() && kits.is_file() {
+                let added = wce_tile::tile_sets::merge_into(&ours, &kits, &names)?;
+                if !added.is_empty() {
+                    msg += &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
+                }
+            }
         }
 
         Ok(msg)

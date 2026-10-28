@@ -3,6 +3,7 @@
 
 pub mod link_checks;
 pub mod resize;
+pub mod tile_sets;
 pub mod battle_map;
 pub mod blend_field;
 pub mod brush_image;
