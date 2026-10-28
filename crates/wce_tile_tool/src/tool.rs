@@ -3347,6 +3347,15 @@ impl Tool for TileTool {
             }
 
             let v = t.display_mut();
+            if gui::menu_item_toggle("Polygons over buildings", &mut v.polygon_over_buildings) {
+                t.polygons_changed();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The polygons' fill and edges go smoothly over the buildings; off: they stay on the terrain.");
+            }
+
+            let v = t.display_mut();
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
             gui::menu_item_toggle("Tile border", &mut v.show_border);
             gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);

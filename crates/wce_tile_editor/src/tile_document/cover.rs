@@ -332,9 +332,13 @@ pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
 
 impl Tile {
 
-    /// The building pieces the covers go over (and the paths of the tops not known yet, asked for at the next [`Tile::poll_tops`]).
+    /// The building pieces the covers go over, none when the display keeps them on the terrain (and the paths of the tops not known yet, asked for at the next [`Tile::poll_tops`]).
     pub(crate) fn cover_solids(&mut self, scene: &RenderScene) -> Vec<Solid> {
         let mut out = vec![];
+        if !self.display.polygon_over_buildings {
+            return out;
+        }
+
         let mut pieces = vec![];
         for &e in &self.instances {
             if self.first_entity.get(e).is_none_or(|&f| f == 0) || self.tscene().type_of(e) != "BUILDING_INSTANCE" {
