@@ -57,6 +57,17 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Trees, grass, billboards and decals (their shaders' other slots and names; the older tree and grass lists read). Open: the
   engine's `g_hide_foliage`.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
+- **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): with
+  the eastern desert's ground and weather the hill is still dark rock and grass where the game shows pale limestone (no climate or season
+  gives it: the layers' textures or the variation index map), our colours are more saturated, contrasted and purple than the game's flat
+  hazy frame (tone mapping, grading or fog), and the trees' shadows are faint. The climate is a guess (`ROME_Continental` by default):
+  take it from the map context's region.
+- **blocked** A RenderDoc capture of a battle (the light pass, tone map and fog inputs, the ground's textures): Rome 2 is 32-bit and
+  RenderDoc on Linux 64-bit only; under Proton's WoW64 (`PROTON_USE_WOW64=1`) the layer loads but DXVK can't map memory on the NVIDIA
+  driver (`VK_ERROR_OUT_OF_HOST_MEMORY`, the game then crashes on its null device). To try: the Intel GPU (`DXVK_FILTER_DEVICE_NAME`),
+  or another machine (Windows: RenderDoc's D3D11 capture). Launch options and the attach steps: Steam `... bash -c 'exec
+  "${@/launcher\/launcher.exe/Rome2.exe}"' -- %command%` (no launcher), RenderDoc's File > Attach to Running Instance, Trigger Capture;
+  captures to `~/wce_re/scratch/rome2/captures/`.
 
 ## Phase 3: editor — partial
 
