@@ -1,0 +1,21 @@
+# Tile properties (Phase 6b of docs/plans/tile_ted_parity.md): a new 2 x 2 tile's flags, mask, colour and normal strength set as the Tile
+# panel's Tile properties does (one undo entry each), one undone, saved into its entry. Run with WCE_TILE_WORKSPACE set; %WORKSPACE% is it
+# (check TILES/assembly_kit_wce_props_test.xml after: random_rotatable false, mask 0111, red 12, normal_strength 1).
+new_tile wce_props_test 2 2 10 32
+frames 5
+tile_prop random_rotatable false
+tile_prop encampable true
+tile_prop mask 0111
+tile_prop red 12.000000
+tile_prop normal_strength 1.000000 variation
+assert_history 5 5
+undo
+assert_history 5 4
+expect_fail tile_prop red 12.000000
+show_panel Tile
+frames 5
+shot %OUT%/tile_properties.png
+frames 5
+save
+frames 3
+quit

@@ -2593,6 +2593,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_prop", "tile_prop <attribute> <value> [variation]", "set a tile property of the entry as the Tile panel's Tile properties does (red green blue mask random_rotatable ...; variation: normal_strength)", |e, a| {
+        let (Some(attr), Some(value)) = (a.first().cloned(), a.get(1).cloned()) else { return fail("usage: tile_prop <attribute> <value> [variation]") };
+        let value = if value == "-" { String::new() } else { value };
+        let variation = a.get(2).is_some_and(|v| v == "variation");
+        let Some(d) = document(e) else { return no_tile() };
+        match d.set_entry_attr(variation, &attr, &value, 0) {
+            Ok(true) => ok(""),
+            Ok(false) => fail("it had that value"),
+            Err(err) => fail(err),
+        }
+    });
+
     c.add("link_problems", "link_problems [n]", "log the tile's link problems (the validator); with n, test that there are that many", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let p = d.link_problems();

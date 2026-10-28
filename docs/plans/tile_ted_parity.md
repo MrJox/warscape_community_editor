@@ -247,7 +247,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   carried out from the old edges (`wce_tile::resize`, `TileDocument::resize_tile`; `resize_tile`, `scripts/tile_resize.txt`). Fixed on the
   way: a save after an edit made only of attribute changes inside a splice (moving the scene, snapping river ends) did not write the scene
   (the splice bakes the edits without marking the scene modified); the save now asks the history too.
-- Tile properties editing UI (`min_height`, `scale`, colour, flags; the texture groups are edited already).
+- Tile properties: done (2026-10-28). TEd's Tile Properties is the colour, the normal strength, the texture groups and a subtile grid
+  (valid, has link, link target). The Tile panel's Tile database entry section edits the colour, the variation's normal strength
+  (TEd's 0.01 .. 50; it only feeds the exported normal map), the flags (random_rotatable, encampable, scalable,
+  requires_infield_lodding, each explained with the kit's counts) and the mask (a grid of the valid cells), one undo entry each, saved
+  into the entry (`TileDocument::set_entry_attr`, `TileEntry::set_variation_attr`; `tile_prop`, `scripts/tile_properties.txt`). The
+  links are Tile links' (6a); `min_height` / `scale` stay read-only: every save fits them to the heights, as TEd's.
 - Tile database management (TEd's Database management dialog; new tile set).
 - Integrity errors view.
 - Stats view (counts, memory budget).
