@@ -203,8 +203,13 @@ pub fn colour_sources(projects_raw: &Path, kit: Option<&Path>) -> Vec<PathBuf> {
 /// (`<kit>/working_data/terrain/tiles/battle/assembly_kit/<name>/battlefield/`, forward slashes, a trailing slash), then one more (as one
 /// 24-bit number) while another tile has it. Without a kit, the path starts at `working_data/`.
 pub fn colour(name: &str, kit: Option<&Path>, taken: &HashSet<[u8; 3]>) -> [u8; 3] {
+    colour_of(&format!("{TILE_SET}/{name}/{VARIATION}"), kit, taken)
+}
+
+/// The same rule for any battle tile folder `<set>/<name>/<variation>` (Save tile as).
+pub fn colour_of(folder: &str, kit: Option<&Path>, taken: &HashSet<[u8; 3]>) -> [u8; 3] {
     let kit = kit.map(|k| format!("{}/", k.to_string_lossy().replace('\\', "/").trim_end_matches('/'))).unwrap_or_default();
-    let path = format!("{kit}working_data/terrain/tiles/battle/{TILE_SET}/{name}/{VARIATION}/");
+    let path = format!("{kit}working_data/terrain/tiles/battle/{folder}/");
     let hash = Md5::digest(path.as_bytes());
     let mut c = [hash[0], hash[1], hash[2]];
     for _ in 0..=taken.len() {

@@ -446,6 +446,55 @@ impl TileEntry {
         Ok(true)
     }
 
+    /// Sets an attribute of the `<TILE>` element (`location`, `tile_set`, `red`...): false when it had that value.
+    pub fn set_tile_attr(&mut self, name: &str, value: &str) -> bool {
+        if self.doc.get(self.root, name).as_deref() == Some(value) {
+            return false;
+        }
+
+        self.doc.set(self.root, name, value);
+        true
+    }
+
+    /// A variation's element as written (its text, edits applied), to put into another entry (`set_variations`).
+    pub fn variation_text(&self, index: usize) -> Option<String> {
+        let elem = *self.items("VARIATIONS", "VARIATION").get(index)?;
+        let el = &self.doc.elements()[elem];
+        Some(String::from_utf8_lossy(&self.doc.text_of_range(el.start_off, el.end_off)).into_owned())
+    }
+
+    /// Replaces the variations with these elements' texts (`variation_text`'s, the `location` attribute of each set to the paired name when
+    /// there is one), one a line as the kit writes them.
+    ///
+    /// # Errors
+    ///
+    /// The entry has no `VARIATIONS` element, or the new text can't be read.
+    pub fn set_variations(&mut self, variations: &[(String, Option<String>)]) -> Result<(), TileEntryError> {
+        self.doc.bake_pending()?;
+        let crlf = self.doc.original_text().windows(2).any(|w| w == b"\r\n");
+        let nl = if crlf { "\r\n" } else { "\n" };
+        let mut text = format!("<VARIATIONS>{nl}");
+        for (v, location) in variations {
+            let v = match location {
+                Some(loc) => match v.find("location='").map(|i| i + "location='".len()) {
+                    Some(start) => {
+                        let end = v[start..].find('\'').map_or(start, |e| start + e);
+                        format!("{}{loc}{}", &v[..start], &v[end..])
+                    }
+
+                    None => v.clone(),
+                },
+
+                None => v.clone(),
+            };
+
+            text += &format!("\t\t{}{nl}", v.trim());
+        }
+
+        text += "\t</VARIATIONS>";
+        self.replace_block("VARIATIONS", &text)
+    }
+
     /// Replaces the root's child element `name` (its whole text) with `text`.
     fn replace_block(&mut self, name: &str, text: &str) -> Result<(), TileEntryError> {
         let elem = self.child(self.root, name).ok_or(TileEntryError::NotATile)?;

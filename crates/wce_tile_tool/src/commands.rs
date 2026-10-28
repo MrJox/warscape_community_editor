@@ -1293,6 +1293,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.migrate_extracted(e).map_or_else(fail, ok))
     });
 
+    c.add("save_tile_as", "save_tile_as <tile set> <name> <variation>", "TEd's Save Tile As (Tile > Save tile as...): the open tile as another battle tile in the projects folder", |e, a| {
+        let (Some(set), Some(name), Some(v)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else { return fail("usage: save_tile_as <tile set> <name> <variation>") };
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        with_tile(e, |t, e| t.save_tile_as(e, id, &set, &name, &v).map_or_else(fail, ok))
+    });
+
     c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
         with_tile(e, |t, _| {
             t.open_new_tile_dialog();

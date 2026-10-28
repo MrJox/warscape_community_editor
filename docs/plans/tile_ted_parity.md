@@ -234,8 +234,12 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   say so. **Phase 6a is done.**
 
 ### Phase 6b: tile module
-- Save As as TEd's *Save tile as* (new name, variation, entry). The generic File > Save as... only writes the tile to another
-  folder.
+- Save tile as: done (2026-10-28). Tile > Save tile as... (TEd's Save Tile As): the tile as a battle tile of a tile set, name and
+  variation in the projects folder, with its entry `TILES/<set>_<name>.xml` (the open tile's, the new location and tile set, a colour of
+  its own by TEd's rule, this variation alone renamed); a tile of that name and size takes it as one more variation (its entry kept
+  otherwise), one of another size is refused, as TEd does; the document goes on as the new tile (`TileDocument::save_tile_as`,
+  `TileEntry::set_variations`, `set_tile_attr`; `save_tile_as`, `scripts/tile_save_as.txt`). A set that is not in `_settings.xml` yet is
+  the database management's business (below).
 - Resize tile.
 - Tile properties editing UI (`min_height`, `scale`, colour, flags; the texture groups are edited already).
 - Tile database management (TEd's Database management dialog; new tile set).
