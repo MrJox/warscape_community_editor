@@ -2492,6 +2492,74 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} link item(s){s}", cells.len()))
     });
 
+    c.add(
+        "link_edit", "link_edit add target <set> <x> <y> | add rule <set> <x> <y> [not] | remove target|rule <i> | set rule <i> <field> <value>",
+        "edit the tile's links as the Tile panel's Tile links does (one undo entry); fields: set x y test entry blend offline base_x base_y",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(en) = d.project().entry.as_ref() else { return fail("no tile database entry") };
+            let (mut targets, mut links) = (en.link_targets(), en.links());
+            let int = |i: usize| a.get(i).and_then(|v| v.parse::<i32>().ok());
+            let usage = "usage: link_edit add target <set> <x> <y> | add rule <set> <x> <y> [not] | remove target|rule <i> | set rule <i> <field> <value>";
+            let name = match (a.first().map(String::as_str), a.get(1).map(String::as_str)) {
+                (Some("add"), Some("target")) => {
+                    let (Some(set), Some(x), Some(y)) = (a.get(2), int(3), int(4)) else { return fail(usage) };
+                    targets.push(wce_formats::tile_entry::TileLinkTarget { elem: 0, serialise_version: 1, tile_set: set.clone(), x, y });
+                    "Add a link target"
+                }
+
+                (Some("add"), Some("rule")) => {
+                    let (Some(set), Some(x), Some(y)) = (a.get(2), int(3), int(4)) else { return fail(usage) };
+                    let test = if a.get(5).is_some_and(|v| v == "not") { "TLT_NOT_EQUALS" } else { "TLT_EQUALS" };
+                    links.push(wce_formats::tile_entry::TileLink {
+                        elem: 0, serialise_version: 1, link_set: set.clone(), x, y, base_x: 1, base_y: 0, is_entry: false, blend_size: 64,
+                        no_offline_blend: false, test: test.to_owned(), has_blend_quad: true,
+                    });
+                    "Add a link rule"
+                }
+
+                (Some("remove"), Some(kind)) => {
+                    let Some(i) = int(2).map(|i| i as usize) else { return fail(usage) };
+                    match kind {
+                        "target" if i < targets.len() => drop(targets.remove(i)),
+                        "rule" if i < links.len() => drop(links.remove(i)),
+                        _ => return fail("no such link"),
+                    }
+
+                    "Remove a link"
+                }
+
+                (Some("set"), Some("rule")) => {
+                    let (Some(i), Some(field), Some(v)) = (int(2).map(|i| i as usize), a.get(3), a.get(4)) else { return fail(usage) };
+                    let Some(l) = links.get_mut(i) else { return fail("no such rule") };
+                    let n = v.parse::<i32>().unwrap_or(0);
+                    match field.as_str() {
+                        "set" => l.link_set = v.clone(),
+                        "x" => l.x = n,
+                        "y" => l.y = n,
+                        "test" => l.test = if v == "not" { "TLT_NOT_EQUALS" } else { "TLT_EQUALS" }.to_owned(),
+                        "entry" => l.is_entry = v == "true",
+                        "blend" => l.blend_size = n.max(0) as u32,
+                        "offline" => l.no_offline_blend = v == "true",
+                        "base_x" => l.base_x = n,
+                        "base_y" => l.base_y = n,
+                        _ => return fail(format!("no field {field}")),
+                    }
+
+                    "Change a link rule"
+                }
+
+                _ => return fail(usage),
+            };
+
+            match d.set_links(name, targets, links, 0) {
+                Ok(true) => ok(""),
+                Ok(false) => fail("nothing changed"),
+                Err(err) => fail(err),
+            }
+        },
+    );
+
     c.add("assert_links", "assert_links <targets n> <rules n> [drawn 0|1]", "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)", |e, a| {
         let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
         let (Some(d), Some((t, r))) = (document(e), parsed) else { return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]") };

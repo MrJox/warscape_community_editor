@@ -23,6 +23,7 @@ pub mod settings;
 mod thumbnails;
 mod camera_views;
 mod selection_tools;
+mod links_editor;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;

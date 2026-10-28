@@ -382,6 +382,79 @@ impl TileEntry {
         }).collect()
     }
 
+    /// Replaces the link targets and the links (TEd's Tile links), written as the kit writes them: one element a line, tab-indented, the
+    /// attributes in the kit's order with single quotes, every `TILE_LINK` with its `<blend_quad/>`, an empty list as `<TILE_LINKS/>`. The
+    /// blocks are spliced only when they change, so an unchanged entry keeps its bytes. `elem` of the items is ignored. Returns whether
+    /// anything changed.
+    ///
+    /// # Errors
+    ///
+    /// The entry has no `TILE_LINK_TARGETS` / `TILE_LINKS` element, or the new text can't be read.
+    pub fn set_links(&mut self, targets: &[TileLinkTarget], links: &[TileLink]) -> Result<bool, TileEntryError> {
+        let (old_targets, old_links) = (self.link_targets(), self.links());
+        let same = |a: &TileLinkTarget, b: &TileLinkTarget| (a.serialise_version, &a.tile_set, a.x, a.y) == (b.serialise_version, &b.tile_set, b.x, b.y);
+        let same_link = |a: &TileLink, b: &TileLink| {
+            (a.serialise_version, &a.link_set, a.x, a.y, a.base_x, a.base_y, a.is_entry, a.blend_size, a.no_offline_blend, &a.test, a.has_blend_quad)
+                == (b.serialise_version, &b.link_set, b.x, b.y, b.base_x, b.base_y, b.is_entry, b.blend_size, b.no_offline_blend, &b.test, b.has_blend_quad)
+        };
+        let targets_same = old_targets.len() == targets.len() && old_targets.iter().zip(targets).all(|(a, b)| same(a, b));
+        let links_same = old_links.len() == links.len() && old_links.iter().zip(links).all(|(a, b)| same_link(a, b));
+        if targets_same && links_same {
+            return Ok(false);
+        }
+
+        self.doc.bake_pending()?;
+        let crlf = self.doc.original_text().windows(2).any(|w| w == b"\r\n");
+        let nl = if crlf { "\r\n" } else { "\n" };
+        let b = |v: bool| if v { "true" } else { "false" };
+        if !links_same {
+            let mut text = String::new();
+            if links.is_empty() {
+                text += "<TILE_LINKS/>";
+            } else {
+                text += &format!("<TILE_LINKS>{nl}");
+                for l in links {
+                    text += &format!(
+                        "\t\t<TILE_LINK serialise_version='{}' link_set='{}' x='{}' y='{}' base_x='{}' base_y='{}' is_entry='{}' blend_size='{}' no_offline_blend='{}' test='{}'",
+                        l.serialise_version, l.link_set, l.x, l.y, l.base_x, l.base_y, b(l.is_entry), l.blend_size, b(l.no_offline_blend), l.test
+                    );
+                    text += &if l.has_blend_quad { format!(">{nl}\t\t\t<blend_quad/>{nl}\t\t</TILE_LINK>{nl}") } else { format!("/>{nl}") };
+                }
+
+                text += "\t</TILE_LINKS>";
+            }
+
+            self.replace_block("TILE_LINKS", &text)?;
+        }
+
+        if !targets_same {
+            let mut text = String::new();
+            if targets.is_empty() {
+                text += "<TILE_LINK_TARGETS/>";
+            } else {
+                text += &format!("<TILE_LINK_TARGETS>{nl}");
+                for t in targets {
+                    text += &format!("\t\t<TILE_LINK_TARGET serialise_version='{}' tile_set='{}' x='{}' y='{}'/>{nl}", t.serialise_version, t.tile_set, t.x, t.y);
+                }
+
+                text += "\t</TILE_LINK_TARGETS>";
+            }
+
+            self.replace_block("TILE_LINK_TARGETS", &text)?;
+        }
+
+        Ok(true)
+    }
+
+    /// Replaces the root's child element `name` (its whole text) with `text`.
+    fn replace_block(&mut self, name: &str, text: &str) -> Result<(), TileEntryError> {
+        let elem = self.child(self.root, name).ok_or(TileEntryError::NotATile)?;
+        let (start, end) = (self.doc.elements()[elem].start_off, self.doc.elements()[elem].end_off);
+        self.doc.splice(start, end - start, text.as_bytes())?;
+        self.root = self.doc.roots().iter().copied().find(|&r| self.doc.elements()[r].name == "TILE").ok_or(TileEntryError::NotATile)?;
+        Ok(())
+    }
+
     /// The folder that holds terrain/tiles (an Assembly Kit's raw_data), from the entry's file
     /// (`<raw_root>/terrain/tiles/<kind>/_tile_database/TILES/<name>.xml`). `None` when the entry was not loaded from a kit.
     pub fn raw_root(&self) -> Option<PathBuf> {

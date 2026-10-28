@@ -2216,6 +2216,29 @@ impl TileDocument {
     /// # Errors
     ///
     /// The tile has no entry, or no such slot.
+    /// Replaces the tile's links (its database entry's link targets and rules, Phase 6a of docs/plans/tile_ted_parity.md): one undo
+    /// entry named `name` (the steps of one `gesture` merge); nothing when they are the same. Written to `TILES/<tile>.xml` on save (`tile_database.bin` is compiled from the
+    /// entries at export).
+    ///
+    /// # Errors
+    ///
+    /// The tile has no database entry.
+    pub fn set_links(&mut self, name: &str, targets: Vec<wce_formats::tile_entry::TileLinkTarget>, links: Vec<wce_formats::tile_entry::TileLink>, gesture: u64) -> Result<bool, String> {
+        let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
+        let before = (entry.link_targets(), entry.links());
+        let strip_t = |v: &[wce_formats::tile_entry::TileLinkTarget]| v.iter().map(|t| (t.serialise_version, t.tile_set.clone(), t.x, t.y)).collect::<Vec<_>>();
+        let strip_l = |v: &[wce_formats::tile_entry::TileLink]| {
+            v.iter().map(|l| (l.serialise_version, l.link_set.clone(), l.x, l.y, l.base_x, l.base_y, l.is_entry, l.blend_size, l.no_offline_blend, l.test.clone(), l.has_blend_quad)).collect::<Vec<_>>()
+        };
+        if strip_t(&before.0) == strip_t(&targets) && strip_l(&before.1) == strip_l(&links) {
+            return Ok(false);
+        }
+
+        self.end_stroke();
+        self.history.push(Box::new(super::commands::LinksCommand { name: name.to_owned(), before, after: (targets, links), gesture }));
+        Ok(true)
+    }
+
     pub fn set_texture_group(&mut self, slot: usize, name: &str) -> Result<(), String> {
         let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
         if slot >= 4 {
