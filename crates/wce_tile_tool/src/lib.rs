@@ -26,6 +26,7 @@ mod selection_tools;
 mod links_editor;
 mod save_tile_as;
 mod resize_tile;
+mod tile_properties;
 pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;

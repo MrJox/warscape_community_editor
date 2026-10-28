@@ -456,6 +456,28 @@ impl TileEntry {
         true
     }
 
+    /// An attribute of the `<TILE>` element, as written.
+    pub fn tile_attr(&self, name: &str) -> Option<String> {
+        self.doc.get(self.root, name)
+    }
+
+    /// Sets an attribute of a variation (`normal_strength`...): false when it had that value or there is no such variation.
+    pub fn set_variation_attr(&mut self, index: usize, name: &str, value: &str) -> bool {
+        let Some(&elem) = self.items("VARIATIONS", "VARIATION").get(index) else { return false };
+        if self.doc.get(elem, name).as_deref() == Some(value) {
+            return false;
+        }
+
+        self.doc.set(elem, name, value);
+        true
+    }
+
+    /// A variation's attribute, as written.
+    pub fn variation_attr(&self, index: usize, name: &str) -> Option<String> {
+        let elem = *self.items("VARIATIONS", "VARIATION").get(index)?;
+        self.doc.get(elem, name)
+    }
+
     /// A variation's element as written (its text, edits applied), to put into another entry (`set_variations`).
     pub fn variation_text(&self, index: usize) -> Option<String> {
         let elem = *self.items("VARIATIONS", "VARIATION").get(index)?;

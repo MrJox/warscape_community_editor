@@ -606,6 +606,66 @@ impl Command<Tile> for TextureGroupCommand {
     }
 }
 
+/// An edit of an attribute of the tile's database entry (Tile properties): of its `<TILE>` element, or of its variation (`variation`).
+pub(crate) struct EntryAttrCommand {
+    pub variation: Option<usize>,
+    pub attr: String,
+    pub before: String,
+    pub after: String,
+    pub gesture: u64,
+}
+
+impl EntryAttrCommand {
+    fn put(&self, t: &mut Tile, value: &str) {
+        if let Some(entry) = t.project.entry.as_mut() {
+            match self.variation {
+                Some(v) => entry.set_variation_attr(v, &self.attr, value),
+                None => entry.set_tile_attr(&self.attr, value),
+            };
+        }
+
+        if self.attr == "normal_strength" {
+            t.project.info.normal_strength = value.trim().parse().unwrap_or(t.project.info.normal_strength);
+            t.material_base = None;
+            t.skin = None;
+        }
+
+        t.links_dirty = true;
+    }
+}
+
+impl Command<Tile> for EntryAttrCommand {
+    fn name(&self) -> String {
+        format!("Tile property {}: {}", self.attr, self.after)
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.put(t, &self.after.clone());
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        self.put(t, &self.before.clone());
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ 0x5052_4f50_0000_0000 } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.attr == self.attr && n.variation == self.variation) else { return false };
+        self.after = n.after.clone();
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// An edit of the tile's links (its database entry's `TILE_LINK_TARGETS` and `TILE_LINKS`): both lists before and after.
 pub(crate) struct LinksCommand {
     pub name: String,

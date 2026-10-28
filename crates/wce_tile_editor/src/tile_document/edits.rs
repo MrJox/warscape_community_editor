@@ -2239,6 +2239,28 @@ impl TileDocument {
         Ok(true)
     }
 
+    /// Sets an attribute of the tile's database entry (Tile properties): of its `<TILE>` element, or of its variation with `variation`; one
+    /// undo entry (the steps of one `gesture` merge). Written to the entry beside the tile on save.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no database entry.
+    pub fn set_entry_attr(&mut self, variation: bool, attr: &str, value: &str, gesture: u64) -> Result<bool, String> {
+        let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
+        let v = variation.then(|| self.tile().project.variation.unwrap_or(0));
+        let before = match v {
+            Some(v) => entry.variation_attr(v, attr),
+            None => entry.tile_attr(attr),
+        }.unwrap_or_default();
+        if before == value {
+            return Ok(false);
+        }
+
+        self.end_stroke();
+        self.history.push(Box::new(super::commands::EntryAttrCommand { variation: v, attr: attr.to_owned(), before, after: value.to_owned(), gesture }));
+        Ok(true)
+    }
+
     pub fn set_texture_group(&mut self, slot: usize, name: &str) -> Result<(), String> {
         let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
         if slot >= 4 {
