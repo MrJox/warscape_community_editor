@@ -117,6 +117,85 @@ impl TileDocument {
         p.raw_root = raw;
     }
 
+    /// TEd's "Save tile as" (Phase 6b of docs/plans/tile_ted_parity.md): the tile as a battle tile of another tile set, name and variation,
+    /// in the projects folder (`terrain/tiles/battle/<set>/<name>/<variation>`), and the document goes on from there. Its database entry
+    /// (`TILES/<set>_<name>.xml`) is the open tile's with the new location, its tile set and a colour of its own (TEd's rule, `new_tile::
+    /// colour_of`), and this variation alone, renamed; when that tile exists already (another variation was saved as it before), the
+    /// variation is added to its entry and the rest of it kept (TEd: "save as a variation of existing tile and inherit its properties"),
+    /// and a tile of another size is refused, as TEd does. `kit`: the Assembly Kit, whose tiles' colours the new one must differ from.
+    ///
+    /// # Errors
+    ///
+    /// No projects folder, a bad name, no database entry, a tile of another size or a variation that exists already, or a file can't be
+    /// written.
+    pub fn save_tile_as(&mut self, set: &str, name: &str, variation: &str, kit: Option<&Path>) -> Result<String, String> {
+        use wce_formats::tile_entry::TileEntry;
+        use wce_tile::new_tile::{check_name, colour_of, colour_sources, colours_in};
+
+        let (set, name, variation) = (check_name(set)?, check_name(name)?, check_name(variation)?);
+        let raw = self.projects_root().ok_or("no projects folder")?.join("raw_data");
+        let folder = raw.join("terrain/tiles/battle").join(&set).join(&name).join(&variation);
+        if wce_tile::tile_project::has_tile(&folder) && folder != self.project().dir {
+            return Err(format!("{set}/{name}/{variation} exists already"));
+        }
+
+        let entry = self.project().entry.as_ref().ok_or("the tile has no database entry")?;
+        let v = self.project().variation.unwrap_or(0);
+        let text = entry.variation_text(v).ok_or("the tile's variation is not in its entry")?;
+        let entry_path = raw.join("terrain/tiles/battle/_tile_database/TILES").join(format!("{set}_{name}.xml"));
+        let (mut there, index) = if entry_path.is_file() {
+            let mut there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
+            if (there.width(), there.height()) != (entry.width(), entry.height()) {
+                return Err(format!("{set}/{name} is a {} x {} tile: a {} x {} tile can't be saved as a variation of it", there.width(), there.height(), entry.width(), entry.height()));
+            }
+
+            if there.find_variation(&variation).is_some() {
+                return Err(format!("{set}/{name} has a variation {variation} already"));
+            }
+
+            let mut all = (0..there.variations().len()).filter_map(|i| there.variation_text(i)).map(|t| (t, None)).collect::<Vec<_>>();
+            all.push((text, Some(variation.clone())));
+            let n = all.len() - 1;
+            there.set_variations(&all).map_err(|e| e.to_string())?;
+            (there, n)
+        } else {
+            let mut there = entry.clone();
+            there.set_file(&entry_path);
+            there.set_tile_attr("location", &format!("terrain\\tiles\\battle\\{set}\\{name}"));
+            there.set_tile_attr("tile_set", &set);
+            let taken = colours_in(&colour_sources(&raw, kit));
+            let c = colour_of(&format!("{set}/{name}/{variation}"), kit, &taken);
+            for (attr, value) in ["red", "green", "blue"].into_iter().zip(c) {
+                there.set_tile_attr(attr, &format!("{:.6}", f64::from(value)));
+            }
+
+            there.set_variations(&[(text, Some(variation.clone()))]).map_err(|e| e.to_string())?;
+            (there, 0)
+        };
+
+        if let Some(dir) = entry_path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+
+        std::fs::write(&entry_path, there.save()).map_err(|_| format!("could not write {}", entry_path.display()))?;
+        there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
+        wce_formats::tile_index::TileIndex::forget_shared();
+
+        // The document is the new tile's: its entry, variation and names; every file written there, then saved in place (the history's
+        // saved mark).
+        self.end_stroke();
+        let p = &mut self.tile_mut().project;
+        p.info.location = there.location();
+        p.info.variation = variation.clone();
+        p.entry = Some(there);
+        p.variation = Some(index);
+        p.raw_root = Some(raw);
+        let msg = self.save_tile(&wce_editor_core::document::SaveTarget { path: folder.clone() })?;
+        self.tile_mut().project.dir = folder;
+        self.save_tile(&wce_editor_core::document::SaveTarget::default())?;
+        Ok(format!("saved as {set}/{name}/{variation}: {msg}"))
+    }
+
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
     /// Files it replaces get a `.bak`. The procedural walls need `walls`: they are
     /// written as their pieces (`wce_walls::export::walls_for_kit`), and a tile without walls takes its old pieces out of the pack.

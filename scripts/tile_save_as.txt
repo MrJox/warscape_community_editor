@@ -1,0 +1,22 @@
+# Save tile as (Phase 6b of docs/plans/tile_ted_parity.md): a new tile edited and saved as another tile set / name / variation (a new entry,
+# its location, colour and one variation), then saved again as a second variation of that tile (added to its entry), a tile of another
+# size refused, and the saved tile opened again. Run with WCE_TILE_WORKSPACE set; %WORKSPACE% is it.
+new_tile wce_saveas_src 2 2 10 32
+frames 5
+add_building barbarian_fort_straight 60 60
+frames 5
+save_tile_as my_set my_tile aa
+assert_modified 0
+assert_file_exists "%WORKSPACE%/raw_data/terrain/tiles/battle/my_set/my_tile/aa/tile.wce"
+assert_file_exists "%WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml"
+expect_fail save_tile_as my_set my_tile aa
+save_tile_as my_set my_tile bb
+new_tile wce_saveas_big 3 2 10 32
+frames 5
+expect_fail save_tile_as my_set my_tile cc
+close_all
+frames 3
+tile "%WORKSPACE%/raw_data/terrain/tiles/battle/my_set/my_tile/bb"
+frames 10
+assert_type_count BUILDING_INSTANCE 1
+quit
