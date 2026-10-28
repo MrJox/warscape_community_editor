@@ -372,6 +372,15 @@ pub fn needs(vfs: &Vfs, shipped: &[(String, Vec<u8>)], buildings: &[String], pre
     out
 }
 
+/// A pack of the game's release (always loaded) that has a path the launch ships, as (pack, path): its file wins over the loose one (the
+/// release's tiles.pack has the tile database). Found without [`needs`]' scan.
+pub fn release_shadowing(vfs: &Vfs, shipped: &[(String, Vec<u8>)]) -> Option<(String, String)> {
+    let packs = vfs.packs();
+    let mut paths: Vec<String> = shipped.iter().map(|(p, _)| normalize(p)).collect();
+    paths.sort();
+    paths.iter().find_map(|p| vfs.owners(p).iter().find(|&&i| !packs[i].is_mod && !packs[i].loose).map(|&i| (packs[i].name.clone(), p.clone())))
+}
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle)
 }
@@ -434,21 +443,23 @@ pub fn remove_launch_pack(data: &Path) -> Result<Option<String>, String> {
 
 /// Whether a process of that executable runs (`None`: unknown, outside Windows or when `tasklist` fails).
 pub fn process_running(exe: &str) -> Option<bool> {
+    processes_running(&[exe]).map(|r| r[0])
+}
+
+/// [`process_running`] for several executables from one process list (`tasklist` takes about 0.2 s).
+pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let out = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {exe}"), "/NH", "/FO", "CSV"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()?;
-        Some(String::from_utf8_lossy(&out.stdout).to_lowercase().contains(&format!("\"{}\"", exe.to_lowercase())))
+        let out = std::process::Command::new("tasklist").args(["/NH", "/FO", "CSV"]).creation_flags(CREATE_NO_WINDOW).output().ok()?;
+        let list = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        Some(exes.iter().map(|exe| list.contains(&format!("\"{}\"", exe.to_lowercase()))).collect())
     }
 
     #[cfg(not(windows))]
     {
-        let _ = exe;
+        let _ = exes;
         None
     }
 }

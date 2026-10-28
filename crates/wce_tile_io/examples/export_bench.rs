@@ -23,6 +23,10 @@ fn main() {
     let t = Instant::now();
     let game = Game::load(&PathBuf::from(&args[0])).unwrap_or_else(|e| panic!("game: {e}"));
     println!("game data: {:.2} s", t.elapsed().as_secs_f64());
+    if std::env::var("WCE_BENCH_GAME_ONLY").is_ok() {
+        println!("{}", wce_foundation::profile::report(false, 1.0));
+        return;
+    }
 
     let out = PathBuf::from(&args[1]);
     let mut total = 0.0;

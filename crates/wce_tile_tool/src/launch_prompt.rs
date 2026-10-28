@@ -67,6 +67,9 @@ struct Plan {
     /// The editor's mounted files (the release, its mod packs, its loose folders), and its mod packs that are in `data\`.
     vfs: Option<Arc<Vfs>>,
     mods: Vec<String>,
+
+    /// Where the launch pack goes for the game (`data\wce_launch.pack`; none in a dry run).
+    copy_to: Option<PathBuf>,
 }
 
 /// What the work made.
@@ -121,7 +124,27 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
         loose = false;
     }
 
-    if let Some(vfs) = plan.vfs.as_ref() {
+    // A pack of the release always loads, and its file wins over a loose one (tiles.pack has the tile database): checked first, it needs
+    // no scan of the dependencies.
+    if loose
+        && let Some(vfs) = plan.vfs.as_ref()
+        && let Some((pack, path)) = launch::release_shadowing(vfs, &files)
+    {
+        notes.push(format!("{pack} also has {path} (a pack's file wins over a loose one): the launch pack"));
+        loose = false;
+    }
+
+    // The launch pack takes every mod pack chosen in the editor: of the dependencies only the weather file can be an edit of the editor's
+    // (its loose folders), carried along.
+    if !loose
+        && let Some(vfs) = plan.vfs.as_ref()
+        && !plan.weather.environment.is_empty()
+        && vfs.owner(&plan.weather.environment).is_some_and(|i| vfs.packs()[i].loose)
+    {
+        overlay.push(wce_vfs::normalize(&plan.weather.environment));
+    }
+
+    if loose && let Some(vfs) = plan.vfs.as_ref() {
         progress(Msg::Step(DEPS));
         wce_foundation::wce_prof!("launch.needs");
         let agf = std::fs::read_to_string(plan.staging.join(&folder).join("tile.agf")).unwrap_or_default();
@@ -195,6 +218,11 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     let _a = activity::start(format!("Writing the launch pack ({} file(s))", files.len()));
     let pack = plan.staging.join(LAUNCH_PACK);
     launch::write_launch_pack(&pack, files, &xml)?;
+    if let Some(target) = &plan.copy_to {
+        let _a = activity::start("Copying the launch pack into the game's data folder");
+        std::fs::copy(&pack, target).map_err(|err| format!("{}: {err}", target.display()))?;
+    }
+
     Ok(Prepared { delivery: Delivery::Pack, pack: Some(pack), mods: plan.mods, xml: xml_copy, folder, notes })
 }
 
@@ -304,11 +332,12 @@ impl TileTool {
                 return Err("the game launched before is still running".to_owned());
             }
 
-            if launch::process_running(profile.exe) == Some(true) {
+            let running = launch::processes_running(&[profile.exe, "steam.exe"]);
+            if running.as_ref().is_some_and(|r| r[0]) {
                 return Err(format!("{} is running already: close it first (the game refuses a second instance)", profile.exe));
             }
 
-            if launch::process_running("steam.exe") == Some(false) {
+            if running.as_ref().is_some_and(|r| !r[1]) {
                 return Err("Steam is not running: start it first".to_owned());
             }
 
@@ -345,7 +374,7 @@ impl TileTool {
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
             inputs: self.export_inputs(e)?, staging: staging.clone(), cells: (info.cells_x, info.cells_y), weather: BattleWeather::from_tile(self.weather.choice()),
-            settings, position, vfs: e.vfs().cloned(), mods,
+            settings, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
         };
 
         activity::clear();
@@ -405,12 +434,8 @@ impl TileTool {
             return Ok(format!("dry run: {how}, {} mod pack(s), {}; the command line is in the log", prepared.mods.len(), prepared.xml.display()));
         }
 
+        // The launch pack is in data\ already (the work copied it).
         let data = job.game_dir.join(profile.data_dir);
-        if let Some(pack) = &prepared.pack {
-            let target = data.join(LAUNCH_PACK);
-            std::fs::copy(pack, &target).map_err(|err| format!("{}: {err}", target.display()))?;
-        }
-
         let child = match launch::start(&job.game_dir, profile.exe, &command) {
             Ok(c) => c,
             Err(err) => {
@@ -469,11 +494,53 @@ impl TileTool {
             }
         }
 
+        self.preload_game(e);
         self.poll_launch_job(e);
         if let Some(msg) = self.launched.as_mut().and_then(Running::poll) {
             self.launched = None;
             log::info(format!("launch in game: {msg}"));
             e.status(&format!("Launch in game: {msg}"), false);
+        }
+    }
+
+    /// Once a tile is open, reads the game's tile data on a thread (once a session: about 0.6 s), so that the first export or launch finds it
+    /// read; takes it when it is.
+    fn preload_game(&mut self, e: &mut Editor) {
+        if !self.game_preload_tried
+            && self.exported_game.is_none()
+            && self.game_preload.is_none()
+            && document_id(e).is_some()
+            && let Some(dir) = e.settings_ref().game_dir()
+        {
+            self.game_preload_tried = true;
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let r = Game::load(&dir).map(|g| {
+                    for w in &g.warnings {
+                        log::warn(format!("exported tiles: {w}"));
+                    }
+
+                    Arc::new(g)
+                });
+                let _ = tx.send(r);
+            });
+            self.game_preload = Some(rx);
+        }
+
+        let Some(rx) = &self.game_preload else { return };
+        match rx.try_recv() {
+            Ok(Ok(g)) => {
+                self.exported_game = Some(g);
+                self.game_preload = None;
+            }
+
+            Ok(Err(err)) => {
+                log::warn(format!("the game's tile data (for exports): {err}"));
+                self.game_preload = None;
+            }
+
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.game_preload = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
 

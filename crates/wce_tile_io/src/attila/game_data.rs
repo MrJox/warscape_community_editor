@@ -36,6 +36,98 @@ pub fn default_schema_path() -> Option<PathBuf> {
     wce_foundation::settings::default_rpfm_schema_path()
 }
 
+/// What [`GameData::load`] takes from one pack, in the pack's order.
+struct PackPart {
+    /// (building key, piece, its `_destructNN`) of the models' names.
+    pieces: Vec<(String, String, u32)>,
+
+    /// (building key, destruction levels) of the collision files.
+    cs2: Vec<(String, u32)>,
+
+    /// The `battlefield_buildings` rows: (a mod's, key, category, destruct thresholds).
+    rows: Vec<(bool, String, String, Vec<f32>)>,
+
+    /// The tile databases: (not the game's `tiles*` packs, kind, database).
+    dbs: Vec<(bool, String, TileDatabase)>,
+}
+
+impl PackPart {
+    /// A pack's part; the warning when it does not read.
+    fn read(p: &Path, attila: &rpfm_lib::games::GameInfo, schema: Option<&Schema>) -> Result<Self, String> {
+        let read = {
+            wce_foundation::wce_prof!("game_data.pack_index");
+            Pack::read_and_merge(std::slice::from_ref(&p.to_path_buf()), attila, true, false, false)
+        };
+        let Ok(mut pack) = read else { return Err(format!("{}: does not read", p.display())) };
+        let name = p.file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let mut out = Self { pieces: vec![], cs2: vec![], rows: vec![], dbs: vec![] };
+        let mut cs2 = vec![];
+        for n in pack.files().keys() {
+            let Some(rest) = n.strip_prefix("rigidmodels/buildings/") else { continue };
+            let Some((key, file)) = rest.split_once('/') else { continue };
+            if file.ends_with(".cs2.parsed") {
+                cs2.push((key.to_owned(), n.clone()));
+            } else if let Some(at) = file.find("_destruct")
+                && file.ends_with(".rigid_model_v2")
+            {
+                let digits = file[at + 9..].chars().take_while(char::is_ascii_digit).collect::<String>();
+                if let Ok(level) = digits.parse::<u32>() {
+                    out.pieces.push((key.to_owned(), file[..at].to_owned(), level));
+                }
+            }
+        }
+
+        // The collision files read in order, parsed on the thread pool, kept in order.
+        let bytes: Vec<(String, Vec<u8>)> = {
+            wce_foundation::wce_prof!("game_data.cs2_read");
+            cs2.into_iter()
+                .filter_map(|(key, n)| match pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) {
+                    Some(Ok(Some(b))) => Some((key, b)),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        {
+            use rayon::prelude::*;
+            wce_foundation::wce_prof!("game_data.cs2_parse");
+            out.cs2 = bytes.par_iter().filter_map(|(key, b)| destruction_levels(b).map(|l| (key.clone(), l))).collect();
+        }
+
+        // The battlefield_buildings tables; a mod's rows (TDD's tables are in its main pack) before the game's.
+        let is_mod = !(name.starts_with("data") || name.starts_with("tiles"));
+        if let Some(schema) = schema {
+            wce_foundation::wce_prof!("game_data.tables");
+            let tables = pack.files().keys().filter(|n| n.starts_with("db/battlefield_buildings_tables/")).cloned().collect::<Vec<_>>();
+            for n in tables {
+                let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
+                let mut extra = DecodeableExtraData::default();
+                extra.set_schema(Some(schema));
+                extra.set_table_name(Some("battlefield_buildings_tables"));
+                let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else { continue };
+                let col = |c: &str| db.column_position_by_name(c);
+                let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
+                for row in db.data().iter() {
+                    let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
+                    out.rows.push((is_mod, row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
+                }
+            }
+        }
+
+        wce_foundation::wce_prof!("game_data.tile_databases");
+        let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
+        for n in names {
+            let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
+            if let Ok(db) = TileDatabase::decode(&mut Cursor::new(&bytes), &None) {
+                let kind = n.trim_start_matches("terrain/tiles/").split('/').next().unwrap_or_default().to_owned();
+                out.dbs.push((!name.starts_with("tiles"), kind, db));
+            }
+        }
+
+        Ok(out)
+    }
+}
+
 impl GameData {
     /// Reads every pack of a game's `data` folder (in name order); `schema` is rpfm's Attila schema for the db tables (without it the
     /// buildings' categories and thresholds are not known).
@@ -56,7 +148,7 @@ impl GameData {
 
         let mut warnings = vec![];
         let schema = match schema {
-            Some(p) => match Schema::load(p, None) {
+            Some(p) => match { wce_foundation::wce_prof!("game_data.schema"); Schema::load(p, None) } {
                 Ok(s) => Some(s),
                 Err(e) => {
                     warnings.push(format!("{}: {e}", p.display()));
@@ -69,70 +161,35 @@ impl GameData {
             warnings.push("no rpfm schema: the buildings' categories and destruction thresholds are not known".to_owned());
         }
 
+        // Each pack on the thread pool (what it holds doesn't depend on the others), then everything taken in the packs' order.
+        let parts: Vec<Result<PackPart, String>> = {
+            use rayon::prelude::*;
+            packs.par_iter().map(|p| PackPart::read(p, attila, schema.as_ref())).collect()
+        };
+
         let mut dbs: Vec<(bool, String, TileDatabase)> = vec![];
         // The destruction levels: the building's collision file lists each piece's destructs, the building's count is the most over its
         // pieces; without one, the same from the models' names (`<piece>_destructNN.rigid_model_v2`).
         let mut pieces: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
         let mut from_cs2: BTreeMap<String, u32> = BTreeMap::new();
         let mut rows: Vec<(bool, String, String, Vec<f32>)> = vec![];
-        for p in &packs {
-            let Ok(mut pack) = Pack::read_and_merge(std::slice::from_ref(p), attila, true, false, false) else {
-                warnings.push(format!("{}: does not read", p.display()));
-                continue;
+        for part in parts {
+            let part = match part {
+                Ok(part) => part,
+                Err(w) => {
+                    warnings.push(w);
+                    continue;
+                }
             };
 
-            let name = p.file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let mut cs2 = vec![];
-            for n in pack.files().keys() {
-                let Some(rest) = n.strip_prefix("rigidmodels/buildings/") else { continue };
-                let Some((key, file)) = rest.split_once('/') else { continue };
-                if file.ends_with(".cs2.parsed") {
-                    cs2.push((key.to_owned(), n.clone()));
-                } else if let Some(at) = file.find("_destruct")
-                    && file.ends_with(".rigid_model_v2")
-                {
-                    let digits = file[at + 9..].chars().take_while(char::is_ascii_digit).collect::<String>();
-                    if let Ok(level) = digits.parse::<u32>() {
-                        let e = pieces.entry(key.to_owned()).or_default().entry(file[..at].to_owned()).or_default();
-                        *e = (*e).max(level);
-                    }
-                }
+            for (key, piece, level) in part.pieces {
+                let e = pieces.entry(key).or_default().entry(piece).or_default();
+                *e = (*e).max(level);
             }
 
-            for (key, n) in cs2 {
-                let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
-                if let Some(levels) = destruction_levels(&bytes) {
-                    from_cs2.insert(key, levels);
-                }
-            }
-
-            // The battlefield_buildings tables; a mod's rows (TDD's tables are in its main pack) before the game's.
-            let is_mod = !(name.starts_with("data") || name.starts_with("tiles"));
-            if let Some(schema) = &schema {
-                let tables = pack.files().keys().filter(|n| n.starts_with("db/battlefield_buildings_tables/")).cloned().collect::<Vec<_>>();
-                for n in tables {
-                    let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
-                    let mut extra = DecodeableExtraData::default();
-                    extra.set_schema(Some(schema));
-                    extra.set_table_name(Some("battlefield_buildings_tables"));
-                    let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else { continue };
-                    let col = |c: &str| db.column_position_by_name(c);
-                    let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
-                    for row in db.data().iter() {
-                        let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
-                        rows.push((is_mod, row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
-                    }
-                }
-            }
-
-            let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
-            for n in names {
-                let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
-                if let Ok(db) = TileDatabase::decode(&mut Cursor::new(&bytes), &None) {
-                    let kind = n.trim_start_matches("terrain/tiles/").split('/').next().unwrap_or_default().to_owned();
-                    dbs.push((!name.starts_with("tiles"), kind, db));
-                }
-            }
+            from_cs2.extend(part.cs2);
+            rows.extend(part.rows);
+            dbs.extend(part.dbs);
         }
 
         dbs.sort_by_key(|(is_mod, _, _)| !is_mod);
