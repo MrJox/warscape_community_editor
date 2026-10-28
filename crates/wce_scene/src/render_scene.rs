@@ -704,6 +704,11 @@ pub struct RenderScene {
     revision: u64,
     structure: u64,
     terrain_rev: u64,
+    overlay_rev: u64,
+
+    /// The overlays whose payload or matrix changed (not structurally), and the log position of overlay_log[0].
+    overlay_log: Vec<EntityId>,
+    overlay_base: u64,
     moved_log: Vec<EntityId>,
 
     /// The log position of moved_log[0].
@@ -767,6 +772,9 @@ impl Default for RenderScene {
             revision: 1,
             structure: 1,
             terrain_rev: 1,
+            overlay_rev: 1,
+            overlay_log: vec![],
+            overlay_base: 0,
             moved_log: vec![],
             moved_base: 0,
             structure_log: vec![],
@@ -841,6 +849,7 @@ impl RenderScene {
         // Not logged: an entity added has an id past the last one a consumer saw.
         self.revision += 1;
         self.structure += 1;
+        self.overlay_rev += 1;
         id
     }
 
@@ -857,7 +866,11 @@ impl RenderScene {
     pub fn update_world(&mut self, id: EntityId, world: Float4x4) {
         let Some(e) = self.find_mut(id) else { return };
         e.world = world;
+        let overlay = matches!(e.payload, Payload::Overlay(_));
         self.revision += 1;
+        if overlay {
+            self.log_overlay(id);
+        }
 
         // Nobody is following: forget the old entries.
         if self.moved_log.len() > MOVED_LOG_LIMIT {
@@ -877,6 +890,7 @@ impl RenderScene {
         e.payload = payload;
         if overlay_only {
             self.revision += 1;
+            self.log_overlay(id);
         } else if terrain_only {
             self.revision += 1;
             self.terrain_rev += 1;
@@ -903,6 +917,7 @@ impl RenderScene {
     fn log_structure(&mut self, change: StructureChange) {
         self.revision += 1;
         self.structure += 1;
+        self.overlay_rev += 1;
 
         // Nobody is following: forget the old entries.
         if self.structure_log.len() > MOVED_LOG_LIMIT {
@@ -911,6 +926,29 @@ impl RenderScene {
         }
 
         self.structure_log.push(change);
+    }
+
+    fn log_overlay(&mut self, id: EntityId) {
+        self.overlay_rev += 1;
+        if self.overlay_log.len() > MOVED_LOG_LIMIT {
+            self.overlay_base += self.overlay_log.len() as u64;
+            self.overlay_log.clear();
+        }
+
+        self.overlay_log.push(id);
+    }
+
+    /// The overlays whose payload or matrix changed since `cursor`, as [`Self::moved_since`] (structural changes are not in it: see
+    /// [`Self::structure_revision`]).
+    pub fn overlays_changed_since(&self, cursor: &mut u64) -> Option<Vec<EntityId>> {
+        let end = self.overlay_base + self.overlay_log.len() as u64;
+        let start = *cursor;
+        *cursor = end;
+        if start < self.overlay_base || start > end {
+            return None;
+        }
+
+        Some(self.overlay_log[(start - self.overlay_base) as usize..].to_vec())
     }
 
     pub fn moved_since(&self, cursor: &mut u64) -> Option<Vec<EntityId>> {
@@ -1029,6 +1067,12 @@ impl RenderScene {
     /// Changes when the payload of a terrain entity (its heights) is replaced: the renderer rebuilds only its terrain draw items then.
     pub fn terrain_revision(&self) -> u64 {
         self.terrain_rev
+    }
+
+    /// Changes when what the overlays draw may have changed: an overlay's payload or matrix, or anything structural (entities, layers,
+    /// visibility). Not for a terrain payload or a moved mesh, so the renderer's overlay cache survives a brush stroke or a dragged building.
+    pub fn overlay_revision(&self) -> u64 {
+        self.overlay_rev
     }
 
     pub fn touch(&mut self) {
