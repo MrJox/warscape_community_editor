@@ -100,6 +100,20 @@ Status legend: **done**, **partial**, **todo**.
   (`WCE_GAME_KEY=rome_2 siege_check <Rome 2> <out> <extracted project>`): 76 fort pieces, 11 areas, 17 streets, 4 wall edges, no problem
   in ours (CA's own layout: two nodes without a boundary). In game: to confirm.
 
+- **done** Master's features after the rebase of 2026-10-28 (docs/plans/launch_in_game.md, tile_ted_parity.md):
+  - Launch in game for any game: the profile's executable (`GameProfile::exe`, also what tells the games' folders apart), data folder,
+    pack format and campaign map; the armies per game (`[games.<id>.tools.tile] launch_army`, Rome 2's vanilla keys by default); the
+    battle XML without what Rome 2's engine lacks. The game's tile data for exports and launches is read from the mounted packs on the
+    preload thread too. In game: to confirm.
+  - Assembly Kits: the list is each game's (Settings > Game shows the shown game's); the exports' vegetation parameters come from the
+    first kit with tiles (none for Rome 2). rpfm's schema for the walls and the weather rules is the game's.
+  - The weather selection database: Rome 2's engine has none (`GameFeatures::variation_db`): the picker and its commands say so.
+  - Tile database window, New tile, Save tile as and the tiles that can follow: for Rome 2 the packs' database (the map context's tree)
+    stands for the kit's; its tiles open from the packs.
+  - Checked, nothing to do: the weather inspector (Rome 2's environment files have Attila's 110 element attributes), the ground texture
+    groups (the tile's climates), the burning buildings (a material without a fire shader draws plain; Rome 2's instance values: to
+    confirm in its renderer).
+
 ## Validation without TEd
 
 - Oracles: the game's files (decompile + compile within the text's precision, the database byte for byte), static RE of Rome 2's

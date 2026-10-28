@@ -54,6 +54,15 @@ played in battle mode anyway), `gfx_fullscreen` (an "environment variable" kept 
    `tiles.pack`'s database, not the loose one. **The release's packs win over loose files too**, and a tile's database is always in
    `tiles.pack`, so a tile reaches the game only in a pack.
 
+## Rome 2 (2026-10-28, static only)
+
+Rome 2's `empire.retail.dll` has the same start-up commands with the same help texts (`game_startup_mode <battle|campaign|campaign_edit|
+frontend|naval> opt:<xml name> opt:<xsd name> opt:<building list>`, `add_working_directory <directory name>`, `show_frontend_movies`, the
+default `data/TestData/world/DemoLandBattle.xml`), and of the battle XML's elements all but three: `deployment_area_alliance_index`,
+`battlefield_owner_alliance_index` and `tile_upgrade` are not among its strings (its benchmark, `script/bm_benchmark/bm_battle.xml`, has
+none of them either), so Launch in game leaves them out for Rome 2 (`GameProfile::launch`). Its vanilla armies: `rom_rome` with
+`Rom_Hastati` against `rom_suebi` with `Ger_Spear_Levy`, subculture `sc_rom_roman` (keys of the release's tables). Not launched yet.
+
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.
 

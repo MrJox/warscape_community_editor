@@ -20,6 +20,15 @@ use crate::variation_editor::{VariationEditState, blocks_saving, draw_variation_
 const VDB_BIN: &str = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
 const VDB_XML: &str = "warscape_asset_variation_db/warscape_asset_variation_db.xml";
 
+/// Why a game has no picker: it has no weather selection database.
+pub fn no_database(game: &wce_vfs::GameProfile) -> String {
+    format!(
+        "{} has no weather selection database (warscape_asset_variation_db): its battles take the environment from the weather folders \
+         (weather/<climate>/<season>/<land|sea>/<day|night>/<precipitation>/), as the Tile tool's Weather section does.",
+        game.display_name
+    )
+}
+
 /// Undo steps kept.
 const UNDO_STEPS: usize = 100;
 
@@ -549,6 +558,14 @@ impl WeatherPicker {
         gui::set_next_window_size(gui::v2(820.0, 860.0), gui::COND_FIRST_USE_EVER);
         gui::set_next_window_bg_alpha(1.0);
         if !gui::begin("Weather picker", Some(&mut self.open), 0) {
+            gui::end();
+            return None;
+        }
+
+        // A game without the database (Rome 2) picks its weather by the folders: nothing to pick or edit here.
+        let game = e.game();
+        if !game.features.variation_db {
+            gui::text_wrapped(&no_database(game));
             gui::end();
             return None;
         }

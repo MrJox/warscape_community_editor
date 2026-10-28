@@ -256,9 +256,12 @@ impl TileTool {
             return;
         };
 
-        let (version, raw) = (d.history().version(), d.project().raw_root.clone());
+        // The whole tile database: the kit's, or (a game whose kit has no tiles) the packs' in the map context's tree.
+        let (version, raw) = (d.history().version(), self.context.raw_of(d));
         let fresh = self.link_candidates.as_ref().is_some_and(|c| c.0 == (id, version));
         if !fresh && gui::small_button("Find them") {
+            self.prepare_neighbours(e);
+            let raw = e.docs.find_as::<TileDocument>(id).and_then(|d| self.context.raw_of(d)).or(raw);
             match raw.as_deref().map(|r| crate::context_panel::database(&mut self.context, r)) {
                 Some(Ok(db)) => {
                     let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
@@ -324,9 +327,10 @@ impl TileTool {
 
     /// Script: finds the candidates (as "Find them"); their count per join of the open tile.
     pub(crate) fn find_link_candidates(&mut self, e: &mut Editor, id: DocumentId) -> Result<Vec<usize>, String> {
+        self.prepare_neighbours(e);
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
         let version = d.history().version();
-        let raw = d.project().raw_root.clone().ok_or("the tile is not in an assembly kit")?;
+        let raw = self.context.raw_of(d).ok_or("the tile is not in an assembly kit")?;
         let db = crate::context_panel::database(&mut self.context, &raw)?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
         let entry = d.project().entry.as_ref().ok_or("no tile database entry")?;

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 pub const SETTINGS_ID: &str = "tile";
 
 /// The fields about the game's files, kept per game: tiles, weathers and Create entries are one game's (the same tile path can be in two
-/// games), and so are the sea states (keys of the game's wind table) and the packs written.
-pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs"];
+/// games), and so are the sea states (keys of the game's wind table), the packs written and Launch in game's armies (keys of its tables).
+pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
 
 /// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
 pub const PACKS_SOURCE: &str = "packs";
@@ -84,8 +84,9 @@ pub struct TileSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpfm_schema: Option<PathBuf>,
 
-    /// Launch in game (`launch.rs`): the battle the game starts into.
+    /// Launch in game (`launch.rs`): the battle the game starts into, and its armies (the game's).
     pub launch: LaunchSettings,
+    pub launch_army: LaunchArmy,
 
     /// The mod pack "Save to mod pack" wrote last, by game key.
     pub mod_packs: BTreeMap<String, String>,
@@ -116,14 +117,22 @@ pub enum LaunchDelivery {
     Loose,
 }
 
-/// The battle of Launch in game: its map and its two armies of one unit each (vanilla keys: a mod's units may need packs that are not
-/// enabled).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// How Launch in game makes its battle: the delivery, the map, and the last launch's times (the armies are each game's: [`LaunchArmy`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LaunchSettings {
     pub delivery: LaunchDelivery,
     pub map: LaunchMap,
 
+    /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
+    pub step_seconds: BTreeMap<String, f32>,
+}
+
+/// Launch in game's two armies of one unit each, a game's (vanilla keys: a mod's units may need packs that are not enabled). An empty key
+/// is the game's own ([`wce_vfs::LaunchFacts`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaunchArmy {
     /// The defender (alliance 0, the player) and the attacker: a faction and a unit each.
     pub defender_faction: String,
     pub defender_unit: String,
@@ -135,17 +144,19 @@ pub struct LaunchSettings {
 
     /// tile_upgrades.xml keys of a settlement battle in a map (`level1 escalation3`); empty: none.
     pub tile_upgrades: String,
-
-    /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
-    pub step_seconds: BTreeMap<String, f32>,
 }
 
-impl Default for LaunchSettings {
-    fn default() -> Self {
+impl LaunchArmy {
+    /// Every key given: an empty one takes the game's.
+    pub fn resolved(&self, game: &wce_vfs::LaunchFacts) -> Self {
+        let or = |v: &str, default: &str| if v.trim().is_empty() { default.to_owned() } else { v.trim().to_owned() };
         Self {
-            delivery: LaunchDelivery::default(), map: LaunchMap::default(), defender_faction: "att_fact_western_roman_empire".to_owned(), defender_unit: "att_rom_legio_comitatenses".to_owned(),
-            attacker_faction: "att_fact_saxones".to_owned(), attacker_unit: "att_nor_saxon_spears".to_owned(), subculture: "att_sub_cult_roman_west".to_owned(),
-            tile_upgrades: String::new(), step_seconds: BTreeMap::new(),
+            defender_faction: or(&self.defender_faction, game.defender_faction),
+            defender_unit: or(&self.defender_unit, game.defender_unit),
+            attacker_faction: or(&self.attacker_faction, game.attacker_faction),
+            attacker_unit: or(&self.attacker_unit, game.attacker_unit),
+            subculture: or(&self.subculture, game.subculture),
+            tile_upgrades: self.tile_upgrades.trim().to_owned(),
         }
     }
 }
@@ -246,6 +257,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
     }
 }

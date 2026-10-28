@@ -449,6 +449,9 @@ impl Editor {
         }
 
         help("Folders with raw_data; the first one wins where several have the same tile or prefab. The tools read them; only \"Save for Assembly Kit\" writes to one (it asks which when several fit), as TEd and the kit's tools read files. With none listed, the kit in the game folder is used.");
+        if !d.game_profile().features.kit_tiles {
+            help(&format!("{}'s kit has no battle tiles: the tiles come from the game's packs and go into mod packs (Tile > Save to mod pack).", d.game_profile().display_name));
+        }
         let default_projects = d.projects_dir().display().to_string();
         let mut projects = d.game_mut().projects.clone();
         if folder_field("Projects", &mut projects, &default_projects) {

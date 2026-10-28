@@ -166,6 +166,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("pick", "pick <category>=<value>", "weather picker condition (opens the picker; repeatable)", |e, a| {
         let Some((category, value)) = a.first().and_then(|x| x.split_once('=')) else { return fail("usage: pick <category>=<value>") };
+        if !e.game().features.variation_db {
+            return fail(&crate::picker::no_database(e.game()));
+        }
+
         with_weather(e, |t, _| {
             t.picker.set_pick(category, value);
             t.picker.open = true;
@@ -174,6 +178,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("picker", "picker pick|edit", "open the weather picker on the Pick (any other argument) or Edit tab", |e, a| {
+        if !e.game().features.variation_db {
+            return fail(&crate::picker::no_database(e.game()));
+        }
+
         with_weather(e, |t, _| {
             t.picker.open = true;
             if a.first().is_some_and(|x| x == "edit") {
@@ -186,6 +194,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("vdb-script", "vdb-script \"add-value:climate=X;save:both\"", "edit and save the weather database (for tests; see docs/re/variation_db.md)", |e, a| {
         let Some(script) = a.first() else { return fail("usage: vdb-script \"<commands>\"") };
+        if !e.game().features.variation_db {
+            return fail(&crate::picker::no_database(e.game()));
+        }
+
         with_weather(e, |t, e| {
             t.picker.open = true;
             t.picker.set_script(script);

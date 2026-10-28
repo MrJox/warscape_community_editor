@@ -1,7 +1,8 @@
 //! Tile > Tile database... (Phase 6b of docs/plans/tile_ted_parity.md; TEd's Tile Database Management): the battle tile sets of the
 //! Assembly Kit and of the projects, each with its colour and its tiles (a click opens one), and New tile set (TEd's: a name and a colour)
 //! into the projects' `_settings.xml`; "Save for Assembly Kit" carries a set a tile uses into the kit's. A new tile goes into a set with
-//! Tile > Save tile as....
+//! Tile > Save tile as.... A game whose kit has no tiles (Rome 2) shows its packs' database instead of the kit's (the map context's copy
+//! in the kit's format, `workflow::neighbour_root`); its tiles open from the packs.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,9 @@ pub(crate) struct DbTile {
     pub location: String,
     pub size: (u32, u32),
     pub ours: bool,
+
+    /// A tile of the packs' database (a game without kit tiles): its first variation's folder in the packs, opened from there.
+    pub packs_folder: Option<String>,
 }
 
 /// The window's state.
@@ -36,8 +40,8 @@ pub(crate) struct DbUi {
     pub status: String,
 }
 
-/// The entries of a `TILES` folder by tile set (`ours`: the projects').
-fn tiles_of(raw: &Path, ours: bool, out: &mut BTreeMap<String, Vec<DbTile>>) {
+/// The entries of a `TILES` folder by tile set (`ours`: the projects'; `packs`: the packs' database in the kit's format).
+fn tiles_of(raw: &Path, ours: bool, packs: bool, out: &mut BTreeMap<String, Vec<DbTile>>) {
     let Ok(dir) = std::fs::read_dir(raw.join("terrain/tiles/battle/_tile_database/TILES")) else { return };
     for f in dir.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml"))) {
         let Ok(e) = TileEntry::load(&f) else { continue };
@@ -45,7 +49,8 @@ fn tiles_of(raw: &Path, ours: bool, out: &mut BTreeMap<String, Vec<DbTile>>) {
         // A project's copy of a kit tile stands for it.
         let location = e.location();
         list.retain(|t| !(ours && t.location.eq_ignore_ascii_case(&location)));
-        list.push(DbTile { entry: f, location, size: (e.width(), e.height()), ours });
+        let packs_folder = packs.then(|| e.variations().first().map(|v| format!("{}/{}", e.location_generic(), v.location))).flatten();
+        list.push(DbTile { entry: f, location, size: (e.width(), e.height()), ours, packs_folder });
     }
 }
 
@@ -53,7 +58,8 @@ impl TileTool {
     /// Reads the kit's and the projects' sets and tiles again.
     pub(crate) fn refresh_tile_database(&mut self, e: &mut Editor) {
         let projects = Self::workspace_dir(e).join("raw_data");
-        let kit = self.kit_for(e, "battle");
+        let packs = !e.game().features.kit_tiles;
+        let kit = if packs { self.packs_database(e) } else { self.kit_for(e, "battle") };
         let ui = self.tile_db.get_or_insert_with(DbUi::default);
         ui.sets.clear();
         ui.tiles.clear();
@@ -63,10 +69,17 @@ impl TileTool {
         ui.sets.extend(ours.into_iter().filter(|s| !theirs.iter().any(|t| t.name == s.name)).map(|s| (s, true)));
         ui.sets.sort_by(|a, b| a.0.name.cmp(&b.0.name));
         if let Some(k) = &kit {
-            tiles_of(k, false, &mut ui.tiles);
+            tiles_of(k, false, packs, &mut ui.tiles);
         }
 
-        tiles_of(&projects, true, &mut ui.tiles);
+        tiles_of(&projects, true, false, &mut ui.tiles);
+    }
+
+    /// The packs' battle tile database in the kit's format, for a game whose kit has no tiles: the map context's tree
+    /// (`TileTool::prepare_neighbours`; the game's tile data is read the first time).
+    pub(crate) fn packs_database(&mut self, e: &mut Editor) -> Option<PathBuf> {
+        self.prepare_neighbours(e);
+        self.context.neighbours.as_ref().map(|(raw, _)| raw.clone())
     }
 
     pub(crate) fn open_tile_database(&mut self, e: &mut Editor) {
@@ -82,7 +95,8 @@ impl TileTool {
         let projects = Self::workspace_dir(e).join("raw_data");
         let ours = settings_file(&projects);
         if !ours.is_file() {
-            let kit = self.kit_for(e, "battle").map(|k| settings_file(&k)).filter(|k| k.is_file()).ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
+            let theirs = if e.game().features.kit_tiles { self.kit_for(e, "battle") } else { self.packs_database(e) };
+            let kit = theirs.map(|k| settings_file(&k)).filter(|k| k.is_file()).ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
             if let Some(dir) = ours.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
@@ -115,7 +129,14 @@ impl TileTool {
         gui::set_next_window_size(gui::v2(520.0, 560.0), gui::COND_FIRST_USE_EVER);
         let mut open = true;
         if gui::begin("Tile database", Some(&mut open), gui::WINDOW_NO_DOCKING) {
-            gui::text_wrapped("The battle tile sets of the Assembly Kit and of the projects, with their tiles (a click opens one). A new set goes into the projects' tile database; Save for Assembly Kit takes it into the kit's when a tile there uses it. Tile > Save tile as... puts a tile into a set.");
+            if e.game().features.kit_tiles {
+                gui::text_wrapped("The battle tile sets of the Assembly Kit and of the projects, with their tiles (a click opens one). A new set goes into the projects' tile database; Save for Assembly Kit takes it into the kit's when a tile there uses it. Tile > Save tile as... puts a tile into a set.");
+            } else {
+                gui::text_wrapped(&format!(
+                    "The battle tile sets of {}'s packs and of the projects, with their tiles (a click opens one; a tile of the packs is extracted into the projects). A new set goes into the projects' tile database. Tile > Save tile as... puts a tile into a set.",
+                    e.game().display_name
+                ));
+            }
             gui::separator();
             gui::set_next_item_width(160.0);
             gui::input_text("##newset", Some("new set's name"), &mut ui.new_name, 64, 0);
@@ -177,7 +198,7 @@ impl TileTool {
                         for t in tiles.iter().filter(|t| f.is_empty() || s.name.contains(&f) || hit(t)) {
                             let name = t.location.rsplit(['\\', '/']).next().unwrap_or_default();
                             if gui::selectable(&format!("{name}  {} x {}{}##{}", t.size.0, t.size.1, if t.ours { "  [projects]" } else { "" }, t.entry.display()), false, 0) {
-                                open_entry = Some(t.entry.clone());
+                                open_entry = Some(t.clone());
                             }
                         }
 
@@ -187,8 +208,11 @@ impl TileTool {
             }
 
             gui::end_child();
-            if let Some(p) = open_entry {
-                let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
+            if let Some(t) = open_entry {
+                let msg = match &t.packs_folder {
+                    Some(folder) => self.extract_or_ask(e, folder),
+                    None => self.open_tile(e, &t.entry.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}")),
+                };
                 e.status(&msg, false);
             }
         }
