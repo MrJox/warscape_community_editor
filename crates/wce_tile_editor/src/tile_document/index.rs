@@ -25,8 +25,33 @@ pub fn style_of(t: &str) -> TileTypeStyle {
         "SIMPLE_MESH_INSTANCE" => s(0.6, 0.6, 0.75, 4.0, false),
         "CaptureLocationInstance" => s(0.2, 0.6, 1.0, 3.0, false),
         "SiegeAINodeInstance" | "SiegeAIEdgeInstance" => s(0.95, 0.2, 0.2, 2.0, false),
-        _ if t.contains("POLYGON") || t.contains("Polygon") || t.contains("Zone") || t == "AISeparatorInstance" => s(0.3, 0.9, 0.9, 1.5, true),
+        _ if t.contains("POLYGON") || t.contains("Polygon") || t.contains("Zone") || t == "AISeparatorInstance" => {
+            let [r, g, b] = polygon_colour(t);
+            s(r, g, b, 1.5, true)
+        }
+
         _ => s(0.8, 0.8, 0.8, 2.0, false),
+    }
+}
+
+/// A polygon type's colour (its cover's fill and edges), and the lines' (splines, separators).
+pub fn polygon_colour(t: &str) -> [f32; 3] {
+    match t {
+        "AI_HINT_POLYGON_INSTANCE" => [1.0, 0.85, 0.2],
+        "NOGO_REGION_POLYGON_INSTANCE" => [0.95, 0.2, 0.2],
+        "GO_REGION_POLYGON_INSTANCE" => [0.3, 0.9, 0.35],
+        "SIEGE_AI_POLYGON_INSTANCE" => [1.0, 0.5, 0.1],
+        "VegetationExclusionPolygonInstance" => [0.65, 0.85, 0.15],
+        "ZONE_POLYGON_INSTANCE" => [0.2, 0.8, 0.7],
+        "DEPLOYMENT_ZONE_POLYGON_INSTANCE" | "DeploymentZonePolygonInstanceGroup" => [0.25, 0.45, 1.0],
+        "CaptureLocationPolygonInstance" => [0.2, 0.85, 1.0],
+        "CivilianDeploymentZone" => [1.0, 0.45, 0.75],
+        "LiteBuildingZone" => [0.65, 0.45, 1.0],
+        "AISeparatorInstance" => [0.95, 0.95, 0.95],
+        "SplineRiverInstance" => [0.3, 0.6, 1.0],
+        "SEGMENTED_SPLINE_INSTANCE" => [0.8, 0.62, 0.4],
+        "WceWallSpline" => [0.75, 0.75, 0.75],
+        _ => [0.3, 0.9, 0.9],
     }
 }
 

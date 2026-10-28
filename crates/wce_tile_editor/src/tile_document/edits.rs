@@ -461,8 +461,8 @@ impl Tile {
 
         self.stroke_open = false;
 
-        // The walls' layouts follow the ground.
-        self.polygons_dirty |= heights && self.has_walls();
+        // The walls' layouts and the polygons' covers follow the ground.
+        self.polygons_dirty |= heights;
     }
 
     fn height_modified(&self) -> bool {
