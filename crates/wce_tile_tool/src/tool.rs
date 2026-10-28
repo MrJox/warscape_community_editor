@@ -21,7 +21,7 @@ use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::{TerrainLook, TerrainView};
 use wce_tile_editor::tile_document::siege::AUTOGEN_LAYER;
-use wce_tile_editor::tile_document::{GROUND_ERASE, WALL_SPLINE, WallLayout, BrushKind, BrushSettings, GENERATED_PREFIX, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{GROUND_ERASE, WALL_SPLINE, WallLayout, BrushKind, BrushSettings, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
 
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
@@ -85,12 +85,12 @@ pub enum TileMode {
 }
 
 /// What the water depth view shows (its tooltip).
-const WATER_VIEW_TIP: &str = "The water's depth over the ground, as BOB works out the tile's water map (hf_water_map.data) from the rivers and \
+pub(crate) const WATER_VIEW_TIP: &str = "The water's depth over the ground, as BOB works out the tile's water map (hf_water_map.data) from the rivers and \
     water planes: cyan shallow to dark blue 6 m and deeper, dark where there is no water. The edges of the areas painted as deep water \
     (ground types) are white, of shallow water yellow: where units can cross is what the painted ground types say, not the water.";
 
 /// What Paint water ground types does (its tooltip).
-const PAINT_WATER_TIP: &str = "Paints the water ground types from the depth: shallow water between the two depths, deep water from the second; \
+pub(crate) const PAINT_WATER_TIP: &str = "Paints the water ground types from the depth: shallow water between the two depths, deep water from the second; \
     water painted where the water is shallower than the first (or gone) is cleared, other ground types where there is no water are kept. \
     The defaults come from the kit's river tiles (painted shallow water 0.2 .. 1.25 m deep, deep water 4.4 .. 5.7 m, quartiles). One undo step.";
 
@@ -368,6 +368,9 @@ pub struct TileTool {
     pub(crate) link_typing: bool,
     pub(crate) prop_typing: bool,
 
+    /// The Tile panel's valid cells show the minimap's ground colour over them.
+    pub(crate) cells_ground: bool,
+
     /// The Save tile as and Resize tile dialogs.
     pub(crate) save_as: Option<crate::save_tile_as::SaveAsUi>,
     pub(crate) resize: Option<crate::resize_tile::ResizeUi>,
@@ -399,6 +402,9 @@ pub struct TileTool {
     pub(crate) water_for: Option<(DocumentId, u64)>,
     pub(crate) water_seen: Option<(DocumentId, u64)>,
     pub(crate) water_since: f64,
+
+    /// The same for the automatic no-go areas (worked out with the depth, from the same final heights, while they show).
+    pub(crate) nogo_for: Option<(DocumentId, u64)>,
 
     /// Paint water ground types' depths: shallow water from the first, deep water from the second (metres).
     pub(crate) water_shallow_m: f32,
@@ -453,6 +459,9 @@ pub struct TileTool {
     pub(crate) surface_hit: Option<crate::placement_modes::SurfacePoint>,
     pub(crate) surface_px: Option<(i32, i32)>,
     pub(crate) place_chips_width: f32,
+
+    /// The ground views' chip's width (ground_views.rs), last frame.
+    pub(crate) ground_chip_width: f32,
 
     /// The vegetation brush's settings (read from the settings on first use), its stroke, and its random numbers.
     pub(crate) veg: Option<crate::settings::VegBrush>,
@@ -606,10 +615,10 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: true, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            drawing: false, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            drawing: false, ground_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -2015,8 +2024,9 @@ impl TileTool {
         gui::end();
     }
 
-    /// Ground: the terrain colour is the tile's blend map mixed from the textures of a climate. The climate is not stored in the tile (a
-    /// map's climate map says it), so it is a setting here; a wrong guess looks different, not broken.
+    /// Ground: the terrain colour is the tile's blend map mixed from the textures of a climate (picked with the views, the water, the sea,
+    /// the trees and the grass in the viewport's ground chip, ground_views.rs). The climate is not stored in the tile (a map's climate map
+    /// says it), so it is a setting; a wrong guess looks different, not broken.
     fn draw_ground_section(&mut self, e: &mut Editor, id: DocumentId) {
         if !gui::collapsing_header("Ground", gui::TREE_DEFAULT_OPEN) {
             return;
@@ -2025,147 +2035,13 @@ impl TileTool {
         let shader_failures = e.renderer.as_ref().map(|r| r.shader_failures().to_vec()).unwrap_or_default();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let mut look = d.tile().terrain_look().clone();
-        let mut changed = gui::checkbox("blended ground (blend map + climate textures)", &mut look.blended);
-        let climates = d.tile().climates().climates.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
-        if look.blended && !climates.is_empty() {
-            let mut ci = climates.iter().position(|c| *c == look.climate).unwrap_or(0) as i32;
-            gui::set_next_item_width(200.0);
-            if gui::combo("climate##ground", &mut ci, &climates.iter().map(String::as_str).collect::<Vec<_>>()) {
-                look.climate = climates[ci as usize].clone();
-                changed = true;
-            }
-
-            // The game's four battle seasons; a texture without the season's variant falls back to summer (fn 0x1180cb20).
-            let seasons = ["sp", "su", "au", "wi"];
-            let mut si = match look.season.as_str() {
-                "sp" => 0,
-                "au" => 2,
-                "wi" => 3,
-                _ => 1,
-            };
-
-            gui::set_next_item_width(80.0);
-            if gui::combo("season##ground", &mut si, &["spring", "summer", "autumn", "winter"]) {
-                look.season = seasons[si as usize].to_owned();
-                changed = true;
-            }
-        }
-
-        if look.blended {
-            let views = [TerrainView::Colour, TerrainView::BlendGroups, TerrainView::GroundTypes, TerrainView::Protection, TerrainView::WaterDepth];
-            let mut vi = views.iter().position(|&v| v == look.view).unwrap_or(0) as i32;
-            gui::set_next_item_width(160.0);
-            if gui::combo("view##ground", &mut vi, &["colour", "blend groups", "ground types", "protection", "water depth"]) {
-                look.view = views[vi as usize];
-                changed = true;
-            }
-
-            if gui::is_item_hovered() && look.view == TerrainView::WaterDepth {
-                gui::set_tooltip(WATER_VIEW_TIP);
-            }
-        }
-
-        let water_view = look.view == TerrainView::WaterDepth;
-        if changed {
+        if gui::checkbox("blended ground (blend map + climate textures)", &mut look.blended) {
             d.tile_mut().set_terrain_look(&mut e.scene, look);
         }
 
-        // The water depth view: the water ground types painted from the depth.
-        if water_view {
-            gui::set_next_item_width(70.0);
-            gui::drag_float("shallow from (m)##water", &mut self.water_shallow_m, 0.05, 0.0, 20.0, "%.2f");
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Water shallower than this is left unpainted (the water at a river's banks, which lies under the ground or barely over it).");
-            }
-
-            gui::same_line();
-            gui::set_next_item_width(70.0);
-            gui::drag_float("deep from (m)##water", &mut self.water_deep_m, 0.05, 0.0, 50.0, "%.2f");
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Water at least this deep is painted deep water (units cannot cross it); shallower water is shallow water (units wade).");
-            }
-
-            self.water_deep_m = self.water_deep_m.max(self.water_shallow_m);
-            if gui::button("Paint water ground types") {
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                self.status = match d.paint_water_ground_types(self.water_shallow_m, self.water_deep_m) {
-                    Ok(n) => format!("{n} ground type pixel(s) painted from the water depth"),
-                    Err(why) => why,
-                };
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(PAINT_WATER_TIP);
-            }
-        }
-
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        gui::text_disabled(&format!("{} the viewport's top right: the views, the climate and season, water, sea, trees, grass", icons::LAYERS));
         gui::text_wrapped(d.tile().terrain_note());
-        let mut water = d.tile().display().show_water;
-        if gui::checkbox("water (rivers)", &mut water) {
-            d.tile_mut().display_mut().show_water = water;
-            d.tile_mut().display_changed();
-        }
-
-        gui::same_line();
-        let mut sea = d.tile().display().show_sea;
-        if gui::checkbox("sea at 0 m", &mut sea) {
-            self.set_show_sea(e, id, sea);
-        }
-
-        // The battle's wind picks the sea's waves and whitecaps.
-        if let Some(r) = e.renderer() {
-            let states = r.sea_states();
-            if !states.is_empty() {
-                let mut k = states.iter().position(|s| *s == r.settings.sea_state).unwrap_or(0) as i32;
-                gui::set_next_item_width(170.0);
-                if gui::combo("sea state (battle wind)", &mut k, &states.iter().map(String::as_str).collect::<Vec<_>>()) {
-                    let key = states[k as usize].clone();
-                    set_sea_state(e, &key);
-                }
-            }
-        }
-
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-
         gui::text_disabled(d.tile().water_note());
-
-        // BOB's procedural trees: one list per climate key, plus default; gen:<list> generates them from the seeds.
-        let mut lists = vec!["none".to_owned()];
-        lists.extend(d.tile().tree_lists().iter().cloned());
-        let shown = d.tile().display().tree_list.clone();
-        let generated = format!("{GENERATED_PREFIX}{shown}");
-        let mut li = lists.iter().position(|l| *l == shown).or_else(|| lists.iter().position(|l| *l == generated)).unwrap_or(0) as i32;
-        let items = lists.iter().map(String::as_str).collect::<Vec<_>>();
-        gui::set_next_item_width(160.0);
-        if gui::combo("procedural trees", &mut li, &items) {
-            d.tile_mut().display_mut().tree_list = if li == 0 { String::new() } else { lists[li as usize].clone() };
-        }
-
-        let mut grass = d.tile().display().show_grass;
-        if gui::checkbox("grass", &mut grass) {
-            d.tile_mut().display_mut().show_grass = grass;
-        }
-
-        gui::same_line();
-        let mut generated = d.tile().display().generate_grass;
-        if gui::checkbox("generated##grass", &mut generated) {
-            d.tile_mut().display_mut().generate_grass = generated;
-        }
-
-        if generated {
-            gui::same_line();
-            if gui::button("regenerate##grass") {
-                d.tile_mut().reload_grass();
-            }
-        }
-
-        if lists[li as usize].starts_with(GENERATED_PREFIX) {
-            gui::same_line();
-            if gui::button("regenerate") {
-                d.tile_mut().reload_tree_list();
-            }
-        }
         for f in &shader_failures {
             gui::text_colored(theme::error(), &format!("game shader not loaded: {f}"));
         }
@@ -3831,10 +3707,13 @@ impl Tool for TileTool {
         self.chips_width = hi.x - lo.x;
         gui::pop_style_color(1);
 
-        // The placement chips at the top right, beside the compass too.
+        // The ground views' chip at the top right, the placement chips (while placing) left of it, beside the compass too.
         let compass_right = origin.x + size.x * 0.5 + (size.x - 16.0).min(360.0) * 0.5;
-        let beside = !e.viewport.show_compass || origin.x + size.x - 8.0 - self.place_chips_width - 8.0 >= compass_right;
-        self.draw_placement_chips(e, origin, size, if beside { 6.0 } else { 58.0 });
+        let placing = self.placing.is_some() || self.grabbing;
+        let right = self.ground_chip_width + if placing { 4.0 + self.place_chips_width } else { 0.0 };
+        let top = if !e.viewport.show_compass || origin.x + size.x - 8.0 - right - 8.0 >= compass_right { 6.0 } else { 58.0 };
+        self.draw_ground_chip(e, origin, size, top);
+        self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - 4.0, size.y), top);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
     }

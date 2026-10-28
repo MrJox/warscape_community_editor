@@ -1061,6 +1061,20 @@ pub struct WaterFields {
     pub w: usize,
     pub h: usize,
     pub t: usize,
+
+    /// The entry's mask (subtiles from the bottom row; empty without one).
+    pub mask: Vec<bool>,
+}
+
+impl WaterFields {
+    /// The automatic no-go areas `terrain_outlines.xml` gets from these heights (`terrain_outlines::no_go_outlines`), in vertices of the
+    /// grid (x the column, y the row along +z).
+    pub fn no_go_outlines(&self, raw: &wce_tile_model::Tile) -> Vec<Vec<(f32, f32)>> {
+        let g = Grid { w: self.w, h: self.h, t: self.t, mask: self.mask.clone() };
+        let go = super::compile::go_outlines(raw);
+        let outlines = super::terrain_outlines::no_go_outlines(&self.heights, self.w, self.h, &go, &self.mask, g.cells_of_tile(raw));
+        outlines.into_iter().map(|o| o.into_iter().map(|(x, y)| (x * 0.5, y * 0.5)).collect()).collect()
+    }
 }
 
 /// [`WaterFields`] of a raw tile.
@@ -1092,7 +1106,7 @@ pub fn water_fields(raw: &wce_tile_model::Tile, raw_data: &std::path::Path, mode
         water
     });
 
-    Ok(WaterFields { heights, water, w, h, t })
+    Ok(WaterFields { heights, water, w, h, t, mask: links.mask.clone() })
 }
 
 /// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2`,

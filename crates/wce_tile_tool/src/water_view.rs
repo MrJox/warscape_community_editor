@@ -1,6 +1,7 @@
 //! The water depth view (Phase 4d of docs/plans/tile_ted_parity.md): stage B's water map (`terrain_mesh::water_fields`, the rasterisation
 //! BOB writes `hf_water_map.data` with) of the tile as it is in memory, less its final heights, handed to the document
-//! (`Tile::set_water_depth`) while the view shows; worked out again once the tile has not changed for a moment after an edit.
+//! (`Tile::set_water_depth`) while a view shows it, and the automatic no-go areas of the same final heights (`Tile::set_auto_nogos`) while
+//! they show; worked out again once the tile has not changed for a moment after an edit.
 
 use std::path::Path;
 
@@ -21,50 +22,64 @@ use crate::tool::TileTool;
 const SETTLE_S: f64 = 0.6;
 
 impl TileTool {
-    /// Per frame: the water depth of the open tile while its view shows, worked out when the tile changed (and has settled).
+    /// Per frame: the water depth of the open tile while a view shows it (the viewport's, the minimap's), and the automatic no-go areas
+    /// while they show, worked out when the tile changed (and has settled).
     pub(crate) fn update_water_depth(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
-        if d.tile().terrain_look().view != TerrainView::WaterDepth || d.tile().stroke_open() {
+        if d.tile().stroke_open() {
             return;
         }
 
+        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth || self.minimap.view() == Some(TerrainView::WaterDepth);
+        let wants_nogo = d.tile().display().show_auto_nogo || self.minimap.shows_auto_nogos();
         let version = d.history().version();
-        let now = e.clock.time();
-        if self.water_for == Some((id, version)) {
+        let key = Some((id, version));
+        let (water, nogo) = (wants_water && self.water_for != key, wants_nogo && self.nogo_for != key);
+        if !water && !nogo {
             return;
         }
 
-        if self.water_seen != Some((id, version)) {
-            self.water_seen = Some((id, version));
+        let now = e.clock.time();
+        if self.water_seen != key {
+            self.water_seen = key;
             self.water_since = now;
         }
 
         // Shown for this tile already: after an edit, once the tile has stayed as it is for a moment; else at once.
-        if self.water_for.is_some_and(|(doc, _)| doc == id) && now - self.water_since < SETTLE_S {
+        let shown = |f: Option<(DocumentId, u64)>| f.is_some_and(|(doc, _)| doc == id);
+        if (!water || shown(self.water_for)) && (!nogo || shown(self.nogo_for)) && now - self.water_since < SETTLE_S {
             return;
         }
 
         let game = self.exported_game(e).ok();
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let started = std::time::Instant::now();
-        let depth = match water_depth_of(d, game.as_deref()) {
-            Ok(w) => Some(w),
+        let (depth, nogos) = match stage_b_of(d, game.as_deref(), nogo) {
+            Ok((w, n)) => (Some(w), n),
             Err(why) => {
-                log::warn(format!("water depth: {why}"));
-                None
+                log::warn(format!("water depth / no-go areas: {why}"));
+                (None, None)
             }
         };
 
-        log::info(format!("water depth worked out in {:.2} s", started.elapsed().as_secs_f64()));
-        self.water_for = Some((id, version));
+        log::info(format!("{} worked out in {:.2} s", if nogo { "water depth and no-go areas" } else { "water depth" }, started.elapsed().as_secs_f64()));
+        self.water_for = key;
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().set_water_depth(&mut e.scene, depth);
+        if nogo {
+            self.nogo_for = key;
+            d.tile_mut().set_auto_nogos(nogos);
+        }
     }
 }
 
 /// The tile as it is in memory (its scene, its heights in the range the next save gives them, its entry with that range) through stage B's
 /// water map; the water planes' models from the game's packs when they are known.
-fn water_depth_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>) -> Result<WaterDepth, String> {
+/// Polygons in metres (tile frame).
+type Outlines = Vec<Vec<[f32; 2]>>;
+
+/// With `nogos`, the automatic no-go areas too.
+fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
     let p = d.project();
@@ -99,5 +114,11 @@ fn water_depth_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow:
         None => vec![f32::NAN; f.w * f.h],
     };
 
-    Ok(WaterDepth { w: f.w, h: f.h, depth })
+    // The grid's vertices over the tile without its border, row j along +z.
+    let nogos = nogos.then(|| {
+        let (sx, sz) = (d.tile().extent_x() as f32 / (f.w - 1).max(1) as f32, d.tile().extent_z() as f32 / (f.h - 1).max(1) as f32);
+        f.no_go_outlines(&raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
+    });
+
+    Ok((WaterDepth { w: f.w, h: f.h, depth }, nogos))
 }
