@@ -15,4 +15,4 @@ windows-bindgen = "0.100"
 
 # rpfm_lib from rpfm's develop branch (which has the Attila formats the editor needs), checked out next to this repo.
 #rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }
-rpfm_lib = { version = "^5.3", default-features = false }
+rpfm_lib = { git = "https://github.com/Frodo45127/rpfm", branch = "develop", default-features = false }
