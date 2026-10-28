@@ -1,9 +1,9 @@
 //! Viewport camera controllers. They turn mouse and key state into a `Camera`; the viewport feeds them and passes the result to the renderer.
 //! All keep the game's battle camera lens (vertical FOV 65 degrees, near 1, far 13000, from the memory dump) unless the lens is edited.
 //!
-//! Five modes: the Total War camera (the game's battle camera, the default), the top-down view (TEd's "Ortho Top": orthographic, straight
+//! Five modes: the Total War camera (the game's battle camera), the top-down view (TEd's "Ortho Top": orthographic, straight
 //! down), the walk camera (TEd's "Walk": eye height above the ground), the fly camera (TEd's "Look": free flight) and the orbit camera (TEd's
-//! "Orbit": around a target). The ground and the obstacles come from a [`CameraWorld`]; the options are the settings' ([`CameraOptions`]).
+//! "Orbit": around a target; the default). The ground and the obstacles come from a [`CameraWorld`]; the options are the settings' ([`CameraOptions`]).
 
 use wce_foundation::math::{Float3, length, normalize};
 use wce_scene::camera::Camera;
@@ -109,11 +109,11 @@ impl CameraWorld for NoWorld {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraMode {
-    #[default]
     TotalWar,
     TopDown,
     Walk,
     Fly,
+    #[default]
     Orbit,
 }
 

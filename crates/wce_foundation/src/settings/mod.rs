@@ -195,7 +195,7 @@ impl Default for Appearance {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
-    /// The camera last used: `total_war`, `top_down` or `walk`.
+    /// The camera last used: `orbit`, `total_war`, `top_down`, `walk` or `fly`.
     pub mode: String,
 
     /// 0 (off) .. 1.
@@ -218,7 +218,7 @@ pub struct CameraSettings {
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            mode: "total_war".to_owned(), smoothing: 0.5, edge_scroll: false, game_limits: false, respect_ground: true, ground_clearance: 1.0,
+            mode: "orbit".to_owned(), smoothing: 0.5, edge_scroll: false, game_limits: false, respect_ground: true, ground_clearance: 1.0,
             respect_collisions: false,
         }
     }
