@@ -49,8 +49,11 @@ To check against a frame of the game: the cascades' fade, the baked map's use, t
 
 ## Weather
 
-Rome 2 has no `warscape_asset_variation_db`: the battle weather is chosen by folder,
-`weather/<climate>/[<season>/]<land|sea>/<day|night>/<dry|fog|rain|...>/<file>.environment`. The tile tool's Weather section builds the
+Rome 2 has no `warscape_asset_variation_db`: the battle weather is chosen by folder (fn 0x114ecc90): the game lists
+`weather/<climate>/<season>/land/<day|night>/<precipitation>/*.environment` with the battle's season (`default` when it has none), only
+when that is empty the `default` season's, last `weather/default/default/land/...`, and picks one at random. The `default/` files are
+heavily graded (brightness up to 1.45, blue contrast 0.6) where the season folders are near neutral: a summer battle is lit by `su/`.
+The paths without a season level (`weather/<climate>/land/...`) are never built. The tile tool's Weather section builds the
 database from the folders. The environment schema is a subset of Attila's (no `terrain_relative_height_fog`, per-channel tones
 biases, `cubemap_sun_colour_scale`, `snowing_intensity`, `wind_dir_degrees`).
 
