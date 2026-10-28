@@ -46,6 +46,10 @@ pub struct GameProfile {
     /// What the game and its Assembly Kit have.
     pub features: GameFeatures,
 
+    /// Ids of the built tools (`Tool::id`: "weather", "tile", ...) that don't work with this game: the editor hides them while it is the
+    /// current one.
+    pub unsupported_tools: &'static [&'static str],
+
     /// Launch in game: the test battle's vanilla armies and what the game's battle XML has.
     pub launch: LaunchFacts,
 }
@@ -139,6 +143,7 @@ impl GameProfile {
         campaign_battle_map: "terrain/battles/main_attila_map",
         default_environment: "weather/charlemagne/med_sp_land_day_dry.environment",
         features: GameFeatures { kit_tiles: true, civilians: true, escalation: true, lite_buildings: true, variation_db: true },
+        unsupported_tools: &[],
         launch: LaunchFacts {
             defender_faction: "att_fact_western_roman_empire",
             defender_unit: "att_rom_legio_comitatenses",
@@ -173,6 +178,7 @@ impl GameProfile {
         campaign_battle_map: "terrain/battles/main_rome_map",
         default_environment: "weather/rome_med/land/day/dry/day_dry_01.environment",
         features: GameFeatures { kit_tiles: false, civilians: false, escalation: false, lite_buildings: false, variation_db: false },
+        unsupported_tools: &[],
         // Rome against the Suebi (keys of the release's factions and main_units tables).
         launch: LaunchFacts {
             defender_faction: "rom_rome",
@@ -187,6 +193,11 @@ impl GameProfile {
 
     /// Every supported game, the default first.
     pub const ALL: [&'static GameProfile; 2] = [&Self::ATTILA, &Self::ROME_2];
+
+    /// False for a tool this game hides (`unsupported_tools`).
+    pub fn supports_tool(&self, id: &str) -> bool {
+        !self.unsupported_tools.contains(&id)
+    }
 
     /// The game with a key, if it's supported.
     pub fn by_key(key: &str) -> Option<&'static GameProfile> {
