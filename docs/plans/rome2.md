@@ -62,7 +62,10 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
 - **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): the
   ground's variations and repeats now follow the game (the hill shows rock's pale variation, at 40 m), but it is still browner than the
-  game's pale grey; the orange cast was the weather: the editor lit with the `default/` season folder's heavily graded files, the
+  game's pale grey. Of every climate's rock only `rome_med`'s first variations are that pale grey with moss: the game's battle was
+  most likely lit and textured as ROME_Med (2026-10-28; to render with it). Not cliffs: `terrain/textures/battle/cliff/*` are only on
+  the `cliff_custom` link tiles' meshes (material 49, TerrainCustomTile, fn 0x114b80a0: `<mesh path>_<climate>_diffuse.dds`, else
+  `<mesh path>_diffuse.dds`), coastal; tile ground never gets them (~/wce_re/scratch/rome2/cliff_re/notes.md). The orange cast was the weather: the editor lit with the `default/` season folder's heavily graded files, the
   game with the battle season's (2026-10-28; the colour matrix and the environment's fields checked against the game, the same); still
   open: the haze. The climate: a tile shown in a map context takes its
   placement's (`ContextPanel::adopt_climate`, the region's as in the game); alone it is the editor's choice (`ROME_Continental` by
