@@ -737,7 +737,7 @@ impl Renderer {
         let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
         for e in scene.entities() {
             let Payload::Overlay(o) = &e.payload else { continue };
-            if !o.pickable || !scene.pickable(e) {
+            if !o.pickable || !scene.pickable(e) || self.settings.game_view {
                 continue;
             }
 

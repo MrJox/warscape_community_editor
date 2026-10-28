@@ -68,6 +68,10 @@ pub struct Viewport {
     pub gizmo_points: f32,
     pub gizmo_clip: f32,
     pub show_grid: bool,
+
+    /// The game view (Terry's): the scene as the game shows it, without markers, polygons, the grid, the selection outline and the gizmo.
+    /// Not kept in the settings: the editor starts in the editor view.
+    pub game_view: bool,
     pub hovered: bool,
     pub frames_rendered: u64,
 
@@ -109,7 +113,7 @@ impl Default for Viewport {
             total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
             orbit: OrbitCamera::default(), mode: CameraMode::default(),
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
+            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -279,6 +283,7 @@ fn render(e: &mut Editor, w: u32, h: u32) {
 
     let vp = &mut e.viewport;
     r.settings.show_grid = vp.show_grid;
+    r.settings.game_view = vp.game_view;
     r.settings.selection = selection;
     (r.settings.tinted, r.settings.tint_colour) = tint;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
@@ -369,6 +374,7 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     // A capture is a function of the scene, not of the live frames before it.
     r.restart_temporal();
     r.settings.show_grid = e.viewport.show_grid;
+    r.settings.game_view = e.viewport.game_view;
     r.settings.selection = selection;
     (r.settings.tinted, r.settings.tint_colour) = tint;
     (r.settings.selection_colour, r.settings.selection_outline_px) = outline_style;
@@ -582,7 +588,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
     let claims = e.viewport_and_tool_claims();
     let mut gizmo_target: Option<(SourceRef, Float4x4)> = None;
-    if e.viewport.gizmo != GizmoMode::Off && !claims && !e.selection.is_empty() {
+    if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
         let primary = e.selection.items()[0];
         gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
     }

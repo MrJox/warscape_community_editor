@@ -632,6 +632,16 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("view_mode", "view_mode editor|game", "the viewport's view: the editor's (markers, polygons, gizmo) or the game's (as the game shows the scene)", |e, a| {
+        match a.first().map(String::as_str) {
+            Some("editor") => e.viewport.game_view = false,
+            Some("game") => e.viewport.game_view = true,
+            _ => return fail("usage: view_mode editor|game"),
+        }
+
+        ok("")
+    });
+
     c.add("focus", "focus", "frame the selection in the viewport", |e, _| {
         viewport::focus_selection(e);
         ok("")

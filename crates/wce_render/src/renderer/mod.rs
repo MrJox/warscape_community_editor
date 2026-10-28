@@ -341,6 +341,10 @@ pub struct RenderSettings {
     /// gfx_shadow_quality: the cascade split row (ShadowMapView +0x84).
     pub shadow_quality: i32,
 
+    /// The game view: the scene as the game shows it, without the editor's overlays (markers, polygons, the grid), the selection outline
+    /// and the tint; overlays are not picked either.
+    pub game_view: bool,
+
     // Editor overlays: a line grid on y = 0, and the entities whose bounds are outlined (yellow, on top).
     pub show_grid: bool,
     pub grid_step: f32,
@@ -392,6 +396,7 @@ impl Default for RenderSettings {
             depth_of_field: true,
             distortion: true,
             shadow_quality: 3,
+            game_view: false,
             show_grid: false,
             grid_step: 10.0,
             grid_half_extent: 200.0,
@@ -1247,7 +1252,7 @@ impl Renderer {
 
         // Final: copies final_ with alpha = 1 for the viewport.
         self.pass_display(target);
-        if self.settings.view == View::Final {
+        if self.settings.view == View::Final && !self.settings.game_view {
             {
                 wce_prof!("render.tint");
                 self.pass_tint(scene, target);

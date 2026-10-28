@@ -1525,6 +1525,32 @@ impl Editor {
             gui::same_line();
         }
 
+        gui::text_disabled("|");
+        gui::same_line();
+        for (game, name, tip) in [
+            (false, "Editor view", "The scene with the editor's markers, polygons, grid, selection outline and gizmo."),
+            (true, "Game view", "The scene as the game shows it: no markers, polygons, grid, selection outline or gizmo."),
+        ] {
+            let on = self.viewport.game_view == game;
+            if on {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            if gui::small_button(name) {
+                self.viewport.game_view = game;
+            }
+
+            if on {
+                gui::pop_style_color(1);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+
+            gui::same_line();
+        }
+
         self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
         gui::text_disabled("|");
         gui::same_line();
@@ -1689,6 +1715,14 @@ impl Editor {
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
             gui::separator();
+            if gui::menu_item("Editor view", None, !self.viewport.game_view, true) {
+                self.viewport.game_view = false;
+            }
+
+            if gui::menu_item("Game view", None, self.viewport.game_view, true) {
+                self.viewport.game_view = true;
+            }
+
             if gui::begin_menu("Camera") {
                 for mode in CameraMode::ALL {
                     if gui::menu_item(mode.label(), None, self.viewport.mode() == mode, true) {
