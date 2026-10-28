@@ -115,7 +115,7 @@ impl TileTool {
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
             let uv = |x: f64, z: f64| gui::v2(((x - x0) / pw) as f32, ((z - z0) / ph) as f32);
             let hi = gui::v2(origin.x + w as f32 * side - 1.0, origin.y + h as f32 * side - 1.0);
-            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, 84));
+            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, 166));
         }
 
         gui::set_cursor_screen_pos(gui::v2(origin.x, origin.y + h as f32 * side + 4.0));
