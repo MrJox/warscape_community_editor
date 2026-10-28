@@ -4,4 +4,5 @@ pub mod camera;
 pub mod clouds;
 pub mod environment;
 pub mod half;
+pub mod model_top;
 pub mod render_scene;

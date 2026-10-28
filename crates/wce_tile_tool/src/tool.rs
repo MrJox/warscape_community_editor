@@ -3114,6 +3114,13 @@ impl Tool for TileTool {
                 }
             });
 
+            // The building tops the polygons' covers go over.
+            d.tile_mut().poll_tops(&|path: &str| match models.peek(path) {
+                (Some(m), _) => Some(m.top.clone()),
+                (None, ModelState::Failed) => Some(None),
+                (None, _) => None,
+            });
+
             // The collapsing buildings' fragments (queued now: they play once loaded).
             d.tile_mut().poll_collapses(&|model: &str| match models.try_get(model, 0.0) {
                 Some(_) => PieceStatus::Ready,
@@ -3333,7 +3340,13 @@ impl Tool for TileTool {
             let t = d.tile_mut();
             let mut changed = false;
             let v = t.display_mut();
-            changed |= gui::menu_item_toggle("Polygon outlines", &mut v.show_polygons);
+            changed |= gui::menu_item_toggle("Polygons", &mut v.show_polygons);
+            gui::set_next_item_width(160.0);
+            if gui::slider_float("polygon fill", &mut v.polygon_fill, 0.0, 1.0, "%.2f") {
+                t.polygons_changed();
+            }
+
+            let v = t.display_mut();
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
             gui::menu_item_toggle("Tile border", &mut v.show_border);
             gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);
@@ -3471,7 +3484,7 @@ impl Tool for TileTool {
 
                 // A polygon point handle starts a drag, shift + click near an edge inserts a point.
                 let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
-                let pts = d.tile().polygon_world_points(sel);
+                let pts = d.tile().polygon_display_points(sel);
                 let spline = d.is_spline(sel);
                 let near = |c: Float3| {
                     let t = dot(c - o, dir);

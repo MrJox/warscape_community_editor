@@ -17,7 +17,8 @@ use wce_tile::ground_type_field::GroundTypeField;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
-use super::index::{matrix_of, style_of};
+use super::cover::{Cover, Solid};
+use super::index::{matrix_of, polygon_colour, style_of};
 use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, terrain_normal_image};
@@ -908,22 +909,43 @@ impl Tile {
     }
 
     fn rebuild_polygon(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
-        let mut o = Overlay { pickable: false, ..Default::default() };
-        let st = if self.idx.valid { self.idx.style[self.idx.type_[elem] as usize] } else { style_of(self.tscene().type_of(elem)) };
-        let spline = wce_tile::splines::is_spline(self.tscene().type_of(elem));
-        let closed = if spline {
-            self.tscene().doc().get(elem, "closed").is_some_and(|v| v == "1")
-        } else {
-            self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0")
-        };
+        let solids = self.cover_solids(scene);
+        self.rebuild_polygon_over(scene, layer, elem, &solids);
+    }
 
+    /// The polygon (or line) on its cover: filled when it is a closed polygon, its edges as ribbons, in its type's colour.
+    fn rebuild_polygon_over(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, solids: &[Solid]) {
+        let mut o = Overlay { pickable: false, ..Default::default() };
+        let ty = self.tscene().type_of(elem).to_owned();
+        let spline = wce_tile::splines::is_spline(&ty);
+        let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
         let points = if spline { self.spline_world_curve(elem) } else { self.polygon_world_points(elem) };
-        let lifted = points.into_iter().map(|p| Float3::new(p.x, p.y + 0.3, p.z)).collect::<Vec<_>>();
-        let closed = closed && !spline;
-        o.polygon_outline(&lifted, closed, st.color);
+        self.covers_dirty.remove(&elem);
+        if points.is_empty() {
+            self.covers.remove(&elem);
+        } else {
+            let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+            for p in &points {
+                lo = [lo[0].min(p.x), lo[1].min(p.z)];
+                hi = [hi[0].max(p.x), hi[1].max(p.z)];
+            }
+
+            // A wall's line stays on the ground (its own pieces would lift it onto the wall).
+            let over = if self.is_wall(elem) { &[][..] } else { solids };
+            let cover = Cover::build(lo, hi, &|x, z| self.terrain_height(x, z), over);
+            let [r, g, b] = polygon_colour(&ty);
+            if closed && points.len() > 2 && self.display.polygon_fill > 0.0 {
+                cover.fill(&points, overlay_colour(r, g, b, self.display.polygon_fill), &mut o);
+            }
+
+            cover.edges(&points, closed, !spline, overlay_colour(r, g, b, 0.85), &mut o);
+            self.covers.insert(elem, cover);
+        }
+
         if self.is_wall(elem) {
             self.wall_overlay(elem, &mut o);
         }
+
         match self.outline_entity.get(&elem).copied().filter(|&e| scene.find(e).is_some()) {
             Some(e) => scene.update_payload(e, Payload::Overlay(o)),
             None => {
@@ -1003,6 +1025,8 @@ impl Tile {
         self.first_entity = vec![0; n];
         self.entity_count = vec![0; n];
         self.outline_entity.clear();
+        self.covers.clear();
+        self.covers_dirty.clear();
         self.wall_preview_cleared();
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
@@ -1173,9 +1197,10 @@ impl Tile {
             self.water_dirty = true;
         }
 
-        // A moved building can be what a wall's end is attached to.
-        if self.tscene().type_of(elem) == "BUILDING_INSTANCE" && self.has_walls() {
-            self.polygons_dirty = true;
+        // A moved building can be what a wall's end is attached to, and under polygons' covers.
+        if self.tscene().type_of(elem) == "BUILDING_INSTANCE" {
+            self.polygons_dirty |= self.has_walls();
+            self.building_moved(elem);
         }
 
         if self.is_wall(elem) {
@@ -1258,6 +1283,11 @@ impl Tile {
 
             scene.touch();
         }
+    }
+
+    /// The polygons' display settings changed: they are rebuilt at the next update.
+    pub fn polygons_changed(&mut self) {
+        self.polygons_dirty = true;
     }
 
     /// The display settings changed: everything shown is rebuilt at the next update.
@@ -1379,6 +1409,9 @@ impl Tile {
 
         if self.polygons_dirty {
             self.polygons_dirty = false;
+            self.covers.clear();
+            self.covers_dirty.clear();
+            let solids = if self.display.show_polygons { self.cover_solids(scene) } else { vec![] };
             for e in self.instances.clone() {
                 if self.is_wall(e) {
                     self.wall_changed(e);
@@ -1389,10 +1422,18 @@ impl Tile {
                 }
 
                 if self.display.show_polygons {
-                    self.rebuild_polygon(scene, layer, e);
+                    self.rebuild_polygon_over(scene, layer, e, &solids);
                 } else if let Some(&id) = self.outline_entity.get(&e) {
                     // Hide: an empty outline.
                     scene.update_payload(id, empty_overlay());
+                }
+            }
+        } else if !self.covers_dirty.is_empty() {
+            // Covers a moved building is (or was) under.
+            let solids = self.cover_solids(scene);
+            for e in std::mem::take(&mut self.covers_dirty) {
+                if self.display.show_polygons && e < self.idx.kind.len() && self.is_polygon(e) && self.shown(e) {
+                    self.rebuild_polygon_over(scene, layer, e, &solids);
                 }
             }
         }
@@ -1567,7 +1608,7 @@ impl Tile {
             }
 
             if self.is_polygon(e) {
-                for (i, q) in self.polygon_world_points(e).into_iter().enumerate() {
+                for (i, q) in self.polygon_display_points(e).into_iter().enumerate() {
                     let (c, r) = (if Some(i) == polygon_point { hot } else { white }, handle_size);
                     h.line(Float3::new(q.x - r, q.y + 0.4, q.z), Float3::new(q.x + r, q.y + 0.4, q.z), c);
                     h.line(Float3::new(q.x, q.y + 0.4, q.z - r), Float3::new(q.x, q.y + 0.4, q.z + r), c);
@@ -1576,7 +1617,7 @@ impl Tile {
 
                 // A spline's handles: a line from the point, a small diamond at the end.
                 if wce_tile::splines::is_spline(self.tscene().type_of(e)) {
-                    let points = self.polygon_world_points(e);
+                    let points = self.polygon_display_points(e);
                     let handle = overlay_colour(0.4, 0.8, 1.0, 1.0);
                     for (q, (hin, hout)) in points.into_iter().zip(self.spline_world_handles(e)) {
                         for k in [hin, hout].into_iter().flatten() {

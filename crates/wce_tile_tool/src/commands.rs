@@ -1404,7 +1404,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
         let (Some(d), Some((idx, x, z))) = (document(e), parsed) else { return fail("usage: tile_drag_point <index> <x m> <z m>") };
         let Some(el) = el.filter(|&el| d.tile().is_polygon(el)) else { return fail("no polygon selected") };
-        let pts = d.tile().polygon_world_points(el);
+        let pts = d.tile().polygon_display_points(el);
         let Some(&from) = usize::try_from(idx as i64).ok().and_then(|i| pts.get(i)) else { return fail("no such point") };
         let to = Float3::new(x, d.tile().terrain_height(x, z), z);
         let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };

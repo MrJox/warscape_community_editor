@@ -20,6 +20,7 @@ use wce_foundation::jobs::{Handle, JobPool, io_pool};
 use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
+use wce_scene::model_top::ModelTop;
 use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
@@ -199,6 +200,9 @@ pub struct GpuModel {
 
     /// The projected decals of LOD 0 (ProjectedDecal* meshes): drawn by the decal pass, not as meshes.
     pub decals: Vec<ModelDecal>,
+
+    /// LOD 0's solid meshes (not trees, grass or water) seen from above: the editor drapes its polygons over buildings with it.
+    pub top: Option<Arc<ModelTop>>,
 }
 
 /// A projected decal mesh of a model: an 8 corner box (ProjectedDecalV3 boxes are turned about y) and the decal's textures by name.
@@ -653,6 +657,34 @@ fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
     }
 }
 
+/// LOD 0's solid meshes from above (the material types drawn as static meshes), with their pivots.
+fn model_top(model: &RigidModel) -> Option<ModelTop> {
+    wce_prof!("model.top");
+    let lod = model.lods().first()?;
+    let mut tris = vec![];
+    for block in lod.mesh_blocks() {
+        let (mesh, material) = (block.mesh(), block.material());
+        let solid = matches!(
+            mesh.material_type(),
+            MaterialType::DefaultMaterial | MaterialType::TiledDirtmap | MaterialType::TerrainBlend | MaterialType::Dirtmap | MaterialType::ShipAmbientmap
+                | MaterialType::Weighted
+        );
+        if !solid {
+            continue;
+        }
+
+        let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+        let at = |i: usize| mesh.vertices().get(i).map(|v| { let p = v.position(); Float3::new(p.x, p.y, p.z) + pivot });
+        for t in mesh.indices().chunks_exact(3) {
+            if let (Some(a), Some(b), Some(c)) = (at(t[0] as usize), at(t[1] as usize), at(t[2] as usize)) {
+                tris.push([a, b, c]);
+            }
+        }
+    }
+
+    ModelTop::from_triangles(&tris)
+}
+
 impl ModelInner {
 
     /// Builds a model on any thread; `None` when it has no drawable standard meshes at LOD 0.
@@ -889,6 +921,10 @@ impl ModelInner {
             } else {
                 gm.lods.push(GpuLod { meshes, distance: *lod.visibility_distance() });
             }
+        }
+
+        if !gm.meshes.is_empty() {
+            gm.top = model_top(&model).map(Arc::new);
         }
 
         Ok(Some(gm))

@@ -40,6 +40,14 @@ pub(crate) struct WallPreview {
     revision: u64,
 }
 
+impl WallPreview {
+
+    /// The preview pieces' entities by wall element.
+    pub(crate) fn entities_by_wall(&self) -> &HashMap<usize, Vec<EntityId>> {
+        &self.entities
+    }
+}
+
 impl Tile {
     pub fn is_wall(&self, elem: usize) -> bool {
         elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == WALL_SPLINE
