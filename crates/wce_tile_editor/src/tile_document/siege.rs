@@ -407,6 +407,73 @@ impl Tile {
         Some(SiegeEdgeEnds { at, nodes: found, walls })
     }
 
+    /// TEd's scene integrity checks (Phase 6b of docs/plans/tile_ted_parity.md; its Integrity errors dialog, `FUN_004bb1e0`), but the
+    /// vegetation's (the Problems section has it): each instance's own (`FUN_00452180` for the polygons: the points inside the tile's area,
+    /// consecutive duplicates dropped; the siege AI nodes' and edges' shapes; a deployment zone's polygons). Each with its element: TEd's
+    /// message where it has one.
+    pub fn integrity_errors(&self) -> Vec<(usize, String)> {
+        let sc = self.tscene();
+        let (w, h) = (self.extent_x() as f32, self.extent_z() as f32);
+        let mut out = vec![];
+        for &e in &self.instances {
+            let ty = sc.type_of(e);
+            if self.is_polygon(e) && !wce_tile::splines::is_spline(ty) && !self.is_wall(e) {
+                // The polygon (or line) clipped to the tile's area: what is left of it there.
+                let closed = sc.doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+                let pts = self.polygon_world_points(e);
+                let inside = clip_to_rect(&pts, closed, w, h);
+                if inside.is_empty() {
+                    out.push((e, "Polygonal line should have at least one vertex inside the valid area of the tile".to_owned()));
+                    continue;
+                }
+
+                let same = |a: &wce_foundation::math::Float3, b: &wce_foundation::math::Float3| (a.x - b.x).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
+                let mut distinct = inside.windows(2).filter(|p| !same(&p[0], &p[1])).count() + 1;
+                if closed && inside.len() > 1 && same(&inside[0], &inside[inside.len() - 1]) {
+                    distinct -= 1;
+                }
+
+                if !closed && distinct < 2 {
+                    out.push((e, "Polygonal line has less than three valid vertices (TEd's words: it needs two)".to_owned()));
+                } else if closed && distinct < 3 {
+                    out.push((e, format!("A closed polygon must at least have three vertices. Current number of verts is {distinct}")));
+                }
+            }
+
+            let named = |name: &str| sc.children(e).into_iter().any(|c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == name);
+            match ty {
+                "SiegeAINodeInstance" => {
+                    if !named("Bounding Box") {
+                        out.push((e, "Siege AI Node should have a main box shape".to_owned()));
+                    }
+
+                    if !named("Boundary") {
+                        out.push((e, "Siege AI Node has no boundary".to_owned()));
+                    }
+                }
+
+                "SiegeAIEdgeInstance" => {
+                    if !named("Street") {
+                        out.push((e, "Siege AI Edge should have a main street shape".to_owned()));
+                    }
+
+                    let sides = sc.children(e).into_iter().filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary").count();
+                    if sc.doc().get(e, "type").as_deref() == Some("SAET_STREET") && sides != 2 {
+                        out.push((e, format!("Street Edge needs to have two boundary splines (it has {sides})")));
+                    }
+                }
+
+                "DeploymentZonePolygonInstanceGroup" if !sc.children(e).into_iter().any(|c| sc.type_of(c) == "DEPLOYMENT_ZONE_POLYGON_INSTANCE") => {
+                    out.push((e, "Deployment Zone must have at least one polygon".to_owned()));
+                }
+
+                _ => {}
+            }
+        }
+
+        out
+    }
+
     /// The siege layout the tile exports now (CA's, or a generated one): nodes, edges, the perimeter, the approaches, the deployment zones.
     pub fn current_siege_layout(&self) -> Layout {
         let sc = self.tscene();
@@ -706,4 +773,64 @@ impl TileDocument {
         self.keep_worlds(&moved, &worlds);
         Ok(())
     }
+}
+
+/// A polygon (closed) or a line clipped to the rectangle [0, w] x [0, h] (x, z): the closed one by Sutherland-Hodgman, the line segment by
+/// segment (the pieces' points in order). Empty when nothing of it is inside.
+fn clip_to_rect(pts: &[wce_foundation::math::Float3], closed: bool, w: f32, h: f32) -> Vec<wce_foundation::math::Float3> {
+    use wce_foundation::math::Float3;
+    let lerp = |a: Float3, b: Float3, t: f32| Float3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+    if closed {
+        let mut poly = pts.to_vec();
+        // The four sides: inside when the value is >= 0.
+        let sides: [&dyn Fn(Float3) -> f32; 4] = [&|p| p.x, &|p| w - p.x, &|p| p.z, &|p| h - p.z];
+        for side in sides {
+            if poly.is_empty() {
+                break;
+            }
+
+            let mut out = vec![];
+            for i in 0..poly.len() {
+                let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                let (da, db) = (side(a), side(b));
+                if da >= 0.0 {
+                    out.push(a);
+                }
+
+                if (da >= 0.0) != (db >= 0.0) {
+                    out.push(lerp(a, b, da / (da - db)));
+                }
+            }
+
+            poly = out;
+        }
+
+        return poly;
+    }
+
+    // A line: each segment cut to the rectangle (Liang-Barsky).
+    let mut out: Vec<Float3> = vec![];
+    for s in pts.windows(2) {
+        let (a, b) = (s[0], s[1]);
+        let (dx, dz) = (b.x - a.x, b.z - a.z);
+        let (mut t0, mut t1) = (0.0f32, 1.0f32);
+        let mut keep = true;
+        for (p, q) in [(-dx, a.x), (dx, w - a.x), (-dz, a.z), (dz, h - a.z)] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    keep = false;
+                }
+            } else {
+                let r = q / p;
+                if p < 0.0 { t0 = t0.max(r) } else { t1 = t1.min(r) }
+            }
+        }
+
+        if keep && t0 <= t1 {
+            out.push(lerp(a, b, t0));
+            out.push(lerp(a, b, t1));
+        }
+    }
+
+    out
 }
