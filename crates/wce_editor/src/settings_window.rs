@@ -176,7 +176,7 @@ impl Editor {
             "appearance" => Page::Appearance,
             "folders" => Page::Folders,
             id => match self.tool_ids().iter().position(|t| t == id) {
-                Some(i) if self.with_tool_at(i, |t, _| t.has_settings()).unwrap_or(false) => Page::Tool(i),
+                Some(i) if self.tool_supported(i) && self.with_tool_at(i, |t, _| t.has_settings()).unwrap_or(false) => Page::Tool(i),
                 _ => return false,
             },
         };
@@ -331,7 +331,7 @@ impl Editor {
             (Page::Appearance, format!("{}  Appearance", icons::PALETTE)),
         ];
 
-        for i in 0..self.tool_count() {
+        for i in self.shown_tools() {
             let page = self.with_tool_at(i, |t, _| t.has_settings().then(|| format!("{}  {}", t.icon(), t.title()))).flatten();
             if let Some(title) = page {
                 pages.push((Page::Tool(i), title));

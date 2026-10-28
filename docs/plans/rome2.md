@@ -14,7 +14,8 @@ Status legend: **done**, **partial**, **todo**.
 
 - `wce_foundation::game::GameProfile` (re-exported by `wce_vfs`): key, Steam folder and app id, the preferences folder, rpfm's schema,
   the campaign battle map, the default environment, where the vanilla packs come from (Attila's manifest; a list for Rome 2), and
-  `GameFeatures` (`kit_tiles`). `GameProfile::ALL`, `by_key`, `from_env` (`$WCE_GAME_KEY` for the examples and gates).
+  `GameFeatures` (`kit_tiles`), and `unsupported_tools`: the ids of built tools the game hides (the switcher, Ctrl+1.., the files they
+  open, their settings pages and the `tool` command skip them; a hidden active tool gives way to the first shown one). Empty for both games. `GameProfile::ALL`, `by_key`, `from_env` (`$WCE_GAME_KEY` for the examples and gates).
 - The pack order puts the patch packs (header type 2) before the release ones; an empty file in a pack removes the file below it.
 - Settings: `game` picks the profile (`Settings::game_profile`); File > Game and the Settings window's Game page switch it live
   (`Editor::switch_game`: the documents close, asking about unsaved ones; `Tool::game_changed`; the packs and the renderer are made

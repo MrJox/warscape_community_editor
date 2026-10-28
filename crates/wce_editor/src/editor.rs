@@ -528,6 +528,16 @@ impl Editor {
         self.tools.len()
     }
 
+    /// Tool `i` works with the current game (`GameProfile::unsupported_tools`): a tool built in but not supported is hidden.
+    pub fn tool_supported(&self, i: usize) -> bool {
+        self.tool_info.get(i).is_some_and(|t| self.game().supports_tool(&t.id))
+    }
+
+    /// The tools shown for the current game, in the switcher's order (Ctrl+1 is the first).
+    pub fn shown_tools(&self) -> Vec<usize> {
+        (0..self.tool_info.len()).filter(|&i| self.tool_supported(i)).collect()
+    }
+
     pub fn tool_ids(&self) -> Vec<String> {
         self.tool_info.iter().map(|t| t.id.clone()).collect()
     }
@@ -807,15 +817,15 @@ impl Editor {
         self.layout_pending_default = true;
     }
 
-    /// Takes effect in the next `pre_frame`.
+    /// Takes effect in the next `pre_frame`. False for a tool not in this build or not supported by the current game.
     pub fn set_tool(&mut self, id: &str) -> bool {
         match self.tool_info.iter().position(|t| t.id == id) {
-            Some(i) => {
+            Some(i) if self.tool_supported(i) => {
                 self.pending_tool = Some(i);
                 true
             }
 
-            None => false,
+            _ => false,
         }
     }
 
@@ -825,13 +835,18 @@ impl Editor {
         self.remember_tool = true;
         let last = self.settings.last_tool.clone();
         if !last.is_empty() && !self.set_tool(&last) {
-            log::warn(format!("the last tool used, '{last}', is not in this build"));
+            log::warn(format!("the last tool used, '{last}', is not in this build or not for {}", self.game().display_name));
         }
     }
 
     fn apply_tool_switch(&mut self) {
+        // The active tool hidden for this game (after a game switch): the first one shown instead.
+        if self.pending_tool.is_none() && !self.tool_supported(self.active_tool) {
+            self.pending_tool = self.shown_tools().first().copied();
+        }
+
         match self.pending_tool.take() {
-            Some(i) if i != self.active_tool && i < self.tools.len() => {
+            Some(i) if i != self.active_tool && i < self.tools.len() && self.tool_supported(i) => {
                 // A layout not loaded yet (the first frame) is not the tool's: the file keeps the saved one.
                 if self.layout_loaded {
                     self.save_layout();
@@ -936,7 +951,7 @@ impl Editor {
             }
 
             self.layout_loaded = true;
-            if self.renderer.is_some() {
+            if self.renderer.is_some() && self.tool_supported(self.active_tool) {
                 self.with_tool_at(self.active_tool, |t, e| t.activated(e));
             }
         }
@@ -953,7 +968,7 @@ impl Editor {
     /// True when a tool opens files like `path` (by its extension).
     pub fn can_open(&self, path: &str) -> bool {
         let ext = path.rfind('.').map(|d| path[d..].to_lowercase()).unwrap_or_default();
-        self.tool_info.iter().any(|t| t.opens.contains(&ext))
+        self.shown_tools().into_iter().any(|i| self.tool_info[i].opens.contains(&ext))
     }
 
     pub fn open_path(&mut self, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
@@ -972,8 +987,8 @@ impl Editor {
 
     fn open_path_with(&mut self, me: Option<&mut dyn Tool>, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
         let ext = path.rfind('.').map(|d| path[d..].to_lowercase()).unwrap_or_default();
-        let claims = |t: &ToolInfo| t.opens.contains(&ext);
-        let tool = if self.tool_info.get(self.active_tool).is_some_and(claims) { Some(self.active_tool) } else { self.tool_info.iter().position(claims) };
+        let claims = |i: usize| self.tool_supported(i) && self.tool_info[i].opens.contains(&ext);
+        let tool = if claims(self.active_tool) { Some(self.active_tool) } else { (0..self.tool_info.len()).find(|&i| claims(i)) };
         let Some(tool) = tool else { return Err(format!("no tool opens '{ext}' files")) };
 
         // Already open: just show it.
@@ -1360,8 +1375,8 @@ impl Editor {
         let io = gui::io();
         if !io.WantTextInput {
             if io.KeyCtrl {
-                for i in 0..self.tool_info.len().min(9) {
-                    if gui::is_key_pressed(gui::KEY_1 + i as i32, false) {
+                for (k, i) in self.shown_tools().into_iter().take(9).enumerate() {
+                    if gui::is_key_pressed(gui::KEY_1 + k as i32, false) {
                         let id = self.tool_info[i].id.clone();
                         self.set_tool(&id);
                     }
@@ -1477,7 +1492,7 @@ impl Editor {
         gui::same_line();
         gui::text_disabled("|");
         gui::same_line();
-        for i in 0..self.tool_info.len() {
+        for (k, i) in self.shown_tools().into_iter().enumerate() {
             let active = i == self.active_tool;
             if active {
                 gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
@@ -1490,8 +1505,8 @@ impl Editor {
                 self.set_tool(&id);
             }
 
-            if i < 9 && gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{}  (Ctrl+{})", self.tool_info[i].title, i + 1));
+            if k < 9 && gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{}  (Ctrl+{})", self.tool_info[i].title, k + 1));
             }
 
             if active {
@@ -1919,9 +1934,9 @@ impl Editor {
         self.docs.active_mut()
     }
 
-    /// Re-activates every tool (after the packs were mounted again).
+    /// Re-activates every tool of the current game (after the packs were mounted again).
     pub fn activate_all_tools(&mut self) {
-        for i in 0..self.tools.len() {
+        for i in self.shown_tools() {
             self.with_tool_at(i, |t, e| t.activated(e));
         }
     }

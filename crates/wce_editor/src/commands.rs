@@ -239,7 +239,13 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
     c.add("tool", "tool <id>", "switch the active tool (weather, tile, ...)", |e, a| {
         let Some(id) = a.first() else { return fail("usage: tool <id>") };
-        if e.set_tool(id) { ok("") } else { fail(format!("no tool '{id}'")) }
+        if e.set_tool(id) {
+            ok("")
+        } else if e.tool_ids().iter().any(|t| t == id) {
+            fail(format!("the tool '{id}' is not available for {}", e.game().display_name))
+        } else {
+            fail(format!("no tool '{id}'"))
+        }
     });
 
     c.add("assert_tool", "assert_tool <id>", "test: the active tool is <id> (after a frame)", |e, a| {
