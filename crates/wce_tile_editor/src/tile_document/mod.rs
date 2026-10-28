@@ -195,7 +195,7 @@ pub struct TileDisplay {
 impl Default for TileDisplay {
     fn default() -> Self {
         Self {
-            hidden_types: BTreeSet::new(), show_polygons: true, polygon_fill: 0.3, polygon_over_buildings: true, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
+            hidden_types: BTreeSet::new(), show_polygons: true, polygon_fill: 0.3, polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
             show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
         }
     }
