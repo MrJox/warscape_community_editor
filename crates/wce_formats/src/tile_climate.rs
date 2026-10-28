@@ -65,6 +65,9 @@ impl Climate {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClimateList {
     pub climates: Vec<Climate>,
+
+    /// `RENDER_PARAMS blend_pixel_scale`: the repeat Rome 2 gives a texture whose entry has none (fn 0x115bfb40), and a group without one.
+    pub blend_pixel_scale: Option<f64>,
 }
 
 /// A number attribute: its default when missing, empty or not a number.
@@ -105,7 +108,8 @@ impl ClimateList {
                     }).collect(),
             }).collect();
 
-        Ok(Self { climates })
+        let blend_pixel_scale = els.iter().position(|el| el.name == "RENDER_PARAMS").and_then(|i| doc.get(i, "blend_pixel_scale")).and_then(|v| strtod(&v));
+        Ok(Self { climates, blend_pixel_scale })
     }
 
     /// Reads the climates of a settings file; an empty list when the file is missing.

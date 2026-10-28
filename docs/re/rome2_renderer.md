@@ -66,20 +66,24 @@ No texture arrays: the tiles' maps are accumulated, then textured in screen spac
    P2 the weights of `g_blend_lf_min_max` added to y, P3 .. P5 the box's world rows, P6 the maps' rotation index. The pixel shader
    reconstructs the world position from the depth, discards outside the rectangle, and writes `blend * alpha`, `index * alpha`,
    `(normal, 1) * alpha` (the tile's normal on the LF normal, both through `lf_block_cb`) into three accumulation targets.
-3. `ps30_terrain_composite`, full screen per material: uv = world xz / `g_blend_pixel_scale` (one repeat for the four groups); the
-   albedo is the accumulated weights times `s_diffuse_r` .. `s_diffuse_a`, the normal the groups' normal maps (`s_normal_r` ..) on the
-   accumulated one, faded to up with distance (`g_far_tile_distance`); added into the three terrain targets (albedo + alpha, normal,
-   gloss 0).
+3. The composite, full screen per material. The game's DX11 one is `dx11_sm_5_0_rigidterrain` `ps50_terrain_composite` (with
+   `vs30_terrain_composite` of the same set); `ps30_terrain_composite` is the low-quality fallback (one texture per group,
+   `s_diffuse_r` .. `s_diffuse_a`, its first variation; one repeat `g_blend_pixel_scale`; gloss 0). ps50 reads `t_diffuse_array` /
+   `t_normal_array` (the game's hold every group of the climate, four layers each) and the accumulated index map: per channel c, the
+   layer is `index * 3 + g_channel_offsets[c]` (the group's first layer), the two nearest layers blended by its fraction, unless
+   `g_channel_swizzle[c]` is 2 .. 5 (variation 0 .. 3, fixed); uv = world xz / `g_blend_pixel_scale_array[g_channel_offsets[c] / 4].x`
+   (a repeat per group); the gloss target gets `g_light_params_array[layer].xyz` (const reflectivity, lerp reflectivity, const
+   smoothness) mixed the same way. `ps_texture_array_cb` is 400 + 400 float4. The renderer gives each material its own 16-layer
+   arrays (offsets 0, 4, 8, 12) and swizzle 0. The albedo, normal and gloss are added into the three terrain targets.
 4. `ps30_terrain_to_gbuffer_ss`: the terrain targets divided by the accumulated alpha (the depth read from a copy of the depth channel,
    `viewz`, as it writes that channel), the noise map
    (`terrain/textures/common/terrain_noise`, `g_noise_params`), the climate's `medium_detail_map.dds` as a normal detail
    (`g_mid_distance_details`: far distance, repeat, strength), into the G-buffer (albedo as sqrt, specular white, z / w).
 
-Open: no shader reads the index map (`ps30_blend` writes it to the second target, which `ps30_terrain_composite` does not sample; the
-tile-space variants `ps_blend_common_ts` / `ps30_terrain_composite_ts` the same), so which of a group's four variation textures the
-game binds is not known: the first. `g_blend_pixel_scale` is the material's layers' mean repeat (the game's value is not known; the
-database's `RENDER_PARAMS` says 9). The game may draw the battle terrain through its virtual texture instead
-(`terrain_enable_battle_vtex`, `ps30_geom_vtex`). To settle: a frame capture of the game.
+Open: the source of `g_channel_swizzle` (0, the index map, here), the far composite (`ps50_far_terrain_composite`, the same with
+the far fields' maps) and whether the battle terrain goes through the virtual texture (`terrain_enable_battle_vtex`,
+`vs30_terrain_composite_vtex`). The resolve reads the gloss target as reflectivity `x + y * (luminance - x)` and smoothness
+`z + w * ((1 - luminance) - z)`.
 
 Shadows: `vs30_shadow` is `vs30_geom` again; `ps30_shadow` is shared.
 
