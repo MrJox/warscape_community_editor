@@ -248,11 +248,18 @@ pub fn read_cloud_planes(doc: &XmlDoc) -> Vec<CloudPlane> {
     planes
 }
 
+/// The drift in radians per second of the dome: `cloud_velocity` times 0.1 (fn 0x18f0bf0 for a cloud's speed, fn 0x190bbf0 for the
+/// interval, fn 0x192a900 for the guard against 0.001).
+fn drift(p: &CloudPlane) -> f32 {
+    p.velocity * 0.1
+}
+
 /// A plane's live clouds: the initial fill (fn 0x18e5b10), the drift (fn 0x192aa40: angle x += speed * dt, the cloud dies past the
 /// far edge) and new clouds entering at column 0 (fn 0x192a900).
 ///
-/// Verified: the death limit (cells / 2) * cell_angle matches the dumped sprites' angle range; the timer restarts at 0 after a spawn.
-/// ASSUMPTION: the spawn interval (object +0x8, source not decoded) is cell_angle / velocity.
+/// Verified: the death limit (cells / 2) * cell_angle matches the dumped sprites' angle range; the timer restarts at 0 after a spawn;
+/// a cloud's speed is (1 +- 2.5%) * cloud_velocity * 0.1 (fn 0x18f0bf0); the spawn interval (object +0x8, set by fn 0x190bbf0 with the
+/// cell angle at +0x30 and the end angle +0x10 = cell angle + cap) is cell_angle / (cloud_velocity * 0.1).
 #[derive(Clone, Debug)]
 pub struct CloudField {
     rng: Rng,
@@ -291,7 +298,7 @@ impl CloudField {
     }
 
     pub fn update(&mut self, p: &CloudPlane, dt: f32) {
-        if (p.velocity * 0.1).partial_cmp(&0.001) != Some(std::cmp::Ordering::Greater) || dt <= 0.0 {
+        if drift(p).partial_cmp(&0.001) != Some(std::cmp::Ordering::Greater) || dt <= 0.0 {
             return;
         }
 
@@ -310,7 +317,7 @@ impl CloudField {
 
         // fn 0x1192a900: one roll per column, then the timer restarts from 0 (it isn't decremented).
         self.timer += dt;
-        if self.timer >= g.cell_angle / p.velocity {
+        if self.timer >= g.cell_angle / drift(p) {
             self.timer = 0.0;
             for y in 0..g.cells {
                 if p.density >= self.rng.next() {
@@ -336,8 +343,8 @@ impl CloudField {
         let ax = (x as f32 + jx - cells as f32 * 0.5 + 0.5) * cell_angle;
         let ay = (y as f32 + jy - cells as f32 * 0.5 + 0.5) * cell_angle;
 
-        // 1 +- 2.5%.
-        let speed = if p.velocity * 0.1 > 0.001 { (1.0 + rng.next() * 65535.0 * 7.629_511e-7 - 0.025) * p.velocity } else { 0.0 };
+        // 1 +- 2.5% of the drift.
+        let speed = if drift(p) > 0.001 { (1.0 + rng.next() * 65535.0 * 7.629_511e-7 - 0.025) * drift(p) } else { 0.0 };
         let Some(t) = choose(p, rng) else { return };
 
         let mut cloud_radius = 0.0f32;

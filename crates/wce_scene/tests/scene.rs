@@ -68,6 +68,14 @@ fn clouds() {
     assert_eq!(clouds, generate_clouds(plane, 5));
     assert_ne!(clouds, generate_clouds(plane, 6));
 
+    // cloud_velocity 100 drifts a cloud 10 rad/s (cloud_velocity * 0.1, +-2.5%), not 100.
+    let mut field = CloudField::default();
+    field.reset(plane, 5);
+    let before = field.instances()[0].t2[0];
+    field.update(plane, 0.001);
+    let moved = field.instances()[0].t2[0] - before;
+    assert!((0.00975..=0.01025).contains(&moved), "{moved}");
+
     let mut field = CloudField::default();
     field.reset(plane, 5);
     for _ in 0..100 {

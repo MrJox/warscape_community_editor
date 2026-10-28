@@ -14,9 +14,8 @@ Open items, each with its place in the code:
    radius; the editor picks the box or an annulus.
 2. **Spawn / accumulate alternation** (fn 0x1188e240; partial: `particles.rs` ~262 spreads a frame's particles from `last_spawn`, ~1520
    accumulates every frame). The rain dump's emitter accumulator (9.025 at rate 3000) is still unexplained.
-3. **VFX constants** (`wce_assets` `vfx_constants.rs`): the scale variation rows (~191 `ASSUMPTION`: min = scale x (1 -
-   ParticleScaleVariation)), the colour lerp shape (~250 `ASSUMPTION`), and `ParticlesLocalSpace` -> 2 (~165, inferred; always false in the
-   shipped files).
+3. **VFX constants** (`wce_assets` `vfx_constants.rs`): the colour lerp shape (~255 `ASSUMPTION`) and `ParticlesLocalSpace` -> 2 (~165,
+   inferred; always false in the shipped files). The scale rows are verified (2026-10-28, docs/re/particles.md "Scale rows").
 4. **VFX curve baking** (`wce_assets` `vfx_def.rs` ~46): how the game interpolates the keys when it bakes a curve into 128 entries is not
    decoded.
 5. **Schema-aware defaults for new elements**: a structural edit adds an empty child; duplicating an existing element is the workaround

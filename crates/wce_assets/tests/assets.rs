@@ -76,9 +76,41 @@ fn library_definitions_and_constants() {
     assert_eq!(k.diffuse, "vfx/textures/rain_drop.dds");
     assert_eq!(k.behaviour_mask, [vfx_bits::PS_TEXTURE | vfx_bits::VERTEX_ALPHA | vfx_bits::CELL_TEXTURE, 0, 0, VFX_MAIN_VIEW_ID]);
     assert_eq!(k.vs_atlas_texture_params, [0.25, 1.0, 0.5, 1.0]);
-    assert_eq!((k.curves[0][0][1], k.curves[1][VFX_CURVE_WIDTH - 1][0]), (2.0, 1.0));
+    // UseSingleScale: Mid and End are Start (x and y separate), so the scale is constant over the life.
+    assert_eq!((k.curves[0][0][1], k.curves[1][VFX_CURVE_WIDTH - 1][0]), (4.0, 2.0));
     assert_eq!((k.curves[6][VFX_CURVE_WIDTH - 1][0], k.curves[7][0][3]), (0.5, 1.0));
     assert_eq!(vfx_texture_path("A\\B.dds"), "a/b.dds");
+}
+
+#[test]
+fn scale_rows() {
+    // snow_BTL: 2 -> 2 at 1% of the life -> 3, variation 0.25: the rows are the curve * 0.75 and * 1.25.
+    let snow = parse_vfx(&doc(r#"<vfx><emitters><emitter id="s" type="continuous_mesh">
+      <property name="ParticleScaleUseSingleScale" value="false"/>
+      <property name="ParticleScaleStart" x="2" y="2"/>
+      <property name="ParticleScaleMid" x="2" y="2"/>
+      <property name="ParticleScaleEnd" x="3" y="3"/>
+      <property name="ParticleScaleMidPointTime" value="0.01"/>
+      <property name="ParticleScaleVariation" value="0.25"/>
+    </emitter></emitters></vfx>"#));
+    let k = build_emitter_constants(snow.emitter("s").unwrap(), None);
+    assert_eq!((k.curves[0][0][0], k.curves[1][0][0]), (1.5, 2.5));
+    let last = VFX_CURVE_WIDTH - 1;
+    let t = last as f32 / VFX_CURVE_WIDTH as f32;
+    let end = 2.0 + (t - 0.01) / 0.99;
+    assert!((k.curves[0][last][1] - end * 0.75).abs() < 1e-5 && (k.curves[1][last][1] - end * 1.25).abs() < 1e-5);
+
+    // snow_BTL_detail: single scale at 0.05, whatever Mid and End say.
+    let detail = parse_vfx(&doc(r#"<vfx><emitters><emitter id="d" type="continuous_mesh">
+      <property name="ParticleScaleUseSingleScale" value="true"/>
+      <property name="ParticleScaleStart" x="0.05" y="0.05"/>
+      <property name="ParticleScaleMid" x="1" y="1"/>
+      <property name="ParticleScaleEnd" x="1" y="1"/>
+      <property name="ParticleScaleMidPointTime" value="0.5"/>
+      <property name="ParticleScaleVariation" value="0"/>
+    </emitter></emitters></vfx>"#));
+    let k = build_emitter_constants(detail.emitter("d").unwrap(), None);
+    assert!((0..VFX_CURVE_WIDTH).all(|x| k.curves[0][x][..2] == [0.05, 0.05] && k.curves[1][x][..2] == [0.05, 0.05]));
 }
 
 #[test]

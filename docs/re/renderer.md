@@ -328,8 +328,10 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
 ## Remaining engine items, status (2026-10-08)
 - Lighting cross-fade: linear (b - a) * t + a on every field (fn 0x175f4e0). Colour conversion: pow 2.2 (verified).
 - Cloud columns: death limit (cells / 2) * cell angle matches the dumped sprite angles; the spawn timer restarts at 0 after
-  a spawn (fn 0x1192a900). The interval (object +0x8) is still cell_angle / velocity by assumption (the dry file has
-  cloud_velocity 0, so no dump shows a moving field).
+  a spawn (fn 0x1192a900). Drift (decoded 2026-10-28): a cloud's speed is (0.975..1.025) * cloud_velocity * 0.1 radians of the dome per
+  second (fn 0x18f0bf0, constant 0x1afbd60 = 0.1; the editor had left the 0.1 out, so clouds drifted 10x too fast), and the column interval
+  (object +0x8, set by fn 0x190bbf0 together with the cell angle +0x30 and the end angle +0x10 = cell angle + cap) is cell_angle /
+  (cloud_velocity * 0.1), only when that product is over 0.001. No dump shows a moving field (the dry file has cloud_velocity 0).
 - Env-pass shadows: binding the main-camera shadow map changes the cube by < 1%; left off.
 - Shadow light fit (fn 0x117329a0, solved 2026-10-18, `renderer/shadow_fit.rs`): light-space perspective shadow maps (LiSPSM,
   `warp_shadows` default on). The basis (fn 0x11758dd0): x = normalize(view x light), y = normalize(light x x) (the view direction made

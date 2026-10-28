@@ -31,7 +31,8 @@ pub const VFX_DISTORTION_VIEW_ID: u32 = 12;
 
 /// Width of the emitter-constants texture: 8 rows per emitter (min / max pairs), u = particle age / lifetime.
 /// Rows 0-1 scale (xy), 2-3 colour (rgb), 4-5 unused by the main VS, 6-7 alpha (x).
-pub const VFX_CURVE_WIDTH: usize = 64;
+/// 256 as the game's scale baker (it writes 256 entries per row as RGBA16F; here f32).
+pub const VFX_CURVE_WIDTH: usize = 256;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EmitterConstants {
@@ -118,6 +119,12 @@ fn three_point(start: f32, mid: f32, end: f32, mid_t: f32, t: f32) -> f32 {
     if t <= mid_t { lerp(start, mid, t / mid_t) } else { lerp(mid, end, (t - mid_t) / (1.0 - mid_t)) }
 }
 
+/// The scale baker's segments (fn 0x182c3c0 -> fn 0x182ba40): start -> mid for t < mid_t, mid -> end from mid_t on, with mid_t not clamped
+/// (0 never uses start, 1 never uses end).
+fn scale_point(start: f32, mid: f32, end: f32, mid_t: f32, t: f32) -> f32 {
+    if t < mid_t { lerp(start, mid, t / mid_t) } else { lerp(mid, end, (t - mid_t) / (1.0 - mid_t)) }
+}
+
 /// The curve texture's u of a column.
 fn column_t(x: usize) -> f32 {
     x as f32 / (VFX_CURVE_WIDTH - 1) as f32
@@ -187,26 +194,27 @@ pub fn build_emitter_constants(em: &VfxEmitterDef, chain: Option<&VfxChain>) -> 
     k.vs_atlas_texture_params[0] = 1.0;
     k.vs_atlas_texture_params[1] = 1.0;
 
-    // Scale rows 0 and 1: ParticleScaleStart / Mid / End (x, y) over life.
-    // ASSUMPTION: min row = scale * (1 - ParticleScaleVariation), max row = scale.
+    // Scale rows 0 and 1: ParticleScaleStart / Mid / End (x, y) over life. Verified in the game's baker (fn 0x182c3c0, reading the
+    // emitter descriptor): ParticleScaleUseSingleScale makes Mid and End equal to Start (x and y stay separate), so the scale does not
+    // change over the life; row 0 = the curve * (1 - |ParticleScaleVariation|), row 1 = the curve * (1 + |ParticleScaleVariation|); the
+    // vertex shader blends the two rows by the particle's seed. The baker takes VFX_CURVE_WIDTH samples at t = i / width.
     let (mut s0, mut s1, mut s2) = ([1.0; 2], [1.0; 2], [1.0; 2]);
     em.vec("ParticleScaleStart", &mut s0);
     em.vec("ParticleScaleMid", &mut s1);
     em.vec("ParticleScaleEnd", &mut s2);
     if em.b("ParticleScaleUseSingleScale", false) {
-        s0[1] = s0[0];
-        s1[1] = s1[0];
-        s2[1] = s2[0];
+        s1 = s0;
+        s2 = s0;
     }
 
     let mid_t = em.f("ParticleScaleMidPointTime", 0.5);
-    let variation = em.f("ParticleScaleVariation", 0.0);
+    let variation = em.f("ParticleScaleVariation", 0.0).abs();
     for x in 0..VFX_CURVE_WIDTH {
-        let t = column_t(x);
+        let t = x as f32 / VFX_CURVE_WIDTH as f32;
         for c in 0..2 {
-            let s = three_point(s0[c], s1[c], s2[c], mid_t, t);
+            let s = scale_point(s0[c], s1[c], s2[c], mid_t, t);
             k.curves[0][x][c] = s * (1.0 - variation);
-            k.curves[1][x][c] = s;
+            k.curves[1][x][c] = s * (1.0 + variation);
         }
 
         for row in &mut k.curves[2..] {
