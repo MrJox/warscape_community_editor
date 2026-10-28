@@ -5,7 +5,8 @@ Editor-wide ideas, noted for later (user, 2026-10-24). Status (2026-10-26): all 
 ## Minimap with views
 
 Done (2026-10-25): the Tile tool's Minimap panel (docs/editor.md, "Minimap"): the colour, height or no base, with the siege AI, the deployment
-zones and the camera as layers. Other views to decide later (ground types and protection are there through the Ground section's view).
+zones and the camera as layers. Done (2026-10-28): the ground views unified (a chip on the viewport and one on the minimap, docs/editor.md,
+"Ground"), every view on the minimap as its own base, the tile's cells and the automatic no-go areas as layers.
 
 ## Save: log the siege AI's problems
 

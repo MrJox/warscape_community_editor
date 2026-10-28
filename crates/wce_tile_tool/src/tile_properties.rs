@@ -25,6 +25,8 @@ const MASK_TIP: &str = "The tile's valid cells (TEd's subtile grid): a click tur
 impl TileTool {
     /// Inside the Tile database entry section.
     pub(crate) fn draw_tile_properties(&mut self, e: &mut Editor, id: DocumentId) {
+        // The minimap's ground colour over the valid cells (baked by the minimap when it is not).
+        let ground = if self.cells_ground && e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.project().has_entry()) { self.minimap.colour_picture(e, id) } else { None };
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         let Some(entry) = d.project().entry.as_ref() else {
             gui::text_disabled("no tile database entry: no properties");
@@ -78,6 +80,12 @@ impl TileTool {
             gui::set_tooltip(MASK_TIP);
         }
 
+        gui::same_line();
+        gui::checkbox("ground colour##maskground", &mut self.cells_ground);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The ground's colour over the cells, faint (the Minimap's colour view: north up, as the cells).");
+        }
+
         let cells = if mask.len() == w * h { mask.bytes().map(|c| c == b'1').collect::<Vec<_>>() } else { vec![true; w * h] };
         let side = (240.0 / w.max(h) as f32).clamp(4.0, 18.0);
         let origin = gui::cursor_screen_pos();
@@ -99,6 +107,15 @@ impl TileTool {
                     gui::set_tooltip(&format!("cell ({x}, {y}): {}", if on { "valid" } else { "not the tile's" }));
                 }
             }
+        }
+
+        // The picture covers the bordered tile, rows along +z: the tile's part of it, north up.
+        if let Some((tex, [x0, z0, pw, ph])) = ground {
+            let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+            let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
+            let uv = |x: f64, z: f64| gui::v2(((x - x0) / pw) as f32, ((z - z0) / ph) as f32);
+            let hi = gui::v2(origin.x + w as f32 * side - 1.0, origin.y + h as f32 * side - 1.0);
+            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, 84));
         }
 
         gui::set_cursor_screen_pos(gui::v2(origin.x, origin.y + h as f32 * side + 4.0));

@@ -1,36 +1,57 @@
-//! The Minimap panel (docs/plans/editor_todo.md): the open tile from above, north (+z) up and +x right, as a base picture (the ground's
-//! colour, its heights, or nothing) under layers that are toggled on and off: the siege AI (what `wce_siege::svg` draws), the deployment
-//! zones and the camera. The left button moves the camera to where it is pressed (held: it follows), the wheel zooms around the cursor, the
-//! middle button pans.
+//! The Minimap panel (docs/plans/editor_todo.md): the open tile from above, north (+z) up and +x right, as a base picture (a view of the
+//! ground as the viewport's ground views show it, baked here: the colour or a debug view of the tile's maps; its heights; or nothing) under
+//! layers that are toggled on and off: the siege AI (what `wce_siege::svg` draws), the deployment zones, the tile's cells (the entry's
+//! mask), the automatic no-go areas and the camera. The base is picked from a chip at the map's top left (the north arrow is at its top
+//! right), as the viewport's ground views.
+//! The left button moves the camera to where it is pressed (held: it follows), the wheel zooms around the cursor, the middle button pans.
 
 use std::sync::mpsc;
 
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, Vec2, col32, v2};
+use wce_editor::{icons, theme};
 use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_siege::{EdgeKind, NodeKind, P, ZoneKind};
+use wce_tile::blend_field::BlendField;
+use wce_tile::ground_type_field::GroundTypeField;
 use wce_tile_editor::terrain_bake::{BakedColour, TerrainView};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::minimap::MinimapSiege;
 
+use crate::ground_views::{AUTO_NOGO_TIP, chip, season_name, view_items, view_name};
 use crate::tool::document_id;
 
 /// The side of the pictures made for the minimap, at most.
 const HEIGHT_DIM: u32 = 512;
-const COLOUR_DIM: u32 = 1024;
+const GROUND_DIM: u32 = 1024;
 
 /// Seconds between two pictures of the heights while they change (a brush stroke), and two reads of the siege AI while the tile is edited
 /// (it waits for the buttons to be released too).
 const HEIGHT_EVERY: f64 = 0.3;
 const SIEGE_EVERY: f64 = 0.5;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// What the minimap shows under its layers: a view of the ground (as the viewport's), the heights, or nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Base {
-    #[default]
-    Colour,
+    Ground(TerrainView),
     Height,
     None,
+}
+
+/// The bases of the minimap only (after the ground views), with their names and the `minimap` command's words; the ground views' words.
+const OWN_BASES: [(Base, &str, &str); 2] = [(Base::Height, "height", "height"), (Base::None, "none", "none")];
+const VIEW_WORDS: [(TerrainView, &str); 5] = [
+    (TerrainView::Colour, "colour"), (TerrainView::BlendGroups, "groups"), (TerrainView::GroundTypes, "ground"), (TerrainView::Protection, "protection"),
+    (TerrainView::WaterDepth, "water"),
+];
+
+fn base_name(base: Base) -> &'static str {
+    match base {
+        Base::Ground(v) => view_name(v),
+        Base::Height => "height",
+        Base::None => "none",
+    }
 }
 
 /// A picture of the minimap: its texture's key in `Editor::images`, and the ground it covers (x0, z0, w, h metres; rows along +z).
@@ -55,41 +76,167 @@ impl Picture {
             self.key.clear();
         }
     }
+
+    /// The texture and the ground it covers, once it is on the GPU.
+    fn image(&self, e: &Editor) -> Option<(u64, [f64; 4])> {
+        e.images.get(&self.key).map(|i| (i.id, self.area))
+    }
 }
 
-/// What the colour picture shows: the game-look colour of a climate and season (baked here), or the Ground section's debug view (its
-/// picture, by address).
+/// What a picture of the ground is of: the tile, the view, the look's climate and season (the views that read the climate's textures), and
+/// the maps it reads as they were (the blend map's and the ground type map's edit depths, the water depth's raster by address).
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum ColourKey {
-    Baked(DocumentId, String, String),
-    Debug(DocumentId, TerrainView, usize),
+struct GroundKey {
+    doc: DocumentId,
+    view: TerrainView,
+    climate: String,
+    season: String,
+    maps: (usize, usize, usize),
+}
+
+fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey {
+    let (p, t) = (d.project(), d.tile());
+    let blend = p.blend.as_ref().map_or(0, BlendField::edit_depth);
+    let ground = p.ground.as_ref().map_or(0, GroundTypeField::edit_depth);
+    let water = t.water_depth().map_or(0, |w| std::ptr::from_ref(w) as usize);
+    let maps = match view {
+        TerrainView::Colour | TerrainView::BlendGroups => (blend, 0, 0),
+        TerrainView::GroundTypes => (0, ground, 0),
+        TerrainView::WaterDepth => (0, ground, water),
+        TerrainView::Protection => (0, 0, 0),
+    };
+
+    let look = t.terrain_look();
+    let (climate, season) = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { (look.climate.clone(), look.season.clone()) } else { Default::default() };
+    GroundKey { doc, view, climate, season, maps }
+}
+
+/// A view of the ground baked for the minimap on a thread (`Tile::minimap_ground_bake`): the last bake, shown while the next one is made
+/// (one at a time), and its picture (the colour with the sea over it while the sea shows).
+#[derive(Default)]
+struct GroundPicture {
+    job: Option<(GroundKey, mpsc::Receiver<Result<BakedColour, String>>)>,
+    baked: Option<(GroundKey, BakedColour)>,
+    failed: Option<(GroundKey, String)>,
+    picture: Picture,
+    picture_of: Option<(GroundKey, bool)>,
+}
+
+impl GroundPicture {
+    /// Up to date with the tile's `view`: a bake started when what it shows changed.
+    fn update(&mut self, e: &mut Editor, serial: &mut u64, id: DocumentId, view: TerrainView) {
+        if let Some((key, rx)) = &self.job {
+            match rx.try_recv() {
+                Ok(Ok(b)) => {
+                    self.baked = Some((key.clone(), b));
+                    self.job = None;
+                }
+
+                Ok(Err(why)) => {
+                    log::info(format!("minimap: no {}: {why}", view_name(key.view)));
+                    self.failed = Some((key.clone(), why));
+                    self.job = None;
+                }
+
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => self.job = None,
+            }
+        }
+
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let key = ground_key(d, id, view);
+        let done = self.baked.as_ref().is_some_and(|(k, _)| *k == key) || self.failed.as_ref().is_some_and(|(k, _)| *k == key);
+        if !done && self.job.is_none() {
+            match d.tile().minimap_ground_bake(view, GROUND_DIM) {
+                Ok(bake) => {
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(bake.run());
+                    });
+                    self.job = Some((key, rx));
+                }
+
+                Err(why) => {
+                    log::info(format!("minimap: no {}: {why}", view_name(view)));
+                    self.failed = Some((key, why));
+                }
+            }
+        }
+
+        // The picture of the last bake of this tile and view.
+        let sea = view == TerrainView::Colour && d.tile().display().show_sea;
+        let made = match &self.baked {
+            Some((k, b)) if k.doc == id && k.view == view => {
+                let of = (k.clone(), sea);
+                (self.picture_of.as_ref() != Some(&of)).then(|| {
+                    let rgba = if sea { d.tile().minimap_sea_over(b) } else { b.rgba.clone() };
+                    (b.w, b.h, rgba, [b.x0, b.z0, b.w_m, b.h_m], of)
+                })
+            }
+
+            _ => {
+                if self.picture_of.is_some() {
+                    self.picture.clear(e);
+                    self.picture_of = None;
+                }
+
+                None
+            }
+        };
+
+        if let Some((w, h, rgba, area, of)) = made {
+            self.picture.set(e, serial, w, h, rgba, area);
+            self.picture_of = Some(of);
+        }
+    }
+
+    fn image(&self, e: &Editor) -> Option<(u64, [f64; 4])> {
+        self.picture_of.as_ref().and_then(|_| self.picture.image(e))
+    }
+
+    /// What the picture is: being baked, why there is none, or the bake's report.
+    fn note(&self) -> String {
+        match (&self.job, &self.failed, &self.baked) {
+            (Some((k, _)), _, _) => format!("baking the {}...", view_name(k.view)),
+            (None, Some((k, why)), _) if self.baked.as_ref().is_none_or(|(b, _)| b != k) => format!("no {}: {why}", view_name(k.view)),
+            (None, _, Some((k, _))) if k.view == TerrainView::Colour => format!("{}, {} (the blend's CPU stand-in)", k.climate, season_name(&k.season)),
+            (None, _, Some((_, b))) => b.report.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn clear(&mut self, e: &mut Editor) {
+        self.picture.clear(e);
+        *self = Self::default();
+    }
 }
 
 pub struct MinimapUi {
     base: Base,
     show_siege: bool,
     show_zones: bool,
+    show_cells: bool,
+    show_nogo: bool,
     show_camera: bool,
 
     /// 1 shows the whole area; the world point in the middle (`None`: the area's centre).
     zoom: f64,
     centre: Option<[f64; 2]>,
 
+    /// The window was drawn last frame (open, not collapsed, not a hidden tab): the views it needs are worked out only then.
+    visible: bool,
+
     doc: DocumentId,
     serial: u64,
-    picture: Picture,
-    picture_of: Option<Base>,
     note: String,
 
-    colour_for: Option<ColourKey>,
-    colour_job: Option<(ColourKey, mpsc::Receiver<Result<BakedColour, String>>)>,
+    /// The colour (a base, and the Tile panel's valid cells over it) and the other views of the ground.
+    colour: GroundPicture,
+    ground: GroundPicture,
 
-    /// The last game-look colour baked, and whether its picture has the sea over it (the Ground section's "sea at 0 m").
-    colour_baked: Option<(ColourKey, BakedColour)>,
-    colour_sea: bool,
-
-    /// The terrain version the heights picture is of, and when it was made.
-    height_for: u64,
+    /// The heights' picture: the terrain version it is of (`None`: not made), when it was made, the ground's range.
+    heights: Picture,
+    height_for: Option<u64>,
     height_time: f64,
     height_range: (f64, f64),
 
@@ -105,9 +252,9 @@ pub struct MinimapUi {
 impl Default for MinimapUi {
     fn default() -> Self {
         Self {
-            base: Base::Colour, show_siege: true, show_zones: true, show_camera: true, zoom: 1.0, centre: None, doc: 0, serial: 0, picture: Picture::default(),
-            picture_of: None, note: String::new(), colour_for: None, colour_job: None, colour_baked: None, colour_sea: false, height_for: 0, height_time: -1e9, height_range: (0.0, 0.0), siege: None,
-            siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
+            base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
+            visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
+            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
         }
     }
 }
@@ -140,6 +287,7 @@ impl MinimapUi {
         }
 
         let open = gui::begin("Minimap", None, 0);
+        self.visible = open;
         let hovered = open && self.draw(e);
         gui::end();
 
@@ -151,6 +299,31 @@ impl MinimapUi {
             gui::own_mouse_wheel(None);
             self.wheel_owned = false;
         }
+    }
+
+    /// The ground view the minimap shows while it shows (for the water depth, which the tool works out).
+    pub fn view(&self) -> Option<TerrainView> {
+        match self.base {
+            Base::Ground(v) if self.visible => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The automatic no-go areas show on it (the tool works them out).
+    pub fn shows_auto_nogos(&self) -> bool {
+        self.visible && self.show_nogo
+    }
+
+    /// The ground's colour picture, for the Tile panel's valid cells (its bake starts now when it is not made): the texture and the ground
+    /// it covers (x0, z0, w, h metres; rows along +z).
+    pub fn colour_picture(&mut self, e: &mut Editor, id: DocumentId) -> Option<(u64, [f64; 4])> {
+        if id != self.doc {
+            self.forget(e);
+            self.doc = id;
+        }
+
+        self.colour.update(e, &mut self.serial, id, TerrainView::Colour);
+        self.colour.image(e)
     }
 
     /// True when the cursor is over the map.
@@ -222,17 +395,31 @@ impl MinimapUi {
         let dl = gui::window_draw_list();
         dl.push_clip_rect(lo, hi);
         dl.rect_filled(lo, hi, col32(24, 25, 28, 255), 0.0);
-        if self.picture_of == Some(self.base)
-            && let Some(img) = e.images.get(&self.picture.key)
-        {
-            let [x0, z0, w, h] = self.picture.area;
-            dl.image(img.id, frame.screen(x0, z0 + h), frame.screen(x0 + w, z0), v2(0.0, 1.0), v2(1.0, 0.0), col32(255, 255, 255, 255));
+        let base = match self.base {
+            Base::Ground(TerrainView::Colour) => self.colour.image(e),
+            Base::Ground(_) => self.ground.image(e),
+            Base::Height => self.heights.image(e),
+            Base::None => None,
+        };
+
+        if let Some((tex, [x0, z0, w, h])) = base {
+            dl.image(tex, frame.screen(x0, z0 + h), frame.screen(x0 + w, z0), v2(0.0, 1.0), v2(1.0, 0.0), col32(255, 255, 255, 255));
         }
 
         // The tile's edge (the area may hold the height map's border around it).
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
         dl.rect(frame.screen(0.0, ez), frame.screen(ex, 0.0), col32(255, 255, 255, 120), 0.0, 1.0);
+
+        if self.show_cells {
+            draw_cells(&dl, &frame, d);
+        }
+
+        if self.show_nogo
+            && let Some(nogos) = d.tile().auto_nogos()
+        {
+            draw_nogos(&dl, &frame, nogos);
+        }
 
         if let Some(s) = &self.siege {
             if self.show_zones {
@@ -251,6 +438,9 @@ impl MinimapUi {
         draw_north(&dl, hi, lo, e.viewport.north);
         dl.pop_clip_rect();
 
+        // The base's chip at the top left, over the map.
+        let hovered = self.draw_chip(lo) && hovered;
+
         // The left button: the camera goes there.
         if active && gui::is_mouse_down(0) {
             let at = frame.world(mouse);
@@ -261,24 +451,68 @@ impl MinimapUi {
             let at = frame.world(mouse);
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let h = d.project().height_at(at[0], at[1]);
-            gui::set_tooltip(&format!("{:.0}, {:.0} m, ground {h:.1} m\nleft: camera here, wheel: zoom, middle: pan", at[0], at[1]));
+            let cell = if self.show_cells { cell_at(d, at).map_or_else(String::new, |(x, y, ok)| format!(", cell ({x}, {y}) {}", if ok { "valid" } else { "not the tile's" })) } else { String::new() };
+            gui::set_tooltip(&format!("{:.0}, {:.0} m, ground {h:.1} m{cell}\nleft: camera here, wheel: zoom, middle: pan", at[0], at[1]));
         }
 
         hovered
     }
 
-    fn draw_bar(&mut self) {
-        let bases = [Base::Colour, Base::Height, Base::None];
-        let mut bi = bases.iter().position(|&b| b == self.base).unwrap_or(0) as i32;
-        gui::set_next_item_width(90.0);
-        if gui::combo("##minimap_base", &mut bi, &["colour", "height", "none"]) {
-            self.base = bases[bi as usize];
+    /// The base's chip and its popup (the ground views, then the minimap's own bases); false while the cursor is over the chip.
+    fn draw_chip(&mut self, lo: Vec2) -> bool {
+        gui::set_cursor_screen_pos(v2(lo.x + 6.0, lo.y + 6.0));
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+        let mut over = false;
+        if gui::begin_child("##minimapchip", v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+            let tip = format!("Minimap: {}\nClick: the ground views, the heights or nothing", base_name(self.base));
+            if chip(self.base != Base::Ground(TerrainView::Colour), icons::LAYERS, "minimapbase", &tip) {
+                gui::open_popup("minimapbase");
+            }
+
+            over = gui::is_item_hovered();
+            if gui::begin_popup("minimapbase") {
+                gui::text_disabled("Minimap");
+                let current = match self.base {
+                    Base::Ground(v) => Some(v),
+                    _ => None,
+                };
+
+                if let Some(v) = view_items(current, "minimapview") {
+                    self.base = Base::Ground(v);
+                }
+
+                gui::separator();
+                for (base, name, _) in OWN_BASES {
+                    if gui::selectable(&format!("{name}##minimapbase"), self.base == base, 0) {
+                        self.base = base;
+                    }
+                }
+
+                gui::end_popup();
+            }
         }
 
-        gui::same_line();
+        gui::end_child();
+        gui::pop_style_color(1);
+        !over
+    }
+
+    fn draw_bar(&mut self) {
         gui::checkbox("siege AI", &mut self.show_siege);
         gui::same_line();
         gui::checkbox("deployment", &mut self.show_zones);
+        gui::same_line();
+        gui::checkbox("cells", &mut self.show_cells);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).");
+        }
+
+        gui::same_line();
+        gui::checkbox("no-go", &mut self.show_nogo);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(AUTO_NOGO_TIP);
+        }
+
         gui::same_line();
         gui::checkbox("camera", &mut self.show_camera);
         gui::same_line();
@@ -295,11 +529,23 @@ impl MinimapUi {
         match self.base {
             Base::None => {}
             Base::Height => self.refresh_heights(e, id, now),
-            Base::Colour => self.refresh_colour(e, id),
+            Base::Ground(TerrainView::Colour) => {
+                self.colour.update(e, &mut self.serial, id, TerrainView::Colour);
+                self.note = self.colour.note();
+            }
+
+            Base::Ground(v) => {
+                self.ground.update(e, &mut self.serial, id, v);
+                self.note = self.ground.note();
+            }
+        }
+
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        if self.show_nogo && d.tile().auto_nogos().is_none() {
+            self.note = format!("{}{}working out the no-go areas...", self.note, if self.note.is_empty() { "" } else { "; " });
         }
 
         if self.show_siege || self.show_zones {
-            let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let version = d.edit_version();
             // Not while a button is held (a drag, a stroke): reading it takes tens of milliseconds on a big tile.
             let idle = !(0..3).any(gui::is_mouse_down);
@@ -315,122 +561,25 @@ impl MinimapUi {
     fn refresh_heights(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let version = d.tile().terrain_version();
-        let stale = self.picture_of != Some(Base::Height) || version != self.height_for;
-        if stale && (self.picture_of != Some(Base::Height) || now - self.height_time >= HEIGHT_EVERY) {
+        if self.height_for != Some(version) && (self.height_for.is_none() || now - self.height_time >= HEIGHT_EVERY) {
             wce_foundation::wce_prof!("tile.minimap.heights");
             match d.tile().minimap_heights(HEIGHT_DIM) {
                 Some(img) => {
                     self.height_range = img.range;
-                    self.picture.set(e, &mut self.serial, img.w, img.h, img.rgba, [img.x0, img.z0, img.w_m, img.h_m]);
+                    self.heights.set(e, &mut self.serial, img.w, img.h, img.rgba, [img.x0, img.z0, img.w_m, img.h_m]);
                 }
 
-                None => self.picture.clear(e),
+                None => self.heights.clear(e),
             }
 
-            self.picture_of = Some(Base::Height);
-            self.colour_for = None;
-            self.height_for = version;
+            self.height_for = Some(version);
             self.height_time = now;
         }
 
-        if self.picture.key.is_empty() {
+        if self.heights.key.is_empty() {
             self.note = "no height map".to_owned();
         } else {
             self.note = format!("ground from {:.1} to {:.1} m", self.height_range.0, self.height_range.1);
-        }
-    }
-
-    /// The colour: the Ground section's debug view when one is shown (its picture), else the game-look colour baked on a thread.
-    fn refresh_colour(&mut self, e: &mut Editor, id: DocumentId) {
-        // A bake that finished.
-        if let Some((key, rx)) = &self.colour_job {
-            match rx.try_recv() {
-                Ok(Ok(b)) => {
-                    let key = key.clone();
-                    self.colour_job = None;
-                    self.colour_baked = Some((key.clone(), b));
-                    self.show_baked(e, id);
-                    self.colour_for = Some(key);
-                }
-
-                Ok(Err(why)) => {
-                    let key = key.clone();
-                    self.colour_job = None;
-                    log::warn(format!("minimap: no ground colour: {why}"));
-                    self.picture.clear(e);
-                    self.picture_of = Some(Base::Colour);
-                    self.colour_for = Some(key);
-                }
-
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => self.colour_job = None,
-            }
-        }
-
-        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        let look = d.tile().terrain_look().clone();
-        let key = if look.view == TerrainView::Colour {
-            ColourKey::Baked(id, look.climate.clone(), look.season.clone())
-        } else {
-            ColourKey::Debug(id, look.view, d.tile().baked_colour().map_or(0, |b| std::ptr::from_ref(b) as usize))
-        };
-
-        let current = self.picture_of == Some(Base::Colour) && self.colour_for.as_ref() == Some(&key);
-
-        // The sea switched on or off: the same bake, the sea over it or not.
-        if current && matches!(key, ColourKey::Baked(..)) && self.colour_baked.is_some() && d.tile().display().show_sea != self.colour_sea {
-            self.show_baked(e, id);
-        }
-
-        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        let baking = self.colour_job.as_ref().is_some_and(|(k, _)| *k == key);
-        if !current && !baking {
-            match &key {
-                ColourKey::Debug(..) => {
-                    match d.tile().baked_colour() {
-                        Some(b) => {
-                            let (w, h, rgba, area) = (b.w, b.h, b.rgba.clone(), [b.x0, b.z0, b.w_m, b.h_m]);
-                            self.picture.set(e, &mut self.serial, w, h, rgba, area);
-                        }
-
-                        None => self.picture.clear(e),
-                    }
-
-                    self.picture_of = Some(Base::Colour);
-                    self.colour_for = Some(key.clone());
-                }
-
-                // Back from a debug view: the last bake is still good.
-                ColourKey::Baked(..) if self.colour_baked.as_ref().is_some_and(|(k, _)| *k == key) => {
-                    self.show_baked(e, id);
-                    self.colour_for = Some(key.clone());
-                }
-
-                ColourKey::Baked(..) => match d.tile().minimap_colour_bake(COLOUR_DIM) {
-                    Ok(bake) => {
-                        let (tx, rx) = mpsc::channel();
-                        std::thread::spawn(move || {
-                            let _ = tx.send(bake.run());
-                        });
-                        self.colour_job = Some((key.clone(), rx));
-                    }
-
-                    Err(why) => {
-                        log::info(format!("minimap: no ground colour: {why}"));
-                        self.picture.clear(e);
-                        self.picture_of = Some(Base::Colour);
-                        self.colour_for = Some(key.clone());
-                    }
-                },
-            }
-        }
-
-        if self.colour_job.is_some() {
-            self.note = "baking the ground's colour...".to_owned();
-        } else if self.picture.key.is_empty() || self.picture_of != Some(Base::Colour) {
-            self.note = "no ground colour (see the log); try the height base".to_owned();
-        } else if let ColourKey::Baked(_, climate, season) = &key {
-            self.note = format!("{climate}, {season} (the blend's CPU stand-in)");
         }
     }
 
@@ -447,55 +596,111 @@ impl MinimapUi {
         };
 
         let num = |w: Option<&String>| w.and_then(|v| v.parse::<f64>().ok()).ok_or("a number");
-        match a.first().map(String::as_str) {
-            None => {}
-            Some("colour") => self.base = Base::Colour,
-            Some("height") => self.base = Base::Height,
-            Some("none") => self.base = Base::None,
-            Some("siege") => self.show_siege = on(a.get(1))?,
-            Some("deployment") => self.show_zones = on(a.get(1))?,
-            Some("camera") => self.show_camera = on(a.get(1))?,
-            Some("zoom") => {
-                self.zoom = num(a.get(1))?.clamp(1.0, 64.0);
-                self.centre = if a.len() >= 4 { Some([num(a.get(2))?, num(a.get(3))?]) } else { None };
-            }
+        let word = a.first().map(String::as_str);
+        if let Some((v, _)) = VIEW_WORDS.iter().find(|(_, w)| Some(*w) == word) {
+            self.base = Base::Ground(*v);
+        } else if let Some((b, _, _)) = OWN_BASES.iter().find(|(_, _, w)| Some(*w) == word) {
+            self.base = *b;
+        } else {
+            match word {
+                None => {}
+                Some("siege") => self.show_siege = on(a.get(1))?,
+                Some("deployment") => self.show_zones = on(a.get(1))?,
+                Some("cells") => self.show_cells = on(a.get(1))?,
+                Some("nogo") => self.show_nogo = on(a.get(1))?,
+                Some("camera") => self.show_camera = on(a.get(1))?,
+                Some("zoom") => {
+                    self.zoom = num(a.get(1))?.clamp(1.0, 64.0);
+                    self.centre = if a.len() >= 4 { Some([num(a.get(2))?, num(a.get(3))?]) } else { None };
+                }
 
-            Some("goto") => {
-                let id = document_id(e).ok_or("no tile")?;
-                move_camera(e, id, [num(a.get(1))?, num(a.get(2))?]);
-            }
+                Some("goto") => {
+                    let id = document_id(e).ok_or("no tile")?;
+                    move_camera(e, id, [num(a.get(1))?, num(a.get(2))?]);
+                }
 
-            Some(w) => return Err(format!("unknown {w}")),
+                Some(w) => return Err(format!("unknown {w}")),
+            }
         }
-
-        let base = match self.base {
-            Base::Colour => "colour",
-            Base::Height => "height",
-            Base::None => "none",
-        };
 
         let siege = self.siege.as_ref().map_or_else(String::new, |s| {
             format!(", {} nodes, {} edges, {} deployment zone groups", s.layout.nodes.len(), s.layout.edges.len(), s.zones.len())
         });
 
-        Ok(format!("minimap: {base}, siege {}, deployment {}, camera {}, zoom {:.2}{siege}", self.show_siege, self.show_zones, self.show_camera, self.zoom))
-    }
-
-    /// The baked colour as the picture, with the sea over it when the Ground section shows the sea.
-    fn show_baked(&mut self, e: &mut Editor, id: DocumentId) {
-        let Some((_, b)) = &self.colour_baked else { return };
-        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        self.colour_sea = d.tile().display().show_sea;
-        let rgba = if self.colour_sea { d.tile().minimap_sea_over(b) } else { b.rgba.clone() };
-        let (w, h, area) = (b.w, b.h, [b.x0, b.z0, b.w_m, b.h_m]);
-        self.picture.set(e, &mut self.serial, w, h, rgba, area);
-        self.picture_of = Some(Base::Colour);
+        Ok(format!(
+            "minimap: {}, siege {}, deployment {}, cells {}, no-go {}, camera {}, zoom {:.2}{siege}{}", base_name(self.base), self.show_siege, self.show_zones,
+            self.show_cells, self.show_nogo, self.show_camera, self.zoom, if self.note.is_empty() { String::new() } else { format!(" ({})", self.note) },
+        ))
     }
 
     /// Another tile: nothing of the last one is kept.
     fn forget(&mut self, e: &mut Editor) {
-        self.picture.clear(e);
-        *self = Self { base: self.base, show_siege: self.show_siege, show_zones: self.show_zones, show_camera: self.show_camera, serial: self.serial, wheel_owned: self.wheel_owned, ..Self::default() };
+        self.colour.clear(e);
+        self.ground.clear(e);
+        self.heights.clear(e);
+        *self = Self {
+            base: self.base, show_siege: self.show_siege, show_zones: self.show_zones, show_cells: self.show_cells, show_nogo: self.show_nogo, show_camera: self.show_camera,
+            visible: self.visible, serial: self.serial, wheel_owned: self.wheel_owned, ..Self::default()
+        };
+    }
+}
+
+/// The entry's cells (x, rows from the +z edge, as the entry counts them) and whether each is valid (its mask; all without one).
+fn tile_cells(d: &TileDocument) -> Option<(usize, usize, Vec<bool>)> {
+    let entry = d.project().entry.as_ref()?;
+    let (w, h) = (entry.width() as usize, entry.height() as usize);
+    let mask = entry.tile_attr("mask").unwrap_or_default();
+    let cells = if mask.len() == w * h { mask.bytes().map(|c| c == b'1').collect() } else { vec![true; w * h] };
+    Some((w, h, cells))
+}
+
+/// The cell under `at` (metres) and whether it is valid.
+fn cell_at(d: &TileDocument, at: [f64; 2]) -> Option<(usize, usize, bool)> {
+    let (w, h, cells) = tile_cells(d)?;
+    let (x, z) = ((at[0] / 128.0).floor(), (at[1] / 128.0).floor());
+    if x < 0.0 || z < 0.0 || x >= w as f64 || z >= h as f64 {
+        return None;
+    }
+
+    let (x, y) = (x as usize, h - 1 - z as usize);
+    Some((x, y, cells[y * w + x]))
+}
+
+/// The tile's cells: the ones not the tile's darkened, the valid ones outlined in the highlight colour.
+fn draw_cells(dl: &gui::DrawList, f: &Frame, d: &TileDocument) {
+    let Some((w, h, cells)) = tile_cells(d) else { return };
+    let rect = |x: usize, y: usize| {
+        let (x0, z0, x1, z1) = d.tile().cell_rect(x as i32, y as i32);
+        (f.screen(f64::from(x0), f64::from(z1)), f.screen(f64::from(x1), f64::from(z0)))
+    };
+
+    for y in 0..h {
+        for x in 0..w {
+            if !cells[y * w + x] {
+                let (lo, hi) = rect(x, y);
+                dl.rect_filled(lo, hi, col32(0, 0, 0, 150), 0.0);
+                dl.rect(lo, hi, col32(140, 140, 140, 110), 0.0, 1.0);
+            }
+        }
+    }
+
+    let hl = theme::u32(theme::palette().highlight);
+    for y in 0..h {
+        for x in 0..w {
+            if cells[y * w + x] {
+                let (lo, hi) = rect(x, y);
+                dl.rect(lo, hi, hl, 0.0, 1.5);
+            }
+        }
+    }
+}
+
+/// The automatic no-go areas, filled red, as the NOGO polygons' colour in the viewport.
+fn draw_nogos(dl: &gui::DrawList, f: &Frame, nogos: &[Vec<[f32; 2]>]) {
+    for poly in nogos {
+        let pts = poly.iter().map(|p| f.screen(f64::from(p[0]), f64::from(p[1]))).collect::<Vec<_>>();
+        dl.concave_poly_filled(&pts, col32(255, 64, 38, 70));
+        dl.polyline(&pts, col32(255, 64, 38, 230), true, 1.5);
     }
 }
 

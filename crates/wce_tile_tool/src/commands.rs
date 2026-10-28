@@ -2530,7 +2530,30 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "minimap", "minimap [colour|height|none | siege|deployment|camera on|off | zoom <k> [x z] | goto <x> <z>]",
+        "tile_auto_nogo", "tile_auto_nogo [on|off]",
+        "show or hide the automatic no-go areas (BOB's terrain_outlines.xml: the steep ground of the final heights) on the ground; their count", |e, a| {
+            let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            match a.first().map(String::as_str) {
+                None => {}
+                Some(w @ ("on" | "off")) => {
+                    d.tile_mut().display_mut().show_auto_nogo = w == "on";
+                    d.tile_mut().display_changed();
+                }
+
+                Some(_) => return fail("usage: tile_auto_nogo [on|off]"),
+            }
+
+            let shown = d.tile().display().show_auto_nogo;
+            ok(match d.tile().auto_nogos() {
+                Some(n) => format!("automatic no-go areas {}: {} area(s), {} point(s)", if shown { "shown" } else { "hidden" }, n.len(), n.iter().map(Vec::len).sum::<usize>()),
+                None => format!("automatic no-go areas {}: not worked out yet", if shown { "shown" } else { "hidden" }),
+            })
+        },
+    );
+
+    c.add(
+        "minimap", "minimap [colour|groups|ground|protection|water|height|none | siege|deployment|cells|nogo|camera on|off | zoom <k> [x z] | goto <x> <z>]",
         "the Minimap panel: its base picture, its layers, its zoom (and centre, metres); goto moves the camera as a click on it does", |e, a| {
             with_tile(e, |t, e| t.minimap.command(e, a).map_or_else(fail, ok))
         },

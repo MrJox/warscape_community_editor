@@ -534,8 +534,25 @@ fn cut_go_outlines(field: &mut [bool], w: usize, h: usize, go: &[Vec<(f32, f32)>
     }
 }
 
+/// `terrain_outlines.xml` of the final heights (`w` x `h`, rows as `final_heights.dds`): [`no_go_outlines`] written as BOB does.
 pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>], mask: &[bool], cells: (usize, usize)) -> Vec<u8> {
     wce_foundation::wce_prof!("stage_b.terrain_outlines");
+    let mut out = String::from("<OUTLINE_LIST>\n");
+    for o in no_go_outlines(heights, w, h, go, mask, cells) {
+        out.push_str("<OUTLINE>\n");
+        for (x, y) in o {
+            out.push_str(&format!("<position x='{:.6}' y='{:.6}'/>", x / 2.0, h as f32 - y / 2.0));
+        }
+        out.push_str("</OUTLINE>\n");
+    }
+
+    out.push_str("</OUTLINE_LIST>\n");
+    out.into_bytes()
+}
+
+/// The automatic no-go areas BOB finds in the final heights (the steep ground, less the go outlines `go`), traced, simplified and kept
+/// as the subtile filter keeps them: their points in the field's space (2 per sample: `x / 2` the column, `y / 2` the row of `heights`).
+pub fn no_go_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>], mask: &[bool], cells: (usize, usize)) -> Vec<Vec<(f32, f32)>> {
     let mut field = no_go(heights, w, h, 2.0, 30.0);
     cut_go_outlines(&mut field, w, h, go);
     let field = blur(&field, w, h);
@@ -566,21 +583,11 @@ pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32
     // The tile's subtiles (the entry's size: with fewer than 128 samples per subtile the scale no longer matches, as in BOB).
     let (cells_x, cells_y) = (cells.0 as i32, cells.1 as i32);
     let scale = 1.0f32 / (128.0 * 2.0);
-    let valid = |o: &&Vec<(f32, f32)>| {
+    let valid = |o: &Vec<(f32, f32)>| {
         o.iter().all(|&(x, y)| {
             let (cx, cy) = ((scale * x) as i32, (scale * y) as i32);
             super::bob_tile::subtile_valid(mask, cells_x as usize, cells_y as usize, cx, cy)
         })
     };
-    let mut out = String::from("<OUTLINE_LIST>\n");
-    for o in s.outlines.iter().filter(valid) {
-        out.push_str("<OUTLINE>\n");
-        for &(x, y) in o {
-            out.push_str(&format!("<position x='{:.6}' y='{:.6}'/>", x / 2.0, h as f32 - y / 2.0));
-        }
-        out.push_str("</OUTLINE>\n");
-    }
-
-    out.push_str("</OUTLINE_LIST>\n");
-    out.into_bytes()
+    s.outlines.into_iter().filter(|o| valid(o)).collect()
 }

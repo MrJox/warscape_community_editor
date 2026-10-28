@@ -8,10 +8,11 @@ use rayon::prelude::*;
 use wce_formats::tile_climate::ClimateList;
 use wce_siege::{Deployment, Input, Layout};
 use wce_tile::blend_field::BlendField;
+use wce_tile::ground_type_field::GroundTypeField;
 use wce_vfs::files::Files;
 
 use super::{Tile, TileDocument};
-use crate::terrain_bake::{BakeRequest, BakedColour, TerrainView, bake_terrain_colour};
+use crate::terrain_bake::{BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth};
 
 /// A picture of the tile from above: sRGB, `w * h * 4`, rows along +z, over `x0, z0, w_m, h_m` (metres).
 #[derive(Clone, Debug, Default)]
@@ -40,21 +41,31 @@ pub struct MinimapSiege {
     pub zones: Vec<(String, Deployment)>,
 }
 
-/// The ground's colour to bake away from the UI thread (it reads the blend map and the climate's textures: seconds on a big tile).
-pub struct ColourBake {
+/// A picture of the ground to bake away from the UI thread (the colour reads the blend map and the climate's textures: seconds on a big
+/// tile), with what it needs from the tile as it is in memory.
+pub struct GroundBake {
     pub request: BakeRequest,
-    /// The blend map in memory (painted), else the file is read.
+    /// The maps in memory (painted), else their files are read.
     pub blend: Option<BlendField>,
+    pub ground: Option<GroundTypeField>,
+    pub water: Option<Arc<WaterDepth>>,
     pub climates: ClimateList,
     pub files: Arc<dyn Files>,
 }
 
-impl ColourBake {
+impl GroundBake {
     /// # Errors
     ///
-    /// The blend map or the textures do not read.
+    /// The maps or the textures do not read; the water depth view's raster is not worked out yet.
     pub fn run(&self) -> Result<BakedColour, String> {
-        bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref())
+        match self.request.look.view {
+            TerrainView::Colour | TerrainView::BlendGroups => bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref()),
+            TerrainView::GroundTypes | TerrainView::Protection => bake_terrain_map_view(&self.request, self.ground.as_ref()),
+            TerrainView::WaterDepth => {
+                let water = self.water.as_ref().ok_or("water depth: being worked out (stage B's water map)")?;
+                Ok(bake_water_depth(&self.request, water, self.ground.as_ref()))
+            }
+        }
     }
 }
 
@@ -113,13 +124,13 @@ impl Tile {
         Some(MinimapImage { x0, z0, w_m, h_m, w, h, rgba, range: (lo, hi) })
     }
 
-    /// The bake of the ground's colour for the minimap (the CPU stand-in of the game's blend, at most `max_dim` pixels a side) with the
-    /// current climate and season.
+    /// The bake of a view of the ground for the minimap (the colour: the CPU stand-in of the game's blend, at most `max_dim` pixels a side)
+    /// with the current climate and season.
     ///
     /// # Errors
     ///
     /// The tile has no blend map area (no database entry or no bordered height map) or no game files.
-    pub fn minimap_colour_bake(&self, max_dim: u32) -> Result<ColourBake, String> {
+    pub fn minimap_ground_bake(&self, view: TerrainView, max_dim: u32) -> Result<GroundBake, String> {
         let p = &self.project;
         if !(p.has_height() && p.has_entry() && p.bordered()) {
             return Err("no blend map area (the tile has no database entry or no bordered height map)".to_owned());
@@ -127,13 +138,16 @@ impl Tile {
 
         let files = self.files.clone().ok_or("no game files")?;
         let [x0, z0, w_m, h_m] = self.minimap_area();
-        let look = crate::terrain_bake::TerrainLook { blended: true, view: TerrainView::Colour, ..self.look.clone() };
+        let look = crate::terrain_bake::TerrainLook { blended: true, view, ..self.look.clone() };
         let request = BakeRequest {
             blend_map: p.dir.join("blend_map.tif"), folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, w_m, h_m,
             look, max_dim, ..Default::default()
         };
 
-        Ok(ColourBake { request, blend: p.blend.clone(), climates: self.climates().clone(), files })
+        let blend = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { p.blend.clone() } else { None };
+        let ground = if matches!(view, TerrainView::GroundTypes | TerrainView::WaterDepth) { p.ground.clone() } else { None };
+        let water = if view == TerrainView::WaterDepth { self.water_depth.clone() } else { None };
+        Ok(GroundBake { request, blend, ground, water, climates: self.climates().clone(), files })
     }
 
     /// A picture of the ground (`BakedColour`'s layout) with the sea over it: the ground under 0 m blue, darker the deeper.

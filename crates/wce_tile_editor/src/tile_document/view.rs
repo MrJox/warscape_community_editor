@@ -690,12 +690,54 @@ impl Tile {
         self.links_entity = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(o), self.source(TERRAIN));
     }
 
+    /// The automatic no-go areas, given by the tool (stage B's final heights, `WaterFields::no_go_outlines` in metres); `None` until worked
+    /// out.
+    pub fn set_auto_nogos(&mut self, nogos: Option<Vec<Vec<[f32; 2]>>>) {
+        self.auto_nogos = nogos.map(Arc::new);
+        self.nogo_dirty = true;
+    }
+
+    pub fn auto_nogos(&self) -> Option<&[Vec<[f32; 2]>]> {
+        self.auto_nogos.as_deref().map(Vec::as_slice)
+    }
+
+    /// The automatic no-go areas' outlines draped over the ground (red, as the NOGO polygons), while they show.
+    fn rebuild_auto_nogos(&mut self, scene: &mut RenderScene, layer: LayerId) {
+        if self.nogo_entity != 0 {
+            scene.remove(self.nogo_entity);
+        }
+
+        self.nogo_entity = 0;
+        self.nogo_dirty = false;
+        let Some(nogos) = self.auto_nogos.clone().filter(|_| self.display.show_auto_nogo) else { return };
+        let mut o = Overlay { pickable: false, ..Default::default() };
+        let line = overlay_colour(1.0, 0.25, 0.15, 1.0);
+        let at = |x: f32, z: f32| Float3::new(x, self.terrain_height(x, z) + 0.6, z);
+        for poly in nogos.iter() {
+            for (k, a) in poly.iter().enumerate() {
+                let b = poly[(k + 1) % poly.len()];
+                // Long edges in steps, to follow the ground.
+                let n = ((b[0] - a[0]).hypot(b[1] - a[1]) / 4.0).ceil().max(1.0) as usize;
+                for s in 0..n {
+                    let (t0, t1) = (s as f32 / n as f32, (s + 1) as f32 / n as f32);
+                    let p = |t: f32| at(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+                    o.line(p(t0), p(t1), line);
+                }
+            }
+        }
+
+        if !o.lines.is_empty() {
+            self.nogo_entity = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(o), self.source(TERRAIN));
+        }
+    }
+
     // ---- publishing
 
     pub(crate) fn update_terrain(&mut self, scene: &mut RenderScene, first: bool) {
         // Landscape rivers lie on the terrain; the link cells are draped over it.
         self.water_dirty = true;
         self.links_dirty = true;
+        self.nogo_dirty = true;
         let (world, t) = if let Some(hf) = &self.project.height {
             // The renderer cuts the grid into patches with LODs, the full resolution costs nothing far away.
             self.terrain_stride = 1;
@@ -955,6 +997,8 @@ impl Tile {
         self.water_dirty = true;
         self.links_entity = 0;
         self.links_dirty = true;
+        self.nogo_entity = 0;
+        self.nogo_dirty = true;
         let n = self.idx.type_.len();
         self.first_entity = vec![0; n];
         self.entity_count = vec![0; n];
@@ -1223,6 +1267,7 @@ impl Tile {
         self.polygons_dirty = true;
         self.water_dirty = true;
         self.links_dirty = true;
+        self.nogo_dirty = true;
     }
 
     pub fn display(&self) -> &super::TileDisplay {
@@ -1248,6 +1293,10 @@ impl Tile {
 
         if self.links_dirty && !self.stroke_open {
             self.rebuild_links(scene, layer);
+        }
+
+        if self.nogo_dirty && !self.stroke_open {
+            self.rebuild_auto_nogos(scene, layer);
         }
 
         if !self.stroke_open {
