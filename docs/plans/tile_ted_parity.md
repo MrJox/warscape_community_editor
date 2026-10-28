@@ -253,7 +253,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   requires_infield_lodding, each explained with the kit's counts) and the mask (a grid of the valid cells), one undo entry each, saved
   into the entry (`TileDocument::set_entry_attr`, `TileEntry::set_variation_attr`; `tile_prop`, `scripts/tile_properties.txt`). The
   links are Tile links' (6a); `min_height` / `scale` stay read-only: every save fits them to the heights, as TEd's.
-- Tile database management (TEd's Database management dialog; new tile set).
+- Tile database management: done (2026-10-28). Tile > Tile database... (TEd's Tile Database Management: a database, its sets and tiles,
+  New Tile Set with a name and a colour, New Tile): the kit's and the projects' battle tile sets with their colours and tiles (filtered;
+  a click opens a tile), New tile set into the projects' `_settings.xml` (a colour no other set has; a map picture tells sets apart by
+  it), and Save for Assembly Kit carries a set the tile uses into the kit's `_settings.xml` (one line, a `.bak`). New tiles go into a
+  set with Save tile as (`wce_tile::tile_sets`, `tile_database.rs`; `tile_set_new`, `tile_database`, `scripts/tile_database.txt`).
 - Integrity errors view.
 - Stats view (counts, memory budget).
 

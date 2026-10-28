@@ -1313,6 +1313,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.resize_tile(e, id, &r).map_or_else(fail, ok))
     });
 
+    c.add("tile_set_new", "tile_set_new <name> [r g b]", "a new tile set in the projects' tile database (Tile > Tile database... > New tile set); the colour picked when not given", |e, a| {
+        let Some(name) = a.first().cloned() else { return fail("usage: tile_set_new <name> [r g b]") };
+        let colour = (a.len() >= 4).then(|| Some([a[1].parse::<u8>().ok()?, a[2].parse::<u8>().ok()?, a[3].parse::<u8>().ok()?])).flatten();
+        with_tile(e, |t, e| t.new_tile_set(e, &name, colour).map_or_else(fail, ok))
+    });
+
+    c.add("tile_database", "tile_database [<set> <n tiles>]", "open the Tile database window; with a set, test that it lists that many tiles in it", |e, a| {
+        with_tile(e, |t, e| {
+            t.open_tile_database(e);
+            let ui = t.tile_db.as_ref().expect("opened");
+            match (a.first(), a.get(1).and_then(|v| v.parse::<usize>().ok())) {
+                (Some(set), Some(n)) => {
+                    let got = ui.tiles.get(set).map_or(0, Vec::len);
+                    if got == n && ui.sets.iter().any(|s| &s.0.name == set) { ok("") } else { fail(format!("set {set}: {got} tile(s), listed {}", ui.sets.iter().any(|s| &s.0.name == set))) }
+                }
+
+                _ => ok(format!("{} set(s)", ui.sets.len())),
+            }
+        })
+    });
+
     c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
         with_tile(e, |t, _| {
             t.open_new_tile_dialog();
