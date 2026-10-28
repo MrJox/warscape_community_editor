@@ -2560,6 +2560,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("link_problems", "link_problems [n]", "log the tile's link problems (the validator); with n, test that there are that many", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let p = d.link_problems();
+        for x in &p {
+            wce_foundation::log::info(format!("link problem: {}", x.message));
+        }
+
+        match a.first().and_then(|v| v.parse::<usize>().ok()) {
+            Some(n) if n != p.len() => fail(format!("{} link problem(s), expected {n}", p.len())),
+            _ => ok(format!("{} link problem(s)", p.len())),
+        }
+    });
+
     c.add("assert_links", "assert_links <targets n> <rules n> [drawn 0|1]", "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)", |e, a| {
         let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
         let (Some(d), Some((t, r))) = (document(e), parsed) else { return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]") };

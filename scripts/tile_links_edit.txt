@@ -1,5 +1,5 @@
 # Editing the tile's links (Phase 6a of docs/plans/tile_ted_parity.md): a target and a rule added to a new tile's entry, one undo entry
-# each, a field changed, undone and redone, saved and read back after opening the tile again. Run with WCE_TILE_WORKSPACE set to a scratch
+# each, the validator (a rule on the tile's own cell), a field changed, undone and redone, saved and read back after opening the tile again. Run with WCE_TILE_WORKSPACE set to a scratch
 # folder; %WORKSPACE% is it (the entry is %WORKSPACE%/raw_data/terrain/tiles/battle/_tile_database/TILES/assembly_kit_wce_links_test.xml).
 new_tile wce_links_test 2 2 10 32
 frames 5
@@ -8,6 +8,10 @@ link_edit add target roads 1 0
 link_edit add rule roads 1 -1
 assert_links 1 1
 assert_history 2 2
+link_problems 0
+link_edit add rule roads 0 0
+link_problems 1
+undo
 link_edit set rule 0 blend 128
 link_edit set rule 0 test not
 assert_history 4 4

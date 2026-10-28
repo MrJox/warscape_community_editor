@@ -2,13 +2,10 @@
 //! edge cell) and rules (what a neighbour's cell must or must not be), as the Tile panel's Tile links list and an editor of the picked one.
 //! Each change is one undo entry (`TileDocument::set_links`; typing a number is one).
 
-use std::path::Path;
-
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons};
 use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use wce_editor_core::document::Document;
-use wce_formats::xml_doc::XmlDoc;
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::TileDocument;
 
@@ -24,22 +21,12 @@ const BLEND_TIP: &str = "How many pixels of the neighbour's terrain are blended 
 const OFFLINE_TIP: &str = "Turns off the export's pre-blend at that edge (from the name; not tested).";
 const BASE_TIP: &str = "The cell of this tile the rule belongs to (the kit mostly has 1, 0; what the game does with it is not known).";
 
-/// The tile set names of a kit's battle tile database (`_tile_database/_settings.xml`), for the link sets.
-fn tile_set_names(raw_root: &Path) -> Vec<String> {
-    let path = raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml");
-    let Ok(doc) = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) else { return vec![] };
-    let mut names = doc.elements().iter().enumerate().filter(|(_, el)| el.name == "TILE_SET").filter_map(|(i, _)| doc.get(i, "name")).collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
-    names
-}
-
 impl TileTool {
     /// The link set names offered (the kit's tile sets, read once per kit), with `current` in them.
     fn link_set_names(&mut self, d: &TileDocument, current: &str) -> Vec<String> {
         let root = d.project().entry.as_ref().and_then(|en| en.raw_root()).unwrap_or_default();
         if self.link_sets.as_ref().is_none_or(|(r, _)| *r != root) {
-            self.link_sets = Some((root.clone(), tile_set_names(&root)));
+            self.link_sets = Some((root.clone(), wce_tile::link_checks::kit_tile_sets(&root)));
         }
 
         let mut names = self.link_sets.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
