@@ -231,6 +231,9 @@ pub struct TerrainMaterial {
     pub detail_colour: String,
     pub detail_normal: String,
 
+    /// A campaign tile: the terrain resolve runs with `g_is_campaign` (the campaign map has no snow on the ground from the weather).
+    pub campaign: bool,
+
     /// Changes with the content.
     pub id: u64,
 }
@@ -259,6 +262,7 @@ impl Default for TerrainMaterial {
             reflectivity: [0.0; 16],
             detail_colour: String::new(),
             detail_normal: String::new(),
+            campaign: false,
             id: 0,
         }
     }

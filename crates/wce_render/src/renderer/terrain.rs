@@ -1103,6 +1103,9 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.terrain.rs_front_cull.as_ref());
         self.ctx.set_input_layout(Some(&il));
 
+        // A campaign tile's resolve: the resolve's one campaign switch is global (it skips the weather's snow on the ground).
+        let campaign = ents.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
+
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
         let mut by_material: Vec<MaterialBoxes> = vec![];
         let mut slot: HashMap<(u64, u64, bool), usize> = HashMap::new();
@@ -1150,7 +1153,7 @@ impl Renderer {
         cbs.set_f("ps_height_map_cb", "g_far_world_read_uv_offset", &[0.0]);
         cbs.set_f("ps_height_map_cb", "g_blend_contrast", &[100.0]);
         cbs.set_f("ps_height_map_cb", "g_lq_infield_blend_range", &[0.0]);
-        cbs.set_i("ps_height_map_cb", "g_is_campaign", 0);
+        cbs.set_i("ps_height_map_cb", "g_is_campaign", i32::from(campaign));
 
         // The (disabled) map-wide normal map's uv.
         cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]);
