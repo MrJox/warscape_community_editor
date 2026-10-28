@@ -51,7 +51,7 @@ pub struct CameraInput {
 /// The settings' camera options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CameraOptions {
-    /// 0 (off) .. 1: how long the view takes to catch up with the controls (up to 0.3 s for most of the way).
+    /// 0 (off) .. 1: how long the view takes to catch up with the controls (up to 0.1 s for most of the way).
     pub smoothing: f32,
 
     /// The game's battle camera limits (the `battle_cameras` table's land row: 2 to 90 m above the ground).
@@ -67,7 +67,7 @@ pub struct CameraOptions {
 
 impl Default for CameraOptions {
     fn default() -> Self {
-        Self { smoothing: 0.5, game_limits: false, respect_ground: true, ground_clearance: 1.0, respect_collisions: false }
+        Self { smoothing: 0.25, game_limits: false, respect_ground: true, ground_clearance: 1.0, respect_collisions: false }
     }
 }
 
@@ -203,7 +203,7 @@ pub trait CameraController {
 
 /// How far the shown view moves towards the controls this frame.
 fn smooth_step(opts: &CameraOptions, dt: f32) -> f32 {
-    if opts.smoothing <= 0.0 || dt <= 0.0 { 1.0 } else { 1.0 - (-dt / (opts.smoothing.min(1.0) * 0.3)).exp() }
+    if opts.smoothing <= 0.0 || dt <= 0.0 { 1.0 } else { 1.0 - (-dt / (opts.smoothing.min(1.0) * 0.1)).exp() }
 }
 
 /// `a` moved `t` of the way to `b`; `b` itself at 1 (no smoothing: exactly the controls' view).

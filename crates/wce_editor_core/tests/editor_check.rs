@@ -525,7 +525,7 @@ fn cameras() {
     let mut s = TotalWarCamera::default();
     let smooth = CameraOptions { smoothing: 1.0, ..opts };
     let start = s.camera().eye;
-    s.update(&CameraInput { forward: true, dt: 0.1, ..Default::default() }, &smooth, &mut NoWorld);
+    s.update(&CameraInput { forward: true, dt: 0.03, ..Default::default() }, &smooth, &mut NoWorld);
     let first = length(s.camera().eye - start);
     assert!(first > 0.0 && first < length(s.eye - start) * 0.5, "smoothing shows part of the move");
 
