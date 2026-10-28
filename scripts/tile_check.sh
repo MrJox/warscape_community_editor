@@ -87,6 +87,16 @@ run_script tile_walls 1 "$DESERT"
 W="$OUT/tile_walls1/saved/tile.wce"
 [ "$(grep -c '<WceWallSpline' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
 
+# building technology overlays (tile_tech.txt): the kinds, the scope, the most destroyed state, the overlapping buildings; identical captures between two runs,
+# and each differs from the plain view
+for run in 1 2; do run_script tile_tech $run "$SRC"; done
+for f in off.png on.png selected.png all.png highest.png collide.png; do
+    cmp -s "$OUT/tile_tech1/$f" "$OUT/tile_tech2/$f" && [ -s "$OUT/tile_tech1/$f" ] && echo "technology $f identical between runs" || fail "technology $f differs between runs (or missing)"
+done
+for f in on.png selected.png all.png collide.png; do
+    cmp -s "$OUT/tile_tech1/off.png" "$OUT/tile_tech1/$f" && fail "technology: $f equals the plain capture" || echo "technology: $f differs from the plain capture"
+done
+
 run_script tile_layers 1 "$OSG"
 run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del
 cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"

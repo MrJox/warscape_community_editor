@@ -84,7 +84,7 @@ impl Default for ColumnState {
 }
 
 /// A row-vector transform of the logic file (translation in m30..m32) as the editor's column-vector matrix.
-fn transform_of(t: &serde_json::Value) -> Option<Float4x4> {
+pub(super) fn transform_of(t: &serde_json::Value) -> Option<Float4x4> {
     let g = |r: usize, c: usize| t.get(format!("m{r}{c}")).and_then(serde_json::Value::as_f64).map(|v| v as f32);
     let mut m = Float4x4::IDENTITY;
     for r in 0..4 {
@@ -132,7 +132,7 @@ fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
 type PlacedPiece = (Float4x4, String, usize, bool);
 
 /// Whether an effect of a `.meta` plays on a standing piece in the editor (see the module notes).
-fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
+pub(super) fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
     match e.tag.as_str() {
         "" => e.volume.is_none() && !e.effect.starts_with("destruction_vfx"),
         "ip_fire" => burning,
@@ -152,7 +152,7 @@ pub(crate) fn quat_matrix(q: [f32; 4]) -> Float4x4 {
 }
 
 /// The piece name (`piece01`) of a piece file.
-fn piece_name(path: &str) -> Option<String> {
+pub(super) fn piece_name(path: &str) -> Option<String> {
     let file = path.rsplit('/').next()?;
     let at = file.find("_piece")?;
     let rest = &file[at + 1..];

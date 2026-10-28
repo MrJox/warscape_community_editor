@@ -27,6 +27,7 @@ mod camera_views;
 mod selection_tools;
 mod links_editor;
 mod save_tile_as;
+mod tech_chip;
 mod resize_tile;
 mod tile_properties;
 mod tile_database;
