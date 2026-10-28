@@ -1299,6 +1299,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.save_tile_as(e, id, &set, &name, &v).map_or_else(fail, ok))
     });
 
+    c.add("resize_tile", "resize_tile <x cells> <z cells> [centre | <x cell> <z cell>] [flat]", "TEd's Resize Tile (Tile > Resize tile...): the old tile centred (default) or at a cell, the new area carried out from the edges (or flat); saved and opened again", |e, a| {
+        let (Some(x), Some(z)) = (a.first().and_then(|v| v.parse::<i32>().ok()), a.get(1).and_then(|v| v.parse::<i32>().ok())) else { return fail("usage: resize_tile <x cells> <z cells> [centre | <x cell> <z cell>] [flat]") };
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        let flat = a.iter().any(|v| v == "flat");
+        let at = (a.len() >= 4).then(|| Some((a[2].parse::<i32>().ok()?, a[3].parse::<i32>().ok()?))).flatten();
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(old) = d.project().entry.as_ref().map(|en| (en.width(), en.height())) else { return fail("no tile database entry") };
+        let ui = crate::resize_tile::ResizeUi {
+            old, size: [x, z], centre: [at.is_none(), at.is_none()], offset: at.map_or([0, 0], |(a, b)| [a, b]), extend: !flat, ..Default::default()
+        };
+        let r = ui.resize();
+        with_tile(e, |t, e| t.resize_tile(e, id, &r).map_or_else(fail, ok))
+    });
+
     c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
         with_tile(e, |t, _| {
             t.open_new_tile_dialog();

@@ -240,7 +240,13 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   otherwise), one of another size is refused, as TEd does; the document goes on as the new tile (`TileDocument::save_tile_as`,
   `TileEntry::set_variations`, `set_tile_attr`; `save_tile_as`, `scripts/tile_save_as.txt`). A set that is not in `_settings.xml` yet is
   the database management's business (below).
-- Resize tile.
+- Resize tile: done (2026-10-28). Tile > Resize tile... (TEd's Resize Tile, `TileResizingEditor`: the size, the old tile centred along x
+  and / or z or at a cell, "data loss" when shrinking): the scene moved with the old tile, the entry's size, and every map of the tile's
+  size resized on disk (heights, blend map, ground types, other images of that size; `.resize.bak` beside each), then the tile opened
+  again; not undoable. The new area as TEd leaves it (a new terrain: base height, first texture group, no ground type) or, the default,
+  carried out from the old edges (`wce_tile::resize`, `TileDocument::resize_tile`; `resize_tile`, `scripts/tile_resize.txt`). Fixed on the
+  way: a save after an edit made only of attribute changes inside a splice (moving the scene, snapping river ends) did not write the scene
+  (the splice bakes the edits without marking the scene modified); the save now asks the history too.
 - Tile properties editing UI (`min_height`, `scale`, colour, flags; the texture groups are edited already).
 - Tile database management (TEd's Database management dialog; new tile set).
 - Integrity errors view.
