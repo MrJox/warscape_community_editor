@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dear_imgui_sys as sys;
-use wce_editor_core::camera_controller::CameraController;
+use wce_editor_core::camera_controller::CameraMode;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult, read_script};
 use wce_editor_core::document::Document;
 use wce_foundation::log::{self, LogLevel};
@@ -538,10 +538,9 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         let parsed = (a.len() >= 3).then(|| Some((parse_float(&a[0])?, parse_float(&a[1])?, parse_float(&a[2])?))).flatten();
         let Some((yaw, pitch, dist)) = parsed else { return fail("usage: cam yaw pitch dist [target_y]") };
         let ty = a.get(3).and_then(|x| parse_float(x)).unwrap_or(5.0);
-        e.viewport.use_orbit();
-        let o = e.viewport.orbit_mut();
-        let t = o.target;
-        o.set_orbit(yaw, pitch, dist, Float3::new(t.x, ty, t.z));
+        e.viewport.set_mode(CameraMode::Orbit);
+        let t = e.viewport.camera().target;
+        e.viewport.controller().set_orbit(yaw, pitch, dist, Float3::new(t.x, ty, t.z));
         ok("")
     });
 
@@ -551,12 +550,14 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             return fail("usage: cam_look x y z | cam_look eye_x eye_y eye_z target_x target_y target_z");
         }
 
-        e.viewport.use_orbit();
+        e.viewport.set_mode(CameraMode::Orbit);
         if v.len() == 3 {
-            e.viewport.orbit_mut().target = Float3::new(v[0], v[1], v[2]);
+            let cam = e.viewport.camera();
+            let d = Float3::new(v[0], v[1], v[2]) - cam.target;
+            e.viewport.controller().set_camera(&Camera { eye: cam.eye + d, target: cam.target + d, ..cam });
         } else {
             let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
-            e.viewport.orbit_mut().set_camera(&cam);
+            e.viewport.controller().set_camera(&cam);
         }
 
         ok("")
@@ -601,14 +602,33 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("camera", "camera orbit|fly", "camera controller", |e, a| {
-        let Some(which) = a.first() else { return fail("usage: camera orbit|fly") };
-        if which == "fly" {
-            e.viewport.use_fly();
-        } else {
-            e.viewport.use_orbit();
+    c.add("camera", "camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>", "the viewport camera's mode and options", |e, a| {
+        const USAGE: &str = "usage: camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>";
+        let Some(which) = a.first() else { return fail(USAGE) };
+        if let Some(mode) = CameraMode::from_key(which) {
+            e.viewport.set_mode(mode);
+            return ok("");
         }
 
+        let on = match a.get(1).map(String::as_str) {
+            Some("on") => Some(true),
+            Some("off") => Some(false),
+            _ => None,
+        };
+
+        let value = a.get(1).and_then(|x| parse_float(x));
+        let o = &mut e.viewport.camera_options;
+        match (which.as_str(), on, value) {
+            ("ground", Some(v), _) => o.respect_ground = v,
+            ("collisions", Some(v), _) => o.respect_collisions = v,
+            ("limits", Some(v), _) => o.game_limits = v,
+            ("edge", Some(v), _) => e.viewport.edge_scroll = v,
+            ("smoothing", _, Some(v)) => o.smoothing = v.clamp(0.0, 1.0),
+            ("clearance", _, Some(v)) => o.ground_clearance = v.max(0.0),
+            _ => return fail(USAGE),
+        }
+
+        e.sync_camera_settings();
         ok("")
     });
 

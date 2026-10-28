@@ -193,8 +193,7 @@ impl WeatherTool {
 
         // With a tile open the camera stays on the tile.
         if !e.docs.shows_scene() {
-            e.viewport.use_orbit();
-            e.viewport.orbit_mut().set_orbit(0.6, 0.35, 60.0f32.max(ext.x.max(ext.z) * 0.9), Float3::new(0.0, 5.0, 0.0));
+            e.viewport.controller().set_orbit(0.6, 0.35, 60.0f32.max(ext.x.max(ext.z) * 0.9), Float3::new(0.0, 5.0, 0.0));
         }
 
         e.status(&format!("Test map: {n} buildings."), false);

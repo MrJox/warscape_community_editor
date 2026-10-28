@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use wce_d3d11::*;
-use wce_foundation::math::{Float3, Float4x4, inverse, look_at_lh, perspective_lh, translation};
+use wce_foundation::math::{Float3, Float4x4, inverse, look_at_lh, translation};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, GraphicsOptions};
@@ -1116,8 +1116,8 @@ impl Renderer {
         // The camera relative to the render origin (built from the relative eye: the absolute view's translation alone lost the precision).
         let aspect = width as f32 / height as f32;
         let o = self.camera.origin;
-        let view_m = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
-        let proj = perspective_lh(cam.fov_y, aspect, cam.znear, cam.zfar);
+        let view_m = cam.view_from(o);
+        let proj = cam.projection(aspect);
 
         // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
         // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main

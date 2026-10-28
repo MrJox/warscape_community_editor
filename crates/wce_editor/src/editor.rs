@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use wce_d3d11::{ID3D11Device, ID3D11DeviceContext};
 use wce_editor_core::command_registry::{CommandHost, CommandRegistry, ScriptRunner};
+use wce_editor_core::camera_controller::{CameraMode, CameraOptions};
 use wce_editor_core::document::Document;
 use wce_editor_core::document_manager::DocumentManager;
 use wce_editor_core::selection::Selection;
@@ -30,7 +31,10 @@ use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
 use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
 use crate::tool::Tool;
-use crate::viewport::Viewport;
+use crate::viewport::{GizmoMode, Viewport};
+
+/// The gizmo's keys over the viewport, with Alt.
+const GIZMO_KEYS: [(i32, GizmoMode); 4] = [(gui::KEY_G, GizmoMode::Translate), (gui::KEY_R, GizmoMode::Rotate), (gui::KEY_S, GizmoMode::Scale), (gui::KEY_Q, GizmoMode::Off)];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -212,6 +216,7 @@ impl Editor {
 
         e.frame_cap = e.settings.frame_cap();
         e.viewport.gizmo_points = e.settings.appearance.gizmo_size;
+        e.apply_camera_settings();
         crate::commands::register_builtin(&mut e.commands);
         e
     }
@@ -295,6 +300,46 @@ impl Editor {
         self.settings.appearance.gizmo_size = points;
         self.viewport.gizmo_points = points * self.display_scale;
         self.save_settings();
+    }
+
+    /// The settings' camera: its mode and options into the viewport.
+    pub fn apply_camera_settings(&mut self) {
+        let c = &self.settings.camera;
+        self.viewport.camera_options = CameraOptions {
+            smoothing: c.smoothing.clamp(0.0, 1.0), game_limits: c.game_limits, respect_ground: c.respect_ground, ground_clearance: c.ground_clearance.max(0.0),
+            respect_collisions: c.respect_collisions,
+        };
+
+        self.viewport.edge_scroll = c.edge_scroll;
+        if let Some(mode) = CameraMode::from_key(&c.mode) {
+            self.viewport.set_mode(mode);
+        }
+    }
+
+    /// The viewport's camera mode and options into the settings, saved.
+    pub fn save_camera_settings(&mut self) {
+        self.sync_camera_settings();
+        self.save_settings();
+    }
+
+    /// The viewport's camera mode and options into the settings, not saved (scripts change them for their run only).
+    pub fn sync_camera_settings(&mut self) {
+        let (o, c) = (self.viewport.camera_options, &mut self.settings.camera);
+        c.mode = self.viewport.mode().key().to_owned();
+        (c.smoothing, c.game_limits, c.respect_ground, c.ground_clearance, c.respect_collisions) = (o.smoothing, o.game_limits, o.respect_ground, o.ground_clearance, o.respect_collisions);
+        c.edge_scroll = self.viewport.edge_scroll;
+    }
+
+    fn camera_settings_changed(&self) -> bool {
+        let (o, c) = (self.viewport.camera_options, &self.settings.camera);
+        (o.smoothing, o.game_limits, o.respect_ground, o.ground_clearance, o.respect_collisions, self.viewport.edge_scroll)
+            != (c.smoothing, c.game_limits, c.respect_ground, c.ground_clearance, c.respect_collisions, c.edge_scroll)
+    }
+
+    /// Switches the camera mode, kept in the settings.
+    pub fn set_camera_mode(&mut self, mode: CameraMode) {
+        self.viewport.set_mode(mode);
+        self.save_camera_settings();
     }
 
     pub fn set_frame_cap(&mut self, fps: u32) {
@@ -1337,13 +1382,12 @@ impl Editor {
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
             let claimed = self.with_tool_at(self.active_tool, |t, e| t.claims_left_button(e)).unwrap_or(false);
             if !io.KeyCtrl && self.viewport.hovered && !claimed {
-                let fly = self.viewport.is_fly();
-                for (key, mode) in [
-                    (gui::KEY_W, crate::viewport::GizmoMode::Translate), (gui::KEY_E, crate::viewport::GizmoMode::Rotate), (gui::KEY_R, crate::viewport::GizmoMode::Scale),
-                    (gui::KEY_Q, crate::viewport::GizmoMode::Off),
-                ] {
-                    if gui::is_key_pressed(key, false) && !fly && !gui::is_mouse_down(1) {
-                        self.viewport.gizmo = mode;
+                // WASD and Q / E are the camera's; the tile tool's G grabs. TODO: the gizmo's keys are to be settled (G / R / S asked for).
+                if io.KeyAlt {
+                    for (key, mode) in GIZMO_KEYS {
+                        if gui::is_key_pressed(key, false) {
+                            self.viewport.gizmo = mode;
+                        }
                     }
                 }
 
@@ -1631,6 +1675,11 @@ impl Editor {
             gui::end_menu();
         }
 
+        // The camera's options are saved once a slider is let go.
+        if !gui::is_mouse_down(0) && self.camera_settings_changed() {
+            self.save_camera_settings();
+        }
+
         if gui::begin_menu("View") {
             gui::menu_item_toggle("Viewport", &mut self.panels.viewport);
             gui::menu_item_toggle("Outliner", &mut self.panels.outliner);
@@ -1639,12 +1688,23 @@ impl Editor {
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
             gui::separator();
-            if gui::menu_item("Orbit camera", None, !self.viewport.is_fly(), true) {
-                self.viewport.use_orbit();
-            }
+            if gui::begin_menu("Camera") {
+                for mode in CameraMode::ALL {
+                    if gui::menu_item(mode.label(), None, self.viewport.mode() == mode, true) {
+                        self.set_camera_mode(mode);
+                    }
+                }
 
-            if gui::menu_item("Fly camera", None, self.viewport.is_fly(), true) {
-                self.viewport.use_fly();
+                gui::separator();
+                let o = &mut self.viewport.camera_options;
+                gui::menu_item_toggle("Respect ground", &mut o.respect_ground);
+                gui::menu_item_toggle("Respect collisions (bounding boxes)", &mut o.respect_collisions);
+                gui::menu_item_toggle("Game height limits", &mut o.game_limits);
+                gui::menu_item_toggle("Edge scrolling", &mut self.viewport.edge_scroll);
+                let o = &mut self.viewport.camera_options;
+                gui::slider_float("Smoothing", &mut o.smoothing, 0.0, 1.0, "%.2f");
+                gui::slider_float("Ground clearance", &mut o.ground_clearance, 0.0, 10.0, "%.1f m");
+                gui::end_menu();
             }
 
             if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), Some("F"), false, !self.selection.is_empty()) {

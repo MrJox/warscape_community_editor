@@ -8,6 +8,7 @@
 use std::sync::mpsc;
 
 use wce_editor::editor::Editor;
+use wce_editor_core::camera_controller::CameraMode;
 use wce_editor::gui::{self, Vec2, col32, v2};
 use wce_editor::{icons, theme};
 use wce_foundation::log;
@@ -704,24 +705,20 @@ fn draw_nogos(dl: &gui::DrawList, f: &Frame, nogos: &[Vec<[f32; 2]>]) {
     }
 }
 
-/// The camera over `at` (x, z metres): the orbit's target goes there (on the ground, the eye keeping its place around it), the free camera's
-/// eye goes there at the same height above the ground.
+/// The camera over `at` (x, z metres): what it looks at on the ground goes there (the walker stands there), its angles and distance kept;
+/// the fly camera's eye goes there at the same height above the ground.
 fn move_camera(e: &mut Editor, id: DocumentId, at: [f64; 2]) {
     let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
     let ground = |x: f32, z: f32| d.project().height_at(f64::from(x), f64::from(z)) as f32;
     let (x, z) = (at[0] as f32, at[1] as f32);
-    if e.viewport.is_fly() {
-        let mut cam = e.viewport.camera();
-        let dy = ground(x, z) - ground(cam.eye.x, cam.eye.z);
-        let shift = wce_foundation::math::Float3::new(x - cam.eye.x, dy, z - cam.eye.z);
-        cam.eye = cam.eye + shift;
-        cam.target = cam.target + shift;
-        e.viewport.controller().set_camera(&cam);
+    let p = if e.viewport.mode() == CameraMode::Fly {
+        let eye = e.viewport.camera().eye;
+        wce_foundation::math::Float3::new(x, eye.y + ground(x, z) - ground(eye.x, eye.z), z)
     } else {
-        let y = ground(x, z);
-        let o = e.viewport.orbit_mut();
-        o.target = wce_foundation::math::Float3::new(x, y, z);
-    }
+        wce_foundation::math::Float3::new(x, ground(x, z), z)
+    };
+
+    e.viewport.controller().move_pivot(p);
 }
 
 fn screen_pts(f: &Frame, unit: f64, pts: &[P]) -> Vec<Vec2> {
@@ -842,9 +839,22 @@ fn draw_siege(dl: &gui::DrawList, f: &Frame, s: &MinimapSiege) {
     }
 }
 
-/// The camera: its eye, what it sees (the horizontal field of view) and the orbit's target.
+/// The camera: its eye, what it sees (the horizontal field of view, the top-down view's rectangle) and what it looks at.
 fn draw_camera(dl: &gui::DrawList, f: &Frame, e: &Editor) {
     let cam = e.viewport.camera();
+    if cam.is_ortho() {
+        let aspect = e.viewport.width().max(1) as f32 / e.viewport.height().max(1) as f32;
+        let (right, up, _) = cam.axes();
+        let (hw, hh) = cam.half_extents(0.0, aspect);
+        let corner = |sx: f32, sy: f32| {
+            let p = cam.eye + right * (sx * hw) + up * (sy * hh);
+            f.screen(f64::from(p.x), f64::from(p.z))
+        };
+
+        let pts = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+        dl.polyline(&pts, col32(255, 255, 255, 220), true, 1.5);
+    }
+
     let eye = f.screen(f64::from(cam.eye.x), f64::from(cam.eye.z));
     let (fx, fz) = (cam.target.x - cam.eye.x, cam.target.z - cam.eye.z);
     let len = (fx * fx + fz * fz).sqrt();
@@ -863,7 +873,7 @@ fn draw_camera(dl: &gui::DrawList, f: &Frame, e: &Editor) {
         dl.polyline(&[a, eye, b], col32(255, 255, 255, 220), false, 1.5);
     }
 
-    if !e.viewport.is_fly() {
+    if !matches!(e.viewport.mode(), CameraMode::Walk | CameraMode::Fly) {
         let t = f.screen(f64::from(cam.target.x), f64::from(cam.target.z));
         dl.line(v2(t.x - 4.0, t.y), v2(t.x + 4.0, t.y), col32(255, 255, 255, 220), 1.5);
         dl.line(v2(t.x, t.y - 4.0), v2(t.x, t.y + 4.0), col32(255, 255, 255, 220), 1.5);

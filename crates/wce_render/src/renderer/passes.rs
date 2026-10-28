@@ -1,6 +1,6 @@
 //! The geometry, shadow and lighting passes.
 
-use wce_foundation::math::{Float3, Float4x4, cross, inverse, look_at_lh, normalize, translation};
+use wce_foundation::math::{Float3, Float4x4, cross, inverse, normalize, translation};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
 
@@ -293,12 +293,10 @@ impl Renderer {
         // The slices are fitted around the camera relative to the render origin: fitted absolute, 10^5 units from the scene's origin, the
         // light's matrices lost their precision once moved back to the origin and the shadows (the trees' most) flickered as the camera moved.
         let o = self.camera.origin;
-        let cam_view = look_at_lh(cam.eye - o, cam.target - o, Float3::new(0.0, 1.0, 0.0));
+        let cam_view = cam.view_from(o);
         let inv_view = inverse(&cam_view);
-        let tan_y = (cam.fov_y * 0.5).tan();
-        let tan_x = tan_y * aspect;
         let view_dir = normalize(cam.target - cam.eye);
-        let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view_dir));
+        let side = normalize(cross(cam.up, view_dir));
 
         let mut matrices = [0.0f32; 64];
         // The cascades for the shaders (relative positions) and for culling (absolute).
@@ -309,7 +307,8 @@ impl Renderer {
             // The frustum slice's corners (fn 0x11698df0), fitted as the game does (shadow_fit.rs).
             let pts: [Float3; 8] = std::array::from_fn(|k| {
                 let d = if k & 4 != 0 { splits[c + 1] } else { slice_near[c] };
-                let v = Float3::new(if k & 1 != 0 { 1.0 } else { -1.0 } * tan_x * d, if k & 2 != 0 { 1.0 } else { -1.0 } * tan_y * d, d);
+                let (hx, hy) = cam.half_extents(d, aspect);
+                let v = Float3::new(if k & 1 != 0 { 1.0 } else { -1.0 } * hx, if k & 2 != 0 { 1.0 } else { -1.0 } * hy, d);
                 inv_view.transform_point(v)
             });
 

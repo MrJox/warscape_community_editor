@@ -6,9 +6,9 @@
 use std::path::Path;
 
 use dear_imguizmo_sys as gz;
-use wce_editor_core::camera_controller::{CameraController, CameraInput, FlyCamera, OrbitCamera};
+use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
 use wce_foundation::log;
-use wce_foundation::math::{Float3, Float4x4, cross, dot, inverse, length, look_at_lh, normalize, perspective_lh};
+use wce_foundation::math::{Float3, Float4x4, inverse, length};
 use wce_foundation::{clock::Clock, wce_prof};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::render_target::RenderTarget;
@@ -43,9 +43,17 @@ impl GizmoMode {
 }
 
 pub struct Viewport {
-    orbit: OrbitCamera,
+    total_war: TotalWarCamera,
+    top_down: TopDownCamera,
+    walk: WalkCamera,
     fly: FlyCamera,
-    fly_active: bool,
+    orbit: OrbitCamera,
+    mode: CameraMode,
+
+    /// The settings' camera options (the editor copies them in), and edge scrolling.
+    pub camera_options: CameraOptions,
+    pub edge_scroll: bool,
+    obstacles: crate::camera_world::ObstacleProbe,
     target: RenderTarget,
     texture: Option<dear_imgui_rs::TextureId>,
     pub gizmo: GizmoMode,
@@ -98,7 +106,9 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            orbit: OrbitCamera::default(), fly: FlyCamera::default(), fly_active: false, target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
+            total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
+            orbit: OrbitCamera::default(), mode: CameraMode::default(),
+            camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
@@ -131,38 +141,43 @@ fn from_gizmo(v: &[f32; 16]) -> Float4x4 {
 
 impl Viewport {
     pub fn controller(&mut self) -> &mut dyn CameraController {
-        if self.fly_active { &mut self.fly } else { &mut self.orbit }
-    }
-
-    /// The orbit controller (the `cam` command sets it directly).
-    pub fn orbit_mut(&mut self) -> &mut OrbitCamera {
-        &mut self.orbit
+        match self.mode {
+            CameraMode::TotalWar => &mut self.total_war,
+            CameraMode::TopDown => &mut self.top_down,
+            CameraMode::Walk => &mut self.walk,
+            CameraMode::Fly => &mut self.fly,
+            CameraMode::Orbit => &mut self.orbit,
+        }
     }
 
     fn controller_ref(&self) -> &dyn CameraController {
-        if self.fly_active { &self.fly } else { &self.orbit }
+        match self.mode {
+            CameraMode::TotalWar => &self.total_war,
+            CameraMode::TopDown => &self.top_down,
+            CameraMode::Walk => &self.walk,
+            CameraMode::Fly => &self.fly,
+            CameraMode::Orbit => &self.orbit,
+        }
     }
 
-    pub fn use_orbit(&mut self) {
-        if !self.fly_active {
+    pub fn mode(&self) -> CameraMode {
+        self.mode
+    }
+
+    /// Switches the controller; the new one continues from the old one's view.
+    pub fn set_mode(&mut self, mode: CameraMode) {
+        if mode == self.mode {
             return;
         }
 
-        self.orbit.set_camera(&self.fly.camera());
-        self.fly_active = false;
+        let cam = self.controller_ref().handoff();
+        self.mode = mode;
+        self.controller().set_camera(&cam);
     }
 
-    pub fn use_fly(&mut self) {
-        if self.fly_active {
-            return;
-        }
-
-        self.fly.set_camera(&self.orbit.camera());
-        self.fly_active = true;
-    }
-
-    pub fn is_fly(&self) -> bool {
-        self.fly_active
+    /// The point the view is about (what the camera looks at on the ground; the walker's place).
+    pub fn pivot(&self) -> Float3 {
+        self.controller_ref().pivot()
     }
 
     pub fn camera(&self) -> Camera {
@@ -202,7 +217,7 @@ impl Viewport {
 
     /// The coordinates readout's lines, with the cursor's last ground point.
     pub fn coords_lines(&self, scene: &RenderScene) -> Vec<String> {
-        crate::coords::lines(&self.camera(), !self.is_fly(), self.cursor_ground, scene.game_units, self.map_frame.as_ref())
+        crate::coords::lines(&self.camera(), !matches!(self.mode, CameraMode::Walk | CameraMode::Fly), self.cursor_ground, scene.game_units, self.map_frame.as_ref())
     }
 
     pub fn ray(&self, x: i32, y: i32) -> Option<(Float3, Float3)> {
@@ -210,16 +225,10 @@ impl Viewport {
             return None;
         }
 
-        let cam = self.camera();
-        let fwd = normalize(cam.target - cam.eye);
-        let right = normalize(cross(Float3::new(0.0, 1.0, 0.0), fwd));
-        let up = cross(fwd, right);
         let (w, h) = (self.target.width() as f32, self.target.height() as f32);
-        let th = (cam.fov_y * 0.5).tan();
-        let aspect = w / h;
         let nx = 2.0 * (x as f32 + 0.5) / w - 1.0;
         let ny = 1.0 - 2.0 * (y as f32 + 0.5) / h;
-        Some((cam.eye, normalize(fwd + right * (nx * th * aspect) + up * (ny * th))))
+        Some(self.camera().ray(nx, ny, w / h))
     }
 
     /// Where a world point is in the last rendered image (pixels). None when it is behind the camera or there was no frame yet.
@@ -228,21 +237,30 @@ impl Viewport {
             return None;
         }
 
-        let cam = self.camera();
-        let fwd = normalize(cam.target - cam.eye);
-        let right = normalize(cross(Float3::new(0.0, 1.0, 0.0), fwd));
-        let up = cross(fwd, right);
-        let rel = world - cam.eye;
-        let z = dot(rel, fwd);
-        if z <= cam.znear {
-            return None;
-        }
-
         let (w, h) = (self.target.width() as f32, self.target.height() as f32);
-        let th = (cam.fov_y * 0.5).tan();
-        let aspect = w / h;
-        Some(((dot(rel, right) / (z * th * aspect) * 0.5 + 0.5) * w - 0.5, (0.5 - dot(rel, up) / (z * th) * 0.5) * h - 0.5))
+        let (nx, ny) = self.camera().project(world, w / h)?;
+        Some(((nx * 0.5 + 0.5) * w - 0.5, (0.5 - ny * 0.5) * h - 0.5))
     }
+}
+
+/// Runs the camera controller over the scene's ground and obstacles.
+pub fn update_camera(e: &mut Editor, input: &CameraInput) {
+    let vp = &mut e.viewport;
+    let opts = vp.camera_options;
+    let far = vp.controller_ref().lens().zfar;
+    let mut world = crate::camera_world::ViewportWorld {
+        scene: &e.scene, ground: &mut vp.probe, obstacles: &mut vp.obstacles, models: e.renderer.as_mut().map(|r| &*r.models()), far,
+    };
+
+    let c: &mut dyn CameraController = match vp.mode {
+        CameraMode::TotalWar => &mut vp.total_war,
+        CameraMode::TopDown => &mut vp.top_down,
+        CameraMode::Walk => &mut vp.walk,
+        CameraMode::Fly => &mut vp.fly,
+        CameraMode::Orbit => &mut vp.orbit,
+    };
+
+    c.update(input, &opts, &mut world);
 }
 
 /// Renders the scene into the viewport's surface.
@@ -561,12 +579,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
 
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
-    let fly = e.viewport.fly_active;
-
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
     let claims = e.viewport_and_tool_claims();
     let mut gizmo_target: Option<(SourceRef, Float4x4)> = None;
-    if e.viewport.gizmo != GizmoMode::Off && !fly && !claims && !e.selection.is_empty() {
+    if e.viewport.gizmo != GizmoMode::Off && !claims && !e.selection.is_empty() {
         let primary = e.selection.items()[0];
         gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
     }
@@ -576,8 +592,8 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if let Some((primary, world)) = gizmo_target {
         let vp = &e.viewport;
         let cam = vp.camera();
-        let v = to_gizmo(&look_at_lh(cam.eye, cam.target, Float3::new(0.0, 1.0, 0.0)));
-        let p = to_gizmo(&perspective_lh(cam.fov_y, w as f32 / h as f32, cam.znear, cam.zfar));
+        let v = to_gizmo(&cam.view());
+        let p = to_gizmo(&cam.projection(w as f32 / h as f32));
         let mut m = to_gizmo(&world);
         let op = match vp.gizmo {
             GizmoMode::Translate => gz::TRANSLATE,
@@ -604,7 +620,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
         // SAFETY: inside a Dear ImGui frame, in the viewport window; the arrays outlive the calls.
         unsafe {
-            gz::ImGuizmo_SetOrthographic(false);
+            gz::ImGuizmo_SetOrthographic(cam.is_ortho());
 
             // A fixed length on screen: ImGuizmo's size is a part of the clip space (2 = the viewport's height).
             gz::ImGuizmo_SetGizmoSizeClipSpace(gizmo_clip);
@@ -652,7 +668,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
         e.tool_viewport_input(&event(ViewportEventKind::Hover));
-        if gui::is_mouse_clicked(0) && !fly {
+        if gui::is_mouse_clicked(0) {
             let taken = e.tool_viewport_input(&event(ViewportEventKind::Press));
             if taken || claims {
                 e.viewport.tool_drag = true;
@@ -672,9 +688,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
     // ---- camera
     let io = gui::io();
-    let mut input = CameraInput { dt: io.DeltaTime, ..Default::default() };
+    let mut input = CameraInput { dt: io.DeltaTime, aspect: size.x / size.y.max(1.0), view_h: size.y, ..Default::default() };
     let tool_drag = e.viewport.tool_drag;
-    // A left drag that starts off the gizmo and the tool turns the orbit camera, gizmo shown or not; one that starts on a handle is the gizmo's.
+    // A left drag that starts off the gizmo and the tool turns the camera, gizmo shown or not; one that starts on a handle is the gizmo's.
     if hovered && gui::is_mouse_clicked(0) {
         e.viewport.orbit_drag = !over_gizmo && !tool_drag && !claims;
     }
@@ -689,30 +705,42 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         input.wheel = if hovered { io.MouseWheel } else { 0.0 };
         let left = e.viewport.orbit_drag;
         if !over_gizmo || left {
-            input.rotate = if fly { gui::is_mouse_down(1) && active } else { (left || gui::is_mouse_down(1)) && active };
+            input.rotate = (left || gui::is_mouse_down(1)) && active;
             input.pan = gui::is_mouse_down(2) && active;
         }
 
-        // WASD (Q / E down / up, Shift faster) while the right button is held, in both controllers; without it W / E / R / Q pick the gizmo.
-        if gui::is_mouse_down(1) && active && !io.WantTextInput {
+        if hovered {
+            input.cursor = Some([2.0 * (mouse_x - origin.x) / size.x.max(1.0) - 1.0, 1.0 - 2.0 * (mouse_y - origin.y) / size.y.max(1.0)]);
+        }
+
+        // WASD moves, Q / E turn (the fly camera: down / up), Shift faster: bare keys over the viewport (Ctrl and Alt are other shortcuts').
+        if !io.WantTextInput && !ctrl && !alt {
             input.forward = gui::is_key_down(gui::KEY_W);
             input.back = gui::is_key_down(gui::KEY_S);
             input.left = gui::is_key_down(gui::KEY_A);
             input.right = gui::is_key_down(gui::KEY_D);
-            input.up = gui::is_key_down(gui::KEY_E);
-            input.down = gui::is_key_down(gui::KEY_Q);
+            input.turn_left = gui::is_key_down(gui::KEY_Q);
+            input.turn_right = gui::is_key_down(gui::KEY_E);
             input.fast = shift;
 
-            // Flying is not a click.
-            if input.forward || input.back || input.left || input.right || input.up || input.down {
+            // Moving is not a click.
+            if input.forward || input.back || input.left || input.right || input.turn_left || input.turn_right {
                 e.viewport.right_press = None;
             }
         }
     }
 
-    e.viewport.controller().update(&input);
+    // Edge scrolling: the mouse within a few points of the image's edge, no button held.
+    if e.viewport.edge_scroll && hovered && !active {
+        const EDGE: f32 = 12.0;
+        let (rx, ry) = (mouse_x - origin.x, mouse_y - origin.y);
+        input.edge[0] = if rx < EDGE { -1.0 } else if rx > size.x - EDGE { 1.0 } else { 0.0 };
+        input.edge[1] = if ry < EDGE { 1.0 } else if ry > size.y - EDGE { -1.0 } else { 0.0 };
+    }
 
-    // ---- a right click (a short press and release without moving or flying; a right drag turns the camera, WASD flies): the tool's context
+    update_camera(e, &input);
+
+    // ---- a right click (a short press and release without moving the mouse or the camera; a right drag turns the camera): the tool's context
     // menu
     if hovered && gui::is_mouse_clicked(1) {
         e.viewport.right_press = Some((mouse_x, mouse_y));

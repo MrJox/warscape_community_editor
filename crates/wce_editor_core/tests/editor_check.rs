@@ -3,7 +3,7 @@
 
 use std::any::Any;
 
-use wce_editor_core::camera_controller::{CameraController, CameraInput, FlyCamera, OrbitCamera};
+use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraOptions, CameraWorld, FlyCamera, GAME_MAX_HEIGHT, NoWorld, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
 use wce_editor_core::command::{Command, CommandStack, History};
 use wce_editor_core::command_registry::{CommandHost, CommandRegistry, CommandResult, ScriptRunner};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
@@ -12,6 +12,7 @@ use wce_editor_core::inspector::{InspectTarget, Inspector, PropertyPath};
 use wce_editor_core::selection::Selection;
 use wce_foundation::math::{Float3, Float4x4, length, translation};
 use wce_scene::render_scene::{LayerId, Overlay, Payload, RenderScene, SourceRef};
+use wce_scene::camera::Camera;
 
 /// An inspector that records what the document asks for and plays back scripted edits.
 #[derive(Default)]
@@ -459,25 +460,112 @@ fn command_registry_and_scripts() {
     assert!(t.failed() && host.calls == 1 && t.error().contains("bad"), "a failing line stops the script with its line number");
 }
 
+/// A flat ground at y = 0 and one 10 m box at (50, 0..10, 0).
+struct FlatWorld;
+
+impl CameraWorld for FlatWorld {
+    fn ground(&mut self, _x: f32, _z: f32) -> Option<f32> {
+        Some(0.0)
+    }
+
+    fn ray_ground(&mut self, o: Float3, d: Float3) -> Option<Float3> {
+        (d.y < -1e-6).then(|| o + d * (-o.y / d.y))
+    }
+
+    fn push_out(&mut self, p: Float3, r: f32) -> Float3 {
+        let (lo, hi) = (Float3::new(45.0, 0.0, -5.0), Float3::new(55.0, 10.0, 5.0));
+        let inside = |p: Float3, m: f32| p.x > lo.x - m && p.x < hi.x + m && p.y > lo.y - m && p.y < hi.y + m && p.z > lo.z - m && p.z < hi.z + m;
+        if !inside(p, r) {
+            return p;
+        }
+
+        // Out through the top (enough for the test).
+        Float3::new(p.x, hi.y + r, p.z)
+    }
+}
+
 #[test]
 fn cameras() {
-    let mut o = OrbitCamera::default();
+    let opts = CameraOptions { smoothing: 0.0, ..Default::default() };
+    let mut o = TotalWarCamera::default();
     o.set_orbit(0.6, 0.35, 120.0, Float3::new(0.0, 5.0, 0.0));
     let c = o.camera();
-    let mut o2 = OrbitCamera::default();
+    let (yaw, pitch, dist) = (0.6f32, 0.35f32, 120.0f32);
+    let eye = Float3::new(0.0, 5.0, 0.0) + Float3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()) * dist;
+    assert!(length(c.eye - eye) < 1e-3 && length(c.target - Float3::new(0.0, 5.0, 0.0)) < 1e-3, "the orbit convention (`cam`) still means the same view");
+    let mut o2 = TotalWarCamera::default();
     o2.set_camera(&c);
-    assert!((o2.yaw - 0.6).abs() < 1e-4 && (o2.pitch - 0.35).abs() < 1e-4 && (o2.dist - 120.0).abs() < 1e-2, "orbit round trip through a Camera");
-    o.update(&CameraInput { wheel: 1.0, ..Default::default() });
-    assert!(o.dist < 120.0, "the wheel zooms in");
-    let yaw = o.yaw;
-    o.update(&CameraInput { rotate: true, dx: 100.0, ..Default::default() });
-    assert!(o.yaw > yaw, "dragging turns the camera");
+    assert!(length(o2.camera().eye - c.eye) < 1e-3 && length(o2.camera().target - c.target) < 1e-2, "Total War camera round trip through a Camera");
+
+    let e0 = o.camera().eye;
+    o.update(&CameraInput { forward: true, dt: 1.0, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!(length(o.camera().eye - e0) > 1.0 && (o.camera().eye.y - e0.y).abs() < 1e-3, "WASD moves over the ground, not up or down");
+    let (y0, p0) = (o.yaw, o.pitch);
+    o.update(&CameraInput { turn_right: true, dt: 0.5, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!(o.yaw > y0, "E turns right");
+    let h0 = o.camera().eye.y;
+    o.update(&CameraInput { wheel: 3.0, dt: 0.01, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!(o.camera().eye.y < h0 && o.pitch > p0, "the wheel goes down along the view and flattens it");
+    o.update(&CameraInput { rotate: true, dx: 100.0, dt: 0.01, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!(o.yaw > y0, "dragging turns the camera");
+
+    // Ground and collisions.
+    let mut g = TotalWarCamera::default();
+    g.set_camera(&Camera { eye: Float3::new(0.0, -5.0, 0.0), target: Float3::new(0.0, -5.0, 10.0), ..Camera::default() });
+    g.update(&CameraInput { dt: 0.01, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!((g.camera().eye.y - 1.0).abs() < 1e-4, "the eye is put back 1 m above the ground");
+    g.set_camera(&Camera { eye: Float3::new(50.0, 5.0, 0.0), target: Float3::new(50.0, 5.0, 10.0), ..Camera::default() });
+    g.update(&CameraInput { dt: 0.01, ..Default::default() }, &CameraOptions { respect_collisions: true, ..opts }, &mut FlatWorld);
+    assert!(g.camera().eye.y >= 10.0, "the eye leaves a bounding box");
+    g.set_camera(&Camera { eye: Float3::new(0.0, 300.0, 0.0), target: Float3::new(0.0, 0.0, 10.0), ..Camera::default() });
+    g.update(&CameraInput { dt: 0.01, ..Default::default() }, &CameraOptions { game_limits: true, ..opts }, &mut FlatWorld);
+    assert!((g.camera().eye.y - GAME_MAX_HEIGHT).abs() < 1e-3, "the game's limits hold the height");
+
+    // Smoothing: the view catches up over a few frames.
+    let mut s = TotalWarCamera::default();
+    let smooth = CameraOptions { smoothing: 1.0, ..opts };
+    let start = s.camera().eye;
+    s.update(&CameraInput { forward: true, dt: 0.1, ..Default::default() }, &smooth, &mut NoWorld);
+    let first = length(s.camera().eye - start);
+    assert!(first > 0.0 && first < length(s.eye - start) * 0.5, "smoothing shows part of the move");
+
+    // Top-down: orthographic, straight down, north up; the wheel zooms about the mouse.
+    let mut t = TopDownCamera::default();
+    t.set_camera(&c);
+    let tc = t.camera();
+    assert!(tc.is_ortho() && (tc.target - tc.eye).y < 0.0 && (tc.target.x - tc.eye.x).abs() < 1e-4, "the top-down view looks straight down");
+    let under = |t: &TopDownCamera| t.camera().ray(0.5, 0.5, 1.0).0;
+    let before = under(&t);
+    t.update(&CameraInput { wheel: 2.0, cursor: Some([0.5, 0.5]), aspect: 1.0, view_h: 500.0, dt: 0.01, ..Default::default() }, &opts, &mut FlatWorld);
+    let after = under(&t);
+    assert!(t.height < length(c.target - c.eye) * 2.0 && (before.x - after.x).abs() < 1e-2 && (before.z - after.z).abs() < 1e-2, "zoom keeps the point under the mouse");
+    let back = t.handoff();
+    assert!(!back.is_ortho(), "the top-down view hands over a perspective view");
+
+    // Walk: on the ground at eye height.
+    let mut w = WalkCamera::default();
+    w.set_camera(&c);
+    w.update(&CameraInput { forward: true, dt: 1.0, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!((w.camera().eye.y - w.eye_height).abs() < 1e-4, "the walker's eye is at its height above the ground");
+
+    // Orbit: the `cam` convention, round trip; the wheel zooms; WASD moves the target. Fly: continues from a view and moves along it.
+    let mut r = OrbitCamera::default();
+    r.set_orbit(0.6, 0.35, 120.0, Float3::new(0.0, 5.0, 0.0));
+    assert!(length(r.camera().eye - c.eye) < 1e-3, "the orbit camera and the Total War camera agree on `cam`");
+    let mut r2 = OrbitCamera::default();
+    r2.set_camera(&r.camera());
+    assert!((r2.yaw - 0.6).abs() < 1e-4 && (r2.pitch - 0.35).abs() < 1e-4 && (r2.dist - 120.0).abs() < 1e-2, "orbit round trip through a Camera");
+    r.update(&CameraInput { wheel: 1.0, dt: 0.01, ..Default::default() }, &opts, &mut NoWorld);
+    assert!(r.dist < 120.0, "the wheel zooms in");
+    let t0 = r.target;
+    r.update(&CameraInput { forward: true, dt: 0.1, ..Default::default() }, &opts, &mut FlatWorld);
+    assert!(length(r.target - t0) > 1.0 && r.target.y == 0.0, "WASD moves the target over the ground");
     let mut f = FlyCamera::default();
     f.set_camera(&c);
-    assert!(length(f.camera().eye - c.eye) < 1e-3, "fly continues from the orbit view");
-    let e0 = f.eye;
-    f.update(&CameraInput { forward: true, dt: 1.0, ..Default::default() });
-    assert!(length(f.eye - e0) > 1.0, "fly moves forward");
+    assert!(length(f.camera().eye - c.eye) < 1e-3, "fly continues from the view");
+    let e1 = f.eye;
+    f.update(&CameraInput { forward: true, dt: 1.0, ..Default::default() }, &opts, &mut NoWorld);
+    assert!(length(f.eye - e1) > 1.0, "fly moves forward");
     assert!((o.lens.fov_y - 1.13446).abs() < 1e-5 && o.lens.znear == 1.0 && o.lens.zfar == 13000.0, "the lens is the game's battle camera");
 }
 

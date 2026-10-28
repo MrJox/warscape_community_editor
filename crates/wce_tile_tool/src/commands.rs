@@ -2030,9 +2030,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
                 // The camera looks at it (wait a few frames before clicking).
                 Some("frame") => {
-                    if !e.viewport.is_fly() {
-                        e.viewport.orbit_mut().set_orbit(0.8, 0.7, 60.0, p);
-                    }
+                    e.viewport.controller().set_orbit(0.8, 0.7, 60.0, p);
 
                     ok(format!("framed element {found}"))
                 }

@@ -2054,7 +2054,6 @@ impl TileTool {
             return;
         }
 
-        let fly = e.viewport.is_fly();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         if !d.project().has_entry() {
             gui::text_disabled("no tile database entry: no links");
@@ -2071,11 +2070,11 @@ impl TileTool {
         let look = self.draw_link_editor(e, id);
         self.draw_link_candidates(e, id);
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        if let (Some((x, y)), false) = (look, fly) {
+        if let Some((x, y)) = look {
             let (x0, z0, x1, z1) = d.tile().cell_rect(x, y);
             let (cx, cz) = ((x0 + x1) * 0.5, (z0 + z1) * 0.5);
             let t = Float3::new(cx, d.tile().terrain_height(cx, cz), cz);
-            e.viewport.orbit_mut().set_orbit(0.8, 0.9, 350.0, t);
+            e.viewport.controller().set_orbit(0.8, 0.9, 350.0, t);
         }
     }
 
@@ -3025,11 +3024,6 @@ impl Tool for TileTool {
     }
 
     fn activated(&mut self, e: &mut Editor) {
-        if e.viewport.is_fly() {
-            e.viewport.use_orbit();
-        }
-
-        e.viewport.orbit_mut().min_eye_height = -1e6;
         let key = e.tool_settings::<TileSettings>(SETTINGS_ID).sea_state;
         if !key.is_empty()
             && let Some(r) = e.renderer()
@@ -3055,9 +3049,7 @@ impl Tool for TileTool {
             self.camera_set_for = id;
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
-            if !e.viewport.is_fly() {
-                e.viewport.orbit_mut().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32));
-            }
+            e.viewport.controller().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32));
 
             self.weather.tile_changed(e, id);
             self.note_recent(e, id);
