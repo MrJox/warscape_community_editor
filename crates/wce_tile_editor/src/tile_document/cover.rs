@@ -397,6 +397,11 @@ impl Tile {
 
     /// The polygons whose cover `elem` (a building) raised or may raise now, rebuilt at the next update.
     pub(crate) fn building_moved(&mut self, elem: usize) {
+        // Covers on the terrain only (Polygons over buildings off): no building raises them.
+        if !self.display.polygon_over_buildings {
+            return;
+        }
+
         let p = self.world_position(elem);
         let reach = self.model_of(elem).map_or(10.0, |m| {
             let e = m.bmax - m.bmin;
