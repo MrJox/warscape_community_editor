@@ -61,8 +61,9 @@ Status legend: **done**, **partial**, **todo**.
 - **done** Rivers and water planes (forward, as the sea; no planar reflection).
 - **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): the
   ground's variations and repeats now follow the game (the hill shows rock's pale variation, at 40 m), but it is still browner than the
-  game's pale grey; our colours are more saturated, contrasted and purple than the game's flat
-  hazy frame (tone mapping, grading or fog), and the trees' shadows are faint. The climate: a tile shown in a map context takes its
+  game's pale grey; the orange cast was the weather: the editor lit with the `default/` season folder's heavily graded files, the
+  game with the battle season's (2026-10-28; the colour matrix and the environment's fields checked against the game, the same); still
+  open: the trees' shadows are faint, the haze. The climate: a tile shown in a map context takes its
   placement's (`ContextPanel::adopt_climate`, the region's as in the game); alone it is the editor's choice (`ROME_Continental` by
   default).
 - **blocked** A RenderDoc capture of a battle (the light pass, tone map and fog inputs, the ground's textures): Rome 2 is 32-bit and

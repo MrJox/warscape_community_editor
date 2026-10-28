@@ -178,32 +178,45 @@ impl WeatherUi {
         AssetVariationDb::decode(&mut Cursor::new(bytes), &None).map_err(|err| format!("{PACKS_DB}: {err}"))
     }
 
-    /// A variation database made from the packs' weather folders, for a game without one (Rome 2):
-    /// `weather/<climate>/[<season>/]<land|sea>/<day|night>/<dry|fog|rain|snow...>/<file>.environment`. The climate folder is the climate
-    /// (`default`: every climate), a season folder `default` (or none) every season.
+    /// A variation database made from the packs' weather folders, for a game without one (Rome 2), as the game chooses (fn
+    /// 0x114ecc90): it lists `weather/<climate>/<season>/land/<day|night>/<precipitation>/*.environment` with the battle's season, and only
+    /// when that folder has none the `default` season's (and last `weather/default/default/...`), then picks one at random. So a `default`
+    /// season file is listed for the seasons whose own folder lacks its kind; the paths without a season level are never read by the game.
+    /// The climate folder is the climate (`default`: every climate).
     fn folders_database(e: &Editor) -> Result<AssetVariationDb, String> {
         let vfs = e.vfs().ok_or("the game packs are not mounted")?;
         const SEASONS: [&str; 4] = ["sp", "su", "au", "wi"];
-        let mut xml = String::from("<environments serialise_version='1'>\n\t<environment_files>\n");
-        let mut n = 0;
+
+        // (climate, season, land|sea, day|night, precipitation, path)
+        let mut files = Vec::new();
         for path in vfs.list("weather/", ".environment") {
             let parts = path.split('/').collect::<Vec<_>>();
-            // weather, climate, [season], land|sea, day|night, precipitation, file
-            let (climate, season, rest) = match parts.len() {
-                7 => (parts[1], parts[2], &parts[3..6]),
-                6 => (parts[1], "default", &parts[2..5]),
-                _ => continue,
-            };
-
-            let [battle, time, precipitation] = rest else { continue };
-            if !["land", "sea"].contains(battle) || !["day", "night"].contains(time) {
+            let [_, climate, season, battle, time, precipitation, _] = parts[..] else { continue };
+            if !["land", "sea"].contains(&battle) || !["day", "night"].contains(&time) {
                 continue;
             }
 
-            let seasons = if SEASONS.contains(&season) { season.to_owned() } else { SEASONS.join(",") };
+            files.push((climate.to_owned(), season.to_owned(), battle, time, precipitation, path.replace('/', "\\")));
+        }
+
+        let own: std::collections::BTreeSet<(String, String, &str, &str, &str)> =
+            files.iter().filter(|f| SEASONS.contains(&f.1.as_str())).map(|f| (f.0.clone(), f.1.clone(), f.2, f.3, f.4)).collect();
+        let mut xml = String::from("<environments serialise_version='1'>\n\t<environment_files>\n");
+        let mut n = 0;
+        for (climate, season, battle, time, precipitation, path) in &files {
+            let seasons: Vec<&str> = if SEASONS.contains(&season.as_str()) {
+                vec![season.as_str()]
+            } else {
+                SEASONS.into_iter().filter(|s| !own.contains(&(climate.clone(), (*s).to_owned(), *battle, *time, *precipitation))).collect()
+            };
+
+            if seasons.is_empty() {
+                continue;
+            }
+
             xml += &format!(
-                "\t\t<environment_file serialise_version='1' filename='{}' map='default_map' climate='{climate}' season='{seasons}' climate_change_index='cc0' precipitation='{precipitation}' time_of_day='{time}' battle_types='{battle}' snow_attrition='snow_attrition_off,snow_attrition_on'/>\n",
-                path.replace('/', "\\")
+                "\t\t<environment_file serialise_version='1' filename='{path}' map='default_map' climate='{climate}' season='{}' climate_change_index='cc0' precipitation='{precipitation}' time_of_day='{time}' battle_types='{battle}' snow_attrition='snow_attrition_off,snow_attrition_on'/>\n",
+                seasons.join(",")
             );
             n += 1;
         }
