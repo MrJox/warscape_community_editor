@@ -33,9 +33,6 @@ use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
 use crate::tool::Tool;
 use crate::viewport::{GizmoMode, Viewport};
 
-/// The gizmo's keys over the viewport, with Alt.
-const GIZMO_KEYS: [(i32, GizmoMode); 4] = [(gui::KEY_G, GizmoMode::Translate), (gui::KEY_R, GizmoMode::Rotate), (gui::KEY_S, GizmoMode::Scale), (gui::KEY_Q, GizmoMode::Off)];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
     Save,
@@ -1382,11 +1379,11 @@ impl Editor {
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
             let claimed = self.with_tool_at(self.active_tool, |t, e| t.claims_left_button(e)).unwrap_or(false);
             if !io.KeyCtrl && self.viewport.hovered && !claimed {
-                // WASD and Q / E are the camera's; the tile tool's G grabs. TODO: the gizmo's keys are to be settled (G / R / S asked for).
-                if io.KeyAlt {
-                    for (key, mode) in GIZMO_KEYS {
-                        if gui::is_key_pressed(key, false) {
-                            self.viewport.gizmo = mode;
+                // 1..4: the gizmo, in the toolbar's order (none, move, rotate, scale); WASD and Q / E are the camera's.
+                if !io.KeyAlt {
+                    for i in 0..4 {
+                        if gui::is_key_pressed(gui::KEY_1 + i, false) {
+                            self.viewport.gizmo = GizmoMode::from_index(i as usize);
                         }
                     }
                 }
@@ -1515,6 +1512,10 @@ impl Editor {
 
             if gui::small_button(&format!("{icon}  {name}")) {
                 self.viewport.gizmo = mode;
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{name} ({})", g + 1));
             }
 
             if on {
