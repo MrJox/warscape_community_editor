@@ -56,8 +56,39 @@ pub struct TileInputs {
     /// `VegetationExclusionPolygonInstance` outlines, in generator coordinates.
     pub exclusions: Vec<Vec<(f32, f32)>>,
 
+    /// Each outline's least and greatest y: a point outside `[least, greatest)` crosses none of its edges ([`point_in`] counts an edge
+    /// from its lower end, excluding the upper), so it is outside without the edges being looked at.
+    pub exclusion_y: Vec<(f32, f32)>,
+
     /// What the lists' heights are multiplied by.
     pub height_alpha: super::height_alpha::HeightAlpha,
+
+    /// [`candidates`] by seed and density (bits), with the random state after them: the generators of a tile's categories share seeds
+    /// and densities, and the points depend on nothing else.
+    pub candidate_cache: CandidateCache,
+}
+
+/// [`TileInputs::candidate_cache`].
+pub type CandidateCache = std::sync::Mutex<std::collections::HashMap<(u32, u32), std::sync::Arc<(Vec<Candidate>, u32)>>>;
+
+/// A hasher for the candidates' `u32` keys (float bits): a multiply, as a set's order is not used (its keys are sorted).
+#[derive(Default)]
+struct U32Hasher(u64);
+
+impl std::hash::Hasher for U32Hasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+
+    fn write_u32(&mut self, v: u32) {
+        self.0 = u64::from(v).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
 }
 
 impl TileInputs {
@@ -108,43 +139,67 @@ impl TileInputs {
         (x >= 0 && y >= 0 && (x as usize) < self.map_w && (y as usize) < self.map_h).then(|| y as usize * self.map_w + x as usize)
     }
 
-    /// `FUN_1028bdc0`.
-    pub(super) fn height(&self, px: u32, py: u32) -> f32 {
+    /// What the generator reads of a pixel, computed once: its 16 channels (`FUN_1028bb40`: a channel, divided by its texture's sum when that
+    /// is over 1) and its height (`FUN_1028bdc0`); zero for a pixel outside the usable cells or the map.
+    pub(super) fn pixel(&self, px: u32, py: u32) -> Pixel {
+        let mut out = Pixel { norm: [0.0; 16], height: 0.0 };
         if !self.valid(px, py) {
-            return 0.0;
+            return out;
         }
 
-        self.map_index(px, py).map_or(0.0, |i| self.heights[i])
+        let Some(i) = self.map_index(px, py) else { return out };
+        out.height = self.heights[i];
+        let pix = &self.blend[i * 16..i * 16 + 16];
+        for t in 0..4 {
+            let mut sum = 0.0f32;
+            for c in 0..4 {
+                sum = if c == 0 { pix[t * 4] + sum } else { sum + pix[t * 4 + c] };
+            }
+
+            for c in 0..4 {
+                let v = pix[t * 4 + c];
+                out.norm[t * 4 + c] = if 1.0 < sum { (1.0 / sum) * v } else { v };
+            }
+        }
+
+        out
     }
 
-    /// `FUN_1028bb40`: a channel, divided by its texture's sum when that is over 1.
-    pub(super) fn channel(&self, px: u32, py: u32, ch: usize) -> f32 {
-        if !self.valid(px, py) {
-            return 0.0;
+    /// The textures `probability_blendmap_value_for_channel_at_pixel` reads for a group name: one channel of the group's textures (see
+    /// [`GroupView`]); an unknown group reads the alphabetically first one.
+    fn probability_textures(&self, name: &str) -> Vec<usize> {
+        let textures = self.textures(name);
+        if !textures.is_empty() {
+            return textures;
         }
 
-        let Some(i) = self.map_index(px, py) else { return 0.0 };
-        let pix = &self.blend[i * 16..i * 16 + 16];
-        let t = ch >> 2;
-        let mut sum = 0.0f32;
-        for c in 0..4 {
-            sum = if c == 0 { pix[t * 4] + sum } else { sum + pix[t * 4 + c] };
-        }
-
-        let v = pix[ch];
-        if 1.0 < sum { (1.0 / sum) * v } else { v }
+        let mut names: Vec<&String> = self.texture_groups.iter().collect();
+        names.sort();
+        names.first().map_or_else(Vec::new, |first| self.textures(first))
     }
 
     fn textures(&self, name: &str) -> Vec<usize> {
         self.texture_groups.iter().enumerate().filter(|(_, g)| *g == name).map(|(i, _)| i).collect()
     }
 
-    /// `summed_channel_blendmap`: the positive channels of every texture of the group.
-    fn summed(&self, px: u32, py: u32, name: &str) -> f32 {
+    fn excluded(&self, x: f32, y: f32) -> bool {
+        self.exclusions.iter().zip(&self.exclusion_y).any(|(poly, &(lo, hi))| lo <= y && y < hi && point_in(poly, x, y))
+    }
+}
+
+/// A pixel as the generator reads it ([`TileInputs::pixel`]).
+pub(super) struct Pixel {
+    pub(super) norm: [f32; 16],
+    pub(super) height: f32,
+}
+
+impl Pixel {
+    /// `summed_channel_blendmap`: the positive channels of every texture of the group (its textures, in order).
+    fn summed(&self, textures: &[usize]) -> f32 {
         let mut acc = 0.0f32;
-        for t in self.textures(name) {
+        for &t in textures {
             for c in 0..4 {
-                let v = self.channel(px, py, t * 4 + c);
+                let v = self.norm[t * 4 + c];
                 if v > 0.0 {
                     acc = v + acc;
                 }
@@ -153,24 +208,22 @@ impl TileInputs {
 
         acc
     }
+}
 
-    /// `probability_blendmap_value_for_channel_at_pixel`: one channel of the group's textures; an unknown group reads the alphabetically
-    /// first one.
-    fn probability_value(&self, px: u32, py: u32, name: &str, number: u32) -> f32 {
-        let mut textures = self.textures(name);
-        if textures.is_empty() {
-            let mut names: Vec<&String> = self.texture_groups.iter().collect();
-            names.sort();
-            let Some(first) = names.first() else { return 0.0 };
-            textures = self.textures(first);
-        }
+/// A group of the category, resolved once per generator run: its parameters, the textures of its channel group and of its probability
+/// channel group, and the channel [`TileInputs::probability_value`] reads.
+struct GroupView<'a> {
+    params: Option<&'a GroupParams>,
+    sum_textures: Vec<usize>,
+    probability_textures: Vec<usize>,
+    probability_channel: Option<usize>,
+}
 
-        let Some(&t) = textures.get((number >> 2) as usize) else { return 0.0 };
-        self.channel(px, py, (number & 3) as usize + t * 4)
-    }
-
-    fn excluded(&self, x: f32, y: f32) -> bool {
-        self.exclusions.iter().any(|poly| point_in(poly, x, y))
+impl<'a> GroupView<'a> {
+    fn new(params: &'a GenerationParams, inputs: &TileInputs, name: &String) -> Self {
+        let Some(g) = params.groups.get(name) else { return Self { params: None, sum_textures: vec![], probability_textures: vec![], probability_channel: None } };
+        let channel = inputs.probability_textures(&g.channel_group_for_probability).get((g.channel_number >> 2) as usize).map(|&t| (g.channel_number & 3) as usize + t * 4);
+        Self { params: Some(g), sum_textures: inputs.textures(&g.channel_group), probability_textures: inputs.textures(&g.channel_group_for_probability), probability_channel: channel }
     }
 }
 
@@ -208,6 +261,23 @@ pub fn candidates(inputs: &TileInputs, density: f32, rand: &mut Rand) -> Vec<Can
     candidates_with(inputs, density, rand, &|x, y| inputs.excluded(x, y))
 }
 
+/// [`candidates`] through the tile's cache: the same points and random state after them.
+pub(super) fn cached_candidates(inputs: &TileInputs, density: f32, rand: &mut Rand) -> std::sync::Arc<(Vec<Candidate>, u32)> {
+    let key = (rand.0, density.to_bits());
+    if let Some(hit) = inputs.candidate_cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
+        rand.0 = hit.1;
+        return hit;
+    }
+
+    let points = candidates(inputs, density, rand);
+    let made = std::sync::Arc::new((points, rand.0));
+    if let Ok(mut c) = inputs.candidate_cache.lock() {
+        c.insert(key, made.clone());
+    }
+
+    made
+}
+
 /// [`candidates`] with the generator's `position_should_be_discarded` (the trees': the exclusion polygons; the grass': outside a box).
 pub fn candidates_with(inputs: &TileInputs, density: f32, rand: &mut Rand, discard: &dyn Fn(f32, f32) -> bool) -> Vec<Candidate> {
     let (w, h) = inputs.grid();
@@ -231,7 +301,7 @@ pub fn candidates_with(inputs: &TileInputs, density: f32, rand: &mut Rand, disca
 
     let total2 = ((total / x1) * x1.ceil()).ceil();
     let t2k = total2 * K;
-    let mut keys = HashSet::new();
+    let mut keys: HashSet<u32, std::hash::BuildHasherDefault<U32Hasher>> = HashSet::with_capacity_and_hasher(count as usize, Default::default());
     let mut s = rand.0;
     for _ in 0..count {
         loop {
@@ -456,7 +526,11 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
 /// [`generate`], then `statics` added to the generated map (where nothing is at their position yet), as BOB adds the static trees to the tree
 /// generator's map before writing: they don't take part in the generation, but their place in the map's order is the list's.
 pub fn generate_with(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32, statics: &[Chosen]) -> Vec<Chosen> {
-    let mut live = generate_map(params, inputs, category, mask, seed, density);
+    with_statics(generate_map(params, inputs, category, mask, seed, density), statics)
+}
+
+/// A generated map with `statics` added (see [`generate_with`]), in the map's order.
+pub(super) fn with_statics(mut live: CaMap<Vec2Key, Chosen>, statics: &[Chosen]) -> Vec<Chosen> {
     for c in statics {
         live.insert(Vec2Key(c.x, c.y), c.clone());
     }
@@ -464,7 +538,8 @@ pub fn generate_with(params: &GenerationParams, inputs: &TileInputs, category: u
     live.iter().map(|(_, c)| c.clone()).collect()
 }
 
-fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> CaMap<Vec2Key, Chosen> {
+/// One generator's map (see [`generate`]), for callers that take more than one list from the same run.
+pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> CaMap<Vec2Key, Chosen> {
     let objects = &params.objects;
 
     // The category's objects of the generator's humidity (0, arid), by group, in the category map's order.
@@ -477,13 +552,17 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
     }
 
     let mut rand = Rand(seed);
-    let points = candidates(inputs, density, &mut rand);
+    let points = {
+        wce_foundation::wce_prof!("veg.candidates");
+        cached_candidates(inputs, density, &mut rand)
+    };
+    let points = &points.0;
     if points.is_empty() {
         return CaMap::default();
     }
 
     let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, 0.0f32, 0.0f32);
-    for p in &points {
+    for p in points {
         minx = minx.min(p.x);
         miny = miny.min(p.y);
         maxx = maxx.max(p.x);
@@ -499,15 +578,12 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
     let mut blends: CaMap<Vec2Key, f32> = CaMap::default();
     let mut chosen_order: Vec<(f32, f32, f32)> = vec![];
 
-    let object_weights = |inner: &CaMap<String, usize>, blend: f32, h: f32| {
-        let mut cum: Vec<(f32, usize)> = vec![];
+    // A group's objects (of the generator's mask, in the group's order: `group_objects`) weighed at a blend and height into `cum`; the total.
+    let object_weights = |objs: &[usize], blend: f32, h: f32, cum: &mut Vec<(f32, usize)>| {
+        cum.clear();
         let mut total = 0.0f32;
-        for (_, &o) in inner.iter() {
+        for &o in objs {
             let op: &ObjectParams = &objects[o];
-            if op.kind & mask != op.kind {
-                continue;
-            }
-
             let bp = op.blend.blend_probability(blend, op.probability);
             if bp != 0.0 {
                 let hp = op.height.height_probability(h, op.probability);
@@ -518,21 +594,32 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
             }
         }
 
-        (cum, total)
+        total
     };
 
     let group_list: Vec<(&String, &CaMap<String, usize>)> = groups.iter().collect();
 
+    // The groups' parameters and channels, resolved once (millions of candidates read them).
+    let group_views: Vec<GroupView> = group_list.iter().map(|(name, _)| GroupView::new(params, inputs, name)).collect();
+    let group_objects: Vec<Vec<usize>> =
+        group_list.iter().map(|(_, inner)| inner.iter().map(|(_, &o)| o).filter(|&o| objects[o].kind & mask == objects[o].kind).collect()).collect();
+
+    // The pick's weights, reused from candidate to candidate.
+    let scratch = std::cell::RefCell::new((Vec::<(f32, usize)>::new(), Vec::<(f32, usize)>::new()));
+
     // One candidate from a random state, without side effects: the group, its blend sum, the object and size (if any) and the state after.
     let choose = |p: &Candidate, state: u32| -> (Option<(usize, f32, Option<(usize, f32)>)>, u32) {
         let mut rand = Rand(state);
-        let h = inputs.height(p.px, p.py);
-        let mut cum: Vec<(f32, usize)> = vec![];
+        let pixel = inputs.pixel(p.px, p.py);
+        let h = pixel.height;
+        let mut scratch = scratch.borrow_mut();
+        let (cum, objects_cum) = &mut *scratch;
+        cum.clear();
         let mut total = 0.0f32;
-        for (i, (name, _)) in group_list.iter().enumerate() {
-            let Some(g) = params.groups.get(name) else { continue };
-            if inputs.summed(p.px, p.py, &g.channel_group) >= 0.05 {
-                let v = inputs.probability_value(p.px, p.py, &g.channel_group_for_probability, g.channel_number);
+        for (i, view) in group_views.iter().enumerate() {
+            let Some(g) = view.params else { continue };
+            if pixel.summed(&view.sum_textures) >= 0.05 {
+                let v = view.probability_channel.map_or(0.0, |c| pixel.norm[c]);
                 let p1 = if v == 0.0 { 0.0 } else { g.channel.blend_probability(v, g.probability) };
                 if p1 != 0.0 {
                     let p2 = g.height.height_probability(h, g.probability);
@@ -548,25 +635,25 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
             return (None, rand.0);
         }
 
-        let Some(gi) = pick(&cum, total, &mut rand) else { return (None, rand.0) };
-        let g: &GroupParams = params.groups.get(group_list[gi].0).expect("listed");
-        let blend = inputs.summed(p.px, p.py, &g.channel_group_for_probability);
-        let (cum, total) = object_weights(group_list[gi].1, blend, h);
-        if cum.is_empty() {
+        let Some(gi) = pick(cum, total, &mut rand) else { return (None, rand.0) };
+        let blend = pixel.summed(&group_views[gi].probability_textures);
+        let total = object_weights(&group_objects[gi], blend, h, objects_cum);
+        if objects_cum.is_empty() {
             return (Some((gi, blend, None)), rand.0);
         }
 
-        let Some(o) = pick(&cum, total, &mut rand) else { return (Some((gi, blend, None)), rand.0) };
+        let Some(o) = pick(objects_cum, total, &mut rand) else { return (Some((gi, blend, None)), rand.0) };
         let size = objects[o].random_size(&mut rand, blend);
         (Some((gi, blend, Some((o, size)))), rand.0)
     };
 
-    probe::run(&points, rand.0, inputs, &|p, s| {
+    probe::run(points, rand.0, inputs, &|p, s| {
         let (r, next) = choose(p, s);
         (r.and_then(|(_, _, o)| o).map(|(o, size)| (objects[o].model.clone(), size)), next)
     });
 
-    for p in &points {
+    let choose_scope = wce_foundation::profile::Scope::new(wce_foundation::profile::slot("veg.choose"));
+    for p in points {
         let (result, next) = choose(p, rand.0);
         rand.0 = next;
         let Some((gi, blend, object)) = result else { continue };
@@ -602,9 +689,12 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
         tree.nodes[n].items.insert(key, c);
     }
 
+    drop(choose_scope);
+    let group_scope = wce_foundation::profile::Scope::new(wce_foundation::profile::slot("veg.group"));
     // group_objects: in the order of a std::map keyed (min_sep, x, y).
     chosen_order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     chosen_order.dedup();
+    let (mut cum, mut nodes, mut keys): (Vec<(f32, usize)>, Vec<usize>, Vec<Vec2Key>) = (vec![], vec![], vec![]);
     for &(_, lx, ly) in &chosen_order {
         let lkey = Vec2Key(lx, ly);
         let Some(lead) = live.get(&lkey) else { continue };
@@ -612,18 +702,23 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
             continue;
         }
 
-        let (gp, gr, lgroup) = (lead.grouping_probability, lead.grouping_radius, lead.group.clone());
+        let (gp, gr) = (lead.grouping_probability, lead.grouping_radius);
+        // The leader's group among the category's (none: no object is valid for it), resolved once.
+        let lgroup = group_list.iter().position(|(name, _)| **name == lead.group);
         if !(rand.unit() <= gp) {
             continue;
         }
 
-        let mut nodes = vec![];
+        nodes.clear();
         tree.query(0, (lx, ly, gr), &mut nodes);
         if traced(lx, ly) {
             eprintln!("leader {:?} gr {gr} nodes {:?}", lp(lx, ly), nodes.iter().map(|&n| (n, tree.nodes[n].min, tree.nodes[n].max, tree.nodes[n].items.keys().iter().map(|k| lp(k.0, k.1)).collect::<Vec<_>>())).collect::<Vec<_>>());
         }
-        for n in nodes {
-            for okey in tree.nodes[n].items.keys() {
+        for &n in &nodes {
+            // The node's keys as they are when its turn comes (the loop changes values, not keys).
+            keys.clear();
+            keys.extend(tree.nodes[n].items.iter().map(|(k, _)| *k));
+            for &okey in &keys {
                 if okey == lkey {
                     continue;
                 }
@@ -637,14 +732,15 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
                 let cell = inputs.cell();
                 let opx = (okey.0 / cell).floor().max(0.0) as u32;
                 let opy = (okey.1 / cell).floor().max(0.0) as u32;
-                if !valid_group(params, inputs, &groups, opx, opy, &lgroup) {
+                let Some(gi) = lgroup else { continue };
+                let pixel = inputs.pixel(opx, opy);
+                if !valid_group(&group_views[gi], &pixel) {
                     continue;
                 }
 
                 let Some(&b) = blends.get(&okey) else { continue };
-                let hh = inputs.height(opx, opy);
-                let Some(inner) = groups.get(&lgroup) else { continue };
-                let (cum, total) = object_weights(inner, b, hh);
+                let hh = pixel.height;
+                let total = object_weights(&group_objects[gi], b, hh, &mut cum);
                 if cum.is_empty() {
                     continue;
                 }
@@ -677,6 +773,8 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
         }
     }
 
+    drop(group_scope);
+    wce_foundation::wce_prof!("veg.min_separation");
     // remove_objects_based_on_min_seperation over a copy of the generated map.
     let snapshot: Vec<Vec2Key> = live.keys();
     for ekey in snapshot {
@@ -733,18 +831,14 @@ fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize,
     live
 }
 
-/// `valid_group_for_position`.
-fn valid_group(params: &GenerationParams, inputs: &TileInputs, groups: &CaMap<String, CaMap<String, usize>>, px: u32, py: u32, group: &str) -> bool {
-    if !groups.contains(&group.to_owned()) {
+/// `valid_group_for_position`, for a group of the category (one that isn't is never valid) at a pixel.
+fn valid_group(view: &GroupView, pixel: &Pixel) -> bool {
+    let Some(g) = view.params else { return false };
+    if !(pixel.summed(&view.sum_textures) >= 0.05) {
         return false;
     }
 
-    let Some(g) = params.groups.get(&group.to_owned()) else { return false };
-    if !(inputs.summed(px, py, &g.channel_group) >= 0.05) {
-        return false;
-    }
-
-    let v = inputs.summed(px, py, &g.channel_group_for_probability);
+    let v = pixel.summed(&view.probability_textures);
     v != 0.0 && g.channel.blend_probability(v, g.probability) != 0.0
 }
 

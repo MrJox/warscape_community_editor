@@ -63,6 +63,12 @@ fn vec3_of(n: &Node, attr: &str) -> Option<[f32; 3]> {
 
 /// Every positioned node below `n` (in document order) with its world matrix and its layer's export type and name.
 fn walk<'a>(n: &'a Node, world: Option<[f32; 16]>, export: &'a str, layer: &'a str, out: &mut Vec<Placed<'a>>) {
+    walk_at(n, world, export, layer, out, 0);
+}
+
+/// [`walk`] at a depth: the subtrees of the top levels are walked on the thread pool (a node's world matrix comes from its own text and
+/// its parent's, so siblings don't depend on each other) and their lists joined in document order.
+fn walk_at<'a>(n: &'a Node, world: Option<[f32; 16]>, export: &'a str, layer: &'a str, out: &mut Vec<Placed<'a>>, depth: usize) {
     let positioned = n.get("position").is_some() || n.get("orientation").is_some();
     let world = if positioned {
         let mut local = ted_rotation_f32(vec3_of(n, "orientation").unwrap_or([0.0; 3]));
@@ -86,8 +92,20 @@ fn walk<'a>(n: &'a Node, world: Option<[f32; 16]>, export: &'a str, layer: &'a s
         out.push(Placed { node: n, world: w, export, layer });
     }
 
-    for c in &n.children {
-        walk(c, world, export, layer, out);
+    if depth < 3 && n.children.len() > 1 {
+        use rayon::prelude::*;
+        let parts: Vec<Vec<Placed<'a>>> = n.children.par_iter().map(|c| {
+            let mut part = vec![];
+            walk_at(c, world, export, layer, &mut part, depth + 1);
+            part
+        }).collect();
+        for part in parts {
+            out.extend(part);
+        }
+    } else {
+        for c in &n.children {
+            walk_at(c, world, export, layer, out, depth + 1);
+        }
     }
 }
 
@@ -879,6 +897,7 @@ fn outlines(placed: &[Placed], extent_z: f32, class: &str, name: &str) -> Option
 /// The go outlines of `go_outlines.xml` (see [`outlines`]) as BOB reads that file back: each point's `%.6f` text through CA's float
 /// parser (`river::ca_parse_f32`), x and y (y = extent - z / 2).
 pub fn go_outlines(raw: &Tile) -> Vec<Vec<(f32, f32)>> {
+    wce_foundation::wce_prof!("compile.go_outlines");
     let (Some(scene), Some(entry)) = (raw.scene.as_ref(), raw.entry.as_ref()) else { return vec![] };
     let Some(height) = entry.root.get("height").and_then(Value::as_int) else { return vec![] };
     let extent_z = height as f32 * 128.0;
@@ -1637,12 +1656,14 @@ fn outline_style() -> crate::xml::DocStyle {
 /// translation in the last column; x and z in TEd's half metres), as BOB_Tile's `QTU::TedScene::elements("BUILDING_INSTANCE")` and
 /// `QTU::TedEntity::world_transform` give them.
 pub fn buildings(raw: &Tile) -> Vec<(String, [f32; 16])> {
+    wce_foundation::wce_prof!("compile.buildings");
     instances(raw, "BUILDING_INSTANCE")
 }
 
 /// [`buildings`] for any class of entity (`SIMPLE_MESH_INSTANCE`: BOB's water planes), an instance's own `scale` (a vector) applied
 /// to its matrix's columns (rotation x scale; the order is an assumption: the vanilla water planes are not rotated).
 pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
+    wce_foundation::wce_prof!("compile.instances");
     let Some(scene) = raw.scene.as_ref() else { return vec![] };
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
@@ -1736,16 +1757,31 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
     // take (no blend map, heights not in subtiles) compiles without it, noted.
     let mut files = vec![];
     drop(stage_a);
-    if let Some(b) = &ctx.stage_b {
-        wce_foundation::wce_prof!("export.compile.stage_b");
-        let _a = wce_foundation::activity::start("Stage B: terrain mesh, height, normal, blend and ground type maps");
-        match super::stage_b::stage_b_files(raw, b) {
-            Ok((f, more)) => {
-                files.extend(f);
-                notes.notes.extend(more.notes);
-            }
-            Err(e) => notes.notes.push(format!("stage B not compiled ({e})")),
+
+    // Stages B and C read the project only: side by side on the thread pool, their files and notes taken in order (B, then C).
+    let stage_b = || {
+        ctx.stage_b.as_ref().map(|b| {
+            wce_foundation::wce_prof!("export.compile.stage_b");
+            let _a = wce_foundation::activity::start("Stage B: terrain mesh, height, normal, blend and ground type maps");
+            super::stage_b::stage_b_files(raw, b)
+        })
+    };
+
+    let stage_c = || {
+        ctx.stage_c.as_ref().filter(|_| !campaign).map(|c| {
+            wce_foundation::wce_prof!("export.compile.stage_c");
+            super::stage_c::stage_c_files(raw, c)
+        })
+    };
+
+    let (made_b, made_c) = rayon::join(stage_b, stage_c);
+    match made_b {
+        Some(Ok((f, more))) => {
+            files.extend(f);
+            notes.notes.extend(more.notes);
         }
+        Some(Err(e)) => notes.notes.push(format!("stage B not compiled ({e})")),
+        None => {}
     }
 
     // BOB's Vegetation processor makes nothing for a campaign tile: a decompiled one's carried files go back as they are.
@@ -1753,17 +1789,13 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
         files.extend(super::stage_c::carried_files(raw)?);
     }
 
-    if let Some(c) = &ctx.stage_c
-        && !campaign
-    {
-        wce_foundation::wce_prof!("export.compile.stage_c");
-        match super::stage_c::stage_c_files(raw, c) {
-            Ok((f, more)) => {
-                files.extend(f);
-                notes.notes.extend(more.notes);
-            }
-            Err(e) => notes.notes.push(format!("stage C not compiled ({e})")),
+    match made_c {
+        Some(Ok((f, more))) => {
+            files.extend(f);
+            notes.notes.extend(more.notes);
         }
+        Some(Err(e)) => notes.notes.push(format!("stage C not compiled ({e})")),
+        None => {}
     }
 
     if !files.is_empty() {

@@ -31,6 +31,7 @@ pub struct Vertex {
 /// [`calculate_normal`] there, and the alpha (`final_alpha.dds`, the [`super::bob_tile::influence`]) of row z: BOB reads that
 /// field unflipped (the influence's rows differ at the middle of a cell: 1 against 0.965 at row 64 of a 2 x 2 tile).
 pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strength: f32, density: usize) -> Vec<Vertex> {
+    wce_foundation::wce_prof!("stage_b.grid_vertices");
     // Metres per sample (`128 / density`, f32): x and z are in metres.
     let metres = 128.0f32 / density as f32;
     let mut out = Vec::with_capacity(w * h);
@@ -52,6 +53,7 @@ pub fn grid_vertices(heights: &[f32], alpha: &[f32], w: usize, h: usize, strengt
 /// (t j+s, b j, b j+s); x = w - 1 (t j, t j+s, b j) (t j+s, b j+s, b j). The new vertices' flags (`build_base_mesh`) go to `flags`:
 /// [`FRINGE_KEPT`] at the tile's corners and where x and z are both multiples of the kind's modulus, else [`FRINGE`].
 pub fn add_fringe(verts: &mut Vec<Vertex>, flags: &mut Vec<u8>, tris: &mut Vec<[u32; 3]>, w: usize, h: usize, kind: MeshKind) {
+    wce_foundation::wce_prof!("stage_b.add_fringe");
     let step = kind.step;
     let mut edge = |tops: Vec<usize>, tri: &dyn Fn(u32, u32, u32, u32) -> [[u32; 3]; 2]| {
         let base = verts.len();
@@ -267,6 +269,7 @@ pub const OUTFIELD: MeshKind = MeshKind { step: 16, modulus: 2048 };
 /// x and z are both multiples of the kind's modulus; the rest free; and locked where `protection_map.dds` (`cells x 128` square,
 /// R32F) is above 0.5: vertex (x, z) reads its row z - 1.
 pub fn grid_flags(w: usize, h: usize, kind: MeshKind, protection: Option<(&[f32], usize, usize)>) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.grid_flags");
     let s = kind.step;
     let mut out = Vec::with_capacity(w * h);
     for z in 0..h {
@@ -292,6 +295,7 @@ pub fn grid_flags(w: usize, h: usize, kind: MeshKind, protection: Option<(&[f32]
 /// The grid's triangles (`build_base_mesh`, step 2): per square of `step` samples, row by row, (x, z) (x, z + s) (x + s, z) and
 /// (x, z + s) (x + s, z + s) (x + s, z).
 pub fn grid_triangles(w: usize, h: usize, step: usize) -> Vec<[u32; 3]> {
+    wce_foundation::wce_prof!("stage_b.grid_triangles");
     let mut out = vec![];
     let v = |x: usize, z: usize| (z * w + x) as u32;
     for z in (0..h - step).step_by(step) {
@@ -523,6 +527,7 @@ impl Merger<'_> {
 /// params' `triangle_decimation_angle_factors0` (degrees), edges up to 120 m, height steps up to 3 m. Passes 1 ..= 50 allow edges of
 /// pass x 2.4 m; each tries every vertex in order; after 4 passes in a row without a change it skips 10. The triangles left, in order.
 pub fn merge(verts: &[Vertex], flags: &[u8], tris: &[[u32; 3]], cos_angle: f32) -> Vec<[u32; 3]> {
+    wce_foundation::wce_prof!("stage_b.merge");
     const MAX_EDGE: f32 = 120.0;
     let passes = ((0.166_666_67f32 * MAX_EDGE) as u32).max(50);
     let step = MAX_EDGE / passes as f32;
@@ -563,6 +568,7 @@ pub fn cos_degrees(degrees: f32) -> f32 {
 
 /// The project's `protection_map.dds` (TEd's R32F template: a 128-byte header, then the samples), as (samples, width, height).
 pub fn protection_map(raw: &wce_tile_model::Tile) -> Option<(Vec<f32>, usize, usize)> {
+    wce_foundation::wce_prof!("stage_b.protection_map");
     let f = raw.files.iter().find(|f| f.path.eq_ignore_ascii_case("protection_map.dds"))?;
     let b = f.data.bytes().ok()?;
     let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().expect("4 bytes")) as usize);
@@ -580,6 +586,7 @@ pub fn protection_map(raw: &wce_tile_model::Tile) -> Option<(Vec<f32>, usize, us
 /// the height interpolated at it when its barycentric weights are all within [-0.0001, 1.0001]; a later triangle overwrites. In f32,
 /// as BOB's SSE code orders it (one sample per metre: the variation's `raw_data_tri_density` is the tile size, 128).
 pub fn rasterise(verts: &[Vertex], tris: &[[u32; 3]], w: usize, h: usize, density: usize) -> Vec<f32> {
+    wce_foundation::wce_prof!("stage_b.rasterise");
     let mut out = vec![0.0f32; w * h];
     rasterise_into(&mut out, verts, tris, w, h, density);
     out
@@ -723,6 +730,7 @@ pub fn stamp_matrix(world: &[f32; 16]) -> [f32; 16] {
 /// its corners' truncated x and z widened by one, clamped to the field less its last row and column; a sample is inside by the
 /// crossing rule over the edges (a c), (b a), (c b); its height interpolates by the areas of the sub-triangles. All SSE f32.
 pub fn rasterise_max_heights(mesh: &HeightMesh, m: &[f32; 16], field: &mut [f32], w: usize, h: usize) {
+    wce_foundation::wce_prof!("stage_b.rasterise_max_heights");
     let tr = |p: &[f32; 3]| {
         let row = |r: usize| p[0] * m[r * 4] + p[1] * m[r * 4 + 1] + p[2] * m[r * 4 + 2] + 1.0 * m[r * 4 + 3];
         [row(0), row(1), row(2)]
@@ -824,6 +832,7 @@ pub fn f16_bits(v: f32) -> u16 {
 /// here), `TerrainBase<k>` (the block's number), 32 zeros, the tile's size in metres x and z, its samples per row, 1, 16, the count
 /// of the block's indices of `is_surface` triangles; its vertices, indices.
 pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) -> bool, size: (u32, u32), row: u32, river: &super::river::RiverMesh) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.rmv2");
     struct Block {
         order: Vec<u32>,
         indices: Vec<u16>,
@@ -1001,6 +1010,7 @@ pub type Stamp = (std::sync::Arc<HeightMesh>, [f32; 16]);
 /// row has `height_map_mesh` 1, its [`HeightMesh`] from `models_building.cs2_file` under the kit's `raw_data`, and its
 /// [`stamp_matrix`]. The keys without a mesh file come back apart (BOB fails the tile: "Height map mesh file ... is missing").
 pub fn building_stamps(raw: &wce_tile_model::Tile, raw_data: &std::path::Path) -> (Vec<Stamp>, Vec<String>) {
+    wce_foundation::wce_prof!("stage_b.building_stamps");
     let get = |r: &Vec<(String, String)>, k: &str| r.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap_or_default();
     let with_mesh = kit_table(raw_data, "battlefield_buildings").iter().filter(|r| get(r, "height_map_mesh") == "1").map(|r| get(r, "key")).collect::<std::collections::HashSet<_>>();
     let cs2 = kit_table(raw_data, "models_building").iter().map(|r| (get(r, "key"), get(r, "cs2_file"))).collect::<std::collections::HashMap<_, _>>();
@@ -1035,6 +1045,7 @@ pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
 
 /// The kit's tile sets' linking tiles (`_settings.xml`'s `TILE_SET` `name` and `linking_tile`), for [`super::bob_tile::InfluenceLinks`].
 pub fn linking_tiles(raw_data: &std::path::Path) -> std::collections::HashMap<String, String> {
+    wce_foundation::wce_prof!("stage_b.linking_tiles");
     let text = std::fs::read_to_string(raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
     let attr = |t: &str, k: &str| t.split(&format!(" {k}=\"")).nth(1).and_then(|v| v.split('"').next()).map(str::to_owned);
     text.split("<TILE_SET ").skip(1).filter_map(|t| Some((attr(t, "name")?, attr(t, "linking_tile")?))).collect()
@@ -1086,7 +1097,10 @@ pub fn terrain_files(
     // The outfield's step: 1 << ((density == 128) + 3).
     let outfield = MeshKind { step: if t == CELL { 16 } else { 8 }, ..OUTFIELD };
     let spacing = (128 / t) as u32;
-    for (name, kind) in [("outfield_mesh.rigid_model_v2", outfield), ("mesh.rigid_model_v2", INFIELD)] {
+
+    // The two meshes are made from the same vertices independently: side by side on the thread pool, their files taken in order.
+    let mesh = |(name, kind): (&str, MeshKind)| {
+        let mut out = vec![];
         let mut verts = base.clone();
         let (mut flags, mut grid);
         if g.masked() {
@@ -1112,7 +1126,13 @@ pub fn terrain_files(
 
             out.push(("hf_height_map.data".to_owned(), chmf(&field, w, h, spacing)));
         }
-    }
+
+        out
+    };
+
+    let (outfield_files, infield_files) = rayon::join(|| mesh(("outfield_mesh.rigid_model_v2", outfield)), || mesh(("mesh.rigid_model_v2", INFIELD)));
+    out.extend(outfield_files);
+    out.extend(infield_files);
 
     // `hf_water_map.data` (`FUN_10089b80`): a field of -1000, the river's triangles rasterised into it (as the terrain's), then the
     // water planes; none without either.

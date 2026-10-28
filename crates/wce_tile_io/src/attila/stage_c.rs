@@ -54,7 +54,14 @@ pub fn kit_params(raw_data: &Path) -> Result<(GenerationParams, Option<GrassPara
 fn ted_parts(raw: &Tile) -> Result<(TedScene, TileEntry, usize), String> {
     let scene = raw.scene.as_ref().ok_or("the project has no tile.ted")?;
     let entry = raw.entry.as_ref().ok_or("the project has no entry")?;
-    let scene = TedScene::parse(crate::xml::write(scene, &crate::xml::DocStyle::ted(), &TedSchema))?;
+    let text = {
+        wce_foundation::wce_prof!("stage_c.inputs.write_ted");
+        crate::xml::write(scene, &crate::xml::DocStyle::ted(), &TedSchema)
+    };
+    let scene = {
+        wce_foundation::wce_prof!("stage_c.inputs.parse_ted");
+        TedScene::parse(text)?
+    };
     let entry = TileEntry::parse(crate::xml::write(&entry.root, &super::ted_project::entry_style(), &EntrySchema)).map_err(|e| e.to_string())?;
     let variation = match &raw.variation {
         Some(name) => entry.variations().iter().position(|v| v.location == *name).ok_or_else(|| format!("the entry has no variation {name}"))?,
@@ -304,24 +311,25 @@ pub fn stage_c_documents(raw: &Tile, ctx: &StageC, which: Outputs) -> Result<(St
     // Each category's trees and procedural BMD, and the grass, on the thread pool (each is generated from its own seeds, so in any order);
     // the documents are taken in category order, as BOB writes them.
     let category = |(category, name): (usize, &String)| -> Result<(Option<Document>, Option<(Document, Document)>), String> {
-        let trees = if which.trees {
+        // The tree generator runs once for the tree list and the props (vegetation::trees_and_props).
+        let (trees, props) = {
             wce_foundation::wce_prof!("export.compile.stage_c.trees");
-            let _a = wce_foundation::activity::start(format!("Stage C: trees of {name}"));
-            // An empty category's list is not written (FUN_10033450; BOB's rule `DeleteEmptyClimateTreeLists` then removes a stale one).
-            let trees = vegetation::tree_list(&inputs, ctx.params, category, seeds, &statics, ctx.model_exists);
-            (!trees.is_empty()).then(|| tree_list_doc(&format!("{name}.tree_list.bin"), &trees))
-        } else {
-            None
+            let _a = wce_foundation::activity::start(format!("Stage C: trees and props of {name}"));
+            vegetation::trees_and_props(&inputs, ctx.params, category, seeds, &statics, ctx.model_exists, which.trees, which.procedural)
         };
 
-        let procedural = if which.procedural {
-            wce_foundation::wce_prof!("export.compile.stage_c.procedural");
-            let _a = wce_foundation::activity::start(format!("Stage C: props, decals and VFX of {name}"));
-            let props = vegetation::generated_props(&inputs, ctx.params, category, seeds);
-            let vfx = vegetation::generated_vfx(&inputs, ctx.params, category, seeds);
-            Some(procedural_bmd(name, &props, &vfx)?)
-        } else {
-            None
+        // An empty category's list is not written (FUN_10033450; BOB's rule `DeleteEmptyClimateTreeLists` then removes a stale one).
+        let trees = trees.filter(|t| !t.is_empty()).map(|t| tree_list_doc(&format!("{name}.tree_list.bin"), &t));
+        let procedural = match props {
+            Some(props) => {
+                wce_foundation::wce_prof!("export.compile.stage_c.procedural");
+                let _a = wce_foundation::activity::start(format!("Stage C: decals and VFX of {name}"));
+                let props = vegetation::with_decals(&inputs, ctx.params, category, seeds, props);
+                let vfx = vegetation::generated_vfx(&inputs, ctx.params, category, seeds);
+                Some(procedural_bmd(name, &props, &vfx)?)
+            }
+
+            None => None,
         };
 
         Ok((trees, procedural))
@@ -334,6 +342,12 @@ pub fn stage_c_documents(raw: &Tile, ctx: &StageC, which: Outputs) -> Result<(St
         let seed = vegetation::grass_seed(&scene).unwrap_or(0);
         Some(grass_list_doc(&vegetation::grass::generate_grass(&inputs, params, seed)))
     };
+
+    if which.trees || which.procedural {
+        wce_foundation::wce_prof!("export.compile.stage_c.candidates");
+        let _a = wce_foundation::activity::start("Stage C: candidate points");
+        vegetation::prepare_candidates(&inputs, ctx.params, seeds);
+    }
 
     let (categories, grass) = rayon::join(|| ctx.params.categories.par_iter().enumerate().map(category).collect::<Vec<_>>(), grass);
     for c in categories {
@@ -478,7 +492,9 @@ pub fn stage_c_files(raw: &Tile, ctx: &StageC) -> Result<(super::stage_b::Files,
     let mut notes = CompileNotes::default();
     let (carried, prints) = super::carry::carried(raw, CARRIED_DIR);
     let stored = (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
-    let current = Fingerprints::of(raw);
+    // Only a decompiled project stores fingerprints; without them nothing is kept and the project's aren't needed (they read the whole
+    // generator input).
+    let current = if stored.is_some() { Fingerprints::of(raw) } else { Err(String::new()) };
     let kinds = [Kind::Trees, Kind::Procedural, Kind::Grass];
     let has = |k: Kind| carried.iter().any(|(n, _)| kind_of(n) == Some(k));
     // An unchanged kind the binary had no file of stays without one.

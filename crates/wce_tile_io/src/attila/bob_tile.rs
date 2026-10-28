@@ -13,6 +13,7 @@ use super::decompile::{GROUND_COLOURS, ground_type_of_group};
 /// variations (the weights as `IMAGE::convert` gives them, / 65535), times 255, truncated; its index the variations weighted 0,
 /// 0.33333, 0.66666, 1 over that sum, times 255, truncated. Group red goes to R, green to G, blue to B, alpha to A.
 pub fn blend_and_index(weights: &[u16], w: usize, h: usize) -> (Vec<u8>, Vec<u8>) {
+    wce_foundation::wce_prof!("stage_b.blend_and_index");
     const W1: f32 = 0.333_33;
     const W2: f32 = 0.666_66;
     let mut blend = vec![0u8; w * h * 4];
@@ -39,6 +40,7 @@ pub fn blend_and_index(weights: &[u16], w: usize, h: usize) -> (Vec<u8>, Vec<u8>
 /// green, blue, alpha) as the entry's ground types of the four groups, then the painted ground types (`ground_type_map.png`, any colour
 /// but black: `ground_type_of` gives its type) over them.
 pub fn ground_types(blend: &[u8], w: usize, h: usize, group_types: [u8; 4], painted: Option<&dyn Fn(usize, usize) -> Option<u8>>) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.ground_types");
     let (ow, oh) = (w - 256, h - 256);
     let mut out = vec![0u8; ow * oh];
     for y in 0..oh {
@@ -84,6 +86,7 @@ pub fn half(bgra: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
 /// down to a side of 1 pixel short of the logarithm (log2 of the larger side, truncated: 8 levels for 384), each compressed by ATI's
 /// codec from the box-filtered level above.
 pub fn dds_dxt5(bgra: &[u8], w: usize, h: usize) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.dds_dxt5");
     let levels = (w.max(h) as f64).log2() as u32;
     let size_of = |w: usize, h: usize| w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * 16;
     let mut out = Vec::new();
@@ -122,6 +125,7 @@ pub fn dds_dxt5(bgra: &[u8], w: usize, h: usize) -> Vec<u8> {
 /// All in single precision: BOB's x87 runs at 24-bit precision here (a Direct3D device's FPU setting, most likely), every operation
 /// rounded to f32 (terrain_rolling_hills_med/2x2/ae's pixel (325, 437): 114 so, 113 in double).
 pub fn normal_map(heights: &[u16], w: usize, h: usize, scale: f32, min_height: f32, strength: f32) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.normal_map");
     let metres = heights.iter().map(|&v| f32::from(v) * (1.0f32 / 65535.0) * scale + min_height).collect::<Vec<_>>();
     let mut out = vec![0u8; w * h * 4];
     for y in 0..h {
@@ -160,6 +164,7 @@ pub fn calculate_normal(field: &[f32], w: usize, h: usize, x: usize, y: usize, s
 /// `normal.dds` from the normal map (ToolDataBuilderDll `FUN_10087420`): each pixel to (B 0, G y, R 255, A x), DXT5; none when the map is
 /// flat (every pixel 127, 127, 255: BOB points the variation at `terrain/textures/common/flat_normal.dds` instead).
 pub fn normal_dds(normals: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
+    wce_foundation::wce_prof!("stage_b.normal_dds");
     if normals.as_chunks::<4>().0.iter().all(|p| *p == [255, 127, 127, 255]) {
         return None;
     }
@@ -290,6 +295,7 @@ pub(crate) fn self_tiling(entry: &Node, linking_tiles: &std::collections::HashMa
 /// With `extra` links BOB builds a second map, without `links`: every side starts 0 and the extra links set sides and corners, filled
 /// in by [`extra_rules`]; the influence is the larger of the two.
 pub fn influence(k: usize, cw: usize, ch: usize, links: &InfluenceLinks) -> Vec<f32> {
+    wce_foundation::wce_prof!("stage_b.influence");
     let mut out = influence_pass(k, cw, ch, &links.links, None, &links.mask);
     if !links.extra.is_empty() {
         let other = influence_pass(k, cw, ch, &[], Some(&links.extra), &links.mask);
@@ -429,6 +435,7 @@ fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: O
 ///
 /// The height map is not `(cells + 2) x T` samples each way (a border subtile of T samples all round).
 pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, links: &InfluenceLinks) -> Result<(Vec<f32>, usize, usize), String> {
+    wce_foundation::wce_prof!("stage_b.final_heights");
     let (t, scale, min_height) = (n.tri_density, n.scale, n.min_height);
     if heights.len() != w * h || !w.is_multiple_of(t) || !h.is_multiple_of(t) || w < 3 * t || h < 3 * t {
         return Err(format!("a height map of {w} x {h} is not a tile of {t} samples per subtile with a border subtile"));
@@ -456,6 +463,7 @@ pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, lin
 /// BOB's heights are not [`final_heights`]: it rasterises the terrain mesh it decimated from them (ToolDataBuilderDll `FUN_1001bf20`),
 /// then raises the buildings' height meshes into it (`rasterise_max_heights`).
 pub fn chmf(heights: &[f32], w: usize, h: usize, spacing: u32) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.chmf");
     assert!((w - 1).is_multiple_of(16) && (h - 1).is_multiple_of(16), "the CHMF converter would pad {w} x {h}");
     let min = heights.iter().copied().fold(f32::MAX, f32::min);
     let max = heights.iter().copied().fold(f32::MIN, f32::max);
@@ -479,6 +487,7 @@ pub fn chmf(heights: &[f32], w: usize, h: usize, spacing: u32) -> Vec<u8> {
 /// A DDS of f32 (D3DFMT_R32F, FourCC 0x72) without mips, as BOB writes `final_heights.dds` and `final_alpha.dds`: header flags 0,
 /// the pixel format's FourCC flag and a bit count of 32, nothing else.
 pub fn dds_r32f(values: &[f32], w: usize, h: usize) -> Vec<u8> {
+    wce_foundation::wce_prof!("stage_b.dds_r32f");
     let mut o = vec![0u8; 128];
     o[..4].copy_from_slice(b"DDS ");
     for (at, v) in [(4, 0x7c), (12, h as u32), (16, w as u32), (0x4c, 0x20), (0x50, 4), (0x54, 0x72), (0x58, 0x20)] {
@@ -519,6 +528,7 @@ const TILE_OUTPUTS: [&str; 9] = [
 /// and `mesh<x>x<y>.rigid_model_v2` per cell but the first, sorted), each section ending in a blank line, one more, then per file
 /// `##<file>:<file>` and two blank lines. Paths are the tile's folder below `working_data`, with `/`.
 pub fn tile_agf(raw: &Tile) -> Option<Vec<u8>> {
+    wce_foundation::wce_prof!("stage_b.tile_agf");
     let entry = &raw.entry.as_ref()?.root;
     let location = entry.get("location")?.as_str()?.replace('\\', "/");
     let folder = format!("{location}/{}", raw.variation.as_deref()?);

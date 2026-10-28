@@ -299,6 +299,7 @@ fn straight_self_tiling(raw: &Tile, entry: &Node, raw_data: &Path, linking_tiles
 ///
 /// A linking tile that is not in the database, or whose heights are missing ("You need to convert ... first").
 pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, String>, field: &mut [f32], w: usize, h: usize) -> Result<(), String> {
+    wce_foundation::wce_prof!("stage_b.blend_links");
     let Some(entry) = raw.entry.as_ref().map(|e| &e.root) else { return Ok(()) };
     if super::bob_tile::self_tiling(entry, linking_tiles) && straight_self_tiling(raw, entry, raw_data, linking_tiles, field, w, h)? {
         return Ok(());

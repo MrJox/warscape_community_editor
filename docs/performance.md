@@ -93,3 +93,41 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
   that nothing crosses a boundary and falls back to the one-go parse otherwise) and the UTF-8 copy is parallel: parse 32 ms, `tile.open` 134 ms to 58 ms. `xml_splice_check` compares both parsers.
 * The shadow cascades cost 3.5 ms on the discrete GPU and 25 ms on the integrated one: casters are drawn into every cascade they touch.
 * `XmlElement` is a heavy structure (strings and vectors per element): a flat attribute array and interned names would halve the memory of an open tile.
+
+# Export pass (2026-10-28)
+
+Target set by the user: Save as exported tile / Launch in game (stages A, B and C, `attila::workflow::save_exported`) drastically faster,
+**the output byte for byte the same**. Measured with `--example export_bench` (wce_tile_io) on 8 kit tiles (plains 8x8, dense forest 4x4,
+river 2x2, western city a medium, lakes 10x10, farm 2x2, swamp 8x8, TDD's Cair Andros small): every file compared with the output of
+`master` before the pass (335 of 335 the same after each change).
+
+| | before | after |
+|---|---|---|
+| the 8 tiles (16 logical CPUs) | 298.5 s | 12.1 s |
+| plains 8x8 / Cair Andros small / western city a medium | 46.9 / 57.4 / 57.4 s | 1.3 / 1.7 / 4.2 s |
+| the 8 tiles on one thread (`RAYON_NUM_THREADS=1`) | 298.5 s | 34.9 s |
+
+What changed (each exact by construction; the order every container is read in is BOB's):
+
+* **The vegetation pick** (`vegetation::generate`, 93 % of the time): per candidate and group the old code looked the group up by name,
+  built the group's texture list (an allocation, string compares) and re-checked the pixel's validity and its texture's sum for each of 16
+  channels. Now the groups are resolved once per generator (`GroupView`), the pixel once per candidate (`TileInputs::pixel`, the same
+  arithmetic), the groups' objects pre-filtered by the generator's mask, the weight buffers reused: 32 s -> 1 s for plains on one thread.
+* **One tree generator run per category**: BOB runs it twice (tree list, props) with the same category, mask, seed and density
+  (`vegetation::trees_and_props`).
+* **`CaMap`**: CA's position hash puts a grid's points into few buckets (2.6 % of them at 200 000 points, 42 entries scanned per lookup).
+  The buckets now only keep the order (lists linked through a slab); lookups go through an index of the exact key; a key equal to another
+  but hashed apart (-0 and 0) is found only while they share a bucket, as a bucket scan finds it. A differential test against the old map
+  (random inserts and removes, -0, NaN) checks answers and order.
+* **Candidates** cached per seed and density for the tile (the categories share them), made before the categories run; their duplicate
+  set has a multiplicative hash; an exclusion polygon is skipped when the point is outside its y range (no edge counts then).
+* **Fingerprints** (stages B and C) only for a decompiled project, the only one that stores them: they were computed for every tile and
+  read the whole generator input.
+* **Threads**: stage B and C side by side; in stage C the categories and the grass; in stage B the textures and the terrain, the two
+  meshes, and the DXT5 rows (blocks met before in a row taken from the row's cache); the scene walk's top-level subtrees.
+* Grass: groups and thresholds resolved once, the pixel once per candidate.
+
+Not done: the scene is written back to TEd's text for stage C's readers (0.8 s for a 45 MB scene; exactness of the numbers' text is what
+the readers rely on); the project's XML read (1.1 s for the same tile); SIMD in the DXT5 colour search (it reproduces x87 double-precision
+evaluation with float stores, and is parallel already) and in the pixel's normalisation (exact with SSE lanes per texture, small gain).
+`wce_prof` scopes (`export.*`, `stage_b.*`, `veg.*`, `compile.*`) show the split; `export_bench` prints them.

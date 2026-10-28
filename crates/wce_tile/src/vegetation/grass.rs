@@ -76,15 +76,22 @@ pub struct GrassItem {
     pub z: f32,
 }
 
-/// `choose_grass_for_pixel`: the group and channel index of a pixel, if its channel passes the threshold.
-fn choose(inputs: &TileInputs, params: &GrassParams, groups: &BTreeMap<String, BTreeSet<usize>>, px: u32, py: u32) -> Option<(String, u32)> {
+/// A texture group of the tile, resolved once: its name, its textures (in order) and the threshold of each channel index.
+struct GrassGroup<'a> {
+    name: &'a String,
+    textures: Vec<usize>,
+    thresholds: [f32; 4],
+}
+
+/// `choose_grass_for_pixel`: the group (its place in `groups`) and channel index of a pixel, if its channel passes the threshold.
+fn choose(pixel: &super::generate::Pixel, groups: &[GrassGroup]) -> Option<(usize, u32)> {
     let mut best = 0.0f32;
-    let mut chosen: Option<(&String, u32, f32)> = None;
-    for (name, textures) in groups {
+    let mut chosen: Option<(usize, u32, f32)> = None;
+    for (gi, g) in groups.iter().enumerate() {
         let (mut sum, mut max, mut index) = (0.0f32, 0.0f32, 0u32);
-        for &t in textures {
+        for &t in &g.textures {
             for c in 0..4u32 {
-                let v = inputs.channel(px, py, t * 4 + c as usize);
+                let v = pixel.norm[t * 4 + c as usize];
                 if v > 0.0 {
                     sum += v;
                     if max < v {
@@ -97,7 +104,7 @@ fn choose(inputs: &TileInputs, params: &GrassParams, groups: &BTreeMap<String, B
 
         if best < sum {
             best = sum;
-            chosen = Some((name, index, max));
+            chosen = Some((gi, index, max));
         }
 
         if best == 1.0 {
@@ -105,8 +112,8 @@ fn choose(inputs: &TileInputs, params: &GrassParams, groups: &BTreeMap<String, B
         }
     }
 
-    let (name, index, max) = chosen?;
-    (params.threshold_of(name, index) <= max).then(|| (name.clone(), index))
+    let (gi, index, max) = chosen?;
+    (groups[gi].thresholds[index as usize] <= max).then_some((gi, index))
 }
 
 /// The generated grass of a tile from its seed (`<Grass generation_seed>`).
@@ -116,13 +123,18 @@ pub fn generate_grass(inputs: &TileInputs, params: &GrassParams, seed: u32) -> V
         groups.entry(g.clone()).or_default().insert(i);
     }
 
+    let groups: Vec<GrassGroup> = groups
+        .iter()
+        .map(|(name, textures)| GrassGroup { name, textures: textures.iter().copied().collect(), thresholds: [0, 1, 2, 3].map(|i| params.threshold_of(name, i)) })
+        .collect();
+
     let mut rand = Rand(seed);
-    let mut placed: CaMap<Vec2Key, (String, u32)> = CaMap::default();
-    for name in groups.keys() {
-        let points = candidates_with(inputs, params.density_of(name), &mut rand, &|_, _| false);
+    let mut placed: CaMap<Vec2Key, (usize, u32)> = CaMap::default();
+    for g in &groups {
+        let points = candidates_with(inputs, params.density_of(g.name), &mut rand, &|_, _| false);
         for p in points {
-            if let Some((group, index)) = choose(inputs, params, &groups, p.px, p.py) {
-                placed.insert(Vec2Key(p.x, p.y), (group, index));
+            if let Some(chosen) = choose(&inputs.pixel(p.px, p.py), &groups) {
+                placed.insert(Vec2Key(p.x, p.y), chosen);
             }
         }
     }
@@ -141,7 +153,7 @@ pub fn generate_grass(inputs: &TileInputs, params: &GrassParams, seed: u32) -> V
         }
 
         let Some((col, row)) = inputs.list_pixel(k.0, k.1) else { continue };
-        out.push(GrassItem { key: format!("{group}/{index}"), x, y: inputs.list_height(col, row), z });
+        out.push(GrassItem { key: format!("{}/{index}", groups[*group].name), x, y: inputs.list_height(col, row), z });
     }
 
     // Written through a vector sorted by key with MSVC's std::sort (not stable: it decides the order of a key's patches).

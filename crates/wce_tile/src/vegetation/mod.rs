@@ -208,7 +208,9 @@ pub fn tile_inputs_from(
         cells,
         height_alpha,
         render_scale: 2.0,
+        exclusion_y: exclusions.iter().map(|p| p.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &(_, y)| (lo.min(y), hi.max(y)))).collect(),
         exclusions,
+        candidate_cache: Default::default(),
     })
 }
 
@@ -225,6 +227,58 @@ pub fn tree_list(inputs: &TileInputs, params: &GenerationParams, category: usize
     let statics: Vec<Chosen> = statics.iter().map(|s| static_chosen(params, name, s, model_exists)).collect();
     let chosen = generate::generate_with(params, inputs, category, params::TREE | params::PROP, seeds.trees, density, &statics);
     generate::to_tree_list(inputs, &chosen, model_exists)
+}
+
+/// A category's tree list (as [`tree_list`]) and the tree generator's props (the first part of [`generated_props`]) from one run of the
+/// tree generator: BOB runs it twice with the same category, mask, seed and density, which give the same map (the generator depends on
+/// nothing else), and the tree list's static trees are added to a copy of it. Each `None` when not asked for.
+pub fn trees_and_props(
+    inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, statics: &[StaticTree], model_exists: &dyn Fn(&str) -> bool, trees: bool,
+    props: bool,
+) -> (Option<Vec<ListTree>>, Option<Vec<generate::ListProp>>) {
+    if !trees && !props {
+        return (None, None);
+    }
+
+    let density = params.densities.get(category).map_or(0.0, |d| d.trees);
+    let live = generate::generate_map(params, inputs, category, params::TREE | params::PROP, seeds.trees, density);
+    let props = props.then(|| {
+        let chosen: Vec<Chosen> = live.iter().map(|(_, c)| c.clone()).collect();
+        generate::to_prop_list(inputs, &chosen)
+    });
+
+    let trees = trees.then(|| {
+        let name = params.categories.get(category).map(String::as_str).unwrap_or_default();
+        let statics: Vec<Chosen> = statics.iter().map(|s| static_chosen(params, name, s, model_exists)).collect();
+        generate::to_tree_list(inputs, &generate::with_statics(live, &statics), model_exists)
+    });
+
+    (trees, props)
+}
+
+/// Fills the tile's candidate cache ([`TileInputs::candidate_cache`]) for every generator of the categories (trees and props, decals, VFX:
+/// each seed and density once), on the thread pool, so that the categories' generators, run side by side, find their points made.
+pub fn prepare_candidates(inputs: &TileInputs, params: &GenerationParams, seeds: Seeds) {
+    use rayon::prelude::*;
+    let mut keys: Vec<(u32, f32)> = vec![];
+    for d in &params.densities {
+        for key in [(seeds.trees, d.trees), (seeds.decals, d.trees), (seeds.vfx, d.vfx)] {
+            if !keys.iter().any(|k| k.0 == key.0 && k.1.to_bits() == key.1.to_bits()) {
+                keys.push(key);
+            }
+        }
+    }
+
+    keys.par_iter().for_each(|&(seed, density)| {
+        let _ = generate::cached_candidates(inputs, density, &mut generate::Rand(seed));
+    });
+}
+
+/// The decal generator's props of a category (the second part of [`generated_props`]), grouped with the tree generator's `props` by key.
+pub fn with_decals(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, props: Vec<generate::ListProp>) -> Vec<generate::ListProp> {
+    let d = params.densities.get(category).copied().unwrap_or_default();
+    let decals = generate::to_decal_list(inputs, &generate::generate(params, inputs, category, params::DECAL, seeds.decals, d.trees));
+    by_key(props.into_iter().chain(decals), |p| p.key.clone())
 }
 
 /// A `VEGETATION_INSTANCE` BOB adds to every tree list (FUN_1003f390), in the generator's frame.
