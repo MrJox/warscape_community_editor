@@ -382,6 +382,11 @@ impl Editor {
 
         env_note("WCE_FRAME_CAP");
         help("Holds an interactive session to that many frames per second, so that a laptop GPU does not heat up and throttle itself.");
+
+        gui::separator_text("Updates");
+        gui::checkbox("Check for updates at start", &mut d.updates.check_on_start);
+        gui::checkbox("Include pre-releases (betas)", &mut d.updates.prereleases);
+        help("Updates come from the editor's releases on GitHub. Help > Check for updates looks for one at any time.");
     }
 
     fn draw_game_page(&mut self) {

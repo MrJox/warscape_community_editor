@@ -14,6 +14,7 @@ pub mod settings_window;
 pub mod steam_detect;
 pub mod theme;
 pub mod tool;
+pub mod updates;
 pub mod viewport;
 
 pub use editor::Editor;

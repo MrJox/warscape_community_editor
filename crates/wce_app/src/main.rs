@@ -294,12 +294,13 @@ fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, img
     false
 }
 
-/// The editor with its tools, the command line as a script, and the frame loop until the editor or the window quits.
+/// The editor with its tools, the command line as a script, and the frame loop until the editor or the window quits. Returns the exit code
+/// and the executable to start next (an update's "Restart now").
 ///
 /// # Safety
 ///
 /// `window` is live; the device presents to it.
-unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context, dpi: f32) -> i32 {
+unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context, dpi: f32) -> (i32, Option<std::path::PathBuf>) {
     let mut exit_code = 0;
     // SAFETY: the window outlives the backend (the caller's contract).
     let mut platform = unsafe { Sdl3Platform::new(imgui, window) };
@@ -307,7 +308,7 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
         Ok(r) => r,
         Err(e) => {
             log::error(format!("cannot create the Dear ImGui renderer: {e}"));
-            return 1;
+            return (1, None);
         }
     };
 
@@ -331,6 +332,7 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
     // A plain interactive start opens the tool of the last session; --tool, or anything scripted, starts as it says.
     if opt.tool.is_empty() && opt.script_text.is_empty() && !batch {
         editor.restore_last_tool();
+        editor.updates_at_start();
     }
     if !opt.capture_path.is_empty() {
         script += &format!("frames 2\ncapture {}x{} \"{}\" {}\nquit\n", opt.capture_w, opt.capture_h, opt.capture_path, opt.frames);
@@ -432,11 +434,13 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
         editor.save_layout();
     }
 
+    let restart = editor.restart_after_quit();
+
     // The editor's GPU objects before the backends, the backends before the context.
     drop(editor);
     drop(renderer);
     drop(platform);
-    exit_code
+    (exit_code, restart)
 }
 
 /// A render target view of the swap chain's back buffer.
@@ -460,7 +464,7 @@ fn main() {
     open_log(&opt);
 
     // SAFETY: no other thread runs yet; SDL and D3D calls with valid arguments; the window outlives the device.
-    let code = unsafe {
+    let (code, restart) = unsafe {
         init_platform();
 
         // An unattended run's window cannot take the focus and is not activated when shown.
@@ -503,7 +507,7 @@ fn main() {
         }
 
         let mut imgui = init_imgui();
-        let code = run_editor(&opt, window, &swap, &dev, &ctx, &mut imgui, dpi);
+        let (code, restart) = run_editor(&opt, window, &swap, &dev, &ctx, &mut imgui, dpi);
 
         // The C++ app's order: the context, then the swap chain and the device (they present to the window), then the window.
         drop(imgui);
@@ -512,8 +516,15 @@ fn main() {
         drop(dev);
         SDL_DestroyWindow(window);
         SDL_Quit();
-        code
+        (code, restart)
     };
+
+    // After an update: the new build, once this one has let go of its window and device.
+    if let Some(exe) = restart
+        && let Err(e) = std::process::Command::new(&exe).spawn()
+    {
+        log::error(format!("cannot restart {}: {e}", exe.display()));
+    }
 
     std::process::exit(code);
 }
