@@ -62,8 +62,9 @@ Status legend: **done**, **partial**, **todo**.
 - **todo** Against the game (user report 2026-10-26, `settlement_egyptian_cities/egyptian_minor_city_c`, in game near Rekem): the
   ground's variations and repeats now follow the game (the hill shows rock's pale variation, at 40 m), but it is still browner than the
   game's pale grey; our colours are more saturated, contrasted and purple than the game's flat
-  hazy frame (tone mapping, grading or fog), and the trees' shadows are faint. The climate is a guess (`ROME_Continental` by default):
-  take it from the map context's region.
+  hazy frame (tone mapping, grading or fog), and the trees' shadows are faint. The climate: a tile shown in a map context takes its
+  placement's (`ContextPanel::adopt_climate`, the region's as in the game); alone it is the editor's choice (`ROME_Continental` by
+  default).
 - **blocked** A RenderDoc capture of a battle (the light pass, tone map and fog inputs, the ground's textures): Rome 2 is 32-bit and
   RenderDoc on Linux 64-bit only; under Proton's WoW64 (`PROTON_USE_WOW64=1`) the layer loads but DXVK can't map memory on the NVIDIA
   driver (`VK_ERROR_OUT_OF_HOST_MEMORY`, the game then crashes on its null device). To try: the Intel GPU (`DXVK_FILTER_DEVICE_NAME`),
