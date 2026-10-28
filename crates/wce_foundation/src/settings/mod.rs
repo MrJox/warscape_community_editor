@@ -224,6 +224,23 @@ impl Default for CameraSettings {
     }
 }
 
+/// The self-updater (Help > Check for updates).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// An interactive session looks for a newer release when it starts.
+    pub check_on_start: bool,
+
+    /// Pre-releases (betas) count as updates.
+    pub prereleases: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { check_on_start: true, prereleases: false }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -246,6 +263,7 @@ pub struct Settings {
 
     pub appearance: Appearance,
     pub camera: CameraSettings,
+    pub updates: UpdateSettings,
     pub games: BTreeMap<String, GameSettings>,
 
     /// Each tool's own table, read and written with the tool's type (see [`Self::tool`]).
@@ -263,7 +281,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, appearance: Appearance::default(),
-            camera: CameraSettings::default(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
+            camera: CameraSettings::default(), updates: UpdateSettings::default(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
         }
     }
 }

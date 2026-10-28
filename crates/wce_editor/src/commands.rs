@@ -994,6 +994,11 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     },
     );
 
+    c.add("check_updates", "check_updates", "Help > Check for updates: looks for a newer release on GitHub and shows the Updates window", |e, _| {
+        e.check_for_updates(true);
+        ok("")
+    });
+
     c.add("setup", "setup <game folder>", "what the first-run dialog's button does: store the game folder in the settings and mount", |e, a| {
         let Some(dir) = a.first() else { return fail("usage: setup <game folder>") };
         e.setup(dir).map_or_else(fail, ok)

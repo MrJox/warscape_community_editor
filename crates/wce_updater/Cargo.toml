@@ -1,0 +1,16 @@
+[package]
+name = "wce_updater"
+description = "The self-updater: finds a newer release of the editor on GitHub, downloads its zip with progress and installs it over the running build."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[dev-dependencies]
+tempfile = "3"

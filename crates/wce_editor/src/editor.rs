@@ -127,7 +127,7 @@ pub struct Editor {
     frame: u64,
     status: String,
     status_error: bool,
-    first_run: bool,
+    pub(crate) first_run: bool,
     pub(crate) weather_preview: Option<WeatherPreview>,
     pub(crate) cam_mark: Option<Camera>,
     output_gamma: f32,
@@ -175,6 +175,7 @@ pub struct Editor {
     pub(crate) panel_data: PanelData,
 
     pub(crate) settings_window: crate::settings_window::SettingsWindow,
+    pub(crate) updates: crate::updates::Updates,
 
     /// An interactive session: the active tool is kept in the settings (`restore_last_tool`).
     remember_tool: bool,
@@ -215,7 +216,7 @@ impl Editor {
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], game_before: None, mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
-            panel_data: PanelData::default(), settings_window: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
+            panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
         e.frame_cap = e.settings.frame_cap();
@@ -1220,6 +1221,7 @@ impl Editor {
         self.prompt_error.clear();
         let message = match a {
             Answer::Cancel => {
+                self.cancel_restart();
                 self.prompt = PromptKind::None;
                 self.prompt_game = None;
                 return Ok("cancelled".to_owned());
@@ -1398,6 +1400,7 @@ impl Editor {
         gui::end();
         self.draw_mods_popup();
         self.draw_settings_window();
+        self.draw_updates();
         if self.first_run {
             self.draw_first_run();
             return;
@@ -1837,6 +1840,11 @@ impl Editor {
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
         if gui::begin_menu("Help") {
             gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
+            gui::separator();
+            if gui::menu_item(self.updates_menu_label(), None, false, true) {
+                self.updates_menu_clicked();
+            }
+
             gui::end_menu();
         }
 
