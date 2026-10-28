@@ -3,6 +3,7 @@
 
 pub mod context;
 pub mod fill;
+pub mod link_candidates;
 pub mod locations;
 pub mod tile_db;
 pub mod tile_list;

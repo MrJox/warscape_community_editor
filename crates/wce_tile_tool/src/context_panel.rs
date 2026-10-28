@@ -103,7 +103,7 @@ impl Default for ContextUi {
 /// A season's snow map: its size and a byte per cell.
 type SnowMap = (u32, u32, Vec<u8>);
 
-fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabase>, String> {
+pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabase>, String> {
     if let Some((r, db)) = &ui.db
         && r == raw
     {
@@ -189,6 +189,18 @@ impl ContextUi {
             let r = load_map(&name, &raw, &db, files.as_deref());
             let _ = tx.send(Job::Map(name, r));
         });
+    }
+
+    /// Shows a map made for the moment (a link candidate next to the open tile, `links_editor`) in the context, the open tile at
+    /// placement `open`.
+    pub fn show_map(&mut self, e: &mut Editor, id: DocumentId, map: PlacedMap, open: usize) {
+        self.shown = true;
+        self.status = format!("{}: {} placements", map.name, map.placements.len());
+        self.loaded = Some((map.name.clone(), Arc::new(map), None));
+        self.placements = vec![open];
+        self.choice = 0;
+        self.clear(e);
+        self.rebuild(e, id);
     }
 
     /// Where the open tile goes: the chosen placement, else the manual cell.

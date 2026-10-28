@@ -1,0 +1,16 @@
+# The tiles that can follow (Phase 6a of docs/plans/tile_ted_parity.md): the candidates at each join of a kit road tile (BOB's fill's link
+# test, `wce_tile::battle_map::link_candidates`), and one shown next to the tile in the map context (a map of the two, on a flat LF 100 m
+# up). %TILE% is the kit tile roads/2x2_straight_br_lt/aa; capture %OUT%/link_candidate.png.
+tile "%TILE%"
+frames 20
+link_candidates
+link_candidates show 0 0
+frames 60
+map_context_settle
+frames 60
+cam_look 128 30 128
+cam 2.4 1.0 500 5
+frames 60
+shot %OUT%/link_candidate.png
+frames 5
+quit

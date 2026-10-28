@@ -7,6 +7,9 @@ use wce_editor::{gui, icons};
 use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use wce_editor_core::document::Document;
 use wce_scene::render_scene::DocumentId;
+use wce_tile::battle_map::context::{MapPlacement, PlacedMap};
+use wce_tile::battle_map::link_candidates::{Candidate, candidates};
+use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile_editor::tile_document::TileDocument;
 
 use crate::tool::TileTool;
@@ -223,4 +226,151 @@ fn set_combo(label: &str, current: &str, names: &[String], tip: &str) -> Option<
     }
 
     out
+}
+
+/// Which side of the open tile a candidate of size `bw` x `bh` (turned) is on (the entry's cells: y counts from the +z edge).
+fn side_of(c: &Candidate, (bw, bh): (i32, i32), w: i32, h: i32) -> &'static str {
+    if c.x + bw <= 0 {
+        "-x side"
+    } else if c.x >= w {
+        "+x side"
+    } else if c.y + bh <= 0 {
+        "+z side"
+    } else if c.y >= h {
+        "-z side"
+    } else {
+        "inside"
+    }
+}
+
+impl TileTool {
+    /// The tiles that can follow the open tile at its joins (`wce_tile::battle_map::link_candidates`), found on asking and worked out
+    /// again after an edit; a click shows one next to the tile in the map context.
+    pub(crate) fn draw_link_candidates(&mut self, e: &mut Editor, id: DocumentId) {
+        if !gui::tree_node("Tiles that can follow") {
+            return;
+        }
+
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else {
+            gui::tree_pop();
+            return;
+        };
+
+        let (version, raw) = (d.history().version(), d.project().raw_root.clone());
+        let fresh = self.link_candidates.as_ref().is_some_and(|c| c.0 == (id, version));
+        if !fresh && gui::small_button("Find them") {
+            match raw.as_deref().map(|r| crate::context_panel::database(&mut self.context, r)) {
+                Some(Ok(db)) => {
+                    let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+                    if let Some(entry) = d.project().entry.as_ref() {
+                        let open = db.tile_from_entry(entry);
+                        let found = candidates(&db, &open);
+                        self.link_candidates = Some(((id, version), open, found, db));
+                    }
+                }
+
+                Some(Err(err)) => self.status = err,
+                None => self.status = "the tile is not in an assembly kit".to_owned(),
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Every tile of the kit's database, at every turn it may take and every place along this tile's edges, whose links and this tile's agree as BOB's fill tests them, and that carries one of this tile's joins on (a target its rule asks for). Found again after an edit.");
+        }
+
+        let Some((stamp, open, found, db)) = self.link_candidates.clone() else {
+            gui::tree_pop();
+            return;
+        };
+
+        if stamp.0 != id {
+            gui::tree_pop();
+            return;
+        }
+
+        if stamp.1 != version {
+            gui::text_disabled("the links changed since: find them again");
+        }
+
+        let mut show = None;
+        for (ti, t) in open.link_targets.iter().enumerate() {
+            let set = t.set.map(|s| db.sets[s].name.clone()).unwrap_or_default();
+            let here = found.iter().filter(|c| c.joins.contains(&ti)).collect::<Vec<_>>();
+            if gui::tree_node(&format!("{set} at ({}, {}): {} placement(s)##join{ti}", t.x, t.y, here.len())) {
+                for (k, c) in here.iter().enumerate() {
+                    let tile = &db.tiles[c.tile];
+                    let name = tile.location.rsplit(['\\', '/']).take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
+                    let turn = match c.rotation { 0x20 => 90, 0x40 => 180, 0x80 => 270, _ => 0 };
+                    let size = if matches!(c.rotation, 0x20 | 0x80) { (tile.height, tile.width) } else { (tile.width, tile.height) };
+                    let label = format!("{name}, turned {turn}, on the {} at ({}, {})##cand{ti}_{k}", side_of(c, size, open.width, open.height), c.x, c.y);
+                    if gui::selectable(&label, false, 0) {
+                        show = Some((*c).clone());
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("Shows it next to this tile in the Map context (its first variation)");
+                    }
+                }
+
+                gui::tree_pop();
+            }
+        }
+
+        gui::tree_pop();
+        if let Some(c) = show {
+            self.preview_candidate(e, id, &open, &db, &c);
+        }
+    }
+
+    /// Script: finds the candidates (as "Find them"); their count per join of the open tile.
+    pub(crate) fn find_link_candidates(&mut self, e: &mut Editor, id: DocumentId) -> Result<Vec<usize>, String> {
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
+        let version = d.history().version();
+        let raw = d.project().raw_root.clone().ok_or("the tile is not in an assembly kit")?;
+        let db = crate::context_panel::database(&mut self.context, &raw)?;
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
+        let entry = d.project().entry.as_ref().ok_or("no tile database entry")?;
+        let open = db.tile_from_entry(entry);
+        let found = candidates(&db, &open);
+        let counts = (0..open.link_targets.len()).map(|ti| found.iter().filter(|c| c.joins.contains(&ti)).count()).collect();
+        self.link_candidates = Some(((id, version), open, found, db));
+        Ok(counts)
+    }
+
+    /// Script: shows the `k`-th candidate of join `join` in the map context.
+    pub(crate) fn show_link_candidate(&mut self, e: &mut Editor, id: DocumentId, join: usize, k: usize) -> Result<String, String> {
+        let (_, open, found, db) = self.link_candidates.clone().ok_or("no candidates found yet")?;
+        let c = found.iter().filter(|c| c.joins.contains(&join)).nth(k).cloned().ok_or("no such candidate")?;
+        self.preview_candidate(e, id, &open, &db, &c);
+        Ok(db.tiles[c.tile].location.clone())
+    }
+
+    /// Shows a candidate next to the open tile in the map context: a map of the two alone.
+    fn preview_candidate(&mut self, e: &mut Editor, id: DocumentId, open: &wce_tile::battle_map::tile_db::Tile, db: &TileDatabase, c: &Candidate) {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let info = &d.project().info;
+        let t = &db.tiles[c.tile];
+        let (bw, bh) = if matches!(c.rotation, 0x20 | 0x80) { (t.height, t.width) } else { (t.width, t.height) };
+
+        // The two on a map that holds both, a cell of margin around.
+        let (x0, y0) = (c.x.min(0) - 1, c.y.min(0) - 1);
+        let (x1, y1) = ((c.x + bw).max(open.width) + 1, (c.y + bh).max(open.height) + 1);
+        let placements = vec![
+            MapPlacement { location: info.location.clone(), variation: info.variation.clone(), x: -x0, y: -y0, w: open.width, h: open.height, rotation: 0x10, flipped: false, climate: 0 },
+            MapPlacement {
+                location: t.location.clone(), variation: t.variations.first().map(|v| v.location.clone()).unwrap_or_default(), x: c.x - x0, y: c.y - y0, w: t.width,
+                h: t.height, rotation: c.rotation, flipped: false, climate: 0,
+            },
+        ];
+        // A flat LF 100 m up: as on an inland map, above the sea (with none the tiles sit 20 m under it, where the game never puts them).
+        let level = ((100.0 + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
+        let lf = wce_tile::battle_map::context::LfField { w: 1, h: 1, values: vec![level] };
+        let map = PlacedMap {
+            name: format!("link candidate {}", t.location), width: (x1 - x0) as u32, height: (y1 - y0) as u32, placements, lf: Some(lf), unknown: vec![],
+            climates: db.climates.iter().map(|c| c.name.clone()).collect(),
+        };
+
+        self.context.show_map(e, id, map, 0);
+        self.status = format!("{} shown next to the tile in the Map context", t.location);
+    }
 }
