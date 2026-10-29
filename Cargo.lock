@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "wce_app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dear-imgui-rs",
  "sdl3-sys",
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "wce_assets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "wce_formats",
  "wce_foundation",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "wce_d3d11"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "rpfm_lib",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "wce_editor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "wce_editor_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "wce_foundation",
  "wce_scene",
@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "wce_formats"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libz-sys",
  "memchr",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "wce_foundation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "serde",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "wce_imgui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "wce_render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "rayon",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "wce_scene"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "wce_formats",
  "wce_foundation",
@@ -2439,11 +2439,11 @@ dependencies = [
 
 [[package]]
 name = "wce_siege"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "wce_tile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "md-5",
  "rayon",
@@ -2456,7 +2456,7 @@ dependencies = [
 
 [[package]]
 name = "wce_tile_editor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "lz4_flex",
  "rayon",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "wce_tile_io"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "rpfm_lib",
@@ -2492,11 +2492,11 @@ dependencies = [
 
 [[package]]
 name = "wce_tile_model"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "wce_tile_tool"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "rpfm_lib",
@@ -2518,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "wce_ui_cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rpfm_lib",
  "serde_json",
@@ -2530,14 +2530,14 @@ dependencies = [
 
 [[package]]
 name = "wce_ui_format"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "wce_vfs",
 ]
 
 [[package]]
 name = "wce_ui_model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "image",
  "rpfm_lib",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "wce_ui_tool"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dear-imgui-sys",
  "serde",
@@ -2563,7 +2563,7 @@ dependencies = [
 
 [[package]]
 name = "wce_updater"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "semver",
  "serde",
@@ -2575,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "wce_vfs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rpfm_lib",
  "tempfile",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "wce_walls"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nalgebra",
  "rpfm_lib",
@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "wce_weather"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rpfm_lib",
  "tempfile",
@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "wce_weather_tool"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rpfm_lib",
  "wce_editor",
