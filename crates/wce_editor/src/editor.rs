@@ -1446,6 +1446,10 @@ impl Editor {
                 if gui::is_key_pressed(gui::KEY_F, false) {
                     self.focus_selection();
                 }
+
+                if !io.KeyAlt && !io.KeyShift && gui::is_key_pressed(gui::KEY_L, false) {
+                    self.viewport.local_coordinates = !self.viewport.local_coordinates;
+                }
             }
         }
 
@@ -1580,6 +1584,24 @@ impl Editor {
             gui::same_line();
         }
 
+        // The coordinate system of the gizmo and the Inspector.
+        let local = self.viewport.local_coordinates;
+        let label = if local { format!("{}  Local##coords", icons::BOX) } else { format!("{}  Global##coords", icons::GLOBE) };
+        if gui::small_button(&label) {
+            self.viewport.local_coordinates = !local;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(if local {
+                "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
+                 prefab or layer the item is in), as the file holds them. Click: global"
+            } else {
+                "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
+                 (relative to the group, prefab or layer the item is in)"
+            });
+        }
+
+        gui::same_line();
         self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
         gui::text_disabled("|");
         gui::same_line();

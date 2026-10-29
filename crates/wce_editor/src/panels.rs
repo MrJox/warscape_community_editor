@@ -27,6 +27,9 @@ pub struct ImGuiInspector {
     next_dim: bool,
     next_format: Option<String>,
     row_hint: String,
+
+    /// The toolbar's coordinate system (`Inspector::local_coordinates`).
+    local: bool,
 }
 
 /// The value column starts after the longest label that fits: 40% of the panel, at least 110 px.
@@ -92,6 +95,10 @@ impl ImGuiInspector {
 impl Inspector for ImGuiInspector {
     fn target(&self) -> InspectTarget {
         self.target
+    }
+
+    fn local_coordinates(&self) -> bool {
+        self.local
     }
 
     fn set_target(&mut self, target: InspectTarget) {
@@ -539,7 +546,7 @@ pub fn inspector(e: &mut Editor) {
     }
 
     // The active tool's contents first (what it is about to make).
-    let mut ins = ImGuiInspector::default();
+    let mut ins = ImGuiInspector { local: e.viewport.local_coordinates, ..Default::default() };
     if e.with_active_tool(|t, e| t.inspect(e, &mut ins)) == Some(true) {
         gui::end();
         return;
@@ -560,7 +567,7 @@ pub fn inspector(e: &mut Editor) {
                 let what = d.describe(r);
                 gui::text(if what.is_empty() { "Item" } else { &what });
                 gui::separator();
-                let mut ins = ImGuiInspector::default();
+                let mut ins = ImGuiInspector { local: e.viewport.local_coordinates, ..Default::default() };
                 ins.begin(r.doc, r.item);
                 d.inspect(r, &mut ins);
             }

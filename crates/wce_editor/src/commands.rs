@@ -638,6 +638,16 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("coordinates", "coordinates global|local", "the coordinate system of the gizmo and the Inspector (the toolbar's Global / Local): the world's, or the selected item's parent's", |e, a| {
+        match a.first().map(String::as_str) {
+            Some("global") => e.viewport.local_coordinates = false,
+            Some("local") => e.viewport.local_coordinates = true,
+            _ => return fail("usage: coordinates global|local"),
+        }
+
+        ok("")
+    });
+
     c.add("view_mode", "view_mode editor|game", "the viewport's view: the editor's (markers, polygons, gizmo) or the game's (as the game shows the scene)", |e, a| {
         match a.first().map(String::as_str) {
             Some("editor") => e.viewport.game_view = false,
@@ -825,9 +835,11 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "gizmo_drag", "gizmo_drag <x|y|z> <pixels> [steps]",
-        "test: drag the translate handle of the first selected item along a world axis with the scripted mouse (aimed from the projected axis tip, not guessed)",
+        "test: drag the translate handle of the first selected item along an axis of the gizmo (the world's, or its parent's in local coordinates)          with the scripted mouse (aimed from the projected axis tip, not guessed)",
         |e, a| {
-            let world = first_selected_transform(e).map(|t| t.1);
+            let selected = first_selected_transform(e);
+            let parent = selected.filter(|_| e.viewport.local_coordinates).and_then(|(s, _)| e.docs.find(s.doc)?.item_parent_transform(s));
+            let world = selected.map(|t| t.1);
             let (Some(world), true, true) = (world, a.len() >= 2, e.viewport.target().valid()) else {
                 return fail("usage: gizmo_drag <x|y|z> <pixels> [steps] (something with a transform is selected)");
             };
@@ -838,6 +850,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 "z" => Float3::new(0.0, 0.0, 1.0),
                 _ => return fail("axis must be x, y or z"),
             };
+
+            // The parent's axis in local coordinates (its column).
+            let axis = parent.map_or(axis, |p| {
+                let c = if axis.x != 0.0 { 0 } else if axis.y != 0.0 { 1 } else { 2 };
+                normalize(Float3::new(p.m[0][c], p.m[1][c], p.m[2][c]))
+            });
 
             let vp = &e.viewport;
             let cam = vp.camera();

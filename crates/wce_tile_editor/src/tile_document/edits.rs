@@ -20,7 +20,7 @@ use wce_tile::properties::{
     parse_int, parse_seasons, parse_vec2, parse_vec3_text,
 };
 use wce_tile::ted_scene::TedScene;
-use wce_tile::world_transform::{WorldTransform, euler_from_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
+use wce_tile::world_transform::{WorldTransform, euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{AlignTo, CopiedItem, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
@@ -60,6 +60,11 @@ fn close(a: Double3, b: Double3) -> bool {
 /// A world position in scene units (`unit` per metre horizontally).
 pub(crate) fn scene_point(p: Float3, unit: f64) -> Double3 {
     Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit)
+}
+
+/// A position in scene units in metres (`scene_point`'s inverse).
+fn scene_metres(p: Double3, unit: f64) -> Float3 {
+    Float3::new((p.x / unit) as f32, (p.y / unit) as f32, (p.z / unit) as f32)
 }
 
 /// The rotation (upper 3x3) of a world matrix.
@@ -2695,29 +2700,63 @@ impl TileDocument {
         }
     }
 
-    /// TEd's X / Y / Z fields: the world position in metres (an extra row; the grid has the scene position) and the position as the file has it.
+    /// The position, in the Inspector's coordinate system (`Inspector::local_coordinates`, the toolbar's Global / Local): relative to the
+    /// parent as the file has it (scene units), or in the world in metres (TEd's X / Y / Z fields).
     fn position_rows(&mut self, e: usize, ins: &mut dyn Inspector, base: u64) {
-        if self.tile().is_instance(e) {
-            let w = self.tile().world_position(e);
-            let mut v = [w.x, w.y, w.z];
-            if ins.edit_float3("position_world", "position (world, m)", &mut v, 0.05) {
-                self.set_world_metres(e, Float3::new(v[0], v[1], v[2]), base + 2);
+        let pos = self.tile().tscene().position(e);
+        if ins.local_coordinates() {
+            let Some(p) = pos else { return };
+            let mut v = p.to_array().map(|c| c as f32);
+            if ins.edit_float3("position", "position (local)", &mut v, 0.5) {
+                self.set_local(e, Some(v.map(f64::from).into()), None, base);
+            }
+        } else {
+            let t = self.tile();
+            if pos.is_none() && !t.is_instance(e) {
+                return;
             }
 
-            if ins.gesture_ended() {
-                self.history.break_merge();
+            let w = if t.is_instance(e) { t.world_position(e) } else { scene_metres(world_transform(t.tscene(), e).position, t.unit()) };
+            let mut v = [w.x, w.y, w.z];
+            if ins.edit_float3("position_world", "position (world, m)", &mut v, 0.05) {
+                let p = Float3::new(v[0], v[1], v[2]);
+                if self.tile().is_instance(e) {
+                    self.set_world_metres(e, p, base + 2);
+                } else {
+                    // A layer or a group: its local position for that world one.
+                    let pw = parent_transform(self.tile().tscene(), e);
+                    let lp = pw.rotation.transpose() * (scene_point(p, self.tile().unit()) - pw.position);
+                    self.set_local(e, Some(lp), None, base + 2);
+                }
             }
         }
 
-        if let Some(p) = self.tile().tscene().position(e) {
-            let mut v = p.to_array().map(|c| c as f32);
-            if ins.edit_float3("position", "position", &mut v, 0.5) {
-                self.set_local(e, Some(v.map(f64::from).into()), None, base);
-            }
+        if ins.gesture_ended() {
+            self.history.break_merge();
+        }
+    }
 
-            if ins.gesture_ended() {
-                self.history.break_merge();
-            }
+    /// The orientation (degrees), in the Inspector's coordinate system: relative to the parent as the file has it, or in the world.
+    fn orientation_row(&mut self, e: usize, ins: &mut dyn Inspector, base: u64, editable: bool) {
+        let Some(local) = self.tile().tscene().euler(e) else { return };
+        let world = !ins.local_coordinates();
+        let pw = parent_transform(self.tile().tscene(), e);
+        let shown = if world { euler_from_matrix(&(pw.rotation * euler_matrix(local))) } else { local };
+        let (field, label) = if world { ("euler_world", "orientation (world)") } else { ("euler", "orientation (local)") };
+        let mut v = shown.to_array().map(degrees);
+        if !editable {
+            ins.text(field, label, &format!("{:.1}°  {:.1}°  {:.1}°", v[0], v[1], v[2]));
+            return;
+        }
+
+        if ins.edit_float3(field, label, &mut v, 0.5) {
+            let typed: Double3 = v.map(radians).into();
+            let euler = if world { euler_from_matrix(&(pw.rotation.transpose() * euler_matrix(typed))) } else { typed };
+            self.set_local(e, None, Some(euler), base + 1);
+        }
+
+        if ins.gesture_ended() {
+            self.history.break_merge();
         }
     }
 
@@ -2840,23 +2879,7 @@ impl TileDocument {
             }
 
             Kind::Orientation => {
-                if let Some(eu) = self.tile().tscene().euler(e) {
-                    if !editable {
-                        let d = eu.to_array().map(degrees);
-                        ins.text("euler", "orientation", &format!("{:.1}°  {:.1}°  {:.1}°", d[0], d[1], d[2]));
-                        return;
-                    }
-
-                    let mut v = eu.to_array().map(degrees);
-                    if ins.edit_float3("euler", "orientation", &mut v, 0.5) {
-                        self.set_local(e, None, Some(v.map(radians).into()), base + 1);
-                    }
-
-                    if ins.gesture_ended() {
-                        self.history.break_merge();
-                    }
-                }
-
+                self.orientation_row(e, ins, base, editable);
                 return;
             }
 

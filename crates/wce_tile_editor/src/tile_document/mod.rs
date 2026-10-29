@@ -869,6 +869,10 @@ impl Document for TileDocument {
         self.tile().item_transform(item)
     }
 
+    fn item_parent_transform(&self, item: SourceRef) -> Option<Float4x4> {
+        self.tile().item_parent_transform(item)
+    }
+
     fn transform_items(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
         self.transform_selected(items, delta, gesture);
     }

@@ -188,6 +188,13 @@ pub trait Document: Any {
         None
     }
 
+    /// The world frame of the item's parent (its group, prefab or layer), in the space of [`Self::item_transform`]: the axes of local
+    /// coordinates. None: the world's.
+    fn item_parent_transform(&self, item: SourceRef) -> Option<Float4x4> {
+        let _ = item;
+        None
+    }
+
     /// Moves items by a world-space delta. `gesture` is constant during one drag so that the commands merge into one undo entry.
     fn transform_items(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
         let _ = (items, delta, gesture);
