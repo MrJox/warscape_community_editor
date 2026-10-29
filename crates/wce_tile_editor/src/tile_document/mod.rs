@@ -426,6 +426,14 @@ pub struct Tile {
     /// has none) with the ones still asked for.
     pub(crate) covers: cover::Covers,
     pub(crate) covers_dirty: BTreeSet<usize>,
+
+    /// The covers of the last rebuild of every polygon, by what they were built from (`Tile::cover_for`).
+    pub(crate) cover_spare: HashMap<u64, cover::Cover>,
+
+    /// The heights' hash for `cover_spare` (0 outside a rebuild of every polygon), and whether the last publish built every polygon on
+    /// the buildings there are (so the rebuild it asked for is not done twice).
+    pub(crate) cover_ground: u64,
+    pub(crate) polygons_published: bool,
     pub(crate) tops: HashMap<String, Option<Arc<wce_scene::model_top::ModelTop>>>,
     pub(crate) tops_wanted: BTreeSet<String>,
     pub(crate) tops_polls: u32,
@@ -688,7 +696,7 @@ impl TileDocument {
         let mut tile = Tile {
             id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, overlay_entity: 0, terrain_version: 1,
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
-            first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
+            first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,

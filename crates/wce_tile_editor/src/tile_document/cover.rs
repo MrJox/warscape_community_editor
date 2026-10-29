@@ -53,15 +53,32 @@ pub(crate) struct Cover {
 
     /// The elements whose pieces raised it.
     pub sources: BTreeSet<usize>,
+
+    /// What it was built from (`Tile::cover_for`): a cover with the same key is the same surface.
+    pub key: u64,
+
+    /// The polygon's fill and edges drawn on it, and what they were drawn from (its points and look): drawn again only when that changed.
+    pub drawn: Option<(u64, Overlay)>,
 }
 
 impl Cover {
 
+    /// The rectangle a cover over `lo`..`hi` covers: with a margin for the edges' ribbons and the bumps' fall-off.
+    pub(crate) fn extent(lo: [f32; 2], hi: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let margin = SMOOTH_M + RIBBON_M + MIN_CELL;
+        ([lo[0] - margin, lo[1] - margin], [hi[0] + margin, hi[1] + margin])
+    }
+
+    /// Whether a solid stands in a cover's extent (it raises the cover then).
+    pub(crate) fn touches(s: &Solid, lo: [f32; 2], hi: [f32; 2]) -> bool {
+        let (a, b) = s.top.world_rect(&s.world);
+        !(b[0] < lo[0] || a[0] > hi[0] || b[1] < lo[1] || a[1] > hi[1])
+    }
+
     /// Over the rectangle `lo`..`hi` (x, z) and a margin for the edges' ribbons and the bumps' fall-off.
     pub fn build(lo: [f32; 2], hi: [f32; 2], terrain: &dyn Fn(f32, f32) -> f32, solids: &[Solid]) -> Self {
         wce_prof!("tile.cover");
-        let margin = SMOOTH_M + RIBBON_M + MIN_CELL;
-        let (lo, hi) = ([lo[0] - margin, lo[1] - margin], [hi[0] + margin, hi[1] + margin]);
+        let (lo, hi) = Self::extent(lo, hi);
         let (w, d) = (hi[0] - lo[0], hi[1] - lo[1]);
         let cell = MIN_CELL.max((w * d / MAX_NODES).sqrt());
         let (nx, nz) = ((w / cell).ceil() as usize + 1, (d / cell).ceil() as usize + 1);
@@ -89,8 +106,7 @@ impl Cover {
         let mut bump = vec![0.0f32; cx * cz];
         let mut sources = BTreeSet::new();
         for s in solids {
-            let (a, b) = s.top.world_rect(&s.world);
-            if b[0] < lo[0] || a[0] > hi[0] || b[1] < lo[1] || a[1] > hi[1] {
+            if !Self::touches(s, lo, hi) {
                 continue;
             }
 
@@ -132,7 +148,7 @@ impl Cover {
         }
 
         let h = node_ground.iter().zip(&node_bump).map(|(g, b)| g + b.max(0.0)).collect();
-        Self { x0: lo[0], z0: lo[1], cell, nx, nz, h, sources }
+        Self { x0: lo[0], z0: lo[1], cell, nx, nz, h, sources, key: 0, drawn: None }
     }
 
     /// The surface's height at (x, z), clamped to the grid.
@@ -393,6 +409,45 @@ impl Tile {
             self.tops_polls = 0;
             self.polygons_dirty = true;
         }
+    }
+
+    /// A polygon's cover over `lo`..`hi`: the one built from the same terrain and buildings before (kept across a rebuild of every
+    /// polygon: adding one building to a city made its 277 covers be built twice, 0.3 s), else a new one.
+    pub(crate) fn cover_for(&mut self, lo: [f32; 2], hi: [f32; 2], solids: &[Solid]) -> Cover {
+        let (elo, ehi) = Cover::extent(lo, hi);
+        let near = solids.iter().filter(|s| Cover::touches(s, elo, ehi)).collect::<Vec<_>>();
+        // The heights: the whole map's, hashed once for the rebuild of every polygon (`spare_covers`).
+        let ground = self.cover_ground;
+        let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
+        let mut key = [lo[0], lo[1], hi[0], hi[1]].iter().fold(mix(0xcbf2_9ce4_8422_2325, ground), |h, v| mix(h, u64::from(v.to_bits())));
+        for s in &near {
+            key = mix(key, Arc::as_ptr(&s.top) as u64);
+            key = s.world.m.iter().flatten().fold(key, |h, v| mix(h, u64::from(v.to_bits())));
+        }
+
+        // The same surface; its sources are the elements now (an insert renumbers them).
+        if let Some(mut c) = self.cover_spare.remove(&key) {
+            c.sources = near.iter().map(|s| s.elem).collect();
+            return c;
+        }
+
+        let mut c = Cover::build(lo, hi, &|x, z| self.terrain_height(x, z), solids);
+        c.key = key;
+        c
+    }
+
+    /// Keeps the covers for `cover_for` before every polygon is rebuilt (`end_spare_covers` drops the ones not used again), with the hash
+    /// of the heights they were built on.
+    pub(crate) fn spare_covers(&mut self) {
+        self.cover_ground = self.project.height_region_hash([f64::MIN, f64::MIN], [f64::MAX, f64::MAX]);
+        let covers = std::mem::take(&mut self.covers);
+        self.cover_spare.extend(covers.into_values().filter(|c| c.key != 0).map(|c| (c.key, c)));
+    }
+
+    /// After the rebuild of every polygon: the covers not used again go (a single polygon's rebuild builds its own).
+    pub(crate) fn end_spare_covers(&mut self) {
+        self.cover_spare.clear();
+        self.cover_ground = 0;
     }
 
     /// The polygons whose cover `elem` (a building) raised or may raise now, rebuilt at the next update.

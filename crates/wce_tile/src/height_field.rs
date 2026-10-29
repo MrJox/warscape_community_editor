@@ -211,6 +211,23 @@ impl HeightField {
         self.scale
     }
 
+    /// A hash of the samples `sample` reads for points in the pixel rectangle `x0..x1`, `y0..y1` (clamped to the map) and of their base:
+    /// equal while none of them changed (a cache of what was worked out from the heights there).
+    pub fn region_hash(&self, x0: f64, y0: f64, x1: f64, y1: f64) -> u64 {
+        let clamp = |v: f64, n: u32| (v.max(0.0) as u32).min(n.saturating_sub(1));
+        let (a, b) = (clamp(x0.floor(), self.w), clamp(x1.floor() + 1.0, self.w));
+        let (c, d) = (clamp(y0.floor(), self.h), clamp(y1.floor() + 1.0, self.h));
+        let mut h = 0xcbf2_9ce4_8422_2325u64 ^ self.base.to_bits();
+        for y in c..=d {
+            let row = y as usize * self.w as usize;
+            for &s in &self.v[row + a as usize..=row + b as usize] {
+                h = (h ^ u64::from(s.to_bits())).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+
+        h
+    }
+
     /// Bilinear, metres.
     pub fn sample(&self, x: f64, y: f64) -> f64 {
         let x = x.clamp(0.0, f64::from(self.w - 1));

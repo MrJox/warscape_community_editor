@@ -17,7 +17,7 @@ use wce_tile::ground_type_field::GroundTypeField;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
-use super::cover::{Cover, Solid};
+use super::cover::Solid;
 use super::index::{matrix_of, polygon_colour, style_of};
 use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
@@ -909,6 +909,7 @@ impl Tile {
     }
 
     fn rebuild_polygon(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
+        wce_prof!("tile.publish_polygon");
         let solids = self.cover_solids(scene);
         self.rebuild_polygon_over(scene, layer, elem, &solids);
     }
@@ -932,13 +933,24 @@ impl Tile {
 
             // A wall's line stays on the ground (its own pieces would lift it onto the wall).
             let over = if self.is_wall(elem) { &[][..] } else { solids };
-            let cover = Cover::build(lo, hi, &|x, z| self.terrain_height(x, z), over);
+            let mut cover = self.cover_for(lo, hi, over);
             let [r, g, b] = polygon_colour(&ty);
-            if closed && points.len() > 2 && self.display.polygon_fill > 0.0 {
-                cover.fill(&points, overlay_colour(r, g, b, self.display.polygon_fill), &mut o);
+            let fill = self.display.polygon_fill;
+            let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
+            let look = [r, g, b, fill].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
+            let look = points.iter().fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
+            match &cover.drawn {
+                Some((k, drawn)) if *k == look => o.clone_from(drawn),
+                _ => {
+                    if closed && points.len() > 2 && fill > 0.0 {
+                        cover.fill(&points, overlay_colour(r, g, b, fill), &mut o);
+                    }
+
+                    cover.edges(&points, closed, !spline, overlay_colour(r, g, b, 0.85), &mut o);
+                    cover.drawn = Some((look, o.clone()));
+                }
             }
 
-            cover.edges(&points, closed, !spline, overlay_colour(r, g, b, 0.85), &mut o);
             self.covers.insert(elem, cover);
         }
 
@@ -1026,7 +1038,7 @@ impl Tile {
         self.first_entity = vec![0; n];
         self.entity_count = vec![0; n];
         self.outline_entity.clear();
-        self.covers.clear();
+        self.spare_covers();
         self.covers_dirty.clear();
         self.wall_preview_cleared();
         self.last_highlight = None;
@@ -1036,12 +1048,21 @@ impl Tile {
             self.update_terrain(scene, true);
         }
 
-        for e in self.instances.clone() {
-            self.add_item_entities(scene, layer, e);
+        {
+            wce_prof!("tile.publish_items");
+            for e in self.instances.clone() {
+                self.add_item_entities(scene, layer, e);
+            }
+
+            self.end_spare_covers();
+            self.polygons_published = self.display.show_polygons && !self.display.polygon_over_buildings;
         }
 
-        self.update_list_trees(scene, layer, true);
-        self.update_grass(scene, layer, true);
+        {
+            wce_prof!("tile.publish_vegetation");
+            self.update_list_trees(scene, layer, true);
+            self.update_grass(scene, layer, true);
+        }
 
         let types = self.idx.type_names.len();
         self.batch_entity = vec![0; types];
@@ -1417,16 +1438,23 @@ impl Tile {
         }
 
         if self.polygons_dirty {
+            wce_prof!("tile.polygons");
             self.polygons_dirty = false;
-            self.covers.clear();
+
+            // The publish just built them all (on the terrain: no building it had not placed yet raises them).
+            let published = std::mem::take(&mut self.polygons_published);
+            if !published {
+                self.spare_covers();
+            }
+
             self.covers_dirty.clear();
-            let solids = if self.display.show_polygons { self.cover_solids(scene) } else { vec![] };
+            let solids = if self.display.show_polygons && !published { self.cover_solids(scene) } else { vec![] };
             for e in self.instances.clone() {
                 if self.is_wall(e) {
                     self.wall_changed(e);
                 }
 
-                if !self.is_polygon(e) || !self.shown(e) {
+                if !self.is_polygon(e) || !self.shown(e) || published {
                     continue;
                 }
 
@@ -1437,6 +1465,8 @@ impl Tile {
                     scene.update_payload(id, empty_overlay());
                 }
             }
+
+            self.end_spare_covers();
         } else if !self.covers_dirty.is_empty() {
             // Covers a moved building is (or was) under.
             let solids = self.cover_solids(scene);
@@ -1447,6 +1477,8 @@ impl Tile {
             }
         }
 
+        // Only for the rebuild the publish of this frame asked for.
+        self.polygons_published = false;
         self.update_wall_previews(scene);
     }
 
