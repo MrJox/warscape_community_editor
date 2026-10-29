@@ -613,6 +613,9 @@ pub struct TileTool {
     pub(crate) destruction: Option<crate::destruction_panel::Session>,
     pub(crate) destruction_open: bool,
     pub(crate) destruction_templates: Option<Arc<wce_destruction::source::Templates>>,
+
+    /// The Destruction mode's volume gizmo is under the mouse or dragged (the tool has the left button then).
+    pub(crate) destruction_gizmo_hot: bool,
 }
 
 impl Default for TileTool {
@@ -631,7 +634,7 @@ impl Default for TileTool {
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
             weather: Default::default(), minimap: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
-            destruction: None, destruction_open: false, destruction_templates: None,
+            destruction: None, destruction_open: false, destruction_templates: None, destruction_gizmo_hot: false,
         }
     }
 }
@@ -3732,6 +3735,8 @@ impl Tool for TileTool {
             return;
         }
 
+        self.destruction_gizmo(e, origin, size);
+
         // The weather chips at the top left of the image, beside the compass (under it when the image is too narrow for both).
         let compass_left = origin.x + size.x * 0.5 - (size.x - 16.0).min(360.0) * 0.5;
         let beside = !e.viewport.show_compass || origin.x + 8.0 + self.chips_width + 8.0 <= compass_left;
@@ -3785,7 +3790,7 @@ impl Tool for TileTool {
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
-        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed
+        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed || self.destruction_gizmo_hot
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

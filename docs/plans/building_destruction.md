@@ -118,7 +118,7 @@ Built (branch `feature/building_destruction`, from master):
   stone or wood sounds at the simulated impacts), the logic file (platforms cut, firing lines re-parented, hard outline and footprint
   from a raster, collision meshes cut and capped with their adjacency, walkable rubble platforms), the rows, the pack. Deterministic.
 - **Editor:** the Destruction mode (docs/editor.md, building destruction row): window, live preview in the viewport (levels, collapse
-  playback with effects, volumes), Confirm into the mod pack and `@wce_proc_data.pack` with the instance switched (one undo entry).
+  playback with effects, volumes), the selected volume moved, turned and sized with the viewport's gizmo, Confirm into the mod pack and `@wce_proc_data.pack` with the instance switched (one undo entry).
   Generated files are listed by the editor's file sources too (`wce_vfs::generated::list`), so a confirmed key draws at once.
 
 Checks:
@@ -143,7 +143,6 @@ damaged level 9.1k vertices (the game's 6.9k), destroyed 12.3k (5.1k); the logic
   not made yet.
 - [ ] **Wood planks:** wood breaks in the same chunks as stone (its own density, bounce, broken-wood texture and wooden sounds); the
   planned splitting along the grain is not done.
-- [ ] **Volumes with the gizmo:** volumes are edited with the window's fields; the viewport's gizmo does not move them yet.
 - [ ] **Weight:** houses (hollow shells) come out at about four times their intact LOD 0 (the cut triangles, the inner sides near the
   damage); a mesh simplifier for the debris, or fewer cuts, would bring it down. Platforms on rubble are many small quads.
 - [ ] **Engine questions** above (`destruct_thresholds` for 2 and 4 levels, the collapse's last frame).

@@ -132,6 +132,52 @@ fn to_gizmo(m: &Float4x4) -> [f32; 16] {
     out
 }
 
+/// A gizmo of a tool's own (not the selection's) on `world`, in the viewport's mode (translate, rotate, scale) and snapping: called from a
+/// tool's `viewport_overlay` (inside the viewport window). `world` is changed while it is dragged. Returns whether it is being dragged and
+/// whether the mouse is over a handle (the tool claims the left button then, so the camera does not turn).
+pub fn manipulate(e: &Editor, origin: gui::Vec2, size: gui::Vec2, world: &mut Float4x4) -> (bool, bool) {
+    let vp = &e.viewport;
+    if vp.gizmo == GizmoMode::Off || vp.game_view || size.x < 1.0 || size.y < 1.0 {
+        return (false, false);
+    }
+
+    let cam = vp.camera();
+    let v = to_gizmo(&cam.view());
+    let p = to_gizmo(&cam.projection(size.x / size.y));
+    let mut m = to_gizmo(world);
+    let op = match vp.gizmo {
+        GizmoMode::Translate => gz::TRANSLATE,
+        GizmoMode::Rotate => gz::ROTATE,
+        _ => gz::SCALE,
+    };
+
+    let mode = if vp.gizmo == GizmoMode::Translate { gz::WORLD } else { gz::LOCAL };
+    let clip = (2.0 * vp.gizmo_points / size.y.max(1.0)).clamp(0.02, 1.5);
+    // As the selection's gizmo: the viewport's button is not "an item" while Manipulate runs (upstream ImGuizmo refuses to start a drag
+    // over another item).
+    let ids = gui::context_ids();
+    gui::set_context_ids((0, ids.1, ids.2));
+    let (using, over);
+    // SAFETY: inside a Dear ImGui frame, in the viewport window; the arrays outlive the calls.
+    unsafe {
+        gz::ImGuizmo_SetID(0x5743_4544);
+        gz::ImGuizmo_SetOrthographic(cam.is_ortho());
+        gz::ImGuizmo_SetGizmoSizeClipSpace(clip);
+        gz::ImGuizmo_SetDrawlist(dear_imgui_sys::igGetWindowDrawList() as *mut _);
+        gz::ImGuizmo_SetRect(origin.x, origin.y, size.x, size.y);
+        gz::ImGuizmo_Manipulate(v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null());
+        using = gz::ImGuizmo_IsUsing();
+        over = gz::ImGuizmo_IsOver_Nil();
+    }
+
+    gui::set_context_ids(ids);
+    if using {
+        *world = from_gizmo(&m);
+    }
+
+    (using, over)
+}
+
 fn from_gizmo(v: &[f32; 16]) -> Float4x4 {
     let mut m = Float4x4::IDENTITY;
     for r in 0..4 {

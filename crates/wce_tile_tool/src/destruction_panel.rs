@@ -16,7 +16,7 @@ use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_formats::anim_meta::MetaBody;
 use wce_foundation::log;
-use wce_foundation::math::Float3;
+use wce_foundation::math::{Float3, Float4x4, inverse};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::destruction::{DestructionRequest, VolumeBox};
@@ -107,6 +107,8 @@ impl TileTool {
             status: String::new(), took: 0.0, wait_since: None,
         });
         self.destruction_open = true;
+        // The building's own gizmo would compete with the volumes': the selection is cleared (the mode keeps the building).
+        e.selection.clear();
         self.send_volumes(e);
         Ok(format!("destruction: {key}"))
     }
@@ -127,6 +129,40 @@ impl TileTool {
 
         s.wait_since = None;
         Ok(Some(if busy { format!("still busy: {}", s.status) } else { s.status.clone() }))
+    }
+
+    /// The gizmo on the selected volume (the viewport's mode: move, turn about the vertical, size), from the viewport's overlay.
+    pub(crate) fn destruction_gizmo(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        self.destruction_gizmo_hot = false;
+        let Some(s) = self.destruction.as_ref() else { return };
+        let (k, i) = s.volume;
+        let Some(v) = s.params.levels.get(k).and_then(|l| l.volumes.get(i)).copied() else { return };
+        let Some(world) = e.docs.find_as::<TileDocument>(s.doc).map(|d| d.tile().world_matrix(s.elem)) else { return };
+        let (sn, cs) = v.yaw.sin_cos();
+        let mut local = Float4x4::IDENTITY;
+        local.m[0] = [cs * v.half[0], 0.0, sn * v.half[2], v.centre[0]];
+        local.m[1] = [0.0, v.half[1], 0.0, v.centre[1]];
+        local.m[2] = [-sn * v.half[0], 0.0, cs * v.half[2], v.centre[2]];
+        let mut m = world * local;
+        let (using, over) = wce_editor::viewport::manipulate(e, origin, size, &mut m);
+        self.destruction_gizmo_hot = using || over;
+        if !using {
+            return;
+        }
+
+        // Back to the building's frame: the centre, the sizes, the turn about the vertical (a tilt is dropped).
+        let b = inverse(&world) * m;
+        let col = |c: usize| Float3::new(b.m[0][c], b.m[1][c], b.m[2][c]);
+        let (x, y, z) = (col(0), col(1), col(2));
+        let len = |f: Float3| (f.x * f.x + f.y * f.y + f.z * f.z).sqrt();
+        let Some(s) = self.destruction.as_mut() else { return };
+        let Some(vol) = s.params.levels.get_mut(k).and_then(|l| l.volumes.get_mut(i)) else { return };
+        vol.centre = [b.m[0][3], b.m[1][3], b.m[2][3]];
+        vol.half = [len(x).max(0.05), len(y).max(0.05), len(z).max(0.05)];
+        vol.yaw = (-x.z).atan2(x.x);
+        s.params.levels[k].preset = Preset::Custom;
+        s.changed = Some(Instant::now());
+        self.send_volumes(e);
     }
 
     /// Leaves the Destruction mode: the building's own pieces again.
