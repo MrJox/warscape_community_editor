@@ -264,6 +264,9 @@ pub struct TileTool {
     /// While placing with Alt held: what is placed stays where it was when Alt went down and turns with the mouse (`AltTurn`).
     pub(crate) alt_turn: Option<crate::create_panel::AltTurn>,
 
+    /// Alt + a left drag in Select mode: the selection turning around its centre (`AltRotate`).
+    pub(crate) alt_rotate: Option<crate::create_panel::AltRotate>,
+
     // The off-terrain report of the Tile panel.
     off_tol: f32,
     off_list: Vec<OffTerrain>,
@@ -616,7 +619,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None,
+            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -3430,6 +3433,11 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                // Alt + a left drag on a selection turns it in place (around its centre).
+                if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
+                    return true;
+                }
+
                 if self.mode.brush().is_some() {
                     self.paint_erase = ev.ctrl;
                     let kind = self.brush_kind().expect("a brush mode");
@@ -3581,6 +3589,11 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Drag => {
+                if self.alt_rotate.is_some() {
+                    self.alt_rotate_drag(e, ev.x, ev.shift);
+                    return true;
+                }
+
                 if self.stroke.is_some() {
                     self.on_hover(e, ev);
                     if self.terrain_hit {
@@ -3634,6 +3647,14 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Release => {
+                if self.alt_rotate.take().is_some() {
+                    if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+                        d.history_mut().break_merge();
+                    }
+
+                    return true;
+                }
+
                 if self.stroke.is_some() {
                     self.status = self.end_stroke_veg(e);
                     return true;
