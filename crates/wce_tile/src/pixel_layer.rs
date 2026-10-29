@@ -2,8 +2,6 @@
 //! of the 64 x 64 pixel blocks an operation touched (a 64 x 64 tile's blend map is 2.3 GB: no whole copies), and the rectangle changed since
 //! the display last took it.
 
-use std::collections::HashMap;
-
 /// Pixels a side of an undo block.
 const BLOCK: u32 = 64;
 
@@ -21,8 +19,10 @@ pub struct PixelLayer<T> {
     v: Vec<T>,
     editing: bool,
 
-    /// The open edit's blocks as they were at its start.
-    saved: HashMap<u32, Vec<T>>,
+    /// The open edit's blocks as they were at its start, by block (`block_of`; a flat table: a pixel's lookup is an index, not a hash), and
+    /// the blocks it holds.
+    saved: Vec<Option<Box<[T]>>>,
+    touched: Vec<u32>,
     undo: Vec<Record<T>>,
     redo: Vec<Record<T>>,
 
@@ -35,7 +35,7 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: HashMap::new(), undo: vec![], redo: vec![], changed: None }
+        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None }
     }
 
     pub fn width(&self) -> u32 {
@@ -59,7 +59,7 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// The samples of a pixel as they were when the open edit began (as they are now outside an edit, or where it changed nothing).
     pub fn original(&self, x: u32, y: u32) -> &[T] {
         let block = self.block_of(x, y);
-        let Some(saved) = self.saved.get(&block) else { return self.pixel(x, y) };
+        let Some(saved) = self.saved.get(block as usize).and_then(Option::as_deref) else { return self.pixel(x, y) };
         let (x0, y0, x1, _) = self.block_rect(block);
         let i = ((y - y0) as usize * (x1 - x0) as usize + (x - x0) as usize) * self.channels;
         &saved[i..i + self.channels]
@@ -82,15 +82,55 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
             return false;
         }
 
-        let block = self.block_of(x, y);
-        if !self.saved.contains_key(&block) {
-            let samples = self.block_samples(block);
-            self.saved.insert(block, samples);
-        }
-
+        self.save_block(self.block_of(x, y));
         self.v[i..i + self.channels].copy_from_slice(samples);
         self.mark(x, y, x + 1, y + 1);
         true
+    }
+
+    /// Sets the pixels `x0 .. x1` of row `y` to `samples` during an edit; false when they all had them.
+    ///
+    /// # Panics
+    ///
+    /// No edit is open.
+    pub fn fill_span(&mut self, y: u32, x0: u32, x1: u32, samples: &[T]) -> bool {
+        assert!(self.editing, "begin_edit() before editing");
+        let (c, row) = (self.channels, y as usize * self.w as usize);
+        let (mut lo, mut hi) = (u32::MAX, 0);
+        // A block's part of the run at a time: a block is saved only when something in it changes.
+        let mut x = x0;
+        while x < x1 {
+            let end = ((x / BLOCK + 1) * BLOCK).min(x1);
+            let run = (row + x as usize) * c..(row + end as usize) * c;
+            let differs = |p: &[T]| p != samples;
+            if let Some(first) = self.v[run.clone()].chunks_exact(c).position(differs) {
+                let last = self.v[run.clone()].chunks_exact(c).rposition(differs).unwrap_or(first);
+                self.save_block(self.block_of(x, y));
+                for p in self.v[run].chunks_exact_mut(c).take(last + 1).skip(first) {
+                    p.copy_from_slice(samples);
+                }
+
+                lo = lo.min(x + first as u32);
+                hi = x + last as u32 + 1;
+            }
+
+            x = end;
+        }
+
+        if lo == u32::MAX {
+            return false;
+        }
+
+        self.mark(lo, y, hi, y + 1);
+        true
+    }
+
+    /// Keeps a block as it is now, the first time the open edit changes it.
+    fn save_block(&mut self, b: u32) {
+        if self.saved[b as usize].is_none() {
+            self.saved[b as usize] = Some(self.block_samples(b).into_boxed_slice());
+            self.touched.push(b);
+        }
     }
 
     fn block_of(&self, x: u32, y: u32) -> u32 {
@@ -149,7 +189,15 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         }
 
         self.editing = true;
-        self.saved.clear();
+        for b in self.touched.drain(..) {
+            self.saved[b as usize] = None;
+        }
+
+        let blocks = self.w.div_ceil(BLOCK) as usize * self.h.div_ceil(BLOCK) as usize;
+        if self.saved.len() != blocks {
+            self.saved = (0..blocks).map(|_| None).collect();
+        }
+
         true
     }
 
@@ -160,16 +208,18 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         }
 
         self.editing = false;
-        if self.saved.is_empty() {
+        if self.touched.is_empty() {
             return;
         }
 
-        let mut blocks = std::mem::take(&mut self.saved).into_iter().map(|(b, before)| {
+        let mut touched = std::mem::take(&mut self.touched);
+        touched.sort_unstable();
+        let blocks = touched.into_iter().map(|b| {
+            let before = self.saved[b as usize].take().expect("a saved block").into_vec();
             let after = self.block_samples(b);
             (b, before, after)
         }).collect::<Vec<_>>();
 
-        blocks.sort_by_key(|b| b.0);
         self.undo.push(Record { blocks });
         self.redo.clear();
     }
@@ -204,10 +254,16 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
 
     /// The pixels under a brush (centre and radius in pixels), clipped to the map: (x, y, offset from the centre).
     pub fn under(&self, cx: f64, cy: f64, radius: f64) -> impl Iterator<Item = (u32, u32, f64, f64)> + use<T> {
+        let (x0, y0, x1, y1) = self.under_bounds(cx, cy, radius);
+        (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x as u32, y as u32, x as f64 - cx, y as f64 - cy)))
+    }
+
+    /// The square of pixels `under` walks (x0, y0, x1, y1; ends included), empty (an end before its start) off the map.
+    pub fn under_bounds(&self, cx: f64, cy: f64, radius: f64) -> (i64, i64, i64, i64) {
         let x0 = ((cx - radius).floor() as i64).max(0);
         let x1 = ((cx + radius).ceil() as i64).min(i64::from(self.w) - 1);
         let y0 = ((cy - radius).floor() as i64).max(0);
         let y1 = ((cy + radius).ceil() as i64).min(i64::from(self.h) - 1);
-        (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x as u32, y as u32, x as f64 - cx, y as f64 - cy)))
+        (x0, y0, x1, y1)
     }
 }

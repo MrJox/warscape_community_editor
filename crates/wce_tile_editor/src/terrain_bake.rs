@@ -148,6 +148,9 @@ pub struct BakedColour {
     /// Of those, the textures that were not found (drawn as the weighted rest).
     pub missing: i32,
 
+    /// The ground types view: its pixels with a ground type (not black).
+    pub set: usize,
+
     /// One line for the log / the panel.
     pub report: String,
 }
@@ -329,6 +332,7 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
     let mut out = BakedColour {
         x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ow, h: oh, rgba: vec![255; ow as usize * oh as usize * 4],
         climate: climate.map_or_else(|| "default".to_owned(), |c| c.name.clone()), season: req.look.season.clone(), layers: wanted, missing, report: String::new(),
+        set: 0,
     };
 
     // The weights of the layers that could not be read are dropped and the rest renormalised, so a missing texture shows as its neighbours.
@@ -395,6 +399,22 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
     Ok(out)
 }
 
+/// The pixels with a ground type (not black) in a rectangle (x0, y0, x1, y1; end exclusive) of the ground types view's image (`w` pixels a
+/// row).
+pub fn ground_types_set(rgba: &[u8], w: u32, (x0, y0, x1, y1): (u32, u32, u32, u32)) -> usize {
+    let w = w as usize;
+    (y0 as usize..y1 as usize).map(|y| rgba[(y * w + x0 as usize) * 4..(y * w + x1 as usize) * 4].as_chunks::<4>().0.iter().filter(|p| p[0] | p[1] | p[2] != 0).count()).sum()
+}
+
+/// The ground types view's report.
+pub fn ground_types_report(set: usize) -> String {
+    if set != 0 {
+        format!("ground types: the map's RGB as stored ({set} pixels set)")
+    } else {
+        "ground types: the map is empty (all pixels 0: no ground types painted)".to_owned()
+    }
+}
+
 /// The tile's ground type map (ground_type_map.png, RGBA over the bordered tile) and protection map (protection_map.dds, R32F over the tile
 /// without border; 1 = protected) as images over the same area, for TEd's debug views (view GroundTypes / Protection).
 ///
@@ -415,15 +435,10 @@ pub fn bake_terrain_map_view(req: &BakeRequest, ground: Option<&GroundTypeField>
         };
 
         let rgba = ground.rgba();
-        let nonzero = rgba.as_chunks::<4>().0.iter().filter(|p| p[0] | p[1] | p[2] != 0).count();
-        let report = if nonzero != 0 {
-            format!("ground types: the map's RGB as stored ({nonzero} pixels set)")
-        } else {
-            "ground types: the map is empty (all pixels 0: no ground types painted)".to_owned()
-        };
-
+        let set = ground_types_set(&rgba, ground.width(), (0, 0, ground.width(), ground.height()));
         return Ok(BakedColour {
-            x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ground.width(), h: ground.height(), rgba, climate: "ground types".to_owned(), report, ..Default::default()
+            x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ground.width(), h: ground.height(), rgba, climate: "ground types".to_owned(),
+            report: ground_types_report(set), set, ..Default::default()
         });
     }
 

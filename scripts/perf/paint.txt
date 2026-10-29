@@ -1,0 +1,386 @@
+# Performance scenario: run with scripts/perf/run.sh paint [tile folder]  (%TILE% is the tile folder). Ground types, then texture paint strokes.
+vsync off
+tile "%TILE%"
+wait_loaded
+frames 30
+cam 0.8 0.6 150 20
+cam_look 415 0 500
+frames 20
+brush 15 6 0.7
+tile_ground_view ground
+frames 10
+perf reset
+profile reset
+paint_ground_type road 400.0 500.0 1 open
+frames 1
+paint_ground_type road 400.5 500.0 1 open
+frames 1
+paint_ground_type road 401.0 500.0 1 open
+frames 1
+paint_ground_type road 401.5 500.0 1 open
+frames 1
+paint_ground_type road 402.0 500.0 1 open
+frames 1
+paint_ground_type road 402.5 500.0 1 open
+frames 1
+paint_ground_type road 403.0 500.0 1 open
+frames 1
+paint_ground_type road 403.5 500.0 1 open
+frames 1
+paint_ground_type road 404.0 500.0 1 open
+frames 1
+paint_ground_type road 404.5 500.0 1 open
+frames 1
+paint_ground_type road 405.0 500.0 1 open
+frames 1
+paint_ground_type road 405.5 500.0 1 open
+frames 1
+paint_ground_type road 406.0 500.0 1 open
+frames 1
+paint_ground_type road 406.5 500.0 1 open
+frames 1
+paint_ground_type road 407.0 500.0 1 open
+frames 1
+paint_ground_type road 407.5 500.0 1 open
+frames 1
+paint_ground_type road 408.0 500.0 1 open
+frames 1
+paint_ground_type road 408.5 500.0 1 open
+frames 1
+paint_ground_type road 409.0 500.0 1 open
+frames 1
+paint_ground_type road 409.5 500.0 1 open
+frames 1
+paint_ground_type road 410.0 500.0 1 open
+frames 1
+paint_ground_type road 410.5 500.0 1 open
+frames 1
+paint_ground_type road 411.0 500.0 1 open
+frames 1
+paint_ground_type road 411.5 500.0 1 open
+frames 1
+paint_ground_type road 412.0 500.0 1 open
+frames 1
+paint_ground_type road 412.5 500.0 1 open
+frames 1
+paint_ground_type road 413.0 500.0 1 open
+frames 1
+paint_ground_type road 413.5 500.0 1 open
+frames 1
+paint_ground_type road 414.0 500.0 1 open
+frames 1
+paint_ground_type road 414.5 500.0 1 open
+frames 1
+paint_ground_type road 415.0 500.0 1 open
+frames 1
+paint_ground_type road 415.5 500.0 1 open
+frames 1
+paint_ground_type road 416.0 500.0 1 open
+frames 1
+paint_ground_type road 416.5 500.0 1 open
+frames 1
+paint_ground_type road 417.0 500.0 1 open
+frames 1
+paint_ground_type road 417.5 500.0 1 open
+frames 1
+paint_ground_type road 418.0 500.0 1 open
+frames 1
+paint_ground_type road 418.5 500.0 1 open
+frames 1
+paint_ground_type road 419.0 500.0 1 open
+frames 1
+paint_ground_type road 419.5 500.0 1 open
+frames 1
+paint_ground_type road 420.0 500.0 1 open
+frames 1
+paint_ground_type road 420.5 500.0 1 open
+frames 1
+paint_ground_type road 421.0 500.0 1 open
+frames 1
+paint_ground_type road 421.5 500.0 1 open
+frames 1
+paint_ground_type road 422.0 500.0 1 open
+frames 1
+paint_ground_type road 422.5 500.0 1 open
+frames 1
+paint_ground_type road 423.0 500.0 1 open
+frames 1
+paint_ground_type road 423.5 500.0 1 open
+frames 1
+paint_ground_type road 424.0 500.0 1 open
+frames 1
+paint_ground_type road 424.5 500.0 1 open
+frames 1
+paint_ground_type road 425.0 500.0 1 open
+frames 1
+paint_ground_type road 425.5 500.0 1 open
+frames 1
+paint_ground_type road 426.0 500.0 1 open
+frames 1
+paint_ground_type road 426.5 500.0 1 open
+frames 1
+paint_ground_type road 427.0 500.0 1 open
+frames 1
+paint_ground_type road 427.5 500.0 1 open
+frames 1
+paint_ground_type road 428.0 500.0 1 open
+frames 1
+paint_ground_type road 428.5 500.0 1 open
+frames 1
+paint_ground_type road 429.0 500.0 1 open
+frames 1
+paint_ground_type road 429.5 500.0 1 open
+frames 1
+paint_ground_type road 430.0 500.0 1 open
+frames 1
+paint_ground_type road 430.5 500.0 1 open
+frames 1
+paint_ground_type road 431.0 500.0 1 open
+frames 1
+paint_ground_type road 431.5 500.0 1 open
+frames 1
+paint_ground_type road 432.0 500.0 1 open
+frames 1
+paint_ground_type road 432.5 500.0 1 open
+frames 1
+paint_ground_type road 433.0 500.0 1 open
+frames 1
+paint_ground_type road 433.5 500.0 1 open
+frames 1
+paint_ground_type road 434.0 500.0 1 open
+frames 1
+paint_ground_type road 434.5 500.0 1 open
+frames 1
+paint_ground_type road 435.0 500.0 1 open
+frames 1
+paint_ground_type road 435.5 500.0 1 open
+frames 1
+paint_ground_type road 436.0 500.0 1 open
+frames 1
+paint_ground_type road 436.5 500.0 1 open
+frames 1
+paint_ground_type road 437.0 500.0 1 open
+frames 1
+paint_ground_type road 437.5 500.0 1 open
+frames 1
+paint_ground_type road 438.0 500.0 1 open
+frames 1
+paint_ground_type road 438.5 500.0 1 open
+frames 1
+paint_ground_type road 439.0 500.0 1 open
+frames 1
+paint_ground_type road 439.5 500.0 1 open
+frames 1
+paint_ground_type road 440.0 500.0 1 open
+frames 1
+paint_ground_type road 440.5 500.0 1 open
+frames 1
+paint_ground_type road 441.0 500.0 1 open
+frames 1
+paint_ground_type road 441.5 500.0 1 open
+frames 1
+paint_ground_type road 442.0 500.0 1 open
+frames 1
+paint_ground_type road 442.5 500.0 1 open
+frames 1
+paint_ground_type road 443.0 500.0 1 open
+frames 1
+paint_ground_type road 443.5 500.0 1 open
+frames 1
+paint_ground_type road 444.0 500.0 1 open
+frames 1
+paint_ground_type road 444.5 500.0 1 open
+frames 1
+paint_ground_type road 445.0 500.0 1
+frames 1
+perf
+profile
+tile_ground_view colour
+frames 10
+perf reset
+profile reset
+paint_ground 1 0 400.0 520.0 1 open
+frames 1
+paint_ground 1 0 400.5 520.0 1 open
+frames 1
+paint_ground 1 0 401.0 520.0 1 open
+frames 1
+paint_ground 1 0 401.5 520.0 1 open
+frames 1
+paint_ground 1 0 402.0 520.0 1 open
+frames 1
+paint_ground 1 0 402.5 520.0 1 open
+frames 1
+paint_ground 1 0 403.0 520.0 1 open
+frames 1
+paint_ground 1 0 403.5 520.0 1 open
+frames 1
+paint_ground 1 0 404.0 520.0 1 open
+frames 1
+paint_ground 1 0 404.5 520.0 1 open
+frames 1
+paint_ground 1 0 405.0 520.0 1 open
+frames 1
+paint_ground 1 0 405.5 520.0 1 open
+frames 1
+paint_ground 1 0 406.0 520.0 1 open
+frames 1
+paint_ground 1 0 406.5 520.0 1 open
+frames 1
+paint_ground 1 0 407.0 520.0 1 open
+frames 1
+paint_ground 1 0 407.5 520.0 1 open
+frames 1
+paint_ground 1 0 408.0 520.0 1 open
+frames 1
+paint_ground 1 0 408.5 520.0 1 open
+frames 1
+paint_ground 1 0 409.0 520.0 1 open
+frames 1
+paint_ground 1 0 409.5 520.0 1 open
+frames 1
+paint_ground 1 0 410.0 520.0 1 open
+frames 1
+paint_ground 1 0 410.5 520.0 1 open
+frames 1
+paint_ground 1 0 411.0 520.0 1 open
+frames 1
+paint_ground 1 0 411.5 520.0 1 open
+frames 1
+paint_ground 1 0 412.0 520.0 1 open
+frames 1
+paint_ground 1 0 412.5 520.0 1 open
+frames 1
+paint_ground 1 0 413.0 520.0 1 open
+frames 1
+paint_ground 1 0 413.5 520.0 1 open
+frames 1
+paint_ground 1 0 414.0 520.0 1 open
+frames 1
+paint_ground 1 0 414.5 520.0 1 open
+frames 1
+paint_ground 1 0 415.0 520.0 1 open
+frames 1
+paint_ground 1 0 415.5 520.0 1 open
+frames 1
+paint_ground 1 0 416.0 520.0 1 open
+frames 1
+paint_ground 1 0 416.5 520.0 1 open
+frames 1
+paint_ground 1 0 417.0 520.0 1 open
+frames 1
+paint_ground 1 0 417.5 520.0 1 open
+frames 1
+paint_ground 1 0 418.0 520.0 1 open
+frames 1
+paint_ground 1 0 418.5 520.0 1 open
+frames 1
+paint_ground 1 0 419.0 520.0 1 open
+frames 1
+paint_ground 1 0 419.5 520.0 1 open
+frames 1
+paint_ground 1 0 420.0 520.0 1 open
+frames 1
+paint_ground 1 0 420.5 520.0 1 open
+frames 1
+paint_ground 1 0 421.0 520.0 1 open
+frames 1
+paint_ground 1 0 421.5 520.0 1 open
+frames 1
+paint_ground 1 0 422.0 520.0 1 open
+frames 1
+paint_ground 1 0 422.5 520.0 1 open
+frames 1
+paint_ground 1 0 423.0 520.0 1 open
+frames 1
+paint_ground 1 0 423.5 520.0 1 open
+frames 1
+paint_ground 1 0 424.0 520.0 1 open
+frames 1
+paint_ground 1 0 424.5 520.0 1 open
+frames 1
+paint_ground 1 0 425.0 520.0 1 open
+frames 1
+paint_ground 1 0 425.5 520.0 1 open
+frames 1
+paint_ground 1 0 426.0 520.0 1 open
+frames 1
+paint_ground 1 0 426.5 520.0 1 open
+frames 1
+paint_ground 1 0 427.0 520.0 1 open
+frames 1
+paint_ground 1 0 427.5 520.0 1 open
+frames 1
+paint_ground 1 0 428.0 520.0 1 open
+frames 1
+paint_ground 1 0 428.5 520.0 1 open
+frames 1
+paint_ground 1 0 429.0 520.0 1 open
+frames 1
+paint_ground 1 0 429.5 520.0 1 open
+frames 1
+paint_ground 1 0 430.0 520.0 1 open
+frames 1
+paint_ground 1 0 430.5 520.0 1 open
+frames 1
+paint_ground 1 0 431.0 520.0 1 open
+frames 1
+paint_ground 1 0 431.5 520.0 1 open
+frames 1
+paint_ground 1 0 432.0 520.0 1 open
+frames 1
+paint_ground 1 0 432.5 520.0 1 open
+frames 1
+paint_ground 1 0 433.0 520.0 1 open
+frames 1
+paint_ground 1 0 433.5 520.0 1 open
+frames 1
+paint_ground 1 0 434.0 520.0 1 open
+frames 1
+paint_ground 1 0 434.5 520.0 1 open
+frames 1
+paint_ground 1 0 435.0 520.0 1 open
+frames 1
+paint_ground 1 0 435.5 520.0 1 open
+frames 1
+paint_ground 1 0 436.0 520.0 1 open
+frames 1
+paint_ground 1 0 436.5 520.0 1 open
+frames 1
+paint_ground 1 0 437.0 520.0 1 open
+frames 1
+paint_ground 1 0 437.5 520.0 1 open
+frames 1
+paint_ground 1 0 438.0 520.0 1 open
+frames 1
+paint_ground 1 0 438.5 520.0 1 open
+frames 1
+paint_ground 1 0 439.0 520.0 1 open
+frames 1
+paint_ground 1 0 439.5 520.0 1 open
+frames 1
+paint_ground 1 0 440.0 520.0 1 open
+frames 1
+paint_ground 1 0 440.5 520.0 1 open
+frames 1
+paint_ground 1 0 441.0 520.0 1 open
+frames 1
+paint_ground 1 0 441.5 520.0 1 open
+frames 1
+paint_ground 1 0 442.0 520.0 1 open
+frames 1
+paint_ground 1 0 442.5 520.0 1 open
+frames 1
+paint_ground 1 0 443.0 520.0 1 open
+frames 1
+paint_ground 1 0 443.5 520.0 1 open
+frames 1
+paint_ground 1 0 444.0 520.0 1 open
+frames 1
+paint_ground 1 0 444.5 520.0 1 open
+frames 1
+paint_ground 1 0 445.0 520.0 1
+frames 1
+perf
+profile
+quit

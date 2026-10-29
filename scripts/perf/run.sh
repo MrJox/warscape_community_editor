@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/perf/run.sh <nav|edit|load> [tile folder]   Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
+# scripts/perf/run.sh <nav|edit|load|paint> [tile folder]   Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 # Runs a performance scenario with the live clock and prints the frame statistics.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
