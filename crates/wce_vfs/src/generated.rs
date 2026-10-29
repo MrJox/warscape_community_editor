@@ -25,6 +25,13 @@ pub fn get(path: &str) -> Option<Arc<Vec<u8>>> {
     s.get(&normalize(path)).cloned()
 }
 
+/// The made files below `prefix` ending with `extension` (normalized paths).
+pub fn list(prefix: &str, extension: &str) -> Vec<String> {
+    let (prefix, extension) = (normalize(prefix), normalize(extension));
+    let Ok(s) = STORE.read() else { return vec![] };
+    s.keys().filter(|k| k.starts_with(&prefix) && k.ends_with(&extension)).cloned().collect()
+}
+
 /// Forgets the files below a folder (`prefix` ends with `/`), or a file.
 pub fn remove_prefix(prefix: &str) {
     let prefix = normalize(prefix);

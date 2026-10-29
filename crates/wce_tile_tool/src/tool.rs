@@ -608,6 +608,11 @@ pub struct TileTool {
 
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
     browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
+
+    /// The Destruction mode (docs/plans/building_destruction.md): the building open in it, its window, the game's templates (read once).
+    pub(crate) destruction: Option<crate::destruction_panel::Session>,
+    pub(crate) destruction_open: bool,
+    pub(crate) destruction_templates: Option<Arc<wce_destruction::source::Templates>>,
 }
 
 impl Default for TileTool {
@@ -626,6 +631,7 @@ impl Default for TileTool {
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
             weather: Default::default(), minimap: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
+            destruction: None, destruction_open: false, destruction_templates: None,
         }
     }
 }
@@ -1357,6 +1363,11 @@ impl TileTool {
     }
 
     /// The pack "Save to mod pack" offers: the last one of the game, else `<data>/wce_tiles.pack`.
+    /// The mod pack the game's last save went into (the destruction's buildings go there too).
+    pub(crate) fn default_mod_pack_for(e: &Editor) -> PathBuf {
+        Self::default_mod_pack(e)
+    }
+
     fn default_mod_pack(e: &Editor) -> PathBuf {
         let game = e.game();
         let last = e.tool_settings::<TileSettings>(SETTINGS_ID).mod_packs.get(game.key).cloned();
@@ -3201,6 +3212,7 @@ impl Tool for TileTool {
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
+        self.draw_destruction(e);
     }
 
     fn draw_menus(&mut self, e: &mut Editor) {
@@ -3230,6 +3242,16 @@ impl Tool for TileTool {
 
         if gui::is_item_hovered() {
             gui::set_tooltip("TEd's Tile Database Management: the battle tile sets of the kit and of the projects with their tiles, and New tile set (into the projects' tile database).");
+        }
+
+        if gui::menu_item("Destruction...", None, false, document(e).is_some() && selected(e).len() == 1) {
+            if let Err(err) = self.open_destruction(e) {
+                self.status = err;
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The selected building in the Destruction mode: its damage levels, collapse animations, broken faces, rubble and effects made from its intact model, previewed here, and written as a new building (docs/plans/building_destruction.md).");
         }
 
         if gui::menu_item("Resize tile...", None, false, document(e).is_some()) {
@@ -3850,6 +3872,11 @@ pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
 /// # Errors
 ///
 /// None is found, or it doesn't read.
+/// rpfm's schema of the current game (the walls' and the destruction's rows).
+pub(crate) fn walls_schema_for(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
+    walls_schema(e)
+}
+
 fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
     let path = walls_schema_path(e)?;
     rpfm_lib::schema::Schema::load(&path, None).map_err(|err| format!("{}: {err}", path.display()))

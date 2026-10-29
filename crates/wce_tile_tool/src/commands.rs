@@ -1986,6 +1986,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
     });
 
+    c.add("destruction_open", "destruction_open", "open the selected building in the Destruction mode (docs/plans/building_destruction.md)", |e, _| {
+        with_tile(e, |t, e| t.open_destruction(e).map_or_else(fail, ok))
+    });
+
+    c.add("destruction_show", "destruction_show <level>", "show a level of the building in the Destruction mode (0 intact)", |e, a| {
+        let Some(l) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return fail("usage: destruction_show <level>") };
+        with_tile(e, |t, e| t.destruction_show(e, l).map_or_else(fail, ok))
+    });
+
+    c.add("destruction_play", "destruction_play <level>", "play the collapse into a damage level (1 the first) in the Destruction mode", |e, a| {
+        let Some(l) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return fail("usage: destruction_play <level>") };
+        with_tile(e, |t, e| t.destruction_play(e, l).map_or_else(fail, ok))
+    });
+
+    c.add("destruction_confirm", "destruction_confirm", "make the building of the Destruction mode with every LOD, write it into the mod pack and the TEd pack, and switch the instance to it", |e, _| {
+        with_tile(e, |t, e| t.destruction_confirm(e).map_or_else(fail, ok))
+    });
+
+    c.add("destruction_close", "destruction_close", "leave the Destruction mode (nothing is written)", |e, _| {
+        with_tile(e, |t, e| {
+            t.close_destruction(e);
+            ok("closed")
+        })
+    });
+
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
         let Some(d) = document(e) else { return fail("no tile open") };
         match d.generate_siege_ai() {

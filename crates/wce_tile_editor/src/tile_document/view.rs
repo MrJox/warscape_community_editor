@@ -1344,6 +1344,7 @@ impl Tile {
         }
 
         self.update_collapses(scene, layer);
+        self.update_destruction(scene, layer);
 
         self.update_list_trees(scene, layer, false);
         self.update_grass(scene, layer, false);

@@ -6,6 +6,7 @@
 pub mod actions;
 pub mod commands;
 pub mod create_panel;
+pub mod destruction_panel;
 pub mod context_panel;
 pub mod entity_types;
 pub mod extract_prompt;

@@ -16,3 +16,4 @@ pub mod generate;
 pub mod source;
 pub mod rows;
 pub mod poly2d;
+pub mod pack;

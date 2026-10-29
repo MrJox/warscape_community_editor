@@ -172,7 +172,7 @@ impl Tile {
     }
 
     /// A `.meta`'s entries (cached).
-    fn meta_entries(&mut self, path: &str) -> Option<Arc<Vec<MetaEffect>>> {
+    pub(super) fn meta_entries(&mut self, path: &str) -> Option<Arc<Vec<MetaEffect>>> {
         if let Some(m) = self.collapses.metas.get(path) {
             return m.clone();
         }
@@ -410,7 +410,7 @@ impl Tile {
     }
 
     /// Spawns a collapse's effect on a piece; `source` is the standing piece file the collapse starts from (a volumetric effect's mesh).
-    fn spawn_effect(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, fx: &MetaEffect, source: Option<&str>, now: Instant) {
+    pub(super) fn spawn_effect(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, fx: &MetaEffect, source: Option<&str>, now: Instant) {
         let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
         let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q);
         let mesh = source.and_then(|f| self.emit_mesh(f, fx));

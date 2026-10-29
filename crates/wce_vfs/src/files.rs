@@ -41,7 +41,14 @@ impl Files for Vfs {
     }
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
-        Vfs::list(self, prefix, extension).into_iter().map(str::to_owned).collect()
+        let mut out = Vfs::list(self, prefix, extension).into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let made = generated::list(prefix, extension);
+        if !made.is_empty() {
+            out.extend(made);
+            out.sort();
+            out.dedup();
+        }
+        out
     }
 
     fn game(&self) -> Option<&GameProfile> {
@@ -70,7 +77,9 @@ impl Files for FolderFiles {
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
         let (prefix, extension) = (normalize(prefix), normalize(extension));
         let mut paths = list_folder(&self.0).into_iter().map(|p| normalize(&p)).filter(|p| p.starts_with(&prefix) && p.ends_with(&extension)).collect::<Vec<_>>();
+        paths.extend(generated::list(&prefix, &extension));
         paths.sort();
+        paths.dedup();
         paths
     }
 }
