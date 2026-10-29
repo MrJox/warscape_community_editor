@@ -79,8 +79,21 @@ impl GroundTypeField {
 
     /// The map as RGBA (alpha 255), row by row.
     pub fn rgba(&self) -> Vec<u8> {
-        let c = self.layer.channels();
-        self.layer.values().chunks(c).flat_map(|p| [p[0], p[1], p[2], 255]).collect()
+        let mut out = vec![0u8; self.width() as usize * self.height() as usize * 4];
+        self.rgba_into(&mut out, (0, 0, self.width(), self.height()));
+        out
+    }
+
+    /// Writes a rectangle of the map (x0, y0, x1, y1; end exclusive) into an image of the whole map in `rgba`'s layout.
+    pub fn rgba_into(&self, out: &mut [u8], (x0, y0, x1, y1): (u32, u32, u32, u32)) {
+        let (w, c) = (self.width() as usize, self.layer.channels());
+        let v = self.layer.values();
+        for y in y0 as usize..y1 as usize {
+            let (a, b) = (y * w + x0 as usize, y * w + x1 as usize);
+            for (o, p) in out[a * 4..b * 4].chunks_exact_mut(4).zip(v[a * c..b * c].chunks_exact(c)) {
+                o.copy_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+        }
     }
 
     /// Whether something changed since `take_changed` was last called.
@@ -103,12 +116,16 @@ impl GroundTypeField {
             return Err("begin_edit() before editing".to_owned());
         }
 
-        let px: Vec<u8> = if self.layer.channels() == 4 { vec![rgb[0], rgb[1], rgb[2], 255] } else { rgb.to_vec() };
+        let px = [rgb[0], rgb[1], rgb[2], 255];
+        let px = &px[..self.layer.channels()];
         let hard = Brush { cx: b.cx, cy: b.cy, radius: b.radius, strength: 1.0, falloff: 0.0, ..Default::default() };
-        for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
-            if hard.weight(dx, dy) > 0.0 {
-                self.layer.set_pixel(x, y, &px);
-            }
+        // A round hard brush covers one run of pixels per row: filled a run at a time.
+        let (x0, y0, x1, y1) = self.layer.under_bounds(b.cx, b.cy, b.radius);
+        for y in y0..=y1 {
+            let inside = |x: i64| hard.weight(x as f64 - b.cx, y as f64 - b.cy) > 0.0;
+            let Some(first) = (x0..=x1).find(|&x| inside(x)) else { continue };
+            let last = (first..=x1).rev().find(|&x| inside(x)).unwrap_or(first);
+            self.layer.fill_span(y as u32, first as u32, last as u32 + 1, px);
         }
 
         Ok(())
@@ -120,8 +137,8 @@ impl GroundTypeField {
     ///
     /// No edit is open.
     pub fn set_rgb(&mut self, x: u32, y: u32, rgb: [u8; 3]) -> bool {
-        let px: Vec<u8> = if self.layer.channels() == 4 { vec![rgb[0], rgb[1], rgb[2], 255] } else { rgb.to_vec() };
-        self.layer.set_pixel(x, y, &px)
+        let px = [rgb[0], rgb[1], rgb[2], 255];
+        self.layer.set_pixel(x, y, &px[..self.layer.channels()])
     }
 
     /// Marks the start of an operation for undo.
@@ -176,5 +193,39 @@ mod tests {
 
         assert!(f.undo());
         assert_eq!(f.to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn the_runs_of_a_dab_are_the_pixels_inside_the_brush() {
+        // 150 x 140: dabs over the 64 x 64 undo blocks' edges and the map's, RGB and RGBA.
+        for color_type in [2u8, 6] {
+            let bpp = if color_type == 6 { 4 } else { 3 };
+            let png = PngFile { width: 150, height: 140, bit_depth: 8, color_type, pixels: vec![0; 150 * 140 * bpp], ..Default::default() };
+            let mut f = GroundTypeField::from_png(png).unwrap();
+            let mut want = vec![[0u8; 3]; 150 * 140];
+            let dabs = [(63.5, 64.2, 7.3, 8), (0.0, 0.0, 4.0, 1), (149.0, 139.0, 10.0, 3), (100.0, 20.0, 0.5, 11), (64.0, 64.0, 2.0, 0)];
+            f.begin_edit().unwrap();
+            for &(cx, cy, radius, ground) in &dabs {
+                let rgb = GROUND_COLOURS[ground];
+                f.paint(&Brush { cx, cy, radius, ..Default::default() }, rgb).unwrap();
+                let hard = Brush { cx, cy, radius, strength: 1.0, falloff: 0.0, ..Default::default() };
+                for (k, p) in want.iter_mut().enumerate() {
+                    let (x, y) = ((k % 150) as f64, (k / 150) as f64);
+                    if (x - cx).abs() <= radius.ceil() + 1.0 && (y - cy).abs() <= radius.ceil() + 1.0 && hard.weight(x - cx, y - cy) > 0.0 {
+                        *p = rgb;
+                    }
+                }
+            }
+
+            f.end_edit();
+            for (k, p) in want.iter().enumerate() {
+                assert_eq!(f.rgb((k % 150) as u32, (k / 150) as u32), *p, "pixel {k}, colour type {color_type}");
+            }
+
+            assert!(f.undo());
+            assert!(f.layer.values().iter().all(|&v| v == 0));
+            assert!(f.redo());
+            assert!(want.iter().enumerate().all(|(k, p)| f.rgb((k % 150) as u32, (k / 150) as u32) == *p));
+        }
     }
 }

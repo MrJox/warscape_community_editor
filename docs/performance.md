@@ -74,7 +74,8 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
 * `perf [reset|full]`: frame time (mean, p95, p99, worst), draw set statistics, GPU time per pass and, with `full`, the CPU scope timers. `profile [reset]`: the scope timers alone. `vsync off`,
   `gfx <feature> on|off` (shadows, ssao, fog, clouds, ...), `gfx lod_scale|min_pixels|shadow_min_texels <x>`, `wait_loaded [s]` (script: until models and textures are in, prints how long it took).
 * `wce.exe --live --script file.txt` runs a script with the live clock, background loading and the real mouse (the default for scripts is the fixed-step clock). Scenario scripts used for the
-  numbers above are in `scripts/perf/` (`nav.txt` orbit and zoom, `edit.txt` drag, brush, duplicate, delete, undo, `load.txt` opening).
+  numbers above are in `scripts/perf/` (`nav.txt` orbit and zoom, `edit.txt` drag, brush, duplicate, delete, undo, `load.txt` opening,
+  `paint.txt` a ground types stroke and a texture paint stroke: `scripts/perf/run.sh paint <tile folder>`).
 * Gates: `perf_check` (thread pool, frustum and LOD culling, DDS stream plan, element index against the transform walk on three tiles, pick grid against brute force), `xml_splice_check`
   (in-place structural edits against the re-parsing ones, undo and redo exact). Both in `scripts/gates.sh`.
 

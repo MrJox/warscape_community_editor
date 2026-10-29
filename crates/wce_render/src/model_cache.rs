@@ -21,7 +21,7 @@ use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::model_top::ModelTop;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain};
+use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -1086,12 +1086,14 @@ impl ModelCache {
         lock(&self.inner.errors).clone()
     }
 
-    /// The terrain patches of a terrain entity; the patches whose heights changed are rebuilt when the payload's version moves on.
+    /// The terrain patches of a terrain entity; the patches whose heights changed are rebuilt when the payload's version moves on, the
+    /// patches whose piece of the skin changed get that piece again.
     pub fn terrain(&mut self, id: EntityId, t: &Terrain) -> Option<&TerrainGpu> {
         wce_prof!("terrain.update");
         let layout = layout_hash(t);
+        let skin_id = t.skin.as_ref().map_or(0, |s| s.id);
         let valid = t.nx >= 2 && t.nz >= 2 && (t.heights.is_empty() || t.heights.len() == t.nx as usize * t.nz as usize) && t.step > 0.0;
-        if self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.version == t.version) {
+        if self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id) {
             return self.terrain.get(&id);
         }
 
@@ -1101,7 +1103,7 @@ impl ModelCache {
         }
 
         // Another entity with the same heights buffer (the placements of one tile in a map context): its patches.
-        if let Some(same) = self.terrain.values().find(|slot| Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version).cloned() {
+        if let Some(same) = self.terrain.values().find(|slot| Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id).cloned() {
             self.terrain.insert(id, same);
             return self.terrain.get(&id);
         }
@@ -1121,8 +1123,14 @@ impl ModelCache {
             tg.skins.resize(tg.patches.len(), None);
         }
 
-        // The patches that changed: all on a new layout, otherwise the ones whose heights (plus the margin the normals read) differ.
+        // The patches that changed: all on a new layout, otherwise the ones whose heights (plus the margin the normals read) differ. The
+        // same buffer is the same heights (a paint stroke): the slot holds it, so it cannot have been written or freed since.
+        let same_heights = same_layout && Arc::ptr_eq(&tg.heights, &t.heights);
         let dirty = (0..tg.patches.len()).into_par_iter().map(|p| {
+            if same_heights {
+                return false;
+            }
+
             if !same_layout || t.heights.is_empty() || tg.heights.len() != t.heights.len() {
                 return true;
             }
@@ -1139,6 +1147,38 @@ impl ModelCache {
             (p, build_patch(dev.device(), t, diffuse.clone(), &textures, pi, pj))
         }).collect::<Vec<_>>();
 
+        // Only the skin's pixels changed (its place and size are the layout): the patches whose piece of it a dab touched get their piece
+        // again on the geometry they have (a ground types stroke rebuilt every patch of the tile each dab). Without the dab's rectangle
+        // (another bake, or a renderer that missed a skin) every piece.
+        let reskinned = match &t.skin {
+            Some(s) if same_layout && tg.skin_id != s.id && s.w > 1 && s.h > 1 => {
+                let rect = s.dirty.filter(|(from, _)| *from == tg.skin_id).map(|(_, r)| r);
+                (0..tg.patches.len()).into_par_iter().filter(|&p| !dirty[p]).filter_map(|p| {
+                    let window = skin_window(t, s, (p % px as usize) as i32, (p / px as usize) as i32);
+                    if rect.is_some_and(|r| !skin_window_reads(s, window, r)) {
+                        return None;
+                    }
+
+                    let texture = make_rgba_texture(dev.device(), window.2 as u32, window.3 as u32, &skin_piece(s, window), true);
+                    let skin = texture.srv.is_some().then(|| Arc::new(RwLock::new(texture)));
+                    let mut model = (*tg.patches[p]).clone();
+                    let diffuse = skin.clone().or_else(|| diffuse.clone()).unwrap_or_else(|| textures.white());
+                    for mesh in model.meshes.iter_mut().chain(model.lods.iter_mut().flat_map(|l| l.meshes.iter_mut())) {
+                        mesh.tex[TEX_DIFFUSE] = diffuse.clone();
+                    }
+
+                    Some((p, model, skin))
+                }).collect::<Vec<_>>()
+            }
+
+            _ => vec![],
+        };
+
+        for (p, model, skin) in reskinned {
+            tg.patches[p] = Arc::new(model);
+            tg.skins[p] = skin;
+        }
+
         let mut failed = false;
         for (p, result) in built {
             match result {
@@ -1154,6 +1194,7 @@ impl ModelCache {
         tg.heights = t.heights.clone();
         tg.layout = layout;
         tg.version = t.version;
+        tg.skin_id = skin_id;
         if failed {
             log::error("terrain: a patch could not be created");
             lock(&self.inner.errors).push("terrain: a patch could not be created".to_owned());
@@ -1202,12 +1243,16 @@ pub struct TerrainGpu {
 
     /// The payload's heights, to find the patches a new payload changed (and the entities that share them).
     pub heights: Arc<Vec<f32>>,
+
+    /// The id of the skin the pieces were cut from (0: none).
+    pub skin_id: u64,
 }
 
 fn mix64(h: u64, v: u64) -> u64 {
     h ^ (v.wrapping_add(0x9E37_79B9_7F4A_7C15).wrapping_add(h << 6).wrapping_add(h >> 2))
 }
 
+/// What the patches' geometry depends on besides the heights: the skin's place and size (its uvs), not its pixels (`TerrainGpu::skin_id`).
 fn layout_hash(t: &Terrain) -> u64 {
     let mut h = t.diffuse.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3));
     h = mix64(h, (t.nx as u64).wrapping_mul(65537).wrapping_add(t.nz as u64));
@@ -1217,7 +1262,54 @@ fn layout_hash(t: &Terrain) -> u64 {
 
     h = mix64(h, t.heights.len() as u64);
     h = mix64(h, u64::from(t.lod));
-    mix64(h, t.skin.as_ref().map_or(0, |skin| skin.id + 1))
+    let Some(s) = &t.skin else { return mix64(h, 0) };
+    for f in [s.x0, s.z0, s.w_m, s.h_m] {
+        h = mix64(h, f.to_bits());
+    }
+
+    mix64(h, (u64::from(s.w) << 32 | u64::from(s.h)).wrapping_add(1))
+}
+
+/// A patch's piece of the skin (`build_patch`): the texels (i0, j0, w, h) under its cells and one more on every side, as texels of the
+/// image (the ones past its edges repeat the edge texels).
+fn skin_window(t: &Terrain, s: &TerrainSkin, pi: i32, pj: i32) -> (i32, i32, i32, i32) {
+    let (ci0, cj0) = (pi * CELLS, pj * CELLS);
+    let (ci1, cj1) = ((ci0 + CELLS).min(t.nx - 1), (cj0 + CELLS).min(t.nz - 1));
+    let (w, h) = (ci1 - ci0 + 1, cj1 - cj0 + 1);
+    let (x0, z0) = (t.origin_x + ci0 as f32 * t.step, t.origin_z + cj0 as f32 * t.step);
+    let (dx, dz) = (s.w_m / f64::from(s.w), s.h_m / f64::from(s.h));
+    let (px0, pz0) = (f64::from(x0), f64::from(z0));
+    let px1 = f64::from(x0) + f64::from(w - 1) * f64::from(t.step);
+    let pz1 = f64::from(z0) + f64::from(h - 1) * f64::from(t.step);
+    let i0 = ((px0 - s.x0) / dx).floor() as i32 - 1;
+    let j0 = ((pz0 - s.z0) / dz).floor() as i32 - 1;
+    let i1 = ((px1 - s.x0) / dx).ceil() as i32 + 1;
+    let j1 = ((pz1 - s.z0) / dz).ceil() as i32 + 1;
+    (i0, j0, (i1 - i0).max(2), (j1 - j0).max(2))
+}
+
+/// Whether a piece of the skin reads a texel of the rectangle (x0, y0, x1, y1; end exclusive).
+fn skin_window_reads(s: &TerrainSkin, (i0, j0, w, h): (i32, i32, i32, i32), r: [u32; 4]) -> bool {
+    let (sw, sh) = (s.w as i32, s.h as i32);
+    let (a0, a1) = (i0.clamp(0, sw - 1), (i0 + w - 1).clamp(0, sw - 1));
+    let (b0, b1) = (j0.clamp(0, sh - 1), (j0 + h - 1).clamp(0, sh - 1));
+    a0 < r[2] as i32 && r[0] as i32 <= a1 && b0 < r[3] as i32 && r[1] as i32 <= b1
+}
+
+/// A piece of the skin as an image of its own, row by row.
+fn skin_piece(s: &TerrainSkin, (i0, j0, w, h): (i32, i32, i32, i32)) -> Vec<u8> {
+    let stride = s.w as usize * 4;
+    let mut out = vec![0u8; w as usize * h as usize * 4];
+    for (j, row) in out.chunks_exact_mut(w as usize * 4).enumerate() {
+        let sj = (j0 + j as i32).clamp(0, s.h as i32 - 1) as usize;
+        let src = &s.rgba[sj * stride..(sj + 1) * stride];
+        for (i, px) in row.chunks_exact_mut(4).enumerate() {
+            let si = (i0 + i as i32).clamp(0, s.w as i32 - 1) as usize * 4;
+            px.copy_from_slice(&src[si..si + 4]);
+        }
+    }
+
+    out
 }
 
 /// A half float as a float (exact).
@@ -1304,27 +1396,9 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
     if let Some(s) = t.skin.as_ref().filter(|s| s.w > 1 && s.h > 1) {
         sk_dx = s.w_m / f64::from(s.w);
         sk_dz = s.h_m / f64::from(s.h);
-        let (px0, pz0) = (f64::from(x0), f64::from(z0));
-        let px1 = f64::from(x0) + f64::from(w - 1) * f64::from(t.step);
-        let pz1 = f64::from(z0) + f64::from(h - 1) * f64::from(t.step);
-        sk_i0 = ((px0 - s.x0) / sk_dx).floor() as i32 - 1;
-        sk_j0 = ((pz0 - s.z0) / sk_dz).floor() as i32 - 1;
-        let i1 = ((px1 - s.x0) / sk_dx).ceil() as i32 + 1;
-        let j1 = ((pz1 - s.z0) / sk_dz).ceil() as i32 + 1;
-        sk_w = (i1 - sk_i0).max(2);
-        sk_h = (j1 - sk_j0).max(2);
-        let mut crop = vec![0u8; sk_w as usize * sk_h as usize * 4];
-        for j in 0..sk_h {
-            let sj = (sk_j0 + j).clamp(0, s.h as i32 - 1) as usize;
-            for i in 0..sk_w {
-                let si = (sk_i0 + i).clamp(0, s.w as i32 - 1) as usize;
-                let at = (j as usize * sk_w as usize + i as usize) * 4;
-                let from = (sj * s.w as usize + si) * 4;
-                crop[at..at + 4].copy_from_slice(&s.rgba[from..from + 4]);
-            }
-        }
-
-        let texture = make_rgba_texture(dev, sk_w as u32, sk_h as u32, &crop, true);
+        let window = skin_window(t, s, pi, pj);
+        (sk_i0, sk_j0, sk_w, sk_h) = window;
+        let texture = make_rgba_texture(dev, sk_w as u32, sk_h as u32, &skin_piece(s, window), true);
         if texture.srv.is_some() {
             skin_out = Some(Arc::new(RwLock::new(texture)));
         }

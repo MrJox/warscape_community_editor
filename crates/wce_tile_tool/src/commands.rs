@@ -932,7 +932,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("paint_ground_type", "paint_ground_type <ground type | none> <x m> <z m> <steps>", "a ground types stroke at a point of the tile with the brush's radius (one undo entry; a name with spaces in quotes)", |e, a| {
+    c.add("paint_ground_type", "paint_ground_type <ground type | none> <x m> <z m> <steps> [open]", "a ground types stroke at a point of the tile with the brush's radius (one undo entry; a name with spaces in quotes); open: the stroke goes on, the next call without it ends it", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
             let ground = a.first().and_then(|n| if n == "none" { Some(GROUND_ERASE) } else { GROUND_TYPES.iter().position(|(g, _)| g == n).map(|i| i as u8) });
@@ -942,7 +942,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 d.brush_step(BrushKind::Ground(ground), x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
-            d.end_stroke();
+            if a.get(4).is_none_or(|w| w != "open") {
+                d.end_stroke();
+            }
+
             if d.tile().ground_rgb_at(x, z).is_none() { fail("no ground type map there") } else { ok("") }
         })
     });

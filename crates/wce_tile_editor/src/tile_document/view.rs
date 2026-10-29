@@ -21,7 +21,7 @@ use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 use super::cover::Solid;
 use super::index::{matrix_of, polygon_colour, style_of};
 use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
-use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
+use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view, ground_types_report, ground_types_set};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
 #[derive(Clone, Copy)]
@@ -243,13 +243,35 @@ impl Tile {
         }
 
         // Painted since the view was baked: the ground types at every step of a stroke, the blend groups (a whole bake) when it ends.
-        let stale = match self.look.view {
-            TerrainView::GroundTypes | TerrainView::WaterDepth => self.project.ground.as_mut().and_then(GroundTypeField::take_changed).is_some(),
-            TerrainView::BlendGroups if !self.stroke_open => self.project.blend.as_mut().and_then(BlendField::take_changed).is_some(),
-            _ => false,
+        let changed = match self.look.view {
+            TerrainView::GroundTypes | TerrainView::WaterDepth => self.project.ground.as_mut().and_then(GroundTypeField::take_changed),
+            TerrainView::BlendGroups if !self.stroke_open => self.project.blend.as_mut().and_then(BlendField::take_changed),
+            _ => None,
         };
 
-        if self.skin.is_some() && self.skin_look == self.look && !stale {
+        if self.skin.is_some() && self.skin_look == self.look && changed.is_none() {
+            return self.skin.clone();
+        }
+
+        // A dab of a ground types stroke: its rectangle of the map written into the view's image (the map's own pixels, its size and place)
+        // instead of the whole map baked again, and the renderer told where (it cuts only the patches' pieces there again). The scene's
+        // terrain let go of the skin (`update_terrain`): written in place, not copied.
+        if let Some(rect) = changed.filter(|_| self.look.view == TerrainView::GroundTypes && self.skin_look == self.look)
+            && let (Some(skin), Some(baked), Some(ground)) = (self.skin.as_mut(), self.skin_baked.as_mut(), self.project.ground.as_ref())
+            && (skin.w, skin.h) == (ground.width(), ground.height())
+            && (baked.w, baked.h) == (skin.w, skin.h)
+        {
+            wce_prof!("tile.ground_types_patch");
+            let (s, b) = (Arc::make_mut(skin), Arc::make_mut(baked));
+            let before = ground_types_set(&s.rgba, s.w, rect);
+            ground.rgba_into(&mut s.rgba, rect);
+            ground.rgba_into(&mut b.rgba, rect);
+            b.set = b.set + ground_types_set(&s.rgba, s.w, rect) - before;
+            b.report = ground_types_report(b.set);
+            self.terrain_note = format!("debug view, {}", b.report);
+            let from = s.id;
+            self.skin_id = next_id(&SKIN_IDS);
+            (s.id, s.dirty) = (self.skin_id, Some((from, [rect.0, rect.1, rect.2, rect.3])));
             return self.skin.clone();
         }
 
@@ -288,7 +310,7 @@ impl Tile {
             let baked = Arc::new(crate::terrain_bake::bake_water_depth(&rq, &water, self.project.ground.as_ref()));
             let k = self.project.mpp_z() / self.project.mpp_x();
             self.skin_id = next_id(&SKIN_IDS);
-            let skin = Arc::new(TerrainSkin { x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id });
+            let skin = Arc::new(TerrainSkin { x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id, dirty: None });
             self.skin = Some(skin.clone());
             self.terrain_note = format!("debug view, {}", baked.report);
             self.skin_baked = Some(baked);
@@ -314,7 +336,7 @@ impl Tile {
         let k = self.project.mpp_z() / self.project.mpp_x();
         self.skin_id = next_id(&SKIN_IDS);
         let skin = Arc::new(TerrainSkin {
-            x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id,
+            x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id, dirty: None,
         });
 
         self.skin = Some(skin.clone());
@@ -787,11 +809,13 @@ impl Tile {
             self.nogo_dirty = true;
         }
 
-        // The scene's terrain lets go of its material: the maps are written in place below instead of copied (they are shared until then).
+        // The scene's terrain lets go of its material and skin: the maps are written in place below instead of copied (they are shared until
+        // then).
         if !first
             && let Some(Payload::Terrain(old)) = scene.find_mut(self.terrain_entity).map(|e| &mut e.payload)
         {
             old.material = None;
+            old.skin = None;
         }
 
         let kept = self.terrain_grid.as_ref().filter(|_| same_heights).map(|(_, w, t)| (*w, t.clone()));

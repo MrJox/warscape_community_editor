@@ -125,7 +125,7 @@ fn main() {
         t.heights = Arc::new((0..t.nz).flat_map(|j| (0..t.nx).map(move |i| (i as f32 * 0.1).sin() * (j as f32 * 0.07).cos() * 20.0 + i as f32 * 0.01)).collect());
         if k == 2 {
             let rgba = (0..160 * 120 * 4).map(|i: usize| (i * 7 + i / 640) as u8).collect();
-            t.skin = Some(Arc::new(TerrainSkin { x0: -110.0, z0: -80.0, w_m: 330.0, h_m: 240.0, w: 160, h: 120, rgba, id: 7 }));
+            t.skin = Some(Arc::new(TerrainSkin { x0: -110.0, z0: -80.0, w_m: 330.0, h_m: 240.0, w: 160, h: 120, rgba, id: 7, dirty: None }));
         }
 
         let tg = models.terrain(10 + k, &t).unwrap();

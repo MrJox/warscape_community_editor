@@ -161,11 +161,15 @@ pub struct TerrainSkin {
     pub h: u32,
     pub rgba: Vec<u8>,
     pub id: u64,
+
+    /// `rgba` differs from that of the skin id given only in this rectangle of pixels (x0, y0, x1, y1; end exclusive): a dab of a ground
+    /// types stroke, written into the patches' pieces of it by a renderer that has that id's skin (the geometry is kept).
+    pub dirty: Option<(u64, [u32; 4])>,
 }
 
 impl Default for TerrainSkin {
     fn default() -> Self {
-        Self { x0: 0.0, z0: 0.0, w_m: 1.0, h_m: 1.0, w: 0, h: 0, rgba: vec![], id: 0 }
+        Self { x0: 0.0, z0: 0.0, w_m: 1.0, h_m: 1.0, w: 0, h: 0, rgba: vec![], id: 0, dirty: None }
     }
 }
 

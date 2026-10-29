@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 use rayon::prelude::*;
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{Entity, EntityId, Payload, RenderScene};
+use wce_scene::render_scene::{Entity, EntityId, LfMap, Payload, RenderScene, Terrain};
 
 use super::*;
 use crate::sea_surface::{SeaRow, SeaSurface, parse_sea_surfaces, parse_wind_levels};
@@ -176,6 +176,36 @@ fn chunk_vertices(job: &ChunkJob, out: &mut [f32], height: &(dyn Fn(f32, f32) ->
     }
 }
 
+/// What a terrain gives the sea bed (`Terrain::ground_at`): its heights, LF map, grid and matrix. The buffers are held, so the same buffer
+/// is the same ground: a paint stroke publishes the terrain again every dab with the heights it had (rebuilding the sea bed each time cost
+/// a millisecond a frame).
+struct SeaBedGround {
+    heights: Arc<Vec<f32>>,
+    lf: Option<Arc<LfMap>>,
+    shape: [u32; 21],
+}
+
+impl SeaBedGround {
+    fn of(e: &Entity, t: &Terrain) -> Self {
+        let mut shape = [0u32; 21];
+        for (k, v) in e.world.m.iter().flatten().chain(&[t.origin_x, t.origin_z, t.step]).enumerate() {
+            shape[k] = v.to_bits();
+        }
+
+        (shape[19], shape[20]) = (t.nx as u32, t.nz as u32);
+        Self { heights: t.heights.clone(), lf: t.lf.clone(), shape }
+    }
+
+    fn same(&self, o: &Self) -> bool {
+        let lf = match (&self.lf, &o.lf) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+
+        lf && Arc::ptr_eq(&self.heights, &o.heights) && self.shape == o.shape
+    }
+}
+
 /// A wind's sea: the table row, the surfaces, their textures and the whitecaps.
 struct SeaAssets {
     row: SeaRow,
@@ -206,8 +236,9 @@ pub(crate) struct OceanGpu {
     winds: Option<Vec<String>>,
     sea_bed: Option<ID3D11ShaderResourceView>,
 
-    /// What the sea bed was built from: the scene's address and terrain revision.
-    sea_bed_key: (usize, u64, u64, u32, u32),
+    /// What the sea bed was built from: the scene's address, its terrains and the render origin, and the terrains' ground.
+    sea_bed_key: (usize, u64, u32, u32),
+    sea_bed_ground: Vec<SeaBedGround>,
 
     /// The scene's terrain entities (a hash of their ids) as of a structure revision: a streamed map context adds and drops terrains
     /// without touching the terrain revision.
@@ -343,13 +374,15 @@ impl Renderer {
             self.water.ocean.sea_bed_terrains = (scene.structure_revision(), ids);
         }
 
-        let key = (scene as *const RenderScene as usize, scene.terrain_revision(), self.water.ocean.sea_bed_terrains.1, o.x.to_bits(), o.y.to_bits() ^ o.z.to_bits().rotate_left(16));
-        if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key {
+        let key = (scene as *const RenderScene as usize, self.water.ocean.sea_bed_terrains.1, o.x.to_bits(), o.y.to_bits() ^ o.z.to_bits().rotate_left(16));
+        let terrains = terrains().collect::<Vec<_>>();
+        let ground = terrains.iter().map(|(e, t)| SeaBedGround::of(e, t)).collect::<Vec<_>>();
+        let same_ground = ground.len() == self.water.ocean.sea_bed_ground.len() && ground.iter().zip(&self.water.ocean.sea_bed_ground).all(|(a, b)| a.same(b));
+        if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key && same_ground {
             return;
         }
 
         wce_prof!("render.ocean_sea_bed");
-        let terrains = terrains().collect::<Vec<_>>();
         let n = SEA_BED_SIZE as usize;
         let texel = 2.0 * SEA_BED_HALF / SEA_BED_SIZE as f32;
         let [lo, range] = SEA_BED_RANGE;
@@ -365,6 +398,7 @@ impl Renderer {
 
         self.water.ocean.sea_bed = immutable_srv(&self.dev, SEA_BED_SIZE, SEA_BED_SIZE, DXGI_FORMAT_R32_FLOAT, &f32_bytes(&data));
         self.water.ocean.sea_bed_key = key;
+        self.water.ocean.sea_bed_ground = ground;
     }
 
     /// The neutral inputs that stand in for what is not traced yet.
