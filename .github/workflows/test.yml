@@ -53,7 +53,8 @@ jobs:
 
   windows:
     name: Windows
-    runs-on: windows-latest
+    runs-on: windows-2022
+    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
 
     env:
       # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
