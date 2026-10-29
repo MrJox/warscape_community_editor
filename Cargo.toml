@@ -16,3 +16,8 @@ windows-bindgen = "0.100"
 # rpfm_lib from rpfm's develop branch (the Attila and Rome 2 formats the editor needs, ahead of the releases). For local rpfm work, a
 # checkout next to this repo: rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }
 rpfm_lib = { git = "https://github.com/Frodo45127/rpfm.git", branch = "develop", default-features = false }
+
+# Windows links SDL3 statically, and the cmake crate builds opt-level 0 as a Debug config against the debug CRT (MSVCRTD), which
+# clashes with the release CRT Rust links. Any opt-level above 0 makes it RelWithDebInfo, on the release CRT.
+[profile.dev.package.sdl3-sys]
+opt-level = 1
