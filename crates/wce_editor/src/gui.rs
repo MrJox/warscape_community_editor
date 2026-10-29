@@ -1031,6 +1031,7 @@ pub const KEY_B: i32 = sys::ImGuiKey_B;
 pub const COLOR_NO_INPUTS: i32 = sys::ImGuiColorEditFlags_NoInputs;
 pub const KEY_V: i32 = sys::ImGuiKey_V;
 pub const KEY_X: i32 = sys::ImGuiKey_X;
+pub const KEY_L: i32 = sys::ImGuiKey_L;
 pub const KEY_PAGE_DOWN: i32 = sys::ImGuiKey_PageDown;
 pub const WINDOW_NO_NAV: i32 = sys::ImGuiWindowFlags_NoNav;
 pub const SELECTABLE_NO_AUTO_CLOSE: i32 = sys::ImGuiSelectableFlags_NoAutoClosePopups;

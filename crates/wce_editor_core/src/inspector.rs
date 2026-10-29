@@ -41,6 +41,12 @@ pub trait Inspector {
 
     fn section(&mut self, title: &str);
 
+    /// Positions and rotations relative to the item's parent (its group, prefab or layer), as the file holds them; false: in the world. The
+    /// editor's Inspector follows the toolbar's Global / Local; the ones that dump or test the rows keep the file's.
+    fn local_coordinates(&self) -> bool {
+        true
+    }
+
     /// Marks the rows that follow of these fields (a field also marks its parts, `flags` marks `flags.visible`), each with a note: a
     /// prefab reference's overrides, with the prefab's value. The ImGui inspector draws their labels in the warning colour, the note as their
     /// tooltip. Until the target changes.

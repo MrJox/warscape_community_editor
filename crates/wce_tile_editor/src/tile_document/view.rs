@@ -1735,6 +1735,14 @@ impl Tile {
         Some(matrix_of(&world_transform(self.tscene(), e), self.unit(), None))
     }
 
+    /// The world frame of the item's parent (its group, prefab or layer; the world for the top level), in `item_transform`'s space: the
+    /// axes of local coordinates.
+    pub(crate) fn item_parent_transform(&self, item: SourceRef) -> Option<Float4x4> {
+        self.item_transform(item)?;
+        let e = elem_of(item.item)?;
+        Some(matrix_of(&super::edits::parent_transform(self.tscene(), e), self.unit(), None))
+    }
+
     /// World positions of the points of a polygon.
     /// A spline's curve in the world (metres), sampled.
     pub fn spline_world_curve(&self, elem: usize) -> Vec<Float3> {

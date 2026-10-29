@@ -57,7 +57,11 @@ pub struct Viewport {
     target: RenderTarget,
     texture: Option<dear_imgui_rs::TextureId>,
     pub gizmo: GizmoMode,
-    pub gizmo_local: bool,
+
+    /// The coordinate system (the toolbar's Global / Local, L): false, the world's; true, the selected item's parent's (its group, prefab
+    /// or layer). The move and rotate gizmo's axes follow it, and the Inspector shows and edits positions and rotations in it. The
+    /// scale gizmo is the item's own either way. Not kept in the settings.
+    pub local_coordinates: bool,
     pub snap: bool,
     pub snap_move: f32,
     pub snap_angle: f32,
@@ -120,7 +124,7 @@ impl Default for Viewport {
             total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
             orbit: OrbitCamera::default(), mode: CameraMode::default(),
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
+            local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -128,6 +132,23 @@ impl Default for Viewport {
 }
 
 // ImGuizmo wants row-vector matrices (v * M, row-major in memory); ours are column-vector (M * v), so it gets the transpose.
+/// A frame with the axes of `axes` (their lengths taken out) at the position of `at`.
+fn axes_at(axes: &Float4x4, at: &Float4x4) -> Float4x4 {
+    let mut m = Float4x4::IDENTITY;
+    for c in 0..3 {
+        let len = (0..3).map(|r| axes.m[r][c] * axes.m[r][c]).sum::<f32>().sqrt().max(1e-12);
+        for r in 0..3 {
+            m.m[r][c] = axes.m[r][c] / len;
+        }
+    }
+
+    for r in 0..3 {
+        m.m[r][3] = at.m[r][3];
+    }
+
+    m
+}
+
 fn to_gizmo(m: &Float4x4) -> [f32; 16] {
     let mut out = [0.0; 16];
     for r in 0..4 {
@@ -612,14 +633,18 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let cam = vp.camera();
         let v = to_gizmo(&cam.view());
         let p = to_gizmo(&cam.projection(w as f32 / h as f32));
-        let mut m = to_gizmo(&world);
         let op = match vp.gizmo {
             GizmoMode::Translate => gz::TRANSLATE,
             GizmoMode::Rotate => gz::ROTATE,
             _ => gz::SCALE,
         };
 
-        let mode = if vp.gizmo_local && vp.gizmo != GizmoMode::Translate { gz::LOCAL } else { gz::WORLD };
+        // Local coordinates: the gizmo works on a stand-in with the parent's axes at the item (the delta it makes is the same world move);
+        // the scale is the item's own.
+        let parent = (vp.local_coordinates && vp.gizmo != GizmoMode::Scale).then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary))).flatten();
+        let frame = parent.map_or(world, |pm| axes_at(&pm, &world));
+        let mut m = to_gizmo(&frame);
+        let mode = if parent.is_some() || vp.gizmo == GizmoMode::Scale && vp.local_coordinates { gz::LOCAL } else { gz::WORLD };
         let gizmo_clip = (2.0 * vp.gizmo_points / size.y.max(1.0)).clamp(0.02, 1.5);
         let mut snap_values = [vp.snap_move; 3];
         if vp.gizmo == GizmoMode::Rotate {
@@ -663,14 +688,14 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             // The tool's snapping (the Tile tool's grid and points) on a translate; the gizmo's own Snap is the step it already took.
             let mut moved = from_gizmo(&m);
             if vp_gizmo == GizmoMode::Translate {
-                let (from, to) = ([world.m[0][3], world.m[1][3], world.m[2][3]], [moved.m[0][3], moved.m[1][3], moved.m[2][3]]);
+                let (from, to) = ([frame.m[0][3], frame.m[1][3], frame.m[2][3]], [moved.m[0][3], moved.m[1][3], moved.m[2][3]]);
                 let snapped = e.with_active_tool(|t, e| t.snap_gizmo_move(e, primary, from, to)).unwrap_or(to);
                 moved.m[0][3] = snapped[0];
                 moved.m[1][3] = snapped[1];
                 moved.m[2][3] = snapped[2];
             }
 
-            let delta = moved * inverse(&world);
+            let delta = moved * inverse(&frame);
             let items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc) {
