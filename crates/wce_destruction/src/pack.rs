@@ -23,8 +23,12 @@ pub fn is_buildings_file(path: &str, key: &str) -> bool {
 ///
 /// # Errors
 ///
-/// The pack exists and doesn't read, or it can't be written.
+/// The pack exists and doesn't read, or it (or its folder) can't be written.
 pub fn put_building(path: &Path, game: &str, kind: PFHFileType, key: &str, files: Vec<(String, Vec<u8>)>, tables: Vec<(String, DB)>) -> Result<usize, String> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+
     let existing = if path.is_file() { read_pack_files(path, game)? } else { vec![] };
     let mut kept = existing.into_iter().filter(|(p, _)| !is_buildings_file(p, key)).collect::<Vec<_>>();
     let others = kept.len();

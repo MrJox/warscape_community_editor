@@ -87,6 +87,26 @@ fn run() -> Result<(), String> {
         println!("  rows: {:?}", tables.iter().map(|(t, db)| (t.clone(), db.data().len())).collect::<Vec<_>>());
 
         if let Some(dir) = &out_dir {
+            // Confirm's way: the building put into a pack (twice: the second replaces the first), read back, its tables decoded.
+            let single = dir.join(format!("{new_key}.pack"));
+            let files = a.files.iter().map(|(n, b)| (format!("rigidmodels/buildings/{new_key}/{n}"), b.clone())).collect::<Vec<_>>();
+            for _ in 0..2 {
+                wce_destruction::pack::put_building(&single, GameProfile::ATTILA.key, rpfm_lib::games::pfh_file_type::PFHFileType::Mod, &new_key, files.clone(), tables.clone())?;
+            }
+            let back = wce_walls::pack::read_pack_files(&single, GameProfile::ATTILA.key)?;
+            let ours = back.iter().filter(|(p, _)| wce_destruction::pack::is_buildings_file(p, &new_key)).count();
+            let tables_back = back.iter().filter(|(p, _)| p.starts_with("db/")).map(|(p, b)| {
+                let table = p.split('/').nth(1).unwrap_or_default();
+                let mut extra = rpfm_lib::files::DecodeableExtraData::default();
+                extra.set_schema(Some(&schema));
+                extra.set_table_name(Some(table));
+                <rpfm_lib::files::db::DB as rpfm_lib::files::Decodeable>::decode(&mut std::io::Cursor::new(b), &Some(extra)).map(|db| db.data().len()).map_err(|e| format!("{p}: {e}"))
+            }).collect::<Result<Vec<_>, _>>()?;
+            println!("  pack: {} files ({ours} of the building, {} expected), tables back {:?}", back.len(), files.len() + tables.len(), tables_back);
+            if ours != files.len() + tables.len() {
+                bad += 1;
+            }
+
             let folder = dir.join(format!("rigidmodels/buildings/{new_key}"));
             std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
             for (name, bytes) in &a.files {
