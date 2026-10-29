@@ -20,8 +20,8 @@ capture recipe is in docs/re/water.md ("The battle sea of a coastal battle"):
 
 Settled 2026-10-27 (docs/re/water.md, "Settled"): the river's uv is metres across / along (BOB's vertices, the shader's 0.01 / 0.001),
 the battle river shader has no fade at the ends and no foam, `g_refraction_depth` is 0.75, and the water now takes shadows (the
-`enable_shadows` variants of the river and water plane shaders). Open: winter ice (the engine loads `BattleTerrain/river/ice_diffuse_*`
-into a terrain node water mode next to the campaign's `campaign_water_lf`; whether a battle uses it is checked in game, docs/re/water.md).
+`enable_shadows` variants of the river and water plane shaders). Settled 2026-10-29 in game: winter rivers stay open water in a battle
+(no ice), so the engine's `BattleTerrain/river/ice_diffuse_*` mode is not a battle feature (docs/re/water.md).
 
 ## To check in game
 

@@ -188,6 +188,12 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   (`commontextures/vfx_fire_diffuse`, bound with the blood map by 0x117c3830). So [2] is POSITION6.x. A tile's `burn` starts the battle
   with the building on fire (`on_fire`); its `burn_amount` is TEd's preview only (the game ramps its own). Attila's building models have
   no burning meshes (material 56: none in the 5639 building models).
+- Burning, as seen in game (2026-10-29, three screenshots from the user of a barbarian longhouse shot by onagers; the last two are 6 s
+  apart): (1) flames (the building's fire effects) all over the outline and black smoke, the roof already caved in (the next
+  destruction level), the walls still their own grey wood, only the fallen roof inside black; (2) fewer flames, the walls darker;
+  (3) the flames out, smoke only, and the whole building, walls and roof, covered in large blotches of rusty orange and black: the
+  fire shader's char and embers at the full amount (`BUILDING_LITE_MAX_BURN_SHADER_AMOUNT` 1.0). So the char builds up while the
+  building burns and is strongest once the fire is out; the flames do not last as long as the char.
 - Glow: TEd's `glow_amount` goes to parameter [3], which no rigid instance path of the kit's engine reads, and the export does not carry
   it. The game's glows are its unit and deployable highlights (`UNIT_GLOW_INTENSITY_SELECTION`, `..._MOUSEOVER`,
   `DEPLOYABLE_GLOW_INTENSITY_...`), its own parameters (POSITION6.y brightens). `glow_amount` does nothing in TEd or the game.
