@@ -32,7 +32,8 @@ check it.
 - Never drawn either: **numbered copies** (`..._destruct01_0` beside `..._destruct01`, `..._destruct01_anim_0` beside
   `..._destruct01_anim`, `<key>_tech_0.cs2.parsed` beside `<key>_tech.cs2.parsed`). The Dawnless Days mod packs carry one beside every
   piece file of its Gondor, Moria and Khazad buildings and some cliffs and rocks (258 models in 103 folders, every one with its original;
-  the meshes equal, a few header bytes differ). The logic file names only the originals. A file whose name less a trailing `_<digits>`
+  in `gondor_fort_straight` every copy has its original's size, and in the pair compared only a few header bytes differ). The logic file
+  names only the originals. A file whose name less a trailing `_<digits>`
   after `destructNN` is in its folder is skipped (`index::copied_piece`).
 - **ASSUMPTION**: the first frame is what a standing siege engine shows. For the ram it is exactly the bind pose (its inverse binds
   are the inverses of frame 0). Check: a deployed ram or tower in game, wheels in place.
