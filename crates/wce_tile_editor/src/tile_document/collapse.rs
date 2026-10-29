@@ -96,6 +96,9 @@ pub(crate) struct CollapseState {
 
     /// (piece file, volume) -> the triangles a volumetric effect emits from.
     emit_meshes: HashMap<(String, [u32; 10]), Option<EmitMesh>>,
+
+    /// Piece file -> its triangles in model space (`Tile::piece_triangles`).
+    piece_meshes: HashMap<String, Option<EmitMesh>>,
 }
 
 /// The column-vector matrix of a bone's local transform.
@@ -360,10 +363,6 @@ impl Tile {
     /// ASSUMPTION: the engine emits from a mesh (fn 0x1183fa30: a random triangle of the effect owner's mesh, masked per triangle), but
     /// which mesh a VOLUMETRIC_EFFECT gives it, and how the volume selects its triangles, were not traced.
     fn emit_mesh(&mut self, file: &str, fx: &MetaEffect) -> Option<EmitMesh> {
-        use rpfm_lib::files::Decodeable;
-        use rpfm_lib::files::rigidmodel::RigidModel;
-        use rpfm_lib::files::rigidmodel::materials::MaterialType;
-
         let size = fx.volume?;
         let key = (file.to_owned(), [fx.position, size].concat().into_iter().chain(fx.rotation).map(f32::to_bits).collect::<Vec<_>>().try_into().ok()?);
         if let Some(m) = self.collapses.emit_meshes.get(&key) {
@@ -374,6 +373,34 @@ impl Tile {
         let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
         let to_local = wce_foundation::math::inverse(&(translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q)));
         let half = size.map(|v| 0.5 * v.abs());
+        let found = self.piece_triangles(file).and_then(|all| {
+            let mut tris = vec![];
+            for t in all.iter() {
+                let [a, b, c] = [0, 3, 6].map(|i| to_local.transform_point(Float3::new(t[i], t[i + 1], t[i + 2])));
+                let m = (a + b + c) * (1.0 / 3.0);
+                if m.x.abs() <= half[0] && m.y.abs() <= half[1] && m.z.abs() <= half[2] {
+                    tris.push([a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z]);
+                }
+            }
+
+            (!tris.is_empty()).then(|| Arc::new(tris))
+        });
+
+        self.collapses.emit_meshes.insert(key, found.clone());
+        found
+    }
+
+    /// A piece file's triangles in its model space (metres; the blocks' pivots applied, the projected decals left out), from its first
+    /// LOD; cached. What an effect that emits from the piece's mesh spawns on.
+    pub(super) fn piece_triangles(&mut self, file: &str) -> Option<EmitMesh> {
+        use rpfm_lib::files::Decodeable;
+        use rpfm_lib::files::rigidmodel::RigidModel;
+        use rpfm_lib::files::rigidmodel::materials::MaterialType;
+
+        if let Some(m) = self.collapses.piece_meshes.get(file) {
+            return m.clone();
+        }
+
         let found = self.files.as_deref().and_then(|f| f.read(file).ok()).and_then(|bytes| {
             let model = RigidModel::decode(&mut std::io::Cursor::new(bytes), &Some(Default::default())).ok()?;
             let mut tris = vec![];
@@ -390,22 +417,19 @@ impl Tile {
                 let (vs, idx) = (block.mesh().vertices(), block.mesh().indices());
                 let at = |i: u16| vs.get(usize::from(i)).map(|v| {
                     let p = v.position();
-                    to_local.transform_point(Float3::new(p.x + pivot.x, p.y + pivot.y, p.z + pivot.z))
+                    [p.x + pivot.x, p.y + pivot.y, p.z + pivot.z]
                 });
 
                 for t in idx.chunks_exact(3) {
                     let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else { continue };
-                    let m = (a + b + c) * (1.0 / 3.0);
-                    if m.x.abs() <= half[0] && m.y.abs() <= half[1] && m.z.abs() <= half[2] {
-                        tris.push([a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z]);
-                    }
+                    tris.push([a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]);
                 }
             }
 
             (!tris.is_empty()).then(|| Arc::new(tris))
         });
 
-        self.collapses.emit_meshes.insert(key, found.clone());
+        self.collapses.piece_meshes.insert(file.to_owned(), found.clone());
         found
     }
 

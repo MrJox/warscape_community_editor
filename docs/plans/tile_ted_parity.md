@@ -149,8 +149,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
     fire shader, charred by POSITION6.x = the burn amount (`docs/re/buildings.md`). The editor does the same (`MeshInstance::burning`,
     the fire passes of `GBUFFER_PASSES`, `s_fire_map` = `vfx_fire_diffuse`); `scripts/tile_building_look.txt`. The game's look is
     noted from screenshots (2026-10-29, `docs/re/buildings.md`); compared (2026-10-29): the char now matches at
-    burn_amount 0.3 (the fire map was read as sRGB; fixed), the game's likely amount; the flames are much smaller than the game's
-    (open, `docs/re/buildings.md`). `burn` is exported (`on_fire`); `burn_amount` is a preview only.
+    burn_amount 0.3 (the fire map was read as sRGB; fixed), the game's likely amount; the flames now cover the
+    building as the game's do (the engine's `burning_entity` over each burning piece's mesh; `docs/re/buildings.md`, "The flames"). `burn` is exported (`on_fire`); `burn_amount` is a preview only.
   - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Hidden from the
     Property Editor (user, 2026-10-28).
   - `dirt_level` never reaches the renderer; `building_tech_level` has no effect in TEd (no case in its property handler, no model

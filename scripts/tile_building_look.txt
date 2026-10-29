@@ -27,7 +27,8 @@ undo
 frames 3
 assert_instance_param 3 1000
 
-# burn: the pieces draw with their material's fire shader, charred by burn_amount (POSITION6.x); %OUT%/burn_1.png, %OUT%/burn_03.png.
+# burn: the pieces draw with their material's fire shader, charred by burn_amount (POSITION6.x), and burning_entity's flames rise from their
+# triangles; %OUT%/burn_1.png, %OUT%/burn_03.png.
 assert_piece 0 burning 0
 tile_edit selected burn true
 frames 10

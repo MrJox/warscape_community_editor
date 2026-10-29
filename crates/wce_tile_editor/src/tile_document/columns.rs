@@ -20,7 +20,11 @@
 //! The effects of the pieces (wce_formats::anim_meta: `<piece file>.meta`), on the buildings' own pieces and on what they attach, are
 //! placed the same way: the torches' `action_vfx_torch_fire_small`, a lighthouse's fire. Shown: the untagged effects that loop (not the
 //! `destruction_vfx_*` bursts a piece plays once when it reaches its level), and the `ip_fire` ones while the building burns (its `burn`
-//! property). The capture smoke, the fire transitions and the timed fires belong to battle events and are not shown.
+//! property). A burning piece also plays `burning_entity` over its whole mesh: the engine's fire on a burning entity (flames, smoke,
+//! embers and a light, from the piece's triangles), whatever its `.meta` holds. The capture smoke, the fire transitions and the timed
+//! fires belong to battle events and are not shown, nor are the engine's other burning stages (`burning_entity_pre_smoke` before,
+//! `burning_entity_collapse` and `burning_entity_aftermath` after; their timing, `BUILDING_FIRE_STAGE_*_DURATION`, was not traced), nor
+//! `burning_entity_small`, which the engine picks for some entities (a type check not identified).
 //! ASSUMPTION: an effect's `scale` is applied like a placed VFXInstance's; its bone and its string flag are not used.
 
 use std::collections::{HashMap, HashSet};
@@ -37,6 +41,10 @@ use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderSc
 use super::index::{copied_piece, destruct_number, piece_copy, static_piece};
 use super::view::{piece_local, piece_model};
 use super::{Tile, item_of};
+
+/// The effect a burning piece plays over its mesh (empire.retail.dll fn 0x104bb1e0 attaches it to the burning entity; its emitters
+/// emit from the entity's mesh, `AllowEmitFromMesh`).
+const BURNING_EFFECT: &str = "burning_entity";
 
 /// Two columns closer than this (metres) are the same joint.
 const JOINT_TOLERANCE_M: f32 = 0.5;
@@ -315,14 +323,15 @@ impl Tile {
 
             let Some(m) = self.model_of(e).filter(|m| m.ok).cloned() else { return (out, pieces) };
             let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { return (out, pieces) };
-            if !self.relevant_building(&key) {
+            let burns = self.tscene().doc().get(e, "burn").is_some_and(|v| v.trim() == "true");
+            let piece_burns = (0..m.pieces.len()).any(|k| self.piece_props(e, k).is_some_and(|p| p.burn));
+            if !burns && !piece_burns && !self.relevant_building(&key) {
                 return (out, pieces);
             }
 
             let columns = self.building_columns(&key);
             let saved = self.saved_destruction_level(e, m.levels);
             let world = self.world_matrix(e);
-            let burns = self.tscene().doc().get(e, "burn").is_some_and(|v| v.trim() == "true");
             for (k, piece) in m.pieces.iter().enumerate() {
                 let props = self.piece_props(e, k).cloned();
                 if props.as_ref().is_some_and(|p| !p.visible) {
@@ -448,8 +457,18 @@ impl Tile {
                 }
             }
 
-            // The pieces' effects, in their model space.
+            // The pieces' effects, in their model space; a burning piece's fire over its whole mesh.
             for (world, file, elem, burns) in effect_pieces {
+                if let Some(mesh) = burns.then(|| self.piece_triangles(&file)).flatten() {
+                    let vfx = VfxEmitter { effect: BURNING_EFFECT.to_owned(), scale: 1.0 / unit, mesh: Some(mesh) };
+                    let id = scene.add(layer, world, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
+                    if let Some(en) = scene.find_mut(id) {
+                        en.locked = true;
+                    }
+
+                    ids.push(id);
+                }
+
                 let Some(effects) = self.piece_effects(&file) else { continue };
                 for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
                     let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
