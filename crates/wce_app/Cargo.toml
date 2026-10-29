@@ -32,8 +32,9 @@ wce_ui_tool = { path = "../wce_ui_tool", optional = true }
 wce_weather_tool = { path = "../wce_weather_tool", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-# Build the same SDL3 version as sdl3-sys so Windows builds do not need a separate SDL SDK install.
-sdl3-sys = { version = "0.7", default-features = false, features = ["build-from-source"] }
+# Build the same SDL3 version as sdl3-sys so Windows builds do not need a separate SDL SDK install. Linked statically:
+# with the build-dir in .cargo/config.toml, sdl3-sys would copy SDL3.dll there instead of next to the exe.
+sdl3-sys = { version = "0.7", default-features = false, features = ["build-from-source", "link-static"] }
 
 [target.'cfg(not(windows))'.dependencies]
 sdl3-sys = "0.7"
