@@ -2016,8 +2016,6 @@ impl TileTool {
         gui::separator();
         self.draw_prefabs_section(e, id);
         gui::separator();
-        self.draw_ground_section(e, id);
-        gui::separator();
         self.draw_links_section(e, id);
         gui::separator();
         self.draw_problems_section(e, id);
@@ -2030,29 +2028,6 @@ impl TileTool {
         }
 
         gui::end();
-    }
-
-    /// Ground: the terrain colour is the tile's blend map mixed from the textures of a climate (picked with the views, the water, the sea,
-    /// the trees and the grass in the viewport's ground chip, ground_views.rs). The climate is not stored in the tile (a map's climate map
-    /// says it), so it is a setting; a wrong guess looks different, not broken.
-    fn draw_ground_section(&mut self, e: &mut Editor, id: DocumentId) {
-        if !gui::collapsing_header("Ground", gui::TREE_DEFAULT_OPEN) {
-            return;
-        }
-
-        let shader_failures = e.renderer.as_ref().map(|r| r.shader_failures().to_vec()).unwrap_or_default();
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        let mut look = d.tile().terrain_look().clone();
-        if gui::checkbox("blended ground (blend map + climate textures)", &mut look.blended) {
-            d.tile_mut().set_terrain_look(&mut e.scene, look);
-        }
-
-        gui::text_disabled(&format!("{} the viewport's top right: the views, the climate and season, water, sea, trees, grass", icons::LAYERS));
-        gui::text_wrapped(d.tile().terrain_note());
-        gui::text_disabled(d.tile().water_note());
-        for f in &shader_failures {
-            gui::text_colored(theme::error(), &format!("game shader not loaded: {f}"));
-        }
     }
 
     /// Tile links: the entry's link targets and rules, edited (`links_editor`), and a viewport view of the cells they name. They are part
