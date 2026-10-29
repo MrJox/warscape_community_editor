@@ -1580,32 +1580,6 @@ impl Editor {
             gui::same_line();
         }
 
-        gui::text_disabled("|");
-        gui::same_line();
-        for (game, name, tip) in [
-            (false, "Editor view", "The scene with the editor's markers, polygons, grid, selection outline and gizmo."),
-            (true, "Game view", "The scene as the game shows it: no markers, polygons, grid, selection outline or gizmo."),
-        ] {
-            let on = self.viewport.game_view == game;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
-
-            if gui::small_button(name) {
-                self.viewport.game_view = game;
-            }
-
-            if on {
-                gui::pop_style_color(1);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(tip);
-            }
-
-            gui::same_line();
-        }
-
         self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
         gui::text_disabled("|");
         gui::same_line();
@@ -1757,7 +1731,7 @@ impl Editor {
             gui::end_menu();
         }
 
-        // The camera's options are saved once a slider is let go.
+        // The camera's options (the viewport's camera chip) are saved once a slider is let go.
         if !gui::is_mouse_down(0) && self.camera_settings_changed() {
             self.save_camera_settings();
         }
@@ -1778,25 +1752,6 @@ impl Editor {
                 self.viewport.game_view = true;
             }
 
-            if gui::begin_menu("Camera") {
-                for mode in CameraMode::ALL {
-                    if gui::menu_item(mode.label(), None, self.viewport.mode() == mode, true) {
-                        self.set_camera_mode(mode);
-                    }
-                }
-
-                gui::separator();
-                let o = &mut self.viewport.camera_options;
-                gui::menu_item_toggle("Respect ground", &mut o.respect_ground);
-                gui::menu_item_toggle("Respect collisions (bounding boxes)", &mut o.respect_collisions);
-                gui::menu_item_toggle("Game height limits", &mut o.game_limits);
-                gui::menu_item_toggle("Edge scrolling", &mut self.viewport.edge_scroll);
-                let o = &mut self.viewport.camera_options;
-                gui::slider_float("Smoothing", &mut o.smoothing, 0.0, 1.0, "%.2f");
-                gui::slider_float("Ground clearance", &mut o.ground_clearance, 0.0, 10.0, "%.1f m");
-                gui::end_menu();
-            }
-
             if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), Some("F"), false, !self.selection.is_empty()) {
                 self.focus_selection();
             }
@@ -1808,7 +1763,6 @@ impl Editor {
                 gui::menu_item_toggle("Fog", &mut r.settings.fog);
             }
 
-            gui::menu_item_toggle("Snap", &mut self.viewport.snap);
             if gui::begin_menu("Gizmo size") {
                 for (size, label) in [(45.0, "Small"), (wce_foundation::settings::DEFAULT_GIZMO_SIZE, "Medium"), (90.0, "Large"), (120.0, "Extra large")] {
                     if gui::menu_item(label, None, self.settings.appearance.gizmo_size == size, true) {
