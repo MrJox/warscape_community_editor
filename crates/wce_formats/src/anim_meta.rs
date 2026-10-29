@@ -101,9 +101,167 @@ pub fn meta_effects(bytes: &[u8]) -> Option<Vec<MetaEffect>> {
     (r.p == bytes.len()).then_some(out)
 }
 
+/// A `.meta` as stored, every field kept: what is written back to the byte, and what generated buildings' effects are made as.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MetaFile {
+    pub version: u32,
+    pub entries: Vec<MetaEntry>,
+}
+
+/// An entry: its type name, version, times, tag (from version 2) and contents.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetaEntry {
+    pub kind: String,
+    pub version: u32,
+    pub start: f32,
+    pub end: f32,
+    pub tag: Option<String>,
+    pub body: MetaBody,
+}
+
+/// An entry's contents by type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetaBody {
+    /// `EFFECT`: the effect, the flag string, position, rotation, bone, and the scale of versions 3 and from 5.
+    Effect { effect: String, flag: String, position: [f32; 3], rotation: [f32; 4], bone: i32, scale: Option<f32> },
+
+    /// `VOLUMETRIC_EFFECT`: the effect and its 20 floats (the layout in this module's notes).
+    Volumetric { effect: String, floats: [f32; 20] },
+
+    /// `SOUND_BUILDING`: 20 bytes, not decoded.
+    Sound([u8; 20]),
+}
+
+impl MetaFile {
+    /// Reads a `.meta`; `None` when an entry's type is unknown or the file doesn't end where its entries do.
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        let mut r = Reader { b: bytes, p: 0 };
+        let version = r.u32()?;
+        let count = r.u32()?;
+        let mut entries = vec![];
+        for _ in 0..count {
+            let kind = r.string_exact()?;
+            let v = r.u32()?;
+            let (start, end) = (r.f32()?, r.f32()?);
+            let tag = if v >= 2 { Some(r.string_exact()?) } else { None };
+            let body = match kind.as_str() {
+                "EFFECT" => {
+                    let (effect, flag) = (r.string_exact()?, r.string_exact()?);
+                    let position = [r.f32()?, r.f32()?, r.f32()?];
+                    let rotation = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
+                    let bone = r.u32()? as i32;
+                    let scale = if v == 3 || v >= 5 { Some(r.f32()?) } else { None };
+                    MetaBody::Effect { effect, flag, position, rotation, bone, scale }
+                }
+
+                "VOLUMETRIC_EFFECT" => {
+                    let effect = r.string_exact()?;
+                    let mut floats = [0.0; 20];
+                    for f in &mut floats {
+                        *f = r.f32()?;
+                    }
+
+                    MetaBody::Volumetric { effect, floats }
+                }
+
+                "SOUND_BUILDING" => MetaBody::Sound(r.take(20)?.try_into().ok()?),
+                _ => return None,
+            };
+
+            entries.push(MetaEntry { kind, version: v, start, end, tag, body });
+        }
+
+        (r.p == bytes.len()).then_some(Self { version, entries })
+    }
+
+    /// The bytes of the file.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = vec![];
+        let text = |b: &mut Vec<u8>, s: &str| {
+            b.extend((s.len() as u16).to_le_bytes());
+            b.extend(s.bytes());
+        };
+
+        b.extend(self.version.to_le_bytes());
+        b.extend((self.entries.len() as u32).to_le_bytes());
+        for e in &self.entries {
+            text(&mut b, &e.kind);
+            b.extend(e.version.to_le_bytes());
+            b.extend(e.start.to_le_bytes());
+            b.extend(e.end.to_le_bytes());
+            if let Some(t) = &e.tag {
+                text(&mut b, t);
+            }
+
+            match &e.body {
+                MetaBody::Effect { effect, flag, position, rotation, bone, scale } => {
+                    text(&mut b, effect);
+                    text(&mut b, flag);
+                    position.iter().chain(rotation).for_each(|v| b.extend(v.to_le_bytes()));
+                    b.extend(bone.to_le_bytes());
+                    if let Some(s) = scale {
+                        b.extend(s.to_le_bytes());
+                    }
+                }
+
+                MetaBody::Volumetric { effect, floats } => {
+                    text(&mut b, effect);
+                    floats.iter().for_each(|v| b.extend(v.to_le_bytes()));
+                }
+
+                MetaBody::Sound(raw) => b.extend(raw),
+            }
+        }
+
+        b
+    }
+
+    /// A volumetric effect over a box (centre, size, in the piece's model space) at `start` seconds, untagged, as the game's collapses
+    /// have their dust.
+    pub fn volumetric(effect: &str, start: f32, centre: [f32; 3], size: [f32; 3]) -> MetaEntry {
+        let mut floats = [0.0; 20];
+        floats[6] = 1.0;
+        floats[7..10].copy_from_slice(&centre);
+        floats[10..13].copy_from_slice(&size);
+        floats[16] = 1.0;
+        MetaEntry { kind: "VOLUMETRIC_EFFECT".into(), version: 2, start, end: start, tag: Some(String::new()), body: MetaBody::Volumetric { effect: effect.into(), floats } }
+    }
+
+    /// A point effect at `start` seconds, untagged, version 5 (with a scale).
+    pub fn effect(effect: &str, start: f32, position: [f32; 3], scale: f32) -> MetaEntry {
+        MetaEntry {
+            kind: "EFFECT".into(),
+            version: 5,
+            start,
+            end: start,
+            tag: Some(String::new()),
+            body: MetaBody::Effect { effect: effect.into(), flag: "false".into(), position, rotation: [0.0, 0.0, 0.0, 1.0], bone: -1, scale: Some(scale) },
+        }
+    }
+}
+
+impl Reader<'_> {
+    /// A string that must be UTF-8 (so that it writes back to the same bytes).
+    fn string_exact(&mut self) -> Option<String> {
+        let n = self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize)?;
+        self.take(n).and_then(|s| String::from_utf8(s.to_vec()).ok())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::meta_effects;
+    use super::{MetaFile, meta_effects};
+
+    #[test]
+    fn writes_back() {
+        let b = (0..TORCH.len()).step_by(2).map(|i| u8::from_str_radix(&TORCH[i..i + 2], 16).unwrap()).collect::<Vec<_>>();
+        assert_eq!(MetaFile::parse(&b).expect("parses").encode(), b);
+
+        let made = MetaFile { version: 2, entries: vec![MetaFile::volumetric("destruction_vfx_area_dust_light", 0.01, [0.0, 6.5, 4.3], [20.0, 18.0, 12.0])] };
+        let e = meta_effects(&made.encode()).expect("reads");
+        assert_eq!((e[0].position, e[0].volume), ([0.0, 6.5, 4.3], Some([20.0, 18.0, 12.0])));
+        assert_eq!(MetaFile::parse(&made.encode()), Some(made));
+    }
 
     /// torch_sconce_piece01_destruct01.meta (models2.pack).
     const TORCH: &str = "0200000001000000060045464645435403000000000000000000000000001b00616374696f6e5f7666785f746f7263685f666972655f736d616c6c050066616c7365d4d2383fb2d7054000000000000000000000000058da12be925a7d3fffffffff0000803f";

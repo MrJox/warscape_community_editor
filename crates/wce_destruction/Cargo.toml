@@ -1,0 +1,15 @@
+[package]
+name = "wce_destruction"
+description = "Building destruction: a building's damage levels, collapse animations, effects and logic generated from its intact model (docs/plans/building_destruction.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nalgebra = "0.35"
+rapier3d = { version = "0.36", features = ["enhanced-determinism"] }
+rpfm_lib.workspace = true
+serde_json = "1"
+wce_formats = { path = "../wce_formats" }
+wce_vfs = { path = "../wce_vfs" }
+wce_walls = { path = "../wce_walls" }
