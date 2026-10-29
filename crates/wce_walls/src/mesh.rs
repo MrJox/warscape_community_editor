@@ -235,7 +235,7 @@ fn clip_mesh(mesh: &mut Mesh, pivot: [f32; 3], planes: &[[f32; 3]]) -> Result<()
 }
 
 /// The part of a polygon where `side >= 0` (Sutherland-Hodgman, the vertices interpolated).
-fn clip_by(polygon: &[Vertex], side: impl Fn(&Vertex) -> f32) -> Vec<Vertex> {
+pub fn clip_by(polygon: &[Vertex], side: impl Fn(&Vertex) -> f32) -> Vec<Vertex> {
     let mut out = vec![];
     for i in 0..polygon.len() {
         let (a, b) = (&polygon[i], &polygon[(i + 1) % polygon.len()]);
@@ -253,7 +253,7 @@ fn clip_by(polygon: &[Vertex], side: impl Fn(&Vertex) -> f32) -> Vec<Vertex> {
 }
 
 /// The vertices the triangles use, each once (the cuts make a copy of a vertex per slab; the triangles that were cut leave theirs unused).
-fn compact(vertices: &[Vertex], indices: &[u16]) -> (Vec<Vertex>, Vec<u16>) {
+pub fn compact(vertices: &[Vertex], indices: &[u16]) -> (Vec<Vertex>, Vec<u16>) {
     let key = |v: &Vertex| {
         let mut k = Vec::with_capacity(24);
         for x in [v.position().as_slice(), v.normal().as_slice(), v.tangent().as_slice(), v.bitangent().as_slice(), v.color().as_slice(), v.weights().as_slice()] {
@@ -308,7 +308,7 @@ fn clip(polygon: &[Vertex], at: f32, keep_above: bool) -> Vec<Vertex> {
 
 /// A vertex between two: what varies smoothly is interpolated (directions renormalised), the rest (bone indices, unknown bytes) taken
 /// from the nearer one.
-fn lerp(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
+pub fn lerp(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
     let mut v = if t < 0.5 { a.clone() } else { b.clone() };
     let l4 = |x: &Vector4<f32>, y: &Vector4<f32>| x + (y - x) * t;
     let l2 = |x: &Vector2<f32>, y: &Vector2<f32>| x + (y - x) * t;
