@@ -218,12 +218,12 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         let marks = scene.add_layer(2, "Overlays");
 
         // Above the peak: always visible.
-        let mut up = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false };
+        let mut up = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
         up.line(Float3::new(0.0, 41.0, 0.0), Float3::new(0.0, 110.0, 0.0), overlay_colour(1.0, 0.0, 1.0, 1.0));
         let up_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(up), SourceRef { doc: 2, item: 1 });
 
         // Inside the hill: hidden by the depth test, visible without it.
-        let mut buried = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false };
+        let mut buried = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
         buried.line(Float3::new(0.0, 2.0, 0.0), Float3::new(0.0, 30.0, 0.0), overlay_colour(0.0, 1.0, 0.0, 1.0));
         let buried_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(buried), SourceRef { doc: 2, item: 2 });
         scene.environment.active = Some(env.clone());

@@ -476,11 +476,15 @@ pub struct Overlay {
     /// Not shown: drawn only into the selection outline's mask. The shapes that stand for selected items without a mesh of their own (a
     /// tile's markers), which the outline goes around like a selected mesh.
     pub selection_mask: bool,
+
+    /// The renderer keeps it in a GPU buffer of its own (as it does any big overlay): changing, adding or removing it writes only that
+    /// buffer, not the one the other overlays share. For an overlay made in pieces that come and go (the building technology's map cells).
+    pub own_buffer: bool,
 }
 
 impl Default for Overlay {
     fn default() -> Self {
-        Self { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false }
+        Self { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false }
     }
 }
 
@@ -980,9 +984,11 @@ impl RenderScene {
         self.touch();
     }
 
-    /// Removes the entities with ids in `ids` (one pass, for many entities added in a row).
+    /// Removes the entities with ids in `ids` (one pass, for many entities added in a row); logged as that removal, not as a change of
+    /// anything (the renderer's draws and overlays follow it instead of being built again: a wall's columns are placed again this way
+    /// every frame a building moves).
     pub fn remove_range(&mut self, ids: std::ops::Range<EntityId>) {
-        self.retain_entities(|e| !ids.contains(&e.id));
+        self.remove_ranges(std::slice::from_ref(&ids));
     }
 
     /// Removes the entities with ids in any of `ranges` (one pass for all: a streamed map context drops several chunks a frame).
