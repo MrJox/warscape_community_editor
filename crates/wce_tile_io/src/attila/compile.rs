@@ -371,6 +371,48 @@ fn marker_table(keys: &[MarkerKey]) -> Vec<Option<usize>> {
     slots
 }
 
+/// Model keys of one file with distinct marker hashes. The hash cancels a character against the same one 4, 8, 12... characters on
+/// (`gondor_civic_building_2/gondor_civic_building_2_piece01...` and `_3/..._3_piece01...` hash alike), and the game shows one model for
+/// keys that hash alike (TDD's Cair Andros, small: the five gondor_civic_building models swapped). A key that collides with an earlier
+/// one is written with the case of a letter of its file name changed (not of its extension) (the game's files ignore case): another hash, the same model.
+/// The packs' prop markers have no such keys (562 files), so this changes no exported tile.
+fn distinct_model_keys(records: &mut [(MarkerKey, Node)]) {
+    let mut taken: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    let mut written: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (k, _) in records.iter_mut() {
+        let MarkerKey::Text(key) = k else { continue };
+        if let Some(w) = written.get(key.as_str()) {
+            key.clone_from(w);
+            continue;
+        }
+
+        let free = |taken: &std::collections::HashMap<u32, String>, s: &str| taken.get(&marker_key_hash(&[s])).is_none_or(|t| t == s);
+        let w = if free(&taken, key) { key.clone() } else { case_variants(key).find(|v| free(&taken, v)).unwrap_or_else(|| key.clone()) };
+        taken.insert(marker_key_hash(&[&w]), w.clone());
+        written.insert(key.clone(), w.clone());
+        *key = w;
+    }
+}
+
+/// A path with the case of one letter of its file name (not its extension) changed, then of two, from the end.
+fn case_variants(path: &str) -> impl Iterator<Item = String> + '_ {
+    let chars = path.chars().collect::<Vec<_>>();
+    let name = chars.iter().rposition(|&c| c == '/' || c == '\\').map_or(0, |i| i + 1);
+    let stem_end = chars[name..].iter().position(|&c| c == '.').map_or(chars.len(), |i| name + i);
+    let letters = (name..stem_end).rev().filter(|&i| chars[i].is_ascii_alphabetic()).collect::<Vec<_>>();
+    let flip = move |at: &[usize]| {
+        let mut c = chars.clone();
+        for &i in at {
+            c[i] = if c[i].is_ascii_lowercase() { c[i].to_ascii_uppercase() } else { c[i].to_ascii_lowercase() };
+        }
+
+        c.into_iter().collect::<String>()
+    };
+    let singles = letters.clone().into_iter().map(|i| vec![i]);
+    let pairs = letters.clone().into_iter().enumerate().flat_map(move |(n, i)| letters[n + 1..].to_vec().into_iter().map(move |j| vec![i, j]));
+    singles.chain(pairs).map(move |at| flip(&at))
+}
+
 /// The order a `MARKER_TABLE` gives its keys (inserted in the order of their first record): the keys in slot order.
 pub(crate) fn marker_table_order(keys: &[MarkerKey]) -> Vec<MarkerKey> {
     marker_table(keys).into_iter().flatten().map(|i| keys[i].clone()).collect()
@@ -578,7 +620,8 @@ fn prop_markers(placed: &[Placed], extent_z: f32, ctx: &CompileContext) -> Optio
     const NAME: &str = "prop_marker.markers";
     let version = ctx.marker_versions.and_then(|f| f(NAME)).unwrap_or_else(|| ctx.conventions.marker_version(NAME));
     let signed = ctx.conventions.signed_decal_fields(version);
-    let records = placed.iter().filter(|p| p.export == "LayerExportType_Normal").filter_map(|p| prop_record(p, extent_z, version, signed)).collect::<Vec<_>>();
+    let mut records = placed.iter().filter(|p| p.export == "LayerExportType_Normal").filter_map(|p| prop_record(p, extent_z, version, signed)).collect::<Vec<_>>();
+    distinct_model_keys(&mut records);
     (!records.is_empty()).then(|| markers_doc(NAME, "PROP_MARKER", 645_566, version, records))
 }
 
@@ -1460,7 +1503,9 @@ fn escalation_bmds(placed: &[Placed], extent_z: f32, ctx: &CompileContext, notes
             MarkerKey::Text(s) | MarkerKey::Named(s, _) => s.clone(),
             MarkerKey::Number(v) => v.to_string(),
         };
-        let props = grouped(layer.iter().filter_map(|p| prop_record(p, extent_z, 9, true)).collect());
+        let mut props = layer.iter().filter_map(|p| prop_record(p, extent_z, 9, true)).collect::<Vec<_>>();
+        distinct_model_keys(&mut props);
+        let props = grouped(props);
         let emitters = grouped(layer.iter().filter(|p| p.node.class == "VFXInstance").map(|p| emitter_record(p, extent_z, 9)).collect());
         let captures = layer
             .iter()
@@ -1968,6 +2013,25 @@ mod tests {
         assert_eq!(marker_table_order(&numbers(&[21, 23, 27, 22, 28, 30])), numbers(&[27, 28, 30, 21, 22, 23]));
         let many = (0..14).map(|n| n * 13).collect::<Vec<u32>>();
         assert_eq!(marker_table_order(&numbers(&many)).len(), 14);
+    }
+
+    #[test]
+    fn model_keys_that_hash_alike_get_distinct_hashes() {
+        // TDD's Cair Andros (small): the digit is twice in each path, 24 characters apart, so the five keys hash alike.
+        let key = |n: u32| format!("RigidModels/Buildings/gondor_civic_building_{n}/gondor_civic_building_{n}_piece01_destruct01.rigid_model_v2");
+        assert!((2..=5).all(|n| marker_key_hash(&[&key(n)]) == marker_key_hash(&[&key(1)])));
+        let mut records = [1, 2, 1, 3, 4, 5, 2].map(|n| (MarkerKey::Text(key(n)), Node::new("record"))).to_vec();
+        distinct_model_keys(&mut records);
+        let text = records.iter().map(|(k, _)| if let MarkerKey::Text(s) = k { s.clone() } else { String::new() }).collect::<Vec<_>>();
+        assert_eq!(text[0], key(1));
+        assert_eq!(text[2], text[0]);
+        assert_eq!(text[6], text[1]);
+        let hashes = [0, 1, 3, 4, 5].map(|i| marker_key_hash(&[&text[i]]));
+        assert_eq!(hashes.iter().collect::<std::collections::BTreeSet<_>>().len(), 5);
+        for (i, n) in [(1, 2), (3, 3), (4, 4), (5, 5)] {
+            assert_eq!(text[i].to_lowercase(), key(n).to_lowercase());
+            assert!(text[i].ends_with(".rigid_model_v2") && text[i].starts_with("RigidModels/Buildings/"));
+        }
     }
 
     #[test]
