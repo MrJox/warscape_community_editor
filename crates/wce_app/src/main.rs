@@ -362,6 +362,10 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
 
     let mut state = WindowEvents::default();
     let mut last_frame = Instant::now();
+
+    // When the frame under the cap ends: a fixed schedule, each end a budget after the last one. Waiting out the budget less each frame's own
+    // time lost the sleep's overshoot (a fraction of a millisecond) every frame: 117 fps at a cap of 120, 140 at 144.
+    let mut frame_due: Option<Instant> = None;
     // SAFETY: D3D calls on live objects; SDL calls on the live window.
     unsafe {
         let mut rtv = back_buffer_view(swap, dev);
@@ -419,9 +423,14 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
             // commands, perf measurements) run free.
             if !batch && editor.script().done() && editor.frame_cap() > 0 {
                 let budget = std::time::Duration::from_secs_f64(1.0 / f64::from(editor.frame_cap()));
-                if let Some(rest) = budget.checked_sub(frame_start.elapsed()) {
-                    std::thread::sleep(rest);
-                }
+                let due = frame_due.unwrap_or(frame_start + budget);
+                // More than a frame late (a hitch, a new cap): the schedule starts again from now instead of frames running back to back.
+                let now = Instant::now();
+                let due = if now > due + budget { now } else { due };
+                wait_until(due);
+                frame_due = Some(due + budget);
+            } else {
+                frame_due = None;
             }
 
             let now = Instant::now();
@@ -441,6 +450,18 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
     drop(renderer);
     drop(platform);
     (exit_code, restart)
+}
+
+/// Waits until `due`: a sleep that ends a little early (it wakes up late by up to about that much), the rest yielded away.
+fn wait_until(due: Instant) {
+    const EARLY: std::time::Duration = std::time::Duration::from_micros(300);
+    if let Some(rest) = due.checked_duration_since(Instant::now()).and_then(|r| r.checked_sub(EARLY)) {
+        std::thread::sleep(rest);
+    }
+
+    while Instant::now() < due {
+        std::thread::yield_now();
+    }
 }
 
 /// A render target view of the swap chain's back buffer.
