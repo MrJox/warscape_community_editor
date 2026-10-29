@@ -28,8 +28,8 @@ pub struct VolumeBox {
 /// What the tool asks of the preview.
 #[derive(Clone, Debug)]
 pub enum DestructionRequest {
-    /// Draw `elem` from these files (a building folder under `key`, pieces `pieces`) at level `level` (0 intact).
-    Show { elem: usize, key: String, files: BTreeMap<String, Vec<u8>>, pieces: Vec<u32>, level: usize },
+    /// Draw `elem` from these files (a building folder under `key`) at level `level` (0 intact).
+    Show { elem: usize, key: String, files: BTreeMap<String, Vec<u8>>, level: usize },
 
     /// Show a level (0 intact).
     Level(usize),
@@ -63,7 +63,9 @@ pub(crate) struct DestructionPreview {
     pending: Vec<DestructionRequest>,
     elem: Option<usize>,
     key: Option<String>,
-    pieces: Vec<u32>,
+
+    /// The preview's file names (its folder's).
+    names: Vec<String>,
     level: usize,
 
     /// The standing entities (one per piece), the overlay, and the building's own piece entities hidden (with whether they were shown).
@@ -95,16 +97,32 @@ impl Tile {
         self.destruction.level
     }
 
-    fn preview_file(&self, piece: u32, level: usize, anim: bool) -> Option<String> {
-        let key = self.destruction.key.as_ref()?;
-        Some(format!("{}{key}_piece{piece:02}_destruct{:02}{}.rigid_model_v2", folder(key), level + 1, if anim { "_anim" } else { "" }))
+    /// The models standing at a level (0 intact): every piece's, a gate's leaves closed.
+    fn level_models(&self, level: usize) -> Vec<String> {
+        let Some(key) = self.destruction.key.as_ref() else { return vec![] };
+        let (plain, closed) = (format!("_destruct{:02}.rigid_model_v2", level + 1), format!("_destruct{:02}_gate_closed.rigid_model_v2", level + 1));
+        self.destruction.names.iter().filter(|n| n.ends_with(&plain) || n.ends_with(&closed)).map(|n| format!("{}{n}", folder(key))).collect()
+    }
+
+    /// The collapses into damage level `level` (their models), each with the standing model it starts from and the one it ends at.
+    fn level_collapses(&self, level: usize) -> Vec<(String, String, Option<String>)> {
+        let Some(key) = self.destruction.key.as_ref() else { return vec![] };
+        let f = folder(key);
+        let (plain, gate) = (format!("_destruct{level:02}_anim.rigid_model_v2"), format!("_destruct{level:02}_gate_closed_destruct_anim.rigid_model_v2"));
+        self.destruction.names.iter().filter_map(|n| {
+            if let Some(stem) = n.strip_suffix(&plain) {
+                Some((format!("{f}{n}"), format!("{f}{stem}_destruct{level:02}.rigid_model_v2"), Some(format!("{f}{stem}_destruct{:02}.rigid_model_v2", level + 1))))
+            } else {
+                n.strip_suffix(&gate).map(|stem| (format!("{f}{n}"), format!("{f}{stem}_destruct{level:02}_gate_closed.rigid_model_v2"), None))
+            }
+        }).collect()
     }
 
     /// Per frame (from publish): carries out the requests, plays the collapse.
     pub(crate) fn update_destruction(&mut self, scene: &mut RenderScene, layer: LayerId) {
         for r in std::mem::take(&mut self.destruction.pending) {
             match r {
-                DestructionRequest::Show { elem, key, files, pieces, level } => {
+                DestructionRequest::Show { elem, key, files, level } => {
                     if self.destruction.elem != Some(elem) {
                         self.restore_destroyed(scene);
                         self.hide_own_pieces(scene, elem);
@@ -114,13 +132,13 @@ impl Tile {
                         wce_vfs::generated::remove_prefix(&folder(&old));
                     }
 
+                    self.destruction.names = files.keys().cloned().collect();
                     for (name, bytes) in files {
                         wce_vfs::generated::put(&format!("{}{name}", folder(&key)), bytes);
                     }
 
                     self.destruction.elem = Some(elem);
                     self.destruction.key = Some(key);
-                    self.destruction.pieces = pieces;
                     self.stop_playing(scene);
                     self.show_destruction_level(scene, layer, level);
                     self.draw_volumes(scene, layer);
@@ -188,12 +206,7 @@ impl Tile {
         self.destruction.level = level;
         let world = self.world_matrix(elem);
         let source = self.source(item_of(elem));
-        for &p in &self.destruction.pieces.clone() {
-            let Some(model) = self.preview_file(p, level, false) else { continue };
-            if self.files.as_deref().is_some_and(|f| !f.exists(&model)) {
-                continue;
-            }
-
+        for model in self.level_models(level) {
             let id = scene.add(layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source);
             if let Some(en) = scene.find_mut(id) {
                 en.locked = true;
@@ -214,8 +227,7 @@ impl Tile {
         let world = self.world_matrix(elem);
         let source = self.source(item_of(elem));
         let mut pieces = vec![];
-        for &p in &self.destruction.pieces.clone() {
-            let Some(mesh) = self.preview_file(p, level - 1, true) else { continue };
+        for (mesh, from, to) in self.level_collapses(level) {
             let stem = mesh.trim_end_matches(".rigid_model_v2").to_owned();
             let anim = self.files.as_deref().and_then(|f| f.read(&format!("{stem}.anim")).ok()).and_then(|b| Animation::decode(&b, usize::MAX));
             let first = scene.next_id();
@@ -231,7 +243,7 @@ impl Tile {
 
             // The new level's bursts at the start, the collapse's own at their times.
             let mut effects = vec![];
-            if let Some(next) = self.preview_file(p, level, false) {
+            if let Some(next) = to {
                 let meta = format!("{}.meta", next.trim_end_matches(".rigid_model_v2"));
                 if let Some(m) = self.meta_entries(&meta) {
                     effects.extend(m.iter().filter(|e| e.tag.is_empty()).cloned().map(|mut e| {
@@ -246,8 +258,7 @@ impl Tile {
             }
 
             effects.sort_by(|a, b| a.start.total_cmp(&b.start));
-            let source = self.preview_file(p, level - 1, false).unwrap_or_default();
-            pieces.push(PiecePlay { anim, bones, effects: effects.into(), source });
+            pieces.push(PiecePlay { anim, bones, effects: effects.into(), source: from });
         }
 
         // The standing pieces the collapse starts from are hidden once the fragments draw (they are bone 0 of the collapse).

@@ -237,8 +237,7 @@ impl TileTool {
                 Ok(g) => {
                     s.took = took;
                     s.status = format!("preview {revision}: {} collapse(s), {:.1} s", g.collapses.len(), took);
-                    let pieces = s.source.pieces.iter().map(|p| p.number).collect();
-                    let req = DestructionRequest::Show { elem: s.elem, key: g.key.clone(), files: g.files.clone(), pieces, level: s.level.min(g.levels - 1) };
+                    let req = DestructionRequest::Show { elem: s.elem, key: g.key.clone(), files: g.files.clone(), level: s.level.min(g.levels - 1) };
                     s.preview = Some(Arc::new(g));
                     if let Some(d) = e.docs.find_as_mut::<TileDocument>(s.doc) {
                         d.tile_mut().destruction_request(req);

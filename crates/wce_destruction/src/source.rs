@@ -30,12 +30,25 @@ impl SourcePiece {
     }
 }
 
+/// A piece with no plain intact file but states (a gate's leaves: `_destruct01_gate_closed`, `_gate_open`): per state its suffix
+/// (`_gate_closed`) and model.
+#[derive(Clone, Debug)]
+pub struct StatePiece {
+    pub number: u32,
+    pub states: Vec<(String, RigidModel)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Source {
     pub key: String,
     pub category: String,
     pub files: BuildingFiles,
     pub pieces: Vec<SourcePiece>,
+
+    /// The two-state pieces, broken like the others (each state on its own), and the pieces this does not break (a siege engine's
+    /// skinned or looped parts), copied as they are.
+    pub state_pieces: Vec<StatePiece>,
+    pub other_pieces: Vec<u32>,
     pub bounds: Aabb,
     pub notes: Vec<String>,
 }
@@ -81,19 +94,45 @@ impl Source {
             }
         }
 
-        if pieces.is_empty() {
+        // The pieces without a plain intact file: their states, else copied.
+        let mut numbers = files.files.keys().filter_map(|n| n.strip_prefix(&prefix).and_then(|r| r.get(..2)).and_then(|d| d.parse::<u32>().ok())).collect::<Vec<_>>();
+        numbers.sort_unstable();
+        numbers.dedup();
+        let mut state_pieces = vec![];
+        let mut other_pieces = vec![];
+        for num in numbers.into_iter().filter(|n| !pieces.iter().any(|p: &SourcePiece| p.number == *n)) {
+            let lead = format!("{prefix}{num:02}_destruct01_");
+            let mut states = vec![];
+            for (name, bytes) in &files.files {
+                let Some(state) = name.strip_prefix(&lead).and_then(|r| r.strip_suffix(".rigid_model_v2")) else { continue };
+                if state.ends_with("anim") {
+                    continue;
+                }
+
+                match decode_model(bytes) {
+                    Ok(model) if matches!(*model.version(), 5 | 6) => states.push((format!("_{state}"), model)),
+                    Ok(_) | Err(_) => notes.push(format!("{name}: not read, the piece is copied as it is")),
+                }
+            }
+
+            if states.is_empty() {
+                other_pieces.push(num);
+            } else {
+                state_pieces.push(StatePiece { number: num, states });
+            }
+        }
+
+        if pieces.is_empty() && state_pieces.is_empty() {
             return Err(format!("{}: no intact piece (`{prefix}NN_destruct01.rigid_model_v2`) to break", files.key));
         }
 
         pieces.sort_by_key(|p| p.number);
         let mut bounds = Aabb::EMPTY;
-        for p in &pieces {
-            if let Some(lod) = p.model.lods().first() {
-                bounds.merge(&Aabb::of(lod_triangles(lod).iter().flatten().flatten().map(pos)));
-            }
+        for m in pieces.iter().map(|p| &p.model).chain(state_pieces.iter().flat_map(|s| s.states.iter().map(|x| &x.1))) {
+            bounds.merge(&model_bounds(m));
         }
 
-        Ok(Self { key: files.key.clone(), category: category.to_owned(), files, pieces, bounds, notes })
+        Ok(Self { key: files.key.clone(), category: category.to_owned(), files, pieces, state_pieces, other_pieces, bounds, notes })
     }
 
     /// The logic file's bytes.
@@ -103,8 +142,24 @@ impl Source {
 
     /// Every texture the intact pieces name.
     pub fn textures(&self) -> Vec<String> {
-        self.pieces.iter().flat_map(|p| p.model.lods().iter().flat_map(|l| l.mesh_blocks().iter().flat_map(|b| b.material().textures().iter().map(|t| t.path().clone())))).collect()
+        self.models().flat_map(|m| m.lods().iter().flat_map(|l| l.mesh_blocks().iter().flat_map(|b| b.material().textures().iter().map(|t| t.path().clone())))).collect()
     }
+
+    /// The intact models: the pieces', and every state of the two-state pieces.
+    pub fn models(&self) -> impl Iterator<Item = &RigidModel> {
+        self.pieces.iter().map(|p| &p.model).chain(self.state_pieces.iter().flat_map(|s| s.states.iter().map(|x| &x.1)))
+    }
+
+    /// The files of a piece (every level), by file name.
+    pub fn piece_files(&self, number: u32) -> Vec<&String> {
+        let lead = format!("{}_piece{number:02}_", self.key);
+        self.files.files.keys().filter(|n| n.starts_with(&lead)).collect()
+    }
+}
+
+/// The box of a model's first LOD (its vertices plus their pivots).
+pub fn model_bounds(m: &RigidModel) -> Aabb {
+    m.lods().first().map_or(Aabb::EMPTY, |lod| Aabb::of(lod_triangles(lod).iter().flatten().flatten().map(pos)))
 }
 
 /// The game's templates for what the generator makes.

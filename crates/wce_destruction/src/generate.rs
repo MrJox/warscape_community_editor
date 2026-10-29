@@ -141,7 +141,7 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
         source,
         templates,
         exists,
-        cells: planked(Cells::make(&source.bounds, params), source, params, &culture),
+        cells: planked(Cells::make(&source.bounds, params), &source.pieces.iter().map(|p| &p.model).collect::<Vec<_>>(), params, &culture),
         culture,
         shell: (!solid_kind).then_some(params.thickness.max(0.05)),
         walkable: params.walkable.unwrap_or(is_fort(&source.category)),
@@ -169,7 +169,7 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
     let collisions = source.logic().map(|l| intact_collisions(l)).transpose()?.unwrap_or_default();
     let mut piece_heaps: Vec<(String, Vec<Option<Heap>>, Vec<Fixed>, Vec<Aabb>)> = vec![];
     for piece in &source.pieces {
-        let made = make_piece(&cx, piece, &mut out)?;
+        let made = make_piece(&cx, piece, "", &mut out)?;
         let name = piece.name();
         // The collision mesh of each damage level: the intact one cut and capped, and the heap.
         let mut fixed = vec![];
@@ -190,6 +190,56 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
         piece_heaps.push((name, made.heaps, fixed, made.bounds));
     }
 
+    // The two-state pieces (gates): each state broken on its own, from the first damage level that reaches it; the rest copied.
+    let mut copied: Vec<(u32, Vec<usize>)> = vec![];
+    for sp in &source.state_pieces {
+        let leaf = sp.states.iter().fold(Aabb::EMPTY, |mut b, (_, m)| {
+            b.merge(&crate::source::model_bounds(m));
+            b
+        });
+        let first = params.levels.iter().position(|l| l.volumes.iter().any(|v| v.bounds().overlaps(&leaf))).map(|k| k + 1);
+        let Some(at) = first.filter(|_| !leaf.is_empty()) else {
+            copy_piece(source, sp.number, &key, &mut out);
+            copied.push((sp.number, (0..=n).map(|l| l.min(1)).collect()));
+            continue;
+        };
+
+        let mut sub = params.clone();
+        sub.rubble = 0.0;
+        let size = leaf.size().max();
+        for (k, l) in sub.levels.iter_mut().enumerate() {
+            l.volumes = if k + 1 == at { vec![crate::params::Volume { centre: [leaf.centre().x, leaf.centre().y, leaf.centre().z], half: (leaf.size() * 0.6 + V3::repeat(0.2)).into(), yaw: 0.0, ellipsoid: false }] } else { vec![] };
+            l.fragment_size = (size / 4.0).clamp(0.4, l.fragment_size);
+            l.max_fragments = l.max_fragments.min(24);
+            l.roughness = 0.0;
+        }
+
+        for (suffix, model) in &sp.states {
+            let mut cells = Cells::make(&leaf, &sub);
+            cells = planked(cells, &[model], &sub, &cx.culture);
+            let scx = Context { params: &sub, cells, shell: None, walkable: false, near_damage: Aabb::EMPTY, culture: cx.culture.clone(), ..cx };
+            let piece = crate::source::SourcePiece { number: sp.number, model: model.clone(), states: vec![] };
+            make_piece(&scx, &piece, suffix, &mut out)?;
+        }
+
+        // The swings (opening, closing) and anything else of the intact level that is not a state, renamed.
+        let states = sp.states.iter().map(|(s, _)| format!("_destruct01{s}.rigid_model_v2")).collect::<Vec<_>>();
+        for name in source.piece_files(sp.number) {
+            let rest = &name[source.key.len()..];
+            if rest.contains("_destruct01_") && !states.iter().any(|s| rest.ends_with(s.as_str())) && !rest.contains("_destruct_anim") {
+                out.files.insert(format!("{key}{rest}"), source.files.files[name].clone());
+            }
+        }
+
+        copied.push((sp.number, (0..=n).map(|l| usize::from(l >= at)).collect()));
+    }
+
+    for &number in &source.other_pieces {
+        copy_piece(source, number, &key, &mut out);
+        copied.push((number, (0..=n).collect()));
+        out.notes.push(format!("piece{number:02}: not broken (no intact or two-state model), copied as it is"));
+    }
+
     // The logic file.
     if let Some(logic) = source.logic() {
         let gone_fns = (1..=n).map(|l| {
@@ -201,8 +251,9 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
             v.sort_by_key(|x| x.0);
             v.into_iter().map(|(_, b, p)| (b, p)).collect::<Vec<_>>()
         }).collect::<Vec<_>>();
-        let pieces = piece_heaps.iter().map(|(name, heaps, fixed, bounds)| PieceLogic {
+        let mut pieces = piece_heaps.iter().map(|(name, heaps, fixed, bounds)| PieceLogic {
             name: name.clone(),
+            copy: None,
             levels: (1..=n).map(|l| LevelLogic {
                 gone: &gone_fns[l - 1],
                 cells: cut_cells[l - 1].clone(),
@@ -213,6 +264,7 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
                 dock_height: source.bounds.max.y * 0.85,
             }).collect(),
         }).collect::<Vec<_>>();
+        pieces.extend(copied.iter().map(|(number, copy)| PieceLogic { name: format!("piece{number:02}"), levels: vec![], copy: Some(copy.clone()) }));
         let (bytes, notes) = make_logic(logic, &pieces)?;
         out.notes.extend(notes);
         out.files.insert(format!("{key}_tech.cs2.parsed"), bytes.clone());
@@ -232,11 +284,11 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
 
 /// The cells with the removed ones that are mostly wood (by the intact LOD 0's triangles in them) split in planks, their grain the
 /// longest spread of those triangles.
-fn planked(mut cells: Cells, source: &Source, params: &Params, culture: &str) -> Cells {
+fn planked(mut cells: Cells, models: &[&RigidModel], params: &Params, culture: &str) -> Cells {
     let mut wood = vec![];
     let mut all = vec![];
-    for p in &source.pieces {
-        let Some(lod) = p.model.lods().first() else { continue };
+    for m in models {
+        let Some(lod) = m.lods().first() else { continue };
         for (b, tris) in lod_triangles(lod).iter().enumerate() {
             let block = &lod.mesh_blocks()[b];
             let class = override_of(&params.materials, block.material()).and_then(|o| o.class).unwrap_or_else(|| classify(block.material(), culture));
@@ -276,13 +328,22 @@ fn planked(mut cells: Cells, source: &Source, params: &Params, culture: &str) ->
     cells
 }
 
+/// A piece's files (every level) under the new key, as they are.
+fn copy_piece(source: &Source, number: u32, key: &str, out: &mut Generated) {
+    for name in source.piece_files(number) {
+        out.files.insert(format!("{key}{}", &name[source.key.len()..]), source.files.files[name].clone());
+    }
+}
+
 /// What [`make_piece`] gives the logic file: per level (0 intact) its heap and the box of its geometry.
 struct PieceMade {
     heaps: Vec<Option<Heap>>,
     bounds: Vec<Aabb>,
 }
 
-fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Generated) -> Result<PieceMade, String> {
+/// A piece's levels and collapses; `suffix` is a two-state piece's state (`_gate_closed`: its levels are `_destructNN_gate_closed`, its
+/// collapse `_destructNN_gate_closed_destruct_anim`, as the game's gates), empty for a plain piece.
+fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, suffix: &str, out: &mut Generated) -> Result<PieceMade, String> {
     let params = cx.params;
     let n = params.levels.len();
     let key = &params.key;
@@ -414,24 +475,24 @@ fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Genera
 
         // A level without fragments here changes at once (as most of the game's buildings do).
         if !mine.is_empty() {
-            let made = collapse(cx, piece, &pl[0], lods, level, &frags, &finals, &track, heaps[level - 1].as_ref(), damage_centre, out)?;
+            let made = collapse(cx, piece, suffix, &pl[0], lods, level, &frags, &finals, &track, heaps[level - 1].as_ref(), damage_centre, out)?;
             out.collapses.push(made);
         }
         heaps.push(heap);
     }
 
     // The levels' models.
-    let intact_name = format!("{src_key}_piece{nn:02}_destruct01.rigid_model_v2");
+    let intact_name = format!("{src_key}_piece{nn:02}_destruct01{suffix}.rigid_model_v2");
     if let Some(bytes) = cx.source.files.files.get(&intact_name) {
-        out.files.insert(format!("{key}_piece{nn:02}_destruct01.rigid_model_v2"), bytes.clone());
-        bounds[0] = cx.source.bounds;
+        out.files.insert(format!("{key}_piece{nn:02}_destruct01{suffix}.rigid_model_v2"), bytes.clone());
+        bounds[0] = crate::source::model_bounds(&piece.model);
     }
 
     if let Some(meta) = cx.source.files.files.get(&format!("{intact_name}.meta")) {
-        out.files.insert(format!("{key}_piece{nn:02}_destruct01.rigid_model_v2.meta"), meta.clone());
+        out.files.insert(format!("{key}_piece{nn:02}_destruct01{suffix}.rigid_model_v2.meta"), meta.clone());
     }
 
-    for state in &piece.states {
+    for state in piece.states.iter().filter(|_| suffix.is_empty()) {
         if let Some(bytes) = cx.source.files.files.get(state) {
             let suffix = &state[intact_name.len() - ".rigid_model_v2".len()..];
             for level in 0..=n {
@@ -459,8 +520,10 @@ fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Genera
 
         *model.lods_mut() = new_lods;
         model.set_skeleton_id(String::new());
-        out.files.insert(format!("{key}_piece{nn:02}_destruct{:02}.rigid_model_v2", level + 1), encode(&mut model)?);
-        out.files.insert(format!("{key}_piece{nn:02}_destruct{:02}.rigid_model_v2.meta", level + 1), standing_meta(cx, &intact_name, level, &frags).encode());
+        out.files.insert(format!("{key}_piece{nn:02}_destruct{:02}{suffix}.rigid_model_v2", level + 1), encode(&mut model)?);
+        if suffix.is_empty() {
+            out.files.insert(format!("{key}_piece{nn:02}_destruct{:02}.rigid_model_v2.meta", level + 1), standing_meta(cx, &intact_name, level, &frags).encode());
+        }
     }
 
     Ok(PieceMade { heaps, bounds })
@@ -600,12 +663,15 @@ fn resample(h: &Heap, step: f32) -> Heap {
 
 /// The collapse into damage level `level`: its model (bone 0 what stays, a bone per fragment), its animation and its effects.
 #[allow(clippy::too_many_arguments)]
-fn collapse(cx: &Context, piece: &crate::source::SourcePiece, pl: &PieceLod, lods: &[rpfm_lib::files::rigidmodel::Lod], level: usize, frags: &[Fragment], finals: &BTreeMap<usize, ([f32; 3], [f32; 4])>, track: &crate::sim::Track, prev_heap: Option<&Heap>, centre: V3, out: &mut Generated) -> Result<Collapse, String> {
+fn collapse(cx: &Context, piece: &crate::source::SourcePiece, suffix: &str, pl: &PieceLod, lods: &[rpfm_lib::files::rigidmodel::Lod], level: usize, frags: &[Fragment], finals: &BTreeMap<usize, ([f32; 3], [f32; 4])>, track: &crate::sim::Track, prev_heap: Option<&Heap>, centre: V3, out: &mut Generated) -> Result<Collapse, String> {
     let params = cx.params;
     let key = &params.key;
     let nn = piece.number;
-    let stem = format!("{key}_piece{nn:02}_destruct{level:02}_anim");
-    let name = format!("building_piece{nn:02}_destruct{level:02}_anim");
+    let (stem, name) = if suffix.is_empty() {
+        (format!("{key}_piece{nn:02}_destruct{level:02}_anim"), format!("building_piece{nn:02}_destruct{level:02}_anim"))
+    } else {
+        (format!("{key}_piece{nn:02}_destruct{level:02}{suffix}_destruct_anim"), format!("building_piece{nn:02}_destruct{level:02}{suffix}_destruct_anim"))
+    };
     let classes = classes(cx, lods[0].mesh_blocks());
     let mine = frags.iter().filter(|f| f.level == level).collect::<Vec<_>>();
 

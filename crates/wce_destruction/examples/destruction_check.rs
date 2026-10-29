@@ -130,7 +130,14 @@ fn check(name: &str, bytes: &[u8], g: &wce_destruction::generate::Generated, sou
         }
 
         let number = name.split("_piece").last().and_then(|r| r.get(..2)).and_then(|n| n.parse::<u32>().ok());
-        let original = source.pieces.iter().find(|p| Some(p.number) == number).map_or(0, |p| p.model.lods().len());
+        if number.is_some_and(|n| source.other_pieces.contains(&n)) {
+            return Ok(format!("copied, blocks {blocks:?}"));
+        }
+        let state = source.state_pieces.iter().find(|p| Some(p.number) == number).and_then(|p| p.states.iter().find(|(s, _)| name.contains(&format!("{s}.rigid_model_v2"))));
+        let original = match state {
+            Some((_, m)) => m.lods().len(),
+            None => source.pieces.iter().find(|p| Some(p.number) == number).map_or(0, |p| p.model.lods().len()),
+        };
         if m.lods().len() != original {
             return Err(format!("{} LODs, the original {original}", m.lods().len()));
         }

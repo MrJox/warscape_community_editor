@@ -38,10 +38,12 @@ pub struct LevelLogic<'a> {
     pub dock_height: f32,
 }
 
-/// A piece (`piece01`) and its damage levels (the first is level 1).
+/// A piece (`piece01`) and its damage levels (the first is level 1); or, for a piece whose levels are not made (a gate, a part copied as
+/// it is), per new level the original level it copies (`copy`, its index among the piece's levels).
 pub struct PieceLogic<'a> {
     pub name: String,
     pub levels: Vec<LevelLogic<'a>>,
+    pub copy: Option<Vec<usize>>,
 }
 
 /// The intact level's collision mesh of each piece (by name), for the caller to cut.
@@ -82,6 +84,25 @@ pub fn make_logic(bytes: &[u8], pieces: &[PieceLogic]) -> Result<(Vec<u8>, Vec<S
             notes.push(format!("{name}: no levels in the logic file"));
             continue;
         };
+
+        if let Some(copy) = &pl.copy {
+            let old = piece["destructs"].as_array().cloned().unwrap_or_default();
+            let mut destructs = vec![];
+            for (level, &from) in copy.iter().enumerate() {
+                let Some(src) = old.get(from.min(old.len().saturating_sub(1))) else { continue };
+                let mut d = src.clone();
+                let was = d["name"].as_str().unwrap_or_default().to_owned();
+                rename(&mut d, &was, &format!("{name}_destruct{:02}", level + 1));
+                d["index"] = json!(level);
+                if level > 0 {
+                    d["collision_3d"]["uk_1"] = json!(next_id);
+                    next_id += 1;
+                }
+                destructs.push(d);
+            }
+            piece["destructs"] = Value::Array(destructs);
+            continue;
+        }
 
         let mut destructs = vec![template.clone()];
         let mut piece_box = Aabb::EMPTY;
