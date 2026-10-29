@@ -72,15 +72,18 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
     `hardware_gather_5_0_sm_5_0` ones (the variant of the game's lighting, `DIR_LIGHT_PS`): the water takes the shadows of what stands
     over it (a bridge's on its river).
   - `g_refraction_depth` 0.75: the engine's constructors and the live game's cbuffer dump agree.
-- **Still open**: **ice in winter**. No battle water shader (river, water plane) has an ice input. The engine loads
+- **Settled in game (2026-10-29)**: **winter rivers do not freeze in a battle**. A screenshot of a snowing winter battle on a river map
+  shows the river as open water: dark, rippled, with sun glints, and the snowy bed showing through where it is shallow along the
+  banks. There is no ice sheet and no ice texture, so battles do not use the ice mode below (mode 1). The editor's river, the same in
+  every season, is right. The notes on the ice object below are kept for reference.
+- **Ice in winter (the engine)**: No battle water shader (river, water plane) has an ice input. The engine loads
   `BattleTerrain/river/ice_diffuse_1` and `_2` in the constructor fn 0x116c98a0 (empire.retail.dll 1.6.0; Ghidra project
   `~/wce_re/game_proj`), into +0xd4 / +0xd8 of an object whose base (fn 0x116d9190, material type 0x58) is made with "river" and
   `BattleTerrain/river` and a rectangle. That object is the second of three modes of a water display of the **Terrain Node** (class made by
   fn 0x118c9e10, vtable 0x11ccdcd0, type id 0xaba7777 in the component factory fn 0x117378d0): fn 0x11924ac0 (vtable slot 141) keeps at
   +2000 nothing (mode 0), the ice object over the node's bounds (+0x794; mode 1), or a `campaign_water_lf` object
-  (`terrain/textures/common`, mode 2). Who sets the mode was not found (no direct call through the slot; reached another way). Whether
-  battles use mode 1 (winter rivers frozen in a battle) is to be checked in game: a winter battle on a river map, with the
-  reference shots. The `ultra` quality level is fixed; the sea's normal texture
+  (`terrain/textures/common`, mode 2). Who sets the mode was not found (no direct call through the slot; reached another way). Battles do not
+  use mode 1 (checked in game, above). The `ultra` quality level is fixed; the sea's normal texture
   (`water_detail_normal`) is the one the battle plane is believed to use.
 - **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`cli/fxc_dump <fxc dir> <out> <asm dir>`), not the GLSL.
 

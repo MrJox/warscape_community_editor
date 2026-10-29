@@ -29,9 +29,10 @@ file's order. The editor itself is described in
 
 ### Phase 0 / 3 / 4 gate
 - An in-game reference shot of a fixed tile / camera / climate (a settlement tile, a river tile, a sea tile), to compare the terrain
-  and water against; with it, a winter battle on a river map (is the river frozen?) and, if possible, a RenderDoc / PIX capture of a
-  coastal battle (the sea's radial mesh and sea bed texture). None has been supplied; the terrain and water shots are compared only run against run. **Deferred** (user,
-  2026-10-26: the user takes the shots later).
+  and water against; and, if possible, a RenderDoc / PIX capture of a coastal battle (the sea's radial mesh and sea bed texture). Not
+  supplied yet; the terrain and water shots are compared only run against run. **Deferred** (user, 2026-10-26: the user takes the shots
+  later). Done (2026-10-29): the winter battle on a river map, a screenshot from the user: the river is not frozen (docs/re/water.md).
+  Done (2026-10-29): a burning building in game, three screenshots from the user (Phase 5d below).
 
 ### Phase 1
 - Done (2026-10-26): the gizmo at a constant screen size. Its handles are a length in points (settings `appearance.gizmo_size`,
@@ -84,9 +85,8 @@ file's order. The editor itself is described in
   `tile_ground_view water`, `paint_water_types`, `assert_water_depth`; `scripts/tile_water_depth.txt`. TEd has no water view. The river
   bed stays as authored (BOB carves it).
 - Water rendering (2026-10-27): the river's uv, fade, foam and `g_refraction_depth` settled from the shaders, the water takes shadows
-  (`rendering_remaining.md`, docs/re/water.md "Settled"). **Deferred to the in-game checks** (with the reference shots): winter ice (the
-  engine's ice textures belong to a terrain node water mode next to the campaign's; does a winter battle freeze its river?), and the
-  battle sea's radial mesh and sea bed texture (GPU-only: a RenderDoc / PIX capture of a coastal battle, docs/re/water.md).
+  (`rendering_remaining.md`, docs/re/water.md "Settled"). Winter ice: settled in game (2026-10-29), a winter battle's
+  river is open water, as the editor draws it. **Deferred to the in-game checks** (with the reference shots): the battle sea's radial mesh and sea bed texture (GPU-only: a RenderDoc / PIX capture of a coastal battle, docs/re/water.md).
 
 ### Phase 5a: terrain painting
 Done: the height brushes, the blend brush, the ground type brush, the falloff curve editor, the image brush, the stroke along a line,
@@ -142,8 +142,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
     and 0.5 and hides the building below that.
   - `burn` / `burn_amount`: done (2026-10-28). The game's burning buildings: render flag 0x200 draws the pieces with their material's
     fire shader, charred by POSITION6.x = the burn amount (`docs/re/buildings.md`). The editor does the same (`MeshInstance::burning`,
-    the fire passes of `GBUFFER_PASSES`, `s_fire_map` = `vfx_fire_diffuse`); `scripts/tile_building_look.txt`. Check the look against
-    a burning building in game. `burn` is exported (`on_fire`); `burn_amount` is a preview only.
+    the fire passes of `GBUFFER_PASSES`, `s_fire_map` = `vfx_fire_diffuse`); `scripts/tile_building_look.txt`. The game's look is
+    noted from screenshots (2026-10-29, `docs/re/buildings.md`); the editor's look is not compared against it yet. `burn` is exported (`on_fire`); `burn_amount` is a preview only.
   - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Hidden from the
     Property Editor (user, 2026-10-28).
   - `dirt_level` never reaches the renderer; `building_tech_level` has no effect in TEd (no case in its property handler, no model
