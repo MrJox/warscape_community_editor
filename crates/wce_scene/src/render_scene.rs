@@ -211,6 +211,10 @@ pub struct TerrainMaterial {
     /// Changes when `normal` does (the rest of the material is reused then).
     pub normal_id: u64,
 
+    /// `normal` differs from that of the normal id given only in this rectangle of pixels (x0, y0, x1, y1; end exclusive): a dab of a
+    /// height stroke, written there by a renderer that has that id's map.
+    pub normal_dirty: Option<(u64, [u32; 4])>,
+
     /// Changes when `blend` and `index` do (a paint stroke).
     pub blend_id: u64,
 
@@ -256,6 +260,7 @@ impl Default for TerrainMaterial {
             alpha: TerrainImage::default(),
             normal: TerrainImage::default(),
             normal_id: 0,
+            normal_dirty: None,
             blend_id: 0,
             blend_dirty: None,
             diffuse: Default::default(),

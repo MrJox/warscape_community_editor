@@ -242,13 +242,16 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
         None => (img(&m.blend, "blend"), img(&m.index, "index")),
     };
 
+    let patchable_normal = m.normal.rgba.as_ref().and_then(|n| crate::texture::PatchableRgba::new(dev, m.normal.w, m.normal.h, n));
+    let normal = patchable_normal.as_ref().map_or_else(|| img(&m.normal, "normal"), |p| p.texture.clone());
     let mut g = TerrainMatGpu {
         normal_id: m.normal_id,
         blend_id: m.blend_id,
         patchable: patchable.map(|p| std::sync::Arc::new(std::sync::Mutex::new(p))),
+        patchable_normal: patchable_normal.map(|p| std::sync::Arc::new(std::sync::Mutex::new(p))),
         blend,
         index,
-        normal: img(&m.normal, "normal"),
+        normal,
 
         // The tile's weight where it overlaps its neighbours (a map context's); alone, 1 over the whole rectangle.
         alpha: m.alpha.rgba.as_ref().map_or_else(|| make_solid_texture(dev, 0xFFFF_FFFF), |rgba| make_rgba_texture(dev, m.alpha.w, m.alpha.h, rgba, false)),
@@ -355,8 +358,9 @@ pub(crate) struct TerrainMatGpu {
     blend_id: u64,
     light_params: Option<ID3D11ShaderResourceView>,
 
-    /// The blend and index maps as textures written in place (`TerrainMaterial::blend_dirty`).
+    /// The blend and index maps as textures written in place (`TerrainMaterial::blend_dirty`), and the normal map (`normal_dirty`).
     patchable: Option<crate::texture::PatchableMaps>,
+    patchable_normal: Option<std::sync::Arc<std::sync::Mutex<crate::texture::PatchableRgba>>>,
 
     /// The material update it was last used in.
     used: u64,
@@ -840,13 +844,24 @@ impl Renderer {
                 }
             }
 
-            // A height stroke only changes the normal map.
+            // A height stroke only changes the normal map: the rectangle a dab changed when the map here is the one it changed, else the
+            // map made again.
             if have.normal_id != m.normal_id
                 && let Some(rgba) = &m.normal.rgba
             {
-                let t = make_rgba_texture(&self.dev, m.normal.w, m.normal.h, rgba, false);
-                if t.srv.is_some() {
-                    have.normal = t;
+                let patched = m.normal_dirty.filter(|&(from, _)| from == have.normal_id).zip(have.patchable_normal.as_ref()).is_some_and(|((_, rect), p)| {
+                    let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
+                    p.fits(m.normal.w, m.normal.h) && {
+                        p.patch(&self.ctx, rgba, rect);
+                        true
+                    }
+                });
+
+                if patched {
+                    have.normal_id = m.normal_id;
+                } else if let Some(p) = crate::texture::PatchableRgba::new(&self.dev, m.normal.w, m.normal.h, rgba) {
+                    have.normal = p.texture.clone();
+                    have.patchable_normal = Some(std::sync::Arc::new(std::sync::Mutex::new(p)));
                     have.normal_id = m.normal_id;
                 }
             }

@@ -105,6 +105,9 @@ pub struct HeightField {
 
     /// Goes up with every change of a sample (`version`).
     changes: u64,
+
+    /// The samples changed since `take_changed` (x0, y0, x1, y1; end exclusive).
+    pending: Option<(u32, u32, u32, u32)>,
     undo: Vec<Record>,
     redo: Vec<Record>,
 }
@@ -177,7 +180,7 @@ impl HeightField {
     pub fn recalibrate(&mut self, min_height: f64, scale: f64) {
         let raw = self.quantized(self.min, self.scale);
         self.v = raw.iter().map(|&r| (f64::from(r) / 65535.0 * scale) as f32).collect();
-        self.changes = self.changes.wrapping_add(1);
+        self.changed((0, 0, self.w, self.h));
         self.base = min_height;
         self.min = min_height;
         self.scale = scale;
@@ -249,8 +252,18 @@ impl HeightField {
         (self.v.as_ptr() as usize, self.changes)
     }
 
-    fn touch(&mut self, x: u32, y: u32) {
+    /// The rectangle of samples changed since the last call (x0, y0, x1, y1; end exclusive), none when nothing did.
+    pub fn take_changed(&mut self) -> Option<(u32, u32, u32, u32)> {
+        self.pending.take()
+    }
+
+    fn changed(&mut self, (x0, y0, x1, y1): (u32, u32, u32, u32)) {
         self.changes = self.changes.wrapping_add(1);
+        self.pending = Some(self.pending.map_or((x0, y0, x1, y1), |p| (p.0.min(x0), p.1.min(y0), p.2.max(x1), p.3.max(y1))));
+    }
+
+    fn touch(&mut self, x: u32, y: u32) {
+        self.changed((x, y, x + 1, y + 1));
         if !self.touched {
             (self.tx0, self.ty0, self.tx1, self.ty1, self.touched) = (x, y, x + 1, y + 1, true);
             return;
@@ -475,7 +488,7 @@ impl HeightField {
     }
 
     fn put(&mut self, r: &Record, values: &[f32]) {
-        self.changes = self.changes.wrapping_add(1);
+        self.changed((r.x0, r.y0, r.x1, r.y1));
         let mut it = values.iter();
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
