@@ -123,6 +123,7 @@ impl Tile {
                     self.destruction.pieces = pieces;
                     self.stop_playing(scene);
                     self.show_destruction_level(scene, layer, level);
+                    self.draw_volumes(scene, layer);
                 }
 
                 DestructionRequest::Level(level) => {

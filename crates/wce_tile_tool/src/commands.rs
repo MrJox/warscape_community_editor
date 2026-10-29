@@ -2004,6 +2004,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.destruction_confirm(e).map_or_else(fail, ok))
     });
 
+    c.add("destruction_wait", "destruction_wait [timeout seconds]", "script: wait until the Destruction mode's preview (or building) is made; reports its status", |e, a| {
+        let timeout = a.first().and_then(|t| t.parse::<f64>().ok()).unwrap_or(120.0);
+        with_tile(e, |t, _| match t.destruction_wait(timeout) {
+            Ok(None) => ok("").again(),
+            Ok(Some(status)) => ok(status),
+            Err(err) => fail(err),
+        })
+    });
+
     c.add("destruction_close", "destruction_close", "leave the Destruction mode (nothing is written)", |e, _| {
         with_tile(e, |t, e| {
             t.close_destruction(e);

@@ -53,6 +53,7 @@ pub(crate) struct Session {
     volume: (usize, usize),
     status: String,
     took: f32,
+    wait_since: Option<Instant>,
 }
 
 fn preset_index(p: Preset) -> i32 {
@@ -103,11 +104,29 @@ impl TileTool {
         self.destruction = Some(Session {
             doc, elem, source, templates, files, category, params,
             revision: 0, changed: Some(Instant::now() - PREVIEW_DELAY), job: None, confirm: None, preview: None, level: 0, volume: (0, 0),
-            status: String::new(), took: 0.0,
+            status: String::new(), took: 0.0, wait_since: None,
         });
         self.destruction_open = true;
         self.send_volumes(e);
         Ok(format!("destruction: {key}"))
+    }
+
+    /// For scripts: `None` while a preview or the building is being made (or the parameters wait to be previewed), for at most
+    /// `timeout` seconds; then the last status.
+    ///
+    /// # Errors
+    ///
+    /// No building is in the Destruction mode.
+    pub fn destruction_wait(&mut self, timeout: f64) -> Result<Option<String>, String> {
+        let s = self.destruction.as_mut().ok_or("no building in the Destruction mode")?;
+        let since = *s.wait_since.get_or_insert_with(Instant::now);
+        let busy = s.job.is_some() || s.confirm.is_some() || s.changed.is_some();
+        if busy && since.elapsed().as_secs_f64() < timeout {
+            return Ok(None);
+        }
+
+        s.wait_since = None;
+        Ok(Some(if busy { format!("still busy: {}", s.status) } else { s.status.clone() }))
     }
 
     /// Leaves the Destruction mode: the building's own pieces again.
