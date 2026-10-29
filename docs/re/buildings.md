@@ -201,6 +201,15 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   over the whole building. The game's building is in the south-east of TDD's Edoras (middle_men_city_edoras/medium), whose houses there
   are the nordic set (townhouse_1..3, city_building_1..3, longhouse_1, grain_store, ahouse, roundhouse; none scaled); those six
   burnt in the editor look the same: blue-black, with at most a few faint brown patches on a roof.
+- **The char, settled (2026-10-29)**: the editor sampled `vfx_fire_diffuse` as sRGB; the game's `s_fire_map` samplers are linear
+  (`samplers.tsv`). The texture's channels are masks, not a colour: R flickers the embers (scrolled 0.05 / s along v), B is the char
+  grey (B / 4) and the ember mask, A how soon a texel chars (`(1 - A) ^ amount * amount`); uv is the mesh's uv0 times (1.2, 1.5). The
+  ember colour is `2 * (0.2 + sat(5 R) * (0.53, 0.07, -0.12))`, then everything goes towards the grey by `amount - 0.025`. The G-buffer
+  and forward fire shaders do the same and have no glow. Read through sRGB, every mask was darker and the embers all but vanished. Fixed
+  (`renderer/passes.rs`): with linear masks, amount 0.3 gives orange streaks and patches over darkened wood, the game's look in the
+  third screenshot, and amount 1 black char. So the game's char most likely settles at `BURN_SHADER_AMOUNT` 0.3 for an ordinary
+  building (1.0 is the lite buildings' maximum); at 1 the shader itself leaves no orange. The fire effects (small flames against the
+  game's flames over the whole building) are still open.
 - Glow: TEd's `glow_amount` goes to parameter [3], which no rigid instance path of the kit's engine reads, and the export does not carry
   it. The game's glows are its unit and deployable highlights (`UNIT_GLOW_INTENSITY_SELECTION`, `..._MOUSEOVER`,
   `DEPLOYABLE_GLOW_INTENSITY_...`), its own parameters (POSITION6.y brightens). `glow_amount` does nothing in TEd or the game.

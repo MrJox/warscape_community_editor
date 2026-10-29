@@ -145,7 +145,8 @@ impl Renderer {
                     }
 
                     r.bind(&ps);
-                    let fire_map = if fire { r.textures.get(FIRE_MAP, true).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
+                    // Linear, as the game's s_fire_map samplers (docs/re/samplers.tsv): its channels are masks, not a colour.
+                    let fire_map = if fire { r.textures.get(FIRE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
                     bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
                     let snow = r.snow_normals_srv();
                     bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
