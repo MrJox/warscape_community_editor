@@ -990,6 +990,15 @@ pub fn context_ids() -> (ImGuiID, ImGuiID, ImGuiID) {
     })
 }
 
+/// Keeps the Alt key now held from moving the keyboard focus to the menu bar when it is let go (Dear ImGui's keyboard navigation does
+/// that for an Alt pressed alone): for a tool that uses Alt with the mouse.
+pub fn cancel_alt_menu_toggle() {
+    call!({
+        let g = &mut *sys::igGetCurrentContext();
+        g.NavWindowingToggleLayer = false;
+    })
+}
+
 pub fn set_context_ids(ids: (ImGuiID, ImGuiID, ImGuiID)) {
     call!({
         let g = &mut *sys::igGetCurrentContext();

@@ -1,0 +1,35 @@
+# A left drag in Select mode draws a selection box instead of turning the camera; a click on the ground still clears the selection; placing
+# goes on after each click without selecting what was placed (TEd's way). Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_place_box_test 4 4 10 32
+frames 5
+add_building roman_fort_straight 50 50
+add_building roman_fort_straight 70 60
+add_building roman_fort_straight 60 80
+frames 30
+tile_select 7
+gizmo translate
+frames 5
+cam_mark
+mouse drag 8% 22% 95% 95% 8
+frames 3
+assert_cam_same
+assert_selected 3
+mouse click 50% 25%
+frames 3
+assert_selected 0
+assert_cam_same
+
+# Placing: two clicks, two buildings, nothing selected, still placing.
+start_making building roman_fort_straight
+frames 3
+tile_click_ground 40 40
+frames 3
+assert_selected 0
+tile_click_ground 80 40
+frames 3
+assert_selected 0
+assert_type_count BUILDING_INSTANCE 5
+assert_history 5 5
+key Escape
+frames 2
+quit

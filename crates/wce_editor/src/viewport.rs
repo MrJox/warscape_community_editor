@@ -115,6 +115,11 @@ pub struct Viewport {
 
     /// The current left-button gesture started off the gizmo and the tool: it turns the camera even when it crosses a gizmo handle.
     orbit_drag: bool,
+
+    /// A left press where a drag draws the tool's selection box (`Tool::left_drag_selects`): where it was (image pixels), and whether the
+    /// mouse has gone far enough for a box (else the release is a click).
+    box_from: Option<(i32, i32)>,
+    box_active: bool,
     image_origin: gui::Vec2,
 }
 
@@ -126,7 +131,7 @@ impl Default for Viewport {
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
+            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -739,13 +744,36 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         }
     }
 
+    // ---- the selection box of a left drag (the tool's): past a few points from the press, until the release
+    if let Some(from) = e.viewport.box_from {
+        let now = (((mouse_x - origin.x) * density) as i32, ((mouse_y - origin.y) * density) as i32);
+        let down = gui::is_mouse_down(0);
+        if !e.viewport.box_active && ((now.0 - from.0) as f32).hypot((now.1 - from.1) as f32) >= 4.0 * density {
+            e.viewport.box_active = true;
+        }
+
+        if e.viewport.box_active {
+            e.with_active_tool(|t, e| t.box_drag(e, from, now, !down));
+        }
+
+        if !down {
+            e.viewport.box_from = None;
+            e.viewport.box_active = false;
+        }
+    }
+
     // ---- camera
     let io = gui::io();
     let mut input = CameraInput { dt: io.DeltaTime, aspect: size.x / size.y.max(1.0), view_h: size.y, ..Default::default() };
     let tool_drag = e.viewport.tool_drag;
-    // A left drag that starts off the gizmo and the tool turns the camera, gizmo shown or not; one that starts on a handle is the gizmo's.
+    // A left drag that starts off the gizmo and the tool turns the camera, gizmo shown or not, unless the tool draws a selection box with it;
+    // one that starts on a handle is the gizmo's.
     if hovered && gui::is_mouse_clicked(0) {
-        e.viewport.orbit_drag = !over_gizmo && !tool_drag && !claims;
+        let free = !over_gizmo && !tool_drag && !claims;
+        let boxes = free && has_tool && e.with_active_tool(|t, e| t.left_drag_selects(e)).unwrap_or(false);
+        e.viewport.orbit_drag = free && !boxes;
+        e.viewport.box_from = boxes.then_some((((mouse_x - origin.x) * density) as i32, ((mouse_y - origin.y) * density) as i32));
+        e.viewport.box_active = false;
     }
 
     if !gui::is_mouse_down(0) {

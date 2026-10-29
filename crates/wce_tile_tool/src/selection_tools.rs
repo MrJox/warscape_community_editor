@@ -1,5 +1,5 @@
-//! Selection tools (Phase 5g of docs/plans/tile_ted_parity.md): box select (TEd's Frustum selection: B, then drag a rectangle; Shift adds,
-//! Ctrl takes away), selecting by the primary's type or key, everything, the inverse, and selections saved by name for the session.
+//! Selection tools (Phase 5g of docs/plans/tile_ted_parity.md): box select (TEd's Frustum selection: a left drag in Select mode, or B then a
+//! drag in any mode; Shift adds, Ctrl takes away), selecting by the primary's type or key, everything, the inverse, and selections saved by name for the session.
 
 use wce_editor::editor::Editor;
 use wce_editor_core::document::Document;
@@ -205,6 +205,14 @@ impl TileTool {
             }
 
             _ => false,
+        }
+    }
+
+    /// A left drag's selection box (`Tool::box_drag`, Select mode): drawn as the B box is, selecting on the release.
+    pub(crate) fn drag_box(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
+        self.box_select = BoxSelect { armed: true, from: Some(from), to };
+        if done {
+            self.box_select_input(e, wce_editor::tool::ViewportEventKind::Release, to.0, to.1);
         }
     }
 

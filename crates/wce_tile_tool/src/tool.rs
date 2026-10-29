@@ -261,6 +261,9 @@ pub struct TileTool {
     pub(crate) grab_normal_offset: f32,
     pub(crate) angle_step: f32,
 
+    /// While placing with Alt held: what is placed stays where it was when Alt went down and turns with the mouse (`AltTurn`).
+    pub(crate) alt_turn: Option<crate::create_panel::AltTurn>,
+
     // The off-terrain report of the Tile panel.
     off_tol: f32,
     off_list: Vec<OffTerrain>,
@@ -613,7 +616,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0,
+            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -1829,10 +1832,12 @@ impl TileTool {
             self.end_grab(e, false);
         }
 
-        // While placing: R / Shift+R turn it. Shift+A over the viewport: the quick-add popup.
+        // While placing: R / Shift+R turn it; Alt held turns it where it is with the mouse. Shift+A over the viewport: the quick-add popup.
         if !io.KeyCtrl && self.placing.is_some() && gui::is_key_pressed(gui::KEY_R, false) {
             self.turn_placing(if io.KeyShift { -self.angle_step } else { self.angle_step });
         }
+
+        self.alt_turn_placing(e);
 
         if io.KeyShift && !io.KeyCtrl && e.viewport.hovered && !gui::is_mouse_down(1) && gui::is_key_pressed(gui::KEY_A, false) {
             self.request_quick_add();
@@ -3651,6 +3656,11 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Click => {
+                // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
+                if self.placing.is_some() || self.drawing {
+                    return true;
+                }
+
                 // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
                 let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
                 let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
@@ -3768,6 +3778,14 @@ impl Tool for TileTool {
 
         let p = self.snap_axes(d.tile(), Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
         [p.x, to[1], p.z]
+    }
+
+    fn left_drag_selects(&self, _e: &Editor) -> bool {
+        self.mode == TileMode::Select && !self.drawing && !self.grabbing && self.placing.is_none() && !self.box_select.armed && self.light_drag.is_none() && self.target_drag.is_none()
+    }
+
+    fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
+        self.drag_box(e, from, to, done);
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {

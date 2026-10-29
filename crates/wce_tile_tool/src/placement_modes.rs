@@ -64,6 +64,11 @@ impl TileTool {
 
     /// Where a click places now: the surface under the mouse (Entity: Above) or the terrain under it; true: on the terrain.
     pub(crate) fn place_point(&self) -> (Float3, bool) {
+        // Being turned with Alt: where it was when Alt went down.
+        if let Some(t) = self.alt_turn {
+            return (t.point, t.on_terrain);
+        }
+
         match (self.modes.unwrap_or_default().0, self.surface_hit) {
             (SurfaceMode::Entity, Some(h)) => (h.point, false),
             _ => (self.snapped_cursor, true),
