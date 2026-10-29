@@ -23,7 +23,7 @@
 //! property). The capture smoke, the fire transitions and the timed fires belong to battle events and are not shown.
 //! ASSUMPTION: an effect's `scale` is applied like a placed VFXInstance's; its bone and its string flag are not used.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -75,11 +75,22 @@ pub(crate) struct ColumnState {
 
     /// What the entities were built from.
     signature: u64,
+
+    /// Each building's columns and pieces with effects (`building_placed`), and the buildings changed since (moved, edited): only those
+    /// are walked again, not the whole city (2 ms a frame while a building was dragged). `dirty` forgets them all.
+    placed: HashMap<usize, Arc<BuildingPlaced>>,
+    changed: HashSet<usize>,
 }
+
+/// A building's columns (world matrix, column key, owning element) and its pieces (`PlacedPiece`).
+type BuildingPlaced = (Vec<(Float4x4, String, usize)>, Vec<PlacedPiece>);
 
 impl Default for ColumnState {
     fn default() -> Self {
-        Self { dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), entities: vec![], signature: 0 }
+        Self {
+            dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), entities: vec![], signature: 0,
+            placed: HashMap::new(), changed: HashSet::new(),
+        }
     }
 }
 
@@ -254,15 +265,53 @@ impl Tile {
         }
 
         let (mut out, mut pieces) = (vec![], vec![]);
-        for e in self.instances.clone() {
+        for i in 0..self.instances.len() {
+            let e = self.instances[i];
+            let placed = match self.columns.placed.get(&e) {
+                Some(p) => p.clone(),
+                None => {
+                    let p = Arc::new(self.building_placed(e));
+                    self.columns.placed.insert(e, p.clone());
+                    p
+                }
+            };
+
+            out.extend_from_slice(&placed.0);
+            pieces.extend_from_slice(&placed.1);
+        }
+
+        (out, pieces)
+    }
+
+    /// Something every building's columns depend on changed (the models, the shown types, the display): all walked again.
+    pub(crate) fn columns_changed(&mut self) {
+        self.columns.dirty = true;
+        self.columns.placed.clear();
+    }
+
+    /// An element moved or was edited: a building's columns are walked again; anything else (a group, a layer: what is in it moved too)
+    /// has every building's walked again.
+    pub(crate) fn columns_element_changed(&mut self, elem: usize) {
+        self.columns.dirty = true;
+        if elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == "BUILDING_INSTANCE" {
+            self.columns.changed.insert(elem);
+        } else {
+            self.columns.placed.clear();
+        }
+    }
+
+    /// One instance's columns and pieces with effects (nothing for what is not a shown building that attaches or plays anything).
+    fn building_placed(&mut self, e: usize) -> BuildingPlaced {
+        let (mut out, mut pieces) = (vec![], vec![]);
+        {
             if self.tscene().type_of(e) != "BUILDING_INSTANCE" || !self.shown(e) {
-                continue;
+                return (out, pieces);
             }
 
-            let Some(m) = self.model_of(e).filter(|m| m.ok).cloned() else { continue };
-            let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { continue };
+            let Some(m) = self.model_of(e).filter(|m| m.ok).cloned() else { return (out, pieces) };
+            let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { return (out, pieces) };
             if !self.relevant_building(&key) {
-                continue;
+                return (out, pieces);
             }
 
             let columns = self.building_columns(&key);
@@ -297,7 +346,15 @@ impl Tile {
             return;
         }
 
-        let (placed, pieces) = self.placed_columns();
+        // Only the buildings that changed are walked again (a change of everything forgot them all: `columns_changed`).
+        for e in std::mem::take(&mut self.columns.changed) {
+            self.columns.placed.remove(&e);
+        }
+
+        let (placed, pieces) = {
+            wce_prof!("tile.columns.gather");
+            self.placed_columns()
+        };
         let hash = |h: u64, w: &Float4x4, key: &str, e: usize| {
             let h = w.m.iter().flatten().fold(h, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(1_099_511_628_211));
             key.bytes().fold(h ^ e as u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211))
@@ -320,13 +377,16 @@ impl Tile {
         // The joints: columns at one spot (scene units) come from the walls on both sides.
         let tol = JOINT_TOLERANCE_M / self.unit() as f32;
         let pos = |w: &Float4x4| Float3::new(w.m[0][3], w.m[1][3], w.m[2][3]);
-        let shared = (0..placed.len()).map(|i| {
-            let p = pos(&placed[i].0);
-            placed.iter().enumerate().any(|(j, (w, _, e))| {
-                let q = pos(w);
-                j != i && *e != placed[i].2 && (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
-            })
-        }).collect::<Vec<_>>();
+        let shared = {
+            wce_prof!("tile.columns.joints");
+            (0..placed.len()).map(|i| {
+                let p = pos(&placed[i].0);
+                placed.iter().enumerate().any(|(j, (w, _, e))| {
+                    let q = pos(w);
+                    j != i && *e != placed[i].2 && (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
+                })
+            }).collect::<Vec<_>>()
+        };
 
         let mut effect_pieces = pieces;
         for (i, (world, key, elem)) in placed.iter().enumerate() {
@@ -370,6 +430,8 @@ impl Tile {
         self.columns.entities.clear();
         self.columns.signature = 0;
         self.columns.dirty = true;
+        self.columns.placed.clear();
+        self.columns.changed.clear();
     }
 }
 

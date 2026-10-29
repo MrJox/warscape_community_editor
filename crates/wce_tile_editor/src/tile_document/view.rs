@@ -1240,9 +1240,9 @@ impl Tile {
             return;
         }
 
-        self.columns.dirty = true;
         let pending = std::mem::take(&mut self.piece_pending);
         for &(elem, _) in &pending {
+            self.columns_element_changed(elem);
             self.tech_element_changed(elem);
         }
 
@@ -1298,7 +1298,7 @@ impl Tile {
 
     /// The display settings changed: everything shown is rebuilt at the next update.
     pub fn display_changed(&mut self) {
-        self.columns.dirty = true;
+        self.columns_changed();
         self.tech.dirty = true;
         self.markers_dirty = true;
         self.polygons_dirty = true;
@@ -1386,7 +1386,7 @@ impl Tile {
             let sig = self.display.hidden_types.iter().fold(0u64, |sig, h| sig.wrapping_mul(1_000_003).wrapping_add(h.bytes().fold(14_695_981_039_346_656_037u64, |a, c| (a ^ u64::from(c)).wrapping_mul(1_099_511_628_211))));
             if sig != self.hidden_signature {
                 self.hidden_signature = sig;
-                self.columns.dirty = true;
+                self.columns_changed();
                 self.tech.dirty = true;
                 let building = self.idx.type_names.iter().position(|t| t == "BUILDING_INSTANCE");
                 let hidden = self.display.hidden_types.contains("BUILDING_INSTANCE");
