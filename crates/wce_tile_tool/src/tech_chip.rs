@@ -80,7 +80,7 @@ impl TileTool {
         }
 
         if game_view {
-            gui::text_disabled("The Game view hides these (View > Editor view).");
+            gui::text_disabled("The Game view hides these (the camera chip: Editor view).");
         }
 
         gui::separator_text("Buildings");

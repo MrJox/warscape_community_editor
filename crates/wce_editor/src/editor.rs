@@ -1744,14 +1744,6 @@ impl Editor {
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
             gui::separator();
-            if gui::menu_item("Editor view", None, !self.viewport.game_view, true) {
-                self.viewport.game_view = false;
-            }
-
-            if gui::menu_item("Game view", None, self.viewport.game_view, true) {
-                self.viewport.game_view = true;
-            }
-
             if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), Some("F"), false, !self.selection.is_empty()) {
                 self.focus_selection();
             }
