@@ -87,7 +87,8 @@ pub(crate) const DIRT_BURN_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidwithdirtbu
 pub(crate) const AMBIENT_MAP_FIRE_GBUFFER_PS: &str = "dx11_sm_3_0_rigidambientmapfiremesh.hlsl_ps_ps30_gbuffer";
 pub(crate) const AMBIENT_MAP_FIRE_GBUFFER_ALPHA_PS: &str = "dx11_sm_3_0_rigidambientmapfiremesh.hlsl_ps_ps30_gbuffer_alpha_test";
 
-/// The texture the engine binds as `s_fire_map` of the rigid materials (empire.retail.dll sets it up with the blood map).
+/// The texture the engine binds as `s_fire_map` of the rigid materials (empire.retail.dll sets it up with the blood map); sampled
+/// linear (its samplers have no sRGB).
 pub(crate) const FIRE_MAP: &str = "commontextures/vfx_fire_diffuse.dds";
 
 /// The G-buffer sub-passes, in drawing order: the material they draw, alpha-tested or not, burning or not, vertex and pixel shader, GPU
