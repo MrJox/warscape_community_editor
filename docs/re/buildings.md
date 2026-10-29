@@ -93,7 +93,7 @@ Tags seen on standing pieces (counts over the game and TDD): `ip_fire` (fire and
 and `destruction_vfx_*` bursts on the damaged states).
 
 The editor plays: untagged effects except `destruction_vfx_*`; `ip_fire` effects while the building burns (its `burn` property, or a
-piece's own); nothing else. Placed at `piece world * translation(position) * rotation`, scale `scale / unit` like a placed VFXInstance.
+piece's own), and then also the engine's `burning_entity` over the piece's mesh (below, "The flames"); nothing else. Placed at `piece world * translation(position) * rotation`, scale `scale / unit` like a placed VFXInstance.
 **ASSUMPTIONS**, to check in game:
 - untagged effects play all the time (the torches burn at deployment, by day too);
 - `destruction_vfx_*` bursts play once when a piece reaches the level, not on a battle that starts with the building already damaged;
@@ -208,8 +208,16 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   and forward fire shaders do the same and have no glow. Read through sRGB, every mask was darker and the embers all but vanished. Fixed
   (`renderer/passes.rs`): with linear masks, amount 0.3 gives orange streaks and patches over darkened wood, the game's look in the
   third screenshot, and amount 1 black char. So the game's char most likely settles at `BURN_SHADER_AMOUNT` 0.3 for an ordinary
-  building (1.0 is the lite buildings' maximum); at 1 the shader itself leaves no orange. The fire effects (small flames against the
-  game's flames over the whole building) are still open.
+  building (1.0 is the lite buildings' maximum); at 1 the shader itself leaves no orange. 
+- **The flames, settled (2026-10-29)**: the game's flames over the whole building are not the pieces' `.meta` effects but the
+  engine's own `burning_entity`: fn 0x104bb1e0 attaches it to the burning entity, with `burning_entity_collapse`, `entity_collapse`,
+  `burning_entity_aftermath` for the later stages and `burning_entity_pre_smoke` before (the `_small` variants for an entity of type
+  0xb, not identified). Its emitters (`library_burning_entity`: fire, burst_flames, embers, smoke, distortion, and a light) all have
+  AllowEmitFromMesh, so they spawn on the entity's own triangles (the particle birth, fn 0x1183fa30: a triangle picked uniformly, not by
+  area, hence the flames gather where the mesh is detailed: wall feet, corners, eaves). The fire emitter ramps from 10 to 100 particles
+  a second over its first 13-15 s, burst_flames peaks at 60-80 a second. The editor now plays `burning_entity` on every burning piece,
+  from its standing mesh (first LOD, decals left out), next to its `ip_fire` effects (`tile_document/columns.rs`). Not done: the stage
+  sequence and its timing (`BUILDING_FIRE_STAGE_ONE_DURATION`, `_TWO_`), the `_small` choice, and the engine's per-triangle mask.
 - Glow: TEd's `glow_amount` goes to parameter [3], which no rigid instance path of the kit's engine reads, and the export does not carry
   it. The game's glows are its unit and deployable highlights (`UNIT_GLOW_INTENSITY_SELECTION`, `..._MOUSEOVER`,
   `DEPLOYABLE_GLOW_INTENSITY_...`), its own parameters (POSITION6.y brightens). `glow_amount` does nothing in TEd or the game.
