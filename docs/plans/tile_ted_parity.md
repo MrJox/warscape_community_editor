@@ -52,8 +52,13 @@ file's order. The editor itself is described in
   difference is one node's height, not the terrain. Found 2026-10-26 (static RE of `Ted::BMDExporter::export_`, `BMDExport.cpp`): the
   exported y is the node's own world position (the scene object's virtual +0x14), passed through `Ted::transform_to_game_tile_space`
   unchanged (it only scales x / z and mirrors z). The tool draws them at ground level while TEd lists them 2.7 m up, i.e. on the crates
-  under them, so the tool is probably the one wrong. Not the nesting itself: freeform buildings inside landscape groups occur 256,480
-  times in the vanilla kit and Phase 0 found only these 15 off. **Deferred: waiting for the files** (only on the Windows side): osgiliath_test's
+  under them, so the tool is probably the one wrong. **Confirmed from the game's copy (2026-10-29)**: TDD's
+  `gen_dun_medium_final.pack` holds wildmen_city_a/medium's compiled files, and its `building_list.xml` (what the game reads) has the 24
+  crates at y 50.47 .. 50.50 each on top of a column of crates at the same x / z: 47.79, 48.69, 49.59, 50.49 (stacks four high, 0.9 m a
+  crate; two columns of three start at 48.66). The tool draws the top crate at the bottom one's height (47.79), inside it; the
+  middle layers it gets right. So the tool loses the top layer's own 2.7 m. Not the nesting itself: freeform buildings inside landscape groups occur 256,480
+  times in the vanilla kit and Phase 0 found only these 15 off. Fixing it still needs the raw tile (the pack has only the compiled files), to see the node
+  chain the tool walks wrong. **Deferred: waiting for the files** (not in the Windows machine's kit, 2026-10-29): osgiliath_test's
   `tile.ted` and its `working_data` `building_list.xml`, or TDD's wildmen_city_a raw tile and export (the user, with the reference
   shots).
 
