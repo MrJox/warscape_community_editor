@@ -1,10 +1,12 @@
 //! The ground views (docs/editor.md): what the ground shows, picked from a chip at the top right of the viewport, as the weather chips at
 //! its top left: the view (`TerrainLook::view`: the colour or a debug view of the tile's maps), the climate and season, the water depth
 //! view's tools, the water, the sea, the procedural trees, the grass and the automatic no-go areas. The Minimap has a chip of its own with
-//! the same views and its own (minimap_panel.rs).
+//! the same views and its own (minimap_panel.rs). The blended ground switch, what the ground shows (or why the plain tiled texture is
+//! used) and the game shaders that did not load are in the popup too (the Tile panel had a Ground section for them). The climate is not
+//! stored in the tile (a map's climate map says it), so it is a setting; a wrong guess looks different, not broken.
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, icons};
+use wce_editor::{gui, icons, theme};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{GENERATED_PREFIX, TileDocument};
@@ -31,11 +33,11 @@ pub(crate) fn view_name(view: TerrainView) -> &'static str {
     GROUND_VIEWS.iter().find(|v| v.0 == view).map_or("colour", |v| v.1)
 }
 
-/// The views as selectables, `current` marked; the one clicked.
+/// The views as radio buttons, `current` marked; the one clicked.
 pub(crate) fn view_items(current: Option<TerrainView>, id: &str) -> Option<TerrainView> {
     let mut picked = None;
     for (view, name, tip) in GROUND_VIEWS {
-        if gui::selectable(&format!("{name}##{id}"), current == Some(view), 0) {
+        if gui::radio_button(&format!("{name}##{id}"), current == Some(view)) && current != Some(view) {
             picked = Some(view);
         }
 
@@ -55,7 +57,7 @@ impl TileTool {
         let (look, nogo) = (d.tile().terrain_look().clone(), d.tile().display().show_auto_nogo);
         let view = if look.blended { view_name(look.view) } else { "plain tiled texture (blend off)" };
         let tip = format!(
-            "Ground: {view}{}{}\nClick: the views, the climate and season, the water, the sea, the trees, the grass, the automatic no-go areas",
+            "Ground: {view}{}{}\nClick: the blend and the views, the climate and season, the water, the sea, the trees, the grass, the automatic no-go areas",
             if look.blended { format!(" ({}, {})", look.climate, season_name(&look.season)) } else { String::new() },
             if nogo { ", automatic no-go areas" } else { "" },
         );
@@ -63,7 +65,7 @@ impl TileTool {
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - 8.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_child("##groundchip", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
-            if chip(look.view != TerrainView::Colour || nogo, icons::LAYERS, "groundviews", &tip) {
+            if chip(!look.blended || look.view != TerrainView::Colour || nogo, icons::LAYERS, "groundviews", &tip) {
                 gui::open_popup("groundviews");
             }
 
@@ -79,23 +81,40 @@ impl TileTool {
         gui::pop_style_color(1);
     }
 
+    /// The popup: the view (the blend, the views), the climate and season, the water depth view's tools, the water, the vegetation and the
+    /// checks, laid out as the other chips' popups.
     fn draw_ground_popup(&mut self, e: &mut Editor, id: DocumentId) {
+        let failures = e.renderer.as_ref().map(|r| r.shader_failures().to_vec()).unwrap_or_default();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let mut look = d.tile().terrain_look().clone();
         let mut changed = false;
-        gui::text_disabled("Ground view");
+        gui::text_disabled("Ground");
+        for f in &failures {
+            gui::text_colored(theme::error(), &format!("game shader not loaded: {f}"));
+        }
+
+        gui::separator_text("View");
+        if gui::checkbox("Blended ground##ground", &mut look.blended) {
+            changed = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The tile's blend map mixed from the climate's textures, by the game's terrain shaders. Off: a plain tiled texture.");
+        }
+
         // A view needs the blend: picking one turns it on (as `tile_ground_view`).
         if let Some(v) = view_items(look.blended.then_some(look.view), "groundview") {
             (look.view, look.blended) = (v, true);
             changed = true;
         }
 
+        note(d.tile().terrain_note());
         let climates = d.tile().climates().climates.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
         if look.blended && !climates.is_empty() {
-            gui::separator();
+            gui::separator_text("Climate");
             let mut ci = climates.iter().position(|c| *c == look.climate).unwrap_or(0) as i32;
             gui::set_next_item_width(200.0);
-            if gui::combo("climate##ground", &mut ci, &climates.iter().map(String::as_str).collect::<Vec<_>>()) {
+            if gui::combo("Climate##ground", &mut ci, &climates.iter().map(String::as_str).collect::<Vec<_>>()) {
                 look.climate = climates[ci as usize].clone();
                 changed = true;
             }
@@ -104,7 +123,7 @@ impl TileTool {
             let seasons = ["sp", "su", "au", "wi"];
             let mut si = seasons.iter().position(|s| *s == look.season).unwrap_or(1) as i32;
             gui::set_next_item_width(200.0);
-            if gui::combo("season##ground", &mut si, &["spring", "summer", "autumn", "winter"]) {
+            if gui::combo("Season##ground", &mut si, &["spring", "summer", "autumn", "winter"]) {
                 look.season = seasons[si as usize].to_owned();
                 changed = true;
             }
@@ -117,22 +136,21 @@ impl TileTool {
 
         // The water depth view: the water ground types painted from the depth.
         if water_view {
-            gui::separator();
-            gui::set_next_item_width(70.0);
+            gui::separator_text("Water depth");
+            gui::set_next_item_width(120.0);
             gui::drag_float("shallow from (m)##water", &mut self.water_shallow_m, 0.05, 0.0, 20.0, "%.2f");
             if gui::is_item_hovered() {
                 gui::set_tooltip("Water shallower than this is left unpainted (the water at a river's banks, which lies under the ground or barely over it).");
             }
 
-            gui::same_line();
-            gui::set_next_item_width(70.0);
+            gui::set_next_item_width(120.0);
             gui::drag_float("deep from (m)##water", &mut self.water_deep_m, 0.05, 0.0, 50.0, "%.2f");
             if gui::is_item_hovered() {
                 gui::set_tooltip("Water at least this deep is painted deep water (units cannot cross it); shallower water is shallow water (units wade).");
             }
 
             self.water_deep_m = self.water_deep_m.max(self.water_shallow_m);
-            if gui::button("Paint water ground types") {
+            if gui::small_button("Paint water ground types") {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 self.status = match d.paint_water_ground_types(self.water_shallow_m, self.water_deep_m) {
                     Ok(n) => format!("{n} ground type pixel(s) painted from the water depth"),
@@ -145,15 +163,81 @@ impl TileTool {
             }
         }
 
-        gui::separator();
         self.draw_ground_layers(e, id);
     }
 
     /// The water, the sea, the procedural trees, the grass and the automatic no-go areas.
     fn draw_ground_layers(&mut self, e: &mut Editor, id: DocumentId) {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        gui::separator_text("Water");
+        let mut water = d.tile().display().show_water;
+        if gui::checkbox("Rivers##ground", &mut water) {
+            d.tile_mut().display_mut().show_water = water;
+            d.tile_mut().display_changed();
+        }
+
+        note(d.tile().water_note());
+        let mut sea = d.tile().display().show_sea;
+        if gui::checkbox("Sea at 0 m##ground", &mut sea) {
+            self.set_show_sea(e, id, sea);
+        }
+
+        // The battle's wind picks the sea's waves and whitecaps.
+        if let Some(r) = e.renderer() {
+            let states = r.sea_states();
+            if !states.is_empty() {
+                let mut k = states.iter().position(|s| *s == r.settings.sea_state).unwrap_or(0) as i32;
+                gui::set_next_item_width(170.0);
+                if gui::combo("Sea state (battle wind)##ground", &mut k, &states.iter().map(String::as_str).collect::<Vec<_>>()) {
+                    let key = states[k as usize].clone();
+                    set_sea_state(e, &key);
+                }
+            }
+        }
+
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+
+        // BOB's procedural trees: one list per climate key, plus default; gen:<list> generates them from the seeds.
+        gui::separator_text("Vegetation");
+        let mut lists = vec!["none".to_owned()];
+        lists.extend(d.tile().tree_lists().iter().cloned());
+        let shown = d.tile().display().tree_list.clone();
+        let generated = format!("{GENERATED_PREFIX}{shown}");
+        let mut li = lists.iter().position(|l| *l == shown).or_else(|| lists.iter().position(|l| *l == generated)).unwrap_or(0) as i32;
+        let items = lists.iter().map(String::as_str).collect::<Vec<_>>();
+        gui::set_next_item_width(160.0);
+        if gui::combo("Procedural trees##ground", &mut li, &items) {
+            d.tile_mut().display_mut().tree_list = if li == 0 { String::new() } else { lists[li as usize].clone() };
+        }
+
+        if lists[li as usize].starts_with(GENERATED_PREFIX) {
+            gui::same_line();
+            if gui::small_button("Regenerate##trees") {
+                d.tile_mut().reload_tree_list();
+            }
+        }
+
+        let mut grass = d.tile().display().show_grass;
+        if gui::checkbox("Grass##ground", &mut grass) {
+            d.tile_mut().display_mut().show_grass = grass;
+        }
+
+        gui::same_line();
+        let mut generated = d.tile().display().generate_grass;
+        if gui::checkbox("Generated##grass", &mut generated) {
+            d.tile_mut().display_mut().generate_grass = generated;
+        }
+
+        if generated {
+            gui::same_line();
+            if gui::small_button("Regenerate##grass") {
+                d.tile_mut().reload_grass();
+            }
+        }
+
+        gui::separator_text("Checks");
         let mut nogo = d.tile().display().show_auto_nogo;
-        if gui::checkbox("automatic no-go areas", &mut nogo) {
+        if gui::checkbox("Automatic no-go areas##ground", &mut nogo) {
             d.tile_mut().display_mut().show_auto_nogo = nogo;
             d.tile_mut().display_changed();
         }
@@ -169,71 +253,18 @@ impl TileTool {
                 None => gui::text_disabled("being worked out"),
             }
         }
-
-        let mut water = d.tile().display().show_water;
-        if gui::checkbox("water (rivers)", &mut water) {
-            d.tile_mut().display_mut().show_water = water;
-            d.tile_mut().display_changed();
-        }
-
-        gui::same_line();
-        let mut sea = d.tile().display().show_sea;
-        if gui::checkbox("sea at 0 m", &mut sea) {
-            self.set_show_sea(e, id, sea);
-        }
-
-        // The battle's wind picks the sea's waves and whitecaps.
-        if let Some(r) = e.renderer() {
-            let states = r.sea_states();
-            if !states.is_empty() {
-                let mut k = states.iter().position(|s| *s == r.settings.sea_state).unwrap_or(0) as i32;
-                gui::set_next_item_width(170.0);
-                if gui::combo("sea state (battle wind)", &mut k, &states.iter().map(String::as_str).collect::<Vec<_>>()) {
-                    let key = states[k as usize].clone();
-                    set_sea_state(e, &key);
-                }
-            }
-        }
-
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-
-        // BOB's procedural trees: one list per climate key, plus default; gen:<list> generates them from the seeds.
-        let mut lists = vec!["none".to_owned()];
-        lists.extend(d.tile().tree_lists().iter().cloned());
-        let shown = d.tile().display().tree_list.clone();
-        let generated = format!("{GENERATED_PREFIX}{shown}");
-        let mut li = lists.iter().position(|l| *l == shown).or_else(|| lists.iter().position(|l| *l == generated)).unwrap_or(0) as i32;
-        let items = lists.iter().map(String::as_str).collect::<Vec<_>>();
-        gui::set_next_item_width(160.0);
-        if gui::combo("procedural trees", &mut li, &items) {
-            d.tile_mut().display_mut().tree_list = if li == 0 { String::new() } else { lists[li as usize].clone() };
-        }
-
-        if lists[li as usize].starts_with(GENERATED_PREFIX) {
-            gui::same_line();
-            if gui::button("regenerate") {
-                d.tile_mut().reload_tree_list();
-            }
-        }
-
-        let mut grass = d.tile().display().show_grass;
-        if gui::checkbox("grass", &mut grass) {
-            d.tile_mut().display_mut().show_grass = grass;
-        }
-
-        gui::same_line();
-        let mut generated = d.tile().display().generate_grass;
-        if gui::checkbox("generated##grass", &mut generated) {
-            d.tile_mut().display_mut().generate_grass = generated;
-        }
-
-        if generated {
-            gui::same_line();
-            if gui::button("regenerate##grass") {
-                d.tile_mut().reload_grass();
-            }
-        }
     }
+}
+
+/// A note under a section of the popup (what is shown, or why not), wrapped at the popup's usual width.
+fn note(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+
+    gui::push_text_wrap_pos(gui::cursor_pos_x() + 320.0);
+    gui::text_disabled(text);
+    gui::pop_text_wrap_pos();
 }
 
 /// A battle season's name.

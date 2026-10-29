@@ -484,7 +484,7 @@ impl MinimapUi {
 
                 gui::separator();
                 for (base, name, _) in OWN_BASES {
-                    if gui::selectable(&format!("{name}##minimapbase"), self.base == base, 0) {
+                    if gui::radio_button(&format!("{name}##minimapbase"), self.base == base) {
                         self.base = base;
                     }
                 }
