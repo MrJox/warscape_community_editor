@@ -113,7 +113,9 @@ Built (branch `feature/building_destruction`, from master):
 
 - **Formats:** `.anim` and `.meta` written back losslessly (`wce_formats::anim::AnimFile`, `anim_meta::MetaFile`), every file of the
   game's and TDD's packs to the byte (`anim_meta_corpus`); `SOUND_BUILDING` decoded (docs/re/buildings.md).
-- **Generator** (`wce_destruction`): cells, solid, fracture, caps (contour rings with holes), materials and cultures, rapier3d collapses,
+- **Generator** (`wce_destruction`): cells (a cell that is mostly wood cut in planks along its grain, `Cells::split_planks`), solid,
+  fracture, caps (contour rings with holes), materials (stone, wood, roof, plaster, earth, other; a texture name that tells nothing is
+  the culture's material: timber for barbarian and nordic buildings) and cultures, rapier3d collapses,
   rubble heaps, levels with every LOD (the same cells cut each LOD), collapse models and animations, effects (dust, bursts, the game's
   stone or wood sounds at the simulated impacts), the logic file (platforms cut, firing lines re-parented, hard outline and footprint
   from a raster, collision meshes cut and capped with their adjacency, walkable rubble platforms), the rows, the pack. Deterministic.
@@ -141,8 +143,6 @@ damaged level 9.1k vertices (the game's 6.9k), destroyed 12.3k (5.1k); the logic
 - [ ] **In TEd (user):** the building from `@wce_proc_data.pack` lists, draws and exports.
 - [ ] **Gates:** the gate leaves (`_gate_closed`, `_gate_open`) are copied to every level unbroken; their `gate_*_destruct_anim` are
   not made yet.
-- [ ] **Wood planks:** wood breaks in the same chunks as stone (its own density, bounce, broken-wood texture and wooden sounds); the
-  planned splitting along the grain is not done.
 - [ ] **Weight:** houses (hollow shells) come out at about four times their intact LOD 0 (the cut triangles, the inner sides near the
   damage); a mesh simplifier for the debris, or fewer cuts, would bring it down. Platforms on rubble are many small quads.
 - [ ] **Engine questions** above (`destruct_thresholds` for 2 and 4 levels, the collapse's last frame).

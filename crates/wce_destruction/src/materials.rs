@@ -31,12 +31,18 @@ const CULTURES: &[(&str, &[&str], &str, &str)] = &[
 /// Broken wood, whatever the culture.
 pub const WOOD_DAMAGE: &str = "barbarian_fort_wood_damage";
 
-/// A material's class, from its diffuse texture's name.
-pub fn classify(material: &Material) -> MaterialClass {
+/// Broken earth (a fort's bank), whatever the culture.
+pub const EARTH_DAMAGE: &str = "temp_barbarian_fort_damaged_soil";
+
+/// A material's class, from its diffuse texture's name; a name that tells nothing is the culture's way of building (the barbarian and
+/// nordic buildings are timber: `barbarian_fort_walls`, `nordic_atlas`).
+pub fn classify(material: &Material, culture: &str) -> MaterialClass {
     let name = diffuse(material).to_lowercase();
     let file = name.rsplit('/').next().unwrap_or(&name);
     let has = |words: &[&str]| words.iter().any(|w| file.contains(w));
-    if has(&["thatch", "straw", "roof", "tile", "shingle", "reed"]) {
+    if has(&["soil", "grass", "earth", "mud", "dirt", "ground", "bank", "turf"]) {
+        MaterialClass::Earth
+    } else if has(&["thatch", "straw", "roof", "tile", "shingle", "reed"]) {
         MaterialClass::Roof
     } else if has(&["wood", "timber", "plank", "beam", "log", "palisade", "stake", "splinter", "bark", "fence"]) {
         MaterialClass::Wood
@@ -44,8 +50,10 @@ pub fn classify(material: &Material) -> MaterialClass {
         MaterialClass::Plaster
     } else if has(&["cloth", "banner", "fabric", "canvas", "tent", "metal", "iron", "glass", "flag", "rope"]) {
         MaterialClass::Other
-    } else {
+    } else if has(&["stone", "brick", "rock", "marble", "masonry", "column"]) || !matches!(culture, "barbarian" | "nordic") {
         MaterialClass::Stone
+    } else {
+        MaterialClass::Wood
     }
 }
 
@@ -80,7 +88,11 @@ pub fn cultures() -> impl Iterator<Item = &'static str> {
 /// The damage texture set of a culture's broken faces of a class, and its rubble's.
 pub fn damage_sets(culture: &str, class: MaterialClass) -> (&'static str, &'static str) {
     let c = CULTURES.iter().find(|c| c.0 == culture).unwrap_or(&CULTURES[0]);
-    let caps = if class == MaterialClass::Wood { WOOD_DAMAGE } else { c.2 };
+    let caps = match class {
+        MaterialClass::Wood => WOOD_DAMAGE,
+        MaterialClass::Earth => EARTH_DAMAGE,
+        _ => c.2,
+    };
     (caps, c.3)
 }
 
@@ -143,6 +155,11 @@ mod tests {
         let mut t = rpfm_lib::files::rigidmodel::materials::Texture::default();
         t.set_path("rigidmodels/buildings/textures/barbarian_thatch_roof_diffuse.dds".into());
         m.set_textures(vec![t]);
-        assert_eq!(classify(&m), MaterialClass::Roof);
+        assert_eq!(classify(&m, "roman"), MaterialClass::Roof);
+        let mut t = rpfm_lib::files::rigidmodel::materials::Texture::default();
+        t.set_path("rigidmodels/buildings/textures/barbarian_fort_walls_diffuse.dds".into());
+        m.set_textures(vec![t]);
+        assert_eq!(classify(&m, "barbarian"), MaterialClass::Wood);
+        assert_eq!(classify(&m, "roman"), MaterialClass::Stone);
     }
 }

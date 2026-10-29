@@ -141,7 +141,7 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
         source,
         templates,
         exists,
-        cells: Cells::make(&source.bounds, params),
+        cells: planked(Cells::make(&source.bounds, params), source, params, &culture),
         culture,
         shell: (!solid_kind).then_some(params.thickness.max(0.05)),
         walkable: params.walkable.unwrap_or(is_fort(&source.category)),
@@ -228,6 +228,52 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
     }
 
     Ok(out)
+}
+
+/// The cells with the removed ones that are mostly wood (by the intact LOD 0's triangles in them) split in planks, their grain the
+/// longest spread of those triangles.
+fn planked(mut cells: Cells, source: &Source, params: &Params, culture: &str) -> Cells {
+    let mut wood = vec![];
+    let mut all = vec![];
+    for p in &source.pieces {
+        let Some(lod) = p.model.lods().first() else { continue };
+        for (b, tris) in lod_triangles(lod).iter().enumerate() {
+            let block = &lod.mesh_blocks()[b];
+            let class = override_of(&params.materials, block.material()).and_then(|o| o.class).unwrap_or_else(|| classify(block.material(), culture));
+            for t in tris {
+                let c = (pos(&t[0]) + pos(&t[1]) + pos(&t[2])) / 3.0;
+                all.push(c);
+                if class == MaterialClass::Wood {
+                    wood.push(c);
+                }
+            }
+        }
+    }
+
+    if wood.is_empty() {
+        return cells;
+    }
+
+    let budget = params.levels.iter().map(|l| l.max_fragments).sum::<usize>();
+    let width = params.levels.iter().map(|l| l.fragment_size).fold(0.0, f32::max) * 0.35;
+    let grain = |_: usize, shape: &crate::cells::Polyhedron| {
+        let b = shape.bounds();
+        let inside = |p: &&V3| b.contains(p) && shape.contains(p, 1e-4);
+        let mine = wood.iter().filter(inside).copied().collect::<Vec<_>>();
+        let total = all.iter().filter(inside).count();
+        if mine.len() < 4 || mine.len() * 10 < total * 6 {
+            return None;
+        }
+
+        // The grain: the longest axis of the wood's spread in the cell.
+        let c = mine.iter().sum::<V3>() / mine.len() as f32;
+        let cov = mine.iter().fold(nalgebra::Matrix3::<f32>::zeros(), |m, p| m + (p - c) * (p - c).transpose());
+        let eig = cov.symmetric_eigen();
+        let (k, _) = eig.eigenvalues.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?;
+        Some(eig.eigenvectors.column(k).into_owned().normalize())
+    };
+    cells.split_planks(&grain, width.max(0.35), 4, budget);
+    cells
 }
 
 /// What [`make_piece`] gives the logic file: per level (0 intact) its heap and the box of its geometry.
@@ -422,7 +468,7 @@ fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Genera
 
 /// The material class of each block of a LOD (an override, else from its textures).
 fn classes(cx: &Context, blocks: &[MeshBlock]) -> Vec<MaterialClass> {
-    blocks.iter().map(|b| override_of(&cx.params.materials, b.material()).and_then(|o| o.class).unwrap_or_else(|| classify(b.material()))).collect()
+    blocks.iter().map(|b| override_of(&cx.params.materials, b.material()).and_then(|o| o.class).unwrap_or_else(|| classify(b.material(), &cx.culture))).collect()
 }
 
 /// The block a slot is made with: the source's own, or the culture's damage or rubble set.
@@ -449,7 +495,7 @@ fn material(cx: &Context, blocks: &[MeshBlock], slot: Slot) -> Option<MeshBlock>
 fn damage_set(cx: &Context, blocks: &[MeshBlock], class: MaterialClass) -> String {
     for b in blocks {
         if let Some(o) = override_of(&cx.params.materials, b.material()) {
-            if o.class.unwrap_or_else(|| classify(b.material())) == class {
+            if o.class.unwrap_or_else(|| classify(b.material(), &cx.culture)) == class {
                 if let Some(d) = &o.damage {
                     return d.clone();
                 }

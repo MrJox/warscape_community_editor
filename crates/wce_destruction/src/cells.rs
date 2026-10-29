@@ -123,6 +123,9 @@ pub struct Cells {
     pub shapes: HashMap<usize, Polyhedron>,
 
     grid: SeedGrid,
+
+    /// A cell split into planks: its parts (cells of their own, after the seeds of the Voronoi cells).
+    children: HashMap<usize, Vec<usize>>,
 }
 
 /// Seeds bucketed for nearest-seed queries.
@@ -285,7 +288,7 @@ impl Cells {
         }
 
         let grid = SeedGrid::new(&seeds, &domain.expanded(4.0), finest.clamp(0.5, 4.0) * 1.5);
-        let mut cells = Self { seeds, level, domain, shapes: HashMap::new(), grid };
+        let mut cells = Self { seeds, level, domain, shapes: HashMap::new(), grid, children: HashMap::new() };
         cells.shapes = (0..cells.seeds.len()).filter(|&i| cells.level[i].is_some()).map(|i| (i, cells.shape(i))).filter(|(_, p)| p.faces.len() >= 4).collect();
         cells.level.iter_mut().enumerate().for_each(|(i, l)| {
             if l.is_some() && !cells.shapes.contains_key(&i) {
@@ -319,9 +322,62 @@ impl Cells {
         poly
     }
 
-    /// The seed whose cell holds a point.
+    /// The cell that holds a point (a plank of a split cell).
     pub fn cell_of(&self, p: &V3) -> Option<usize> {
-        self.grid.nearest(&self.seeds, p)
+        let i = self.grid.nearest(&self.seeds, p)?;
+        match self.children.get(&i) {
+            Some(parts) => parts.iter().copied().find(|c| self.shapes.get(c).is_some_and(|s| s.contains(p, 1e-4))).or(parts.first().copied()),
+            None => Some(i),
+        }
+    }
+
+    /// Wood breaks in planks: each removed cell `wood` gives a grain for (a unit vector: the cell is mostly wood) is cut by planes along
+    /// the grain every `width` m across it (at most `most` planks a cell, and `budget` new cells in all). The planks are cells of their own,
+    /// removed at their cell's level; faces between them are across each other.
+    pub fn split_planks(&mut self, wood: &dyn Fn(usize, &Polyhedron) -> Option<V3>, width: f32, most: usize, budget: usize) {
+        let mut ids = self.shapes.keys().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        let mut made = 0;
+        for c in ids {
+            if made >= budget {
+                break;
+            }
+
+            let Some(grain) = wood(c, &self.shapes[&c]) else { continue };
+            // Across the grain, level with the ground when the grain stands (posts split into staves), else across it and up.
+            let across = grain.cross(&V3::y()).try_normalize(1e-3).unwrap_or_else(V3::x);
+            let shape = self.shapes[&c].clone();
+            let (lo, hi) = shape.vertices().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.dot(&across)), hi.max(p.dot(&across))));
+            let n = (((hi - lo) / width.max(0.05)).floor() as usize).clamp(1, most.max(1));
+            if n < 2 {
+                continue;
+            }
+
+            let first = self.seeds.len();
+            let parts = (first..first + n).collect::<Vec<_>>();
+            let step = (hi - lo) / n as f32;
+            let mut kept = vec![];
+            for (k, &id) in parts.iter().enumerate() {
+                let mut part = shape.clone();
+                if k + 1 < n {
+                    part.clip(&Plane { n: across, d: lo + step * (k + 1) as f32 }, Across::Cell(id + 1));
+                }
+                if k > 0 {
+                    part.clip(&Plane { n: -across, d: -(lo + step * k as f32) }, Across::Cell(id - 1));
+                }
+
+                self.seeds.push(centroid(&part.vertices().copied().collect::<Vec<_>>()));
+                self.level.push(self.level[c]);
+                if part.faces.len() >= 4 {
+                    self.shapes.insert(id, part);
+                    kept.push(id);
+                }
+            }
+
+            self.shapes.remove(&c);
+            self.children.insert(c, kept);
+            made += n;
+        }
     }
 
     /// The level a point is removed at (1-based), if any: inside the domain, in a removed cell.

@@ -121,11 +121,12 @@ pub enum MaterialClass {
     Wood,
     Roof,
     Plaster,
+    Earth,
     Other,
 }
 
 impl MaterialClass {
-    pub const ALL: [Self; 5] = [Self::Stone, Self::Wood, Self::Roof, Self::Plaster, Self::Other];
+    pub const ALL: [Self; 6] = [Self::Stone, Self::Wood, Self::Roof, Self::Plaster, Self::Earth, Self::Other];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -133,6 +134,7 @@ impl MaterialClass {
             Self::Wood => "Wood",
             Self::Roof => "Roof",
             Self::Plaster => "Plaster",
+            Self::Earth => "Earth",
             Self::Other => "Other",
         }
     }
@@ -143,6 +145,7 @@ impl MaterialClass {
             Self::Stone | Self::Plaster => (2.3, 0.9, 0.05),
             Self::Wood => (0.6, 0.7, 0.15),
             Self::Roof => (1.6, 0.8, 0.1),
+            Self::Earth => (1.8, 1.0, 0.0),
             Self::Other => (1.0, 0.8, 0.1),
         }
     }
