@@ -3,10 +3,11 @@
 //! face inside the solid throughout is one polygon. A face between a removed cell and what still stands gives two caps: the fragment's
 //! (out of the cell) and the standing part's (into it), the latter shown from the cell's level until its neighbour's.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::cells::{Across, Cells};
 use crate::geom::{Plane, V3, basis, clip_polygon, newell};
+use crate::poly2d::{P2, area2, contains, simplify, triangulate};
 use crate::solid::Solid;
 
 /// A cap polygon (counter-clockwise seen from its normal's side).
@@ -46,8 +47,13 @@ pub fn caps(cells: &Cells, solid: &Solid, h: f32) -> Caps {
 
     let mut ids = cells.shapes.keys().copied().collect::<Vec<_>>();
     ids.sort_unstable();
+    let reach = solid.bounds().expanded(h);
     for c in ids {
         let shape = &cells.shapes[&c];
+        if !shape.bounds().overlaps(&reach) {
+            continue;
+        }
+
         let lc = cells.rank(c);
         let mut mine = vec![];
         for f in &shape.faces {
@@ -74,7 +80,9 @@ pub fn caps(cells: &Cells, solid: &Solid, h: f32) -> Caps {
     out
 }
 
-/// The solid's section on a convex face (its polygons, counter-clockwise about the plane's normal).
+/// The solid's section on a convex face (its polygons, counter-clockwise about the plane's normal). The face is sampled on a grid
+/// (outside the face counts as outside the solid, so the contours close on the face's edges); the contours are chained into rings,
+/// simplified, clipped to the face and triangulated, holes kept (a shell's section is a ring).
 pub fn section(face: &[V3], plane: &Plane, solid: &Solid, h: f32) -> Vec<Vec<V3>> {
     let n = plane.n;
     let (u, v) = basis(&n);
@@ -85,32 +93,34 @@ pub fn section(face: &[V3], plane: &Plane, solid: &Solid, h: f32) -> Vec<Vec<V3>
         (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
     }
 
-    let area = newell(face).norm() * 0.5;
-    if area < 1e-4 {
+    if newell(face).norm() * 0.5 < 1e-4 {
         return vec![];
     }
 
     let nx = (((x1 - x0) / h).ceil() as usize).clamp(1, 400);
     let ny = (((y1 - y0) / h).ceil() as usize).clamp(1, 400);
     let (hx, hy) = ((x1 - x0) / nx as f32, (y1 - y0) / ny as f32);
-    let corner = |i: usize, j: usize| (x0 + i as f32 * hx, y0 + j as f32 * hy);
-    let mut inside = vec![false; (nx + 1) * (ny + 1)];
+    // One cell of margin all round, outside the face: every contour closes.
+    let (gx, gy) = (nx + 3, ny + 3);
+    let corner = |i: usize, j: usize| (x0 + (i as f32 - 1.0) * hx, y0 + (j as f32 - 1.0) * hy);
+    let on_face = |x: f32, y: f32| in_convex(&pts, x, y, 1e-5);
+    let test = |x: f32, y: f32| on_face(x, y) && solid.inside(&to3(x, y));
+    let mut inside = vec![false; gx * gy];
     let (mut any, mut all) = (false, true);
-    for j in 0..=ny {
-        for i in 0..=nx {
+    for j in 0..gy {
+        for i in 0..gx {
             let (x, y) = corner(i, j);
-            let p = to3(x, y);
-            let k = solid.inside(&p);
-            inside[j * (nx + 1) + i] = k;
-            // Only the corners on the face count for "all inside".
-            if in_convex(&pts, x, y, 1e-4) {
-                any |= k;
-                all &= k;
+            if !on_face(x, y) {
+                continue;
             }
+
+            let k = solid.inside(&to3(x, y));
+            inside[j * gx + i] = k;
+            any |= k;
+            all &= k;
         }
     }
 
-    // The face's own corners, too.
     for p in face {
         let k = solid.inside(p);
         any |= k;
@@ -125,81 +135,109 @@ pub fn section(face: &[V3], plane: &Plane, solid: &Solid, h: f32) -> Vec<Vec<V3>
         return vec![face.to_vec()];
     }
 
-    let at = |i: usize, j: usize| inside[j * (nx + 1) + i];
-    let crossing = |a: (f32, f32), b: (f32, f32), a_in: bool| {
-        let (mut lo, mut hi) = (0.0f32, 1.0f32);
-        for _ in 0..4 {
+    // Crossings, one per grid edge: horizontal edges (i, j)-(i+1, j) are 2 * (j * gx + i), vertical (i, j)-(i, j+1) one more.
+    let at = |i: usize, j: usize| inside[j * gx + i];
+    let mut points: HashMap<usize, (f32, f32)> = HashMap::new();
+    let mut crossing = |e: usize, a: (usize, usize), b: (usize, usize)| -> (f32, f32) {
+        *points.entry(e).or_insert_with(|| {
+            let (pa, pb) = (corner(a.0, a.1), corner(b.0, b.1));
+            let a_in = at(a.0, a.1);
+            let (mut lo, mut hi) = (0.0f32, 1.0f32);
+            for _ in 0..5 {
+                let m = 0.5 * (lo + hi);
+                if test(pa.0 + (pb.0 - pa.0) * m, pa.1 + (pb.1 - pa.1) * m) == a_in { lo = m } else { hi = m }
+            }
             let m = 0.5 * (lo + hi);
-            let p = to3(a.0 + (b.0 - a.0) * m, a.1 + (b.1 - a.1) * m);
-            if solid.inside(&p) == a_in { lo = m } else { hi = m }
-        }
-        let m = 0.5 * (lo + hi);
-        (a.0 + (b.0 - a.0) * m, a.1 + (b.1 - a.1) * m)
+            (pa.0 + (pb.0 - pa.0) * m, pa.1 + (pb.1 - pa.1) * m)
+        })
     };
+
+    // Per cell, the contour's segments with the inside on their left: from where an inside run along the cell's boundary (walked
+    // counter-clockwise) ends to where it began.
+    let mut next: HashMap<usize, usize> = HashMap::new();
+    for j in 0..gy - 1 {
+        for i in 0..gx - 1 {
+            let c = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
+            let ins = c.map(|(a, b)| at(a, b));
+            if ins.iter().all(|&x| x) || ins.iter().all(|&x| !x) {
+                continue;
+            }
+
+            let edge = [2 * (j * gx + i), 2 * (j * gx + i + 1) + 1, 2 * ((j + 1) * gx + i), 2 * (j * gx + i) + 1];
+            let mut entering = vec![];
+            let mut leaving = vec![];
+            for k in 0..4 {
+                let (a, b) = (k, (k + 1) % 4);
+                if ins[a] != ins[b] {
+                    crossing(edge[k], c[a], c[b]);
+                    if ins[b] { entering.push((k, edge[k])) } else { leaving.push((k, edge[k])) }
+                }
+            }
+
+            // Each leaving crossing goes to the entering crossing that began its run (the latest before it, cyclically).
+            for &(kl, el) in &leaving {
+                let e = entering.iter().filter(|(ke, _)| *ke < kl).max_by_key(|(ke, _)| *ke).or_else(|| entering.iter().max_by_key(|(ke, _)| *ke));
+                if let Some(&(_, ee)) = e {
+                    next.insert(el, ee);
+                }
+            }
+        }
+    }
+
+    // The rings.
+    let mut starts = next.keys().copied().collect::<Vec<_>>();
+    starts.sort_unstable();
+    let mut rings: Vec<Vec<P2>> = vec![];
+    for s in starts {
+        if !next.contains_key(&s) {
+            continue;
+        }
+
+        let mut ring = vec![];
+        let mut e = s;
+        while let Some(n) = next.remove(&e) {
+            ring.push(points[&e]);
+            e = n;
+            if e == s {
+                break;
+            }
+        }
+
+        if ring.len() >= 3 {
+            rings.push(simplify(ring, h * 0.15));
+        }
+    }
 
     let face_planes = (0..pts.len()).map(|k| {
         let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
-        // Inside is on the left of a counter-clockwise edge.
         let e = V3::new(b.0 - a.0, b.1 - a.1, 0.0);
         let nrm = V3::new(e.y, -e.x, 0.0).normalize();
         Plane { n: nrm, d: nrm.x * a.0 + nrm.y * a.1 }
     }).collect::<Vec<_>>();
-    let clip2 = |poly: Vec<V3>| face_planes.iter().fold(poly, |p, pl| if p.len() < 3 { p } else { clip_polygon(&p, pl) });
+    let clip = |r: &[P2]| -> Vec<P2> {
+        let poly = r.iter().map(|p| V3::new(p.0, p.1, 0.0)).collect::<Vec<_>>();
+        face_planes.iter().fold(poly, |p, pl| if p.len() < 3 { p } else { clip_polygon(&p, pl) }).iter().map(|p| (p.x, p.y)).collect()
+    };
 
+    let (outers, holes): (Vec<_>, Vec<_>) = rings.into_iter().filter(|r| r.len() >= 3 && area2(r).abs() > 1e-4).partition(|r| area2(r) > 0.0);
     let mut out = vec![];
-    for j in 0..ny {
-        let mut i = 0;
-        while i < nx {
-            let full = |i: usize| at(i, j) && at(i + 1, j) && at(i, j + 1) && at(i + 1, j + 1);
-            if full(i) {
-                // A run of full cells: one rectangle.
-                let start = i;
-                while i < nx && full(i) {
-                    i += 1;
-                }
+    for o in outers {
+        let mine = holes.iter().filter(|hl| contains(&o, hl[0])).cloned().collect::<Vec<_>>();
+        let o = clip(&o);
+        if o.len() < 3 || area2(&o) <= 1e-4 {
+            continue;
+        }
 
-                let (a, b) = (corner(start, j), corner(i, j + 1));
-                let rect = vec![V3::new(a.0, a.1, 0.0), V3::new(b.0, a.1, 0.0), V3::new(b.0, b.1, 0.0), V3::new(a.0, b.1, 0.0)];
-                push(&mut out, clip2(rect), &to3);
-                continue;
+        let (ps, tris) = triangulate(&o, &mine);
+        for t in tris {
+            let tri = t.map(|k| to3(ps[k].0, ps[k].1)).to_vec();
+            if newell(&tri).norm() > 1e-7 {
+                out.push(tri);
             }
-
-            let quad = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
-            if quad.iter().any(|&(a, b)| at(a, b)) {
-                let mut poly = vec![];
-                for k in 0..4 {
-                    let (a, b) = (quad[k], quad[(k + 1) % 4]);
-                    let (ia, ib) = (at(a.0, a.1), at(b.0, b.1));
-                    let (pa, pb) = (corner(a.0, a.1), corner(b.0, b.1));
-                    if ia {
-                        poly.push(V3::new(pa.0, pa.1, 0.0));
-                    }
-
-                    if ia != ib {
-                        let c = crossing(pa, pb, ia);
-                        poly.push(V3::new(c.0, c.1, 0.0));
-                    }
-                }
-
-                push(&mut out, clip2(poly), &to3);
-            }
-
-            i += 1;
         }
     }
 
     out
-}
-
-fn push(out: &mut Vec<Vec<V3>>, poly2: Vec<V3>, to3: &dyn Fn(f32, f32) -> V3) {
-    if poly2.len() < 3 {
-        return;
-    }
-
-    let poly = poly2.iter().map(|p| to3(p.x, p.y)).collect::<Vec<_>>();
-    if newell(&poly).norm() > 1e-6 {
-        out.push(poly);
-    }
 }
 
 fn in_convex(pts: &[(f32, f32)], x: f32, y: f32, eps: f32) -> bool {

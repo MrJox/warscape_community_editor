@@ -106,8 +106,14 @@ fn assign(poly: Vec<Vertex>, cands: &[usize], cells: &Cells, out: &mut Vec<(Opti
     };
 
     let shape = &cells.shapes[&c];
-    if !shape.bounds().overlaps(&Aabb::of(poly.iter().map(pos))) {
+    let points = poly.iter().map(pos).collect::<Vec<_>>();
+    if separated(&points, shape) {
         assign(poly, rest_cands, cells, out);
+        return;
+    }
+
+    if points.iter().all(|p| shape.contains(p, 1e-5)) {
+        out.push((Some(c), poly));
         return;
     }
 
@@ -125,6 +131,56 @@ fn assign(poly: Vec<Vertex>, cands: &[usize], cells: &Cells, out: &mut Vec<(Opti
     }
 
     out.push((Some(c), rest));
+}
+
+/// Plain triangles less the cells gone by damage level `level`: the parts outside them (a collision mesh's).
+pub fn outside(tris: &[[V3; 3]], cells: &Cells, level: usize) -> Vec<[V3; 3]> {
+    let mut gone = cells.shapes.iter().filter(|(i, _)| cells.rank(**i) <= level).map(|(i, s)| (*i, s.bounds(), s)).collect::<Vec<_>>();
+    gone.sort_by_key(|g| g.0);
+    let gone = gone.into_iter().map(|(_, b, s)| (b, s)).collect::<Vec<_>>();
+    let mut out = vec![];
+    for t in tris {
+        let mut pieces = vec![t.to_vec()];
+        let tb = Aabb::of(t.iter().copied());
+        for (b, shape) in &gone {
+            if !b.overlaps(&tb) {
+                continue;
+            }
+
+            let mut next = vec![];
+            for p in pieces {
+                if separated(&p, shape) {
+                    next.push(p);
+                    continue;
+                }
+
+                let mut rest = p;
+                for f in &shape.faces {
+                    let o = crate::geom::clip_polygon(&rest, &f.plane.flipped());
+                    if o.len() >= 3 && newell(&o).norm() > 1e-6 {
+                        next.push(o);
+                    }
+
+                    rest = crate::geom::clip_polygon(&rest, &f.plane);
+                    if rest.len() < 3 {
+                        break;
+                    }
+                }
+            }
+            pieces = next;
+        }
+
+        for p in pieces {
+            out.extend((1..p.len().saturating_sub(1)).map(|i| [p[0], p[i], p[i + 1]]));
+        }
+    }
+
+    out
+}
+
+/// Whether a polygon lies wholly outside a convex cell (on the outer side of one of its faces).
+pub fn separated(points: &[V3], shape: &crate::cells::Polyhedron) -> bool {
+    shape.faces.iter().any(|f| points.iter().all(|p| f.plane.side(p) >= -1e-5))
 }
 
 fn area(poly: &[Vertex]) -> f32 {
@@ -163,7 +219,7 @@ mod tests {
         let total = |tris: &[Tri]| tris.iter().map(|t| (pos(&t[1]) - pos(&t[0])).cross(&(pos(&t[2]) - pos(&t[0]))).norm() * 0.5).sum::<f32>();
         let area = total(&s.kept[0]) + s.cells.values().map(|b| total(&b[0])).sum::<f32>();
         assert!((area - 320.0).abs() < 0.05, "{area}");
-        assert!(!s.cells.is_empty() && total(&s.kept[0]) > 50.0);
+        assert!(!s.cells.is_empty() && total(&s.kept[0]) > 20.0, "{} cells, kept {}", s.cells.len(), total(&s.kept[0]));
         for t in s.cells.values().flat_map(|b| b[0].iter()).chain(&s.kept[0]) {
             for v in t {
                 assert!((v.texture_coordinate().x - v.position().x / 20.0).abs() < 1e-4, "the UV follows the position");

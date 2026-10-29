@@ -117,6 +117,17 @@ impl Solid {
     pub fn triangle(&self, i: usize) -> &[V3; 3] {
         &self.tris[i]
     }
+
+    /// The box around the triangles.
+    pub fn bounds(&self) -> Aabb {
+        Aabb::of(self.tris.iter().flatten().copied())
+    }
+
+    /// The nearest triangle within `limit` (its index).
+    pub fn nearest(&self, p: &V3, limit: f32) -> Option<usize> {
+        let b = Aabb { min: p - V3::repeat(limit), max: p + V3::repeat(limit) };
+        self.near(&b).into_iter().map(|i| (point_triangle(p, &self.tris[i]), i)).filter(|(d, _)| *d <= limit).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, i)| i)
+    }
 }
 
 /// The distance from a point to a triangle (Ericson, Real-Time Collision Detection 5.1.5).

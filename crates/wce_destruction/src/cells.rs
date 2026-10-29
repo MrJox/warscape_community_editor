@@ -209,7 +209,6 @@ impl Cells {
                 continue;
             }
 
-            let mut r = rng.fork(100 + k as u64);
             let inside = |p: &V3| lp.volumes.iter().map(|v| v.sdf(p)).fold(f32::MAX, f32::min);
             let mut region = Aabb::EMPTY;
             for v in &lp.volumes {
@@ -222,36 +221,38 @@ impl Cells {
                 continue;
             }
 
-            // The spacing: the fragment size, larger if the level would have too many fragments (counted over the building's box).
-            let solid = region.volume().max(1e-3);
+            // The spacing: the fragment size, larger until the level has no more fragments than asked (the seeds of a level are
+            // made again from the same stream at each try).
             let mut s = lp.fragment_size.max(0.3);
-            while solid / s.powi(3) > lp.max_fragments.max(1) as f32 * 2.5 {
-                s *= 1.1;
+            let mut mine;
+            loop {
+                let mut r = rng.fork(100 + k as u64);
+                mine = vec![];
+                let n = region.size().map(|x| (x / s).ceil().max(1.0) as usize);
+                for iz in 0..n.z {
+                    for iy in 0..n.y {
+                        for ix in 0..n.x {
+                            let at = region.min + V3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5) * s;
+                            let p = at + V3::new(r.range(-0.45, 0.45), r.range(-0.45, 0.45), r.range(-0.45, 0.45)) * s;
+                            let noise = r.range(-1.0, 1.0) * lp.roughness * s * 0.5;
+                            // A seed already there from an earlier level keeps its level.
+                            if domain.contains(&p) && inside(&p) + noise <= 0.0 && !seeds.iter().any(|q| (q - p).norm_squared() < (0.5 * s).powi(2)) {
+                                mine.push(p);
+                            }
+                        }
+                    }
+                }
+
+                if mine.len() <= lp.max_fragments.max(1) || s > 50.0 {
+                    break;
+                }
+
+                s *= 1.12;
             }
 
             finest = finest.min(s);
-            let jitter = |r: &mut Rng, p: V3, s: f32| p + V3::new(r.range(-0.45, 0.45), r.range(-0.45, 0.45), r.range(-0.45, 0.45)) * s;
-            let n = region.size().map(|x| (x / s).ceil().max(1.0) as usize);
-            for iz in 0..n.z {
-                for iy in 0..n.y {
-                    for ix in 0..n.x {
-                        let at = region.min + V3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5) * s;
-                        let p = jitter(&mut r, at, s);
-                        let noise = r.range(-1.0, 1.0) * lp.roughness * s * 0.5;
-                        if !domain.contains(&p) || inside(&p) + noise > 0.0 {
-                            continue;
-                        }
-
-                        // A seed already there from an earlier level keeps its level.
-                        if seeds.iter().any(|q| (q - p).norm_squared() < (0.5 * s).powi(2)) {
-                            continue;
-                        }
-
-                        seeds.push(p);
-                        level.push(Some(k as u8 + 1));
-                    }
-                }
-            }
+            level.extend(std::iter::repeat_n(Some(k as u8 + 1), mine.len()));
+            seeds.extend(mine);
         }
 
         // Seeds that stay, around the damage: they bound the removed cells.
