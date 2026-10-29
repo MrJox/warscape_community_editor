@@ -3729,11 +3729,12 @@ impl Tool for TileTool {
         self.chips_width = hi.x - lo.x;
         gui::pop_style_color(1);
 
-        // The ground views' chip at the top right, the placement chips (while placing) left of it, beside the compass too.
-        let compass_right = origin.x + size.x * 0.5 + (size.x - 16.0).min(360.0) * 0.5;
+        // The ground views' chip at the top right, left of the viewport's camera and snap chips, the placement chips (while placing) left of
+        // it, beside the compass too (the viewport moves the whole row under it when it does not fit).
         let placing = self.placing.is_some() || self.grabbing;
-        let right = self.ground_chip_width + self.tech_chip_width + 4.0 + if placing { 4.0 + self.place_chips_width } else { 0.0 };
-        let top = if !e.viewport.show_compass || origin.x + size.x - 8.0 - right - 8.0 >= compass_right { 6.0 } else { 58.0 };
+        e.viewport.tool_chips_width = self.ground_chip_width + self.tech_chip_width + 4.0 + if placing { 4.0 + self.place_chips_width } else { 0.0 };
+        let top = e.viewport.chips_top;
+        let size = gui::v2(size.x - e.viewport.chips_width - 4.0, size.y);
         self.draw_ground_chip(e, origin, size, top);
         self.draw_tech_chip(e, origin, size, top);
         self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - 8.0, size.y), top);
@@ -3754,6 +3755,20 @@ impl Tool for TileTool {
 
     fn toolbar(&mut self, e: &mut Editor) {
         self.draw_toolbar(e);
+    }
+
+    fn camera_chip(&mut self, e: &mut Editor) {
+        self.draw_camera_views(e);
+    }
+
+    fn snap_chip(&mut self, e: &mut Editor) {
+        if document_id(e).is_some() {
+            self.draw_snap_settings();
+        }
+    }
+
+    fn snapping(&mut self, e: &mut Editor) -> Option<String> {
+        document_id(e).and_then(|_| self.snapping_summary())
     }
 
     fn unsaved_work(&self) -> Vec<String> {

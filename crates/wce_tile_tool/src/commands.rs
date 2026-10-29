@@ -1011,7 +1011,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "snap", "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off]",
-        "the snapping of the grab and the placing (the toolbar's grid popup); no argument: log it",
+        "the snapping of the grab and the placing (the viewport's snap chip); no argument: log it",
         |e, a| {
             with_tile(e, |t, _| {
                 let mut i = 0;
@@ -1804,7 +1804,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} moved", d.distribute(&all, axis)))
     });
 
-    c.add("view_save", "view_save <name>", "save the camera as a view of the open tile (the toolbar's camera views)", |e, a| {
+    c.add("view_save", "view_save <name>", "save the camera as a view of the open tile (the viewport's camera chip)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: view_save <name>") };
         with_tile(e, |t, e| t.save_camera_view(e, &name).map_or_else(|| no_tile(), |i| ok(format!("view {i}"))))
     });

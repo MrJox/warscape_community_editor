@@ -1,5 +1,5 @@
-//! Camera bookmarks (Phase 5g of docs/plans/tile_ted_parity.md; wce's): views of a tile saved by name and gone back to from the toolbar's
-//! popup. Kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile.
+//! Camera bookmarks (Phase 5g of docs/plans/tile_ted_parity.md; wce's): views of a tile saved by name and gone back to from the viewport's
+//! camera chip. Kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile.
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons};
@@ -62,21 +62,14 @@ impl TileTool {
         });
     }
 
-    /// The toolbar's button and its popup: the saved views (a click goes there, x forgets it) and the current view saved by a name.
-    pub(crate) fn draw_camera_views_button(&mut self, e: &mut Editor) {
-        if gui::small_button(&format!("{}##views", icons::CAMERA)) {
-            gui::open_popup("tile_views");
-        }
-
+    /// The views in the viewport's camera chip: the saved views (a click goes there, x forgets it) and the current view saved by a name.
+    pub(crate) fn draw_camera_views(&mut self, e: &mut Editor) {
+        let Some((_, views)) = self.camera_views(e) else { return };
+        gui::separator_text("Saved views");
         if gui::is_item_hovered() {
-            gui::set_tooltip("Camera views: the views of this tile you saved; a click goes back to one");
+            gui::set_tooltip("The views of this tile you saved; a click goes back to one");
         }
 
-        if !gui::begin_popup("tile_views") {
-            return;
-        }
-
-        let views = self.camera_views(e).map(|(_, v)| v).unwrap_or_default();
         if views.is_empty() {
             gui::text_disabled("No saved views for this tile.");
         }
@@ -103,7 +96,6 @@ impl TileTool {
             self.view_name.clear();
         }
 
-        gui::end_popup();
         if let Some(n) = go {
             self.go_to_camera_view(e, &n);
         }

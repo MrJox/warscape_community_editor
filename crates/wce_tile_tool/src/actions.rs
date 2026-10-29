@@ -1,4 +1,4 @@
-//! The Tile tool's actions outside its panels: the terrain brushes and the snapping in the toolbar (the brush's settings in the Inspector
+//! The Tile tool's actions outside its panels: the terrain brushes in the toolbar, the snapping in the viewport's snap chip (the brush's settings in the Inspector
 //! while one is active), and what can be done to the selection, in the viewport's right-click menu and in the Edit menu.
 
 use std::path::Path;
@@ -55,7 +55,7 @@ const BRUSHES: [(&str, &str); 9] = [
 ];
 
 impl TileTool {
-    /// The toolbar: the terrain brushes (a click on the active one goes back to selecting) and the snapping.
+    /// The toolbar: the terrain brushes (a click on the active one goes back to selecting).
     pub(crate) fn draw_toolbar(&mut self, e: &mut Editor) {
         if document_id(e).is_none() {
             return;
@@ -89,47 +89,46 @@ impl TileTool {
             gui::same_line();
         }
 
-        self.draw_camera_views_button(e);
-        gui::same_line();
+    }
 
-        // The snapping: a button lit while it is on, its settings in a popup.
-        let snapping = self.snap_grid || self.snap_vertices;
-        if snapping {
-            gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-        }
-
-        if gui::small_button(&format!("{}  {} m##snap", icons::GRID_3X3, wce_formats::c_num::printf_g(f64::from(self.grid_m)))) {
-            gui::open_popup("tile_snap");
-        }
-
-        if snapping {
-            gui::pop_style_color(1);
-        }
-
+    /// The tile's snapping in the viewport's snap chip: of the grab (G), of the move gizmo and of the placing (to the grid, to points), and
+    /// the turn of Ctrl+R / R.
+    pub(crate) fn draw_snap_settings(&mut self) {
+        gui::separator_text("Tile");
         if gui::is_item_hovered() {
-            gui::set_tooltip("Snapping of the grab (G), of the move gizmo and of the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
+            gui::set_tooltip("The grab (G), the move gizmo and the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
         }
 
-        if gui::begin_popup("tile_snap") {
-            gui::checkbox("snap to grid", &mut self.snap_grid);
-            gui::set_next_item_width(120.0);
-            gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
-            gui::checkbox("snap to points", &mut self.snap_vertices);
-            if gui::is_item_hovered() {
-                gui::set_tooltip("TEd's Snap to vertices: what is grabbed or placed goes onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0). Before the grid.");
-            }
-
-            gui::set_next_item_width(120.0);
-            gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
-            if gui::is_item_hovered() {
-                gui::set_tooltip("TEd's snap tolerance. 0: the grid always snaps. Above 0: an axis snaps only when it is this close to a grid line (a magnet), and points snap within it.");
-            }
-            gui::set_next_item_width(120.0);
-            gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
-            gui::end_popup();
+        gui::checkbox("snap to grid", &mut self.snap_grid);
+        gui::set_next_item_width(120.0);
+        gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
+        gui::checkbox("snap to points", &mut self.snap_vertices);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("TEd's Snap to vertices: what is grabbed or placed goes onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0). Before the grid.");
         }
 
-        gui::same_line();
+        gui::set_next_item_width(120.0);
+        gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("TEd's snap tolerance. 0: the grid always snaps. Above 0: an axis snaps only when it is this close to a grid line (a magnet), and points snap within it.");
+        }
+
+        gui::set_next_item_width(120.0);
+        gui::drag_float("rotate step (deg)", &mut self.angle_step, 1.0, 1.0, 180.0, "%.3f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The turn of R / Shift+R while placing, of Ctrl+R / Ctrl+Shift+R and Turn on the selection.");
+        }
+    }
+
+    /// The snap chip's tooltip: what of the tile's snapping is on.
+    pub(crate) fn snapping_summary(&self) -> Option<String> {
+        let grid = format!("the {} m grid", wce_formats::c_num::printf_g(f64::from(self.grid_m)));
+        match (self.snap_grid, self.snap_vertices) {
+            (false, false) => None,
+            (true, false) => Some(grid),
+            (false, true) => Some("points".to_owned()),
+            (true, true) => Some(format!("points, {grid}")),
+        }
     }
 
     /// The Inspector while a terrain brush is active: its settings and the height under the cursor. False otherwise.

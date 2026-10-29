@@ -4,10 +4,12 @@
 //! the same views and its own (minimap_panel.rs).
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, icons, theme};
+use wce_editor::{gui, icons};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{GENERATED_PREFIX, TileDocument};
+
+pub(crate) use wce_editor::chips::chip;
 
 use crate::tool::{PAINT_WATER_TIP, TileTool, WATER_VIEW_TIP, document_id, set_sea_state};
 
@@ -43,25 +45,6 @@ pub(crate) fn view_items(current: Option<TerrainView>, id: &str) -> Option<Terra
     }
 
     picked
-}
-
-/// A chip: an icon, lit while `on`; true when clicked.
-pub(crate) fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
-    if on {
-        let h = theme::palette().highlight;
-        gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
-    }
-
-    let clicked = gui::small_button(&format!("{icon}##{id}"));
-    if on {
-        gui::pop_style_color(1);
-    }
-
-    if gui::is_item_hovered() {
-        gui::set_tooltip(tip);
-    }
-
-    clicked
 }
 
 impl TileTool {

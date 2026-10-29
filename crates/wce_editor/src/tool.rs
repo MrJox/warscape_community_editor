@@ -122,6 +122,22 @@ pub trait Tool: Any {
         let _ = (editor, origin, size);
     }
 
+    /// The tool's part of the viewport's camera chip's popup (crate::chips), after the editor's camera options.
+    fn camera_chip(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// The tool's part of the viewport's snap chip's popup (crate::chips), after the gizmo's steps.
+    fn snap_chip(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// What of the tool's snapping is on, for the snap chip's tooltip (it is lit then); None when nothing is.
+    fn snapping(&mut self, editor: &mut Editor) -> Option<String> {
+        let _ = editor;
+        None
+    }
+
     /// The Inspector's contents instead of the selection's (what the tool is about to make, say): true when it filled it.
     fn inspect(&mut self, editor: &mut Editor, inspector: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
         let _ = (editor, inspector);

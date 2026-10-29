@@ -80,6 +80,13 @@ pub struct Viewport {
     pub show_compass: bool,
     pub north: [f32; 2],
 
+    /// The viewport's chips at the top right (crate::chips): their width and how far down they are, last frame; a tool's chips go left
+    /// of them at that height. The tool's chips' width (it sets it every frame it draws them) moves the row under the compass when
+    /// both do not fit beside it.
+    pub chips_width: f32,
+    pub chips_top: f32,
+    pub tool_chips_width: f32,
+
     /// The coordinates readout (crate::coords), the map a tool places the scene in (cells, height above the sea), the ground point under
     /// the cursor (while it is over the image).
     pub show_coords: bool,
@@ -113,7 +120,7 @@ impl Default for Viewport {
             total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
             orbit: OrbitCamera::default(), mode: CameraMode::default(),
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
+            gizmo_local: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -581,7 +588,11 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         crate::coords::draw(origin, size, &e.viewport.coords_lines(&e.scene));
     }
 
-    // The tool's widgets over the image (the tile's weather chips).
+    // The camera's and the snapping's chips at the top right, then the tool's widgets over the image (the tile's chips, left of them).
+    if size.x >= 120.0 {
+        crate::chips::draw(e, origin, size);
+    }
+
     e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
 
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
