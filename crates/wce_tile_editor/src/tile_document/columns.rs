@@ -71,7 +71,9 @@ pub(crate) struct ColumnState {
 
     /// Building key -> whether it attaches or plays anything (a building without either is skipped every frame).
     relevant: HashMap<String, bool>,
-    entities: Vec<EntityId>,
+
+    /// The entities placed for each building (its columns and effects) and what they show (a hash): kept while that does not change.
+    by_elem: HashMap<usize, (u64, Vec<EntityId>)>,
 
     /// What the entities were built from.
     signature: u64,
@@ -82,13 +84,16 @@ pub(crate) struct ColumnState {
     changed: HashSet<usize>,
 }
 
+/// What a building shows (`update_columns`): a hash of it, its columns (world matrix, column key, broken or standing) and its pieces.
+type Shows = (u64, Vec<(Float4x4, String, i64)>, Vec<PlacedPiece>);
+
 /// A building's columns (world matrix, column key, owning element) and its pieces (`PlacedPiece`).
 type BuildingPlaced = (Vec<(Float4x4, String, usize)>, Vec<PlacedPiece>);
 
 impl Default for ColumnState {
     fn default() -> Self {
         Self {
-            dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), entities: vec![], signature: 0,
+            dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), by_elem: HashMap::new(), signature: 0,
             placed: HashMap::new(), changed: HashSet::new(),
         }
     }
@@ -362,17 +367,11 @@ impl Tile {
 
         let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, e)| hash(h, w, key, *e));
         let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, e, burns)| hash(h ^ u64::from(*burns), w, file, *e));
-        if signature == self.columns.signature && (placed.is_empty() && pieces.is_empty() || !self.columns.entities.is_empty()) {
+        if signature == self.columns.signature && (placed.is_empty() && pieces.is_empty() || !self.columns.by_elem.is_empty()) {
             return;
         }
 
         self.columns.signature = signature;
-        // Added in a row by the last placement: one pass.
-        if let (Some(&lo), Some(&hi)) = (self.columns.entities.iter().min(), self.columns.entities.iter().max()) {
-            scene.remove_range(lo..hi + 1);
-        }
-
-        self.columns.entities.clear();
 
         // The joints: columns at one spot (scene units) come from the walls on both sides.
         let tol = JOINT_TOLERANCE_M / self.unit() as f32;
@@ -388,46 +387,92 @@ impl Tile {
             }).collect::<Vec<_>>()
         };
 
-        let mut effect_pieces = pieces;
+        // What each building shows: its columns (broken where they are shared) and its pieces with effects. A building whose share did not
+        // change keeps its entities: placing them all again restarted every torch and dust of the city on each frame a building moved.
+        let mut shows: HashMap<usize, Shows> = HashMap::new();
         for (i, (world, key, elem)) in placed.iter().enumerate() {
-            let Some(model) = self.column_model(key) else { continue };
             let level = i64::from(shared[i]);
-            for (base, levels) in &model.pieces {
-                let file = piece_model(base, level, *levels);
-                let mi = MeshInstance { model: file.clone(), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
-                let id = scene.add(layer, *world, Payload::MeshInstance(mi), self.source(item_of(*elem)));
-                if let Some(en) = scene.find_mut(id) {
-                    en.locked = true;
+            let en = shows.entry(*elem).or_insert_with(|| (0xcbf2_9ce4_8422_2325, vec![], vec![]));
+            en.0 = hash(en.0 ^ level as u64, world, key, *elem);
+            en.1.push((*world, key.clone(), level));
+        }
+
+        for piece in pieces {
+            let en = shows.entry(piece.2).or_insert_with(|| (0xcbf2_9ce4_8422_2325, vec![], vec![]));
+            en.0 = hash(en.0 ^ u64::from(piece.3) ^ 0x9e37, &piece.0, &piece.1, piece.2);
+            en.2.push(piece);
+        }
+
+        let mut gone: Vec<EntityId> = vec![];
+        let old = std::mem::take(&mut self.columns.by_elem);
+        for (elem, (sig, ids)) in old {
+            match shows.get(&elem) {
+                Some(now) if now.0 == sig => {
+                    self.columns.by_elem.insert(elem, (sig, ids));
                 }
 
-                self.columns.entities.push(id);
-                effect_pieces.push((*world, file, *elem, false));
+                _ => gone.extend(ids),
             }
         }
 
-        // The pieces' effects, in their model space.
+        gone.sort_unstable();
+        let mut ranges: Vec<std::ops::Range<EntityId>> = vec![];
+        for id in gone {
+            match ranges.last_mut() {
+                Some(r) if r.end == id => r.end = id + 1,
+                _ => ranges.push(id..id + 1),
+            }
+        }
+
+        scene.remove_ranges(&ranges);
         let unit = self.unit() as f32;
-        for (world, file, elem, burns) in effect_pieces {
-            let Some(effects) = self.piece_effects(&file) else { continue };
-            for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
-                let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-                let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, mesh: None };
-                let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
-                if let Some(en) = scene.find_mut(id) {
-                    en.locked = true;
-                }
-
-                self.columns.entities.push(id);
+        for (elem, (sig, columns, pieces)) in shows {
+            if self.columns.by_elem.contains_key(&elem) {
+                continue;
             }
+
+            let mut ids = vec![];
+            let mut effect_pieces = pieces;
+            for (world, key, level) in columns {
+                let Some(model) = self.column_model(&key) else { continue };
+                for (base, levels) in &model.pieces {
+                    let file = piece_model(base, level, *levels);
+                    let mi = MeshInstance { model: file.clone(), lod: true, p5: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
+                    let id = scene.add(layer, world, Payload::MeshInstance(mi), self.source(item_of(elem)));
+                    if let Some(en) = scene.find_mut(id) {
+                        en.locked = true;
+                    }
+
+                    ids.push(id);
+                    effect_pieces.push((world, file, elem, false));
+                }
+            }
+
+            // The pieces' effects, in their model space.
+            for (world, file, elem, burns) in effect_pieces {
+                let Some(effects) = self.piece_effects(&file) else { continue };
+                for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
+                    let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
+                    let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, mesh: None };
+                    let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
+                    if let Some(en) = scene.find_mut(id) {
+                        en.locked = true;
+                    }
+
+                    ids.push(id);
+                }
+            }
+
+            self.columns.by_elem.insert(elem, (sig, ids));
         }
 
-        // No touch: the removal is logged and the entities added are new to the scene's followers; a touch made the renderer build its
+        // No touch: the removals are logged and the entities added are new to the scene's followers; a touch made the renderer build its
         // draws and every overlay again on each frame a building moved.
     }
 
     /// Forgets the columns (the scene they were in is gone).
     pub(crate) fn reset_columns(&mut self) {
-        self.columns.entities.clear();
+        self.columns.by_elem.clear();
         self.columns.signature = 0;
         self.columns.dirty = true;
         self.columns.placed.clear();
