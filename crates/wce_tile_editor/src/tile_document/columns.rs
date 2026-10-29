@@ -361,7 +361,8 @@ impl Tile {
             }
         }
 
-        scene.touch();
+        // No touch: the removal is logged and the entities added are new to the scene's followers; a touch made the renderer build its
+        // draws and every overlay again on each frame a building moved.
     }
 
     /// Forgets the columns (the scene they were in is gone).

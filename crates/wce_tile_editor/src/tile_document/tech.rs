@@ -4,9 +4,12 @@
 //! docking lines, the emitters, the attached buildings, the bounding boxes, and the buildings whose footprints overlap each other.
 //!
 //! The file is read once per building key into shapes in the building's frame (`TechModel`); each shape belongs to a destruction state
-//! of a piece, and the overlay draws the state the instance shows (or, with `TechSettings::highest`, the most destroyed one). The overlay
-//! is one entity of lines and translucent triangles, rebuilt when a building, the selection, the settings or (for the buildings within
-//! the range) the camera changed; the settings are a view setting of the tile, not kept in the file nor in the settings (`TileDisplay`).
+//! of a piece, and the overlay draws the state the instance shows (or, with `TechSettings::highest`, the most destroyed one). Each
+//! building's lines and translucent triangles are kept, made again when that building changes (moved, edited) or when everything does
+//! (the settings, the selection, the shown types); they are drawn as one overlay entity per map cell (`CELL_M`), each in its own GPU buffer,
+//! so that a building moved or the camera's range moving over the city writes only the cells that changed (a whole city's overlay, half a
+//! million lines, was made and sent again on every frame a building moved). The overlapping buildings are an entity of their own. The
+//! settings are a view setting of the tile, not kept in the file nor in the settings (`TileDisplay`).
 //!
 //! The fields come from rpfm's `Cs2Parsed` (its serde form: the fields are private); where the spec in the file-formats notes and rpfm
 //! differ (rpfm reads the windows, doors, cannons and docking points of v13 as counts only), rpfm is what round-trips the shipped files.
@@ -31,6 +34,9 @@ use super::{BuildingModel, Tile};
 
 /// The most lines one overlay holds (about 19 MB): the buildings nearest the camera come first.
 const MAX_LINES: usize = 600_000;
+
+/// The side of the map cells the overlay is cut in (metres).
+const CELL_M: f32 = 64.0;
 
 /// Two footprints that overlap by less than this (metres of the world, as drawn) do not collide: walls that abut.
 const TOUCH: f32 = 0.2;
@@ -611,11 +617,23 @@ struct Foot {
 // ---- the tile
 
 pub(crate) struct TechState {
-    /// Something they depend on changed: rebuilt at the next update.
+    /// Everything changed (the settings, the selection, the shown types, the models): every building is made again at the next update.
     pub(crate) dirty: bool,
+
+    /// The buildings that changed since (moved, edited): made again at the next update.
+    changed: HashSet<usize>,
     models: HashMap<String, Option<Arc<TechModel>>>,
     metas: HashMap<String, Option<Arc<Vec<MetaEffect>>>>,
-    entity: EntityId,
+
+    /// Each building's lines and triangles, in the world (None: it has no logic file).
+    built: HashMap<usize, Option<Arc<Overlay>>>,
+
+    /// The overlay's entities: one per map cell with the buildings in it (sorted), and the overlapping buildings' (0: none).
+    cells: HashMap<(i32, i32), (EntityId, Vec<usize>)>,
+    collisions: EntityId,
+
+    /// Drawn at least once since the last reset (an empty overlay has no entity).
+    live: bool,
 
     /// Where the camera was at the last rebuild.
     eye: Float3,
@@ -625,7 +643,10 @@ pub(crate) struct TechState {
 
 impl Default for TechState {
     fn default() -> Self {
-        Self { dirty: true, models: HashMap::new(), metas: HashMap::new(), entity: 0, eye: Float3::new(1e30, 1e30, 1e30), selection: vec![], stats: TechStats::default() }
+        Self {
+            dirty: true, changed: HashSet::new(), models: HashMap::new(), metas: HashMap::new(), built: HashMap::new(), cells: HashMap::new(), collisions: 0, live: false,
+            eye: Float3::new(1e30, 1e30, 1e30), selection: vec![], stats: TechStats::default(),
+        }
     }
 }
 
@@ -655,10 +676,69 @@ impl Tile {
         self.tech.dirty = true;
     }
 
-    /// Forgets the entity (the scene it was in is gone).
+    /// Forgets the entities (the scene they were in is gone).
     pub(crate) fn reset_tech(&mut self) {
-        self.tech.entity = 0;
+        self.tech.cells.clear();
+        self.tech.collisions = 0;
+        self.tech.live = false;
         self.tech.dirty = true;
+    }
+
+    /// An element moved or was edited: a building's own overlay is made again; anything else (a group, a layer: what is in it moved too)
+    /// makes every building's again.
+    pub(crate) fn tech_element_changed(&mut self, elem: usize) {
+        if elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == "BUILDING_INSTANCE" {
+            self.tech.changed.insert(elem);
+        } else {
+            self.tech.dirty = true;
+        }
+    }
+
+    /// Takes the overlay's entities off the scene (one logged removal, not a change of everything).
+    fn remove_tech_entities(&mut self, scene: &mut RenderScene) {
+        let mut ids: Vec<EntityId> = self.tech.cells.drain().map(|(_, (id, _))| id).collect();
+        ids.extend((self.tech.collisions != 0).then_some(self.tech.collisions));
+        self.tech.collisions = 0;
+        scene.remove_ranges(&ids.into_iter().map(|id| id..id + 1).collect::<Vec<_>>());
+    }
+
+    /// A building's overlay, in the world: its logic file's shapes at the states its pieces show, its emitters. None without a logic file.
+    fn tech_building(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
+        let placed = self.tech_placed(e, s.highest)?;
+        let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
+        let collision_bits = TechKind::Collision.bit() | TechKind::Gates.bit();
+        for item in placed.model.building.iter().filter(|i| s.on(i.kind)) {
+            emit(&mut o, &placed.world, item, s.fill);
+        }
+
+        let force = self.piece_props.iter().any(|(&(el, _), p)| el == e && p.show_collision);
+        for &(w, i, want) in &placed.pieces {
+            let piece = &placed.model.pieces[i];
+            let Some(level) = pick(&piece.levels, want) else { continue };
+            let frame = w * piece.local;
+            for item in level.items.iter().filter(|i| s.on(i.kind) || (force && collision_bits & i.kind.bit() != 0)) {
+                emit(&mut o, &frame, item, s.fill);
+            }
+        }
+
+        if s.on(TechKind::Emitters) {
+            for (w, file) in &placed.files {
+                let Some(effects) = self.tech_meta(file) else { continue };
+                for fx in effects.iter() {
+                    let at = *w * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
+                    let playing = shown_effect(fx, false);
+                    let rgb = if playing { [0.4, 1.0, 0.5] } else { [0.75, 0.65, 0.25] };
+                    let shape = match fx.volume {
+                        Some(v) => Shape::BoxAt(at, Float3::new(v[0] * 0.5, v[1] * 0.5, v[2] * 0.5)),
+                        None => Shape::Axes(at, 1.2),
+                    };
+
+                    emit(&mut o, &Float4x4::IDENTITY, &Item { kind: TechKind::Emitters, rgb, shape }, s.fill);
+                }
+            }
+        }
+
+        Some(o)
     }
 
     /// The selection, from the highlight: the overlay of the selected buildings follows it.
@@ -799,7 +879,8 @@ impl Tile {
         Some(Foot { elem: e, rings, lo, hi, centre })
     }
 
-    /// Per frame: draws the technology again when it changed (a building, the selection, the settings, the camera for the buildings in range).
+    /// Per frame: draws the technology again when it changed (a building, the selection, the settings, the camera for the buildings in range):
+    /// the buildings that changed are made again, and only the map cells whose buildings or their overlays changed are sent to the scene.
     pub(crate) fn update_tech(&mut self, scene: &mut RenderScene, layer: LayerId, eye: Float3) {
         wce_prof!("tile.update_tech");
         let s = self.display.tech.clone();
@@ -807,12 +888,10 @@ impl Tile {
         // A piece the Inspector's show_collision is on for draws its collision whatever the settings.
         let piece_collision = self.piece_props.values().any(|p| p.show_collision);
         if !s.any() && !piece_collision {
-            if self.tech.entity != 0 {
-                scene.remove(self.tech.entity);
-                scene.touch();
-                self.tech.entity = 0;
-            }
-
+            self.remove_tech_entities(scene);
+            self.tech.live = false;
+            self.tech.built.clear();
+            self.tech.changed.clear();
             self.tech.stats = TechStats::default();
             return;
         }
@@ -823,70 +902,116 @@ impl Tile {
             dot(d, d) > range * range
         };
 
-        if !self.tech.dirty && !moved && self.tech.entity != 0 && scene.find(self.tech.entity).is_some() {
+        // The scene was replaced: the entities went with it.
+        let alive = self.tech.cells.values().all(|(id, _)| scene.find(*id).is_some()) && (self.tech.collisions == 0 || scene.find(self.tech.collisions).is_some());
+        if !alive {
+            self.tech.cells.clear();
+            self.tech.collisions = 0;
+        }
+
+        if !self.tech.dirty && self.tech.changed.is_empty() && !moved && self.tech.live && alive {
             return;
         }
 
-        self.tech.dirty = false;
+        let full = std::mem::take(&mut self.tech.dirty) || !alive;
+        let changed = std::mem::take(&mut self.tech.changed);
+        if full {
+            self.tech.built.clear();
+        } else {
+            for e in &changed {
+                self.tech.built.remove(e);
+            }
+        }
+
+        self.tech.live = true;
         self.tech.eye = eye;
         let candidates = self.tech_candidates(eye, &s);
-        let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
         let mut stats = TechStats::default();
-        let collision_bits = TechKind::Collision.bit() | TechKind::Gates.bit();
+        let (mut lines, mut drawn) = (0, vec![]);
         for &e in &candidates {
-            let Some(placed) = self.tech_placed(e, s.highest) else { continue };
+            let part = match self.tech.built.get(&e) {
+                Some(p) => p.clone(),
+                None => {
+                    let p = self.tech_building(e, &s).map(Arc::new);
+                    self.tech.built.insert(e, p.clone());
+                    p
+                }
+            };
+
+            let Some(part) = part else { continue };
             stats.buildings += 1;
-            for item in placed.model.building.iter().filter(|i| s.on(i.kind)) {
-                emit(&mut o, &placed.world, item, s.fill);
-            }
-
-            for &(w, i, want) in &placed.pieces {
-                let piece = &placed.model.pieces[i];
-                let Some(level) = pick(&piece.levels, want) else { continue };
-                let frame = w * piece.local;
-                let force = self.piece_props.iter().any(|(&(el, _), p)| el == e && p.show_collision);
-                for item in level.items.iter().filter(|i| s.on(i.kind) || (force && collision_bits & i.kind.bit() != 0)) {
-                    emit(&mut o, &frame, item, s.fill);
-                }
-            }
-
-            if s.on(TechKind::Emitters) {
-                for (w, file) in &placed.files {
-                    let Some(effects) = self.tech_meta(file) else { continue };
-                    for fx in effects.iter() {
-                        let at = *w * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-                        let playing = shown_effect(fx, false);
-                        let rgb = if playing { [0.4, 1.0, 0.5] } else { [0.75, 0.65, 0.25] };
-                        let shape = match fx.volume {
-                            Some(v) => Shape::BoxAt(at, Float3::new(v[0] * 0.5, v[1] * 0.5, v[2] * 0.5)),
-                            None => Shape::Axes(at, 1.2),
-                        };
-
-                        emit(&mut o, &Float4x4::IDENTITY, &Item { kind: TechKind::Emitters, rgb, shape }, s.fill);
-                    }
-                }
-            }
-
-            if o.lines.len() / 2 > MAX_LINES {
+            lines += part.lines.len() / 2;
+            drawn.push(e);
+            if lines > MAX_LINES {
                 stats.capped = true;
                 break;
             }
         }
 
+        // The cells: one entity each, sent again only when its buildings or their overlays changed.
+        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for &e in &drawn {
+            let p = self.world_position(e);
+            cells.entry(((p.x / CELL_M).floor() as i32, (p.z / CELL_M).floor() as i32)).or_default().push(e);
+        }
+
+        let mut gone = vec![];
+        for (key, (id, members)) in std::mem::take(&mut self.tech.cells) {
+            match cells.get_mut(&key) {
+                Some(now) => {
+                    now.sort_unstable();
+                    if full || *now != members || members.iter().any(|m| changed.contains(m)) {
+                        scene.update_payload(id, Payload::Overlay(self.tech_cell(now, &s)));
+                    }
+
+                    self.tech.cells.insert(key, (id, std::mem::take(now)));
+                }
+
+                None => gone.push(id..id + 1),
+            }
+        }
+
+        for (key, mut members) in cells {
+            if members.is_empty() {
+                continue;
+            }
+
+            members.sort_unstable();
+            let id = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(self.tech_cell(&members, &s)), self.source(super::TERRAIN));
+            self.tech.cells.insert(key, (id, members));
+        }
+
+        let mut collision_lines = 0;
         if s.detect {
-            stats.collisions = self.tech_collisions(&mut o, &candidates, &s);
+            let mut o = Overlay { depth_test: !s.xray, pickable: false, own_buffer: true, ..Default::default() };
+            stats.collisions = self.tech_collisions(&mut o, &drawn, &s);
+            collision_lines = o.lines.len() / 2;
+            if self.tech.collisions != 0 {
+                scene.update_payload(self.tech.collisions, Payload::Overlay(o));
+            } else {
+                self.tech.collisions = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(o), self.source(super::TERRAIN));
+            }
+        } else if self.tech.collisions != 0 {
+            gone.push(self.tech.collisions..self.tech.collisions + 1);
+            self.tech.collisions = 0;
         }
 
-        stats.lines = o.lines.len() / 2;
+        // Not a structural change of everything: the removals are logged as such, the payloads' updates as overlays changed, and the
+        // entities added are new to the scene's followers.
+        scene.remove_ranges(&gone);
+        stats.lines = lines + collision_lines;
         self.tech.stats = stats;
-        let payload = Payload::Overlay(o);
-        if self.tech.entity != 0 && scene.find(self.tech.entity).is_some() {
-            scene.update_payload(self.tech.entity, payload);
-        } else {
-            self.tech.entity = scene.add(layer, Float4x4::IDENTITY, payload, self.source(super::TERRAIN));
+    }
+
+    /// A cell's overlay: its buildings' together.
+    fn tech_cell(&self, members: &[usize], s: &TechSettings) -> Overlay {
+        let mut o = Overlay { depth_test: !s.xray, pickable: false, own_buffer: true, ..Default::default() };
+        for part in members.iter().filter_map(|e| self.tech.built.get(e)?.as_ref()) {
+            o.lines.extend_from_slice(&part.lines);
+            o.triangles.extend_from_slice(&part.triangles);
         }
 
-        scene.touch();
+        o
     }
 
     /// Marks the buildings whose footprints overlap, among the ones drawn (and, for a selection, whatever stands against it); how many pairs.

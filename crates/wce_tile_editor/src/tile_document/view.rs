@@ -1241,9 +1241,12 @@ impl Tile {
         }
 
         self.columns.dirty = true;
+        let pending = std::mem::take(&mut self.piece_pending);
+        for &(elem, _) in &pending {
+            self.tech_element_changed(elem);
+        }
 
-        self.tech.dirty = true;
-        for (elem, k) in std::mem::take(&mut self.piece_pending) {
+        for (elem, k) in pending {
             let Some(first) = self.first_entity.get(elem).copied().filter(|&f| f != 0) else { continue };
             if k >= usize::from(self.entity_count[elem]) {
                 continue;

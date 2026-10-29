@@ -648,7 +648,7 @@ impl Tile {
     /// An attribute of one element changed that the index keeps (its scale) or that changes how it is shown.
     pub(crate) fn index_attr_edited(&mut self, elem: usize) {
         self.columns.dirty = true;
-        self.tech.dirty = true;
+        self.tech_element_changed(elem);
         if self.idx.valid && elem < self.idx.scale.len() {
             let s = self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
             self.idx.scale[elem] = s;
@@ -659,7 +659,7 @@ impl Tile {
     /// The position / orientation of one element changed.
     pub(crate) fn index_edited(&mut self, elem: usize) {
         self.columns.dirty = true;
-        self.tech.dirty = true;
+        self.tech_element_changed(elem);
         if !self.idx.valid || elem >= self.idx.slot.len() {
             return;
         }

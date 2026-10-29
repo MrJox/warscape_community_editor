@@ -142,6 +142,8 @@ fn structure_log() {
     assert_eq!(scene.entities().iter().map(|e| e.id).collect::<Vec<_>>(), [ids[2], ids[3]]);
     assert!(scene.find(ids[3]).is_some() && scene.find(ids[0]).is_none());
     assert_eq!(scene.structure_since(&mut cursor), Some(vec![StructureChange::Removed(ids[0]..ids[2]), StructureChange::Removed(ids[4]..ids[5] + 1)]));
+    scene.remove_range(ids[3]..ids[4]);
+    assert_eq!(scene.structure_since(&mut cursor), Some(vec![StructureChange::Removed(ids[3]..ids[4])]));
 
     // A payload of another kind, and anything else.
     scene.update_payload(ids[2], Payload::Overlay(Overlay::default()));

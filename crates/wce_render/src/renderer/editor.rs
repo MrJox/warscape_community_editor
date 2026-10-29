@@ -9,7 +9,7 @@
 use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::camera::Camera;
-use wce_scene::render_scene::{EntityId, Overlay, OverlayVertex, Payload, RenderScene, overlay_colour};
+use wce_scene::render_scene::{EntityId, Overlay, OverlayVertex, Payload, RenderScene, StructureChange, overlay_colour};
 
 use super::*;
 use crate::draw_set::{Frustum, View as DrawView, Visible};
@@ -128,6 +128,28 @@ fn push_overlay(batches: &mut [Vec<OverlayVertex>; 4], e: &wce_scene::render_sce
 
 /// The most vertices of the overlays kept apart from the cache because they keep changing (`EditorGpu::ovl_volatile`).
 const VOLATILE_OVERLAY_MAX: usize = 1 << 17;
+
+/// The vertices from which an overlay has a GPU buffer of its own (`EditorGpu::ovl_big`) instead of a place in the cache.
+const BIG_OVERLAY: usize = 1 << 15;
+
+/// The vertices of an overlay entity.
+fn overlay_size(o: &Overlay) -> usize {
+    o.lines.len() + o.triangles.len()
+}
+
+/// Whether an overlay has a GPU buffer of its own: a big one, or one that asks for it (`Overlay::own_buffer`).
+fn own_buffer(o: &Overlay) -> bool {
+    o.own_buffer || overlay_size(o) >= BIG_OVERLAY
+}
+
+/// A part of an overlay buffer to draw: the first vertex and the count, per batch.
+type BatchRanges = ([u32; 4], [u32; 4]);
+
+/// An overlay with a buffer of its own: its vertices in the world, at the transform they were made with.
+struct BigOverlay {
+    gpu: OverlayBuffer,
+    world: Float4x4,
+}
 
 /// A surface under a pixel (`Renderer::pick_surface`): its world point, its normal, and the entity it belongs to (0: none known).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -266,6 +288,24 @@ pub(crate) struct EditorGpu {
     ovl_gpu_cache: OverlayBuffer,
     ovl_gpu_volatile: OverlayBuffer,
     ovl_gpu_frame: OverlayBuffer,
+
+    /// The big overlays (a big tile's polygon covers, hundreds of thousands of vertices each) and the ones that ask for it
+    /// (`Overlay::own_buffer`), a buffer each, written again only when
+    /// that overlay changes (its payload or its transform) or goes: a structural change elsewhere (a building moved, a column placed) made
+    /// the cache with all of them in it be built again every frame (38 ms on a city with 2.3 M overlay vertices). The position in the
+    /// scene's log of structural changes, for the payloads replaced and the entities removed.
+    ovl_big: std::collections::BTreeMap<EntityId, BigOverlay>,
+    ovl_structure_cursor: u64,
+
+    /// The overlays in the cache and the scene's next entity id when it was built: a structural change that touches none of them (a
+    /// building's columns placed again, meshes added or removed) leaves the cache as it is.
+    ovl_cache_ids: std::collections::BTreeSet<EntityId>,
+    ovl_cache_next: EntityId,
+
+    /// Where the overlays with buffers of their own come between the cache's (their entity, the cache's vertices before it per batch):
+    /// they are drawn in the scene's order, as when everything was in the cache (a big zone's translucent fill after the city's small
+    /// ones covered them).
+    ovl_cache_marks: Vec<(EntityId, [u32; 4])>,
     ovl_blend: Option<ID3D11BlendState>,
     ovl_ds_test: Option<ID3D11DepthStencilState>,
     ovl_ds_off: Option<ID3D11DepthStencilState>,
@@ -420,19 +460,36 @@ impl Renderer {
         // the cache.
         let scene_id = scene as *const RenderScene as usize;
         let changed = scene.overlays_changed_since(&mut self.editor.ovl_log_cursor);
-        let structural = self.editor.ovl_cache_scene != scene_id || self.editor.ovl_cache_structure != scene.structure_revision() || changed.is_none();
+        let log = scene.structure_since(&mut self.editor.ovl_structure_cursor);
+        let was_big = self.editor.ovl_big.keys().copied().collect::<std::collections::BTreeSet<_>>();
+        self.update_big_overlays(scene, scene_id, changed.as_deref(), log.as_deref());
+        let structural = self.editor.ovl_cache_scene != scene_id
+            || changed.is_none()
+            || self.editor.ovl_cache_structure != scene.structure_revision() && self.cache_touched(scene, log.as_deref());
+        if !structural {
+            self.editor.ovl_cache_structure = scene.structure_revision();
+            self.editor.ovl_cache_next = scene.next_id();
+        }
+
         let (mut rebuild, mut volatile_changed) = (structural, structural && !self.editor.ovl_volatile.is_empty());
         if structural {
             self.editor.ovl_volatile.clear();
         } else if self.editor.ovl_cache_rev != scene.overlay_revision() {
             let size = |id: EntityId| scene.find(id).map_or(0, |e| match &e.payload {
-                Payload::Overlay(o) => o.lines.len() + o.triangles.len(),
+                Payload::Overlay(o) => overlay_size(o),
                 _ => 0,
             });
 
+            let own = |id: EntityId| scene.find(id).is_some_and(|e| matches!(&e.payload, Payload::Overlay(o) if own_buffer(o)));
+
             let mut kept_apart = self.editor.ovl_volatile.iter().map(|&id| size(id)).sum::<usize>();
             for id in changed.unwrap_or_default() {
-                if self.editor.ovl_volatile.contains(&id) {
+                if own(id) {
+                    // Its own buffer (update_big_overlays); one that has just grown that big is still in the cache or kept apart.
+                    if !was_big.contains(&id) {
+                        (rebuild, volatile_changed) = (true, true);
+                    }
+                } else if self.editor.ovl_volatile.contains(&id) {
                     volatile_changed = true;
                 } else if kept_apart + size(id) <= VOLATILE_OVERLAY_MAX {
                     kept_apart += size(id);
@@ -449,11 +506,23 @@ impl Renderer {
             wce_prof!("render.overlay_rebuild");
             self.editor.ovl_cache_scene = scene_id;
             self.editor.ovl_cache_structure = scene.structure_revision();
+            self.editor.ovl_cache_next = scene.next_id();
+            self.editor.ovl_cache_ids.clear();
+            self.editor.ovl_cache_marks.clear();
             let mut batches: [Vec<OverlayVertex>; 4] = Default::default();
             for e in scene.entities() {
                 let Payload::Overlay(o) = &e.payload else { continue };
-                if scene.drawable(e) && !o.selection_mask && !self.editor.ovl_volatile.contains(&e.id) {
+                if o.selection_mask {
+                    continue;
+                }
+
+                // One kept apart while it was small and since grown has its own buffer now.
+                if own_buffer(o) {
+                    self.editor.ovl_volatile.remove(&e.id);
+                    self.editor.ovl_cache_marks.push((e.id, batches.each_ref().map(|v| v.len() as u32)));
+                } else if scene.drawable(e) && !self.editor.ovl_volatile.contains(&e.id) {
                     push_overlay(&mut batches, e, o);
+                    self.editor.ovl_cache_ids.insert(e.id);
                 }
             }
 
@@ -465,7 +534,7 @@ impl Renderer {
             for &id in &self.editor.ovl_volatile {
                 let Some(e) = scene.find(id).filter(|e| scene.drawable(e)) else { continue };
                 let Payload::Overlay(o) = &e.payload else { continue };
-                if !o.selection_mask {
+                if !o.selection_mask && !own_buffer(o) {
                     push_overlay(&mut batches, e, o);
                 }
             }
@@ -527,8 +596,34 @@ impl Renderer {
         let frame: [Vec<OverlayVertex>; 4] = [vec![], lines_d, vec![], lines_n];
         self.editor.ovl_gpu_frame.upload(&self.dev, &self.ctx, &frame);
         let e = &self.editor;
-        let parts = [&e.ovl_gpu_cache, &e.ovl_gpu_volatile, &e.ovl_gpu_frame];
-        if parts.iter().all(|p| p.count.iter().all(|&n| n == 0)) {
+        // In the scene's order: the cache in runs, the overlays with buffers of their own where they come between them (the ones newer
+        // than the cache after it; hidden ones keep their buffer), then the small ones that keep changing and the frame's extras.
+        let whole = |p: &OverlayBuffer| -> BatchRanges { (p.first, p.count) };
+        let shown = |id: EntityId| scene.find(id).is_some_and(|x| scene.drawable(x));
+        let mut parts: Vec<(&OverlayBuffer, BatchRanges)> = vec![];
+        let mut at = [0u32; 4];
+        let mut placed = std::collections::BTreeSet::new();
+        for &(id, mark) in &e.ovl_cache_marks {
+            let mark = std::array::from_fn(|b| mark[b].min(e.ovl_gpu_cache.count[b]));
+            parts.push((&e.ovl_gpu_cache, (std::array::from_fn(|b| e.ovl_gpu_cache.first[b] + at[b]), std::array::from_fn(|b| mark[b] - at[b].min(mark[b])))));
+            at = mark;
+            if let Some(big) = e.ovl_big.get(&id).filter(|_| shown(id)) {
+                parts.push((&big.gpu, whole(&big.gpu)));
+                placed.insert(id);
+            }
+        }
+
+        let cache = &e.ovl_gpu_cache;
+        parts.push((cache, (std::array::from_fn(|b| cache.first[b] + at[b].min(cache.count[b])), std::array::from_fn(|b| cache.count[b] - at[b].min(cache.count[b])))));
+        for (id, big) in &e.ovl_big {
+            if !placed.contains(id) && shown(*id) {
+                parts.push((&big.gpu, whole(&big.gpu)));
+            }
+        }
+
+        parts.push((&e.ovl_gpu_volatile, whole(&e.ovl_gpu_volatile)));
+        parts.push((&e.ovl_gpu_frame, whole(&e.ovl_gpu_frame)));
+        if parts.iter().all(|(_, (_, count))| count.iter().all(|&n| n == 0)) {
             return;
         }
 
@@ -544,22 +639,97 @@ impl Renderer {
         self.ctx.vs_set_constant_buffers(0, &[Some(cb)]);
         self.ctx.ps_set_shader(e.ovl_ps.as_ref());
 
-        // Per batch: the cache, the overlays that keep changing, the frame's extras.
+        // Per batch, the parts in order.
         for b in 0..4 {
-            for p in parts {
-                if p.count[b] == 0 {
+            for (p, (first, count)) in &parts {
+                if count[b] == 0 {
                     continue;
                 }
 
-                self.ctx.set_vertex_buffers(0, &[p.vb.clone()], &[OVERLAY_VERTEX as u32], &[0]);
+                self.ctx.set_vertex_buffers(0, std::slice::from_ref(&p.vb), &[OVERLAY_VERTEX as u32], &[0]);
                 self.ctx.set_depth_stencil_state(if b < 2 { e.ovl_ds_test.as_ref() } else { e.ovl_ds_off.as_ref() }, 0);
                 self.ctx.set_topology(topology[b]);
-                self.ctx.draw(p.count[b], p.first[b]);
+                self.ctx.draw(count[b], first[b]);
             }
         }
 
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_render_targets(&[], None);
+    }
+
+    /// The buffers of the overlays that have their own (`EditorGpu::ovl_big`) brought up to date: the ones whose overlay changed (`changed`, the scene's log of
+    /// overlays updated), whose payload was replaced or whose entity went (its log of structural changes) are made again or dropped, and
+    /// new big overlays get one. A new scene, or a log that was cut short, starts over.
+    fn update_big_overlays(&mut self, scene: &RenderScene, scene_id: usize, changed: Option<&[EntityId]>, structure: Option<&[StructureChange]>) {
+        let e = &mut self.editor;
+        match (structure, changed) {
+            (Some(structure), Some(changed)) if e.ovl_cache_scene == scene_id => {
+                for c in structure {
+                    match c {
+                        StructureChange::Removed(ids) => e.ovl_big.retain(|id, _| !ids.contains(id)),
+                        StructureChange::Payload(id) => {
+                            e.ovl_big.remove(id);
+                        }
+
+                        StructureChange::Other => {}
+                    }
+                }
+
+                for id in changed {
+                    e.ovl_big.remove(id);
+                }
+            }
+
+            _ => e.ovl_big.clear(),
+        }
+
+        // Gone (a single removal is logged as Other), become small or a selection mask, or moved.
+        e.ovl_big.retain(|id, b| {
+            scene.find(*id).is_some_and(|x| x.world == b.world && matches!(&x.payload, Payload::Overlay(o) if own_buffer(o) && !o.selection_mask))
+        });
+
+        for x in scene.entities() {
+            let Payload::Overlay(o) = &x.payload else { continue };
+            if !own_buffer(o) || o.selection_mask || e.ovl_big.contains_key(&x.id) {
+                continue;
+            }
+
+            wce_prof!("render.overlay_big");
+            let mut batches: [Vec<OverlayVertex>; 4] = Default::default();
+            push_overlay(&mut batches, x, o);
+            let mut gpu = OverlayBuffer::default();
+            gpu.upload(&self.dev, &self.ctx, &batches);
+            e.ovl_big.insert(x.id, BigOverlay { gpu, world: x.world });
+        }
+    }
+
+    /// Whether structural changes (`log`, since the last frame) touch the cache of small overlays or the ones kept apart: anything but
+    /// removals and replaced payloads (visibility, layers), one of theirs removed or replaced, or a small overlay new since the cache.
+    fn cache_touched(&self, scene: &RenderScene, log: Option<&[StructureChange]>) -> bool {
+        let e = &self.editor;
+        let ours = |id: EntityId| e.ovl_cache_ids.contains(&id) || e.ovl_volatile.contains(&id);
+        let small = |id: EntityId| scene.find(id).is_some_and(|x| matches!(&x.payload, Payload::Overlay(o) if !own_buffer(o) && !o.selection_mask));
+        let Some(log) = log else { return true };
+        for c in log {
+            match c {
+                StructureChange::Removed(r) => {
+                    if e.ovl_cache_ids.range(r.clone()).next().is_some() || e.ovl_volatile.range(r.clone()).next().is_some() {
+                        return true;
+                    }
+                }
+
+                StructureChange::Payload(id) => {
+                    if ours(*id) || small(*id) {
+                        return true;
+                    }
+                }
+
+                StructureChange::Other => return true,
+            }
+        }
+
+        // Added since: entity ids only grow, and the scene keeps them in the order they came.
+        scene.entities().iter().rev().take_while(|x| x.id >= e.ovl_cache_next).any(|x| small(x.id))
     }
 
     /// The selection outline (see the module): the mask of the selected meshes, terrain and overlays, then its edge over the target.
