@@ -225,7 +225,8 @@ fn write_payload(w: &mut W, p: &Payload) -> bool {
             w.f32(*phase);
         }
 
-        Payload::VfxEmitter(VfxEmitter { effect, scale, mesh }) => {
+        // `stop` is a collapse's own (runtime effects are never cached).
+        Payload::VfxEmitter(VfxEmitter { effect, scale, mesh, .. }) => {
             w.u8(4);
             w.str(effect);
             w.f32(*scale);
@@ -421,7 +422,7 @@ fn read_payload(r: &mut R) -> Result<Payload, String> {
         4 => {
             let (effect, scale) = (r.str()?, r.f32()?);
             let mesh = if r.bool()? { Some(Arc::new(r.f32s()?.as_chunks::<9>().0.to_vec())) } else { None };
-            Payload::VfxEmitter(VfxEmitter { effect, scale, mesh })
+            Payload::VfxEmitter(VfxEmitter { effect, scale, mesh, stop: None })
         }
 
         5 => {
@@ -515,7 +516,7 @@ mod tests {
                 (Float4x4::IDENTITY, Payload::MeshInstance(MeshInstance { model: "b.rigid_model_v2".to_owned(), ..Default::default() })),
                 (Float4x4::IDENTITY, Payload::Water(Water { verts: vec![WaterVertex { x: 1.0, fade: 0.5, ..Default::default() }], indices: vec![0, 0, 0], ..Default::default() })),
                 (Float4x4::IDENTITY, Payload::PointLight(PointLight { colour: [1.0, 0.5, 0.25], colour_scale: 2.0, colour_min: 0.0, radius: 9.0, smooth: true, animation: 2, speed: [1.0, 2.0], phase: 0.3 })),
-                (Float4x4::IDENTITY, Payload::VfxEmitter(VfxEmitter { effect: "fire".to_owned(), scale: 1.5, mesh: Some(Arc::new(vec![[1.0; 9]])) })),
+                (Float4x4::IDENTITY, Payload::VfxEmitter(VfxEmitter { effect: "fire".to_owned(), scale: 1.5, mesh: Some(Arc::new(vec![[1.0; 9]])), stop: None })),
                 (Float4x4::IDENTITY, Payload::Decal(Decal { model: "d".to_owned(), tiled: true, opacity: 0.7, parallax: 0.1 })),
             ],
             mid: 2,

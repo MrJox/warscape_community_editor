@@ -244,6 +244,7 @@ impl Tile {
             let meta = format!("{}.meta", next.strip_suffix(".rigid_model_v2").unwrap_or(&next));
             if let Some(m) = self.meta_entries(&meta) {
                 effects.extend(m.iter().filter(|e| burst_effect(e, burning)).cloned().map(|mut e| {
+                    e.end -= e.start;
                     e.start = 0.0;
                     e
                 }));
@@ -424,7 +425,7 @@ impl Tile {
 
         let linger = EFFECT_LINGER_S + (fx.end - fx.start).max(0.0);
         for _ in 0..count {
-            let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / self.unit() as f32, mesh: mesh.clone() };
+            let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / self.unit() as f32, mesh: mesh.clone(), stop: Some((fx.end - fx.start).max(0.0)) };
             let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
             if let Some(en) = scene.find_mut(id) {
                 en.locked = true;

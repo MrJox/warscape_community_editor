@@ -203,7 +203,7 @@ impl Tile {
                 "POINT_LIGHT_INSTANCE" => vec![Payload::PointLight(super::view::point_light_of(mini.doc(), e, 0.0))],
                 "VFXInstance" => get("vfx").map(|effect| {
                     let scale = get("scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / unit;
-                    Payload::VfxEmitter(VfxEmitter { effect, scale: scale as f32, mesh: None })
+                    Payload::VfxEmitter(VfxEmitter { effect, scale: scale as f32, mesh: None, stop: None })
                 }).into_iter().collect(),
                 kind => models.into_iter().map(|model| {
                     // A tree's leaves need "nothing dissolved" (see `add_item_entities`).

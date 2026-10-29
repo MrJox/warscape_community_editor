@@ -225,6 +225,9 @@ pub struct WorldEffect {
 
     /// The triangles (effect frame, metres) its mesh emitters spawn on (render_scene::VfxEmitter::mesh).
     pub mesh: Option<EmitMesh>,
+
+    /// Seconds after the effect starts at which its infinite emitters are stopped (render_scene::VfxEmitter::stop).
+    pub stop: Option<f32>,
 }
 
 /// One emitter of a placed effect: an emitter instance after the weather's.
@@ -244,6 +247,7 @@ struct WorldInstance {
     /// The total scale: the effect's times the reference's (drawn in its range).
     scale: f32,
     mesh: Option<EmitMesh>,
+    stop: Option<f32>,
     tint: [f32; 4],
 
     /// The instance's own generator (game: emitter instance +0xc0, 0x343fd / 0x269ec3).
@@ -986,6 +990,7 @@ impl ParticleSystem {
                         inst.rot = rot;
                         inst.quat = quat;
                         inst.mesh.clone_from(&fx.mesh);
+                        inst.stop = fx.stop;
                         inst
                     }
 
@@ -1000,7 +1005,7 @@ impl ParticleSystem {
                         let area_blend = game_rand(&mut rng);
                         let tint = std::array::from_fn(|c| lerp(em.tint_min[c], em.tint_max[c], t_tint));
                         WorldInstance {
-                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, mesh: fx.mesh.clone(), tint, rng,
+                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, mesh: fx.mesh.clone(), stop: fx.stop, tint, rng,
                             area_blend, lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
                             emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
                             start: clock, last_spawn: clock, st: EmitterState::default(),
@@ -1662,7 +1667,9 @@ impl ParticleSystem {
             }
 
             let age = self.clock - inst.start + pre;
-            if !infinite && !d.b("InfiniteLife", false) && age > emitter_life {
+            // A stopped infinite emitter (a `.meta` effect past its end) is no longer infinite: it runs out its LifeTime.
+            let endless = (infinite || d.b("InfiniteLife", false)) && inst.stop.is_none_or(|s| self.clock - inst.start < s);
+            if !endless && age > emitter_life {
                 continue;
             }
 

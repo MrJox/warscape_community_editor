@@ -247,6 +247,7 @@ impl Tile {
                 let meta = format!("{}.meta", next.trim_end_matches(".rigid_model_v2"));
                 if let Some(m) = self.meta_entries(&meta) {
                     effects.extend(m.iter().filter(|e| e.tag.is_empty()).cloned().map(|mut e| {
+                        e.end -= e.start;
                         e.start = 0.0;
                         e
                     }));

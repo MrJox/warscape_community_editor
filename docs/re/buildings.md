@@ -156,6 +156,12 @@ centre lies inside the volume's box (in the volume's frame), spawns the volumetr
   false), spin about ParticleSpinAxis from a random orientation, scale lerp(ParticleScaleStart.x, .y); the engine's rigid particle
   update was not traced;
 - the new level's bursts play when the collapse starts (not when it ends);
+- a `.meta` effect is stopped at its `end` (a point event: `end` = `start` in every destruction entry, e.g. the wall's dust at 0.0106 s),
+  and a stopped emitter that the vanilla references mark `infinite_life="true"` (all the `destruction_vfx_*` volumetrics) runs out its own
+  LifeTime and ends (`VfxEmitter::stop`). Run as infinite instead, the dust plumes (LifeTime 0.07 - 0.1 s, 40 - 100 particles a second,
+  particles living 2 - 8 s) of the group's ~25 instances kept emitting for the 15 s the editor lets an effect stay, a wall of smoke that hid
+  the collapse; the emitters' own LifeTimes (0.07 s plumes, 1.5 s aftermath, 1.65 s down / out) and non-looping curves are only meaningful
+  when each runs once. Not traced in the engine;
 - an effect's bone is not followed (a few `.meta` effects name bone 0);
 - the editor's playback matches the game's speed (the `.anim`'s rate and end time, real time).
 

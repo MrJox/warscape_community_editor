@@ -442,6 +442,10 @@ pub struct VfxEmitter {
     /// The triangles (three points, metres, in the entity's frame) its emitters that emit from a mesh (`AllowEmitFromMesh`) spawn on: a
     /// building's `VOLUMETRIC_EFFECT` (the particle system's mesh emission).
     pub mesh: Option<EmitMesh>,
+
+    /// Seconds after the effect starts at which its infinite emitters (the references' `infinite_life`) are stopped: each then runs out
+    /// its own LifeTime and ends, as the effect of a `.meta` entry does (`end - start`). `None`: they run for as long as the effect stays.
+    pub stop: Option<f32>,
 }
 
 /// Triangles an effect emits from: per triangle its three points (x y z each).

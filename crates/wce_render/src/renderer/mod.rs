@@ -1212,7 +1212,7 @@ impl Renderer {
                         row[3] = (row[3] - o) * units;
                     }
 
-                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone() })
+                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone(), stop: v.stop })
                 }
 
                 _ => None,
