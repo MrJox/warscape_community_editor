@@ -966,6 +966,12 @@ impl TileProject {
         (z_m + self.border_m()) / self.mpp_z()
     }
 
+    /// `HeightField::region_hash` of the heights `height_at` reads in the rectangle `lo`..`hi` (x, z, as `height_at` takes them); 0 without
+    /// a height map.
+    pub fn height_region_hash(&self, lo: [f64; 2], hi: [f64; 2]) -> u64 {
+        self.height.as_ref().map_or(0, |h| h.region_hash(self.pixel_x(lo[0]), self.pixel_z(lo[1]), self.pixel_x(hi[0]), self.pixel_z(hi[1])))
+    }
+
     pub fn height_at(&self, x_m: f64, z_m: f64) -> f64 {
         self.height.as_ref().map_or(0.0, |h| h.sample(self.pixel_x(x_m), self.pixel_z(z_m)))
     }
