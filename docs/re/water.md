@@ -75,15 +75,25 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
 - **Settled in game (2026-10-29)**: **winter rivers do not freeze in a battle**. A screenshot of a snowing winter battle on a river map
   shows the river as open water: dark, rippled, with sun glints, and the snowy bed showing through where it is shallow along the
   banks. There is no ice sheet and no ice texture, so battles do not use the ice mode below (mode 1). The editor's river, the same in
-  every season, is right. The notes on the ice object below are kept for reference.
+  every season, is right. Nor can a mod turn it on (below).
 - **Ice in winter (the engine)**: No battle water shader (river, water plane) has an ice input. The engine loads
   `BattleTerrain/river/ice_diffuse_1` and `_2` in the constructor fn 0x116c98a0 (empire.retail.dll 1.6.0; Ghidra project
   `~/wce_re/game_proj`), into +0xd4 / +0xd8 of an object whose base (fn 0x116d9190, material type 0x58) is made with "river" and
   `BattleTerrain/river` and a rectangle. That object is the second of three modes of a water display of the **Terrain Node** (class made by
-  fn 0x118c9e10, vtable 0x11ccdcd0, type id 0xaba7777 in the component factory fn 0x117378d0): fn 0x11924ac0 (vtable slot 141) keeps at
-  +2000 nothing (mode 0), the ice object over the node's bounds (+0x794; mode 1), or a `campaign_water_lf` object
-  (`terrain/textures/common`, mode 2). Who sets the mode was not found (no direct call through the slot; reached another way). Battles do not
-  use mode 1 (checked in game, above). The `ultra` quality level is fixed; the sea's normal texture
+  fn 0x118c9e10, type id 0xaba7777 in the component factory fn 0x117378d0): fn 0x11924ac0 keeps at +0x7d0 (+2000) nothing (mode 0), the
+  ice object over the node's bounds (+0x794; mode 1), or a `campaign_water_lf` object (`terrain/textures/common`, mode 2).
+  **Settled (static analysis, 2026-10-29): the mode is never set, and mode 1 is not ice.** The setter is slot +0x58 (entry 0x11ccdf04)
+  of the node's primary vtable 0x11ccdeac (the base 0x11ccdcf4 has purecall there; 0x11ccdcd0, named here before, is the vtable of the
+  +0x50 "Node Entries" sub-object). The display at +0x7d0 is zeroed in the ctor, written only by the setter, and drawn by slot +0x24
+  (fn 0x1190c610, render pass 1). Nothing calls the setter: not the users of the node's getters (fn 0x10391b80, 191 call sites;
+  fn 0x116c0660, 37; fn 0x1174e810), not the node's own code, and none of the DLL's 730 `call [reg+0x58]` sites with a 0 / 1 / 2
+  argument; the campaign's `campaign_water_lf` plane comes from other components (0xaba7778 / 0xaba7779, through fn 0x117bfd10). The
+  only "ice" strings are the two texture paths (no script or console binding). The ice object's draw (fn 0x1177f610) feeds
+  BATTLE_WATER_PLANE_SHADER (shader manager +0x1131c, fn 0x116c99d0: `waterplane.hlsl`, `ps30_battle_*_water_quality`), so mode 1
+  would be a flat sea-shader quad over the node's bounds; `ice_diffuse_1 / _2` have no sampler in that shader. Each mode also writes a
+  float to `FUN_117b6660(scene)+0x1b4` (1.333 for mode 1, 1/36 for mode 2; meaning unknown). Most likely dead code. **Not moddable**: no
+  db table, tweaker, script, battle setting or pack file reaches it; frozen battle rivers would need a new shader and engine code.
+  Battles do not use mode 1 (checked in game, above). The `ultra` quality level is fixed; the sea's normal texture
   (`water_detail_normal`) is the one the battle plane is believed to use.
 - **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`cli/fxc_dump <fxc dir> <out> <asm dir>`), not the GLSL.
 
