@@ -128,6 +128,19 @@ fn passes(e: &Entry, words: &[String]) -> bool {
     words.iter().all(|w| e.search.contains(w))
 }
 
+/// The turn of Alt + mouse while placing, in degrees per pixel the mouse goes left or right.
+const ALT_TURN_DEG_PER_PX: f32 = 0.5;
+
+/// What is placed being turned with Alt held (`TileTool::alt_turn_placing`): where it stays, whether that is on the terrain, and the
+/// mouse's x and the turn when Alt went down.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AltTurn {
+    pub point: Float3,
+    pub on_terrain: bool,
+    pub mouse_x: f32,
+    pub yaw: f32,
+}
+
 impl TileTool {
     /// The entries of the open tile (with the prefab library).
     fn create_entries(&mut self, e: &mut Editor) -> Arc<Vec<Entry>> {
@@ -286,11 +299,27 @@ impl TileTool {
 
     /// Turns what is being placed by `deg`.
     pub fn turn_placing(&mut self, deg: f32) {
+        if let Some(yaw) = self.placing_yaw() {
+            self.set_placing_yaw(yaw + deg);
+        }
+    }
+
+    /// The turn of what is being placed (degrees).
+    fn placing_yaw(&self) -> Option<f32> {
         match self.placing {
-            Some(crate::tool::Placing::Prefab(_)) => self.create.prefab_yaw = (self.create.prefab_yaw + deg).rem_euclid(360.0),
+            Some(crate::tool::Placing::Prefab(_)) => Some(self.create.prefab_yaw),
+            Some(crate::tool::Placing::Draft) => self.draft.as_ref().map(|d| d.yaw),
+            None => None,
+        }
+    }
+
+    fn set_placing_yaw(&mut self, deg: f32) {
+        let deg = deg.rem_euclid(360.0);
+        match self.placing {
+            Some(crate::tool::Placing::Prefab(_)) => self.create.prefab_yaw = deg,
             Some(crate::tool::Placing::Draft) => {
                 if let Some(d) = &mut self.draft {
-                    d.yaw = (d.yaw + deg).rem_euclid(360.0);
+                    d.yaw = deg;
                 }
 
                 self.keep_draft();
@@ -298,6 +327,37 @@ impl TileTool {
 
             None => {}
         }
+    }
+
+    /// Per frame while placing: Alt held keeps what is placed where it was when Alt went down and turns it with the mouse (left / right;
+    /// Shift: by the rotate step), so that it is placed already turned; a click places it there, letting Alt go puts it back under the
+    /// mouse, turned.
+    pub(crate) fn alt_turn_placing(&mut self, e: &Editor) {
+        let io = gui::io();
+        let Some(yaw) = self.placing_yaw().filter(|_| io.KeyAlt && !io.KeyCtrl && (e.viewport.hovered || self.alt_turn.is_some())) else {
+            self.alt_turn = None;
+            return;
+        };
+
+        // Alt with the mouse is not a trip to the menu bar.
+        gui::cancel_alt_menu_toggle();
+        let x = io.MousePos.x;
+        let Some(t) = self.alt_turn else {
+            if self.terrain_hit {
+                let (point, on_terrain) = self.place_point();
+                self.alt_turn = Some(AltTurn { point, on_terrain, mouse_x: x, yaw });
+            }
+
+            return;
+        };
+
+        let mut turned = t.yaw + (x - t.mouse_x) * ALT_TURN_DEG_PER_PX;
+        if io.KeyShift && self.angle_step > 0.0 {
+            turned = (turned / self.angle_step).round() * self.angle_step;
+        }
+
+        self.set_placing_yaw(turned);
+        self.status = format!("turn {:.1} deg (Alt + mouse; Shift: steps of {} deg; click places it here)", turned.rem_euclid(360.0), self.angle_step);
     }
 
     /// The text of what a click places now (the preview shows it).
@@ -351,6 +411,13 @@ impl TileTool {
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
         let (at, on_terrain) = if self.preview_forced { (at, true) } else { self.place_point() };
         let placed = d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"));
+
+        // Still placing (TEd's way: as many as there are clicks, Esc stops): the new one is not selected, and the selection there was
+        // goes (the insert renumbers the elements after it).
+        if placed.is_ok() {
+            d.take_selection_hint();
+            e.selection.clear();
+        }
 
         // From a vegetation set: the next one is another of its trees.
         if let (Some(set), Some(draft)) = (set, self.draft.as_mut())

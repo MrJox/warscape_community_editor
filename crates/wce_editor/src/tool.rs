@@ -163,6 +163,19 @@ pub trait Tool: Any {
         false
     }
 
+    /// Whether a left drag that starts off the gizmo (and off what the tool takes the press for) draws a selection box instead of turning
+    /// the camera (`box_drag`); a click without a drag still selects. The camera keeps the right and middle buttons.
+    fn left_drag_selects(&self, editor: &Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// The selection box of a left drag (`left_drag_selects`): from the press to the mouse, image pixels; `done` on the release, which
+    /// selects what is inside (Shift adds, Ctrl takes away).
+    fn box_drag(&mut self, editor: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
+        let _ = (editor, from, to, done);
+    }
+
     /// Where the translate gizmo puts `item` (world metres) when its drag asks for `to` (it was at `from`): the tool's snapping. An axis
     /// that did not move (`to` equals `from` there) is the tool's to leave alone. The default does not snap.
     fn snap_gizmo_move(&self, editor: &Editor, item: SourceRef, from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
