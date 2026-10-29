@@ -231,11 +231,23 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
         t
     };
 
+    // The blend and index maps change under a paint stroke: written in place, not made again.
+    let patchable = match (&m.blend.rgba, &m.index.rgba) {
+        (Some(b), Some(i)) => crate::texture::PatchableRgba::new(dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(dev, m.index.w, m.index.h, i)),
+        _ => None,
+    };
+
+    let (blend, index) = match &patchable {
+        Some((b, i)) => (b.texture.clone(), i.texture.clone()),
+        None => (img(&m.blend, "blend"), img(&m.index, "index")),
+    };
+
     let mut g = TerrainMatGpu {
         normal_id: m.normal_id,
         blend_id: m.blend_id,
-        blend: img(&m.blend, "blend"),
-        index: img(&m.index, "index"),
+        patchable: patchable.map(|p| std::sync::Arc::new(std::sync::Mutex::new(p))),
+        blend,
+        index,
         normal: img(&m.normal, "normal"),
 
         // The tile's weight where it overlaps its neighbours (a map context's); alone, 1 over the whole rectangle.
@@ -342,6 +354,9 @@ pub(crate) struct TerrainMatGpu {
     normal_id: u64,
     blend_id: u64,
     light_params: Option<ID3D11ShaderResourceView>,
+
+    /// The blend and index maps as textures written in place (`TerrainMaterial::blend_dirty`).
+    patchable: Option<crate::texture::PatchableMaps>,
 
     /// The material update it was last used in.
     used: u64,
@@ -800,13 +815,27 @@ impl Renderer {
     /// The GPU side of a terrain material, made now (the open tile's; a map context's are made on the loading threads, see `terrain_ready`).
     fn build_terrain_material(&mut self, m: &TerrainMaterial) {
         if let Some(have) = self.terrain.mat.get_mut(&m.id) {
-            // A paint stroke only changes the blend and index maps.
+            // A paint stroke only changes the blend and index maps: the rectangle it changed when the maps here are the ones it changed
+            // (written in place), else the maps made again.
             if have.blend_id != m.blend_id
                 && let (Some(b), Some(i)) = (&m.blend.rgba, &m.index.rgba)
             {
-                let (b, i) = (make_rgba_texture(&self.dev, m.blend.w, m.blend.h, b, false), make_rgba_texture(&self.dev, m.index.w, m.index.h, i, false));
-                if b.srv.is_some() && i.srv.is_some() {
-                    (have.blend, have.index) = (b, i);
+                let patched = m.blend_dirty.filter(|&(from, _)| from == have.blend_id).zip(have.patchable.as_ref()).is_some_and(|((_, rect), p)| {
+                    let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
+                    if !p.0.fits(m.blend.w, m.blend.h) || !p.1.fits(m.index.w, m.index.h) {
+                        return false;
+                    }
+
+                    p.0.patch(&self.ctx, b, rect);
+                    p.1.patch(&self.ctx, i, rect);
+                    true
+                });
+
+                if patched {
+                    have.blend_id = m.blend_id;
+                } else if let Some((pb, pi)) = crate::texture::PatchableRgba::new(&self.dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(&self.dev, m.index.w, m.index.h, i)) {
+                    (have.blend, have.index) = (pb.texture.clone(), pi.texture.clone());
+                    have.patchable = Some(std::sync::Arc::new(std::sync::Mutex::new((pb, pi))));
                     have.blend_id = m.blend_id;
                 }
             }

@@ -672,7 +672,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("paint", "paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps>", "a brush stroke at a point of the tile (one undo entry)", |e, a| {
+    c.add("paint", "paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps> [open]", "a brush stroke at a point of the tile (one undo entry); open: the stroke goes on (as while the mouse is held), the next call without it ends it", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
             let Some((x, z, n)) = parsed else { return fail("usage: paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps>") };
@@ -696,12 +696,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 d.brush_step(kind, x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
-            d.end_stroke();
+            if a.get(4).is_none_or(|w| w != "open") {
+                d.end_stroke();
+            }
+
             ok("")
         })
     });
 
-    c.add("paint_ground", "paint_ground <group 0-3> <variation 0-3> <x m> <z m> <steps>", "a paint stroke of the ground's textures at a point of the tile, with the brush's radius, strength and falloff (one undo entry)", |e, a| {
+    c.add("paint_ground", "paint_ground <group 0-3> <variation 0-3> <x m> <z m> <steps> [open]", "a paint stroke of the ground's textures at a point of the tile, with the brush's radius, strength and falloff (one undo entry); open: the stroke goes on, the next call without it ends it", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 5).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
             let Some((g, v, x, z, n)) = parsed.filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1)) else {
@@ -714,7 +717,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 d.brush_step(kind, x, z, t.brush.clone(), 1.0 / 60.0);
             }
 
-            d.end_stroke();
+            if a.get(5).is_none_or(|w| w != "open") {
+                d.end_stroke();
+            }
+
             if d.tile().blend_pixel_at(x, z).is_none() { fail("no blend map there") } else { ok("") }
         })
     });

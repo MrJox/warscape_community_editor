@@ -102,6 +102,9 @@ pub struct HeightField {
 
     /// Copy of the samples at `begin_edit`.
     snapshot: Vec<f32>,
+
+    /// Goes up with every change of a sample (`version`).
+    changes: u64,
     undo: Vec<Record>,
     redo: Vec<Record>,
 }
@@ -174,6 +177,7 @@ impl HeightField {
     pub fn recalibrate(&mut self, min_height: f64, scale: f64) {
         let raw = self.quantized(self.min, self.scale);
         self.v = raw.iter().map(|&r| (f64::from(r) / 65535.0 * scale) as f32).collect();
+        self.changes = self.changes.wrapping_add(1);
         self.base = min_height;
         self.min = min_height;
         self.scale = scale;
@@ -240,7 +244,13 @@ impl HeightField {
         a * (1.0 - fy) + b * fy
     }
 
+    /// What the samples are: equal while none changed (this field's data and its count of changes; another field has other data).
+    pub fn version(&self) -> (usize, u64) {
+        (self.v.as_ptr() as usize, self.changes)
+    }
+
     fn touch(&mut self, x: u32, y: u32) {
+        self.changes = self.changes.wrapping_add(1);
         if !self.touched {
             (self.tx0, self.ty0, self.tx1, self.ty1, self.touched) = (x, y, x + 1, y + 1, true);
             return;
@@ -465,6 +475,7 @@ impl HeightField {
     }
 
     fn put(&mut self, r: &Record, values: &[f32]) {
+        self.changes = self.changes.wrapping_add(1);
         let mut it = values.iter();
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
