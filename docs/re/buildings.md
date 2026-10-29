@@ -80,7 +80,13 @@ pieces' files of the game and the TDD packs parse to the byte with this layout:
   every file seen), the box's centre (3) and size (3) in the piece's model space, the box's rotation (4, the identity in every file seen),
   3 more (zero in every file seen). **ASSUMPTION** (centre and size): the walls' boxes span their pieces (`roman_fort_straight` piece01:
   20 x 18 x 12 m around (0, 6.5, 4.3)), the houses' theirs (`barbarian_ahouse_1`: 10.2 x 7 x 12.8 m around (0, 2.9, 0.2));
-- `SOUND_BUILDING` (2): 20 bytes (not decoded).
+- `SOUND_BUILDING` (2): 20 bytes: u32 the sound (a hash), its position (3 f32, the piece's model space: the collapse's opening sounds
+  at the damage, its impacts about 1 m above the ground where fragments land) and u32 0 (one file has 9.0 there). Its start and end
+  are seconds into the collapse (impacts from 0.8 to 6.5 s in a 10 s collapse). Read from the game's collapses (2026-10-29,
+  `wce_destruction` example `destruction_calibrate`); the engine was not traced.
+
+Every `.meta` and `.anim` under `rigidmodels/buildings/` of the game's and TDD's packs (2267 and 1032 files) writes back to the byte
+through wce_formats' lossless `MetaFile` and `AnimFile` (example `anim_meta_corpus`). The largest collapse has 798 bones.
 
 Tags seen on standing pieces (counts over the game and TDD): `ip_fire` (fire and smoke loops, ~1400), `capture` (capture smoke, 507),
 `fire_transition` (108), `fire` (timed fire and smoke, 74), and untagged (the torch fires, the Carthage lighthouse's `enviro_vfx_fire_loop`,

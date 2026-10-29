@@ -107,6 +107,43 @@ the rubble toggle, the effects list, the seed; the volumes are gizmo-editable; *
 - How the pathfinder takes a generated breach (platforms from the rubble, no hard outline): a siege battle on a generated wall.
 - `destruct_thresholds` for a building that had fewer levels.
 
-## Status
+## Status (2026-10-29)
 
-See the end of this file (kept current by each session).
+Built (branch `feature/building_destruction`, from master):
+
+- **Formats:** `.anim` and `.meta` written back losslessly (`wce_formats::anim::AnimFile`, `anim_meta::MetaFile`), every file of the
+  game's and TDD's packs to the byte (`anim_meta_corpus`); `SOUND_BUILDING` decoded (docs/re/buildings.md).
+- **Generator** (`wce_destruction`): cells, solid, fracture, caps (contour rings with holes), materials and cultures, rapier3d collapses,
+  rubble heaps, levels with every LOD (the same cells cut each LOD), collapse models and animations, effects (dust, bursts, the game's
+  stone or wood sounds at the simulated impacts), the logic file (platforms cut, firing lines re-parented, hard outline and footprint
+  from a raster, collision meshes cut and capped with their adjacency, walkable rubble platforms), the rows, the pack. Deterministic.
+- **Editor:** the Destruction mode (docs/editor.md, building destruction row): window, live preview in the viewport (levels, collapse
+  playback with effects, volumes), Confirm into the mod pack and `@wce_proc_data.pack` with the instance switched (one undo entry).
+  Generated files are listed by the editor's file sources too (`wce_vfs::generated::list`), so a confirmed key draws at once.
+
+Checks:
+
+- `cargo test -p wce_destruction` (cells, solid, fracture, caps, rubble, sim, materials, tech, assembly, pack) and the format tests.
+- `destruction_check <game> <schema> roman_fort_straight barbarian_fort_straight roman_fort_tower_b_corner_with_extension
+  nordic_longhouse_1 sassanid_townhouse_3`: every file reads back, the logic file writes back through its serde form, each collapse's
+  blocks are on its bones, the levels keep each piece's LOD count, two runs give the same bytes; 1 to 4 s a building.
+- A scripted run of the editor (the Destruction mode on a vanilla wall in a new tile: preview, levels, both collapses played) with
+  captures; Confirm was not run unattended (it writes into the game's `data`).
+
+Measured on `roman_fort_straight` (defaults: 2 damage levels, breach): 38 and 34 fragments, collapses of 7-10 s at 20 fps; LOD 0 of the
+damaged level 9.1k vertices (the game's 6.9k), destroyed 12.3k (5.1k); the logic file's damaged level 62 platforms (the game's 17).
+
+## Open
+
+- [ ] **In game (user):** a generated wall and a generated house in a battle: the levels swap, the collapses play (their last frame
+  meets the next level), the dust and sounds play, units cross a walkable breach and path around blocking rubble, projectiles hit the
+  new collision meshes, the collision mesh's open edges (`across_face_index` -1, never seen in the game's files) are accepted.
+- [ ] **In TEd (user):** the building from `@wce_proc_data.pack` lists, draws and exports.
+- [ ] **Gates:** the gate leaves (`_gate_closed`, `_gate_open`) are copied to every level unbroken; their `gate_*_destruct_anim` are
+  not made yet.
+- [ ] **Wood planks:** wood breaks in the same chunks as stone (its own density, bounce, broken-wood texture and wooden sounds); the
+  planned splitting along the grain is not done.
+- [ ] **Volumes with the gizmo:** volumes are edited with the window's fields; the viewport's gizmo does not move them yet.
+- [ ] **Weight:** houses (hollow shells) come out at about four times their intact LOD 0 (the cut triangles, the inner sides near the
+  damage); a mesh simplifier for the debris, or fewer cuts, would bring it down. Platforms on rubble are many small quads.
+- [ ] **Engine questions** above (`destruct_thresholds` for 2 and 4 levels, the collapse's last frame).

@@ -26,6 +26,7 @@ Each open item lives in one plan; the others point to it.
 | [tile_ted_parity.md](docs/plans/tile_ted_parity.md) | the Tile tool against TEd: what is still missing (terrain painting, selection tools, links editors, the tile module) | live |
 | [tile_roundtrip.md](docs/plans/tile_roundtrip.md) | the game-neutral tile model, the per-game readers and writers, the decompile and the export (stages A to C), the corpus checks | mostly done |
 | [procedural_walls.md](docs/plans/procedural_walls.md) | walls generated along a drawn spline, exported in a pack | mostly done |
+| [building_destruction.md](docs/plans/building_destruction.md) | the Destruction mode: a building's damage levels, collapse animations, effects and logic generated from its intact model, written as a new building | built; in-game checks open |
 | [siege_ai.md](docs/plans/siege_ai.md) | Generate SiegeAI: a settlement's siege AI layout in one click | done but in-game tests |
 | [launch_in_game.md](docs/plans/launch_in_game.md) | Launch in game: the open tile exported and the game started straight into a battle on it | built; launched from the menu (pack), loose delivery to try in game |
 | [map_context_todo.md](docs/plans/map_context_todo.md) | map-level terrain: the neighbour tiles, the seams, far maps, the outfield, large-context performance | open |
