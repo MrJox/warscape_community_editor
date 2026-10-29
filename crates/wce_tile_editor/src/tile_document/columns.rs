@@ -34,7 +34,7 @@ use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene, VfxEmitter};
 
-use super::index::{destruct_number, static_piece};
+use super::index::{copied_piece, destruct_number, piece_copy, static_piece};
 use super::view::{piece_local, piece_model};
 use super::{Tile, item_of};
 
@@ -226,12 +226,12 @@ impl Tile {
             let mut pieces = vec![];
             for p in &paths {
                 let file = &p[p.rfind('/').map_or(0, |s| s + 1)..];
-                if !static_piece(file) || !file.contains("destruct01") {
+                if !static_piece(file) || !file.contains("destruct01") || piece_copy(p, |q| paths.iter().any(|x| x == q)) {
                     continue;
                 }
 
                 let stem = &file[..file.find("destruct01").unwrap_or(0)];
-                let levels = paths.iter().filter(|q| q.contains(stem) && static_piece(q)).map(|q| destruct_number(q)).max().unwrap_or(1);
+                let levels = paths.iter().filter(|q| q.contains(stem) && static_piece(q) && copied_piece(q).is_none()).map(|q| destruct_number(q)).max().unwrap_or(1);
                 pieces.push((p.clone(), levels));
             }
 

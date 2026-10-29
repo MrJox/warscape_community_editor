@@ -122,6 +122,24 @@ pub(crate) fn static_piece(file: &str) -> bool {
     !stem.ends_with("_anim") && !stem.ends_with("_open")
 }
 
+/// The file a numbered copy of a piece file copies: `..._destruct01_0.rigid_model_v2` -> `..._destruct01.rigid_model_v2`,
+/// `..._destruct01_anim_0` -> `..._destruct01_anim`; None for a file without a `_<digits>` after its `destructNN`. Some mod packs (The
+/// Dawnless Days: its Gondor, Moria and Khazad buildings) carry such a copy of every piece beside it, the same mesh; the building's logic
+/// file names only the plain ones, so the game does not draw the copies. Drawing them put every piece twice and, through the copy of the
+/// collapse (`_anim_0`, not an `_anim` by its ending), the falling rubble over the standing wall.
+pub(crate) fn copied_piece(path: &str) -> Option<String> {
+    let stem = path.strip_suffix(".rigid_model_v2")?;
+    let file_at = stem.rfind('/').map_or(0, |s| s + 1);
+    let tail_at = file_at + stem[file_at..].find("destruct")? + "destruct".len() + 2;
+    let (base, number) = stem.rsplit_once('_')?;
+    (base.len() >= tail_at && !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then(|| format!("{base}.rigid_model_v2"))
+}
+
+/// Whether a piece file is a numbered copy of another file of its folder (`copied_piece`, the copied file there).
+pub(crate) fn piece_copy(path: &str, exists: impl Fn(&str) -> bool) -> bool {
+    copied_piece(path).is_some_and(|original| exists(&original))
+}
+
 /// The part of a piece file after `destructNN` (`_left_wheel_looped_anim`, `_weighted_anim`, `_anim`; empty for a plain state).
 fn piece_tail(file: &str) -> &str {
     let stem = file.strip_suffix(".rigid_model_v2").unwrap_or(file);
@@ -701,6 +719,10 @@ impl Tile {
                 }
 
                 let file = &p[slash + 1..];
+                if piece_copy(&p, |q| files.exists(q)) {
+                    continue;
+                }
+
                 if working_anim(file) {
                     let level = destruct_number(file);
                     let intact = p.replacen(&format!("destruct{level:02}"), "destruct01", 1);
@@ -993,5 +1015,19 @@ mod tests {
         assert!(!super::working_anim(&f("piece01_destruct01_destruction_weighted_anim")), "a collapse");
         assert!(!super::working_anim(&f("piece02_destruct01_gate_closing_anim")));
         assert_eq!(super::plain_piece("a/x_piece01_destruct02_weighted_anim.rigid_model_v2"), "a/x_piece01_destruct02.rigid_model_v2");
+    }
+
+    #[test]
+    fn numbered_copies_are_not_pieces() {
+        let f = |s: &str| format!("rigidmodels/buildings/gondor_fort_straight_2/gondor_fort_straight_2_{s}.rigid_model_v2");
+        assert_eq!(super::copied_piece(&f("piece01_destruct01_0")), Some(f("piece01_destruct01")));
+        assert_eq!(super::copied_piece(&f("piece01_destruct01_anim_0")), Some(f("piece01_destruct01_anim")));
+        assert_eq!(super::copied_piece(&f("piece02_destruct02_gate_closed_12")), Some(f("piece02_destruct02_gate_closed")));
+        assert_eq!(super::copied_piece(&f("piece01_destruct01")), None, "the digits of the key or the level are not a copy's");
+        assert_eq!(super::copied_piece(&f("piece02_destruct01_gate_closed")), None);
+        assert_eq!(super::copied_piece("rigidmodels/buildings/rock_01/rock_01.rigid_model_v2"), None, "no destruct: not a piece file");
+        let listed = [f("piece01_destruct01")];
+        assert!(super::piece_copy(&f("piece01_destruct01_0"), |q| listed.iter().any(|x| x == q)));
+        assert!(!super::piece_copy(&f("piece01_destruct02_0"), |q| listed.iter().any(|x| x == q)), "without the original it is drawn");
     }
 }
