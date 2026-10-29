@@ -10,7 +10,7 @@ use wce_scene::render_scene::{Decal, EntityId, MeshInstance, Overlay, Payload, R
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, world_transform};
 
-use super::index::{matrix_of, static_piece, vegetation_model};
+use super::index::{matrix_of, piece_copy, static_piece, vegetation_model};
 use super::{TERRAIN, Tile, scene_key};
 
 /// The preview's entities and what they were made from.
@@ -237,7 +237,7 @@ impl Tile {
         let Some(files) = self.files.as_deref() else { return vec![] };
         files.list(&format!("rigidmodels/buildings/{}/", key.to_lowercase()), ".rigid_model_v2").into_iter().filter(|p| {
             let file = &p[p.rfind('/').map_or(0, |s| s + 1)..];
-            static_piece(file) && (!file.contains("destruct") || file.contains("destruct01"))
+            static_piece(file) && (!file.contains("destruct") || file.contains("destruct01")) && !piece_copy(p, |q| files.exists(q))
         }).collect()
     }
 }
