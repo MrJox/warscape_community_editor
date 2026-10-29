@@ -17,7 +17,8 @@ env:
 jobs:
   windows:
     name: Windows build
-    runs-on: windows-latest
+    runs-on: windows-2022
+    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
 
     env:
       # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
@@ -41,12 +42,12 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p wce_app
 
-      # wce.exe and the SDL3.dll sdl3-sys builds from source (it copies it next to the executable).
+      # SDL3 links statically, so wce.exe needs no SDL3.dll beside it.
       - name: Package
         shell: pwsh
         run: |
           $dist = New-Item -ItemType Directory -Force dist
-          Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe", "$env:CARGO_TARGET_DIR\release\SDL3.dll" $dist
+          Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe" $dist
           Copy-Item README.md, THIRD_PARTY.md $dist
           Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
 
