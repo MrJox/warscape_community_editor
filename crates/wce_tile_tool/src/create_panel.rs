@@ -10,7 +10,7 @@ use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
-use wce_foundation::math::Float3;
+use wce_foundation::math::{Float3, rotation_y, translation};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::{Create, Draft, turned};
 
@@ -139,6 +139,17 @@ pub(crate) struct AltTurn {
     pub on_terrain: bool,
     pub mouse_x: f32,
     pub yaw: f32,
+}
+
+/// Alt + a left drag in Select mode (`TileTool::alt_rotate_begin`): the selection, the centre it turns around (the gizmo's space: world
+/// metres), the press's x, the turn applied so far (degrees) and the drag's undo gesture.
+#[derive(Clone, Debug)]
+pub(crate) struct AltRotate {
+    pub items: Vec<wce_scene::render_scene::SourceRef>,
+    pub centre: Float3,
+    pub x0: i32,
+    pub applied: f32,
+    pub gesture: u64,
 }
 
 impl TileTool {
@@ -327,6 +338,52 @@ impl TileTool {
 
             None => {}
         }
+    }
+
+    /// Alt pressed with the left button over the viewport in Select mode: the selection starts turning around its centre with the mouse
+    /// (left / right). False without a selection that can turn.
+    pub(crate) fn alt_rotate_begin(&mut self, e: &mut Editor, x: i32) -> bool {
+        let Some(id) = crate::tool::document_id(e) else { return false };
+        let items = e.selection.items().iter().copied().filter(|r| r.doc == id).collect::<Vec<_>>();
+        let Some(d) = e.docs.find_as_mut::<wce_tile_editor::tile_document::TileDocument>(id) else { return false };
+        let at = items.iter().filter_map(|&r| d.item_transform(r)).map(|m| Float3::new(m.m[0][3], m.m[1][3], m.m[2][3])).collect::<Vec<_>>();
+        if at.is_empty() {
+            return false;
+        }
+
+        let n = at.len() as f32;
+        let centre = at.iter().fold(Float3::default(), |c, &p| c + p) * (1.0 / n);
+        let gesture = d.next_gesture();
+        self.alt_rotate = Some(AltRotate { items, centre, x0: x, applied: 0.0, gesture });
+        self.status = "turning the selection (Alt + drag; Shift: by the rotate step)".to_owned();
+        true
+    }
+
+    /// The drag of `alt_rotate_begin`: the selection turned about the vertical through its centre by the mouse's way left or right since the
+    /// press (0.5 degree a pixel; Shift: whole rotate steps), one undo entry for the drag.
+    pub(crate) fn alt_rotate_drag(&mut self, e: &mut Editor, x: i32, shift: bool) {
+        let Some(mut r) = self.alt_rotate.clone() else { return };
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        let mut total = (x - r.x0) as f32 / density * ALT_TURN_DEG_PER_PX;
+        if shift && self.angle_step > 0.0 {
+            total = (total / self.angle_step).round() * self.angle_step;
+        }
+
+        let step = total - r.applied;
+        if step.abs() < 1e-4 {
+            return;
+        }
+
+        // The turn as the gizmo's world-space delta: about the vertical through the centre.
+        let c = r.centre;
+        let delta = translation(c) * rotation_y(step.to_radians()) * translation(Float3::new(-c.x, -c.y, -c.z));
+        if let Some(d) = e.docs.find_mut(r.items[0].doc) {
+            d.transform_items(&r.items, &delta, r.gesture);
+        }
+
+        r.applied = total;
+        self.status = format!("turned {total:.1} deg (Alt + drag; Shift: steps of {} deg)", self.angle_step);
+        self.alt_rotate = Some(r);
     }
 
     /// Per frame while placing: Alt held keeps what is placed where it was when Alt went down and turns it with the mouse (left / right;
