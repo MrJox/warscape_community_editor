@@ -194,6 +194,11 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   (3) the flames out, smoke only, and the whole building, walls and roof, covered in large blotches of rusty orange and black: the
   fire shader's char and embers at the full amount (`BUILDING_LITE_MAX_BURN_SHADER_AMOUNT` 1.0). So the char builds up while the
   building burns and is strongest once the fire is out; the flames do not last as long as the char.
+  The editor against it (2026-10-29; barbarian_longhouse_1, _2, ahouse_1, _2 and townhouse_2 with `burn`, at burn_amount 0.3, 0.6 and
+  1): the char goes from the building's colour towards an even dark blue-grey, near black at 1, with **no rusty-orange ember
+  blotches** at any amount; and the fire effects are a few small flames and smoke columns on the roof, where the game wraps the whole
+  building in flames. Both are open: the shader's ember term (`s_fire_map`, its channel or uv scale) and which effect the game plays
+  over the whole building. The game's building is not one of these five (a big plank-walled hall with a shingle roof).
 - Glow: TEd's `glow_amount` goes to parameter [3], which no rigid instance path of the kit's engine reads, and the export does not carry
   it. The game's glows are its unit and deployable highlights (`UNIT_GLOW_INTENSITY_SELECTION`, `..._MOUSEOVER`,
   `DEPLOYABLE_GLOW_INTENSITY_...`), its own parameters (POSITION6.y brightens). `glow_amount` does nothing in TEd or the game.
