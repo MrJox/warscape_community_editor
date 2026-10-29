@@ -209,18 +209,54 @@ pub fn terrain_normal_image(heights: &[f32], nx: i32, nz: i32, step_x: f64, step
         return flat_normal();
     }
 
-    let height = |i: i32, j: i32| f64::from(heights[j.clamp(0, nz - 1) as usize * nx as usize + i.clamp(0, nx - 1) as usize]);
     let mut px = vec![0u8; w as usize * h as usize * 4];
     px.par_chunks_mut(w as usize * 4).enumerate().for_each(|(y, row)| {
-        let j = (y as f64 * f64::from(nz - 1) / f64::from((h - 1).max(1))).round() as i32;
         for (x, d) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let i = (x as f64 * f64::from(nx - 1) / f64::from((w - 1).max(1))).round() as i32;
-            let dhdx = (height(i + 1, j) - height(i - 1, j)) / (2.0 * step_x);
-            let dhdz = (height(i, j + 1) - height(i, j - 1)) / (2.0 * step_z);
-            let len = (dhdx * dhdx + 1.0 + dhdz * dhdz).sqrt();
-            *d = [255, q8((-dhdz / len) * 0.5 + 0.5), 0, q8((-dhdx / len) * 0.5 + 0.5)];
+            *d = normal_pixel(heights, nx, nz, step_x, step_z, w, h, x as u32, y as u32);
         }
     });
 
     TerrainImage { w, h, rgba: Some(Arc::new(px)) }
+}
+
+/// `terrain_normal_image`'s pixel (x, y).
+#[allow(clippy::too_many_arguments, reason = "the grid, its spacing, the image size and the pixel")]
+fn normal_pixel(heights: &[f32], nx: i32, nz: i32, step_x: f64, step_z: f64, w: u32, h: u32, x: u32, y: u32) -> [u8; 4] {
+    let height = |i: i32, j: i32| f64::from(heights[j.clamp(0, nz - 1) as usize * nx as usize + i.clamp(0, nx - 1) as usize]);
+    let j = (f64::from(y) * f64::from(nz - 1) / f64::from((h - 1).max(1))).round() as i32;
+    let i = (f64::from(x) * f64::from(nx - 1) / f64::from((w - 1).max(1))).round() as i32;
+    let dhdx = (height(i + 1, j) - height(i - 1, j)) / (2.0 * step_x);
+    let dhdz = (height(i, j + 1) - height(i, j - 1)) / (2.0 * step_z);
+    let len = (dhdx * dhdx + 1.0 + dhdz * dhdz).sqrt();
+    [255, q8((-dhdz / len) * 0.5 + 0.5), 0, q8((-dhdx / len) * 0.5 + 0.5)]
+}
+
+/// `terrain_normal_image`'s image made again where the grid changed in `cells` (i0, j0, i1, j1; end exclusive): the pixels whose samples
+/// or their neighbours are there. The pixels written (x0, y0, x1, y1; end exclusive), none when the image is not one of this grid.
+#[allow(clippy::too_many_arguments, reason = "the image, the grid, its spacing and the cells")]
+pub fn patch_terrain_normal(img: &mut TerrainImage, heights: &[f32], nx: i32, nz: i32, step_x: f64, step_z: f64, cells: [i32; 4]) -> Option<[u32; 4]> {
+    let (w, h) = (img.w, img.h);
+    if nx < 2 || nz < 2 || heights.len() < nx as usize * nz as usize || w < 2 || h < 2 {
+        return None;
+    }
+
+    // A pixel reads the samples one either side of its own: the cells widened by one, then to the pixels (rounded outwards).
+    let (sx, sz) = (f64::from(w - 1) / f64::from(nx - 1), f64::from(h - 1) / f64::from(nz - 1));
+    let x0 = ((f64::from(cells[0] - 1) - 0.5) * sx).floor().max(0.0) as u32;
+    let y0 = ((f64::from(cells[1] - 1) - 0.5) * sz).floor().max(0.0) as u32;
+    let x1 = (((f64::from(cells[2]) + 0.5) * sx).ceil() as u32 + 1).min(w);
+    let y1 = (((f64::from(cells[3]) + 0.5) * sz).ceil() as u32 + 1).min(h);
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+
+    let px = Arc::make_mut(img.rgba.as_mut()?);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = (y as usize * w as usize + x as usize) * 4;
+            px[at..at + 4].copy_from_slice(&normal_pixel(heights, nx, nz, step_x, step_z, w, h, x, y));
+        }
+    }
+
+    Some([x0, y0, x1, y1])
 }

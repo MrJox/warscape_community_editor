@@ -22,7 +22,7 @@ use super::cover::Solid;
 use super::index::{matrix_of, polygon_colour, style_of};
 use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view};
-use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, terrain_normal_image};
+use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
 #[derive(Clone, Copy)]
 struct RiverPoint {
@@ -414,10 +414,30 @@ impl Tile {
             m.blend_dirty = None;
         }
 
-        // The normal map follows the heights: the last one while they did not change.
-        match self.normal_image.as_ref().filter(|(w, h, _)| same_heights && *w == m.blend.w && *h == m.blend.h) {
+        // The normal map follows the heights: the last one while they did not change, written again where a dab changed them.
+        let size = (m.blend.w, m.blend.h);
+        let cells = self.heights_changed.take().filter(|_| !same_heights);
+        let patched = match (cells, self.normal_image.as_mut().filter(|(w, h, _)| (*w, *h) == size)) {
+            (Some(cells), Some((_, _, img))) => {
+                wce_prof!("tile.normal_patch");
+                let k = self.project.mpp_z() / self.project.mpp_x();
+                patch_terrain_normal(img, &t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, cells)
+            }
+
+            _ => None,
+        };
+
+        if let Some(rect) = patched {
+            let from = self.normal_id;
+            self.normal_id = next_id(&NORMAL_IDS);
+            m.normal = self.normal_image.as_ref().map(|(_, _, img)| img.clone()).unwrap_or_default();
+            m.normal_dirty = Some((from, rect));
+        }
+
+        match self.normal_image.as_ref().filter(|(w, h, _)| (same_heights || patched.is_some()) && *w == m.blend.w && *h == m.blend.h) {
             Some((_, _, img)) => m.normal = img.clone(),
             None => {
+                wce_prof!("tile.normal_map");
                 let k = self.project.mpp_z() / self.project.mpp_x();
                 m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
                 self.normal_id = next_id(&NORMAL_IDS);
@@ -755,6 +775,11 @@ impl Tile {
         // making the grid, the normal map and the water again cost a frame each dab on a city).
         let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile);
         let same_heights = !first && self.terrain_entity != 0 && self.terrain_grid.as_ref().is_some_and(|(k, _, _)| *k == heights);
+
+        // Where the heights changed since (the same field: its data where it was; another one is all new), in the grid's cells.
+        let changed = self.project.height.as_mut().and_then(HeightField::take_changed);
+        let same_field = self.terrain_grid.as_ref().is_some_and(|((v, clip), _, _)| v.map(|v| v.0) == heights.0.map(|v| v.0) && *clip == heights.1);
+        self.heights_changed = changed.filter(|_| same_field && !first && !self.clip_to_tile).map(|(x0, y0, x1, y1)| [x0 as i32, y0 as i32, x1 as i32, y1 as i32]);
         if !same_heights {
             // Landscape rivers lie on the terrain; the link cells are draped over it.
             self.water_dirty = true;
