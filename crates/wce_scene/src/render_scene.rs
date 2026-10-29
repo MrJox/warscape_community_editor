@@ -214,6 +214,10 @@ pub struct TerrainMaterial {
     /// Changes when `blend` and `index` do (a paint stroke).
     pub blend_id: u64,
 
+    /// The maps differ from those of the blend id given only in this rectangle of pixels (x0, y0, x1, y1; end exclusive): a renderer that
+    /// has that id's maps writes the rectangle (a dab of a stroke) instead of the whole maps.
+    pub blend_dirty: Option<(u64, [u32; 4])>,
+
     /// Pack paths per slot; empty is a neutral slice.
     pub diffuse: [String; 16],
     pub normal_tex: [String; 16],
@@ -253,6 +257,7 @@ impl Default for TerrainMaterial {
             normal: TerrainImage::default(),
             normal_id: 0,
             blend_id: 0,
+            blend_dirty: None,
             diffuse: Default::default(),
             normal_tex: Default::default(),
             pixel_scale: [40.1; 4],

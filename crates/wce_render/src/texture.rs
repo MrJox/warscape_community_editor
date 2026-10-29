@@ -507,3 +507,97 @@ pub fn make_rgba_texture(dev: &ID3D11Device, w: u32, h: u32, rgba: &[u8], srgb: 
         Err(_) => Texture::default(),
     }
 }
+
+/// An RGBA texture written in place where it changes (a painted ground's blend and index maps): its mip chain is kept on the CPU, so a
+/// changed rectangle is worked out again on every level and written there (`UpdateSubresource`) instead of the whole texture, mips and
+/// all, being made again for every dab of a stroke (two 1280 x 1280 maps: 9 ms a frame).
+#[derive(Debug)]
+pub struct PatchableRgba {
+    pub texture: Texture,
+    gpu: ID3D11Texture2D,
+    levels: Vec<Vec<u8>>,
+    lw: Vec<u32>,
+    lh: Vec<u32>,
+}
+
+// SAFETY: D3D11 resources are free-threaded (the device is created without D3D11_CREATE_DEVICE_SINGLETHREADED); the texture is only
+// written through the immediate context, on the render thread.
+unsafe impl Send for PatchableRgba {}
+
+/// A terrain material's blend and index maps written in place (`TerrainMatGpu::patchable`).
+pub type PatchableMaps = std::sync::Arc<std::sync::Mutex<(PatchableRgba, PatchableRgba)>>;
+
+impl PatchableRgba {
+    pub fn new(dev: &ID3D11Device, w: u32, h: u32, rgba: &[u8]) -> Option<Self> {
+        if w == 0 || h == 0 || rgba.len() < w as usize * h as usize * 4 {
+            return None;
+        }
+
+        let (levels, lw, lh) = rgba_mip_chain(w, h, rgba);
+        let format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        let td = D3D11_TEXTURE2D_DESC {
+            Width: w, Height: h, MipLevels: levels.len() as u32, ArraySize: 1, Format: format, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
+
+        let subs = levels.iter().zip(&lw).map(|(level, w)| InitData::new(level, w * 4)).collect::<Vec<_>>();
+        let gpu = dev.create_texture_2d(&td, Some(&subs)).ok()?;
+        let srv = dev.create_shader_resource_view(&gpu, None).ok()?;
+        let texture = Texture { srv: Some(srv), width: w, height: h, mips: levels.len() as u32, depth: 1, format, ..Default::default() };
+        Some(Self { texture, gpu, levels, lw, lh })
+    }
+
+    /// Whether `rgba` (w x h) is the size this texture was made for.
+    pub fn fits(&self, w: u32, h: u32) -> bool {
+        self.lw[0] == w && self.lh[0] == h
+    }
+
+    /// `rgba` (the whole image as it is now) differs from what the texture holds only in `rect` (x0, y0, x1, y1; end exclusive): that part
+    /// of every level is made again and written.
+    pub fn patch(&mut self, ctx: &ID3D11DeviceContext, rgba: &[u8], rect: [u32; 4]) {
+        let (w, h) = (self.lw[0], self.lh[0]);
+        let [mut x0, mut y0, mut x1, mut y1] = [rect[0].min(w), rect[1].min(h), rect[2].min(w), rect[3].min(h)];
+        if x0 >= x1 || y0 >= y1 || rgba.len() < w as usize * h as usize * 4 {
+            return;
+        }
+
+        for y in y0..y1 {
+            let at = (y as usize * w as usize + x0 as usize) * 4;
+            let n = (x1 - x0) as usize * 4;
+            self.levels[0][at..at + n].copy_from_slice(&rgba[at..at + n]);
+        }
+
+        self.upload(ctx, 0, [x0, y0, x1, y1]);
+        for l in 1..self.levels.len() {
+            let (pw, ph) = (self.lw[l - 1] as usize, self.lh[l - 1] as usize);
+            let (nw, nh) = (self.lw[l], self.lh[l]);
+            (x0, y0, x1, y1) = (x0 / 2, y0 / 2, x1.div_ceil(2).min(nw), y1.div_ceil(2).min(nh));
+            let (src, dst) = self.levels.split_at_mut(l);
+            let (src, dst) = (&src[l - 1], &mut dst[0]);
+            for y in y0 as usize..y1 as usize {
+                for x in x0 as usize..x1 as usize {
+                    let (sx0, sx1, sy0, sy1) = ((2 * x).min(pw - 1), (2 * x + 1).min(pw - 1), (2 * y).min(ph - 1), (2 * y + 1).min(ph - 1));
+                    for k in 0..4 {
+                        let s = [(sy0, sx0), (sy0, sx1), (sy1, sx0), (sy1, sx1)].iter().map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k])).sum::<u32>();
+                        dst[(y * nw as usize + x) * 4 + k] = ((s + 2) / 4) as u8;
+                    }
+                }
+            }
+
+            self.upload(ctx, l, [x0, y0, x1, y1]);
+        }
+    }
+
+    fn upload(&self, ctx: &ID3D11DeviceContext, level: usize, [x0, y0, x1, y1]: [u32; 4]) {
+        let w = self.lw[level] as usize;
+        let row = (x1 - x0) as usize * 4;
+        let mut data = Vec::with_capacity(row * (y1 - y0) as usize);
+        for y in y0 as usize..y1 as usize {
+            let at = (y * w + x0 as usize) * 4;
+            data.extend_from_slice(&self.levels[level][at..at + row]);
+        }
+
+        let b = D3D11_BOX { left: x0, top: y0, front: 0, right: x1, bottom: y1, back: 1 };
+        let _ = ctx.update_subresource(&self.gpu, level as u32, Some(&b), &data, row as u32, 0);
+    }
+}

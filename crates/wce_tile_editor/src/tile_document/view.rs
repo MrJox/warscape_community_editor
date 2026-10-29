@@ -13,6 +13,7 @@ use wce_scene::render_scene::{TerrainImage, Decal,
     EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::blend_field::BlendField;
+use wce_tile::height_field::HeightField;
 use wce_tile::ground_type_field::GroundTypeField;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
@@ -325,7 +326,7 @@ impl Tile {
 
     /// The ground for the game's terrain shaders: the blend / index maps and the climate's texture list are made once per look, the normal map
     /// from the current heights every time (a stroke changes it).
-    fn ground_material(&mut self, t: &Terrain) -> Option<Arc<TerrainMaterial>> {
+    fn ground_material(&mut self, t: &Terrain, same_heights: bool) -> Option<Arc<TerrainMaterial>> {
         self.ground_info = GroundInfo::default();
         if !self.look.blended || self.look.view != TerrainView::Colour {
             self.material_base = None;
@@ -384,14 +385,16 @@ impl Tile {
             }
         }
 
-        // Painted since: the maps again over what changed.
+        // Painted since: the maps again over what changed, and what changed for the renderer (it writes that part of its maps).
         if let Some(b) = self.project.blend.as_mut()
             && let Some(rect) = b.take_changed()
             && let Some(base) = self.material_base.as_mut()
         {
             let m = Arc::make_mut(base);
             patch_blend_maps(m, self.project.blend.as_ref().expect("taken above"), rect);
+            let from = m.blend_id;
             m.blend_id = next_id(&NORMAL_IDS);
+            m.blend_dirty = Some((from, [rect.0, rect.1, rect.2, rect.3]));
         }
 
         self.ground_info = self.ground_info_base.clone();
@@ -406,9 +409,22 @@ impl Tile {
             m.id = self.material_clip_id;
         }
 
-        let k = self.project.mpp_z() / self.project.mpp_x();
-        m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
-        self.normal_id = next_id(&NORMAL_IDS);
+        // Another frame's crop: its pixels are not the base's (the renderer makes the maps again).
+        if self.clip_to_tile {
+            m.blend_dirty = None;
+        }
+
+        // The normal map follows the heights: the last one while they did not change.
+        match self.normal_image.as_ref().filter(|(w, h, _)| same_heights && *w == m.blend.w && *h == m.blend.h) {
+            Some((_, _, img)) => m.normal = img.clone(),
+            None => {
+                let k = self.project.mpp_z() / self.project.mpp_x();
+                m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
+                self.normal_id = next_id(&NORMAL_IDS);
+                self.normal_image = Some((m.blend.w, m.blend.h, m.normal.clone()));
+            }
+        }
+
         m.normal_id = self.normal_id;
         Some(Arc::new(m))
     }
@@ -735,11 +751,35 @@ impl Tile {
     // ---- publishing
 
     pub(crate) fn update_terrain(&mut self, scene: &mut RenderScene, first: bool) {
-        // Landscape rivers lie on the terrain; the link cells are draped over it.
-        self.water_dirty = true;
-        self.links_dirty = true;
-        self.nogo_dirty = true;
-        let (world, t) = if let Some(hf) = &self.project.height {
+        // The heights as they were the last time: the grid and the normal map are kept (a paint stroke changes only the ground's maps;
+        // making the grid, the normal map and the water again cost a frame each dab on a city).
+        let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile);
+        let same_heights = !first && self.terrain_entity != 0 && self.terrain_grid.as_ref().is_some_and(|(k, _, _)| *k == heights);
+        if !same_heights {
+            // Landscape rivers lie on the terrain; the link cells are draped over it.
+            self.water_dirty = true;
+            self.links_dirty = true;
+            self.nogo_dirty = true;
+        }
+
+        // The scene's terrain lets go of its material: the maps are written in place below instead of copied (they are shared until then).
+        if !first
+            && let Some(Payload::Terrain(old)) = scene.find_mut(self.terrain_entity).map(|e| &mut e.payload)
+        {
+            old.material = None;
+        }
+
+        let kept = self.terrain_grid.as_ref().filter(|_| same_heights).map(|(_, w, t)| (*w, t.clone()));
+        let (world, t) = if let Some((world, grid)) = kept {
+            let mut t = grid;
+            t.lf = self.context_lf.clone();
+            t.material = self.ground_material(&t, true);
+            if t.material.is_none() {
+                t.skin = self.ground_skin();
+            }
+
+            (world, t)
+        } else if let Some(hf) = &self.project.height {
             // The renderer cuts the grid into patches with LODs, the full resolution costs nothing far away.
             self.terrain_stride = 1;
             let stride = self.terrain_stride;
@@ -753,6 +793,7 @@ impl Tile {
                 (0, 0, hf.width() as i32 - 1, hf.height() as i32 - 1)
             };
 
+            let heights_key = heights;
             let mut t = Terrain { nx: ((px1 - px0) / stride + 1).max(2), nz: ((pz1 - pz0) / stride + 1).max(2), ..Default::default() };
             let k = (p.mpp_z() / p.mpp_x()) as f32;
             t.step = (p.mpp_x() * f64::from(stride)) as f32;
@@ -770,14 +811,15 @@ impl Tile {
 
             t.heights = Arc::new(heights);
             t.lod = true;
+            let mut w = Float4x4::IDENTITY;
+            w.m[2][2] = k;
+            self.terrain_grid = Some((heights_key, w, t.clone()));
             t.lf = self.context_lf.clone();
-            t.material = self.ground_material(&t);
+            t.material = self.ground_material(&t, false);
             if t.material.is_none() {
                 t.skin = self.ground_skin();
             }
 
-            let mut w = Float4x4::IDENTITY;
-            w.m[2][2] = k;
             (w, t)
         } else {
             let t = Terrain::flat((self.extent_x().max(self.extent_z()) * 0.5) as f32, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0);
