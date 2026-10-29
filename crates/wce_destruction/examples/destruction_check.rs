@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use wce_destruction::generate::generate;
+use wce_destruction::generate::{Options, generate};
 use wce_destruction::params::Params;
 use wce_destruction::rows::{category_of, rows};
 use wce_destruction::source::{Source, Templates, decode_model};
@@ -55,9 +55,9 @@ fn run() -> Result<(), String> {
 
         println!("== {key} ({category}): {} pieces, bounds {:?} .. {:?}", source.pieces.len(), source.bounds.min.as_slice(), source.bounds.max.as_slice());
         let t = Instant::now();
-        let a = generate(&source, &params, &templates, &exists)?;
+        let a = generate(&source, &params, &templates, &exists, Options::default())?;
         let ms = t.elapsed().as_millis();
-        let b = generate(&source, &params, &templates, &exists)?;
+        let b = generate(&source, &params, &templates, &exists, Options::default())?;
         let same = a.files == b.files;
         println!("  generated in {ms} ms, {} files; again the same bytes: {same}", a.files.len());
         bad += usize::from(!same);
@@ -129,7 +129,8 @@ fn check(name: &str, bytes: &[u8], g: &wce_destruction::generate::Generated, sou
             return Ok(format!("bones {} frames {} {:.1} s, blocks {blocks:?}, LOD 0 {verts} vertices", a.parents.len(), a.frames.len(), a.duration()));
         }
 
-        let original = source.pieces.first().map_or(0, |p| p.model.lods().len());
+        let number = name.split("_piece").last().and_then(|r| r.get(..2)).and_then(|n| n.parse::<u32>().ok());
+        let original = source.pieces.iter().find(|p| Some(p.number) == number).map_or(0, |p| p.model.lods().len());
         if m.lods().len() != original {
             return Err(format!("{} LODs, the original {original}", m.lods().len()));
         }

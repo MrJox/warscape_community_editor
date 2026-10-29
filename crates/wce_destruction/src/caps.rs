@@ -5,6 +5,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use rayon::prelude::*;
+
 use crate::cells::{Across, Cells};
 use crate::geom::{Plane, V3, basis, clip_polygon, newell};
 use crate::poly2d::{P2, area2, contains, simplify, triangulate};
@@ -48,14 +50,11 @@ pub fn caps(cells: &Cells, solid: &Solid, h: f32) -> Caps {
     let mut ids = cells.shapes.keys().copied().collect::<Vec<_>>();
     ids.sort_unstable();
     let reach = solid.bounds().expanded(h);
-    for c in ids {
+    let per_cell = ids.par_iter().filter(|c| cells.shapes[*c].bounds().overlaps(&reach)).map(|&c| {
         let shape = &cells.shapes[&c];
-        if !shape.bounds().overlaps(&reach) {
-            continue;
-        }
-
         let lc = cells.rank(c);
         let mut mine = vec![];
+        let mut standing = vec![];
         for f in &shape.faces {
             let other = match f.across {
                 Across::Domain(false) => continue,
@@ -63,18 +62,22 @@ pub fn caps(cells: &Cells, solid: &Solid, h: f32) -> Caps {
                 Across::Cell(j) => cells.rank(j),
             };
 
-            let polys = section(&f.poly, &f.plane, solid, h);
-            for poly in polys {
+            for poly in section(&f.poly, &f.plane, solid, h) {
                 mine.push(Cap { poly: poly.clone(), normal: f.plane.n });
                 if other > lc {
                     let mut rev = poly;
                     rev.reverse();
-                    out.standing.push(StandingCap { cap: Cap { poly: rev, normal: -f.plane.n }, from: lc, until: (other != usize::MAX).then_some(other) });
+                    standing.push(StandingCap { cap: Cap { poly: rev, normal: -f.plane.n }, from: lc, until: (other != usize::MAX).then_some(other) });
                 }
             }
         }
 
+        (c, mine, standing)
+    }).collect::<Vec<_>>();
+
+    for (c, mine, standing) in per_cell {
         out.fragments.insert(c, mine);
+        out.standing.extend(standing);
     }
 
     out

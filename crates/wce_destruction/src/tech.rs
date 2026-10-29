@@ -148,7 +148,8 @@ fn level_logic(d: &mut Value, lv: &LevelLogic, notes: &mut Vec<String>, piece: &
         let outline = outline(&p["vertices"]);
         let mut mine = vec![];
         for piece in subtract(&outline, &lv.cells) {
-            if piece.len() < 3 || newell(&piece).norm() < 0.02 {
+            // Slivers (under half a square metre) are left out.
+            if piece.len() < 3 || newell(&piece).norm() < 1.0 {
                 continue;
             }
 

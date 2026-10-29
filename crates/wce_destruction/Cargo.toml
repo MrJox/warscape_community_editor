@@ -9,6 +9,7 @@ license.workspace = true
 nalgebra = "0.35"
 rapier3d = { version = "0.36", features = ["enhanced-determinism"] }
 rpfm_lib.workspace = true
+rayon = "1"
 serde_json = "1"
 wce_formats = { path = "../wce_formats" }
 wce_vfs = { path = "../wce_vfs" }

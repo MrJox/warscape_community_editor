@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use rayon::prelude::*;
+
 use rpfm_lib::files::rigidmodel::{MeshBlock, RigidModel};
 use rpfm_lib::files::rigidmodel::vertices::Vertex;
 use rpfm_lib::files::Encodeable;
@@ -83,6 +85,7 @@ struct PieceLod {
     caps: Caps,
     solid: Solid,
     block_of_tri: Vec<usize>,
+    cut: Vec<bool>,
 }
 
 struct Context<'a> {
@@ -94,6 +97,25 @@ struct Context<'a> {
     culture: String,
     shell: Option<f32>,
     walkable: bool,
+
+    /// Around the damage: where a shell shows its inner side.
+    near_damage: Aabb,
+
+    /// How many LODs are made (all of them, or the first for a preview).
+    lods: usize,
+}
+
+/// How much is made.
+#[derive(Clone, Copy, Debug)]
+pub struct Options {
+    /// The levels' LODs: all of them, or only the first ones (a preview; not for the game).
+    pub lods: usize,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { lods: usize::MAX }
+    }
 }
 
 /// Generates the destroyed building.
@@ -101,7 +123,7 @@ struct Context<'a> {
 /// # Errors
 ///
 /// The building has nothing to break, or a file doesn't write.
-pub fn generate(source: &Source, params: &Params, templates: &Templates, exists: &dyn Fn(&str) -> bool) -> Result<Generated, String> {
+pub fn generate(source: &Source, params: &Params, templates: &Templates, exists: &dyn Fn(&str) -> bool, options: Options) -> Result<Generated, String> {
     let n = params.levels.len();
     if n == 0 {
         return Err("no damage level".into());
@@ -123,6 +145,14 @@ pub fn generate(source: &Source, params: &Params, templates: &Templates, exists:
         culture,
         shell: (!solid_kind).then_some(params.thickness.max(0.05)),
         walkable: params.walkable.unwrap_or(is_fort(&source.category)),
+        near_damage: {
+            let mut b = Aabb::EMPTY;
+            for v in params.levels.iter().flat_map(|l| &l.volumes) {
+                b.merge(&v.bounds());
+            }
+            b.expanded(source.bounds.size().max() * 0.25)
+        },
+        lods: options.lods.max(1),
     };
 
     let key = params.key.clone();
@@ -214,9 +244,9 @@ fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Genera
     let nn = piece.number;
     let lods = piece.model.lods();
 
-    // Per LOD: split, capped.
-    let mut pl = vec![];
-    for (l, lod) in lods.iter().enumerate() {
+    // Per LOD (in parallel): split, capped.
+    let (cells, shell) = (&cx.cells, cx.shell);
+    let pl = lods.par_iter().enumerate().take(cx.lods).map(|(l, lod)| {
         let tris = lod_triangles(lod);
         let cut = lod.mesh_blocks().iter().map(|b| is_cut(*b.mesh().material_type(), *b.material().vertex_format())).collect::<Vec<_>>();
         let mut flat = vec![];
@@ -230,11 +260,12 @@ fn make_piece(cx: &Context, piece: &crate::source::SourcePiece, out: &mut Genera
             }
         }
 
-        let solid = Solid::new(flat, cx.shell);
-        let sp = split(&tris, &cut, &cx.cells);
-        let cp = caps(&cx.cells, &solid, CAP_STEP[l.min(4)]);
-        pl.push(PieceLod { split: sp, caps: cp, solid, block_of_tri });
-    }
+        let solid = Solid::new(flat, shell);
+        let sp = split(&tris, &cut, cells);
+        let cp = caps(cells, &solid, CAP_STEP[l.min(4)]);
+        PieceLod { split: sp, caps: cp, solid, block_of_tri, cut }
+    }).collect::<Vec<_>>();
+    let lods = &lods[..pl.len()];
 
     let Some(lod0) = pl.first() else { return Err(format!("piece{nn:02}: no LOD")) };
     let classes0 = classes(cx, &lods[0].mesh_blocks()[..]);
@@ -449,7 +480,10 @@ fn cap_class(pl: &PieceLod, classes: &[MaterialClass], cap: &Cap) -> MaterialCla
 
 fn cap_tris(cx: &Context, pl: &PieceLod, classes: &[MaterialClass], cap: &Cap) -> (Slot, Vec<Tri>) {
     let class = cap_class(pl, classes, cap);
-    (Slot::Damage(MaterialClass::ALL.iter().position(|c| *c == class).unwrap_or(0) as u8), polygon_tris(&template_vertex(cx, false), &cap.poly, &cap.normal, DAMAGE_SPAN))
+    // Classes broken with the same texture set share a block: the slot is the first class of that set.
+    let set = damage_sets(&cx.culture, class).0;
+    let first = MaterialClass::ALL.iter().position(|c| damage_sets(&cx.culture, *c).0 == set).unwrap_or(0);
+    (Slot::Damage(first as u8), polygon_tris(&template_vertex(cx, false), &cap.poly, &cap.normal, DAMAGE_SPAN))
 }
 
 /// What a level shows at a LOD: what stands (and its broken faces, and the inner side of shells), every earlier collapse's fragments
@@ -458,10 +492,11 @@ fn cap_tris(cx: &Context, pl: &PieceLod, classes: &[MaterialClass], cap: &Cap) -
 fn standing_gather(cx: &Context, pl: &PieceLod, lods: &[rpfm_lib::files::rigidmodel::Lod], l: usize, level: usize, frags: &[Fragment], finals: &BTreeMap<usize, ([f32; 3], [f32; 4])>, with_own: bool, heap: Option<&Heap>) -> Gather {
     let mut g = Gather::default();
     let classes = classes(cx, lods[l].mesh_blocks());
-    let shells = cx.shell.filter(|_| l <= 1 && level > 0);
+    let shells = cx.shell.filter(|_| l == 0 && level > 0);
     for (b, tris) in pl.split.standing(&cx.cells, level).into_iter().enumerate() {
-        if let Some(t) = shells.filter(|_| pl.block_of_tri.contains(&b)) {
-            g.add(Slot::Source(b), tris.iter().map(|x| inner(x, t)).collect::<Vec<_>>());
+        if let Some(t) = shells.filter(|_| pl.cut.get(b).copied().unwrap_or(false)) {
+            let near = tris.iter().filter(|x| cx.near_damage.contains(&((pos(&x[0]) + pos(&x[1]) + pos(&x[2])) / 3.0))).map(|x| inner(x, t)).collect::<Vec<_>>();
+            g.add(Slot::Source(b), near);
         }
         g.add(Slot::Source(b), tris);
     }
@@ -479,7 +514,7 @@ fn standing_gather(cx: &Context, pl: &PieceLod, lods: &[rpfm_lib::files::rigidmo
 
         let Some((t, q)) = finals.get(&f.cell) else { continue };
         let to = v3(*t);
-        add_fragment(cx, pl, &classes, f, shells, &mut g, &|v: &Vertex| moved(v, &f.origin, *q, &to));
+        add_fragment(cx, pl, &classes, f, &mut g, &|v: &Vertex| moved(v, &f.origin, *q, &to));
     }
 
     if let Some(h) = heap {
@@ -492,14 +527,10 @@ fn standing_gather(cx: &Context, pl: &PieceLod, lods: &[rpfm_lib::files::rigidmo
 }
 
 /// A fragment's triangles (its cell's part of every block, its caps, the inner side of a shell) through `place`.
-fn add_fragment(cx: &Context, pl: &PieceLod, classes: &[MaterialClass], f: &Fragment, shells: Option<f32>, g: &mut Gather, place: &dyn Fn(&Vertex) -> Vertex) {
+fn add_fragment(cx: &Context, pl: &PieceLod, classes: &[MaterialClass], f: &Fragment, g: &mut Gather, place: &dyn Fn(&Vertex) -> Vertex) {
     if let Some(blocks) = pl.split.cells.get(&f.cell) {
         for (b, tris) in blocks.iter().enumerate() {
-            let mut all = tris.clone();
-            if let Some(t) = shells.filter(|_| pl.block_of_tri.contains(&b)) {
-                all.extend(tris.iter().map(|x| inner(x, t)));
-            }
-            g.add(Slot::Source(b), all.iter().map(|t| t.clone().map(|v| place(&v))).collect::<Vec<_>>());
+            g.add(Slot::Source(b), tris.iter().map(|t| t.clone().map(|v| place(&v))).collect::<Vec<_>>());
         }
     }
 
@@ -539,7 +570,7 @@ fn collapse(cx: &Context, piece: &crate::source::SourcePiece, pl: &PieceLod, lod
     for (i, f) in mine.iter().enumerate() {
         let mut g = Gather::default();
         let origin = f.origin;
-        add_fragment(cx, pl, &classes, f, cx.shell, &mut g, &|v: &Vertex| {
+        add_fragment(cx, pl, &classes, f, &mut g, &|v: &Vertex| {
             let mut x = v.clone();
             let p = x.position_mut();
             (p.x, p.y, p.z) = (p.x - origin.x, p.y - origin.y, p.z - origin.z);
