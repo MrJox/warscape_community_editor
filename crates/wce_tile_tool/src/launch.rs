@@ -92,6 +92,10 @@ pub struct Battle<'a> {
     pub cells: (u32, u32),
     pub weather: BattleWeather,
 
+    /// The sea's surface (a key of `sea_surfaces_tables`, e.g. `wind_level_2`); empty: none written. A battle whose map has sea needs it:
+    /// without it the game crashes while loading a coast tile (alone or at a placement on the campaign map; access violation).
+    pub sea_surface: String,
+
     /// The armies, every key given ([`LaunchArmy::resolved`]).
     pub army: &'a LaunchArmy,
 
@@ -178,6 +182,10 @@ pub fn battle_xml(b: &Battle) -> String {
     }
 
     x += "\t</battle_description>\n";
+    if !b.sea_surface.is_empty() {
+        x += &format!("\t<sea_surface_name>{}</sea_surface_name>\n", esc(&b.sea_surface));
+    }
+
     if !w.environment.is_empty() {
         x += &format!("\t<weather>\n\t\t<prevailing_wind x=\"0.00\" y=\"9.00\"/>\n\t\t<environment_key>{}</environment_key>\n\t</weather>\n", esc(&w.environment));
     }
@@ -555,7 +563,7 @@ mod tests {
     fn tile_battle_as_tested() {
         let s = attila_army();
         let facts = wce_vfs::GameProfile::ATTILA.launch;
-        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), army: &s, facts: &facts });
+        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &facts });
         assert!(x.contains("<name>terrain/tiles/battle/plains/8x8/8x8_aa</name>"));
         assert!(!x.contains("tile_map_position"));
         assert!(x.contains("<type>land_normal</type>"));
@@ -568,6 +576,7 @@ mod tests {
         assert!(x.contains("<faction>att_fact_western_roman_empire</faction>") && x.contains("<unit_type type=\"att_nor_saxon_spears\"/>"));
         assert!(x.contains("<deployment_area_alliance_index>1</deployment_area_alliance_index>") && x.contains("<battlefield_owner_alliance_index>"));
         assert_eq!(x.matches("<alliance id=").count(), 2);
+        assert!(!x.contains("sea_surface_name"), "no sea surface given: none written");
     }
 
     #[test]
@@ -575,7 +584,7 @@ mod tests {
         let game = &wce_vfs::GameProfile::ROME_2;
         let s = LaunchArmy { tile_upgrades: "level1".to_owned(), ..LaunchArmy::default() }.resolved(&game.launch);
         let map = BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x: 0.5, y: 0.5, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), army: &s, facts: &game.launch });
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &game.launch });
         assert!(x.contains("<faction>rom_rome</faction>") && x.contains("<unit_type type=\"Rom_Hastati\"/>"));
         assert!(x.contains("<faction>rom_suebi</faction>") && x.contains("<unit_type type=\"Ger_Spear_Levy\"/>"));
         assert!(x.contains("<subculture>sc_rom_roman</subculture>") && x.contains("<name>terrain/battles/main_rome_map/</name>"));
@@ -586,7 +595,10 @@ mod tests {
     fn settlement_position() {
         let s = LaunchArmy { tile_upgrades: "level1 escalation3".to_owned(), ..attila_army() };
         let map = BattleMap::Position { map: "terrain/battles/main_attila_map/".to_owned(), x: 310.0 / 2032.0, y: 324.0 / 1437.0, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch });
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: "wind_level_2".to_owned(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch });
+        assert!(x.contains("</battle_description>
+	<sea_surface_name>wind_level_2</sea_surface_name>
+	<weather>"));
         assert!(x.contains("<tile_map_position x=\"0.152559\" y=\"0.225470\">/</tile_map_position>"));
         assert!(x.contains("<type>settlement_standard</type>") && x.contains("<capture_settlement>"));
         assert!(x.contains("<tile_upgrade>level1</tile_upgrade>\n\t\t<tile_upgrade>escalation3</tile_upgrade>"));

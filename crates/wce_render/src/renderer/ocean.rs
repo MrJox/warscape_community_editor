@@ -307,6 +307,12 @@ impl Renderer {
         self.water.ocean.winds.clone().unwrap_or_default()
     }
 
+    /// The sea surface (a key of `sea_surfaces_tables`, e.g. `wind_level_2`) a battle wind uses; `None` without the table or the row.
+    pub fn sea_surface_of(&self, wind: &str) -> Option<String> {
+        let winds = self.files.read("db/wind_levels_tables/wind_levels").ok().and_then(|b| parse_wind_levels(&b))?;
+        winds.into_iter().find(|w| w.key == wind).map(|w| w.sea_surface).filter(|s| !s.is_empty())
+    }
+
     /// The sea of the settings' wind: the table rows, the two surfaces, their textures and the whitecaps (once per wind).
     fn ocean_sea_state(&mut self) {
         let key = self.settings.sea_state.clone();
