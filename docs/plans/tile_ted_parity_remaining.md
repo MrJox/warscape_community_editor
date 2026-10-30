@@ -23,9 +23,8 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    0x2000, `rigidstandard ps30_alpha_blend_40`), which the renderer lacks, so opaque materials don't fade. This is renderer work.
    - Add a blended forward pass for those instances, after the deferred lighting.
    - Check it in `scripts/tile_building_look.txt` (`opacity_05.png`).
-5. **`scripts/tile_building_props.txt` is broken** (found 2026-10-29, also without the fire changes). Line 30,
-   `tile_edit selected orientation 0,1,0`, fails with "no row 'orientation' to edit". The Inspector's row now seems to be
-   "orientation (world)". Fix the script or the row name, then run the script through.
+5. Done (2026-10-30): `scripts/tile_building_props.txt` runs through again (the orientation row is `euler` since the Global / Local
+   coordinates).
 6. **Plan upkeep**: `tile_ted_parity.md` is out of date in places.
    - The status table is stale: 6a says "read-only view", and 6b / 5g list less than is done.
    - The header still names the `workflow-review` branch.
@@ -62,10 +61,15 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - The editor's `where` "game" readout lacks the centring and the height offset.
     - The image gates' references change with b5f2cac and 20c8eea: to run and record.
 
-## C. Not planned
+## C. Needs review
+
+- Piece-to-piece snapping onto the logic files' platforms (the wall-walks) and collision shapes: the end-to-end join uses the end
+  anchors only. Using them would place things on a wall-walk at its height and join corners, towers and gatehouses by their surfaces
+  (user, 2026-10-30: needs review; first read what the logic files hold for a few wall and gate pieces).
+
+## D. Not planned
 
 - Polygons painted with a brush (exclusion and no-go polygons): a new feature, not TEd's ("Ideas for later").
-- Piece-to-piece snapping onto the logic files' platforms and collision: nothing needed it.
 - The stacked crates (Phase 2): left unfixed (user, 2026-10-30).
 
 ## Suggested order

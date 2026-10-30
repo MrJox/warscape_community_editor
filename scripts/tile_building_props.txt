@@ -25,8 +25,9 @@ assert_attr selected surface_mode MSM_LANDSCAPE
 undo
 assert_attr selected surface_mode MSM_FREEFORM
 
-# Degrees in the panel, radians at full precision in tile.wce (TEd's precision is applied when the tile is converted for it).
-tile_edit selected orientation 0,1,0
+# Degrees in the panel, radians at full precision in tile.wce (TEd's precision is applied when the tile is converted for it). The row is
+# `euler` (orientation (local)): the script's Inspector shows local coordinates, the panel's Global mode `euler_world`.
+tile_edit selected euler 0,1,0
 assert_attr selected orientation euler(0,0.017453292519943295,0)
 undo
 
