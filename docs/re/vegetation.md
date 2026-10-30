@@ -390,7 +390,12 @@ that sets variables by name hash would not show up in this search; only a memory
   - The editor does the swap for grass and for the trees' branches, leaves and billboards (G-buffer and shadow passes), from the scene's
     `vegetation_season` (the tile's ground season).
 - `tree_metadata.txt` LOD distances vs the models' own.
-- The second instance matrix (untilted) vs the shader's TEXCOORD0..2 / 3..5: the editor feeds the tilted matrix to both.
+- Settled (2026-10-30): the second instance matrix. The branch and leaf vertex shaders (rigidbranchcommon_v3 / rigidleafcommon_v3)
+  compute the position as `(TEXCOORD0..2 . POSITION0) * POSITION6.x + (TEXCOORD3..5 . POSITION1) * POSITION6.y`: the tilted matrix
+  for the first position, the untilted one for the second, weighted per vertex, so a tree on a slope keeps its trunk upright and only
+  its base follows the ground. The editor fed the tilted matrix to both, and a tree on a steep bank lay along it (a long streak over
+  the river at Rome); it now gives the untilted rows in the instance's POSITION5..7 (`untilted_rows`), which the tree layout reads as
+  TEXCOORD3..5.
 - Winding (2026-10-20): the dead tree models' normals run along the triangle winding, the pines' against it. Drawing trees two-sided
   (most of the tree material's rasterizer descriptions, fn 0x116e5130, are CULL_NONE) changed nothing visible; which description the
   G-buffer pass uses is not traced.

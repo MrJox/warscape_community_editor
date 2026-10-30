@@ -210,8 +210,9 @@ pub(crate) fn rigid_layout() -> Vec<InputElement> {
 
 /// The inputs of the tree vertex shaders (rigidbranchcommon_v3, rigidleafcommon_v3), from their code: the Tree vertex
 /// ([`crate::model_cache::TREE_STRIDE`] bytes: POSITION0 position, 1 LOD position, 2..4 normal / tangent / bitangent, 5 uv, 6 the two LOD
-/// weights, 7 colour and wind weight; bytes 48..52 unused) and the instance (TEXCOORD0..2 the world rows for the position, TEXCOORD3..5 the
-/// ones for the LOD position: the same rows here, TEXCOORD6 (tint and wind seed, 1 - dissolve, burn) = the rigid instance's POSITION4).
+/// weights, 7 colour and wind weight; bytes 48..52 unused) and the instance (TEXCOORD0..2 the world rows for the position, tilted to the
+/// terrain; TEXCOORD3..5 the untilted rows for POSITION1, from the rigid instance's POSITION5..7 (the draw set's gather puts them there);
+/// TEXCOORD6 (tint and wind seed, 1 - dissolve, burn) = the rigid instance's POSITION4).
 /// Rome 2's shaders read the same values in another order: TEXCOORD3 (.xy: tint and wind seed, 1 - dissolve; no burn), TEXCOORD4..6 the
 /// LOD position's rows.
 pub(crate) fn tree_layout(game: game::RenderGame) -> Vec<InputElement> {
@@ -233,7 +234,7 @@ pub(crate) fn tree_layout(game: game::RenderGame) -> Vec<InputElement> {
     for i in 0..7 {
         let offset = match (rome2, i) {
             (_, 0..=2) => i * 16,
-            (false, 3..=5) | (true, 4..=6) => (i - if rome2 { 4 } else { 3 }) * 16,
+            (false, 3..=5) | (true, 4..=6) => 64 + (i - if rome2 { 4 } else { 3 }) * 16,
             _ => 48,
         };
         el.push(element(c"TEXCOORD", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, offset, true));
