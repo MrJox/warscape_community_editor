@@ -5,10 +5,10 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
 
 ## A. Can be done now
 
-1. **Snapping leftovers** (Phase 5g). TEd's `Ted::GRID_SETTINGS` names four things wce lacks: `snap_mode` `SF_SNAP_TO_EDGES`, the
-   `angle_snap_tolerance`, and `horizontal_snap` / `vertical_snap`. Their code was never traced.
-   - Trace them in TEd first (Ghidra, black box in TEd if it runs), then add them to the grid popup and the `snap` command.
-   - Extend `scripts/tile_snap.txt`.
+1. **Snapping leftovers** (Phase 5g): traced statically (2026-10-30, tile_ted_parity.md "TEd's snapping"): the settings, their defaults
+   and the bits are known; `horizontal_snap` / `vertical_snap` have no reader; the code that applies edges / vertices snapping was not
+   found. Left: a black box test in TEd (the user runs it: Grid and Snapping Settings with Edges, then Vertices, moving a building near
+   another), then the editor's version.
 2. Done (2026-10-30): **Normal (Grouped) weight gate**: the Blendmap Filters' test; a pixel they leave out takes the share of its 5 x 5
    box that passes (`blend_field::grouped_gate`, unit test; docs/re/terrain.md).
 3. **Burning sequence** (Phase 5d follow-up). The editor shows the steady fire only. The engine (fn 0x104bb1e0) has five stages:

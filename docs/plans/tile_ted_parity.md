@@ -197,11 +197,22 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   line from the first selected to the last; one undo entry each (`TileDocument::align`, `distribute`, `move_instances`; `align`,
   `distribute`, `scripts/tile_align.txt`).
 - Snapping: done (2026-10-28), after TEd's names (`Ted::GRID_SETTINGS`: `grid_snap_tolerance`, `angle_snap_tolerance`,
-  `horizontal_snap`, `vertical_snap`, `snap_mode` = `SF_SNAP_TO_GRID / ANGLE / EDGES / VERTICES`; their code was not traced). The grid
+  `horizontal_snap`, `vertical_snap`, `snap_mode` = `SF_SNAP_TO_GRID / ANGLE / EDGES / VERTICES`; traced 2026-10-30 as far as static
+  analysis goes, below). The grid
   popup has a tolerance (0: the grid always snaps; above, an axis snaps only that close to a grid line, a magnet) and "snap to points"
   (onto the nearest instance or polygon point within the tolerance, 1.5 m at 0), for the grab and now the placing too (it did not
   snap before). While grabbing, PageUp / PageDown move a freeform item along the ground's normal (0.25 m; Shift: 1 m). `snap`,
   `scripts/tile_snap.txt`. Not done: snap to edges, the angle tolerance, horizontal / vertical snap.
+- TEd's snapping, traced 2026-10-30 (`TEd.AssemblyKit.exe`, static): `Ted::GRID_SETTINGS` ("Grid and Snapping Settings", constructor
+  `FUN_005516d0`, `get_property` `FUN_00551a70`) holds grid_cell_count 100, grid_major_line_frequency 5, grid_spacing 10, the two
+  colours, show_grid on, `horizontal_snap` / `vertical_snap` off (bytes +0x45 / +0x46), `grid_snap_tolerance` 10, `angle_snap_tolerance`
+  90 (degrees) and `snap_mode` 0, a bit set: grid 1, angle 2, edges 4, vertices 8 (the enum's names table). The toolbar's two snapping
+  buttons (`TedAppProxy::on_grid_snapping_activated` / `on_angle_snapping_activated`, `FUN_004f62a0` / `FUN_004f6310`) flip bits 1 and 2
+  through `set_property(10)`; edges and vertices are only settable in the settings dialog. No code reads `horizontal_snap` or
+  `vertical_snap` at their offsets (in the object or its container); the gizmo's slots (`SelectModeProxy::on_manipulator_moved` /
+  `_rotated`, `FUN_0048e370` / `FUN_0048e4d0`) take the position and angle back from the application through virtuals, and the code that
+  applies the snap mode behind them was not found statically. wce keeps its grid and angle snapping; edges, vertices and the horizontal /
+  vertical switches would need TEd run (a black box test) to know what they do.
 - Camera bookmarks: done (2026-10-28; wce's). The toolbar's camera button: the tile's saved views (a click goes there, x forgets one),
   the current view saved by a name; kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile
   (`view_save`, `view_go`, `scripts/tile_camera_views.txt`).
