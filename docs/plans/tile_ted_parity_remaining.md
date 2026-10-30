@@ -31,7 +31,7 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    - The header still names the `workflow-review` branch.
    - The "ground views in a viewport chip" idea is done on master (the Ground chip).
 
-## B. In-game captures (done 2026-10-30, except the coast)
+## B. In-game captures (done 2026-10-30)
 
 Captures, the cameras read from the dumps, the editor's matching renders and the notes: `%TEMP%\wce_scratch\captures`
 (`findings.md`). The game's camera in editor scene units: (x / 2 + half, y / 2 + offset, z / 2 + half); the offset is the tile's
@@ -44,17 +44,23 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
    sea level in game (the game's own tile too): launch it at a campaign placement (a note says so; 31ddecc). Its captures: two look
    references (the dumps held another pass's camera, as they do with sea in view): the game's surf band is wider and whiter, its sand
    lighter and rippled.
-9. **The battle sea** (Phase 4): the radial mesh and the sea bed texture need a frame capture of a coastal battle. PIX captures only
-   D3D12 (Attila is D3D11), so RenderDoc, which crashed the game before: one try with the current version.
-10. **Launch in game**: drop `<Climate>` / `<Season>` (the game reads neither); say that a tile launched alone has the `default`
-    ground. (Coast tiles alone: a note, done.)
-11. **Look differences** the captures showed (renderer work, each to look into):
-    - roofs: game red terracotta, editor grey-beige (rigid materials; not the faction colours, which are white in game too);
-    - trees: game summer trees full and dark, editor thin and pale; game has many small bushes the editor lacks;
-    - water: editor brighter, with brownish streaks and sharper glints;
-    - settlement buildings: the editor shows sets the game doesn't (a tent cluster, huts): the upgrade level?
-    - the editor's `where` "game" readout lacks the centring and the height offset;
-    - the strategy view (top-down) is the game's fog of war, not a render to match.
+9. Done (2026-10-30): **the battle sea**. RenderDoc works once the 32-bit game uses less memory (only the launch pack, low settings):
+   the radial mesh and the sea bed texture are in docs/re/water.md; the sea bed texture is now 1024 x 1024 (c9d149a).
+10. Done (2026-10-30): **Launch in game** writes no `<Climate>` / `<Season>` (8e71d1a) and notes a tile launched alone that will have
+    the `default` ground (2fe4d7c).
+11. **Look differences** the captures showed (renderer work):
+    - Done: roofs grey-blue: `g_apply_environment_specular` was 1, the game's is 0 (b5f2cac, docs/re/renderer.md).
+    - Done: a tree on a steep bank lay along it (the trees' second, untilted matrix; 20c8eea).
+    - **The environment specular pass**: the game adds the sky's reflection in a pass of its own (`environment_specular_light.hlsl`,
+      lower resolution, blurred in x and y); the editor has none since b5f2cac. Small on the roofs (+0.1).
+    - **Water**: the editor's river is bluer and brighter than the game's dark slate, with brownish streaks and sharper glints; the
+      coast's surf band is narrower and less white than the game's.
+    - **Trees**: the game's summer trees are fuller and darker, and it has many small bushes the editor lacks; at Rome the editor draws
+      another species than the game at the same spot (which tree list the game picks: the climate's?).
+    - **Settlement buildings**: the editor shows sets the game doesn't (a tent cluster, huts): the upgrade level?
+    - **Exposure**: re-measure the white point (game 22.0, editor 16.4 at the Rome view) now that the lighting matches.
+    - The editor's `where` "game" readout lacks the centring and the height offset.
+    - The image gates' references change with b5f2cac and 20c8eea: to run and record.
 
 ## C. Not planned
 
@@ -64,4 +70,4 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
 
 ## Suggested order
 
-B's 8-10 with the climates' follow-ups, then 5 and 6, then 3 (tracing only, then ask), 1, 2, 4 and 11.
+5 and 6, the image gates, then 11, then 3 (tracing only, then ask), 1, 2 and 4.
