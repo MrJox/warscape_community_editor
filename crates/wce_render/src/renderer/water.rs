@@ -227,7 +227,8 @@ impl Renderer {
             vec![self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()]
         };
         self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
-        self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), 1);
+        // Rivers are stencil 2 (the fog pass, stencil 1, leaves them: their shader fogs itself); the water planes 1.
+        self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), if rivers { 2 } else { 1 });
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_input_layout(Some(&layout));

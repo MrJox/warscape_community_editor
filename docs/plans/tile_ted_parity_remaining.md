@@ -47,16 +47,15 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
 11. **Look differences** the captures showed (renderer work):
     - Done: roofs grey-blue: `g_apply_environment_specular` was 1, the game's is 0 (b5f2cac, docs/re/renderer.md).
     - Done: a tree on a steep bank lay along it (the trees' second, untilted matrix; 20c8eea).
-    - **The environment specular pass**: the game adds the sky's reflection in a pass of its own (`environment_specular_light.hlsl`,
-      lower resolution, blurred in x and y); the editor has none since b5f2cac. Small on the roofs (+0.1).
-    - **Water**: the editor's river is bluer and brighter than the game's dark slate, with brownish streaks and sharper glints; the
-      coast's surf band is narrower and less white than the game's.
+    - Done: the environment specular pass (`environment_specular_light.hlsl`, blurred in x and y; f7247be).
+    - Done: the river: `g_ssr_enabled` 1 and the rivers before the environment specular pass, as the game (docs/re/water.md).
+    - **Coast**: the surf band is narrower and less white than the game's (to compare with a capture at the coast).
     - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
       two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
     - Done: settlement buildings the game doesn't show (Rome's camp of round huts): its *Escalation 2* layer, which the game loads
       for the `escalation2` upgrade only; the Game view now leaves out the layers the battle would not load.
-    - Done: exposure: the tone mapper's statistics now run on the game's fixed 256 x 256 image halved to 1 x 1; the average luma at the
-      Rome view matches (3.38 / 3.37); the white point's residue is the brightest pixels of the game's wider frame (docs/re/renderer.md).
+    - Done: exposure: the tone mapper's statistics now run on the game's fixed 256 x 256 image halved to 1 x 1; at the Rome view the
+      white point is 22.3 against the game's 22.1 with the same packs (docs/re/renderer.md).
     - Done: `where` reads the launched battle's game coordinates (centred, the height offset; docs/editor.md).
     - The image gates' references change with b5f2cac and 20c8eea: to run and record.
 
