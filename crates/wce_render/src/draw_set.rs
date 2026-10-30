@@ -540,7 +540,31 @@ impl DrawSet {
             };
 
             let p = |i: usize| std::array::from_fn(|k| params[i * 4 + k]);
-            let (mut p5, mut p6) = (p(1), p(2));
+            let (mut p5, mut p6, mut p7) = (p(1), p(2), p(3));
+
+            // A tree (rigidbranch / rigidleaf v3) blends two matrices per vertex: the world one (tilted to the terrain) and an untilted one
+            // (TEXCOORD3..5, read from POSITION5..7's place), so that only the roots follow the slope (docs/re/vegetation.md). The entity
+            // gives the untilted rows in p5..p7 (scene units, like the world); all zero: the world's.
+            if matches!(mesh.kind, crate::model_cache::MeshKind::TreeBranch | crate::model_cache::MeshKind::TreeLeaf) {
+                let given = [p5, p6, p7];
+                let mut second = if given.iter().flatten().all(|&v| v == 0.0) { *w } else { given };
+                if mesh.has_offset {
+                    let rows = second;
+                    for (out, r) in second.iter_mut().zip(&rows) {
+                        out[3] += r[0] * mesh.offset.x + r[1] * mesh.offset.y + r[2] * mesh.offset.z;
+                    }
+                }
+
+                if units != 1.0 {
+                    second = second.map(|row| row.map(|v| v * units));
+                }
+
+                for (row, o) in second.iter_mut().zip(origin) {
+                    row[3] -= o;
+                }
+
+                [p5, p6, p7] = second;
+            }
 
             // A tree billboard (rigidtreebillboard vs30_main) reads POSITION5 as (position, 1 - dissolve) and POSITION6 as (facing x, tint
             // seed, facing z, size): from the world matrix (its z axis faces, its y axis is the size) and the seed of POSITION4.
@@ -550,7 +574,7 @@ impl DrawSet {
                 p6 = [world[0][2], params[0], world[2][2], size];
             }
 
-            *r = RigidInstance { world, p4: p(0), p5, p6, p7: p(3) };
+            *r = RigidInstance { world, p4: p(0), p5, p6, p7 };
         });
     }
 

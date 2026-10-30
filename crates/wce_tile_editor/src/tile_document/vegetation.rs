@@ -94,6 +94,12 @@ impl Tile {
         translation(p) * self.terrain_tilt(p.x, p.z) * translation(Float3::new(-p.x, -p.y, -p.z)) * w
     }
 
+    /// A placed tree's piece without the tilt, as its instance's POSITION5..7 ([`untilted_rows`]).
+    pub(crate) fn untilted_piece_rows(&self, elem: usize, piece: usize) -> [[f32; 4]; 3] {
+        let w = self.world_matrix(elem);
+        untilted_rows(&self.piece_props.get(&(elem, piece)).map_or(w, |p| w * super::view::piece_local(p)))
+    }
+
     /// FUN_10429b80's tilt at a world point: the rotation that takes the up axis to the terrain normal, the normal from heights 0.5 m to each side.
     pub(crate) fn terrain_tilt(&self, x: f32, z: f32) -> Float4x4 {
         if !self.project.has_height() {
@@ -351,9 +357,12 @@ impl Tile {
             }
 
             let y = if t.freeform || !self.project.has_height() { t.y / unit } else { (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32 };
-            let w = translation(Float3::new(t.x, y, z)) * self.terrain_tilt(t.x, z) * rotation_y(-t.yaw) * scaling(t.scale / unit);
+            let at = translation(Float3::new(t.x, y, z));
+            let turn = rotation_y(-t.yaw) * scaling(t.scale / unit);
+            let w = at * self.terrain_tilt(t.x, z) * turn;
             let seed = ((k as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 16_777_216.0;
-            let mi = MeshInstance { model: t.model.clone(), lod: true, p4: [seed, 1.0, 0.0, 1000.0], ..Default::default() };
+            let [p5, p6, p7] = untilted_rows(&(at * turn));
+            let mi = MeshInstance { model: t.model.clone(), lod: true, p4: [seed, 1.0, 0.0, 1000.0], p5, p6, p7, ..Default::default() };
             let e = scene.add(layer, w, Payload::MeshInstance(mi), self.source(TERRAIN));
             if let Some(en) = scene.find_mut(e) {
                 en.locked = true;
@@ -364,6 +373,13 @@ impl Tile {
 
         added
     }
+}
+
+/// A tree's untilted matrix as its instance's POSITION5..7 (the rows): the tree shaders blend it with the tilted world matrix per vertex
+/// (the game's `P2 * yaw * scale` beside `P1 * tilt * yaw * scale`, FUN_10429b80), so the trunk stays upright on a slope and only the
+/// roots follow it (docs/re/vegetation.md, "Placement").
+pub(crate) fn untilted_rows(m: &Float4x4) -> [[f32; 4]; 3] {
+    [m.m[0], m.m[1], m.m[2]]
 }
 
 /// The rotation taking the up axis to the normal of a terrain whose height drops by `dx` along +x and `dz` along +z over 1 m.

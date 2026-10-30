@@ -918,16 +918,16 @@ impl Tile {
                 let model = self.piece_file(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), self.piece_levels(elem, i));
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
-                let p5 = [0.0, 0.0, 0.0, 1.0];
-                // A building's or a mesh's look (its piece's own once edited): the opacity, and on fire the burn amount (POSITION6.x).
-                let (p4, p6, burning) = if self.tscene().type_of(elem) == "VEGETATION_INSTANCE" {
-                    (p4, [0.0; 4], false)
+                // A building's or a mesh's look (its piece's own once edited): the opacity, and on fire the burn amount (POSITION6.x). A tree
+                // carries its untilted matrix in POSITION5..7 instead (`untilted_rows`).
+                let (p4, [p5, p6, p7], burning) = if self.tscene().type_of(elem) == "VEGETATION_INSTANCE" {
+                    (p4, self.untilted_piece_rows(elem, i), false)
                 } else {
                     let look = self.piece_props_or_building(elem, i);
-                    ([p4[0], p4[1], p4[2], opacity_w(look.opacity)], burn_row(&look), look.burn)
+                    ([p4[0], p4[1], p4[2], opacity_w(look.opacity)], [[0.0, 0.0, 0.0, 1.0], burn_row(&look), [0.0; 4]], look.burn)
                 };
 
-                let mi = MeshInstance { model, lod: true, p4, p5, p6, burning, ..Default::default() };
+                let mi = MeshInstance { model, lod: true, p4, p5, p6, p7, burning, ..Default::default() };
                 let e = scene.add(layer, world, Payload::MeshInstance(mi), self.source(item_of(elem)));
                 if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
                     en.visible = false;
@@ -1287,9 +1287,18 @@ impl Tile {
         self.refresh_payload(scene, elem);
         if self.first_entity.get(elem).is_some_and(|&f| f != 0) {
             let w = self.drawn_matrix(elem);
+            let tree = self.tscene().type_of(elem) == "VEGETATION_INSTANCE";
             for k in 0..u64::from(self.entity_count[elem]) {
+                let id = self.first_entity[elem] + k as EntityId;
                 let world = self.piece_props.get(&(elem, k as usize)).map_or(w, |p| w * piece_local(p));
-                scene.update_world(self.first_entity[elem] + k as EntityId, world);
+                scene.update_world(id, world);
+
+                // A tree's untilted matrix moves with it.
+                if tree && let Some(Payload::MeshInstance(mi)) = scene.find(id).map(|e| &e.payload) {
+                    let [p5, p6, p7] = self.untilted_piece_rows(elem, k as usize);
+                    let mi = MeshInstance { p5, p6, p7, ..mi.clone() };
+                    scene.update_payload(id, Payload::MeshInstance(mi));
+                }
             }
         }
 
