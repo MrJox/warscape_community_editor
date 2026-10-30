@@ -353,6 +353,14 @@ height map as geom_new, CULL_BACK, the shadow rasterizers' bias (2500, slope 1.8
     variation 0 fades in.
   So a stroke paints a group with a graded rim: variation 0 outside, variation 3 inside ("flange"). It sets values from the stroke's
   weight; it does not add to them.
+- **Normal (Grouped)** (`PM2OpBlend2Base`, constructor `FUN_004825f0` via `FUN_00482a50` / `FUN_0048afd0`, made by the module's
+  constructor with the module's sub-object at +0x88 as its gate; `apply` = `FUN_00482ad0`, traced 2026-10-30). The gate is the
+  Blendmap Filters' test (vtable `0x006af2e0`, slot 0 `FUN_00487660` -> `FUN_004866f0`: 0 when the height filter is on and the pixel's
+  height is outside its range, or the slope filter likewise, else 1). Where the gate is 1 the weight is the stroke's; where it is 0 the
+  weight becomes the gate's average over the box of radius 2 around the pixel (the op's `FUN_0040c580` returns 2; the box clipped to the
+  map), whatever the stroke's weight, and nothing is done when that average is 0. Then every channel is scaled by 1 - w and the two
+  channels around the continuous variation get w times their shares. So Grouped's filter edge is soft (a pixel just outside the range
+  takes up to 24/25 of the paint), where the other operations' masks are hard. wce: `blend_field::grouped_gate`.
 - **Rock-painting** (`Ted::RockPaintOperation`; `apply` = `FUN_004836b0`). One property, `channel` (any of the 16). It ignores the
   stroke's weight (the argument is overwritten unread): wherever the brush reaches, the channel is set to t(slope) and the other channels
   are scaled to make room (`(1 - t) / (1 - c)`; nothing is done where the channel is already 1). With s = 1 - n.y (n the terrain normal

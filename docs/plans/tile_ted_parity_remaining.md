@@ -9,10 +9,8 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    `angle_snap_tolerance`, and `horizontal_snap` / `vertical_snap`. Their code was never traced.
    - Trace them in TEd first (Ghidra, black box in TEd if it runs), then add them to the grid popup and the `snap` command.
    - Extend `scripts/tile_snap.txt`.
-2. **Normal (Grouped) weight gate** (Phase 5a). TEd's `PM2OpBlend2Base::apply` (fn 0x00482ad0) gates the weight with a per-pixel
-   function that its module hands it: where that function is 0, the weight is its neighbourhood's average. wce leaves the gate out.
-   - Trace the function.
-   - Add it to `PaintMode::Grouped`, with a unit test.
+2. Done (2026-10-30): **Normal (Grouped) weight gate**: the Blendmap Filters' test; a pixel they leave out takes the share of its 5 x 5
+   box that passes (`blend_field::grouped_gate`, unit test; docs/re/terrain.md).
 3. **Burning sequence** (Phase 5d follow-up). The editor shows the steady fire only. The engine (fn 0x104bb1e0) has five stages:
    `burning_entity_pre_smoke`, then `burning_entity`, then `burning_entity_collapse` / `entity_collapse` / `burning_entity_aftermath`.
    - Trace the stage timing (`BUILDING_FIRE_STAGE_ONE_DURATION`, `_TWO_`, the `BUILDING_LITE_*` ones).
@@ -49,7 +47,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - Done: a tree on a steep bank lay along it (the trees' second, untilted matrix; 20c8eea).
     - Done: the environment specular pass (`environment_specular_light.hlsl`, blurred in x and y; f7247be).
     - Done: the river: `g_ssr_enabled` 1 and the rivers before the environment specular pass, as the game (docs/re/water.md).
-    - **Coast**: the surf band is narrower and less white than the game's (to compare with a capture at the coast).
+    - **Coast**: the surf band looked narrower and less white than the game's; no capture of the fixed coast launch has a usable camera
+      (the dumps held other passes' cameras), so it needs one more (screenshot + dump, near / far 1 / 13000).
     - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
       two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
     - Done: settlement buildings the game doesn't show (Rome's camp of round huts): its *Escalation 2* layer, which the game loads

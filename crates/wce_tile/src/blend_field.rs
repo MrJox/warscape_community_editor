@@ -58,8 +58,8 @@ pub enum PaintMode {
 
     /// TEd's Normal (Grouped) (`PM2OpBlend2Base`, properties `channel_group` and `flange`): the channel's texture group at a continuous
     /// variation `variation` (0 .. 3), split between the two variations around it (1.3: 70 % of variation 1, 30 % of 2); every channel
-    /// scaled by 1 - w and the two given w times their share. TEd also gates the weight with a per-pixel function the module hands it (where
-    /// it is 0, the weight is its neighbourhood's average); that function was not traced and is left out.
+    /// scaled by 1 - w and the two given w times their share. The Blendmap Filters gate it (`grouped_gate`): a pixel they leave out takes,
+    /// instead of the brush's weight, the share of its 5 x 5 neighbourhood they let through (none: not painted).
     Grouped { variation: f32 },
 
     /// TEd's blend blur (`QTU::GPOWeightedAverage` "Smooth", radius 2 on the blend map): every channel moves towards its neighbourhood's
@@ -72,6 +72,33 @@ pub const BLUR_RADIUS: i32 = 2;
 
 fn blur_weight(dx: i32, dy: i32) -> f64 {
     (-f64::from(dx * dx + dy * dy) / 8.0).exp()
+}
+
+/// The radius of Normal (Grouped)'s gate neighbourhood (TEd's op returns 2: a 5 x 5 box, clipped to the map).
+pub const GROUPED_GATE_RADIUS: i32 = 2;
+
+/// Normal (Grouped)'s weight at a pixel (TEd's `PM2OpBlend2Base::apply`, fn 0x00482ad0): the brush's `a` where the gate (the Blendmap
+/// Filters: the module's functor at +0x88, fn 0x004866f0, 0 outside the height or slope range) lets the pixel through; else the gate's
+/// average over the neighbourhood, whatever the brush's weight; `None` when no neighbour passes.
+pub fn grouped_gate(x: u32, y: u32, w: u32, h: u32, a: f64, gate: &dyn Fn(u32, u32) -> bool) -> Option<f64> {
+    if gate(x, y) {
+        return Some(a);
+    }
+
+    let (mut on, mut n) = (0u32, 0u32);
+    for dy in -GROUPED_GATE_RADIUS..=GROUPED_GATE_RADIUS {
+        for dx in -GROUPED_GATE_RADIUS..=GROUPED_GATE_RADIUS {
+            let (nx, ny) = (i64::from(x) + i64::from(dx), i64::from(y) + i64::from(dy));
+            if nx < 0 || ny < 0 || nx >= i64::from(w) || ny >= i64::from(h) {
+                continue;
+            }
+
+            n += 1;
+            on += u32::from(gate(nx as u32, ny as u32));
+        }
+    }
+
+    (on > 0).then(|| f64::from(on) / f64::from(n))
 }
 
 /// Normal (Grouped)'s pixel: `p` scaled by 1 - a, and a shared between the group's variations around `variation` (0 .. 3).
@@ -294,8 +321,16 @@ impl BlendField {
 
         let w = u64::from(self.width());
         for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
-            let a = b.weight(dx, dy).min(1.0);
-            if a <= 0.0 || !mask(x, y) {
+            let mut a = b.weight(dx, dy).min(1.0);
+            if a <= 0.0 {
+                continue;
+            }
+
+            // Grouped: the filters gate the weight (a pixel they leave out may still take some from its neighbours); the others: a hard mask.
+            if let PaintMode::Grouped { .. } = mode {
+                let Some(gated) = grouped_gate(x, y, self.width(), self.height(), a, mask) else { continue };
+                a = gated;
+            } else if !mask(x, y) {
                 continue;
             }
 
@@ -481,6 +516,13 @@ mod tests {
         assert_eq!(q.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
         assert!((f64::from(q[5]) / 65535.0 - 0.7).abs() < 1e-4 && (f64::from(q[6]) / 65535.0 - 0.3).abs() < 1e-4 && q[0] == 0);
         assert_eq!(grouped_pixel(&p, 2, 3.0, 0.5)[11], 32767, "half: the tie goes to the lower channel");
+
+        // The gate: through, the brush's weight; out, the share of the 5 x 5 box that passes (clipped at the map's edge); none, no paint.
+        let left_half = |x: u32, _: u32| x < 5;
+        assert_eq!(grouped_gate(3, 5, 10, 10, 0.4, &left_half), Some(0.4));
+        assert_eq!(grouped_gate(5, 5, 10, 10, 0.4, &left_half), Some(10.0 / 25.0), "two of five columns pass");
+        assert_eq!(grouped_gate(7, 5, 10, 10, 0.4, &left_half), None);
+        assert_eq!(grouped_gate(5, 0, 10, 10, 0.4, &left_half), Some(6.0 / 15.0), "clipped at the top: three rows");
     }
 
     #[test]
