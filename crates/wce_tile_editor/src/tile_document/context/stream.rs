@@ -130,10 +130,13 @@ impl Shared {
             }
         }
 
-        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees)));
+        // The game's kit, when the tiles' own has no vegetation parameters.
+        let own_params = self.rq.raw_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
+        let game_kit = self.rq.game_kit.as_deref().filter(|_| !own_params);
+        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees, game_kit)));
         let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
-            None => (load_template(&dir, &look, self.rq.trees, self.files.clone()), false),
+            None => (load_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
         });
 
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)

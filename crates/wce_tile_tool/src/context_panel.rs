@@ -262,7 +262,7 @@ impl ContextUi {
         let raw = self.raw_of(d)?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, far: self.far_ring(), raw_root: raw, look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            mid: self.mid, far: self.far_ring(), raw_root: raw, game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
             provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()),
