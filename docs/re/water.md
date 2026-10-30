@@ -193,10 +193,11 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
     8 m to 160.5, 16 m to 224.5, 32 m to 352.5, 64 m to 608.5, 128 m to 1120.5, 256 m to 2144.5, 512 m to 4192.5, 1024 m to 8288.5,
     2048 m to 28 768.5. POSITION0 and POSITION1 differ by at most 0.04 m and share their y (-0.28 .. 0.23 m): the CPU gives the
     vertices only a small height, the waves are the vertex shader's (from the sea and swell surfaces). TEXCOORD0 is 1 out to
-    192.5 m, then 0.968, 0.934, 0.859, 0.774, 0.678, 0.573 at 208.5 .. 352.5 m, and 0 from 416.5 m: a fade of the waves with distance.
+    192.5 m, then 0.968, 0.934, 0.859, 0.774, 0.678, 0.573 at 208.5 .. 352.5 m, and 0 from 416.5 m. The vertex shader only passes it on (COLOR0.z), and the ultra-quality pixel shader
+    (`ps30_main_ultra_water_quality`, the one the editor draws) does not read COLOR0: nothing to port (the editor writes 0).
   - **The sea bed info texture** (VS t0): 1024 x 1024 B8G8R8A8, grey (r = g = b), alpha 255: the ground's height around the camera,
     `r * 25 - 20` (black -20 m: open sea; white +5 m: land), the shore and the map's tiles visible as blocks. So 2 m texels over the
-    shader's 2048 m square (the editor's stand-in is 512 x 512, 4 m texels).
+    shader's 2048 m square. The editor builds its own at that size since (it was 512 x 512).
   - **Constants**: `ocean_VS` g_sea_decay 0.0006, g_sea_uv_scale 0.014286 (1 / 70), g_swell_uv_scale 0.00125 (1 / 800), g_vs_sea_info
     (-20, 25, -0.11762, 0.23985); `OceanSharedConstants` froth distortion speed 0.35 / amount 0.05, lowest wave trough y 0, g_ps_sea_info
     as the VS's, detail normal uv scales 15.8 / 5, speeds 7.8 / 6.8, g_transparency_exponential_scale 4, then 19, 20, 0.37.
