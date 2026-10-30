@@ -72,6 +72,17 @@ impl ConstantBuffers {
         }
     }
 
+    /// Writes bytes at an offset of a buffer, whatever its variables: for a cbuffer whose name two shaders declare with different layouts
+    /// (`parameters` of environment_specular_light and of reflections_blur), each pass writes its own layout before it draws.
+    pub fn set_at(&mut self, cb: &str, offset: usize, data: &[u8]) {
+        let Some(b) = self.buffers.get_mut(cb) else { return };
+        let end = (offset + data.len()).min(b.cpu.len());
+        if offset < end {
+            b.cpu[offset..end].copy_from_slice(&data[..end - offset]);
+            b.dirty = true;
+        }
+    }
+
     pub fn set_f(&mut self, cb: &str, var: &str, v: &[f32]) {
         self.set(cb, var, &v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>());
     }

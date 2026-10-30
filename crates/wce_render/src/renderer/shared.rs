@@ -63,6 +63,10 @@ pub(crate) struct SharedResources {
     pub black_srv: Option<ID3D11ShaderResourceView>,
     pub overlay_none_srv: Option<ID3D11ShaderResourceView>,
     pub jitter_srv: Option<ID3D11ShaderResourceView>,
+
+    /// The environment specular pass's `s_terrain` stand-in: the battle map's ground colour (the game binds the whole map's far diffuse,
+    /// 8192 x 8192, which the editor does not build), the average of Rome's campaign map: (0.49, 0.43, 0.30), squared by the shader.
+    pub ground_colour_srv: Option<ID3D11ShaderResourceView>,
 }
 
 impl SharedResources {
@@ -136,6 +140,7 @@ impl SharedResources {
         }
 
         r.jitter_srv = immutable_srv(dev, 256, 256, DXGI_FORMAT_R8G8B8A8_UNORM, &px);
+        r.ground_colour_srv = solid_srv(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &[126, 110, 75, 255]);
 
         Ok(r)
     }
