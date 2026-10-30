@@ -68,6 +68,10 @@ pub struct ContextRequest {
 
     /// The kit's raw_data folder (the neighbours' tile folders).
     pub raw_root: PathBuf,
+
+    /// The game's Assembly Kit with the tiles (`TileProject::game_kit`): the neighbours' trees are generated with its parameters when
+    /// `raw_root`'s kit has none (the projects' kit layout).
+    pub game_kit: Option<PathBuf>,
     pub look: TerrainLook,
     pub trees: bool,
 

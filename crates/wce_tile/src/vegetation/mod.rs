@@ -86,7 +86,13 @@ pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
 
 /// The Assembly Kit's `working_data/BattleTerrain/vegetation` for a tile.
 pub fn params_dir(project: &TileProject) -> Option<PathBuf> {
-    param_kits(project).map(|kit| kit.join("working_data").join("BattleTerrain").join("vegetation")).find(|dir| dir.is_dir())
+    param_kits(project).find_map(|kit| kit_params_dir(&kit))
+}
+
+/// A kit's `working_data/BattleTerrain/vegetation`, when it has one.
+pub fn kit_params_dir(kit: &Path) -> Option<PathBuf> {
+    let dir = kit.join("working_data").join("BattleTerrain").join("vegetation");
+    dir.is_dir().then_some(dir)
 }
 
 /// The subtiles generation may use: all of them without a mask, else the mask's '1's (row-major, width first), as BOB stores them: (x,

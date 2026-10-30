@@ -226,10 +226,11 @@ impl Template {
     }
 }
 
-/// Opens a neighbour tile (slow: the whole tile document; run it away from the UI thread).
-pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
+/// Opens a neighbour tile (slow: the whole tile document; run it away from the UI thread); `game_kit` is `TileProject::game_kit`.
+pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
-    let project = TileProject::open(dir)?;
+    let mut project = TileProject::open(dir)?;
+    project.game_kit = game_kit.map(Path::to_path_buf);
     let mut doc = TileDocument::new(project, files);
     let t = doc.tile_mut();
     t.look = look.clone();

@@ -1,6 +1,6 @@
 //! The map context's templates on disk (`<settings>/map_context/<key>.bin`): opening a tile takes a tenth of a second to seconds, reading what
-//! it made back a few milliseconds. The key hashes the tile folder's files (path, size, time), the terrain look, the trees switch and the
-//! format version; a changed tile gets a new key. The game files the tiles name (models, effects) are not in the key: `clear` empties it.
+//! it made back a few milliseconds. The key hashes the tile folder's files (path, size, time), the terrain look, the trees switch, the
+//! game's kit the trees are generated with when the tiles' own kit has no parameters, and the format version; a changed tile gets a new key. The game files the tiles name (models, effects) are not in the key: `clear` empties it.
 //!
 //! Layout: "WCECTX" + u16 version, then lz4 (size prepended) of: the extent, the near grid, the material, the entities. Little endian; a
 //! string is u32 length + UTF-8.
@@ -63,8 +63,8 @@ fn fnv(h: u64, bytes: &[u8]) -> u64 {
     bytes.iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
 }
 
-/// The cache key of a tile folder for a look.
-pub fn key(dir: &Path, look: &TerrainLook, trees: bool) -> u64 {
+/// The cache key of a tile folder for a look, its trees generated with `game_kit`'s parameters when there is one.
+pub fn key(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>) -> u64 {
     let mut files = vec![];
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -86,6 +86,11 @@ pub fn key(dir: &Path, look: &TerrainLook, trees: bool) -> u64 {
         h = fnv(h, p.as_bytes());
         h = fnv(h, &len.to_le_bytes());
         h = fnv(h, &time.to_le_bytes());
+    }
+
+    // Only then: the keys of the tiles under a kit with parameters stay the same.
+    if let Some(kit) = game_kit {
+        h = fnv(h, kit.to_string_lossy().to_lowercase().as_bytes());
     }
 
     fnv(h, format!("{look:?} {trees}").as_bytes())
