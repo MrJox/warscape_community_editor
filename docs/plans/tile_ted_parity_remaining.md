@@ -17,10 +17,7 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    - Trace the `_small` choice (entity type 0xb) and the per-triangle mask of the mesh emission (fn 0x1183fa30).
    - Then decide with the user whether the editor plays the sequence: a "play the fire" preview in the Inspector, with the char amount
      ramping to `BURN_SHADER_AMOUNT` 0.3. Or does `burn` stay a static preview of the main stage?
-4. **Faded opaque materials** (Phase 5d, `opacity` below 1). TEd files such a building for the blended forward shaders (render flag
-   0x2000, `rigidstandard ps30_alpha_blend_40`), which the renderer lacks, so opaque materials don't fade. This is renderer work.
-   - Add a blended forward pass for those instances, after the deferred lighting.
-   - Check it in `scripts/tile_building_look.txt` (`opacity_05.png`).
+4. Done (2026-10-30): **Faded opaque materials**: the blended forward pass (`pass_faded`, the materials' `ps30_alpha_blend_40`).
 5. Done (2026-10-30): `scripts/tile_building_props.txt` runs through again (the orientation row is `euler` since the Global / Local
    coordinates).
 6. Done (2026-10-30): plan upkeep (`tile_ted_parity.md`'s header and status table).

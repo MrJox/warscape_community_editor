@@ -134,12 +134,17 @@ impl Renderer {
 
     /// `draw_batches`, telling `each` whether the batch's instances are burning (`DrawSet::batch_burning`).
     pub(crate) fn draw_batches_burning(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh, bool) -> bool) -> (u64, u64) {
+        self.draw_batches_flags(sets, viss, firsts, |r, m, burning, _| each(r, m, burning))
+    }
+
+    /// `draw_batches`, telling `each` whether the batch's instances are burning and whether they are faded (`DrawSet::batch_faded`).
+    pub(crate) fn draw_batches_flags(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh, bool, bool) -> bool) -> (u64, u64) {
         let (mut instances, mut triangles) = (0u64, 0u64);
         for k in 0..2 {
             let (set, vis) = (sets[k], viss[k]);
             for &b in &vis.active {
                 let m = set.batch_mesh(b);
-                if !each(self, m, set.batch_burning(b)) {
+                if !each(self, m, set.batch_burning(b), set.batch_faded(b)) {
                     continue;
                 }
 
