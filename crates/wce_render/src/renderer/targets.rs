@@ -108,6 +108,13 @@ pub(crate) struct PostTargets {
 
     /// The luma stats pyramid; the last is 1x1.
     pub stats: Vec<SizedTarget>,
+
+    /// The environment specular pass (environment_specular_light, reflections_blur): the reflection, its blur parameters (radius, weight),
+    /// the x blur, and the stand-in for the depth-stencil the game's pass reads (the stencil in .y; the pass runs where its low bits are 1).
+    pub reflection: Target,
+    pub reflection_params: Target,
+    pub reflection_blur: Target,
+    pub stencil: Target,
 }
 
 impl PostTargets {
@@ -126,6 +133,12 @@ impl PostTargets {
         self.bloom_a = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         self.bloom_b = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         self.ldr = sized_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);        // tone-mapped, linear
+
+        // The game's: R11G11B10 reflection and x blur, R8G8 parameters (a RenderDoc capture, docs/re/renderer.md).
+        self.reflection = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        self.reflection_params = make_target(dev, w, h, DXGI_FORMAT_R8G8_UNORM);
+        self.reflection_blur = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        self.stencil = make_target(dev, w, h, DXGI_FORMAT_R8G8_UINT);
         self.stats.clear();
         let (mut sw, mut sh) = (qw, qh);
         loop {

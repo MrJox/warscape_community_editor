@@ -405,7 +405,7 @@ pixel:
   environment's specular in a pass of its own after the lights (`environment_specular_light.hlsl`, DEFERRED_ENVIRONMENT_SPECULAR_SHADER,
   at a lower resolution, then blurred in x and y; events 9460 / 9477 / 9488 of rome_tdd), which on that roof adds only (0.09, 0.12,
   0.16). With the flag at 1 the directional light reflected the sky at full strength on the white specular: grey-blue roofs and walls.
-- The editor now sets 0 (`environment_apply.rs`) and has no separate pass yet (the roofs lose that small reflection). ASSUMPTION: the
+- The editor now sets 0 (`environment_apply.rs`) and, since, draws the separate pass too (below). ASSUMPTION: the
   flag is 0 at every graphics setting (both captures were at low settings, and the separate pass ran there); its writer was not traced
   (the variable is declared by fn 0x116f6870).
 - The exposure differs too (white point 22.0 in the game, 16.4 in the editor at that view: the auto exposure measures what each draws).
@@ -427,3 +427,29 @@ game leaves black (the editor's cube averages about 2.3 x the game's; the river 
   list (vfunc +0xe8 of the scene) and fn 0x11923ad0(1) marks the pass; what joins the list (and whether a setting decides) is not
   traced. Settle it with a memory dump at normal settings and vanilla weather (engine ambient: the cube's face averages are in
   `lighting_VS_PS.ambient_cube_*`), against the editor's two cubes.
+
+## The environment specular pass (2026-10-30, RenderDoc)
+
+`environment_specular_light.hlsl` (DEFERRED_ENVIRONMENT_SPECULAR_SHADER; the editor runs the single-sampled full-resolution variant of
+the game's `..._full_res_ms`, and `reflections_blur.hlsl` `blur_x` / `blur_y_fullres`), after the water and before the fog
+(`Renderer::pass_environment_specular`):
+
+- Per pixel where the stencil's low four bits are 1 (all the game's geometry; the sky is 0): the reflected view ray; a screen-space march
+  of up to `g_ray_max_samples` (20) steps through the depth, a hit taking the light buffer there; otherwise the environment cube, and
+  below the horizon the battle map's far diffuse (`s_terrain`, 8192 x 8192, the map's ground; squared, times the sun colour and the
+  sun's height). Outputs: the reflection (R11G11B10) and (blur radius, weight) (R8G8); the weight is a fresnel term
+  (`pow(dot, 10)`) over the G-buffer's channel 2 .w (the gloss map's y), times the SSAO. The blurs (x, then y) multiply by the specular
+  colour (channel 3) and the weight and add the result to the light buffer (ONE / ONE). On Rome's roof: reflection (4.4, 6.4, 7.6),
+  weight 0.0235, added (0.10, 0.14, 0.16).
+- `parameters` (the capture): g_flags 0, g_ray_length_scale 1, g_ray_max_samples 20, g_acceptance_depth_range (0.4, 1),
+  g_border_falloff_range (0.9, 1), g_depth_bias_intensity 0.1, g_depth_falloff_range (0.996, 0.99), g_blur_radius_multiplier (2, 5),
+  g_steep_reflection_adjustment_intensity 0.06, g_terrain_offset_scale (0.5, 0.5, 28672, -28672), g_buffers_scale 1; the blurs'
+  `parameters` (another layout under the same name, written with `ConstantBuffers::set_at`): g_flags 0, g_min_normal_dot 0.98,
+  g_min_depth 0.5, g_buffers_scale 1.
+- **The gloss maps are sampled sRGB** (found on the way): the game's G-buffer holds the rigid materials' gloss map linearised (roof
+  channel 1 .w 0.0078 and channel 2 .w 0.0235 where the editor had 0.094 and 0.157, their sRGB decodes 0.009 and 0.021). The editor
+  read them linear: glossiness and the reflection weight 5 to 10 x too high (with this pass, white roofs). Fixed (`model_cache.rs`).
+- ASSUMPTIONS: the march reads the light buffer (the low-settings capture bound a placeholder there: screen-space reflections off);
+  `s_terrain` is a constant ground colour (0.49, 0.43, 0.30), the average of the map's far diffuse at Rome (the editor builds no far
+  diffuse); the stencil is a texture of 1s (the editor's depth has no stencil; the sky's specular colour is 0, so it adds nothing there);
+  the jitter is the SSAO's (256 x 256, the pass reads its first 64 x 64).

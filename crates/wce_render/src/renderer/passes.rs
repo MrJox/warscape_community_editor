@@ -246,6 +246,95 @@ impl Renderer {
         self.fullscreen(&ps);
     }
 
+    /// The environment's specular, as the game adds it after the lights (two RenderDoc captures of Rome, docs/re/renderer.md): the
+    /// directional light leaves it out (`g_apply_environment_specular` 0). environment_specular_light writes each pixel's reflection (a
+    /// screen-space march through the depth, hits taken from the light buffer; else the environment cube, below the horizon the map's ground
+    /// colour lit by the sun) and its blur radius and weight; reflections_blur blurs it in x, then in y, multiplied by the specular colour and
+    /// the weight, added to the light buffer. The parameters are the capture's.
+    /// ASSUMPTIONS: the light buffer as the march's source (the low-settings capture bound a placeholder there); the ground colour is a
+    /// constant (`ground_colour_srv`); every pixel passes the stencil test (the game's geometry has low bits 1, the sky 0, whose specular
+    /// colour is 0 anyway).
+    pub(crate) fn pass_environment_specular(&mut self) {
+        if self.env.active || self.game == super::game::RenderGame::Rome2 {
+            return;
+        }
+
+        let (Some(es), Some(bx), Some(by)) = (self.shader(ENV_SPECULAR_PS), self.shader(REFLECTION_BLUR_X_PS), self.shader(REFLECTION_BLUR_Y_PS)) else { return };
+        wce_prof!("render.environment_specular");
+        let f = |v: f32| v.to_le_bytes();
+        let i = |v: i32| v.to_le_bytes();
+        self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        if let Some(rtv) = &self.post.stencil.rtv {
+            self.ctx.clear_render_target_view(rtv, [1.0, 1.0, 0.0, 0.0]);
+        }
+
+        // 1. The reflection and its blur parameters.
+        let p: [(usize, Vec<u8>); 11] = [
+            (0, i(0).to_vec()), (4, f(1.0).to_vec()), (8, f(20.0).to_vec()), (16, [f(0.4), f(1.0)].concat()), (24, [f(0.9), f(1.0)].concat()),
+            (32, f(0.1).to_vec()), (36, [f(0.996), f(0.99)].concat()), (48, [f(2.0), f(5.0)].concat()), (56, f(0.06).to_vec()),
+            (64, [f(0.5), f(0.5), f(28672.0), f(-28672.0)].concat()), (80, f(1.0).to_vec()),
+        ];
+        for (at, bytes) in &p {
+            self.cbs.set_at("parameters", *at, bytes);
+        }
+
+        self.upload();
+        self.ctx.set_render_targets(&[self.post.reflection.rtv.clone(), self.post.reflection_params.rtv.clone()], None);
+        for k in 0..4 {
+            bind_srv(&self.ctx, &es, &format!("gbuffer_channel_{}_sampler", k + 1), self.gbuffer.channels[k].srv.as_ref());
+        }
+
+        bind_srv(&self.ctx, &es, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
+        bind_srv(&self.ctx, &es, "s_terrain", self.res.ground_colour_srv.as_ref());
+        bind_srv(&self.ctx, &es, "s_light_accumulation_buffer", self.gbuffer.hdr.srv.as_ref());
+        bind_srv(&self.ctx, &es, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
+        bind_srv(&self.ctx, &es, "t_depth_stencil_int", self.post.stencil.srv.as_ref());
+        bind_srv(&self.ctx, &es, "t_jitter", self.res.jitter_srv.as_ref());
+        ps_samplers(&self.ctx, &es, &self.states.s_clamp_point);
+        for name in ["s_environment", "s_terrain", "s_ssao", "s_light_accumulation_buffer"] {
+            bind_sampler(&self.ctx, &es, name, self.states.s_clamp_linear.as_ref());
+        }
+
+        self.fullscreen(&es);
+        null_ps_srvs(&self.ctx, 16);
+
+        // 2. The x blur.
+        let blur = |cbs: &mut crate::cbuffers::ConstantBuffers| {
+            for (at, bytes) in [(0, i(0).to_vec()), (4, f(0.98).to_vec()), (8, f(0.5).to_vec()), (12, f(1.0).to_vec())] {
+                cbs.set_at("parameters", at, &bytes);
+            }
+        };
+
+        blur(&mut self.cbs);
+        self.upload();
+        self.ctx.set_render_targets(std::slice::from_ref(&self.post.reflection_blur.rtv), None);
+        bind_srv(&self.ctx, &bx, "gbuffer_channel_1_sampler", self.gbuffer.channels[0].srv.as_ref());
+        bind_srv(&self.ctx, &bx, "s_reflection_buffer", self.post.reflection.srv.as_ref());
+        bind_srv(&self.ctx, &bx, "s_blur_parameters_buffer", self.post.reflection_params.srv.as_ref());
+        ps_samplers(&self.ctx, &bx, &self.states.s_clamp_point);
+        bind_sampler(&self.ctx, &bx, "s_reflection_buffer", self.states.s_clamp_linear.as_ref());
+        self.fullscreen(&bx);
+        null_ps_srvs(&self.ctx, 16);
+
+        // 3. The y blur, added to the light buffer (ONE / ONE, as the game).
+        blur(&mut self.cbs);
+        self.upload();
+        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), None);
+        self.ctx.set_blend_state(self.states.bs_add_one.as_ref());
+        bind_srv(&self.ctx, &by, "gbuffer_channel_1_sampler", self.gbuffer.channels[0].srv.as_ref());
+        bind_srv(&self.ctx, &by, "gbuffer_channel_3_sampler", self.gbuffer.channels[2].srv.as_ref());
+        bind_srv(&self.ctx, &by, "s_reflection_buffer", self.post.reflection_blur.srv.as_ref());
+        bind_srv(&self.ctx, &by, "s_blur_parameters_buffer", self.post.reflection_params.srv.as_ref());
+        ps_samplers(&self.ctx, &by, &self.states.s_clamp_point);
+        bind_sampler(&self.ctx, &by, "s_reflection_buffer", self.states.s_clamp_linear.as_ref());
+        self.fullscreen(&by);
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+    }
+
     /// The battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps):
     /// - far = camera near + sum(row) with the quality row (30, 90, 210, 450) -> 781 (fn 0x11751fc0, table dll+0x1c88aa0);
     /// - range = the depth-buffer analysis (min, max visible view depth, max clamped to far), max *= shadow_split_enlargement_safe_zone (1.05);

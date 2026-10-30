@@ -838,7 +838,9 @@ impl ModelInner {
                 tex: [
                     material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
                     material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
-                    material_texture(textures, path, material, TextureType::GlossMap, false, textures.black()),
+                    // sRGB, as the game samples it: its G-buffer holds the gloss map's x (channel 1 .w) and y (channel 2 .w) linearised
+                    // (RenderDoc captures of Rome against the editor's, docs/re/renderer.md); read linear they were 5 to 10 x too high.
+                    material_texture(textures, path, material, TextureType::GlossMap, true, textures.black()),
                     material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
                     normal,
                     // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and

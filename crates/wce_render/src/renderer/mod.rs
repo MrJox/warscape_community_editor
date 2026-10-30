@@ -119,6 +119,11 @@ pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] 
 ];
 
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
+
+/// The environment specular pass (DEFERRED_ENVIRONMENT_SPECULAR_SHADER, full resolution; the game runs their MSAA variants) and its blurs.
+pub(crate) const ENV_SPECULAR_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
+pub(crate) const REFLECTION_BLUR_X_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_x";
+pub(crate) const REFLECTION_BLUR_Y_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y_fullres";
 pub(crate) const TM_DOWN_LUMA: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image_store_luma";
 pub(crate) const TM_LUMA_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats";
 pub(crate) const TM_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_luma_stats";
@@ -1179,6 +1184,7 @@ impl Renderer {
         self.pass_point_lights(scene);
         self.gpu_timer.mark("sea");
         self.pass_water(scene, false);
+        self.pass_environment_specular();
         self.pass_fog();
         self.gpu_timer.mark("rivers");
         self.pass_water(scene, true);
