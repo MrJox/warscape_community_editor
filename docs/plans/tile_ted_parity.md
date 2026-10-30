@@ -120,7 +120,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   areas are to be handled as polygons** (user): the NOGO_REGION_POLYGON_INSTANCEs (drawn today; painting them as brushes is Phase 5b).
 - Done (2026-10-27): TEd's **Normal (Grouped)** (`PM2OpBlend2Base`, properties `channel_group` and `flange`; `apply` fn 0x00482ad0):
   a group painted at a continuous variation, split between the two around it (`PaintMode::Grouped`, `grouped_pixel`); TEd's gate on the
-  weight (a per-pixel function the module hands it: where 0, the weight is its neighbourhood's average) was not traced and is left out.
+  weight is the Blendmap Filters' test: a pixel they leave out takes the share of its 5 x 5 box that passes (`grouped_gate`, traced
+  2026-10-30, docs/re/terrain.md).
   And its **blur** (`GPOWeightedAverage` "Smooth" built with radius 2 on the blend map, 3 on the height map; weights `exp(-d^2 / 8)`, fn
   0x004814b0): `PaintMode::Blur`, each channel towards that average as the stroke found it, by the stroke's built-up weight. The paint
   brush's mode choice (tooltips), the Grouped variation slider, `brush_paint ... grouped [v] | blur`,
