@@ -163,6 +163,7 @@ impl TileTool {
     /// one more. Then places or paints with it, if that is not being done already. A new set holds one kind: the other is refused.
     pub(crate) fn add_to_new_set(&mut self, e: &mut Editor, kind: SetKind, keys: &[SetEntry]) {
         let set = self.scratch_set.get_or_insert_with(|| VegetationSet { kind, ..Default::default() });
+        let kind_changed = set.entries.is_empty() && set.kind != kind;
         if set.entries.is_empty() {
             set.kind = kind;
         } else if set.kind != kind {
@@ -178,7 +179,8 @@ impl TileTool {
         }
 
         let kinds = set.entries.len();
-        if self.veg_set != Some(SetInUse::New) {
+        // Placing with it already, but as the other kind (the set was emptied, then given the other's): again, with this kind's draft.
+        if self.veg_set != Some(SetInUse::New) || kind_changed {
             self.start_new_set(e);
         }
 
