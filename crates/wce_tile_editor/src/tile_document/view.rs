@@ -1436,6 +1436,22 @@ impl Tile {
         &mut self.display
     }
 
+    /// The game view's layers ([`TileDisplay::game_layers`](super::TileDisplay::game_layers)); a change republishes the scene, as a layer's eye does.
+    pub fn set_game_layers(&mut self, scene: &mut RenderScene, layers: Option<u8>) {
+        if self.display.game_layers == layers {
+            return;
+        }
+
+        self.display.game_layers = layers;
+        self.idx.valid = false;
+        self.structure_version += 1;
+        if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
+            let layer = self.layer;
+            self.rebuild_items(true);
+            self.publish_items(scene, layer, true);
+        }
+    }
+
     /// Per frame (the tool's update): rebuilds the marker batches when the camera moved enough or the display settings changed, and the water
     /// and links when they are stale.
     pub fn update_view(&mut self, scene: &mut RenderScene, eye: Float3) {

@@ -53,7 +53,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
       coast's surf band is narrower and less white than the game's.
     - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
       two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
-    - **Settlement buildings**: the editor shows sets the game doesn't (a tent cluster, huts): the upgrade level?
+    - Done: settlement buildings the game doesn't show (Rome's camp of round huts): its *Escalation 2* layer, which the game loads
+      for the `escalation2` upgrade only; the Game view now leaves out the layers the battle would not load.
     - **Exposure**: re-measure the white point (game 22.0, editor 16.4 at the Rome view) now that the lighting matches.
     - The editor's `where` "game" readout lacks the centring and the height offset.
     - The image gates' references change with b5f2cac and 20c8eea: to run and record.
