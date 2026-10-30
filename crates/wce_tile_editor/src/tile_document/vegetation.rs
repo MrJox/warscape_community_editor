@@ -111,6 +111,13 @@ impl Tile {
         Some(format!("{}/", dir[at + 1..].trim_end_matches('/')))
     }
 
+    /// A file of `dir` by its name, whatever its case (the lists are named by lower case names, `ROME_Med.tree_list.bin` is `rome_med`'s).
+    pub(crate) fn read_local(dir: &std::path::Path, file: &str) -> Option<Vec<u8>> {
+        let file = file.to_lowercase();
+        let path = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|f| f.to_string_lossy().to_lowercase() == file))?;
+        std::fs::read(path).ok()
+    }
+
     /// The tree lists there are for the tile (their names: `default`, `rome_med`, ...), in the game files or in the tile's folder, then
     /// the generated ones (`gen:<list>`) when the kit's parameters are there.
     pub fn tree_lists(&self) -> &[String] {
@@ -231,10 +238,9 @@ impl Tile {
         let carried = self.generation_params().is_none().then(|| self.project.dir.join(CARRIED_DIR));
         [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
             let file = format!("{name}{extension}");
-            let bytes = std::fs::read(self.project.dir.join(&file))
-                .ok()
+            let bytes = Self::read_local(&self.project.dir, &file)
                 .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
-                .or_else(|| std::fs::read(carried.as_ref()?.join(&file)).ok())?;
+                .or_else(|| Self::read_local(carried.as_ref()?, &file))?;
             Some((bytes, old))
         })
     }

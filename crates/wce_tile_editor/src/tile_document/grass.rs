@@ -53,10 +53,9 @@ impl Tile {
         // Without the kit's grass parameters, a decompiled project's carried list too.
         let carried = vegetation::grass_params_path(&self.project).is_none().then(|| self.project.dir.join(super::vegetation::CARRIED_DIR));
         let read = |file: &str| {
-            std::fs::read(self.project.dir.join(file))
-                .ok()
+            Self::read_local(&self.project.dir, file)
                 .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))
-                .or_else(|| std::fs::read(carried.as_ref()?.join(file)).ok())
+                .or_else(|| Self::read_local(carried.as_ref()?, file))
         };
 
         let file = format!("{LIST}{GRASS_LIST_EXTENSION}");
