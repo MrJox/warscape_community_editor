@@ -472,6 +472,15 @@ impl TileTool {
     /// The battle's map when it is a position (`LaunchMap::MapContext`: the Map context's placement in the game's campaign map), `None` for
     /// the tile alone; with a note when the placement can't be used (the kit's maps are not in the game's packs).
     fn launch_position(&self, game: &GameProfile, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
+        let (map, mut note) = self.launch_map_position(game, location, cells, mode);
+        if map.is_none() && launch::coastal_set(location.split('/').nth(3).unwrap_or_default()) {
+            note.push_str(launch::COAST_ALONE_NOTE);
+        }
+
+        (map, note)
+    }
+
+    fn launch_map_position(&self, game: &GameProfile, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
         if mode == LaunchMap::Tile {
             return (None, String::new());
         }

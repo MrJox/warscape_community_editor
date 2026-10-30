@@ -84,6 +84,17 @@ impl BattleWeather {
     }
 }
 
+/// The note of a coast tile launched alone (checked in game, 2026-10-30, with the game's own tile too): the game places it without its
+/// sea level, so the tile is dry ground down to its edges, the sea only around it, and the plants of its sea bed stand in the air.
+pub const COAST_ALONE_NOTE: &str = " (a coast tile alone: the game draws it without its sea level, dry ground to the tile's edges and its sea-bed \
+     plants in the air; launch it at a placement: Settings > Tile, The Map context's placement)";
+
+/// Whether a battle tile set lies on the sea (`sea`, `sea_coast`, `sea_coast_landing`, the `settlement_*_ports`, `river_mouth*`).
+pub fn coastal_set(set: &str) -> bool {
+    let set = set.to_ascii_lowercase();
+    set.starts_with("sea") || set.starts_with("river_mouth") || set.ends_with("_ports")
+}
+
 /// What the battle XML is made from.
 pub struct Battle<'a> {
     pub map: BattleMap,
@@ -557,6 +568,17 @@ mod tests {
 
     fn attila_army() -> LaunchArmy {
         LaunchArmy::default().resolved(&wce_vfs::GameProfile::ATTILA.launch)
+    }
+
+    #[test]
+    fn coastal_sets() {
+        for set in ["sea", "sea_coast", "sea_coast_landing", "settlement_western_ports", "river_mouth_shallow"] {
+            assert!(coastal_set(set), "{set}");
+        }
+
+        for set in ["river", "river_crossing", "settlement_western_cities", "plains", "lakes"] {
+            assert!(!coastal_set(set), "{set}");
+        }
     }
 
     #[test]
