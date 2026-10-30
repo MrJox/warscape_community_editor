@@ -471,4 +471,16 @@ A memory dump at the user's max settings (Rome at its campaign placement, vanill
 (the bottom is the engine's 0.35 * luma(top) stand-in in all.) No editor variant fits: the game's side faces are neutral, between the
 scene cube (warm: the lit ground) and the sky-only ones (blue), and darker than both; the top face, sky and clouds in every variant, is
 1.27 x the game's. So at max settings the game's cube is not the minimum-settings sky-only one (its lower halves are not black), but
-not the editor's lit scene either. Open; the water reflects this cube (still brighter and bluer in the editor).
+not the editor's lit scene either.
+
+**Settled (2026-10-30): the cube is the sky and the clouds above the horizon, black below, at every setting; the editor's clouds were
+four times too big.** Comparing the cloud draws of the game's cube build (`envgen_frame129.rdc`) with the editor's: the game's sprite
+is a 7 x 7 grid (216 indices) in [-0.5, 0.5] with uv = xy + 0.5; the editor drew a single quad in [-1, 1] (v flipped), four times the
+area through the same shader. With the game's grid, the top face (sky and clouds) matches the minimum-settings capture within 10%
+(editor 4.7 6.6 7.9, game 4.3 6.3 7.7), and the editor's sky-only side faces are twice the game's: the game's lower halves are black
+(its dome is a half sphere). Against the max-settings dump, half the editor's sky-only side face is the game's within 5-15%: the
+cube has no scene at max settings either (the October match of the scene cube came from the clouds' excess). The editor's cube is now
+the sky and both cloud planes on every face, the bottom face and the side faces' lower halves black (`render_env_cube`); its ambient
+at Rome with the vanilla dry weather: +x 0.61 0.62 0.64 (game 0.52 0.55 0.56), -x 0.98 0.95 0.87 (1.11 1.05 0.89), top 1.50 1.41 1.37
+(1.52 1.34 1.22), +z 0.64 0.65 0.66 (0.65 0.64 0.63), -z 0.98 0.92 0.85 (1.02 0.97 0.83); the rest is the clouds' random layout and
+the wind. The river, which reflects the cube, is the game's dark slate now. The cloud grid is the main view's too.
