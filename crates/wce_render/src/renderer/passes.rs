@@ -47,11 +47,7 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
-        self.cbs.set_f("tree_billboard_constants", "g_tint_colours", &[1.0; 12]);
         self.ctx.set_input_layout(Some(&layout));
-
-        // White: no tint (the engine's values per climate have not been looked for).
-        self.cbs.set_f("vegetation_tint_colours", "g_tint_colours", &[1.0; 12]);
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // The ground first, as the entity order had it (equal depths: the first one drawn wins).
@@ -125,6 +121,10 @@ impl Renderer {
             let Some(pass_layout) = pass_layout else { continue };
             self.ctx.set_input_layout(Some(pass_layout));
 
+            // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE).
+            let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf);
+            self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
+
             let slots = self.slots_of(&ps);
             let mut bound = false;
             let fire = GBUFFER_PASSES[pass].2;
@@ -161,6 +161,13 @@ impl Renderer {
 
                 if matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
                     r.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
+                    r.upload();
+                }
+
+                // A tree mesh's material tints it.
+                if m.kind.is_tree() {
+                    let cb = if m.kind == MeshKind::TreeBillboard { "tree_billboard_constants" } else { "vegetation_tint_colours" };
+                    r.cbs.set_f(cb, "g_tint_colours", &m.tint);
                     r.upload();
                 }
 

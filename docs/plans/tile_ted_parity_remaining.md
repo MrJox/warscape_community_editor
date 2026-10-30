@@ -51,8 +51,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
       lower resolution, blurred in x and y); the editor has none since b5f2cac. Small on the roofs (+0.1).
     - **Water**: the editor's river is bluer and brighter than the game's dark slate, with brownish streaks and sharper glints; the
       coast's surf band is narrower and less white than the game's.
-    - **Trees**: the game's summer trees are fuller and darker, and it has many small bushes the editor lacks; at Rome the editor draws
-      another species than the game at the same spot (which tree list the game picks: the climate's?).
+    - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
+      two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
     - **Settlement buildings**: the editor shows sets the game doesn't (a tent cluster, huts): the upgrade level?
     - **Exposure**: re-measure the white point (game 22.0, editor 16.4 at the Rome view) now that the lighting matches.
     - The editor's `where` "game" readout lacks the centring and the height offset.

@@ -156,6 +156,10 @@ pub struct GpuMesh {
     /// The tiled dirt map's repeats per uv unit (the material's floats 0 and 1, `rigid_config_PS.g_uv2_tile_interval`); TiledDirtmap only.
     pub uv2_tile: [f32; 2],
 
+    /// A tree mesh's three tint colours (its material's vector params 1, 2 and 3; white when absent): the game's
+    /// `vegetation_tint_colours.g_tint_colours`, between which the instance's seed picks (RenderDoc captures, docs/re/vegetation.md).
+    pub tint: [f32; 12],
+
     /// The mesh-local origin: a model mesh's pivot (its material's `v_pivot`: the vertices are stored around it), a terrain patch's corner
     /// (half-float positions stay small).
     pub offset: Float3,
@@ -582,6 +586,18 @@ fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_l
     textures.get_quiet(&local, true).is_some().then_some(local)
 }
 
+/// A material's tint colours: its vector params 1, 2 and 3 (the trees' leaf and branch materials have them), white for a missing one.
+fn tree_tint(material: &rpfm_lib::files::rigidmodel::materials::Material) -> [f32; 12] {
+    let mut tint = [1.0; 12];
+    for (id, v) in material.params_vector4df32() {
+        if let Ok(k @ 0..=2) = usize::try_from(id - 1) {
+            tint[k * 4..k * 4 + 4].copy_from_slice(&[v.x, v.y, v.z, v.w]);
+        }
+    }
+
+    tint
+}
+
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
 fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
@@ -833,6 +849,7 @@ impl ModelInner {
                 stride,
                 kind,
                 uv2_tile: if matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
+                tint: tree_tint(material),
                 offset: pivot,
                 has_offset: pivot != Float3::default(),
                 tex: [
@@ -1483,6 +1500,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         stride: 32,
         kind: MeshKind::Standard,
         uv2_tile: [0.0; 2],
+        tint: [1.0; 12],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
         tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white()],
