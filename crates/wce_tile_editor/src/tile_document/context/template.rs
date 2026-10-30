@@ -239,6 +239,7 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     t.display.show_polygons = false;
     t.display.show_border = false;
     t.display.lod = false;
+    t.display.tree_list_auto = false;
     if !trees {
         t.display.tree_list.clear();
     } else {

@@ -179,6 +179,10 @@ pub struct TileDisplay {
     /// The procedural trees drawn: the name of one of the tile's tree lists (`default`, a climate key like `rome_med`), empty for none.
     pub tree_list: String,
 
+    /// The tree list follows the terrain look's climate, as the game picks it (the climate's own list when the tile has one, else
+    /// `default`), until one is chosen (the Tile panel, `tree_list`).
+    pub tree_list_auto: bool,
+
     /// The grass of BOB's `default.grass_list.bin`, near the camera.
     pub show_grass: bool,
 
@@ -196,7 +200,7 @@ impl Default for TileDisplay {
     fn default() -> Self {
         Self {
             hidden_types: BTreeSet::new(), show_polygons: true, polygon_fill: 0.3, polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
-            show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
+            show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), tree_list_auto: true, show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
         }
     }
 }

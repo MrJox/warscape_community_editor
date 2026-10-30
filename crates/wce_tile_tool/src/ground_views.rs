@@ -208,6 +208,7 @@ impl TileTool {
         gui::set_next_item_width(160.0);
         if gui::combo("Procedural trees##ground", &mut li, &items) {
             d.tile_mut().display_mut().tree_list = if li == 0 { String::new() } else { lists[li as usize].clone() };
+            d.tile_mut().display_mut().tree_list_auto = false;
         }
 
         if lists[li as usize].starts_with(GENERATED_PREFIX) {

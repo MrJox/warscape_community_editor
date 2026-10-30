@@ -55,8 +55,9 @@ The tweakers `MIN_TREE_SCALE` (0.8) and `MAX_TREE_SCALE` (1.2) of TreeDisplay.cp
 another tree path (`FUN_1042ca50`, same seed, same LCG). That path draws a random scale and yaw and ignores the list's scale byte. Which trees it serves
 (frontend backdrop, `FRONTEND_BACKDROP_MIN/MAX_TREE_SCALE` are separate tweakers) is open.
 
-The editor (`crates/wce_tile_editor/src/tile_document/vegetation.rs`) draws one list chosen on the Tile panel (*procedural trees*; command
-`tree_list [name | none]`, default `default`). It skips the list trees that stand where a shown static instance stands, puts non-freeform trees on
+The editor (`crates/wce_tile_editor/src/tile_document/vegetation.rs`) draws one list: the ground climate's own (the game's choice: the battle map's cell climate,
+`rome_med.tree_list.bin` and the like; `default` when the tile has none), or one chosen (*procedural trees*; command
+`tree_list [name | none]`). It skips the list trees that stand where a shown static instance stands, puts non-freeform trees on
 the terrain, scales by the byte / 127, uses the one-worker yaw sequence and tilts the tree to the terrain (step 3, normal from the world heights
 0.5 m to each side). The static VEGETATION_INSTANCEs are drawn tilted too (they are list trees in the game); their edit gizmos and picking keep the untilted matrix.
 
