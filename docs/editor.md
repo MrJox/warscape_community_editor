@@ -115,7 +115,10 @@ Layer commands: `tile_flag`, `tile_new_layer`, `tile_rename`, `tile_move_to <wha
 Entry commands: `tiles [words]` (the browser's rows), `tile_entry` (log the entry), `assert_entry <field> <value>`, `assert_tiles <n> [words]`; test helpers `gizmo_drag <x|y|z> <pixels>` and `cam_info`. Extra commands: `tile_mode`, `brush`, `grab_to x z`, `tile_click`, `tile_click_ground`, `tile_drag_point`, `draw_polygon`, `tile_diagnostics` and the tests `assert_instances`, `assert_type_count`, `assert_world`, `assert_world_xz`, `assert_height`, `mark_height` / `assert_height_delta`, `assert_selected_type`,
 `assert_at_cursor`, `assert_mode`, `assert_grabbing`, `assert_file_exists`. `mouse move|click|drag|wheel|off x y` (pixels or `50%` of the viewport image) drives the same ImGui events as the real mouse; in fixed-step runs the real mouse is ignored. `where [x y | on | off]` prints the camera's, its orbit target's and the cursor's coordinates (scene and game units; in a map context
 also the map cell, and the cursor's height above the sea), `x y` probing the ground under that pixel; the same readout sits in the viewport's
-bottom-left corner (View > Coordinates). View > Fog turns the distance fog off (the fog pass and the rivers' own fog), as `gfx fog off`.
+bottom-left corner (View > Coordinates). With a tile open the game units are the launched battle's (`coords::BattleFrame`): centred on the
+tile, height zero at the map's sea level at a map placement and at the variation's `min_height` (its number, as scene units) for the tile
+alone, as the cameras of in-game captures fit (western_city_rome/small: the editor's (386.3, 9.8, 333.8) is the game's (-251.5, 44.5,
+-356.5)). `luma` logs the auto exposure's black and white points, `cb <buffer> [variable]` a game constant buffer's values. View > Fog turns the distance fog off (the fog pass and the rivers' own fog), as `gfx fog off`.
 
 `tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 

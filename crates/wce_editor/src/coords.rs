@@ -26,6 +26,14 @@ impl MapFrame {
     }
 }
 
+/// Where the game's battle puts its origin in the scene (scene units): game = (point - origin) * game units. A tile's battle is centred
+/// on the tile; its height zero is the map's sea level at a map placement, the tile's lowest height for a tile alone (the cameras of
+/// in-game captures against the editor's, docs/re/game_command_line.md).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BattleFrame {
+    pub origin: Float3,
+}
+
 /// The side of the grid the terrains are bucketed on (scene units).
 const BUCKET: f32 = 256.0;
 
@@ -133,9 +141,9 @@ impl GroundProbe {
 }
 
 /// The readout's lines: the camera, its target (orbit) or nothing (fly), the cursor's ground point.
-pub fn lines(cam: &Camera, orbit: bool, cursor: Option<Float3>, game_units: f32, map: Option<&MapFrame>) -> Vec<String> {
+pub fn lines(cam: &Camera, orbit: bool, cursor: Option<Float3>, game_units: f32, map: Option<&MapFrame>, battle: Option<&BattleFrame>) -> Vec<String> {
     let point = |name: &str, p: Float3, height: bool| {
-        let g = p * game_units;
+        let g = (p - battle.map_or(Float3::default(), |b| b.origin)) * game_units;
         let mut s = format!("{name:<7}{:>10.1} {:>8.1} {:>10.1}   game {:>10.1} {:>8.1} {:>10.1}", p.x, p.y, p.z, g.x, g.y, g.z);
         if let Some(m) = map {
             let (cx, cy) = m.cell(p.x, p.z);

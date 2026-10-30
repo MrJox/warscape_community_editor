@@ -3026,6 +3026,8 @@ impl Tool for TileTool {
     fn update(&mut self, e: &mut Editor) {
         self.update_launch(e);
         let Some(id) = document_id(e) else {
+            e.viewport.battle_frame = None;
+
             // The last tile closed: its weather goes with it.
             if self.camera_set_for != 0 {
                 self.camera_set_for = 0;
@@ -3100,6 +3102,14 @@ impl Tool for TileTool {
         self.context.poll(e, id);
         e.viewport.north = self.context.north();
         e.viewport.map_frame = self.context.map_frame();
+        e.viewport.battle_frame = e.docs.find_as::<TileDocument>(id).map(|d| {
+            // Alone, the height zero is at the variation's min_height read as scene units (the number in metres, not divided by the unit
+            // scale: what the cameras of the in-game captures fit, western_city_rome/small's -12.42).
+            let (t, p) = (d.tile(), d.project());
+            let low = p.height.as_ref().map_or(0.0, |h| h.min_height());
+            let y = e.viewport.map_frame.map_or(low as f32, |m| m.sea_y);
+            wce_editor::coords::BattleFrame { origin: Float3::new((t.extent_x() * 0.5) as f32, y, (t.extent_z() * 0.5) as f32) }
+        });
 
         // Structural edits move element indices: the command says what is selected afterwards.
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");

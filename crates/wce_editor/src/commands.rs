@@ -721,8 +721,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             lines.push(format!("{name}.{var} {}", vals.join(" ")));
         }
 
-        ok(lines.join("
-"))
+        ok(lines.join("\n"))
+    });
+
+    c.add("luma", "luma", "log the auto exposure's black and white points as the GPU last computed them (the game's: its 1x1 points target)", |e, _| {
+        let Some(r) = e.renderer() else { return fail("no renderer") };
+        ok(format!("luma black {} white {}", r.luma_black(), r.luma_white()))
     });
 
     c.add("where", "where [x y | on | off]", "the camera's and the cursor's coordinates (scene and game units; map cell and height above the sea in a map context); x y: the ground under that pixel of the viewport image (or 50%); on / off: the readout in the viewport", |e, a| {
@@ -747,8 +751,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             None => {}
         }
 
-        ok(e.viewport.coords_lines(&e.scene).join("
-"))
+        ok(e.viewport.coords_lines(&e.scene).join("\n"))
     });
 
     c.add("window_focus", "window_focus <window>", "bring a window to the front (a docked one: its tab is selected), by its title", |e, a| {

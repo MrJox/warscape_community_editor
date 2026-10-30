@@ -95,6 +95,9 @@ pub struct Viewport {
     /// the cursor (while it is over the image).
     pub show_coords: bool,
     pub map_frame: Option<crate::coords::MapFrame>,
+
+    /// The game battle's origin in the scene, for the readout's game coordinates (a tool sets it; none: the scene's own origin).
+    pub battle_frame: Option<crate::coords::BattleFrame>,
     pub cursor_ground: Option<Float3>,
     probe: crate::coords::GroundProbe,
     trace: String,
@@ -129,7 +132,7 @@ impl Default for Viewport {
             total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
             orbit: OrbitCamera::default(), mode: CameraMode::default(),
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, cursor_ground: None, probe: Default::default(),
+            local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, battle_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
             trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
         }
@@ -254,7 +257,7 @@ impl Viewport {
 
     /// The coordinates readout's lines, with the cursor's last ground point.
     pub fn coords_lines(&self, scene: &RenderScene) -> Vec<String> {
-        crate::coords::lines(&self.camera(), !matches!(self.mode, CameraMode::Walk | CameraMode::Fly), self.cursor_ground, scene.game_units, self.map_frame.as_ref())
+        crate::coords::lines(&self.camera(), !matches!(self.mode, CameraMode::Walk | CameraMode::Fly), self.cursor_ground, scene.game_units, self.map_frame.as_ref(), self.battle_frame.as_ref())
     }
 
     pub fn ray(&self, x: i32, y: i32) -> Option<(Float3, Float3)> {
