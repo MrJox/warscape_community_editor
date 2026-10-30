@@ -11,12 +11,9 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    another), then the editor's version.
 2. Done (2026-10-30): **Normal (Grouped) weight gate**: the Blendmap Filters' test; a pixel they leave out takes the share of its 5 x 5
    box that passes (`blend_field::grouped_gate`, unit test; docs/re/terrain.md).
-3. **Burning sequence** (Phase 5d follow-up). The editor shows the steady fire only. The engine (fn 0x104bb1e0) has five stages:
-   `burning_entity_pre_smoke`, then `burning_entity`, then `burning_entity_collapse` / `entity_collapse` / `burning_entity_aftermath`.
-   - Trace the stage timing (`BUILDING_FIRE_STAGE_ONE_DURATION`, `_TWO_`, the `BUILDING_LITE_*` ones).
-   - Trace the `_small` choice (entity type 0xb) and the per-triangle mask of the mesh emission (fn 0x1183fa30).
-   - Then decide with the user whether the editor plays the sequence: a "play the fire" preview in the Inspector, with the char amount
-     ramping to `BURN_SHADER_AMOUNT` 0.3. Or does `burn` stay a static preview of the main stage?
+3. **Burning sequence** (Phase 5d follow-up): traced (2026-10-30, docs/re/buildings.md "Burning, the sequence"): the char ramps 0 to
+   0.3 over 18 s while burning, then 0.3 to 1 over 10 s in the second stage; the four effect stages and the `_small` set. Left: the
+   user's choice, whether the editor plays the sequence (a "play the fire" preview in the Inspector) or `burn` stays a static preview.
 4. Done (2026-10-30): **Faded opaque materials**: the blended forward pass (`pass_faded`, the materials' `ps30_alpha_blend_40`).
 5. Done (2026-10-30): `scripts/tile_building_props.txt` runs through again (the orientation row is `euler` since the Global / Local
    coordinates).
