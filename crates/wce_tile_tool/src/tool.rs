@@ -3855,6 +3855,8 @@ impl Tool for TileTool {
 
         project.prefab_base = Some(self.prefab_source());
 
+        project.game_kit = tiles_kit(e);
+
         // From the Assembly Kit: the groups that are exact copies of a prefab become references to it (Tile > Prefabs does it again).
         if !project.dir.starts_with(&projects) {
             let index = self.content_index(e);

@@ -228,6 +228,10 @@ pub struct TileProject {
 
     /// What the last save found about the references (each one that kept its contents: they differ from its prefab by more than values).
     pub prefab_notes: Vec<String>,
+
+    /// The game's Assembly Kit with the tiles (its folder): the vegetation and grass parameters come from it when the tile's own kit has
+    /// none (the projects' kit layout, where new tiles are, holds raw_data only), as the exports take theirs.
+    pub game_kit: Option<PathBuf>,
 }
 
 /// A key's prefab contents, as a copy holds them (`PrefabLibrary::contents`).
@@ -363,7 +367,7 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![],
+            height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![], game_kit: None,
         };
 
         project.river_texts = project.current_river_texts();

@@ -45,10 +45,16 @@ pub fn grass_seed(scene: &TedScene) -> Option<u32> {
     doc.get(elem, "generation_seed").and_then(|v| v.trim().parse::<u32>().ok())
 }
 
-/// The Assembly Kit's `max_grass.xml` for a tile under its `raw_data` (BOB names it `<raw>/terrain/...`; the kit has it in working_data).
+/// The Assembly Kits a tile's parameters are looked for in: the one of the `raw_data` it is under, then the game's.
+fn param_kits(project: &TileProject) -> impl Iterator<Item = PathBuf> + '_ {
+    project.raw_root.as_ref().and_then(|raw| raw.parent()).map(Path::to_path_buf).into_iter().chain(project.game_kit.clone())
+}
+
+/// The Assembly Kit's `max_grass.xml` for a tile (BOB names it `<raw>/terrain/...`; the kit has it in working_data).
 pub fn grass_params_path(project: &TileProject) -> Option<PathBuf> {
-    let kit = project.raw_root.as_ref()?.parent()?;
-    ["working_data", "raw_data"].iter().map(|d| kit.join(d).join("terrain/vegetation/battle/grass/max_grass.xml")).find(|p| p.is_file())
+    param_kits(project)
+        .flat_map(|kit| ["working_data", "raw_data"].map(|d| kit.join(d).join("terrain/vegetation/battle/grass/max_grass.xml")))
+        .find(|p| p.is_file())
 }
 
 /// The `VegetationExclusionPolygonInstance` outlines in the generator's frame, which is tile.ted's scene (x, z); hidden ones too.
@@ -78,11 +84,9 @@ pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
     out
 }
 
-/// The Assembly Kit's `working_data/BattleTerrain/vegetation` for a tile under its `raw_data`.
+/// The Assembly Kit's `working_data/BattleTerrain/vegetation` for a tile.
 pub fn params_dir(project: &TileProject) -> Option<PathBuf> {
-    let raw = project.raw_root.as_ref()?;
-    let dir = raw.parent()?.join("working_data").join("BattleTerrain").join("vegetation");
-    dir.is_dir().then_some(dir)
+    param_kits(project).map(|kit| kit.join("working_data").join("BattleTerrain").join("vegetation")).find(|dir| dir.is_dir())
 }
 
 /// The subtiles generation may use: all of them without a mask, else the mask's '1's (row-major, width first), as BOB stores them: (x,
