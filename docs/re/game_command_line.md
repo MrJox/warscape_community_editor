@@ -82,7 +82,8 @@ pointing at the XML). Root `<battle>`:
 - `<weather>`: `<prevailing_wind x y>`, `<environment_key>` (an `.environment` path).
 - `<Climate><name>`, `<Season><name>` (`season_autumn`), `<skip_deployment>`. **Not read by Attila** (2026-10-30): its battle XML reader
   has no `Climate` or `Season` tag (no such strings in empire.retail.dll). The ground's climate is the battle map's cell climate; a
-  tile launched alone gets climate index 0, `default` (summer textures only), whatever the battle asks (checked in game).
+  tile launched alone gets climate index 0, `default` (summer textures only), whatever the battle asks (checked in game). Launch in
+  game no longer writes either.
 - `<sea_surface_name>` (top level, a key of `sea_surfaces_tables`, e.g. `wind_level_2`; the coastal historical battles Olbia and the
   Catalaunian Plains have it). **Required when the map has sea** (2026-10-30): without it a coast tile crashes the game while loading
   (access violation), alone or at its campaign placement, with the game's own tile data too. Launch in game writes the sea surface of

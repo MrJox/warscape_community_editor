@@ -45,7 +45,7 @@ const R2_OCEAN_PS: &str = "dx11_sm_3_0_ocean.hlsl_ps_ps30_main_ultra_water_quali
 const OCEAN_PS: &str = "dx11_sm_4_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
 
 /// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`); the game's is 1024 x 1024
-/// (2 m texels; a RenderDoc capture, docs/re/water.md).
+/// (2 m texels; a RenderDoc capture at the lowest graphics settings, docs/re/water.md).
 const SEA_BED_SIZE: u32 = 1024;
 const SEA_BED_HALF: f32 = 1024.0;
 

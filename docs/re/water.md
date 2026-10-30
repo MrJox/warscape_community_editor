@@ -185,7 +185,8 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
 - **Settled by a RenderDoc capture (2026-10-30)** of a coastal battle (sea_coast/2x2_bb_straight at its campaign placement, cell
   (244, 101), sea surface wind_level_0, camera 63.9 m up; `D:\renderdoc\coast.rdc`, RenderDoc 1.46). RenderDoc runs out of the 32-bit
   game's address space (E_OUTOFMEMORY while loading) unless the game uses less: only the launch pack as mod, textures low, "unlimited
-  video memory" off. The ocean is two draws of the same mesh (a depth pass, event 897, then the colour pass, 914), 78 000 indices:
+  video memory" off; the capture was taken with every graphics setting at its minimum, so the mesh's size and the sea bed
+  texture's resolution may be the low setting's (not checked at ultra). The ocean is two draws of the same mesh (a depth pass, event 897, then the colour pass, 914), 78 000 indices:
   - **The radial mesh**: 13 120 vertices = 80 spokes x 164 rings, spoke-major (index = spoke * 164 + ring), 28-byte vertices
     (POSITION0 float3, POSITION1 float3, TEXCOORD0 float). The spokes are every 4.5 degrees all round, and they start at one centre that
     is not under the camera: on the sea 122.6 m ahead of it horizontally (1.92 x the camera's height; one capture, so the rule is
@@ -194,7 +195,8 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
     2048 m to 28 768.5. POSITION0 and POSITION1 differ by at most 0.04 m and share their y (-0.28 .. 0.23 m): the CPU gives the
     vertices only a small height, the waves are the vertex shader's (from the sea and swell surfaces). TEXCOORD0 is 1 out to
     192.5 m, then 0.968, 0.934, 0.859, 0.774, 0.678, 0.573 at 208.5 .. 352.5 m, and 0 from 416.5 m. The vertex shader only passes it on (COLOR0.z), and the ultra-quality pixel shader
-    (`ps30_main_ultra_water_quality`, the one the editor draws) does not read COLOR0: nothing to port (the editor writes 0).
+    nor do any of the 24 ocean pixel shaders (every water quality, with and without shadows) read COLOR0: nothing to port (the
+    editor writes 0).
   - **The sea bed info texture** (VS t0): 1024 x 1024 B8G8R8A8, grey (r = g = b), alpha 255: the ground's height around the camera,
     `r * 25 - 20` (black -20 m: open sea; white +5 m: land), the shore and the map's tiles visible as blocks. So 2 m texels over the
     shader's 2048 m square. The editor builds its own at that size since (it was 512 x 512).
