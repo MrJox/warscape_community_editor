@@ -82,11 +82,12 @@ impl TileDocument {
 
     /// The buildings the coverage goes around: the ones outside the coverage layer (its rocks are replaced) whose category (`category`:
     /// the packs' tables, else the kit's) is one of [`AVOIDED_CATEGORIES`]. A footprint whose model has not loaded yet takes its radius
-    /// from the model's files.
+    /// from the model's files (read once per key: a settlement has thousands of instances of a few).
     pub fn coverage_blockers(&self, category: &dyn Fn(&str) -> Option<String>) -> Vec<Blocker> {
         let sc = self.tile().tscene();
         let layer = self.coverage_layer();
         let kit = self.tile().building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project().dir));
+        let mut sizes = std::collections::HashMap::<String, Option<RockSize>>::new();
         self.footprints().into_iter()
             .filter(|f| sc.type_of(f.elem) == "BUILDING_INSTANCE" && layer.is_none_or(|l| !sc.is_descendant(f.elem, l)))
             .filter_map(|f| {
@@ -100,7 +101,8 @@ impl TileDocument {
                     f.radius
                 } else {
                     let s = sc.scale(f.elem).map_or(1.0, |s| s.x.abs().max(s.z.abs()) as f32);
-                    self.rock_size(&key).map_or(0.0, |z| z.radius * s)
+                    let size = *sizes.entry(key.clone()).or_insert_with(|| self.rock_size(&key));
+                    size.map_or(0.0, |z| z.radius * s)
                 };
 
                 Some(Blocker { x: f.x, z: f.z, radius })
