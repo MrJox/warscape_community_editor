@@ -413,8 +413,11 @@ pixel:
   statistics shader takes four point taps at +-1/4 of an output texel, a 2 x 2 block. The editor had a quarter of the view's size and
   divided by 4 per level, so each level read a quarter of its input and the maximum missed the highlights: its white point never left
   the environment's minimum (17). Now as the game (`TONEMAP_SIZE`): the average luma at that view is 3.382 against the game's 3.373.
-  The white point still differs (game 22.1 from a maximum of 20.6, editor 17.0 from 13.9): the maximum is a few sunlit pixels of the
-  plaza's marble columns at the right edge of the game's wider frame (the column's texture is the same in both). `luma` logs the points.
+  The white point then differed (game 22.1 from a maximum of 20.6, editor 17.0 from 13.9): the maximum is a few sunlit pixels of the
+  plaza's white marble columns, which are TDD's (`ruin_single_column_*` in `tdd_pack5_buildings`): the capture's launch pack carried
+  the tile's buildings from the editor's mod packs, and the editor's scratch settings had none. With the TDD packs mounted the editor's
+  white point is 22.3 against the game's 22.1 at the same 1920 x 1080 view, and the frame's regions agree within a few percent.
+  `luma` logs the points.
 
 ## EnvMapGen in a RenderDoc capture (2026-10-30)
 

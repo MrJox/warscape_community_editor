@@ -1098,6 +1098,12 @@ impl Renderer {
         self.cloud_layer.dt = self.clock.dt;
         self.update_weather(&env, time_s);
 
+        // Attila's water leaves its reflection to the environment specular pass (the rivers' shader skips its cube reflection with this 1,
+        // as in the game's captures); Rome 2 has no such pass.
+        if self.game != game::RenderGame::Rome2 {
+            self.cbs.set_i("lighting_VS_PS", "g_ssr_enabled", 1);
+        }
+
         // Snow regions: what lies in them (flagged instances, decals, snowy trees and ground) snows at their amount, the rest as the weather.
         self.snow_weather = env.snowing_intensity;
         self.snow_region = scene.snow().map(|s| s.amount.max(env.snowing_intensity));
@@ -1184,10 +1190,22 @@ impl Renderer {
         self.pass_point_lights(scene);
         self.gpu_timer.mark("sea");
         self.pass_water(scene, false);
+
+        // Attila, as the game: the rivers with the other water, before the environment specular pass that adds their reflection (they are
+        // stencil 2: the fog pass leaves them, their shader fogs itself). Rome 2's are forward and come after the fog.
+        let rome2 = self.game == game::RenderGame::Rome2;
+        if !rome2 {
+            self.gpu_timer.mark("rivers");
+            self.pass_water(scene, true);
+        }
+
         self.pass_environment_specular();
         self.pass_fog();
-        self.gpu_timer.mark("rivers");
-        self.pass_water(scene, true);
+        if rome2 {
+            self.gpu_timer.mark("rivers");
+            self.pass_water(scene, true);
+        }
+
         self.gpu_timer.mark("particles");
 
         // The weather precipitation (vfx1 of the WEATHER definition).
