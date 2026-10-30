@@ -262,3 +262,15 @@ tile_decompile_check "$GAME"`): 1,654 tile folders of the packs decompiled (16 o
 TEd project and read back into the same model; the lite building zones keep every building's flag. The gate fails on a folder that does not
 decompile or read back. The agreement with the kit's raw tiles is printed, not gated (the kit is not always the packs' version, nor BOB's
 output: docs/formats/tile_decompile.md): `docs/baseline/tile_decompile_check.txt`. The `pack_samples` test decompiles its 8 samples too.
+
+## The screenshots re-recorded after the in-game look fixes (2026-10-30, `ingame-checks`)
+
+The renderer changed what the shots show: the environment specular flag (b5f2cac) and pass (f7247be), the gloss maps sampled sRGB, the
+trees (untilted matrix 20c8eea; tint and two-sided bf14300), the environment cube (sky and clouds only, a47738f), the tone mapper's
+fixed 256 x 256 statistics (49e2974), the rivers' reflection (889cc38) and the faded instances' forward pass (7bd618c). `scripts/shots.sh`
+now finds the kit as `gates.sh` does (`assembly_kit` when the two tilemap kits are missing). New references recorded on the user's
+machine (AMD Radeon RX 7900 XTX, the game in `D:\Juegos\Steam\steamapps\common\Total War Attila`, settings without mod packs through
+`WCE_SETTINGS_DIR`) in `build/gates_base_perf/`. Two runs: dry (1280 x 720 and 800 x 600) and both tiles byte-identical; **rain and
+snow are not**: the precipitation particles land elsewhere from run to run (rain 3 % of the pixels, snow 49 %, the rest through the
+exposure), so those two fail the one-level rule against any reference. Nothing in the particles changed on this branch; whether master
+does the same was not checked (it needs a second build).

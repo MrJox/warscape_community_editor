@@ -50,7 +50,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - Done: exposure: the tone mapper's statistics now run on the game's fixed 256 x 256 image halved to 1 x 1; at the Rome view the
       white point is 22.3 against the game's 22.1 with the same packs (docs/re/renderer.md).
     - Done: `where` reads the launched battle's game coordinates (centred, the height offset; docs/editor.md).
-    - The image gates' references change with b5f2cac and 20c8eea: to run and record.
+    - Done: the image gates' references re-recorded (`build/gates_base_perf`, docs/baseline.md); found on the way: the rain and snow
+      shots are not deterministic between runs (the precipitation particles), to look into.
 
 ## C. Needs review
 
