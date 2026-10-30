@@ -298,6 +298,11 @@ fn write_rows(ctx: &ID3D11DeviceContext, tex: &ID3D11Texture2D, texels: &[u16], 
 
 impl Renderer {
 
+    /// The game shaders' constant buffers as the last frame left them (for comparisons with the game's: a memory dump, a capture).
+    pub fn constant_buffers(&self) -> &crate::cbuffers::ConstantBuffers {
+        &self.cbs
+    }
+
     /// The battle winds a sea can be drawn with (`wind_levels_tables`, in its order; empty without the table).
     pub fn sea_states(&mut self) -> Vec<String> {
         if self.water.ocean.winds.is_none() {

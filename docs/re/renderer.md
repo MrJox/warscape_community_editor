@@ -453,3 +453,22 @@ the game's `..._full_res_ms`, and `reflections_blur.hlsl` `blur_x` / `blur_y_ful
   `s_terrain` is a constant ground colour (0.49, 0.43, 0.30), the average of the map's far diffuse at Rome (the editor builds no far
   diffuse); the stencil is a texture of 1s (the editor's depth has no stencil; the sky's specular colour is 0, so it adds nothing there);
   the jitter is the SSAO's (256 x 256, the pass reads its first 64 x 64).
+
+### The cube at max settings (2026-10-30, memory dump)
+
+A memory dump at the user's max settings (Rome at its campaign placement, vanilla `cc4_day_dry_1`: engine ambient, so
+`lighting_VS_PS.ambient_cube_*` are the cube's face averages; `g_ssr_enabled` 1 there) against the editor (`cb lighting_VS_PS` after
+120 frames at the same placement and weather):
+
+| face | game | editor, scene cube | editor, sky + clouds on every face | editor, sky, clouds on top only |
+| --- | --- | --- | --- | --- |
+| +x | 0.52 0.55 0.56 | 0.98 0.84 0.69 | 1.63 1.62 1.60 | 0.86 0.99 1.10 |
+| -x | 1.11 1.05 0.89 | 1.62 1.47 1.18 | 2.18 2.09 1.88 | 2.01 2.05 1.81 |
+| +y | 1.52 1.34 1.22 | 1.93 1.73 1.63 | 1.93 1.73 1.63 | 1.93 1.73 1.63 |
+| +z | 0.65 0.64 0.63 | 1.02 0.88 0.76 | 1.60 1.59 1.58 | 0.89 1.02 1.11 |
+| -z | 1.02 0.97 0.83 | 1.52 1.37 1.13 | 2.04 1.96 1.78 | 1.96 2.00 1.77 |
+
+(the bottom is the engine's 0.35 * luma(top) stand-in in all.) No editor variant fits: the game's side faces are neutral, between the
+scene cube (warm: the lit ground) and the sky-only ones (blue), and darker than both; the top face, sky and clouds in every variant, is
+1.27 x the game's. So at max settings the game's cube is not the minimum-settings sky-only one (its lower halves are not black), but
+not the editor's lit scene either. Open; the water reflects this cube (still brighter and bluer in the editor).
