@@ -104,6 +104,9 @@ struct Batch {
 
     /// Its instances are burning: the G-buffer pass draws them with their material's fire shader.
     burning: bool,
+
+    /// Its instances are faded (opacity below 1): drawn by the blended forward pass, not the G-buffer's.
+    faded: bool,
 }
 
 /// One view's request.
@@ -179,10 +182,16 @@ pub struct DrawSet {
 
     // Models and batches.
     models: Vec<ModelEntry>,
-    /// (Model address, burning) -> model index; the batches keep the models alive, so an address stays unique. The burning instances of
-    /// a model have batches of their own.
-    model_of: HashMap<(usize, bool), u32>,
+    /// (Model address, burning, faded) -> model index; the batches keep the models alive, so an address stays unique. The burning and the
+    /// faded instances of a model have batches of their own.
+    model_of: HashMap<(usize, bool, bool), u32>,
     batch: Vec<Batch>,
+}
+
+/// Whether instance parameters (POSITION4..7) fade the instance: POSITION4.w is round(opacity * 1000) plus a fraction, as the engine
+/// packs it; below 1000 the engine files the piece for the blended forward shaders (render flag 0x2000, docs/re/buildings.md).
+pub fn faded(params: &[f32; 16]) -> bool {
+    params[3].floor() < 1000.0
 }
 
 /// The largest squared length of the rotation-scale columns of a world matrix.
@@ -258,8 +267,13 @@ impl DrawSet {
         self.batch[batch as usize].burning
     }
 
-    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool) -> u32 {
-        if let Some(&index) = self.model_of.get(&(Arc::as_ptr(m) as usize, burning)) {
+    /// Whether a batch's instances are faded (opacity below 1, [`faded`]).
+    pub fn batch_faded(&self, batch: u32) -> bool {
+        self.batch[batch as usize].faded
+    }
+
+    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool, faded: bool) -> u32 {
+        if let Some(&index) = self.model_of.get(&(Arc::as_ptr(m) as usize, burning, faded)) {
             return index;
         }
 
@@ -278,7 +292,7 @@ impl DrawSet {
             me.lod_first.push(me.lod_batch.len() as u32);
             for mesh in 0..meshes.len() {
                 me.lod_batch.push(self.batch.len() as u32);
-                self.batch.push(Batch { model: m.clone(), lod, mesh, burning });
+                self.batch.push(Batch { model: m.clone(), lod, mesh, burning, faded });
             }
 
             me.lod_distance.push(if distance > 0.0 { distance } else { f32::INFINITY });
@@ -293,7 +307,7 @@ impl DrawSet {
 
         let index = self.models.len() as u32;
         self.models.push(me);
-        self.model_of.insert((Arc::as_ptr(m) as usize, burning), index);
+        self.model_of.insert((Arc::as_ptr(m) as usize, burning, faded), index);
         index
     }
 
@@ -305,7 +319,7 @@ impl DrawSet {
     /// `add`, burning or not (the fire shaders).
     #[allow(clippy::too_many_arguments)]
     pub fn add_burning(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, burning: bool, entity: EntityId) -> u32 {
-        let mi = self.model_index(model, burning);
+        let mi = self.model_index(model, burning, params.is_some_and(faded));
         let me = &self.models[mi as usize];
         let c = world.transform_point(me.centre);
         let sphere = [c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()];

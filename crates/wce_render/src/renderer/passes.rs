@@ -128,8 +128,9 @@ impl Renderer {
             let slots = self.slots_of(&ps);
             let mut bound = false;
             let fire = GBUFFER_PASSES[pass].2;
-            let (instances, triangles) = self.draw_batches_burning([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning| {
-                if pass_of(m, burning) != Some(pass) {
+            // Faded instances are the blended forward pass's (`pass_faded`).
+            let (instances, triangles) = self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning, faded| {
+                if faded || pass_of(m, burning) != Some(pass) {
                     return false;
                 }
 
@@ -159,45 +160,7 @@ impl Renderer {
                     bound = true;
                 }
 
-                if matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
-                    r.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
-                    r.upload();
-                }
-
-                // A tree mesh's material tints it.
-                if m.kind.is_tree() {
-                    let cb = if m.kind == MeshKind::TreeBillboard { "tree_billboard_constants" } else { "vegetation_tint_colours" };
-                    r.cbs.set_f(cb, "g_tint_colours", &m.tint);
-                    r.upload();
-                }
-
-                // rigidwithdirtmesh names its dirt map and mask differently.
-                if m.kind == MeshKind::Dirtmap {
-                    let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
-                    bind_srv(&r.ctx, &ps, "s_decal_dirt_map", srv(crate::model_cache::TEX_DETAIL).as_ref());
-                    bind_srv(&r.ctx, &ps, "s_decal_dirt_mask", srv(crate::model_cache::TEX_ALPHA_MASK).as_ref());
-                }
-
-                // Trees draw their season's diffuse (as grass does).
-                let seasonal = if m.kind.is_tree() { r.vegetation_diffuse(m) } else { None };
-
-                // The billboard's textures have names of their own.
-                if m.kind == MeshKind::TreeBillboard {
-                    let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
-                    bind_srv(&r.ctx, &ps, "s_diffuse_map_tree", seasonal.clone().or_else(|| srv(crate::model_cache::TEX_DIFFUSE)).as_ref());
-                    bind_srv(&r.ctx, &ps, "s_combined_normal_and_displacement", srv(crate::model_cache::TEX_NORMAL).as_ref());
-                }
-
-                for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {
-                    let Some(slot) = slot else { continue };
-                    let srv = if t == crate::model_cache::TEX_DIFFUSE && seasonal.is_some() {
-                        seasonal.clone()
-                    } else {
-                        m.tex[t].read().ok().and_then(|tex| tex.srv.clone())
-                    };
-                    r.ctx.ps_set_shader_resources(*slot, &[srv]);
-                }
-
+                r.bind_mesh_material(&ps, &slots, m);
                 true
             });
 
@@ -223,6 +186,115 @@ impl Renderer {
         self.draw_lists.draws = draws;
         self.draw_lists.vis_terrain = vis_terrain;
         self.draw_lists.vis = vis;
+    }
+
+    /// Binds a mesh's material for a rigid or tree pixel shader: its textures in the shader's slots, the dirt maps' names, the tiled dirt's
+    /// repeats, a tree's tint and season.
+    pub(crate) fn bind_mesh_material(&mut self, ps: &Rc<GameShader>, slots: &[Option<u32>; TEX_SLOTS], m: &GpuMesh) {
+        if matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
+            self.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
+            self.upload();
+        }
+
+        // A tree mesh's material tints it.
+        if m.kind.is_tree() {
+            let cb = if m.kind == MeshKind::TreeBillboard { "tree_billboard_constants" } else { "vegetation_tint_colours" };
+            self.cbs.set_f(cb, "g_tint_colours", &m.tint);
+            self.upload();
+        }
+
+        // rigidwithdirtmesh names its dirt map and mask differently.
+        if m.kind == MeshKind::Dirtmap {
+            let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
+            bind_srv(&self.ctx, ps, "s_decal_dirt_map", srv(crate::model_cache::TEX_DETAIL).as_ref());
+            bind_srv(&self.ctx, ps, "s_decal_dirt_mask", srv(crate::model_cache::TEX_ALPHA_MASK).as_ref());
+        }
+
+        // Trees draw their season's diffuse (as grass does).
+        let seasonal = if m.kind.is_tree() { self.vegetation_diffuse(m) } else { None };
+
+        // The billboard's textures have names of their own.
+        if m.kind == MeshKind::TreeBillboard {
+            let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
+            bind_srv(&self.ctx, ps, "s_diffuse_map_tree", seasonal.clone().or_else(|| srv(crate::model_cache::TEX_DIFFUSE)).as_ref());
+            bind_srv(&self.ctx, ps, "s_combined_normal_and_displacement", srv(crate::model_cache::TEX_NORMAL).as_ref());
+        }
+
+        for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {
+            let Some(slot) = slot else { continue };
+            let srv = if t == crate::model_cache::TEX_DIFFUSE && seasonal.is_some() {
+                seasonal.clone()
+            } else {
+                m.tex[t].read().ok().and_then(|tex| tex.srv.clone())
+            };
+            self.ctx.ps_set_shader_resources(*slot, &[srv]);
+        }
+    }
+
+    /// The faded instances (opacity below 1), which the G-buffer pass leaves out: drawn after the lighting with their material's blended
+    /// forward shader over the light buffer, depth-tested without writing depth, from the G-buffer pass's instances. A material without
+    /// one (trees, terrain blend) is not drawn faded.
+    pub(crate) fn pass_faded(&mut self) {
+        if self.env.active || !self.draw_lists.vis.active.iter().any(|&b| self.draw_lists.draws.batch_faded(b)) {
+            return;
+        }
+
+        let Some(vs) = self.shader(RIGID_VS) else { return };
+        let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
+        wce_prof!("render.faded");
+        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
+        self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+
+        let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+        let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+        let firsts = self.draw_lists.gbuffer_firsts;
+        for (kind, name) in FADED_PASSES {
+            let Some(ps) = self.shader(name) else { continue };
+            let slots = self.slots_of(&ps);
+            let mut bound = false;
+            let (_, triangles) = self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, _, faded| {
+                if !faded || m.kind != kind {
+                    return false;
+                }
+
+                if !bound {
+                    r.bind(&vs);
+                    for &slot in vs.textures.values() {
+                        r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                    }
+
+                    r.bind(&ps);
+                    bind_srv(&r.ctx, &ps, "s_fire_map", r.res.black_srv.as_ref());
+                    let snow = r.snow_normals_srv();
+                    bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
+                    bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
+                    bind_srv(&r.ctx, &ps, "s_environment", if r.env.valid { r.env.cube.srv.as_ref() } else { r.sky.cube.srv.as_ref() });
+                    bind_srv(&r.ctx, &ps, "s_sky", r.sky.cube.srv.as_ref());
+                    r.upload();
+                    ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
+                    bind_sampler(&r.ctx, &ps, "s_environment", r.states.s_wrap_linear.as_ref());
+                    bind_sampler(&r.ctx, &ps, "s_sky", r.states.s_clamp_linear.as_ref());
+                    bound = true;
+                }
+
+                r.bind_mesh_material(&ps, &slots, m);
+                true
+            });
+
+            self.draw_stats.triangles += triangles;
+        }
+
+        self.draw_lists.terrain_draws = terrain_draws;
+        self.draw_lists.draws = draws;
+        self.draw_lists.vis_terrain = vis_terrain;
+        self.draw_lists.vis = vis;
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        null_ps_srvs(&self.ctx, 16);
     }
 
     pub(crate) fn pass_directional_light(&mut self) {

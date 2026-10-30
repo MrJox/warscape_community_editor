@@ -1,6 +1,6 @@
 # A building's look properties (Phase 5d of docs/plans/tile_ted_parity.md): burn and burn_amount draw it burning (below); opacity goes to POSITION4.w as the engine packs it
-# (round(opacity * 1000)), set and undone through the Inspector (`tile_edit`). Two captures, %OUT%/opacity_1.png and %OUT%/opacity_05.png (only
-# alpha-tested materials fade until the renderer has the blended forward pass). Run with WCE_TILE_WORKSPACE set to a scratch folder.
+# (round(opacity * 1000)), set and undone through the Inspector (`tile_edit`). Two captures, %OUT%/opacity_1.png and %OUT%/opacity_05.png (below 1
+# the building draws in the blended forward pass, `pass_faded`). Run with WCE_TILE_WORKSPACE set to a scratch folder.
 new_tile wce_look_test 2 2 10 32
 frames 5
 add_building barbarian_fort_straight 60 60

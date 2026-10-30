@@ -139,8 +139,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - The look properties, traced in TEd and the kit's Warscape.dll (2026-10-27, `docs/re/buildings.md` "Look properties"):
   - `opacity`: done. TEd hands it to the renderer, which packs round(opacity * 1000) into POSITION4.w; the pieces draw with it
     (`Tile::opacity_w`, kept up when the Inspector sets it; `tile_set_prop`, `assert_instance_param`, `scripts/tile_building_look.txt`).
-    The alpha-tested G-buffer shaders fade with it. Below 1 TEd files the building for the blended forward shaders (render flag
-    0x2000, `rigidstandard ps30_alpha_blend_40`), which the renderer does not have: opaque materials show no fade yet. The G-buffer
+    Below 1 TEd files the building for the blended forward shaders (render flag 0x2000, `rigidstandard ps30_alpha_blend_40`); so does
+    the editor since 2026-10-30: a faded instance has batches of its own (`draw_set::faded`), which the G-buffer pass leaves out and
+    `pass_faded` draws after the lighting with each material's `ps30_alpha_blend_40` (lit and fogged in one pass, depth-tested, alpha
+    blended; trees and terrain blend meshes have none and are not drawn faded); its shadow stays. The G-buffer
     dissolve (`g_dissolve_enable`) was tried and dropped: its test (opacity - dissolve * (1 - opacity) >= 0.5) only fades between 0.75
     and 0.5 and hides the building below that.
   - `burn` / `burn_amount`: done (2026-10-28). The game's burning buildings: render flag 0x200 draws the pieces with their material's

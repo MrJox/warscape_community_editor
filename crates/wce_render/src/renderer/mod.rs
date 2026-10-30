@@ -118,6 +118,15 @@ pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] 
     (MeshKind::TerrainBlend, false, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
 ];
 
+/// The blended forward shaders of the faded instances (opacity below 1: the engine's render flag 0x2000, docs/re/buildings.md), per
+/// material: lit and fogged in one pass, the diffuse alpha times the opacity (POSITION4.w) as the alpha.
+pub(crate) const FADED_PASSES: [(MeshKind, &str); 4] = [
+    (MeshKind::Standard, "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidstandard.hlsl_ps_ps30_alpha_blend_40"),
+    (MeshKind::TiledDirtmap, "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidtileddirtmapmesh.hlsl_ps_ps30_alpha_blend_40"),
+    (MeshKind::Dirtmap, "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidwithdirtmesh.hlsl_ps_ps30_alpha_blend_40"),
+    (MeshKind::AmbientMap, "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidambientmapmesh.hlsl_ps_ps30_alpha_blend_40"),
+];
+
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
 
 /// The environment specular pass (DEFERRED_ENVIRONMENT_SPECULAR_SHADER, full resolution; the game runs their MSAA variants) and its blurs.
@@ -969,6 +978,9 @@ impl Renderer {
         cbs.set_f("camera_VS_PS", "g_render_target_dimensions", &[fw, fh, 1.0 / fw, 1.0 / fh]);
         cbs.set_i("camera_VS_PS", "g_num_of_samples", 1);
 
+        // The forward shaders discard outside this rectangle (in normalized device coordinates); the game's is the whole view.
+        cbs.set_f("camera_VS_PS", "g_clip_rect", &[-1.0, -1.0, 1.0, 1.0]);
+
         // Rome 2's leaves fade near the camera: their alpha is scaled by saturate(distance^2 * g_hide_foliage) (0 hides every leaf). The
         // engine's value is not known: 1, the leaves within a unit of the camera faded.
         cbs.set_f("camera_VS_PS", "g_hide_foliage", &[1.0]);
@@ -1205,6 +1217,10 @@ impl Renderer {
             self.gpu_timer.mark("rivers");
             self.pass_water(scene, true);
         }
+
+        // The faded instances, lit and fogged by their own shaders, over the finished light buffer.
+        self.gpu_timer.mark("faded");
+        self.pass_faded();
 
         self.gpu_timer.mark("particles");
 
