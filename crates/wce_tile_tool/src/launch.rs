@@ -89,6 +89,18 @@ impl BattleWeather {
 pub const COAST_ALONE_NOTE: &str = " (a coast tile alone: the game draws it without its sea level, dry ground to the tile's edges and its sea-bed \
      plants in the air; launch it at a placement: Settings > Tile, The Map context's placement)";
 
+/// The climate a tile launched alone has in game: the battle map's cell climate, and a lone tile has no cells (index 0 of the tile
+/// database's climates; checked in game, 2026-10-30). The battle XML's `<Climate>` is not read (CA's own battle files have it too).
+pub const ALONE_CLIMATE: &str = "default";
+
+/// The note of a tile launched alone whose look in the editor is another climate's.
+pub fn climate_alone_note(climate: &str) -> String {
+    format!(
+        " (the tile alone has the `{ALONE_CLIMATE}` climate's ground in game (summer textures), not {climate}'s: a battle's ground climate is \
+         its map's; launch it at a placement for the map's climate: Settings > Tile, The Map context's placement)"
+    )
+}
+
 /// Whether a battle tile set lies on the sea (`sea`, `sea_coast`, `sea_coast_landing`, the `settlement_*_ports`, `river_mouth*`).
 pub fn coastal_set(set: &str) -> bool {
     let set = set.to_ascii_lowercase();
