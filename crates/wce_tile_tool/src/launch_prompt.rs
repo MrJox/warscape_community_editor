@@ -327,6 +327,7 @@ impl TileTool {
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let info = d.project().info.clone();
+        let climate = d.tile().terrain_look().climate.clone();
         if self.weather.tile() != d.source_key() {
             // A tile opened this frame (a script): its weather is taken up now, not on the next update.
             self.weather.tile_changed(e, id);
@@ -379,7 +380,11 @@ impl TileTool {
 
         let tile_settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
         let (settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
-        let (position, note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
+        let (position, mut note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
+        if position.is_none() && !climate.is_empty() && !climate.eq_ignore_ascii_case(launch::ALONE_CLIMATE) {
+            note.push_str(&launch::climate_alone_note(&climate));
+        }
+
         let sea_surface = e.renderer().and_then(|r| {
             let wind = if tile_settings.sea_state.is_empty() { r.settings.sea_state.clone() } else { tile_settings.sea_state.clone() };
             r.sea_surface_of(&wind)
