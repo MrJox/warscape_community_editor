@@ -103,7 +103,13 @@ fn run(args: &[String]) -> Result<i32, String> {
     };
 
     let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
-    let vfs = Arc::new(Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?);
+    // WCE_MOD_PACKS (pack file names, `;` between them, first wins): mods mounted above the game's packs (a mod's environment files).
+    let mut config = Config::new(game, GameProfile::ATTILA);
+    if let Ok(mods) = std::env::var("WCE_MOD_PACKS") {
+        config.mod_packs = Some(mods.split(';').map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned).collect());
+    }
+
+    let vfs = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
     let read = |p: &str| vfs.read(p).map_err(|e| e.to_string());
     let mut cbs = ConstantBuffers::default();
     let mut lib = ShaderLibrary::new(&dev);
