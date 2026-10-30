@@ -2952,6 +2952,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
 
         d.tile_mut().display_mut().tree_list = name;
+        d.tile_mut().display_mut().tree_list_auto = false;
         d.tile_mut().reload_tree_list();
         ok("")
     });

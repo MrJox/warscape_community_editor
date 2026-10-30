@@ -293,6 +293,14 @@ impl Tile {
     /// The entities of the list trees follow the display (after a publish, which dropped them, or a change of list or of the vegetation's
     /// visibility).
     pub(crate) fn update_list_trees(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {
+        if self.display.tree_list_auto {
+            let own = self.look.climate.to_lowercase();
+            let list = if self.tree_lists().contains(&own) { own } else { DEFAULT_TREE_LIST.to_owned() };
+            if self.display.tree_list != list {
+                self.display.tree_list = list;
+            }
+        }
+
         let want = (self.display.tree_list.clone(), self.display.hidden_types.contains("VEGETATION_INSTANCE"));
         if !published && self.trees.shown.as_ref() == Some(&want) {
             return;
