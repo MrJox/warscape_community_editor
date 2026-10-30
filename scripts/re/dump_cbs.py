@@ -21,6 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "..", ".claude", "skills", "attila-modding", "scripts"))
+sys.path.insert(0, HERE)  # minidump.py beside this script
 from minidump import Dump  # noqa: E402
 
 GLOBAL_RVA = 0x2A21D18
