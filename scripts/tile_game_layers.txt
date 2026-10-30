@@ -1,0 +1,20 @@
+# The Game view draws the layers the launched battle would load (TileDisplay::game_layers): western_city_rome/small's "Escalation 2" (a
+# camp of round huts, eye on in the file) is drawn in the Editor view only, unless Launch in game asks for escalation2 at the map placement.
+# %TILE% is western_city_rome/small. Fresh settings: Launch in game takes the tile alone, no upgrades.
+tile "%TILE%"
+wait_loaded
+frames 2
+view_mode editor
+frames 2
+assert_shown "Escalation 2" 1
+assert_shown "Escalation 1" 0
+view_mode game
+frames 2
+assert_shown "Escalation 2" 0
+# the layer's own eye is untouched, and the Editor view brings it back
+assert_flag "Escalation 2" visible 1
+view_mode editor
+frames 2
+assert_shown "Escalation 2" 1
+assert_modified 0
+quit

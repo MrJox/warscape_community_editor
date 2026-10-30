@@ -98,6 +98,8 @@ for f in on.png selected.png all.png collide.png; do
 done
 
 run_script tile_layers 1 "$OSG"
+# the Game view leaves out the escalation layers the battle does not load (Rome's "Escalation 2" camp)
+run_script tile_game_layers 1 "$KIT/settlement_western_cities/western_city_rome/small"
 run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del
 cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"
 for run in 1 2; do run_script tile_smoke $run "$SRC"; done

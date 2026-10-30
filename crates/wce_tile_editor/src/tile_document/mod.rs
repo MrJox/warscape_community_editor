@@ -194,6 +194,11 @@ pub struct TileDisplay {
 
     /// The buildings' technology (collision, platforms, pipes ...) drawn over them (tech.rs); off until the chip turns it on.
     pub tech: TechSettings,
+
+    /// The game view's layers: the escalation upgrades of the battle (bit n - 1 for `escalation<n>`), and the layers the game would not
+    /// load are not drawn ("Don't Export" ones, the other escalation layers: `index::in_game`). None: every layer as its eye says, as TEd.
+    /// Set with [`Tile::set_game_layers`].
+    pub game_layers: Option<u8>,
 }
 
 impl Default for TileDisplay {
@@ -201,6 +206,7 @@ impl Default for TileDisplay {
         Self {
             hidden_types: BTreeSet::new(), show_polygons: true, polygon_fill: 0.3, polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
             show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), tree_list_auto: true, show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
+            game_layers: None,
         }
     }
 }

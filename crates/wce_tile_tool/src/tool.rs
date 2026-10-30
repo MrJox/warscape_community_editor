@@ -3059,6 +3059,24 @@ impl Tool for TileTool {
             self.scene_focus_frames = 3;
         }
 
+        // The Game view draws the layers the launched battle would load: the escalation upgrades go with a settlement at its map placement.
+        let layers = e.viewport.game_view.then(|| {
+            let s = e.tool_settings::<TileSettings>(SETTINGS_ID);
+            if s.launch.map != crate::settings::LaunchMap::MapContext {
+                return 0;
+            }
+
+            s.launch_army.tile_upgrades.split_whitespace().fold(0u8, |m, u| match u.to_ascii_lowercase().as_str() {
+                "escalation1" => m | 1,
+                "escalation2" => m | 2,
+                "escalation3" => m | 4,
+                _ => m,
+            })
+        });
+        if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+            d.tile_mut().set_game_layers(&mut e.scene, layers);
+        }
+
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
         self.update_water_depth(e, id);

@@ -177,6 +177,19 @@ fn text(raw: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(raw)
 }
 
+/// Whether the game loads a layer of this export type (`LayerExportType_...`) in a battle with these escalation upgrades (bit n - 1 for
+/// `escalation<n>`): not a "Don't Export" layer, nor an escalation layer whose upgrade the battle lacks (tile_upgrades_ex.xml: the upgrade
+/// `escalation<n>` turns on the optional layer `escalation<n>`, the layer's `bmd_data_escalation<n>`).
+pub(crate) fn in_game(export_type: &str, escalations: u8) -> bool {
+    match export_type.strip_prefix("LayerExportType_").unwrap_or(export_type) {
+        "Off" => false,
+        "Escalation1" => escalations & 1 != 0,
+        "Escalation2" => escalations & 2 != 0,
+        "Escalation3" => escalations & 4 != 0,
+        _ => true,
+    }
+}
+
 /// The parsed local transform and flags of one element.
 #[derive(Clone, Copy, Default)]
 struct Local {
@@ -185,6 +198,9 @@ struct Local {
 
     /// 1: has a flags attribute, 2: OIF_VISIBLE, 4: OIF_ACTIVE.
     flagbits: u8,
+
+    /// A layer the game view leaves out ([`TileDisplay::game_layers`](super::TileDisplay::game_layers)).
+    not_in_game: bool,
     kind: u8,
     mode: u8,
     scale: Option<[f32; 3]>,
@@ -501,6 +517,13 @@ impl Tile {
                 return false;
             }
 
+            if bit == 1 && let Some(mask) = self.display.game_layers
+                && let Some(t) = self.tscene().doc().get(q, "export_type")
+                && !in_game(&t, mask)
+            {
+                return false;
+            }
+
             p = self.elements()[q].parent;
         }
 
@@ -537,6 +560,8 @@ impl Tile {
             ix.type_names.iter().position(|s| s == "SIMPLE_MESH_INSTANCE"),
         ];
 
+        let game_layers = self.display.game_layers;
+
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
         let local = (0..n).into_par_iter().map(|i| {
@@ -553,6 +578,10 @@ impl Tile {
             if let Some(fv) = raw("flags") {
                 let fv = text(fv);
                 l.flagbits = 1 | if fv.contains("OIF_VISIBLE") { 2 } else { 0 } | if fv.contains("OIF_ACTIVE") { 4 } else { 0 };
+            }
+
+            if let Some(mask) = game_layers.filter(|_| kind == LAYER_BIT) {
+                l.not_in_game = raw("export_type").is_some_and(|r| !in_game(&text(r), mask));
             }
 
             l.pos = raw("position").and_then(|r| parse_triple(&text(r), "vector"));
@@ -603,6 +632,9 @@ impl Tile {
             let ps = p.map_or(3, |p| ix.state[p]);
             let fb = local[i].flagbits;
             ix.state[i] = if fb != 0 { ps & (u8::from(fb & 2 != 0) | if fb & 4 != 0 { 2 } else { 0 }) } else { ps };
+            if local[i].not_in_game {
+                ix.state[i] &= !1;
+            }
 
             let mut slot = p.map_or(0, |p| ix.slot[p]);
             let l = &local[i];
@@ -998,6 +1030,15 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
 #[cfg(test)]
 mod tests {
     use super::static_piece;
+
+    #[test]
+    fn the_game_loads_the_escalation_layers_of_its_upgrades_only() {
+        use super::in_game;
+        assert!(in_game("LayerExportType_Normal", 0) && in_game("LayerExportType_Separate", 0));
+        assert!(!in_game("LayerExportType_Off", 7), "a Don't Export layer never");
+        assert!(!in_game("LayerExportType_Escalation2", 0) && !in_game("LayerExportType_Escalation2", 5));
+        assert!(in_game("LayerExportType_Escalation2", 2) && in_game("LayerExportType_Escalation3", 4) && in_game("LayerExportType_Escalation1", 1));
+    }
 
     #[test]
     fn animation_meshes_and_open_states_are_not_pieces() {
