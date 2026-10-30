@@ -117,6 +117,9 @@ pub(crate) struct PostTargets {
     pub stencil: Target,
 }
 
+/// The side of the tone mapper's downsampled image (luma statistics, bloom), whatever the view's size.
+pub(crate) const TONEMAP_SIZE: u32 = 256;
+
 impl PostTargets {
 
     /// (Re)creates the targets for a view size; the SSAO result is kept.
@@ -128,7 +131,10 @@ impl PostTargets {
         self.ao_tmp = make_target(dev, (w / 2).max(1), (h / 2).max(1), DXGI_FORMAT_R16_FLOAT);
         self.ao_blur = make_target(dev, (w / 2).max(1), (h / 2).max(1), DXGI_FORMAT_R16_FLOAT);
 
-        let (qw, qh) = (w.div_ceil(4), h.div_ceil(4));
+        // The game's "quarter" image is a fixed 256 x 256 (a RenderDoc capture at 1920 x 1080: the luma statistics and the bloom read it),
+        // halved down to 1 x 1 by the statistics, whose four point taps at +-1/4 of an output texel cover a 2 x 2 block: a pyramid that
+        // shrank faster skipped texels and missed the highlights (the white point stayed at the environment's minimum).
+        let (qw, qh) = (TONEMAP_SIZE, TONEMAP_SIZE);
         self.quarter = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);  // rgb + luma in .w
         self.bloom_a = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         self.bloom_b = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -142,8 +148,8 @@ impl PostTargets {
         self.stats.clear();
         let (mut sw, mut sh) = (qw, qh);
         loop {
-            sw = sw.div_ceil(4);
-            sh = sh.div_ceil(4);
+            sw = sw.div_ceil(2);
+            sh = sh.div_ceil(2);
             self.stats.push(sized_target(dev, sw, sh, DXGI_FORMAT_R32G32B32A32_FLOAT));  // min, max, avg, max
             if sw <= 1 && sh <= 1 {
                 break;
