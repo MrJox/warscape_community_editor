@@ -409,3 +409,21 @@ pixel:
   flag is 0 at every graphics setting (both captures were at low settings, and the separate pass ran there); its writer was not traced
   (the variable is declared by fn 0x116f6870).
 - The exposure differs too (white point 22.0 in the game, 16.4 in the editor at that view: the auto exposure measures what each draws).
+
+## EnvMapGen in a RenderDoc capture (2026-10-30)
+
+A capture of the battle's first frame (frame 129 of a launch through RenderDoc, Rome at its campaign placement, TDD's weather, every
+graphics setting at its minimum; `TargetControl.QueueCapture`) holds the environment cube's build (fn 0x118e00e0): per face (256 x 256,
+R11G11B10, slice by slice) a clear, the sky dome (s_sky) and the two cloud planes (122 and 128 sprites, `cloud_plane_PS` with the
+remapped horizon alpha: 0.97 and 0.99 for the file's 0.7 and 0.9), and nothing else: no G-buffer, no lights, no fog. The faces average
+(3.3, 4.5, 5.3) on the sides, (4.3, 6.3, 7.7) on top, 0 below. The camera is at (0, 108.15, 0): 50 m over the ground at the world origin
+(`fStack_31c = 50` plus the terrain height, Rome's land ~58 m there). The editor renders the cube through its scene passes (G-buffer,
+sky, clouds on top, light, fog) from 50 m over the scene's (0, 0): the lit ground fills the lower halves, which the minimum-settings
+game leaves black (the editor's cube averages about 2.3 x the game's; the river reflects it: brighter, bluer water).
+
+- Done: the cube's camera is 50 game metres above the ground at the battle's centre (`RenderScene::battle_centre`, the tile's centre).
+- Open: whether the scene is in the cube at other settings. The October dump (normal settings, vanilla dry weather) matched the editor's
+  scene cube within 10-25% (above), which a sky-only cube with black lower halves would not. Per face fn 0x1192b640 fills a render
+  list (vfunc +0xe8 of the scene) and fn 0x11923ad0(1) marks the pass; what joins the list (and whether a setting decides) is not
+  traced. Settle it with a memory dump at normal settings and vanilla weather (engine ambient: the cube's face averages are in
+  `lighting_VS_PS.ambient_cube_*`), against the editor's two cubes.

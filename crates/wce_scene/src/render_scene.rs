@@ -753,6 +753,10 @@ pub struct RenderScene {
     /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
     pub sea_level: f32,
 
+    /// The battle's centre (x, z; scene units): the game's world origin, above which it renders the environment cube (EnvMapGen, 50 m over
+    /// the ground there). A tile's centre; (0, 0) for a scene drawn around its own origin.
+    pub battle_centre: [f32; 2],
+
     /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
     /// Set with [`Self::set_snow`].
     snow: Option<SnowRegions>,
@@ -801,6 +805,7 @@ impl Default for RenderScene {
             vegetation_season: String::new(),
             game_units: 1.0,
             sea_level: 0.0,
+            battle_centre: [0.0, 0.0],
             snow: None,
         }
     }
