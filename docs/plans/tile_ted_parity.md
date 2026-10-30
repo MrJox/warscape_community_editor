@@ -58,14 +58,12 @@ file's order. The editor itself is described in
   crate; two columns of three start at 48.66). The tool draws the top crate at the bottom one's height (47.79), inside it; the
   middle layers it gets right. So the tool loses the top layer's own 2.7 m. Not the nesting itself: freeform buildings inside landscape groups occur 256,480
   times in the vanilla kit and Phase 0 found only these 15 off. Fixing it still needs the raw tile (the pack has only the compiled files), to see the node
-  chain the tool walks wrong. **Deferred: waiting for the files** (not in the Windows machine's kit, 2026-10-29): osgiliath_test's
-  `tile.ted` and its `working_data` `building_list.xml`, or TDD's wildmen_city_a raw tile and export (the user, with the reference
-  shots).
+  chain the tool walks wrong. **Closed, not fixed** (user, 2026-10-30): the raw tiles are not available (osgiliath_test's `tile.ted`
+  and its `working_data` `building_list.xml`, or TDD's wildmen_city_a raw tile and export).
 
 ### Phase 3
-- 3e season mixing: the season combo picks one season's textures (sections (1, 1, 0)); whether the game mixes seasons or
-  climate-change states on a tile (`g_remapped_season`, `g_climate_change_index`) is open (`docs/re/terrain.md`, "Seasons and snow"
-  and "Assumptions / open"). Settle it with the in-game shot.
+- 3e season mixing: settled in game (2026-10-30): the game shows one season's ground, as the season combo does (summer green and
+  winter tan at Rome's campaign placement, each matching the editor); no mixing seen (`docs/re/terrain.md`, "Seasons and snow").
 
 ### Phase 4
 - Done (2026-10-27): 4c, flip a river's (or road's) direction: `TileDocument::flip_spline` (the points' attribute texts permuted, the

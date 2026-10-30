@@ -232,8 +232,8 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   point / clamp; `s_normal_array` trilinear / wrap. `s_snow_normals` (fn 0x116f7b40) trilinear / wrap. The editor uses anisotropic 8 for the quality class.
 - **`g_overlay_view_projection` (verified)**: identity is the declared default (directional_light_PS fn 0x116d45c0, waterplane_VS fn 0x116d8fb0); a tile has
   no overlay, so it stays. `s_overlay` (trilinear / clamp) must be (0, 0, 0, 1) for "no overlay" (see the resolve note above).
-- **Assumptions / open** (no in-game capture to compare against yet): the far-blend
-  and map-wide normal layers, season mixing (see "Seasons and snow" for the snow normals), the second and third
+- **Assumptions / open** (in-game captures exist since 2026-10-30, docs/plans/tile_ted_parity_remaining.md): the far-blend
+  and map-wide normal layers, season mixing (settled: none seen, "Seasons and snow"; see "Seasons and snow" for the snow normals), the second and third
   layer indices of the resolve (`g_layer1/2_texture_index`, the mask is black so they stay off; fn 0x118839d0 sets them from ints at the
   drawable's +0x270 + 0x80 / + 0x84 and binds the mask from its +0x34 object, vfunc +0xac, beside the far maps: the map-level path, not followed further), neighbour tiles (their alpha feather and the overlap between tiles), one detail texture pair per climate.
 - **The CPU bake** (`tools/tile/terrain_bake`) remains only for TEd's debug views of the tile's maps (blend groups, ground types, protection): editor visualisations, not the game's look.
@@ -301,6 +301,10 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   summer, then the `default` climate by the same rules: what the editor's `climate_texture_path` does (no vanilla texture has a
   climate-change suffix). The editor loads one season and climate (sections (1, 1, 0)); the tile look now offers spring too (trees ship
   spring textures; the ground has a few).
+- **Settled in game (2026-10-30, captures with the camera from memory dumps):** the battle ground shows one season, its own textures,
+  as the editor draws it: western_city_rome at its campaign placement (ROME_Med) is green in summer and dry tan in winter, each matching
+  the editor's single-season ground; no mixing of seasons seen. A battle's ground climate is the battle map's cell climate (a tile
+  launched alone gets climate index 0, `default`, summer textures only, whatever the season); the battle XML has no climate element.
 - **Detail maps:** the game looks for `medium_detail_map_<season>_*` and `medium_detail_map_snow_*` before the plain ones (fn 0x118209e0);
   no vanilla climate ships them, so one pair per climate is right.
 - **Snow:** the weather node loads `commontextures/snow_normal.dds` as the global `s_snow_normals` (fn 0x118ce490); the editor now binds
