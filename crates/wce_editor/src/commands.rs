@@ -706,6 +706,25 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add("cb", "cb <buffer> [variable]", "log a game constant buffer's variables as the last frame set them (floats; the values scripts/re/dump_cbs.py reads from the game)", |e, a| {
+        let Some(name) = a.first() else { return fail("usage: cb <buffer> [variable]") };
+        let Some(r) = e.renderer() else { return fail("no renderer") };
+        let Some(b) = r.constant_buffers().buffers().find(|b| &b.name == name) else { return fail(format!("no constant buffer {name}")) };
+        let mut lines = vec![];
+        for (var, v) in &b.vars {
+            if a.get(1).is_some_and(|w| w != var) {
+                continue;
+            }
+
+            let bytes = &b.cpu[(v.offset as usize).min(b.cpu.len())..((v.offset + v.size) as usize).min(b.cpu.len())];
+            let vals = bytes.chunks_exact(4).map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect::<Vec<_>>();
+            lines.push(format!("{name}.{var} {}", vals.join(" ")));
+        }
+
+        ok(lines.join("
+"))
+    });
+
     c.add("where", "where [x y | on | off]", "the camera's and the cursor's coordinates (scene and game units; map cell and height above the sea in a map context); x y: the ground under that pixel of the viewport image (or 50%); on / off: the readout in the viewport", |e, a| {
         match a.first().map(String::as_str) {
             Some("on") | Some("off") => {
