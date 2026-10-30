@@ -75,6 +75,9 @@ pub struct ContextUi {
     doc: DocumentId,
     pub build: u64,
 
+    /// The look the build on its way was asked with: a look that changes again meanwhile starts another, the same one waits for it.
+    build_look: Option<TerrainLook>,
+
     /// Each chunk's entities on the layer (added in a row: a range of ids), and the sea's (with the focus it is around).
     chunks: HashMap<ChunkKey, std::ops::Range<EntityId>>,
 
@@ -98,7 +101,7 @@ impl Default for ContextUi {
     fn default() -> Self {
         Self {
             game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
-            follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, chunks: HashMap::new(), waiting: vec![],
+            follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, build_look: None, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
         }
@@ -192,6 +195,7 @@ impl ContextUi {
         let game_dir = self.game_dir;
         self.busy = format!("reading {name}...");
         self.rx = Some(rx);
+        self.build_look = None;
         std::thread::spawn(move || {
             let r = load_map(&name, game_dir, &raw, &db, files.as_deref());
             let _ = tx.send(Job::Map(name, r));
@@ -271,6 +275,7 @@ impl ContextUi {
         let n = self.build;
         let (tx, rx) = channel();
         self.busy = "reading the map's ground...".to_owned();
+        self.build_look = Some(rq.look.clone());
         self.rx = Some(rx);
         std::thread::spawn(move || {
             let s = Streamer::new(rq, files);
@@ -300,6 +305,7 @@ impl ContextUi {
             && let Ok(job) = rx.try_recv()
         {
             self.rx = None;
+            self.build_look = None;
             self.busy.clear();
             changed = true;
             match job {
@@ -431,8 +437,12 @@ impl ContextUi {
         let raw = self.raw_of(d);
         let Some(s) = self.streamer.as_ref() else { return };
         if s.frame().look != look {
-            let doc = self.doc;
-            self.rebuild(e, doc);
+            // One build per look: asked again every frame, a build slower than a frame never landed and the threads piled up.
+            if self.rx.is_none() || self.build_look.as_ref() != Some(&look) {
+                let doc = self.doc;
+                self.rebuild(e, doc);
+            }
+
             return;
         }
 
@@ -617,6 +627,7 @@ impl ContextUi {
         self.gone.clear();
         self.sea = None;
         self.build += 1;
+        self.build_look = None;
     }
 
     /// A new tile was opened: drop the old tile's context, find the new one in the loaded map.

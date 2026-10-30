@@ -22,6 +22,10 @@ offsets change (`camera_VS_PS` is 560 bytes, Attila's 576), not their meaning, e
 not the fifth (the per-instance value); material id 0. `rigidcommon vs30_main` has no `POSITION7` / `SV_InstanceID` input and no
 pixel selection texture.
 
+Burning: the packs have `rigidstandardfire` only. Attila's fire variants of the other materials (`rigidtileddirtmapfiremesh`,
+`rigidwithdirtburnmesh`, `rigidambientmapfiremesh`) are not there, so the editor draws burning dirt, tiled dirt and ambient map meshes with
+their plain shaders (`RenderGame::has_fire_shaders`). What the game draws them with is not known.
+
 ## Tone mapping (`post.rs`)
 
 The luminance statistics are in log Y: `downsample_image` (a quarter-size copy), `hdr_rgb_to_hdr_cie_log_y_xy` (into a quarter-size

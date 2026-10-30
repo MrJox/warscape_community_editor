@@ -93,7 +93,8 @@ impl Renderer {
         // whose material has no shaders at all is not drawn. With the game's terrain pass, TerrainBlend meshes leave the table: their geometry
         // pass below marks them as terrain pixels, and the terrain pass projects the terrain's material onto them (blend_mesh.rs).
         self.draw_lists.gbuffer_firsts = firsts;
-        let shaders = GBUFFER_PASSES.map(|(_, _, _, vs, ps, _)| self.shader(vs).zip(self.shader(ps)));
+        let game = self.game;
+        let shaders = GBUFFER_PASSES.map(|(kind, _, fire, vs, ps, _)| (!fire || game.has_fire_shaders(kind)).then(|| self.shader(vs).zip(self.shader(ps))).flatten());
         let pass_in = |m: &GpuMesh, fire: bool| {
             let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1 && p.2 == fire)?;
             let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1 && p.2 == fire).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());

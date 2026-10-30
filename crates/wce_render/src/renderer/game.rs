@@ -21,4 +21,11 @@ impl RenderGame {
             _ => Self::Attila,
         }
     }
+
+    /// Whether the game has the fire variant of a material's G-buffer shaders. Rome 2's packs have rigidstandardfire only (no
+    /// rigidtileddirtmapfiremesh, rigidwithdirtburnmesh or rigidambientmapfiremesh): its burning dirt, tiled dirt and ambient map meshes
+    /// keep their plain shaders.
+    pub(crate) fn has_fire_shaders(self, kind: crate::model_cache::MeshKind) -> bool {
+        self == Self::Attila || kind == crate::model_cache::MeshKind::Standard
+    }
 }
