@@ -11,9 +11,9 @@ Status legend: **verified** (disassembly of the shader and/or empire.retail.dll)
 | 3 | Sky (forward) | `skydome.hlsl` ps30_main | samples the sky cube; below-horizon directions clamp to the horizon |
 | 4 | Directional light | `directionallight.hlsl` ps30_slm_highdef (shadows_hardware_gather_5_0, sm_5_0) | full-screen, stencil = geometry. Ambient cube + env. specular + sun |
 | 4b | Fog | `battlefog.hlsl` ps30_main | over geometry (stencil), alpha-blended (assumption); sky cube + sun-lit fog colour |
-| 5 | Luma stats | `hdr_tone_mapper.hlsl` downsample_image_store_luma, hdr_luma_to_quarter_size_luma_stats, downsample_quarter_size_luma_stats | quarter image (rgb + luma), then min/max/avg pyramid to 1x1 |
+| 5 | Luma stats | `hdr_tone_mapper.hlsl` downsample_image_store_luma, hdr_luma_to_quarter_size_luma_stats, downsample_quarter_size_luma_stats | the "quarter" image, a fixed 256 x 256 (rgb + luma), then a min/max/avg pyramid halving to 1x1 |
 | 6 | Exposure | determine_black_and_white_points | 1x1 ping-pong; `prev + (target-prev)*(1-speed)^(30*dt)`; read back (4-frame ring) into `constant_tone_mapping_buffer` |
-| 7 | Bloom | high_pass_luminance_cutoff, blur_x, blur_y | quarter size, 11-tap |
+| 7 | Bloom | high_pass_luminance_cutoff, blur_x, blur_y | 256 x 256, 11-tap |
 | 8 | Tone map | constant_tone_mapper_with_bloom | linear output; S-curve LUT (see below) |
 | 9 | To screen | `hdr_to_screen.hlsl` ps30_main_high | fog of war (off), `g_brightness`, gamma, then `colour_matrix` in gamma space |
 
@@ -408,7 +408,13 @@ pixel:
 - The editor now sets 0 (`environment_apply.rs`) and, since, draws the separate pass too (below). ASSUMPTION: the
   flag is 0 at every graphics setting (both captures were at low settings, and the separate pass ran there); its writer was not traced
   (the variable is declared by fn 0x116f6870).
-- The exposure differs too (white point 22.0 in the game, 16.4 in the editor at that view: the auto exposure measures what each draws).
+- The exposure (2026-10-30, the same capture): the game's tone mapper downsamples the 1920 x 1080 image into a fixed 256 x 256 (the
+  "quarter" image; the bloom works on it too), then halves it to 1 x 1 in the luma statistics (128, 64, ... 1; events 9780-9863). The
+  statistics shader takes four point taps at +-1/4 of an output texel, a 2 x 2 block. The editor had a quarter of the view's size and
+  divided by 4 per level, so each level read a quarter of its input and the maximum missed the highlights: its white point never left
+  the environment's minimum (17). Now as the game (`TONEMAP_SIZE`): the average luma at that view is 3.382 against the game's 3.373.
+  The white point still differs (game 22.1 from a maximum of 20.6, editor 17.0 from 13.9): the maximum is a few sunlit pixels of the
+  plaza's marble columns at the right edge of the game's wider frame (the column's texture is the same in both). `luma` logs the points.
 
 ## EnvMapGen in a RenderDoc capture (2026-10-30)
 
