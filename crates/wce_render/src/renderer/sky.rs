@@ -167,9 +167,11 @@ impl Renderer {
     }
 
     /// EnvMapGen (fn 0x118e00e0): six 90-degree views from 50 m above the ground at the world origin (the battle's centre: `fStack_31c = 50`
-    /// plus the terrain height there; (0, 108.15, 0) at Rome's campaign placement in a RenderDoc capture), far plane 972800, through the normal scene passes; then every
-    /// face's lowest mip is read back (readback_ambient). While it renders, the lighting uses the XML ambient (no computed cube exists yet in
-    /// the engine at that point, fn 0x178a300) and no shadows (measured: binding the main-camera shadow map changes the faces by < 1%).
+    /// plus the terrain height there; (0, 108.15, 0) at Rome's campaign placement), far plane 972800; then every face's lowest mip is read
+    /// back (readback_ambient). Each face is the sky dome and both cloud planes, nothing else: no scene, no lights, no fog, and black below
+    /// the horizon (the dome is a half sphere). Settled 2026-10-30 (docs/re/renderer.md): a RenderDoc capture of the game's build at minimum
+    /// settings shows those draws alone, and a memory dump at max settings gives the face averages of that cube (sides within 5-15%, top
+    /// within 10%), not of a cube with the scene in it.
     pub(crate) fn render_env_cube(&mut self, env: &EnvironmentParams, time_s: f32, scene: &wce_scene::render_scene::RenderScene) {
         let n = SKY_CUBE;
         std::mem::swap(&mut self.gbuffer, &mut self.env.gbuffer);
@@ -196,26 +198,44 @@ impl Renderer {
             self.ctx.set_viewports(&[viewport(0.0, 0.0, n as f32, n as f32)]);
             self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
 
-            // No sun disc: with it the +x face of the dry file is 10x the game's value; without it the side faces match the dump within 10-25%.
-            self.pass_gbuffer();
+            // No sun disc (the game draws none into the cube).
+            for rtv in self.gbuffer.rtvs().iter().flatten() {
+                self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+            }
+
+            if let Some(dsv) = &self.gbuffer.dsv {
+                self.ctx.clear_depth_stencil_view(dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0, 0);
+            }
+
             if let Some(rtv) = &self.gbuffer.hdr.rtv {
                 self.ctx.clear_render_target_view(rtv, [0.0; 4]);
             }
 
             self.pass_sky_forward();
-
-            // Only the top (+y) face receives clouds: the game's side faces equal the cloud-free scene within 10-15%, while clouds on every face put
-            // them 100% off. Mechanism inferred: fn 0x1192aa40 sets per-cloud visibility flags from a frustum during EnvMapGen (fn 0x1192b640),
-            // which here leaves only the zenith clouds.
-            if f == 2 {
-                self.pass_clouds(env);
-            }
-
-            self.pass_directional_light();
-            self.pass_fog();
+            self.pass_clouds(env);
             self.ctx.set_render_targets(&[], None);
-            if let (Some(cube), Some(hdr)) = (&self.env.cube.tex, &self.gbuffer.hdr.tex) {
-                self.ctx.copy_subresource_region(cube, f as u32 * 9, [0; 3], hdr, 0, None);
+
+            // Below the horizon black: the bottom face, and the lower half of the side faces (their up is +y, the horizon the middle row).
+            let (Some(cube), Some(hdr)) = (self.env.cube.tex.clone(), self.gbuffer.hdr.tex.clone()) else { continue };
+            let half = D3D11_BOX { left: 0, top: 0, front: 0, right: n, bottom: n / 2, back: 1 };
+            match f {
+                2 => self.ctx.copy_subresource_region(&cube, f as u32 * 9, [0; 3], &hdr, 0, None),
+                3 => {
+                    if let Some(rtv) = &self.gbuffer.hdr.rtv {
+                        self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+                    }
+
+                    self.ctx.copy_subresource_region(&cube, f as u32 * 9, [0; 3], &hdr, 0, None);
+                }
+
+                _ => {
+                    self.ctx.copy_subresource_region(&cube, f as u32 * 9, [0; 3], &hdr, 0, Some(&half));
+                    if let Some(rtv) = &self.gbuffer.hdr.rtv {
+                        self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+                    }
+
+                    self.ctx.copy_subresource_region(&cube, f as u32 * 9, [0, n / 2, 0], &hdr, 0, Some(&half));
+                }
             }
         }
 
@@ -549,7 +569,9 @@ impl Renderer {
             // The cloud maps: linear wrap.
             ps_samplers(&self.ctx, &ps, &self.states.s_wrap_linear);
             self.ctx.set_vertex_buffers(0, &[self.res.cloud_quad_vb.clone(), instances], &[16, 72], &[0, 0]);
-            self.ctx.draw_instanced(6, count, 0, 0);
+            self.ctx.set_index_buffer(self.res.cloud_quad_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+            let n = super::shared::CLOUD_GRID as u32;
+            self.ctx.draw_indexed_instanced(n * n * 6, count, 0, 0, 0);
         }
 
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());

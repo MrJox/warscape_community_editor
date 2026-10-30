@@ -58,6 +58,7 @@ pub(crate) struct SharedResources {
     pub sun_vb: Option<ID3D11Buffer>,
     pub flare_vb: Option<ID3D11Buffer>,
     pub cloud_quad_vb: Option<ID3D11Buffer>,
+    pub cloud_quad_ib: Option<ID3D11Buffer>,
     pub instance_ids_srv: Option<ID3D11ShaderResourceView>,
     pub white_srv: Option<ID3D11ShaderResourceView>,
     pub black_srv: Option<ID3D11ShaderResourceView>,
@@ -68,6 +69,9 @@ pub(crate) struct SharedResources {
     /// 8192 x 8192, which the editor does not build), the average of Rome's campaign map: (0.49, 0.43, 0.30), squared by the shader.
     pub ground_colour_srv: Option<ID3D11ShaderResourceView>,
 }
+
+/// The cloud sprite's grid: quads a side.
+pub(crate) const CLOUD_GRID: usize = 6;
 
 impl SharedResources {
 
@@ -115,9 +119,29 @@ impl SharedResources {
 
         r.flare_vb = immutable_buffer(dev, &f32_bytes(q.as_flattened()), D3D11_BIND_VERTEX_BUFFER);
 
-        // The cloud sprite quad: POSITION xy in [-1, 1] (scaled by the sprite's angular size), TEXCOORD0 uv.
-        let cq = [[-1.0f32, -1.0, 0.0, 1.0], [-1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 0.0], [-1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, -1.0, 1.0, 1.0]];
+        // The cloud sprite, as the game's (a RenderDoc capture of EnvMapGen, docs/re/renderer.md): a 7 x 7 grid (6 x 6 quads, 216 indices)
+        // with POSITION xy in [-0.5, 0.5] and TEXCOORD0 = xy + 0.5; the vertex shader bends it (g_flatten_factor), so it is not one quad.
+        // The editor's was a single quad in [-1, 1] with v flipped: four times the game's area, and the clouds about that much too bright.
+        const N: usize = CLOUD_GRID;
+        let mut cq = Vec::with_capacity((N + 1) * (N + 1));
+        for j in 0..=N {
+            for i in 0..=N {
+                let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+                cq.push([u - 0.5, v - 0.5, u, v]);
+            }
+        }
+
+        let mut ci: Vec<u16> = Vec::with_capacity(N * N * 6);
+        for j in 0..N {
+            for i in 0..N {
+                let a = (j * (N + 1) + i) as u16;
+                let (b, c, d) = (a + 1, a + (N + 1) as u16, a + (N + 2) as u16);
+                ci.extend([a, b, d, a, d, c]);
+            }
+        }
+
         r.cloud_quad_vb = immutable_buffer(dev, &f32_bytes(cq.as_flattened()), D3D11_BIND_VERTEX_BUFFER);
+        r.cloud_quad_ib = immutable_buffer(dev, &ci.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
 
         // The HBAO jitter texture, 256^2 (g_JitterResolution in the dump). UNORM, expanded with *2-1 by the shader: x, y = direction rotation
         // (cos, sin of 2*pi*r / num_dir), z = step jitter. The engine's generator was not found; the texture only decorrelates the sample
