@@ -87,10 +87,9 @@ impl Tile {
     fn read_grass_list(&self) -> Option<Vec<(String, Vec<(f32, f32)>)>> {
         let carried = Some(self.project.own_dir().join(super::vegetation::CARRIED_DIR));
         let read = |file: &str| {
-            std::fs::read(self.project.own_file(file))
-                .ok()
+            self.read_own(file)
                 .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))
-                .or_else(|| std::fs::read(carried.as_ref()?.join(file)).ok())
+                .or_else(|| Self::read_local(carried.as_ref()?, file))
         };
 
         let file = format!("{LIST}{GRASS_LIST_EXTENSION}");

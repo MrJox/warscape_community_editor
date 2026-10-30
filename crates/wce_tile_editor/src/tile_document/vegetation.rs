@@ -193,6 +193,19 @@ impl Tile {
         (v.contains('x'), v.contains('z'))
     }
 
+    /// A file of `dir` by its name, whatever its case (the lists are named by lower case names, `ROME_Med.tree_list.bin` is `rome_med`'s).
+    pub(crate) fn read_local(dir: &std::path::Path, file: &str) -> Option<Vec<u8>> {
+        let file = file.to_lowercase();
+        let path = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|f| f.to_string_lossy().to_lowercase() == file))?;
+        std::fs::read(path).ok()
+    }
+
+    /// A file of the project by its name whatever its case ([`Self::read_local`]): the viewed variation's own when it has one, else the
+    /// project folder's (as `TileProject::own_file`).
+    pub(crate) fn read_own(&self, file: &str) -> Option<Vec<u8>> {
+        Self::read_local(&self.project.own_dir(), file).or_else(|| Self::read_local(&self.project.dir, file))
+    }
+
     /// The packed tree lists of the tile (their names: `default`, `rome_med`, ...): in its folder, the game files, or carried by a
     /// decompiled project. Drawn only when the trees can't be generated ([`Tile::trees_unavailable`]).
     fn packed_tree_lists(&self) -> &[String] {
@@ -231,10 +244,10 @@ impl Tile {
     fn read_tree_list(&self, name: &str) -> Option<(Vec<u8>, bool)> {
         [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
             let file = format!("{name}{extension}");
-            let bytes = std::fs::read(self.project.own_file(&file))
-                .ok()
+            let bytes = self
+                .read_own(&file)
                 .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
-                .or_else(|| std::fs::read(self.project.own_dir().join(CARRIED_DIR).join(&file)).ok())?;
+                .or_else(|| Self::read_local(&self.project.own_dir().join(CARRIED_DIR), &file))?;
             Some((bytes, old))
         })
     }
