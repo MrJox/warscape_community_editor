@@ -1,4 +1,4 @@
-//! Lists a rigid_model_v2's mesh blocks (LOD 0): material type, name, vertex count and bounds.
+//! Lists a rigid_model_v2's mesh blocks (LOD 0): material type, name, vertex count, bounds and the material's extra parameters.
 //!
 //!   cargo run --release -p wce_formats --example rmv2_mats -- <file.rigid_model_v2>
 
@@ -34,5 +34,8 @@ fn main() {
         }
 
         println!("{i}: {:?} '{}' verts {} lo {:?} hi {:?} tex {:?}", mesh.material_type(), block.material().name(), v.len(), lo, hi, tex);
+        let mat = block.material();
+        let v4: Vec<(i32, [f32; 4])> = mat.params_vector4df32().iter().map(|(k, v)| (*k, [v.x, v.y, v.z, v.w])).collect();
+        println!("   params string {:?} f32 {:?} i32 {:?} vec4 {:?}", mat.params_string(), mat.params_f32(), mat.params_i32(), v4);
     }
 }

@@ -52,6 +52,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         stride: 32,
         kind: Default::default(),
         uv2_tile: [0.0; 2],
+        tint: [1.0; 12],
         offset: Float3::new(a, b, c),
         has_offset,
         tex: std::array::from_fn(|_| tex.clone()),

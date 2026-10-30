@@ -347,24 +347,27 @@ Against the packs most outfield_tents VFX lists differ: the packs are stale ther
 
 ## Tint colours (`g_tint_colours`)
 
-The leaf and billboard shaders read `g_tint_colours` for the per-instance tint (the instance seed picks between the colours). In the dll:
+The leaf and billboard shaders read `g_tint_colours` for the per-instance tint: the leaf pixel shader lerps colour 0 to 1 for a seed
+(`v2.z`) below 0.5 and colour 1 to 2 above it, and multiplies the diffuse by the result.
 
-- The leaf shader constructor `FUN_116e5130` declares `g_tint_colours` with the default (1, 1, 1, 1); the variable object is at +0x2f0, its slot
-  pointer at +0x304. The billboard shader constructor `FUN_116ebbb0` does the same.
-- The `RIGID_LEAF_DRY` / `RIGID_LEAF_WET` shader objects sit at manager+0x60bf8 / +0x63420 (manager `FUN_1178c460`). They are used only by the shader
-  registry `FUN_116f1a30`, the destructor `FUN_117134e0`, the technique-select thunk at `0x11843fb4`, and the leaf draw `FUN_11885aa0`. The draw
-  writes only `g_billboard_params` (shader+0x334, through `FUN_11883540`).
-- The `tint_min/max` and `ColourTintMin/Max` strings belong to particles.
-
-Conclusion: the engine never writes `g_tint_colours`, so the trees are untinted (white), as the editor binds them. Caveat: a generic writer
-that sets variables by name hash would not show up in this search; only a memory dump of a running battle would rule it out.
+- Settled (2026-10-30, RenderDoc captures of Rome, vanilla and TDD): the game sets them per tree model. They are the leaf and branch
+  materials' vector params 1, 2 and 3 in the `.rigid_model_v2` (`params_vector4df32`; e.g. oak_a's leaves (1, 0.79, 0.67), white,
+  (0.73, 0.79, 0.55); cypress (0.91, 0.86, 0.74), white, (0.75, 0.80, 0.82)), stored as floats, so a byte search for the /255 colours
+  misses them. The leaf draw `FUN_11885aa0` copies three float4 from its node (+0x12c) into the variable (`FUN_117d85e0`).
+- The editor reads them per mesh (`GpuMesh::tint`) and sets `vegetation_tint_colours` (`tree_billboard_constants` for billboards) per
+  batch; it bound white before, which made every tree paler than the game's.
+- The leaf shader constructor `FUN_116e5130` declares `g_tint_colours` with the default (1, 1, 1, 1); `RIGID_LEAF_DRY` / `RIGID_LEAF_WET`
+  sit at manager+0x60bf8 / +0x63420 (manager `FUN_1178c460`). The draw also writes `g_billboard_params` (through `FUN_11883540`); it
+  was 0 in the captures.
 
 ## Open
 
-- **Leaf density.** The mesh trees look sparser than their own billboards (fewer, smaller leaf cards up close than the billboard suggests at
-  distance). Candidates: the leaf cards' alpha test threshold (`g_billboard_params` from `FUN_11883540` is not fed yet), the LOD weights of the leaf
-  vertices (`LOD weights@44`), or the leaf size scaling with distance in `rigidleafcommon_v3`'s vertex shader. To look at after the procedural
-  vegetation.
+- **Leaf density.** Settled in part (2026-10-30, RenderDoc captures of Rome): the game draws the leaves and branches two-sided
+  (CULL_NONE; the editor culled back faces, losing the leaf cards facing away) and tinted (above). Left: with MSAA the game uses the
+  ps_5_0 leaf shader, which turns the alpha into a coverage mask (`oMask`: floor(saturate(1.11 a) (samples + 1)) samples, none below
+  1), so at 2x a leaf texel shows from a = 0.3 and partly covered ones blend in the resolve; the editor has no MSAA and its ps_4_0 shader
+  cuts at a = 0.5, so the crowns are slightly thinner at the edges. `g_season_type` was 1 in the summer capture (3 in the winter snow
+  dump); the editor sends 0 (the RenderSettings default); which shaders read it was not looked at.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
   has no packed file for (or `gen:<list>` / grass *generated*). Open:
   - Settled: the atlantic family (ROME_Destruct on forest tiles, the settlement / farm / road climate lists) and outfield_tents differ
