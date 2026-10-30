@@ -48,8 +48,8 @@ pub struct BattleWeather {
     /// An `.environment` of the packs; empty: the game's choice.
     pub environment: String,
 
-    /// `Spring` .. `Winter`, and the Season row's key (`season_spring` ..).
-    pub season: (&'static str, &'static str),
+    /// `Spring` .. `Winter`.
+    pub season: &'static str,
 
     /// `dry`, `rain`, `snow`.
     pub precipitation: &'static str,
@@ -57,7 +57,8 @@ pub struct BattleWeather {
     /// `day`, `night`.
     pub time_of_day: &'static str,
 
-    /// A climate key (`ROME_Atlantic`); empty: none written.
+    /// The climate of the weather list's filter (`ROME_Atlantic`); empty: any. Not written into the battle (the game reads no
+    /// `<Climate>`): it picks the ground textures the loose files carry.
     pub climate: String,
 }
 
@@ -67,10 +68,10 @@ impl BattleWeather {
     pub fn from_tile(w: &TileWeather) -> Self {
         let q = |k: &str| w.query.get(k).map(String::as_str).filter(|v| !v.is_empty() && !v.contains(',')).unwrap_or("");
         let season = match q("season") {
-            "sp" => ("Spring", "season_spring"),
-            "su" => ("Summer", "season_summer"),
-            "wi" => ("Winter", "season_winter"),
-            _ => ("Autumn", "season_autumn"),
+            "sp" => "Spring",
+            "su" => "Summer",
+            "wi" => "Winter",
+            _ => "Autumn",
         };
 
         let precipitation = match q("precipitation") {
@@ -90,7 +91,7 @@ pub const COAST_ALONE_NOTE: &str = " (a coast tile alone: the game draws it with
      plants in the air; launch it at a placement: Settings > Tile, The Map context's placement)";
 
 /// The climate a tile launched alone has in game: the battle map's cell climate, and a lone tile has no cells (index 0 of the tile
-/// database's climates; checked in game, 2026-10-30). The battle XML's `<Climate>` is not read (CA's own battle files have it too).
+/// database's climates; checked in game, 2026-10-30). The game reads no `<Climate>` in the battle XML.
 pub const ALONE_CLIMATE: &str = "default";
 
 /// The note of a tile launched alone whose look in the editor is another climate's.
@@ -194,7 +195,7 @@ pub fn battle_xml(b: &Battle) -> String {
     x += &format!(
         "\t<battle_description>\n\t\t<time_of_day>{}</time_of_day>\n\t\t<season>{}</season>\n\t\t<precipitation_type>{}</precipitation_type>\n\
          \t\t<type>{}</type>\n\t\t<duration>3600</duration>\n\t\t<timeout_winning_alliance_index>0</timeout_winning_alliance_index>\n",
-        w.time_of_day, w.season.0, w.precipitation, if settlement { "settlement_standard" } else { "land_normal" }
+        w.time_of_day, w.season, w.precipitation, if settlement { "settlement_standard" } else { "land_normal" }
     );
     if b.facts.alliance_indices {
         x += "\t\t<battlefield_owner_alliance_index>0</battlefield_owner_alliance_index>\n";
@@ -213,11 +214,9 @@ pub fn battle_xml(b: &Battle) -> String {
         x += &format!("\t<weather>\n\t\t<prevailing_wind x=\"0.00\" y=\"9.00\"/>\n\t\t<environment_key>{}</environment_key>\n\t</weather>\n", esc(&w.environment));
     }
 
-    if !w.climate.is_empty() {
-        x += &format!("\t<Climate>\n\t\t<name>{}</name>\n\t</Climate>\n", esc(&w.climate));
-    }
-
-    x += &format!("\t<Season>\n\t\t<name>{}</name>\n\t</Season>\n\t<skip_deployment></skip_deployment>\n\t<battle_map_definition>\n", w.season.1);
+    // No <Climate> nor <Season> element: the game reads neither (no such tag in its battle XML reader; the ground's climate is the map's,
+    // the season battle_description's).
+    x += "\t<skip_deployment></skip_deployment>\n\t<battle_map_definition>\n";
     match &b.map {
         BattleMap::Tile(folder) => x += &format!("\t\t<name>{}</name>\n", esc(folder)),
         BattleMap::Position { map, x: px, y: py, .. } => {
@@ -604,9 +603,9 @@ mod tests {
         assert!(x.contains("<playable_area dimension=\"1802\">"));
         assert!(x.contains("<position x='-952' y='-952'/>"));
         assert!(x.contains("<position x=\"0\" y=\"-410\"/>") && x.contains("<position x=\"0\" y=\"410\"/>"));
-        assert!(x.contains("<season>Autumn</season>") && x.contains("<name>season_autumn</name>"));
+        assert!(x.contains("<season>Autumn</season>"));
+        assert!(!x.contains("<Climate>") && !x.contains("<Season>"), "the game reads neither");
         assert!(x.contains("<precipitation_type>dry</precipitation_type>"), "a filter of several values is 'any'");
-        assert!(x.contains("<Climate>\n\t\t<name>ROME_Atlantic</name>"));
         assert!(x.contains("<faction>att_fact_western_roman_empire</faction>") && x.contains("<unit_type type=\"att_nor_saxon_spears\"/>"));
         assert!(x.contains("<deployment_area_alliance_index>1</deployment_area_alliance_index>") && x.contains("<battlefield_owner_alliance_index>"));
         assert_eq!(x.matches("<alliance id=").count(), 2);
