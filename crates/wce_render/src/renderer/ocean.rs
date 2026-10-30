@@ -19,9 +19,9 @@
 //!   The game's vertex shader takes a displaced and a rest position, and the surfaces carry heights whose range is in the shader's
 //!   constants (`g_vs_sea_info.zw`), but how the engine combines them (and whether it uses the frames' slope images, unused here) is
 //!   not known.
-//! - The sea bed info texture (`sea_bed_info_texture`, 512 x 512 over x, z in [-1024, 1024]: the vertex shader reads red as the ground
-//!   height, `r * g_vs_sea_info.y + g_vs_sea_info.x`, -20 .. 5 m) is built from the scene's terrains; what the engine writes into its own
-//!   512 x 512 texture has not been traced. Near the shore the vertex shader flattens the waves into a small ripple, and pushes the sea
+//! - The sea bed info texture (`sea_bed_info_texture`, 1024 x 1024 over x, z in [-1024, 1024]: the vertex shader reads red as the ground
+//!   height, `r * g_vs_sea_info.y + g_vs_sea_info.x`, -20 .. 5 m) is built from the scene's terrains, as the game's is the ground's height
+//!   (grey, `r * 25 - 20`; a RenderDoc capture of a coastal battle, docs/re/water.md). Near the shore the vertex shader flattens the waves into a small ripple, and pushes the sea
 //!   4 m down where the ground is above it.
 //! - `g_transparency_exponential_scale` (4) and the sea bed range (-20, 25) are the dumps' values; they are not in the tables.
 
@@ -44,8 +44,9 @@ const R2_OCEAN_PS: &str = "dx11_sm_3_0_ocean.hlsl_ps_ps30_main_ultra_water_quali
 /// The "ultra" quality level.
 const OCEAN_PS: &str = "dx11_sm_4_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
 
-/// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`).
-const SEA_BED_SIZE: u32 = 512;
+/// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`); the game's is 1024 x 1024
+/// (2 m texels; a RenderDoc capture, docs/re/water.md).
+const SEA_BED_SIZE: u32 = 1024;
 const SEA_BED_HALF: f32 = 1024.0;
 
 /// The sea bed's height range (`g_vs_sea_info.xy`) and `g_transparency_exponential_scale`: the dumps' values, not in the tables.
@@ -53,7 +54,7 @@ const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
 /// The sea quadtree: its leaves are `CHUNK_CELLS` cells a side; a node is split while the camera is nearer than `SPLIT_DISTANCE`
-/// times its size (game units), down to `CHUNK_SIZE` (4 m cells, the sea bed's texel).
+/// times its size (game units), down to `CHUNK_SIZE` (4 m cells).
 const CHUNK_SIZE: f32 = 128.0;
 const CHUNK_CELLS: u32 = 32;
 const SPLIT_DISTANCE: f32 = 1.5;
