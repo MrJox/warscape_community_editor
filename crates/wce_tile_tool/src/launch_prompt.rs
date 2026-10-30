@@ -59,6 +59,9 @@ struct Plan {
     staging: PathBuf,
     cells: (u32, u32),
     weather: BattleWeather,
+
+    /// The sea surface of the tile's battle wind (`Battle::sea_surface`).
+    sea_surface: String,
     settings: LaunchSettings,
 
     /// The game launched, and its armies (every key given).
@@ -110,7 +113,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     };
 
     let map = plan.position.take().unwrap_or_else(|| BattleMap::Tile(folder.clone()));
-    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), army: &plan.army, facts: &plan.game.launch });
+    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), sea_surface: plan.sea_surface.clone(), army: &plan.army, facts: &plan.game.launch });
     files.push((launch::BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
 
     // Loose files, with the mod packs their assets need; the pack when loose files would lose to one of them.
@@ -377,12 +380,16 @@ impl TileTool {
         let tile_settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
         let (settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
         let (position, note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
+        let sea_surface = e.renderer().and_then(|r| {
+            let wind = if tile_settings.sea_state.is_empty() { r.settings.sea_state.clone() } else { tile_settings.sea_state.clone() };
+            r.sea_surface_of(&wind)
+        });
         let mods: Vec<String> = e.selected_mod_packs().into_iter().filter(|m| data.join(m).is_file()).collect();
         let before = STEPS.map(|(k, _)| settings.step_seconds.get(k).copied());
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
             inputs: self.export_inputs(e)?, staging: staging.clone(), cells: (info.cells_x, info.cells_y), weather: BattleWeather::from_tile(self.weather.choice()),
-            settings, game: profile, army, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
+            sea_surface: sea_surface.unwrap_or_default(), settings, game: profile, army, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
         };
 
         activity::clear();
