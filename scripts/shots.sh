@@ -41,7 +41,9 @@ name="capture_dry_800x600.png"
 "$BIN/wce.exe" --tool weather --open "weather/charlemagne/med_sp_land_day_dry.environment" --cam 0.6 0.35 120 --frames 20 --capture 800x600 "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
 same_capture "$name" || bad=1
 # two tiles through the tile tool (terrain with polygons; a settlement with its real building models)
-KIT="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
+GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
+KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
+[ -d "$KIT" ] || KIT="$GAME/assembly_kit/raw_data/terrain/tiles/battle"   # one kit (assembly_kit) instead of the two tilemap kits
 for t in atlantic_mountains/custom_monte_rosa/aa settlement_western_cities/western_city_rome/medium; do
     name="capture_tile_$(echo "$t" | tr '/' '_').png"
     "$BIN/wce.exe" --tile "$KIT/$t" --cam 0.8 0.7 900 --frames 3 --capture 1280x720 "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
