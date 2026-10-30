@@ -60,15 +60,14 @@ assert_history 2 2
 key F
 frames 3
 
-# tools: switching keeps the document, placeholders register
+# tools: switching keeps the document (the default build's tools; the placeholder tabs are behind the `placeholders` feature since
+# f669546)
 tool tile
 frames 3
 assert_tool tile
-tool unit
+tool ui
 frames 2
-assert_tool unit
-tool cinematic
-frames 2
+assert_tool ui
 tool weather
 frames 3
 assert_tool weather
