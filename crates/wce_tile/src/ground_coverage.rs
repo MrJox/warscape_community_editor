@@ -363,7 +363,7 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         label[start] = r;
         let mut k = 0;
         while k < cells.len() {
-            for nb in g.neighbours(cells[k]).collect::<Vec<_>>() {
+            for nb in g.neighbours(cells[k]) {
                 if mask[nb] && label[nb] == NONE {
                     label[nb] = r;
                     cells.push(nb);
@@ -421,7 +421,7 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         let r = label[s];
         let (sx, sz) = ((s % g.nx) as f32, (s / g.nx) as f32);
         let (f, t) = (g.heights[foot[s]], g.heights[top[s]]);
-        for nb in g.neighbours(i).collect::<Vec<_>>() {
+        for nb in g.neighbours(i) {
             if mask[nb] || ring[nb] != NONE {
                 continue;
             }
@@ -645,7 +645,8 @@ fn populate(input: &Input, buildings: &Buildings, d: &mut Differential) {
                 g.height(x + r * a.cos(), z + r * a.sin())
             });
 
-            if !buildings.clear(x, z, r) {
+            // On the tile (a cell at its edge reaches half a cell out), as the plants.
+            if !buildings.clear(x, z, r) || x < g.x0 || z < g.z0 || x > xmax || z > zmax {
                 continue;
             }
 

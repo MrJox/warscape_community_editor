@@ -33,8 +33,9 @@ pub struct CoverageUi {
 
     pub preview: Option<Preview>,
 
-    /// The buildings' categories from the packs' tables (the mods' too), read on the first run, and why they could not be.
-    categories: Option<std::sync::Arc<std::collections::BTreeMap<String, String>>>,
+    /// The buildings' categories from the packs' tables (the mods' too), read on the first run, and why they could not be; again when the
+    /// game, its mounted packs or the schema change (`CategoriesSource`).
+    categories: Option<(CategoriesSource, std::sync::Arc<std::collections::BTreeMap<String, String>>)>,
     categories_note: String,
 
     /// Generate asked to replace what the layer holds (the question opens on the next frame).
@@ -50,6 +51,9 @@ pub struct Preview {
     owner: Vec<u32>,
     pub summary: String,
 }
+
+/// What the buildings' categories were read from: the game, its mounted packs (their `Files`) and rpfm's schema.
+type CategoriesSource = (String, Option<usize>, Option<std::path::PathBuf>);
 
 const NONE: u32 = u32::MAX;
 
@@ -84,10 +88,7 @@ impl TileTool {
                 Ok(summary)
             }
 
-            "generate" => {
-                self.generate_coverage(e);
-                if self.status.starts_with("ground coverage:") { Ok(self.status.clone()) } else { Err(self.status.clone()) }
-            }
+            "generate" => self.generate_coverage(e),
 
             _ => Err("ground_coverage: preview or generate".to_owned()),
         }
@@ -114,6 +115,12 @@ impl TileTool {
         self.coverage.seed = u64::from((self.random.unit() * 1.0e6) as u32);
     }
 
+    /// Closes the window, and its preview with it (the viewport would go on drawing it).
+    fn close_coverage(&mut self) {
+        self.coverage.open = false;
+        self.coverage.preview = None;
+    }
+
     fn keep_coverage_values(&self, e: &mut Editor) {
         let c = GroundCoverage { params: self.coverage.params.to_text(), rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
         e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.ground_coverage = c);
@@ -126,7 +133,7 @@ impl TileTool {
         }
 
         if document_id(e).is_none() {
-            self.coverage.open = false;
+            self.close_coverage();
             return;
         }
 
@@ -135,7 +142,10 @@ impl TileTool {
         let mut open = true;
         if !gui::begin(&format!("{}  Ground coverage (experimental)###groundcoverage", icons::MOUNTAIN), Some(&mut open), 0) {
             gui::end();
-            self.coverage.open = open;
+            if !open {
+                self.close_coverage();
+            }
+
             return;
         }
 
@@ -155,6 +165,7 @@ impl TileTool {
         let changed = params_rows(&mut self.coverage.params);
 
         gui::separator_text("Seed");
+        // The field holds an i32: a bigger seed (a script's) is shown capped, and kept unless edited.
         let mut seed = self.coverage.seed.min(i32::MAX as u64) as i32;
         gui::set_next_item_width(140.0);
         let mut reseeded = gui::input_int("##seed", &mut seed);
@@ -164,7 +175,9 @@ impl TileTool {
             reseeded = true;
         }
 
-        self.coverage.seed = seed.max(0) as u64;
+        if reseeded {
+            self.coverage.seed = seed.max(0) as u64;
+        }
 
         gui::separator();
         let (mut preview, mut generate_now, mut clear) = (false, false, false);
@@ -199,7 +212,9 @@ impl TileTool {
         }
 
         gui::end();
-        self.coverage.open = open;
+        if !open {
+            self.close_coverage();
+        }
 
         if clear {
             self.coverage.preview = None;
@@ -218,7 +233,7 @@ impl TileTool {
             if document(e).is_some_and(|d| d.coverage_items() > 0) {
                 self.coverage.confirm = true;
             } else {
-                self.generate_coverage(e);
+                let _ = self.generate_coverage(e);
             }
         }
 
@@ -238,7 +253,7 @@ impl TileTool {
         gui::text_wrapped(&format!("\"{COVERAGE_LAYER}\" holds {n} item(s). They are replaced, edits made to them by hand too (Ctrl+Z undoes it)."));
         if gui::button("Replace") {
             gui::close_current_popup();
-            self.generate_coverage(e);
+            let _ = self.generate_coverage(e);
         }
 
         gui::same_line();
@@ -261,15 +276,18 @@ impl TileTool {
         Ok((rocks, plants))
     }
 
-    /// The buildings' categories of the packs' `battlefield_buildings` tables (read once; empty without rpfm's schema, and the kit's
-    /// tables are what is known then).
+    /// The buildings' categories of the packs' `battlefield_buildings` tables (read once for the game, its packs and the schema; empty
+    /// without rpfm's schema, and the kit's tables are what is known then).
     fn building_categories(&mut self, e: &Editor) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
-        if let Some(c) = &self.coverage.categories {
+        let (files, schema) = (e.files(), crate::tool::walls_schema_path(e).ok());
+        let source = (e.game().key.to_owned(), files.as_ref().map(|f| std::sync::Arc::as_ptr(f).cast::<()>() as usize), schema.clone());
+        if let Some((_, c)) = self.coverage.categories.as_ref().filter(|(s, _)| *s == source) {
             return c.clone();
         }
 
+        self.coverage.categories_note.clear();
         let mut out = std::collections::BTreeMap::new();
-        match (e.files(), crate::tool::walls_schema_path(e).ok()) {
+        match (files, schema) {
             (Some(files), Some(schema)) => {
                 let tables = files.list("db/battlefield_buildings_tables/", "").into_iter().filter_map(|p| files.read(&p).ok()).collect::<Vec<_>>();
                 match wce_tile_io::attila::game_data::building_categories(&tables, &schema) {
@@ -283,7 +301,7 @@ impl TileTool {
         }
 
         let c = std::sync::Arc::new(out);
-        self.coverage.categories = Some(c.clone());
+        self.coverage.categories = Some((source, c.clone()));
         c
     }
 
@@ -308,30 +326,29 @@ impl TileTool {
         Ok(Preview { doc, result, lines, grid, owner, summary })
     }
 
-    /// Generates and puts the result into the layer.
-    fn generate_coverage(&mut self, e: &mut Editor) {
-        let (rocks, plants) = match self.coverage_sets(e) {
-            Ok(s) => s,
-            Err(err) => {
-                self.status = err;
-                return;
-            }
-        };
+    /// Generates and puts the result into the layer; what it did, also the status.
+    ///
+    /// # Errors
+    ///
+    /// No set, no tile, or the layer can't take the result.
+    fn generate_coverage(&mut self, e: &mut Editor) -> Result<String, String> {
+        let done = self.generate_coverage_into(e);
+        self.status = done.clone().unwrap_or_else(|err| err);
+        done
+    }
 
+    fn generate_coverage_into(&mut self, e: &mut Editor) -> Result<String, String> {
+        let (rocks, plants) = self.coverage_sets(e)?;
         let settings = CoverageSettings { params: self.coverage.params, seed: self.coverage.seed, rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
         let categories = self.building_categories(e);
-        let Some(d) = document(e) else { return };
+        let d = document(e).ok_or("ground coverage: no tile is open")?;
         let (result, _, _) = run(d, &rocks, &plants, &categories, settings.params, settings.seed);
-        self.status = match d.apply_coverage(&result, &settings) {
-            Ok(c) => format!(
-                "ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\"", c.slopes, c.rocks, c.plants, c.exclusions,
-            ),
-            Err(err) => format!("ground coverage failed: {err}"),
-        };
+        let c = d.apply_coverage(&result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
 
         // What is in the tile now is the result: the preview would draw over it.
         self.coverage.preview = None;
         e.selection.clear();
+        Ok(format!("ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\"", c.slopes, c.rocks, c.plants, c.exclusions))
     }
 
     /// The preview's lines, into the tool's overlay (only over the tile it was made for).
