@@ -390,3 +390,22 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
 - Before this the ground's textures repeated half as often as in the game (twice the texel size: blurry rock and sand up close), the
   grass reached twice as far, and every distance constant was off by two.
 
+
+## Environment specular and the grey roofs (2026-10-30, RenderDoc)
+
+Two RenderDoc captures of Rome (western_city_rome at its campaign placement, `D:\renderdoc\rome.rdc` with the vanilla weather,
+`rome_tdd.rdc` with TDD's `cc4_day_dry_1.environment`), against a RenderDoc capture of the editor at the same camera, roof pixel by roof
+pixel:
+
+- The G-buffer agrees: the roof's albedo (0.40, 0.32, 0.26) in the game, (0.42, 0.33, 0.27) in the editor; specular colour white in both
+  (the buildings' specular atlases are near white). Every constant the editor derives from the environment matches
+  (`env_vs_dump` with `WCE_MOD_PACKS`).
+- The directional light's output did not: the game's roof (2.0, 1.41, 0.97), warm like its albedo; the editor's (2.53, 2.88, 3.05),
+  blue-white. The game's `lighting_VS_PS.g_apply_environment_specular` is 0 in both captures (the editor had 1): the game draws the
+  environment's specular in a pass of its own after the lights (`environment_specular_light.hlsl`, DEFERRED_ENVIRONMENT_SPECULAR_SHADER,
+  at a lower resolution, then blurred in x and y; events 9460 / 9477 / 9488 of rome_tdd), which on that roof adds only (0.09, 0.12,
+  0.16). With the flag at 1 the directional light reflected the sky at full strength on the white specular: grey-blue roofs and walls.
+- The editor now sets 0 (`environment_apply.rs`) and has no separate pass yet (the roofs lose that small reflection). ASSUMPTION: the
+  flag is 0 at every graphics setting (both captures were at low settings, and the separate pass ran there); its writer was not traced
+  (the variable is declared by fn 0x116f6870).
+- The exposure differs too (white point 22.0 in the game, 16.4 in the editor at that view: the auto exposure measures what each draws).

@@ -47,7 +47,10 @@ pub fn apply_environment(e: &EnvironmentParams, cbs: &mut ConstantBuffers) {
     set3(cbs, "lighting_VS_PS", "g_shallow_water_colour", colour_to_linear(e.shallow_water));
     set3(cbs, "lighting_VS_PS", "g_sea_bed_light_scatter", e.sea_bed_scatter);
     cbs.set_f("lighting_VS_PS", "g_refraction_light_scatter", &[e.refraction_scatter]);
-    cbs.set_i("lighting_VS_PS", "g_apply_environment_specular", 1);
+    // 0, as in the game (two RenderDoc captures of Rome, vanilla and TDD weather): the game adds the environment's specular in a pass of
+    // its own after the lights (environment_specular_light.hlsl at a lower resolution, blurred), much weaker, which the editor does not
+    // have. With 1 the white specular of the buildings' materials reflected the sky at full strength: grey-blue roofs (docs/re/renderer.md).
+    cbs.set_i("lighting_VS_PS", "g_apply_environment_specular", 0);
     cbs.set_f("lighting_VS_PS", "g_hdr_on", &[1.0]);
 
     // fog_VS_PS. Verified (memory dump): colour = pow(2.2) of the first three components of "argb(...)" (which are r, g, b; the fourth
