@@ -55,8 +55,9 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
       two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
     - Done: settlement buildings the game doesn't show (Rome's camp of round huts): its *Escalation 2* layer, which the game loads
       for the `escalation2` upgrade only; the Game view now leaves out the layers the battle would not load.
-    - **Exposure**: re-measure the white point (game 22.0, editor 16.4 at the Rome view) now that the lighting matches.
-    - The editor's `where` "game" readout lacks the centring and the height offset.
+    - Done: exposure: the tone mapper's statistics now run on the game's fixed 256 x 256 image halved to 1 x 1; the average luma at the
+      Rome view matches (3.38 / 3.37); the white point's residue is the brightest pixels of the game's wider frame (docs/re/renderer.md).
+    - Done: `where` reads the launched battle's game coordinates (centred, the height offset; docs/editor.md).
     - The image gates' references change with b5f2cac and 20c8eea: to run and record.
 
 ## C. Needs review
