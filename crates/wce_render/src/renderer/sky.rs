@@ -166,10 +166,11 @@ impl Renderer {
         }
     }
 
-    /// EnvMapGen (fn 0x118e00e0): six 90-degree views from (0, ground + 50, 0), far plane 972800, through the normal scene passes; then every
+    /// EnvMapGen (fn 0x118e00e0): six 90-degree views from 50 m above the ground at the world origin (the battle's centre: `fStack_31c = 50`
+    /// plus the terrain height there; (0, 108.15, 0) at Rome's campaign placement in a RenderDoc capture), far plane 972800, through the normal scene passes; then every
     /// face's lowest mip is read back (readback_ambient). While it renders, the lighting uses the XML ambient (no computed cube exists yet in
     /// the engine at that point, fn 0x178a300) and no shadows (measured: binding the main-camera shadow map changes the faces by < 1%).
-    pub(crate) fn render_env_cube(&mut self, env: &EnvironmentParams, time_s: f32) {
+    pub(crate) fn render_env_cube(&mut self, env: &EnvironmentParams, time_s: f32, scene: &wce_scene::render_scene::RenderScene) {
         let n = SKY_CUBE;
         std::mem::swap(&mut self.gbuffer, &mut self.env.gbuffer);
         let save_ao = std::mem::replace(&mut self.post.ao_result, self.res.white_srv.clone());
@@ -178,8 +179,16 @@ impl Renderer {
         self.cbs.set_f("shadowmap_PS", "g_iSplitCount", &[0.0]);
         let proj = perspective_lh(PI / 2.0, 1.0, 1.0, 972_800.0);
 
-        // The test map's ground is at 0.
-        let eye = Float3::new(0.0, 50.0, 0.0);
+        // 50 game metres above the ground at the battle's centre (the sea when no terrain covers it).
+        let [cx, cz] = scene.battle_centre;
+        let ground = scene.entities().iter()
+            .filter(|e| scene.drawable(e))
+            .find_map(|e| match &e.payload {
+                wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cx, cz),
+                _ => None,
+            })
+            .unwrap_or(scene.sea_level);
+        let eye = Float3::new(cx, ground + 50.0 / self.camera.units, cz);
         for f in 0..6 {
             let view = face_view(f) * translation(-(eye - self.camera.origin));
             self.set_camera(&view, &proj, eye, n, n, time_s);

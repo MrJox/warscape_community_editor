@@ -1115,7 +1115,7 @@ impl Renderer {
         // The XML ambient while it renders.
         if self.clock.frame.is_multiple_of(4) || !self.env.valid {
             wce_prof!("render.env_cube");
-            self.render_env_cube(&env, time_s);
+            self.render_env_cube(&env, time_s, scene);
         }
 
         self.apply_engine_ambient(&env);

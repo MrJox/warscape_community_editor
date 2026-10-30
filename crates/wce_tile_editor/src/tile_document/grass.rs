@@ -167,6 +167,7 @@ impl Tile {
 
         // The game draws the tile in its units: the scene's times unit_scale.
         scene.game_units = self.unit() as f32;
+        scene.battle_centre = [(self.project.extent_x() / 2.0) as f32, (self.project.extent_z() / 2.0) as f32];
 
         let want = (self.display.show_grass, self.display.generate_grass);
         if !published && self.grass.shown.as_ref() == Some(&want) {
