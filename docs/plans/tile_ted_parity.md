@@ -1,11 +1,10 @@
 # Tile tool: TEd feature parity
 
-**Status (2026-10-26).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
-render, terrain did not look like the game, some buildings stood at the wrong height, and "what else does TEd have". Phases 0, 0b,
-1, 2, 3, 4a / 4b, 7 are done, and so are most of 4c, 5 and 6; most of 5a (terrain painting) and part of 6b were done by the workflow
-review (`workflow_review.md`, branch `workflow-review`). What is left is the TEd tools below. **This plan is to be finished on the
-`workflow-review` branch before that branch is merged** (user, 2026-10-26); the items are worked through one at a time, in this
-file's order. The editor itself is described in
+**Status (2026-10-30).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
+render, terrain did not look like the game, some buildings stood at the wrong height, and "what else does TEd have". Every phase is
+done; the in-game captures (2026-10-29 / 30, branch `ingame-checks`) settled the season and climate questions, the battle sea and
+the burning look. What is left (a few TEd tools still to trace, renderer differences the captures showed) is listed in
+`tile_ted_parity_remaining.md`, worked through in its order. The editor itself is described in
 `docs/editor.md` ("Tile tool"); what each `tile.ted` element type can do (create / edit / draw / export) is in
 `docs/tile_entity_types.md`. Findings are in `docs/formats/tile_ted.md` (placement, layer flags, TEd's modules, Property Editor),
 `docs/formats/tile_database.md` (the entry), `docs/re/terrain.md`, `docs/re/water.md` and `docs/re/tile_links.md`.
@@ -16,13 +15,13 @@ file's order. The editor itself is described in
 | 0b Tile entry as the root | done: `TileEntry`, `TileIndex`, Tiles panel, open by entry / folder / `tile.ted` | `docs/formats/tile_database.md`, `docs/editor.md` |
 | 1 Layers and scene graph | done: Scene panel (eye = `OIF_VISIBLE`, cursor arrow = `OIF_ACTIVE`), structure commands, export type, gizmo fix, W / E / R, snap toggle. The shared Outliner shows the tile tree read-only (accepted) | `docs/editor.md` ("Scene panel") |
 | 2 Placement and heights | done: landscape / freeform rules, strokes carry landscape instances, oracle exact; stale entries fixed by `TileProject::calibrate_from_final_heights` | `docs/formats/tile_ted.md`, `docs/editor.md` ("Placement") |
-| 3 Terrain | done with the game's shaders (3a, 3b, 3d; 3c largely); 3e partial: the season combo picks the textures | `docs/re/terrain.md`; map-level terrain: `map_context_todo.md` |
-| 4 Water | 4a, 4b done; 4c mostly (points, handles, insert / prepend, per-point values, `river_spline*.xml` written on save) | `docs/re/water.md`; rendering leftovers: `rendering_remaining.md` |
-| 5a Terrain painting | height brushes; blend brush with a live preview, texture groups, ground type brush, falloff curve editor, image brush, stroke along a line (at a spline's width), TEd's Blendmap Filters, Auto-Flange and Rock-painting | `workflow_review.md` (section 3), `docs/re/terrain.md` |
-| 5b-5f Tools | vegetation brush and sets, procedural trees / grass, decals, Create panel with preview, prefabs (group / ungroup), props, VFX, point lights, every zone type | `docs/tile_entity_types.md`; walls: `procedural_walls.md`; siege AI generation: `siege_ai.md` |
-| 5g Selection | multi-item gizmo, type filters | `docs/editor.md` |
-| 6a Links | read-only view (list and cells on the ground) | `docs/re/tile_links.md` |
-| 6b Tile module | New tile (Tile > New tile..., a project); height range fitted on save; texture groups edited in the Tile panel | `workflow_review.md` |
+| 3 Terrain | done with the game's shaders (3a-3e; 3e settled in game: one season's ground, the battle map's cell climate) | `docs/re/terrain.md`; map-level terrain: `map_context_todo.md` |
+| 4 Water | done: 4a-4d (river editing, river ends against the links, water depth view); the battle sea from a RenderDoc capture | `docs/re/water.md`; rendering leftovers: `rendering_remaining.md` |
+| 5a Terrain painting | done: height brushes (with TEd's Spline Road, and noise, stamp, height map import), blend brush, ground type brush, falloff curve editor, image brush, stroke along a line, Normal (Grouped) and blur, TEd's Blendmap Filters, Auto-Flange and Rock-painting | `workflow_review.md` (section 3), `docs/re/terrain.md` |
+| 5b-5f Tools | done: vegetation brush and sets, procedural trees / grass, decals, Create panel with preview and thumbnails, prefabs, props, VFX, point lights (radius gizmo), every zone type, shelter targets, siege AI edges' nodes, the buildings' look properties (opacity, burn) | `docs/tile_entity_types.md`; walls: `procedural_walls.md`; siege AI generation: `siege_ai.md` |
+| 5g Selection | done: multi-item gizmo, type filters, box select and selections, copy / paste, align / distribute, snapping (grid tolerance, points, pieces), camera bookmarks | `docs/editor.md` |
+| 6a Links | done: editors for links and targets, the validator, the tiles that can follow | `docs/re/tile_links.md` |
+| 6b Tile module | done: New tile, Save tile as, Resize tile, Tile properties, Tile database management, Integrity errors, Stats | `workflow_review.md` |
 | 7 Export | done (`save_exported`, stages A-C) | `tile_roundtrip.md` |
 
 ## Open
@@ -276,8 +275,7 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 ## Ideas for later (user, 2026-10-27)
 - Polygons painted with a brush instead of drawn point by point (exclusion polygons, and the no-go areas, which are to be handled as
   polygons): a new feature, not TEd's; for a future pass.
-- Move the ground views (colour, blend groups, ground types, protection, water depth) into a quick filter in the viewport, next to the
-  other viewport chips, instead of the Tile panel's Ground section.
+- Done on master: the ground views are a chip on the viewport (the Ground chip), with the Tile panel's Ground section moved in.
 
 ## Decisions
 - The tile's root is its database entry, not the folder of `tile.ted` (2026-10-09).

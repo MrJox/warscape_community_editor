@@ -25,10 +25,7 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    - Check it in `scripts/tile_building_look.txt` (`opacity_05.png`).
 5. Done (2026-10-30): `scripts/tile_building_props.txt` runs through again (the orientation row is `euler` since the Global / Local
    coordinates).
-6. **Plan upkeep**: `tile_ted_parity.md` is out of date in places.
-   - The status table is stale: 6a says "read-only view", and 6b / 5g list less than is done.
-   - The header still names the `workflow-review` branch.
-   - The "ground views in a viewport chip" idea is done on master (the Ground chip).
+6. Done (2026-10-30): plan upkeep (`tile_ted_parity.md`'s header and status table).
 
 ## B. In-game captures (done 2026-10-30)
 
