@@ -175,17 +175,29 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
     (2 m a texel over the shader's 2048 m) loaded from a memory-mapped file (its handle's release fn 0x116502a0 unmaps a view). Which file
     is not settled: the likely one is a 2048 m cut of the battle map's `terrain/battles/<map>/lf_sea_height_map.dds` (16-bit, one
     channel; 31 MB for main_attila_map), but its content is GPU-only, so neither the code nor a CPU memory dump shows it.
-  - Not found: the code that fills the radial mesh (80 segments of a sin / cos table, 164 rings; `[0x24]`, `[0x25]` = 43.2, 2.72 at the
-    dumped camera), so how the frames' heights (and the slope images) move the vertices is not known; and what the engine writes into the
-    sea bed info texture.
+  - Not found in the code: what fills the radial mesh (80 segments of a sin / cos table, 164 rings; `[0x24]`, `[0x25]` = 43.2, 2.72 at
+    the dumped camera). The capture below shows the mesh it makes and the sea bed texture.
 - **The editor (2026-10-19; 2026-10-20 the surfaces, whitecaps and wind)**: `crates/wce_render/src/renderer/ocean.rs` (the files:
   `crates/wce_render/src/sea_surface.rs`) draws the sea planes with these shaders, the wind's table row and prebaked surfaces, the
   whitecap array, `combined_foam.dds` and `water_detail_normal.dds`. Stand-ins: a quadtree grid instead of the radial mesh, displaced by
   the blended sea and swell heights; the sea bed texture built from the scene's terrain heights (512 x 512, encoded for the shader's
   `r * 25 - 20`; it only changes how the waves flatten near the shore).
-- **How to settle the radial mesh and the sea bed texture** (both GPU-only): a RenderDoc (or PIX) capture of Attila (DX11) in a coastal
-  battle with the shore in view. At the ocean draw (`ocean.hlsl` vs30_main / ps30_main_*_water_quality) save: 1. the vertex buffer
-  (POSITION0 displaced, POSITION1 rest, TEXCOORD0) with that draw's camera: the rings' radii and, against the sea / swell frames of the
-  same time (`g_foam_anim_data` gives the sea frame), the displacement (heights only or the slope images too; scaling); 2. the texture
-  bound to `g_sea_bed_info_texture` (VS t0): format and pixels, against the map's `lf_sea_height_map.dds` and the terrain heights;
-  3. the `ocean_VS` and `OceanSharedConstants` buffers, to recheck the values taken from the tables.
+- **Settled by a RenderDoc capture (2026-10-30)** of a coastal battle (sea_coast/2x2_bb_straight at its campaign placement, cell
+  (244, 101), sea surface wind_level_0, camera 63.9 m up; `D:\renderdoc\coast.rdc`, RenderDoc 1.46). RenderDoc runs out of the 32-bit
+  game's address space (E_OUTOFMEMORY while loading) unless the game uses less: only the launch pack as mod, textures low, "unlimited
+  video memory" off. The ocean is two draws of the same mesh (a depth pass, event 897, then the colour pass, 914), 78 000 indices:
+  - **The radial mesh**: 13 120 vertices = 80 spokes x 164 rings, spoke-major (index = spoke * 164 + ring), 28-byte vertices
+    (POSITION0 float3, POSITION1 float3, TEXCOORD0 float). The spokes are every 4.5 degrees all round, and they start at one centre that
+    is not under the camera: on the sea 122.6 m ahead of it horizontally (1.92 x the camera's height; one capture, so the rule is
+    not settled). Every spoke has the same ring radii (m): 0, then steps of 0.5 m to 32, 1 m to 64.5, 2 m to 96.5, 4 m to 128.5,
+    8 m to 160.5, 16 m to 224.5, 32 m to 352.5, 64 m to 608.5, 128 m to 1120.5, 256 m to 2144.5, 512 m to 4192.5, 1024 m to 8288.5,
+    2048 m to 28 768.5. POSITION0 and POSITION1 differ by at most 0.04 m and share their y (-0.28 .. 0.23 m): the CPU gives the
+    vertices only a small height, the waves are the vertex shader's (from the sea and swell surfaces). TEXCOORD0 is 1 out to
+    192.5 m, then 0.968, 0.934, 0.859, 0.774, 0.678, 0.573 at 208.5 .. 352.5 m, and 0 from 416.5 m: a fade of the waves with distance.
+  - **The sea bed info texture** (VS t0): 1024 x 1024 B8G8R8A8, grey (r = g = b), alpha 255: the ground's height around the camera,
+    `r * 25 - 20` (black -20 m: open sea; white +5 m: land), the shore and the map's tiles visible as blocks. So 2 m texels over the
+    shader's 2048 m square (the editor's stand-in is 512 x 512, 4 m texels).
+  - **Constants**: `ocean_VS` g_sea_decay 0.0006, g_sea_uv_scale 0.014286 (1 / 70), g_swell_uv_scale 0.00125 (1 / 800), g_vs_sea_info
+    (-20, 25, -0.11762, 0.23985); `OceanSharedConstants` froth distortion speed 0.35 / amount 0.05, lowest wave trough y 0, g_ps_sea_info
+    as the VS's, detail normal uv scales 15.8 / 5, speeds 7.8 / 6.8, g_transparency_exponential_scale 4, then 19, 20, 0.37.
+  Read with `scripts/re/rd_ocean_dump.py` (run by `qrenderdoc --python`).

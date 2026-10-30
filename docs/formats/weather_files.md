@@ -58,5 +58,6 @@ decision 2026-10-08: only `warscape_asset_variation_db`, docs/re/variation_db.md
 
 No whole-frame comparison with the game (a battle frame has too much other content, and battles cannot be started from the command line).
 The game's own shaders run, so what is checked are their inputs: constant buffer values from a full memory dump of the game in a battle
-(Task Manager > Create dump file; RenderDoc crashes the game), read by `scripts/re/dump_cbs.py` and compared with what the editor
+(Task Manager > Create dump file; RenderDoc runs the 32-bit game out of memory unless it loads few packs at low texture settings,
+docs/re/water.md), read by `scripts/re/dump_cbs.py` and compared with what the editor
 computes from the same file (`wce_render` example `env_vs_dump`); render target formats, pass order and sampler states from the same dump.
