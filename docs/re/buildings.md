@@ -188,6 +188,18 @@ TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_
   (`commontextures/vfx_fire_diffuse`, bound with the blood map by 0x117c3830). So [2] is POSITION6.x. A tile's `burn` starts the battle
   with the building on fire (`on_fire`); its `burn_amount` is TEd's preview only (the game ramps its own). Attila's building models have
   no burning meshes (material 56: none in the 5639 building models).
+- Burning, the sequence (2026-10-30, empire.retail.dll, static):
+  - The tweakers' defaults (their registrations at 0x10047e00.., 0x10052d30..): `BUILDING_FIRE_STAGE_ONE_DURATION` 18 s,
+    `BUILDING_FIRE_STAGE_TWO_DURATION` 10 s, `BURN_SHADER_AMOUNT` 0.3; the "lite" buildings' `BUILDING_LITE_FIRE_STAGE_ONE_DURATION`
+    30 s, `_TWO_` 15 s, `BUILDING_LITE_BURN_SHADER_AMOUNT` 0.3, `BUILDING_LITE_MAX_BURN_SHADER_AMOUNT` 1.0.
+  - The char (fn 0x10438340, while the entity's flag 0x8 at +0x7a is set; it sets render flag 0x200): with t the time since the fire
+    started (+0x50), the burn amount is 0.3 * t / 18 during stage one (0 to 0.3); after it, 0.3 while the second timer (+0x58) is 0,
+    then 0.3 + 0.7 * t2 / 10 over stage two, and 1 from there. Which event starts +0x58 was not traced; the screenshots (below) fit
+    "the fire went out": the char is strongest once the flames are gone.
+  - The effects (fn 0x104bb1e0): `burning_entity`, then `burning_entity_collapse` / `entity_collapse` / `burning_entity_aftermath`;
+    the entity type 0xb (the small ones) takes the `_small` set (`burning_entity_small`, `burning_entity_small_collapse`,
+    `entity_small_collapse`, no aftermath); `burning_entity_pre_smoke` comes first when a virtual of the entity (vtable +0x20) says so.
+    The per-triangle mask of the mesh emission (fn 0x1183fa30) was not followed.
 - Burning, as seen in game (2026-10-29, three screenshots from the user of a barbarian longhouse shot by onagers; the last two are 6 s
   apart): (1) flames (the building's fire effects) all over the outline and black smoke, the roof already caved in (the next
   destruction level), the walls still their own grey wood, only the fallen roof inside black; (2) fewer flames, the walls darker;
