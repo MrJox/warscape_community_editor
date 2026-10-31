@@ -2001,7 +2001,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
     });
 
-    c.add("tile_fire", "tile_fire play|stop|state [selected | #elem]", "the burning sequence's preview of a building (fire.rs): play it from the start, stop it, or log where it is", |e, a| {
+    c.add("tile_piece_ends", "tile_piece_ends [selected | #elem]", "log a fort piece's ends as piece-to-piece snapping sees them (piece frame: joint, the way out, the outer side)", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(el) = element_arg(d, a.first().map_or("selected", String::as_str), primary_of(&sel, d)) else { return fail("no such element") };
+        let Some(key) = d.tile().tscene().doc().get(el, "key") else { return fail("not a building") };
+        let ends = d.tile().piece_ends(&key);
+        ok(format!("{} end(s): ", ends.len()) + &ends.iter().map(|x| format!("at {:.2} {:.2} {:.2} out {:.2} {:.2} side {:.2} {:.2}", x.at[0], x.at[1], x.at[2], x.out[0], x.out[1], x.side[0], x.side[1])).collect::<Vec<_>>().join(" | "))
+    });
+
+    c.add("tile_fire","tile_fire play|stop|state [selected | #elem]", "the burning sequence's preview of a building (fire.rs): play it from the start, stop it, or log where it is", |e, a| {
         let sel = selected(e);
         let now = e.clock.time();
         let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_fire play|stop|state [selected | #elem]") };

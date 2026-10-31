@@ -229,8 +229,16 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Piece-to-piece snapping: done (2026-10-28; wce's). With "snap to points" on, a fort piece grabbed near another's end (within the
   tolerance, 4 m at 0) joins it: it takes the other's rotation (the outer sides agree) and its low end goes onto the other's high end,
   or its high end onto the other's low end. The ends are the walls' anchors (the logic file's frame, else the model's x extent;
-  `Tile::snap_piece`, `TileDocument::set_world_transform`; `scripts/tile_piece_snap.txt`). Not done: the logic files' platforms and
-  collision (nothing needed them).
+  `Tile::snap_piece`, `TileDocument::set_world_transform`; `scripts/tile_piece_snap.txt`).
+  Reviewed (2026-10-31) against the logic files of the Roman fort pieces (straight, corners, angled joiners, towers, tower ends, the
+  gateway, the stepped bastions; `wce_tile_editor --example tech_dump`): the wall-walks are platforms 15 units up (25 at a stepped
+  bastion's high end), and every end has a cap, a platform of its own piece (not the first) about 2 by 2.5 units on the walk's outer
+  band, a rectangle or (a bastion's high end) a quadrilateral with a slanted inner side; a corner's second end is turned 90 degrees, an
+  angled joiner's 45. The x-extent anchors could not join those. Now the ends are the caps (`wce_walls::logic::ends`: the joint, the
+  way the wall leaves, the outer side), the x extent only for pieces without caps: the piece turns about the vertical so that its end
+  meets the other's head on with the outer faces on the same side, its joint goes onto the other's, the walk heights too (a bastion's
+  high end takes the next piece 10 units up). `tile_piece_ends` logs a piece's ends; `scripts/tile_piece_snap_roman.txt`. The
+  procedural walls' attachments (`wce_walls::scene::anchors`) still use the x extent.
 
 ### Phase 6a: tile links
 - Editors for `TILE_LINK` / `TILE_LINK_TARGET`: done (2026-10-28). The Tile panel's Tile links: the targets and rules listed (a click
