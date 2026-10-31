@@ -3127,13 +3127,22 @@ impl Tool for TileTool {
         self.context.poll(e, id);
         e.viewport.north = self.context.north();
         e.viewport.map_frame = self.context.map_frame();
+
+        // The battle's frame is north-aligned: a tile at a map placement is turned in it as the map turns the tile (the sun, the wind and
+        // the game coordinates follow; in-game captures of a coast placement, docs/re/game_command_line.md).
+        let [nx, nz] = e.viewport.north;
+        let yaw = nx.atan2(nz).to_degrees();
+        if (e.scene.world_yaw - yaw).abs() > 1e-3 {
+            e.scene.world_yaw = yaw;
+        }
+
         e.viewport.battle_frame = e.docs.find_as::<TileDocument>(id).map(|d| {
             // Alone, the height zero is at the variation's min_height read as scene units (the number in metres, not divided by the unit
             // scale: what the cameras of the in-game captures fit, western_city_rome/small's -12.42).
             let (t, p) = (d.tile(), d.project());
             let low = p.height.as_ref().map_or(0.0, |h| h.min_height());
             let y = e.viewport.map_frame.map_or(low as f32, |m| m.sea_y);
-            wce_editor::coords::BattleFrame { origin: Float3::new((t.extent_x() * 0.5) as f32, y, (t.extent_z() * 0.5) as f32) }
+            wce_editor::coords::BattleFrame { origin: Float3::new((t.extent_x() * 0.5) as f32, y, (t.extent_z() * 0.5) as f32), yaw: e.scene.world_yaw }
         });
 
         // Structural edits move element indices: the command says what is selected afterwards.
