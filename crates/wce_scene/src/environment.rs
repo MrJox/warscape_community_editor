@@ -489,6 +489,7 @@ pub struct GraphicsOptions {
     pub reflections: i32,
     pub effects_quality: i32,
     pub grain: bool,
+    pub cloud_shadows: bool,
 
     /// 0 trilinear, n anisotropic 2^n (fn 0x1177f410).
     pub texture_filtering: i32,
@@ -500,7 +501,7 @@ pub struct GraphicsOptions {
 impl Default for GraphicsOptions {
     fn default() -> Self {
         Self {
-            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, sky_quality: 3, reflections: 2, effects_quality: 3, grain: false, texture_filtering: 3,
+            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, sky_quality: 3, reflections: 2, effects_quality: 3, grain: false, cloud_shadows: false, texture_filtering: 3,
             values: BTreeMap::new(),
         }
     }
@@ -518,6 +519,7 @@ impl GraphicsOptions {
                 "gfx_brightness_setting" if v > 0.0 => o.brightness = v,
                 "gfx_vignette" => o.vignette = on,
                 "gfx_grain" => o.grain = on,
+                "gfx_cloud_shadows" => o.cloud_shadows = on,
                 "gfx_ssao" => o.ssao = on,
                 "gfx_distortion" => o.distortion = on,
                 "gfx_depth_of_field" => o.depth_of_field = v as i32,

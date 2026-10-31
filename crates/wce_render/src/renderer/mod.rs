@@ -155,6 +155,11 @@ pub(crate) const TM_R2_LOG_Y: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr
 pub(crate) const TM_R2_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_cie_log_y_xy_to_quarter_size_log_y_stats";
 pub(crate) const TM_R2_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_log_y_stats";
 pub(crate) const TM_TONE_MAP: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_basic_tone_mapper";
+/// Thrones of Britannia's cloud shadows (fn 0x117c3680): the texture, cloud_shade_battle_scale and cloud_shade_battle_speed.
+pub(crate) const CLOUD_SHADE_TEXTURE: &str = "terrain/textures/common/cloud_shade.dds";
+pub(crate) const CLOUD_SHADE_BATTLE_SCALE: f32 = 0.0005;
+pub(crate) const CLOUD_SHADE_BATTLE_SPEED: f32 = 50.0;
+
 /// Thrones of Britannia's film grain texture (fn 0x117d7da0).
 pub(crate) const GRAIN_TEXTURE: &str = "commontextures/grain.dds";
 
@@ -406,6 +411,9 @@ pub struct RenderSettings {
     /// gfx_grain: the film grain (Thrones of Britannia's hdr_to_screen ENABLE_GRAIN variants).
     pub grain: bool,
 
+    /// gfx_cloud_shadows: the clouds' shade over the sun (Thrones of Britannia's directional light).
+    pub cloud_shadows: bool,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -481,6 +489,7 @@ impl Default for RenderSettings {
             reflections: 2,
             effects_quality: 3,
             grain: false,
+            cloud_shadows: false,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -519,6 +528,7 @@ impl RenderSettings {
         self.reflections = o.reflections;
         self.effects_quality = o.effects_quality;
         self.grain = o.grain;
+        self.cloud_shadows = o.cloud_shadows;
         self.texture_filtering = o.texture_filtering;
     }
 }
@@ -722,6 +732,9 @@ pub struct Renderer {
     /// The film grain (gfx_grain).
     grain: Grain,
 
+    /// The cloud shade's offset (g_cloud_shade_params.xy): moved with the wind by seconds * cloud_shade_battle_speed / 4096, kept in 0..1.
+    cloud_shade: [f32; 2],
+
     /// The effects quality the definitions were read with.
     effects_applied: Option<i32>,
     nis_failed: bool,
@@ -865,6 +878,7 @@ impl Renderer {
             nis: nis::Nis::default(),
             effects_applied: None,
             grain: Grain::default(),
+            cloud_shade: [0.0; 2],
             scaled: None,
             nis_failed: false,
             res: SharedResources::new(dev)?,
@@ -1249,6 +1263,13 @@ impl Renderer {
             self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[0.0]);
         }
         self.clock.dt = if self.clock.last_time < 0.0 { 0.016 } else { (time_s - self.clock.last_time).max(0.0) };
+
+        // The cloud shade moves with the wind (fn 0x117c3680: the change of seconds * speed / 4096 along the wind's direction).
+        if self.settings.cloud_shadows {
+            let step = self.clock.dt * CLOUD_SHADE_BATTLE_SPEED / 4096.0;
+            let d = self.wind.direction;
+            self.cloud_shade = [(self.cloud_shade[0] + d.x * step).rem_euclid(1.0), (self.cloud_shade[1] + d.y * step).rem_euclid(1.0)];
+        }
 
         // The clock restarted.
         if self.clock.last_time >= 0.0 && time_s < self.clock.last_time {

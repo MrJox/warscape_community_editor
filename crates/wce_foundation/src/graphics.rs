@@ -192,7 +192,7 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
     opt("gfx_vignette", "Vignette", GfxKind::Toggle, "true", true),
     opt("gfx_grain", "Film grain", GfxKind::Toggle, "false", true),
-    opt("gfx_cloud_shadows", "Cloud shadows", GfxKind::Toggle, "false", false),
+    opt("gfx_cloud_shadows", "Cloud shadows", GfxKind::Toggle, "false", true),
     opt("gfx_god_rays", "God rays", GfxKind::Toggle, "false", false),
     opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND), "0", false),
     opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
