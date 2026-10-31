@@ -280,7 +280,7 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
   (1 to 2 levels, the compression): the export does not touch the texture weights at the edges; tiles' textures meet through
   `final_alpha`. What the game draws where both neighbours' alpha is near 0 (the map-wide ground: `config.xml`'s default texture groups
   in the cell's climate, the far / outfield maps?) is the engine's side, not traced yet.
-- **The game's alpha** (2026-10-31): the tile loader reads `terrain	extures\%slpha\%dx%d.dds` (the entry's
+- **The game's alpha** (2026-10-31): the tile loader reads `terrain\textures\%s\alpha\%dx%d.dds` (the entry's
   `custom_alpha_blend_texture` instead when it names one: lakes, river mouths, custom mountains), DXT5 over the tile with its border
   ((cells + 2) * 128 pixels a side, the blend map's grid; `2x3.dds` is 512 wide, 640 high). `ps30_blend` reads its R only
   (`r * 1.1 - 0.1 < 0` discards): 1 over the tile and an irregular part of its border, falling to 0 32 .. 96 m out in noisy, organic shapes
