@@ -3833,6 +3833,7 @@ impl Tool for TileTool {
         self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - 8.0, size.y), top);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
+        self.context.draw_minimap(e, origin, size);
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {

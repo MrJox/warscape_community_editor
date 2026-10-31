@@ -180,6 +180,14 @@ fn from_gizmo(v: &[f32; 16]) -> Float4x4 {
 }
 
 impl Viewport {
+    /// The far plane of every camera mode's lens (scene units): the map context's view distance while it shows, else the game's battle
+    /// camera's ([`Lens::default`]).
+    pub fn set_far_plane(&mut self, zfar: f32) {
+        for lens in [&mut self.total_war.lens, &mut self.top_down.lens, &mut self.walk.lens, &mut self.fly.lens, &mut self.orbit.lens] {
+            lens.zfar = zfar;
+        }
+    }
+
     pub fn controller(&mut self) -> &mut dyn CameraController {
         match self.mode {
             CameraMode::TotalWar => &mut self.total_war,

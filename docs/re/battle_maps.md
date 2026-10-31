@@ -183,6 +183,11 @@ plains (aa .. ad) elsewhere.
   12 chunks while 9 new tiles open on the workers: 15.6 ms a frame on average, p95 40 ms, the worst 140 ms (new tiles' maps uploaded on the
   render thread).
 - The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`).
+- **View distance and overview map** (2026-10-31): while the context shows, the camera's far plane is the panel's view distance (the
+  game's battle camera's 13 000 scene units up to the whole map; `map_context_view <distance>`), and the LF ring follows it (the far
+  chunks grow with its square: 632 at 13 000, 9 437 at 60 000, about 11 fps then on an RX 7900 XTX). The overview map over the viewport
+  (top right) is the map's LF shaded (sea blue by depth, land by height, lit from the north-west), with the open tile's placement and the
+  camera's view; a click or a drag moves the camera there.
 - **Where a placement's tile comes from** (2026-10-31): the first source that has it, in the order every kit-layout loader follows
   (`wce_tile::sources`): the projects' kit layout, the Assembly Kits in the settings' order, then the packs decompiled into the kit's layout
   (for Attila only the fallback, read the first time a tile is in no kit; for Rome 2 the neighbours' tree).

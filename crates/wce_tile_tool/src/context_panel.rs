@@ -29,6 +29,45 @@ const APPLY_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
 /// The campaign battle map of the game's files.
 pub const GAME_MAP: &str = "campaign (game files)";
 
+/// The game's battle camera's far plane (scene units; `Lens::default`): the view distance without the context.
+pub const GAME_FAR_PLANE: f32 = 13_000.0;
+
+/// The minimap's picture key in `Editor::images`, and its widest side (pixels of the picture; the overlay draws it smaller).
+const MINIMAP_KEY: &str = "map_context/minimap";
+const MINIMAP_SIDE: u32 = 1024;
+
+/// A map's LF as a picture (`side` pixels at most a side, rows from the map's top): the sea blue by depth, the land from green through
+/// brown and grey to white by height, shaded by the slope from the north-west.
+fn minimap_pixels(lf: &wce_tile::battle_map::context::LfField, side: u32) -> (u32, u32, Vec<u8>) {
+    use wce_tile::battle_map::context::{LF_HEIGHT, VERTICAL_OFFSET};
+    let k = lf.w.max(lf.h).div_ceil(side).max(1);
+    let (w, h) = (lf.w.div_ceil(k), lf.h.div_ceil(k));
+    let m = |x: u32, y: u32| f64::from(lf.values[(y.min(lf.h - 1) * lf.w + x.min(lf.w - 1)) as usize]) / 65535.0 * LF_HEIGHT - VERTICAL_OFFSET;
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let (sx, sy) = (x * k, y * k);
+            let v = m(sx, sy);
+            let shade = ((m(sx.saturating_sub(k), sy.saturating_sub(k)) - m(sx + k, sy + k)) / (f64::from(k) * 64.0)).clamp(-1.0, 1.0);
+            let c: [f64; 3] = if v <= 0.5 {
+                let t = (-v / 20.0).clamp(0.0, 1.0);
+                [40.0 - 20.0 * t, 90.0 - 40.0 * t, 150.0 - 40.0 * t]
+            } else {
+                // Green to brown to grey to white, by height.
+                let stops = [(0.0, [96.0, 130.0, 70.0]), (300.0, [150.0, 135.0, 90.0]), (1000.0, [130.0, 125.0, 120.0]), (2500.0, [240.0, 240.0, 240.0])];
+                let i = stops.iter().rposition(|s| v >= s.0).unwrap_or(0).min(stops.len() - 2);
+                let t = ((v - stops[i].0) / (stops[i + 1].0 - stops[i].0)).clamp(0.0, 1.0);
+                std::array::from_fn(|c| (stops[i].1[c] * (1.0 - t) + stops[i + 1].1[c] * t) * (1.0 + 0.35 * shade))
+            };
+
+            let o = ((y * w + x) * 4) as usize;
+            px[o..o + 4].copy_from_slice(&[c[0].clamp(0.0, 255.0) as u8, c[1].clamp(0.0, 255.0) as u8, c[2].clamp(0.0, 255.0) as u8, 255]);
+        }
+    }
+
+    (w, h, px)
+}
+
 /// The label of the other battle maps in the game's packs: `<folder> (game files)` (the other campaigns', a mod's).
 pub const GAME_FILES: &str = " (game files)";
 
@@ -130,6 +169,14 @@ pub struct ContextUi {
     far_view: i32,
     pub trees: bool,
 
+    /// The camera's view distance while the context shows (scene units; the game's battle camera sees 13 000), and whether the minimap
+    /// shows over the viewport.
+    pub view_distance: f32,
+    pub minimap: bool,
+
+    /// The minimap's picture: the map it is of (its name) and the image's key in `Editor::images`.
+    minimap_of: String,
+
     /// The rings follow the camera (else they stay around the tile).
     pub follow: bool,
     pub status: String,
@@ -167,7 +214,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true, view_distance: GAME_FAR_PLANE, minimap: true, minimap_of: String::new(),
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, build_look: None, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
@@ -570,6 +617,7 @@ impl ContextUi {
     /// sea follows the focus.
     pub fn stream(&mut self, e: &mut Editor) -> bool {
         wce_prof!("context.stream");
+        e.viewport.set_far_plane(self.view_distance.max(GAME_FAR_PLANE));
         self.follow_look(e);
         let Some(focus) = self.focus(e) else { return false };
         let widened = self.follow_view(e, focus);
@@ -702,6 +750,7 @@ impl ContextUi {
 
     /// Takes the context off the scene (and stops its streamer).
     pub fn clear(&mut self, e: &mut Editor) {
+        e.viewport.set_far_plane(GAME_FAR_PLANE);
         if self.layer != 0 {
             e.scene.remove_layer(self.layer);
             self.layer = 0;
@@ -816,6 +865,14 @@ impl ContextUi {
             gui::text_disabled(&format!("LF ground to the camera's view: {} cells", self.far_view));
         }
 
+        // How far the camera sees while the context shows (the far ring follows it); the whole map at most.
+        let whole = self.loaded.as_ref().map_or(GAME_FAR_PLANE * 4.0, |(_, m, _)| (m.width.max(m.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
+        gui::slider_float("view distance", &mut self.view_distance, GAME_FAR_PLANE, whole, "%.0f");
+        gui::checkbox("overview map", &mut self.minimap);
+        if self.view_distance > GAME_FAR_PLANE * 2.0 {
+            gui::text_disabled("far views draw many chunks: slower frames");
+        }
+
         changed |= gui::checkbox("their trees", &mut self.trees);
         gui::checkbox("follow the camera", &mut self.follow);
 
@@ -858,5 +915,95 @@ impl ContextUi {
         if !self.status.is_empty() {
             gui::text_wrapped(&self.status);
         }
+    }
+}
+
+impl ContextUi {
+
+    /// The overview map over the viewport (top right, under the camera chips): the loaded map's LF, the open tile's placement, the camera and where it looks; a click
+    /// (or a drag) moves the camera there, keeping its height and angle.
+    pub fn draw_minimap(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        if !self.minimap || !self.shown {
+            return;
+        }
+
+        let Some((name, map, _)) = self.loaded.clone() else { return };
+        let Some(frame) = self.streamer.as_ref().map(|s| s.frame().clone()) else { return };
+        let Some(lf) = map.lf.as_ref().filter(|f| f.w > 1 && f.h > 1) else { return };
+        if self.minimap_of != name {
+            let (w, h, px) = minimap_pixels(lf, MINIMAP_SIDE);
+            e.images.forget(MINIMAP_KEY);
+            e.images.submit(MINIMAP_KEY, w, h, px);
+            self.minimap_of = name;
+        }
+
+        let Some(img) = e.images.get(MINIMAP_KEY) else { return };
+
+        // About a third of the image's width (the whole map's shape), under the camera chips (the coordinates are bottom left).
+        let mw = (size.x * 0.3).clamp(160.0, 420.0);
+        let mh = mw * img.h as f32 / img.w.max(1) as f32;
+        let top = e.viewport.chips_top + 44.0;
+        if mh > size.y - top - 120.0 || size.x < 400.0 {
+            return;
+        }
+
+        let pos = gui::v2(origin.x + size.x - mw - 10.0, origin.y + top);
+        gui::set_cursor_screen_pos(pos);
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.0, 0.0, 0.0, 0.6));
+        if gui::begin_child("##minimap", gui::v2(mw, mh), 0, gui::WINDOW_NO_SCROLLBAR) {
+            let dl = gui::window_draw_list();
+            let (x0, y0) = (pos.x, pos.y);
+            dl.image(img.id, gui::v2(x0, y0), gui::v2(x0 + mw, y0 + mh), gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), gui::col32(255, 255, 255, 255));
+            dl.rect(gui::v2(x0, y0), gui::v2(x0 + mw, y0 + mh), gui::col32(0, 0, 0, 200), 0.0, 1.0);
+
+            // Map cells to the picture.
+            let (cw, ch) = (map.width.max(1) as f32, map.height.max(1) as f32);
+            let at = |cx: f64, cy: f64| gui::v2(x0 + cx as f32 / cw * mw, y0 + cy as f32 / ch * mh);
+
+            // The open tile's placement.
+            let o = frame.open;
+            let (a, b) = (at(f64::from(o[0]), f64::from(o[1])), at(f64::from(o[2]), f64::from(o[3])));
+            dl.rect(gui::v2(a.x - 1.0, a.y - 1.0), gui::v2(b.x.max(a.x + 2.0) + 1.0, b.y.max(a.y + 2.0) + 1.0), gui::col32(255, 210, 60, 255), 0.0, 2.0);
+
+            // The camera and where it looks (the view distance's reach).
+            let cam = e.viewport.camera();
+            let (ex, ey) = frame.cell_of(f64::from(cam.eye.x), f64::from(cam.eye.z));
+            let (tx, ty) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
+            let (dx, dy) = (tx - ex, ty - ey);
+            let l = dx.hypot(dy).max(1e-9);
+            let reach = f64::from(cam.zfar) / CELL;
+            let eye = at(ex, ey);
+            let half = (f64::from(cam.fov_y) * 0.75).min(1.2);
+            let side = |s: f64| {
+                let (c, n) = (half.cos(), s * half.sin());
+                let (rx, ry) = ((dx * c - dy * n) / l, (dx * n + dy * c) / l);
+                at(ex + rx * reach, ey + ry * reach)
+            };
+
+            dl.triangle_filled(eye, side(-1.0), side(1.0), gui::col32(255, 255, 255, 40));
+            dl.line(eye, side(-1.0), gui::col32(255, 255, 255, 140), 1.0);
+            dl.line(eye, side(1.0), gui::col32(255, 255, 255, 140), 1.0);
+            dl.circle_filled(eye, 4.0, gui::col32(230, 60, 50, 255));
+
+            // A click or a drag: the camera over that cell.
+            gui::set_cursor_screen_pos(pos);
+            gui::invisible_button("##minimap_click", gui::v2(mw, mh), 0);
+            if gui::is_item_active() {
+                let m = gui::mouse_pos();
+                let (cx, cy) = (f64::from((m.x - x0) / mw * cw), f64::from((m.y - y0) / mh * ch));
+                let (fx, fz) = frame.from_map.apply(cx, cy);
+                let (fx, fz) = (fx as f32, fz as f32);
+                let d = wce_foundation::math::Float3::new(fx - cam.target.x, 0.0, fz - cam.target.z);
+                let to = wce_scene::camera::Camera { eye: cam.eye + d, target: cam.target + d, ..cam };
+                e.viewport.controller().set_camera(&to);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{}: click to move the camera there", self.minimap_of));
+            }
+        }
+
+        gui::end_child();
+        gui::pop_style_color(1);
     }
 }
