@@ -96,6 +96,13 @@ Not found yet: the grass density per level (the kit's `max_grass.xml` holds one 
 tweakables, 0.4 / 0.65 / 1.0, are not read by any code found), what the effects' 2 / 1 / 0 drive, the texture quality's mip drop,
 and the type codes' enum.
 
+The type code is a model's (its node's +0x50; the campaign path takes its first LOD's first mesh's +0x10): the battle LOD pass
+(fn 0x1180c370) runs over a rigid node's children (fn 0x1186a3b0, node class fn 0x117c9580). Ruled out as its enum: the RMV2 material
+ids (the files' 74 / 75 trees, 65 units, 69 grass, 68 buildings) and the engine's material name table (0x11f5ab44: index = file id -
+29), the shader techniques' ids (`FUN_118c8440`, numbered per shader file: `water_low` .. `water_ultra` 0x27 .. 0x2a) and a type-id
+getter beside the classes' name getters (`WATER_MESH`, fn 0x11751d70). Next: what writes the node's +0x50 (the rigid node's load), or
+a frame of the game (the LOD each model draws at each level).
+
 ## What the editor applies
 
 - Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
