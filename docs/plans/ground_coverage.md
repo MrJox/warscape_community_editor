@@ -4,6 +4,10 @@ A Tile panel button that finds the tile's steep height differentials (slopes, cl
 each one, rocks only up its face to just under the top edge. Everything goes into the layer `(AUTOGEN) Ground Coverage`, with vegetation
 exclusion polygons around the vegetation it adds (BOB drops manual trees that are outside every exclusion polygon, docs/re/vegetation.md).
 
+Status (2026-10-31): the first version (steps 1-4 below) is done and reviewed on `feature/auto_ground_coverage`. It is being redesigned
+into a contextual terrain coverage tool: see [Redesign](#redesign-2026-10-31), which comes first; the sections after it describe the first
+version (what the redesign builds on).
+
 Status (2026-10-26): steps 1-4 done on `feature/auto_ground_coverage`; step 5 (trying it on kit tiles, tuning the defaults) is the user's.
 Building scale (`wce_scale`) was added for the rocks and is **optional** (`scale the rocks`, off by default): TEd has no building scale and
 whether Attila honours the building list's scale is not known. Script command for checks: `ground_coverage <preview|generate> <rocks|-> <plants|-> [seed]`.
@@ -11,6 +15,102 @@ whether Attila honours the building list's scale is not known. Script command fo
 Seen on mediterranean_mountains/custom_pillar_hercules_a (defaults, seed 7): 301 slopes, 97 covered, 18,685 rocks, 5,339 plants, 635
 polygons, about 1 s in release. A whole mountainside is one differential (283,000 m², 15,900 rocks on its face): the face density and a cap
 per differential may need tuning.
+
+## Redesign (2026-10-31)
+
+The first version was inspired by JW Evolution 3's one-button cliff decoration. The redesign makes it a contextual terrain coverage tool:
+coverage of different kinds of terrain, by kind-specific detection rules, either over the whole tile or with a brush.
+
+### Decisions (user, 2026-10-31)
+
+| Question | Answer |
+|---|---|
+| Scope | **Fill the whole tile** (as now) **or brush** |
+| Brush | **Live**, as the vegetation brush: each dab finds the kind's terrain under the circle and puts rocks and plants there at once; Ctrl + drag takes coverage away. One undo entry per stroke |
+| Kinds | **Inland cliffs** (as now, plus: only where the terrain is over the sea), **coastal** (non-walkable coast), **riverbank** (non-walkable river banks) |
+| Non-walkable (coast, banks) | **The game's no-go field**: BOB's automatic no-go areas (steeper than 30°, less the go outlines), what the auto no-go view shows |
+| Presets | **Named presets per kind**: the kind fixes the detection rule; a preset is a saved file of parameters + rock set + plant set ("Mediterranean coast"). Built-in defaults for each kind |
+| Storage | **One layer, a group per kind**: `(AUTOGEN) Ground Coverage` > `Cliffs` / `Coast` / `Riverbanks`. Filling a kind replaces only that kind's filled items; brushed items are kept in their own group |
+
+### What each kind finds
+
+All three work on the same 1 m grid; what changes is which cells are the feature and where its bands are. The context they need (stage B's
+final heights, its water map, the no-go field) is worked out once per tile version, as the water depth view does (`water_view::stage_b_of`).
+
+- **Inland cliffs**: the current detection (slope above `slope_deg`, closing, regions, foot and top walks, rise and area filters). New rule:
+  a cell whose foot is not above the sea (`foot height <= sea_margin`, the sea at 0 m) is not inland: it is left to the coast. A region
+  whose cells are all left out is dropped (state `AtSea`, shown red in the preview as the others left alone).
+- **Coastal**: the no-go cells within `water_reach` of the sea (a cell at or under 0 m that is sea, not a pond: connected to the tile's
+  edge or to the map context's open sea). Regions as for cliffs. Bands, by height over the sea instead of a walked foot: a **waterline
+  band** from `-below` (rocks half under water) to `+above` metres, rocks only by default; a **face band** above it up to `top_margin`
+  under the top, sparser rocks; plants optional on a **lip band** along the top (off by default: an empty plant set).
+- **Riverbank**: the no-go cells within `water_reach` of river water (stage B's water map: a cell whose water surface is over its
+  ground). Bands by height over the local water surface (the nearest water cell's): a **water's edge band** (rocks and plants: reeds,
+  bushes) and a **bank band** above it (rocks). A river's bed (under water) gets nothing.
+
+Coast and banks use the game's no-go field (not the preset's angle), so the coverage marks exactly the ground units can't walk. Buildings
+are gone around as now (the same categories, `building_clearance`). Exclusion polygons around the plants' clusters, as now, for every kind.
+
+### Presets
+
+- A file per preset under the projects' `raw_data/art/ground_coverage_presets/<name>.wce` (beside `vegetation_sets`), XML as the sets:
+  `<GROUND_COVERAGE_PRESET kind="cliffs|coast|riverbank" rocks="<set>" plants="<set>" params="<Params::to_text>"/>`.
+- Built-in defaults per kind (not files; "Save as" makes a file of one). The parameters a kind does not use are not shown for it.
+- The window: kind tabs (Cliffs / Coast / Riverbanks), a preset combo per kind with Save, Save as, Delete, then the parameters.
+- The last preset of each kind is remembered in the Tile settings (`GroundCoverage` gets one per kind).
+
+### Storage
+
+```
+(AUTOGEN) Ground Coverage        LayerInstance
+  Cliffs                         group: wce_autogen_preset, _params, _seed, _rocks, _plants of its last fill
+    Slope 12                     a filled region: rocks, plants, exclusion polygons
+    Brushed                      group
+      Stroke 3                   a stroke's rocks, plants and the exclusion polygons around its plants
+  Coast
+    Shore 4 ...
+  Riverbanks
+    Bank 2 ...
+```
+
+- **Fill** a kind: replaces that kind's region groups, keeps its `Brushed` group; the filled items keep their spacing from the brushed ones
+  (a fill after brushing doesn't pile onto the strokes). One undo entry, the question when it would replace items (as now).
+- **Old layers** (the first version: `Slope N` groups and the `wce_autogen_*` attributes directly under the layer) read as Cliffs: the first
+  fill or stroke moves them into a `Cliffs` group.
+
+### Brush
+
+- A mode of the window: **Fill tile** / **Brush**. Brush takes radius, density (a factor on the preset's densities) and the kind's preset.
+- Stroke start: the context and the kind's classification of the whole tile (regions and bands) are taken from the cache, worked out when
+  the tile changed (about 1 s on a big tile; a status note while it runs). Dabs only scatter: they throw rocks and plants into the band
+  cells under the circle, at the preset's densities, spaced from what is there (the tile's coverage and the stroke's own), clear of the
+  buildings. The stroke is previewed as the vegetation brush's; at its end it goes into `Brushed` > `Stroke N` with the exclusion polygons
+  of its plants' clusters, one undo entry.
+- **Ctrl + drag** takes away the coverage under the circle (of the kind shown, filled or brushed); a group whose plants changed gets its
+  exclusion polygons again from what is left; a group left empty goes.
+- The overlay while brushing: the kind's bands near the cursor (green foot / waterline, orange face), so it shows where a dab would land.
+
+### Steps (a commit per step, on `feature/auto_ground_coverage`)
+
+1. **Context.** `terrain_outlines::no_go_field` (the no-go field less the go outlines, before the blur and the tracing: the field the
+   outlines come from) and a `CoverageContext` on the tool (heights, water surface, no-go, sea), resampled to the 1 m grid, cached per
+   document version; `water_view::stage_b_of` shared.
+2. **Kinds in the algorithm.** `wce_tile::ground_coverage` gets `Kind` and the per-kind detection and bands above; `generate` becomes
+   classify (regions and bands, per kind) + populate (in a set of cells: the tile or a circle). The cliffs' sea rule. Tests on synthetic
+   fields: a cliff at the sea goes to the coast; a cliff over the sea stays a cliff; a steep bank by a river is a bank, a walkable one
+   isn't; a pond under 0 m is not the sea.
+3. **Storage.** Kind groups, fill replaces a kind's regions only, the brushed group kept, old layers read as Cliffs.
+4. **Presets.** The file format, scan, built-ins, the window's kind tabs and preset combo; the script command becomes
+   `ground_coverage <preview|generate> <kind> <preset|-> [seed]`.
+5. **Brush.** The mode, the stroke (scatter, preview, commit to `Stroke N` with its polygons), Ctrl erase, the bands overlay.
+6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults.
+
+### Open (to settle while building)
+
+- The coast's sea: the tile's cells under 0 m connected to its edge may be a lake under sea level on an inland tile. The map context knows
+  where the open sea is; without it, edge-connected is the guess.
+- The banks' "local water surface" for a river whose surface falls along the tile (the nearest water cell's height is the guess).
+- Whether Ctrl + drag erases every kind or only the window's current one (the plan says the current one).
 
 ## Decisions (user, 2026-10-26)
 
