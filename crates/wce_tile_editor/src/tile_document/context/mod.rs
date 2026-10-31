@@ -141,6 +141,19 @@ fn bounds(a: &Affine2, x0: f64, z0: f64, x1: f64, z1: f64) -> [f64; 4] {
     b
 }
 
+/// A mesh instance's POSITION5..7 as a tree's untilted matrix (rows), when they are one: a 3 x 3 part that is not degenerate.
+fn untilted(rows: &[[f32; 4]; 3]) -> Option<Float4x4> {
+    let r = |i: usize, j: usize| f64::from(rows[i][j]);
+    let det = r(0, 0) * (r(1, 1) * r(2, 2) - r(1, 2) * r(2, 1)) - r(0, 1) * (r(1, 0) * r(2, 2) - r(1, 2) * r(2, 0)) + r(0, 2) * (r(1, 0) * r(2, 1) - r(1, 1) * r(2, 0));
+    if det.abs() < 1e-9 {
+        return None;
+    }
+
+    let mut m = Float4x4::IDENTITY;
+    m.m[..3].copy_from_slice(rows);
+    Some(m)
+}
+
 /// The x, z of an entity's position.
 fn position(m: &Float4x4) -> (f64, f64) {
     (f64::from(m.m[0][3]), f64::from(m.m[2][3]))
@@ -593,8 +606,22 @@ impl Frame {
 
             let mut world = frame * *w;
             let (x, z) = position(&world);
-            world.m[1][3] += self.lift(x, z);
-            out.push((world, payload.clone()));
+            let lift = self.lift(x, z);
+            world.m[1][3] += lift;
+
+            // A tree's untilted matrix (POSITION5..7: the tree shaders blend it with the world one per vertex, `untilted_rows`) moves with
+            // it: left in the tile's frame, every vertex was pulled towards a place hundreds of metres off (long streaks). Other models'
+            // POSITION5..7 are shader parameters (their 3 x 3 part is zero).
+            let mut payload = payload.clone();
+            if let Payload::MeshInstance(mi) = &mut payload
+                && let Some(rows) = untilted(&[mi.p5, mi.p6, mi.p7])
+            {
+                let mut m = frame * rows;
+                m.m[1][3] += lift;
+                [mi.p5, mi.p6, mi.p7] = [m.m[0], m.m[1], m.m[2]];
+            }
+
+            out.push((world, payload));
         }
     }
 

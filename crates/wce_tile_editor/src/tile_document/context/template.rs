@@ -186,6 +186,19 @@ fn alpha_map(m: &TerrainMaterial, ex: f64, ez: f64) -> TerrainImage {
     TerrainImage { w, h, rgba: Some(Arc::new(px)) }
 }
 
+/// The game's alpha of a tile (`s_alpha_map`; `ps30_blend` reads its R): the entry's `custom_alpha_blend_texture`, else the one of its size,
+/// `terrain/textures/<kind>/alpha/<w>x<h>.dds` (the engine's `%dx%d`; 2x3.dds is 512 wide, 640 high, as a 2 x 3 tile's blend map). It covers
+/// the tile with its border (one cell around, (cells + 2) * 128 pixels a side), 1 over the tile and an irregular part of the border, so
+/// neighbours overlap and fade into each other over 32 .. 96 m in organic shapes (the resolve divides by the weights' sum). None when the
+/// game has no such texture.
+fn game_alpha(entry: &wce_formats::tile_entry::TileEntry, cells: (u32, u32), files: &dyn Files) -> Option<TerrainImage> {
+    let custom = entry.custom_alpha_blend_texture().replace('\\', "/").to_lowercase();
+    let kind = Some(entry.kind()).filter(|k| !k.is_empty()).unwrap_or_else(|| "battle".to_owned());
+    let path = if custom.is_empty() { format!("terrain/textures/{kind}/alpha/{}x{}.dds", cells.0, cells.1) } else { custom };
+    let img = wce_formats::dds_decode::dds_decode_mip(&files.read(&path).ok()?, 0).ok()?;
+    Some(TerrainImage { w: img.w, h: img.h, rgba: Some(Arc::new(img.px)) })
+}
+
 fn image_bytes(img: &TerrainImage) -> usize {
     img.rgba.as_ref().map_or(0, |p| p.len())
 }
@@ -235,15 +248,20 @@ impl Template {
 }
 
 /// The material of a tile over `[x0, z0, x1, z1]` (its border cropped off past what the heights cover), with its normal map from the
-/// heights, its alpha map and its box; new ids.
-fn context_material(m: &TerrainMaterial, (x0, z0, x1, z1): (f64, f64, f64, f64), (ex, ez): (f64, f64), own: &Grid, height: &(dyn Fn(f64, f64) -> f32 + Sync)) -> TerrainMaterial {
+/// heights, its alpha map (the game's, `game_alpha`, when the rectangle is the tile with its whole border; else 1 over the tile) and its
+/// box; new ids.
+fn context_material(
+    m: &TerrainMaterial, (x0, z0, x1, z1): (f64, f64, f64, f64), (ex, ez): (f64, f64), own: &Grid, height: &(dyn Fn(f64, f64) -> f32 + Sync),
+    alpha: Option<TerrainImage>,
+) -> TerrainMaterial {
     let step = NEIGHBOUR_STEP;
     let mut m = m.clone();
     crop_material(&mut m, x0, z0, x1, z1);
     let (gx, gz) = (((m.x1 - m.x0) / step).round().max(1.0) as i32 + 1, ((m.z1 - m.z0) / step).round().max(1.0) as i32 + 1);
     let over = Grid::sample(gx, gz, m.x0, m.z0, step, height);
     m.normal = terrain_normal_image(&over.heights, over.nx, over.nz, step, step, m.blend.w.max(1), m.blend.h.max(1));
-    m.alpha = alpha_map(&m, ex, ez);
+    let bordered = (x0 + 128.0).abs() < 1e-6 && (z0 + 128.0).abs() < 1e-6 && (x1 - ex - 128.0).abs() < 1e-6 && (z1 - ez - 128.0).abs() < 1e-6;
+    m.alpha = alpha.filter(|_| bordered).unwrap_or_else(|| alpha_map(&m, ex, ez));
     let (lo, hi) = own.range();
     (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
     m.id = next_id(&MATERIAL_IDS);
@@ -292,7 +310,8 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
 
     let (m, _) = crate::terrain_material::build_terrain_material(&rq, &blend, &climates, files.as_ref())?;
     // Its box reaches over the mesh too (`finish`).
-    let material = Arc::new(context_material(&m, (-b, -b, ex + b, ez + b), (ex, ez), &own, &height));
+    let alpha = game_alpha(entry, (cx, cz), files.as_ref());
+    let material = Arc::new(context_material(&m, (-b, -b, ex + b, ez + b), (ex, ez), &own, &height, alpha));
     let mut tpl = Template { extent: (ex, ez), own, material: Some(material), custom: Some(Arc::new(mesh)), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
     tpl.finish();
     Ok(tpl)
@@ -303,7 +322,7 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let t0 = std::time::Instant::now();
     let mut project = TileProject::open(dir)?;
     project.game_kit = game_kit.map(Path::to_path_buf);
-    let mut doc = TileDocument::new(project, files);
+    let mut doc = TileDocument::new(project, files.clone());
     let t = doc.tile_mut();
     t.look = look.clone();
     t.display.show_grass = false;
@@ -333,8 +352,11 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let step = NEIGHBOUR_STEP;
     let o = f64::from(OVERLAP_STEPS) * step;
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
+    // The heights the game draws: BOB's final_heights.dds (the tile's own faded to 0 over the last 64 m of a land edge, so neighbours
+    // meet on the LF; docs/re/battle_maps.md, tile seams) when it is not older than the tile, else the editing heights.
     let (project, unit) = (&t.project, t.unit());
-    let height = |x: f64, z: f64| (project.height_at(x, z) / unit) as f32;
+    let baked = project.final_heights();
+    let height = |x: f64, z: f64| (baked.as_ref().map_or_else(|| project.height_at(x, z), |f| f.at(x, z)) / unit) as f32;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
 
     // The material with its border (at most what the height map has), its normal map from the heights over it, its alpha map, its box.
@@ -342,7 +364,10 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let material = scratch.find(t.terrain_entity).and_then(|e| match &e.payload {
         Payload::Terrain(tr) => tr.material.clone(),
         _ => None,
-    }).map(|m| Arc::new(context_material(&m, (-border, -border, ex + border, ez + border), (ex, ez), &own, &height)));
+    }).map(|m| {
+        let alpha = files.as_deref().zip(project.entry.as_ref()).and_then(|(f, e)| game_alpha(e, (project.info.cells_x.max(1), project.info.cells_y.max(1)), f));
+        Arc::new(context_material(&m, (-border, -border, ex + border, ez + border), (ex, ez), &own, &height, alpha))
+    });
 
     let mut entities: Vec<(Float4x4, Payload)> = scratch
         .entities()

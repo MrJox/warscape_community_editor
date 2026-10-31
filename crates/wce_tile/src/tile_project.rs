@@ -979,6 +979,54 @@ impl TileProject {
     pub fn height_at(&self, x_m: f64, z_m: f64) -> f64 {
         self.height.as_ref().map_or(0.0, |h| h.sample(self.pixel_x(x_m), self.pixel_z(z_m)))
     }
+
+    /// BOB's `final_heights.dds` of the tile (the heights the game draws), when it is there and not older than the height map, the scene and
+    /// the editor's file (a tile edited since its export would show its old heights).
+    pub fn final_heights(&self) -> Option<FinalHeights> {
+        let path = self.dir.join("final_heights.dds");
+        let time = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let baked = time(path.clone())?;
+        if ["height_map_0.png", TED_FILE, WCE_FILE].iter().filter_map(|f| time(self.dir.join(f))).any(|t| t > baked) {
+            return None;
+        }
+
+        FinalHeights::parse(&std::fs::read(path).ok()?, self.extent_x(), self.extent_z())
+    }
+}
+
+/// BOB's `final_heights.dds`: R32F metres over the tile without its border, sample (i, j) at (i, j) * extent / (n - 1) of the tile's frame.
+#[derive(Clone, Debug)]
+pub struct FinalHeights {
+    w: usize,
+    h: usize,
+    sx: f64,
+    sz: f64,
+    values: Vec<f32>,
+}
+
+impl FinalHeights {
+    /// None when it is not an R32F DDS of at least 2 x 2 samples.
+    pub fn parse(bytes: &[u8], extent_x: f64, extent_z: f64) -> Option<Self> {
+        let word = |at: usize| bytes.get(at..at + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        let (w, h) = (word(16) as usize, word(12) as usize);
+        if bytes.len() < 128 || &bytes[..4] != b"DDS " || word(4) != 124 || word(84) != 114 || w < 2 || h < 2 || bytes.len() < 128 + w * h * 4 {
+            return None;
+        }
+
+        let values = bytes[128..128 + w * h * 4].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        Some(Self { w, h, sx: (w - 1) as f64 / extent_x, sz: (h - 1) as f64 / extent_z, values })
+    }
+
+    /// Bilinear at a point of the tile's frame (metres), clamped to the tile.
+    pub fn at(&self, x: f64, z: f64) -> f64 {
+        let (fx, fz) = ((x * self.sx).clamp(0.0, (self.w - 1) as f64), (z * self.sz).clamp(0.0, (self.h - 1) as f64));
+        let (i0, j0) = ((fx.floor() as usize).min(self.w - 2), (fz.floor() as usize).min(self.h - 2));
+        let (tx, tz) = (fx - i0 as f64, fz - j0 as f64);
+        let v = |i: usize, j: usize| f64::from(self.values[j * self.w + i]);
+        let top = v(i0, j0) * (1.0 - tx) + v(i0 + 1, j0) * tx;
+        let bottom = v(i0, j0 + 1) * (1.0 - tx) + v(i0 + 1, j0 + 1) * tx;
+        top * (1.0 - tz) + bottom * tz
+    }
 }
 
 #[cfg(test)]
