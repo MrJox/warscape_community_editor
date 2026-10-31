@@ -147,8 +147,10 @@ impl Renderer {
 
         wce_prof!("render.water");
         let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
-        let sea_ps = sea_ps(self.settings.water_quality);
-        let ultra = self.settings.water_quality >= 3;
+        // Rome 2's six levels are not mapped to its four techniques yet: ultra, as before.
+        let quality = if self.game == super::game::RenderGame::Rome2 { 3 } else { self.settings.water_quality };
+        let sea_ps = sea_ps(quality);
+        let ultra = quality >= 3;
         let ps = match (rivers, self.settings.shadows) {
             (true, true) => self.shader(RIVER_PS_SHADOWS).or_else(|| self.shader(RIVER_PS)),
             (true, false) => self.shader(RIVER_PS),

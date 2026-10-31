@@ -51,13 +51,36 @@ device's class (virtual +0x370) is 2. Every preset's texture quality is by the c
 up to 1600: 1 (0 when the device class is 2), up to 2600: 2, above: 3. Unit and fleet sizes come from fns 0x11730f60 / 0x11730f20
 (not the renderer's).
 
+## Rome 2
+
+The same struct (0x7c bytes; the options screen's panel holds it at +0xc8: the code at 0x11292400 .. 0x11293a80): +0x1c .. +0x1f are its fade near units, hide
+dead bodies, hide foliage and lightning check boxes (no screen space reflections), +0x70 alpha blending (`dropdown_aoit`). Its quality
+options have six levels (Low, Medium, High, Very High, Ultra, Extreme: the options screen's layout) and the slider six presets, filled
+by fn 0x1144c3b0:
+
+| | Low | Medium | High | Very High | Ultra | Extreme |
+|---|---|---|---|---|---|---|
+| Anti-aliasing | 0 | 0 | 0 | 0 | 0 | 3 |
+| Texture filtering | 0 | 0 | 0 | 0 | 0 | 1 |
+| Shadows | 0 | 0 | 2 | 3 | 4 | 5 |
+| Water, trees, grass, terrain, sky, building, unit detail, particle effects | 0 | 1 | 2 | 3 | 4 | 5 |
+| SSAO | off | off | off | off | off | on |
+| Distortion | off | off | off | on | on | on |
+| Cloud shadows / god rays | off / off | on / off | on / on | on / on | on / on | on / on |
+| Depth of field, grain, hide foliage, vignette, alpha blending | off | off | off | off | off | off |
+| Texture quality | memory | memory | memory | 2 | memory | memory |
+
+By video memory (virtual +0x19c, MB): above 1200: 3, above 800: 2, above 600: 1, else 0. Its water techniques are registered in the
+other order (`water_ultra` 0x1f .. `water_low` 0x22, fn 0x113ded70) and how its six levels pick one of the four is not found yet.
+
 ## What the editor applies
 
 - Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
 - Water: the water planes' and the sea's pixel shaders, `ps30_battle_<level>_water_quality` / `ps30_main_<level>_water_quality`
   (the engine registers the techniques `water_low` .. `water_ultra`, fn 0x116ec510); only ultra has the variant with shadows, the
-  lower levels draw the plain one. Rome 2's extreme draws ultra.
-- Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md).
+  lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
+- Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
+  checked in its engine): anisotropic 8x.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): anti-aliasing, texture quality,

@@ -457,7 +457,7 @@ impl Renderer {
         // Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass: the lit colour only, its constants and textures named otherwise
         // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let ocean_ps = ocean_ps(self.settings.water_quality, rome2);
+        let ocean_ps = ocean_ps(if rome2 { 3 } else { self.settings.water_quality }, rome2);
         let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), self.shader(&ocean_ps)) else { return false };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
