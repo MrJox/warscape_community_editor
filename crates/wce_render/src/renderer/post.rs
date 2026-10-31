@@ -207,11 +207,41 @@ impl Renderer {
         self.fullscreen_to(&ldr.t.rtv, ldr.w, ldr.h, &tm);
     }
 
+    /// Moves the film grain's offset as the game (fn 0x1179af90, Thrones of Britannia): once 1 / grain_fps (24) of a second has passed
+    /// since the last move, the offset is two numbers of the MSVC generator (seed * 0x343fd + 0x269ec3; x the second, y the first), their
+    /// top 16 bits / 65535.
+    pub(crate) fn advance_grain(&mut self, dt: f32) {
+        const GRAIN_FPS: f32 = 24.0;
+        self.grain.since += dt;
+        if self.grain.since * 1000.0 < 1000.0 / GRAIN_FPS {
+            return;
+        }
+
+        self.grain.since = 0.0;
+        let first = self.grain.seed.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+        let second = first.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+        self.grain.seed = second;
+        let scale = 1.0 / 65535.0;
+        self.grain.offset = [(second >> 16) as f32 * scale, (first >> 16) as f32 * scale];
+    }
+
     pub(crate) fn pass_to_screen(&mut self, env: &EnvironmentParams) {
         let mut distortion = if self.settings.distortion { self.particles.distortion().cloned() } else { None };
         let dof = env.use_dof && self.settings.depth_of_field;
         let mut ps = None;
-        if distortion.is_some() {
+
+        // gfx_grain (Thrones of Britannia): the shaders' ENABLE_GRAIN variants (Attila has none; Rome 2's are not checked).
+        let mut grain = self.settings.grain && self.game != super::game::RenderGame::Rome2;
+        if grain {
+            let name = format!(
+                "dx11_{}{}enable_grain_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high",
+                if distortion.is_some() { "enable_distortion_" } else { "" }, if dof { "enable_depth_of_field_" } else { "" },
+            );
+            ps = self.shader(&name);
+            grain = ps.is_some();
+        }
+
+        if ps.is_none() && distortion.is_some() {
             ps = self.shader(if dof { TO_SCREEN_DOF_DISTORT_PS } else { TO_SCREEN_DISTORT_PS });
         }
 
@@ -265,6 +295,16 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "frame_sampler", self.post.ldr.t.srv.as_ref());
         bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         bind_srv(&self.ctx, &ps, "s_fog_of_war_mask", self.res.black_srv.as_ref());
+
+        if grain {
+            // The grain (fn 0x1179af90, ToB): commontextures/grain.dds through grain_sampler (linear, wrap), moved to a random offset
+            // grain_fps (24) times a second.
+            let srv = self.sky_texture(GRAIN_TEXTURE, false);
+            bind_srv(&self.ctx, &ps, "grain_sampler", srv.as_ref());
+            bind_sampler(&self.ctx, &ps, "grain_sampler", self.states.s_wrap_linear.as_ref());
+            self.cbs.set_f("hdr_to_screen_PS", "grain_tex_offset", &self.grain.offset);
+            self.bind(&ps);
+        }
 
         // Thrones of Britannia's adds 0.1 x the god rays' red (gfx_god_rays; docs/re/thrones_renderer.md), which the editor doesn't draw:
         // black, as the game with them off (the slot is empty after `fullscreen_to` too; this keeps it so whatever the passes before).
