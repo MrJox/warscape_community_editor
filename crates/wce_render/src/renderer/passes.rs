@@ -180,7 +180,7 @@ impl Renderer {
         // the resolve only touch those), so that the terrain textures are projected onto the meshes.
         if blend_in_terrain {
             let d = blend_mesh::BlendDraw {
-                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.rtvs(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: 2,
+                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.rtvs(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: TERRAIN_STENCIL,
                 blend: self.states.bs_opaque.clone(),
             };
 

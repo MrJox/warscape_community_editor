@@ -158,6 +158,17 @@ pub(crate) const TO_SCREEN_DISTORT_PS: &str = "dx11_enable_distortion_sm_3_0_hdr
 pub(crate) const TO_SCREEN_DOF_PS: &str = "dx11_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str = "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 pub(crate) const FOG_PS: &str = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
+
+/// Stencil bit 7: the pixels projected decals may paint. The game's G-buffer writes 129 (bit 7 | 1) for the ground and the TerrainBlend
+/// meshes (its rocks) and 1 for every other model (RenderDoc, coast.rdc: events 307, 692, 808 against 552 .. 776); a decal's box paints
+/// the ground in it, not the tents, walls or tables standing there. The other stencil tests leave the bit out (`STENCIL_LOW`).
+pub(crate) const DECAL_RECEIVER: u8 = 0x80;
+
+/// The stencil bits below the decal bit: what the lights, the fog and the terrain's resolve compare.
+pub(crate) const STENCIL_LOW: u8 = 0x7F;
+
+/// The terrain surface's and the TerrainBlend meshes' stencil: 2 (the terrain pixels the blend boxes and the resolve take), and decals.
+pub(crate) const TERRAIN_STENCIL: u32 = 2 | DECAL_RECEIVER as u32;
 pub(crate) const SHADOW_VS: &str = "dx11_sm_3_0_rigidcommon.hlsl_vs_vs30_shadow";
 pub(crate) const SUN_VS: &str = "dx11_sm_3_0_sun.hlsl_vs_vs30_main";
 pub(crate) const SUN_PS: &str = "dx11_sm_3_0_sun.hlsl_ps_ps30_main";

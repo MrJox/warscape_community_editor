@@ -502,8 +502,9 @@ impl Renderer {
         let mark = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_REPLACE, ..keep };
         t.ds_stencil_snow = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { StencilWriteMask: 0x01, FrontFace: mark, BackFace: mark, ..s });
 
-        // ... and they become geometry (stencil 1) for the lights: 2 -> 1 here, 3 -> 1 (bit 1 cleared) in the snowy resolve.
-        s.StencilReadMask = 0xFF;
+        // ... and they become geometry (stencil 1) for the lights: 2 -> 1 here, 3 -> 1 (bit 1 cleared) in the snowy resolve; the decal bit
+        // (`DECAL_RECEIVER`, set with the 2) is not compared and stays.
+        s.StencilReadMask = STENCIL_LOW;
         s.FrontFace.StencilPassOp = D3D11_STENCIL_OP_DECR;
         s.BackFace = s.FrontFace;
         t.ds_resolve = depth_stencil(&dev, &s);
@@ -1112,7 +1113,7 @@ impl Renderer {
 
         let (zw_rtv, viewz_rtv) = (self.gbuffer.channels[3].rtv.clone(), self.terrain.viewz.rtv.clone());
         let (ds_depth, ds_equal) = (self.terrain.ds_depth.clone(), self.terrain.ds_equal.clone());
-        self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, 2);
+        self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL);
         self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0);
 
         // The terrain-blend meshes' view-space depth (`geometry_30`): the resolve places them with it.

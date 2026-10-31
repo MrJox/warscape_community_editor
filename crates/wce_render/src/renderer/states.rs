@@ -77,7 +77,9 @@ impl States {
         let equal = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL, ..replace };
         d.FrontFace = equal;
         d.BackFace = equal;
+        d.StencilReadMask = super::STENCIL_LOW;
         st.ds_light = dev.create_depth_stencil_state(&d).ok();
+        d.StencilReadMask = 0xFF;
         d.StencilEnable = false.into();
         st.ds_off = dev.create_depth_stencil_state(&d).ok();
 

@@ -512,3 +512,21 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   of the ground under it. The editor's channel 4 is an R32F target written with z / w; it was cleared to 0 (the near plane), so a sea
   pixel with no ground behind it got no fog at all: dark slivers along the horizon where the map context's far ground had gaps. It is
   cleared to 1 now. The fog shader (`battlefog.hlsl` ps30_main) has no case for the sky: a depth of 1 fogs as far as the far plane.
+
+## Which pixels take projected decals (2026-10-31, RenderDoc)
+
+- The game's G-buffer stencil has two values for geometry: 129 (bit 7 | 1) for the ground (coast.rdc: event 307, the terrain's depth
+  pass; 808, the terrain) and the TerrainBlend meshes (692 .. 711: its rocks, `attila_rock_*`, whose one mesh is a TerrainBlend), and 1
+  for every other model, tree and billboard (552 .. 776). The lights compare with mask 3 (event 863: equal 1), so bit 7 is a mark of
+  its own: the pixels decals may paint. (The captures were at the lowest settings, which draw no decals, so the decal pass's own state
+  was not seen; the rule is read from the marks.)
+- The editor painted every pixel inside a decal's box. The kit's road and camp decals have tall boxes (`path_1`: 20 x 30 x 5 TEd units),
+  so on gen_dun_medium_final_2 they smeared their textures over the tents, tables, crates and walls standing in them. Now the terrain
+  surface and the TerrainBlend meshes write stencil `TERRAIN_STENCIL` (2 | `DECAL_RECEIVER`), the decal pass tests `DECAL_RECEIVER`, and
+  the other tests (the terrain's resolve, the lights, the fog) compare `STENCIL_LOW` only. Models drawn over the ground replace the
+  stencil with 1, so they clear the mark.
+- Checked on the same tile against the game's compiled `gen_dun_medium` (`prop_marker.markers`, with `prop_markers_dump` and
+  `decal_list`): outside the escalation layers, 15 313 of its decals pair with the game's records by position and all but one have the
+  same axes, so the boxes themselves were right (the tilted ones, rock clumps and some `path_1`, are tilted in the game too).
+- Not marked: the legacy terrain patches (a scene whose ground has no material) draw as models, so decals skip them.
+
