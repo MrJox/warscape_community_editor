@@ -135,6 +135,10 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   0x11911e70 / 0x118debf0: passes at 0). Not applied: what each feeds is not settled.
 - Grass, trees: no battle reader besides the per-model levels above (the grass getter's only caller is fn 0x11841280's type 0x40; the
   vegetation's own tree LOD uses `tree_lod_scaler` 1.35, no level). In battle they likely change nothing; left as not applied.
+- Film grain (ToB; fns 0x117d7da0, 0x1179af90): `commontextures/grain.dds` through `grain_sampler` (linear, wrap) in hdr_to_screen's
+  ENABLE_GRAIN variants; `grain_tex_offset` moves when 1000 / grain_fps (24) ms have passed: two numbers of the MSVC generator
+  (seed * 0x343fd + 0x269ec3), x the second, y the first, top 16 bits * 1 / 65535. Applied (the texture read as UNORM: its sRGB flag
+  is not read).
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and

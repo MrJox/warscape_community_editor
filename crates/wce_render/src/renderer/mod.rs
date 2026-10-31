@@ -151,6 +151,17 @@ pub(crate) const TM_R2_LOG_Y: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr
 pub(crate) const TM_R2_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_cie_log_y_xy_to_quarter_size_log_y_stats";
 pub(crate) const TM_R2_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_log_y_stats";
 pub(crate) const TM_TONE_MAP: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_basic_tone_mapper";
+/// Thrones of Britannia's film grain texture (fn 0x117d7da0).
+pub(crate) const GRAIN_TEXTURE: &str = "commontextures/grain.dds";
+
+/// The film grain's state: the generator, the time since its last move, its offset (`hdr_to_screen_PS.grain_tex_offset`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Grain {
+    pub seed: u32,
+    pub since: f32,
+    pub offset: [f32; 2],
+}
+
 pub(crate) const TO_SCREEN_PS: &str = "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 
 /// The same shader compiled with ENABLE_DISTORTION: uv += (distortion_sampler.xy - 0.498) * 0.02 (heat haze, lens drops).
@@ -388,6 +399,9 @@ pub struct RenderSettings {
     /// buffers at half size at 1, full size at 2.
     pub reflections: i32,
 
+    /// gfx_grain: the film grain (Thrones of Britannia's hdr_to_screen ENABLE_GRAIN variants).
+    pub grain: bool,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -462,6 +476,7 @@ impl Default for RenderSettings {
             sky_quality: 3,
             reflections: 2,
             effects_quality: 3,
+            grain: false,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -499,6 +514,7 @@ impl RenderSettings {
         self.sky_quality = o.sky_quality;
         self.reflections = o.reflections;
         self.effects_quality = o.effects_quality;
+        self.grain = o.grain;
         self.texture_filtering = o.texture_filtering;
     }
 }
@@ -699,6 +715,9 @@ pub struct Renderer {
     nis: nis::Nis,
     scaled: Option<RenderTarget>,
 
+    /// The film grain (gfx_grain).
+    grain: Grain,
+
     /// The effects quality the definitions were read with.
     effects_applied: Option<i32>,
     nis_failed: bool,
@@ -841,6 +860,7 @@ impl Renderer {
             video_memory,
             nis: nis::Nis::default(),
             effects_applied: None,
+            grain: Grain::default(),
             scaled: None,
             nis_failed: false,
             res: SharedResources::new(dev)?,
@@ -1407,6 +1427,9 @@ impl Renderer {
         let dt = self.clock.dt;
         self.gpu_timer.mark("tonemap + post");
         self.pass_tonemap(&env, dt);
+        if self.settings.grain {
+            self.advance_grain(dt);
+        }
         if self.settings.view == View::Final {
             self.pass_to_screen(&env);
             if self.settings.lens_flare {
