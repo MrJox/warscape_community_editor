@@ -11,10 +11,10 @@ use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
-use wce_tile::ground_coverage::{Differential, Grid, Input, Params, RockSize, Seat, State, generate};
+use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Params, RockSize, Seat, State, generate};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
-use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings};
+use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL};
 
 use crate::settings::{GroundCoverage, SETTINGS_ID, TileSettings};
 use crate::tool::{TileTool, document, document_id};
@@ -40,6 +40,9 @@ pub struct CoverageUi {
 
     /// Generate asked to replace what the layer holds (the question opens on the next frame).
     confirm: bool,
+
+    /// The tile's water and no-go field on the generator's grid, for the tile and its version they were worked out for.
+    context: Option<((DocumentId, u64), std::sync::Arc<Context>)>,
 }
 
 /// What Preview found, for one tile: the result, its lines, which differential each grid cell is in, and a summary.
@@ -305,13 +308,43 @@ impl TileTool {
         c
     }
 
+    /// The tile's water and no-go field on the generator's grid (stage B's, as the water depth view's): worked out again when the tile
+    /// changed (about a second on a big tile).
+    ///
+    /// # Errors
+    ///
+    /// No tile is open, or stage B fails (no height map, a linking tile's heights missing).
+    fn coverage_context(&mut self, e: &mut Editor) -> Result<std::sync::Arc<Context>, String> {
+        let id = document_id(e).ok_or("no tile is open")?;
+        let key = (id, document(e).ok_or("no tile is open")?.history().version());
+        if let Some((_, c)) = self.coverage.context.as_ref().filter(|(k, _)| *k == key) {
+            return Ok(c.clone());
+        }
+
+        let game = self.exported_game(e).ok();
+        let d = document(e).ok_or("no tile is open")?;
+        let started = std::time::Instant::now();
+        let (f, raw) = crate::water_view::stage_b_fields(d, game.as_deref()).map_err(|err| format!("ground coverage: the tile's water and no-go areas: {err}"))?;
+        let (sx, sz) = crate::water_view::vertex_spacing(d, &f);
+        let c = std::sync::Arc::new(Context::resample(&d.coverage_grid(), f.w, f.h, sx, sz, &crate::water_view::water_depth(&f), &f.no_go_field(&raw)));
+        let m2 = |n: usize| n as f32 * GRID_CELL * GRID_CELL;
+        let (no_go, wet) = (c.no_go.iter().filter(|&&b| b).count(), c.water_depth.iter().filter(|&&d| d > 0.0).count());
+        wce_foundation::log::info(format!(
+            "ground coverage: the tile's water and no-go areas worked out in {:.2} s ({:.0} m2 no-go, {:.0} m2 under rivers and water planes)",
+            started.elapsed().as_secs_f64(), m2(no_go), m2(wet),
+        ));
+        self.coverage.context = Some((key, c.clone()));
+        Ok(c)
+    }
+
     /// Finds the differentials and what goes on them, with the lines that show it.
     fn compute_coverage(&mut self, e: &mut Editor) -> Result<Preview, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
         let categories = self.building_categories(e);
+        let context = self.coverage_context(e)?;
         let doc = document_id(e).ok_or("no tile is open")?;
         let d = document(e).ok_or("no tile is open")?;
-        let (result, grid, unknown) = run(d, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
+        let (result, grid, unknown) = run(d, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
         let lines = preview_lines(d, &grid, &result);
         let owner = owners(&grid, &result);
         let mut summary = summary_of(&result);
@@ -341,8 +374,9 @@ impl TileTool {
         let (rocks, plants) = self.coverage_sets(e)?;
         let settings = CoverageSettings { params: self.coverage.params, seed: self.coverage.seed, rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
         let categories = self.building_categories(e);
+        let context = self.coverage_context(e)?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
-        let (result, _, _) = run(d, &rocks, &plants, &categories, settings.params, settings.seed);
+        let (result, _, _) = run(d, &context, &rocks, &plants, &categories, settings.params, settings.seed);
         let c = d.apply_coverage(&result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
 
         // What is in the tile now is the result: the preview would draw over it.
@@ -390,7 +424,7 @@ impl TileTool {
 /// Runs the generator on the tile (around the buildings of the avoided categories): the result, the grid, and the rock keys whose model was
 /// not found.
 fn run(
-    d: &TileDocument, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
+    d: &TileDocument, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
 ) -> (Vec<Differential>, Grid, Vec<String>) {
     let grid = d.coverage_grid();
     let blockers = d.coverage_blockers(&|k: &str| categories.get(&k.to_lowercase()).cloned());
@@ -404,7 +438,7 @@ fn run(
     }).collect::<HashMap<_, _>>();
 
     let size = |k: &str| sizes.get(k).copied().unwrap_or(UNKNOWN_ROCK);
-    let result = generate(&Input { grid: &grid, blockers: &blockers, rocks, plants, rock_size: &size, params, seed });
+    let result = generate(&Input { grid: &grid, context: Some(context), blockers: &blockers, rocks, plants, rock_size: &size, params, seed });
     (result, grid, unknown)
 }
 

@@ -260,6 +260,35 @@ impl Grid {
 /// `ground_platform` (path borders, mounds: part of the ground), nor a key of no known category (the invisible dummies among them).
 pub const AVOIDED_CATEGORIES: [&str; 6] = ["generic", "fort_wall", "fort_tower", "unbreachable_fort_wall", "gate", "bridge"];
 
+/// What the kinds need of the tile besides its heights, one value per sample of a [`Grid`]: the water over the ground and the game's no-go
+/// field (stage B's: `terrain_mesh::WaterFields`, the final heights the game is built from).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Context {
+    /// Metres of water (rivers, water planes) over the ground; 0 where there is none. The sea is not in it: it is the ground under 0 m.
+    pub water_depth: Vec<f32>,
+
+    /// Where units can't walk (BOB's automatic no-go areas: steeper than 30 degrees, less the go outlines).
+    pub no_go: Vec<bool>,
+}
+
+impl Context {
+    /// Stage B's fields, `w` x `h` vertices over the tile (row j along +z) `sx` and `sz` metres apart from (0, 0), at the grid's samples
+    /// (the nearest vertex). `depth`: NaN or under 0 where there is no water.
+    pub fn resample(g: &Grid, w: usize, h: usize, sx: f32, sz: f32, depth: &[f32], no_go: &[bool]) -> Self {
+        let mut c = Self { water_depth: Vec::with_capacity(g.nx * g.nz), no_go: Vec::with_capacity(g.nx * g.nz) };
+        for i in 0..g.nx * g.nz {
+            let (x, z) = g.at(i);
+            let vx = ((x / sx).round().max(0.0) as usize).min(w.saturating_sub(1));
+            let vz = ((z / sz).round().max(0.0) as usize).min(h.saturating_sub(1));
+            let v = vz * w + vx;
+            c.water_depth.push(depth.get(v).copied().filter(|d| *d > 0.0).unwrap_or(0.0));
+            c.no_go.push(no_go.get(v).copied().unwrap_or(false));
+        }
+
+        c
+    }
+}
+
 /// A building the coverage goes around: its centre and radius, metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Blocker {
@@ -278,6 +307,9 @@ pub struct RockSize {
 /// What a generation takes.
 pub struct Input<'a> {
     pub grid: &'a Grid,
+
+    /// The water and the no-go field on the grid's samples; none: no water, all walkable.
+    pub context: Option<&'a Context>,
     pub blockers: &'a [Blocker],
     pub rocks: &'a VegetationSet,
     pub plants: &'a VegetationSet,
@@ -817,7 +849,7 @@ mod tests {
 
     fn run(g: &Grid, blockers: &[Blocker], seed: u64) -> Vec<Differential> {
         let (rocks, plants) = sets();
-        generate(&Input { grid: g, blockers, rocks: &rocks, plants: &plants, rock_size: &size, params: Params::default(), seed })
+        generate(&Input { grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, params: Params::default(), seed })
     }
 
     #[test]
@@ -911,8 +943,21 @@ mod tests {
         assert!(run(&g, &[], 5).iter().flat_map(|d| &d.rocks).all(|r| r.scale == 1.0));
         let (rocks, plants) = sets();
         let params = Params { scale_rocks: true, ..Default::default() };
-        let out = generate(&Input { grid: &g, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
+        let out = generate(&Input { grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
         assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
+    }
+
+    #[test]
+    fn the_context_takes_the_nearest_vertex() {
+        // Stage B's fields every 2 m (3 x 2 vertices, row j along +z); the grid every metre over 4 x 2 m.
+        let g = Grid::sample(0.0, 0.0, 4.0, 2.0, 1.0, |_, _| 0.0);
+        let depth = [f32::NAN, 0.5, 2.0, -1000.0, 0.0, 3.0];
+        let no_go = [false, true, false, false, false, true];
+        let c = Context::resample(&g, 3, 2, 2.0, 2.0, &depth, &no_go);
+        assert_eq!(c.water_depth[..5], [0.0, 0.5, 0.5, 2.0, 2.0]);
+        assert_eq!(c.no_go[..5], [false, true, true, false, false]);
+        assert_eq!(c.water_depth[10..], [0.0, 0.0, 0.0, 3.0, 3.0]);
+        assert_eq!(c.no_go[10..], [false, false, false, true, true]);
     }
 
     #[test]
