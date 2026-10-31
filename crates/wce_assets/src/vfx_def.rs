@@ -356,13 +356,29 @@ fn read_prop(doc: &XmlDoc, e: usize) -> VfxProp {
     p
 }
 
+/// The effects' quality variant the definitions are read with (0 the base, 1 and 2 lower; [`set_quality`]).
+static QUALITY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Chooses the effects' quality variant the definitions are read with from now on: gfx_effects_quality 3 -> 0, 2 -> 1, 0 and 1 -> 2
+/// (Attila's fn 0x118f0a30; docs/re/graphics_options.md). Definitions read before keep theirs: read them again.
+pub fn set_quality(effects_quality: i32) {
+    let variant = match effects_quality {
+        q if q >= 3 => 0,
+        2 => 1,
+        _ => 2,
+    };
+    QUALITY.store(variant, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The properties among an element's children.
 ///
-/// Emitter properties repeat per graphics quality: quality 0 is the base value, higher levels are lower-quality overrides (fewer
-/// particles, shorter culling). The editor keeps the base level, which is what gfx_effects_quality 3 (the maximum, the default)
-/// selects; an override is only kept until a base value appears.
+/// Emitter properties repeat per graphics quality: quality 0 is the base value, 1 and 2 lower-quality overrides (fewer particles,
+/// shorter culling). A property takes the value of the quality variant chosen ([`set_quality`]) when it has one, else its base value
+/// (the engine falls back to variant 0, fn 0x11894bc0); an override of another variant is only kept until a base value appears.
 fn read_props(doc: &XmlDoc, e: usize) -> VfxProps {
+    let want = QUALITY.load(std::sync::atomic::Ordering::Relaxed);
     let mut out = VfxProps::default();
+    let mut chosen = std::collections::BTreeSet::new();
     for &c in &doc.elements()[e].children {
         if !matches!(doc.elements()[c].name.as_str(), "property" | "ranged_property" | "texture_property") {
             continue;
@@ -370,8 +386,12 @@ fn read_props(doc: &XmlDoc, e: usize) -> VfxProps {
 
         let Some(name) = doc.get(c, "name") else { continue };
         let quality = atoi(&doc.get(c, "quality").unwrap_or_else(|| "0".to_owned()));
-        if quality != 0 && out.props.contains_key(&name) {
+        if chosen.contains(&name) || (quality != 0 && quality != want && out.props.contains_key(&name)) {
             continue;
+        }
+
+        if quality == want {
+            chosen.insert(name.clone());
         }
 
         out.props.insert(name, read_prop(doc, c));

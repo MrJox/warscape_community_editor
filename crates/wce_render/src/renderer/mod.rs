@@ -381,6 +381,16 @@ pub struct RenderSettings {
     pub unit_quality: i32,
     pub tree_quality: i32,
 
+    /// gfx_sky_quality: the sky cube's size (`sky::SKY_CUBE_LARGE`, 256 at 0).
+    pub sky_quality: i32,
+
+    /// gfx_screen_space_reflections: the environment specular pass off at 0 (the directional light adds the specular then), its
+    /// buffers at half size at 1, full size at 2.
+    pub reflections: i32,
+
+    /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
+    pub effects_quality: i32,
+
     /// gfx_texture_filtering: the materials' and the terrain's "quality" samplers, trilinear or anisotropic 2^n (fn 0x1177f410).
     pub texture_filtering: i32,
 
@@ -449,6 +459,9 @@ impl Default for RenderSettings {
             building_quality: 3,
             unit_quality: 3,
             tree_quality: 3,
+            sky_quality: 3,
+            reflections: 2,
+            effects_quality: 3,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -483,6 +496,9 @@ impl RenderSettings {
         self.building_quality = o.building_quality;
         self.unit_quality = o.unit_quality;
         self.tree_quality = o.tree_quality;
+        self.sky_quality = o.sky_quality;
+        self.reflections = o.reflections;
+        self.effects_quality = o.effects_quality;
         self.texture_filtering = o.texture_filtering;
     }
 }
@@ -682,6 +698,9 @@ pub struct Renderer {
     /// The render scale's upscaler, the scene's image at its size, and whether NIS failed (the scale is then off).
     nis: nis::Nis,
     scaled: Option<RenderTarget>,
+
+    /// The effects quality the definitions were read with.
+    effects_applied: Option<i32>,
     nis_failed: bool,
     pub(crate) res: SharedResources,
 
@@ -821,6 +840,7 @@ impl Renderer {
             states: States::new(dev),
             video_memory,
             nis: nis::Nis::default(),
+            effects_applied: None,
             scaled: None,
             nis_failed: false,
             res: SharedResources::new(dev)?,
@@ -1153,6 +1173,18 @@ impl Renderer {
             self.states.set_filtering(&self.dev, filtering);
         }
 
+        // gfx_effects_quality: the effects' quality variant (not Rome 2's, whose levels are not mapped); a change reads them again.
+        let effects = if self.game == game::RenderGame::Rome2 { 3 } else { self.settings.effects_quality };
+        if self.effects_applied != Some(effects) {
+            wce_assets::vfx_def::set_quality(effects);
+            if self.effects_applied.is_some() {
+                self.particles.reload_definitions();
+                self.vfx_scene = (0, u64::MAX, 0, 0, 0, 0);
+            }
+
+            self.effects_applied = Some(effects);
+        }
+
         // Fixed-step runs load every texture whole: frame N must be the same every run.
         self.textures.set_streaming(!self.settings.deterministic);
         self.textures.pump();
@@ -1178,6 +1210,12 @@ impl Renderer {
         }
 
         apply_environment(&env, &mut self.cbs);
+
+        // gfx_screen_space_reflections 0 (Attila, Thrones of Britannia; fn 0x11904130): no environment specular pass, the directional
+        // light adds the environment's specular itself.
+        if self.reflections_off() {
+            self.cbs.set_i("lighting_VS_PS", "g_apply_environment_specular", 1);
+        }
 
         // Fog off: the fog pass is skipped, and the shaders that fog themselves (the rivers) get none either.
         if !self.settings.fog {

@@ -112,6 +112,34 @@ ids (the files' 74 / 75 trees, 65 units, 69 grass, 68 buildings) and the engine'
 getter beside the classes' name getters (`WATER_MESH`, fn 0x11751d70). Next: what writes the node's +0x50 (the rigid node's load), or
 a frame of the game (the LOD each model draws at each level).
 
+## The other options (Attila; Thrones of Britannia has the same functions)
+
+Readers of the live struct (by offset, or the vtable's getters: +0x114 texture as 3 - level, +0x1bc grass, +0x16c / +0x15c / +0x160 /
++0x178 the campaign's):
+
+- Sky (fn 0x11905050): the sky cube ("Sky Large CubeMap") 1024 at levels 1-3, 512 ("Sky Small CubeMap") at 0, where the sky is drawn
+  through the 256 cube of the environment map ("Sky Cube EnvMap RT") instead (fn 0x11923ad0). Applied: the editor's sky cube is 1024,
+  256 at 0 (it was 256 at every level).
+- Screen space reflections = the environment specular pass (environment_specular_light, reflections_blur): on above 0 (fn 0x118c2530),
+  its buffers at 0, 0.5, 1 of the screen (table 0x11cca8fc, fn 0x11903ec0); at 0 `g_apply_environment_specular` is 1 (fn 0x11904130: the
+  directional light adds the specular). Applied: off at 0; level 1's half-size buffers are drawn at full size.
+- Particle effects: the level is mapped to a variant (fn 0x118f0a30: 0 at 3, 1 at 2, 2 at 0 and 1) and each effect takes that variant
+  (fn 0x11894bc0, else variant 0): the vfx files' `quality="1"` / `"2"` property overrides. Applied (`vfx_def::set_quality`). The same
+  value also sizes a particle buffer (fns 0x11902c80 / 0x11902c20: 0x10000, 0x4000 at 2, 0x40000 in some cases): not applied (its
+  meaning against the editor's 512^2 is not known).
+- Texture quality (fn 0x1188a3c0): a texture's first mip = min(drop - (3 - bias), size class) when drop (3 - level) > 3 - bias; size
+  class 0 below 128, 1 below 256, 2 below 512, else 3; bias a u16 table at 0x11c88670 indexed by the texture's +0x108 (unknown: not the
+  RMV2 texture type, whose indices are all 0). Not applied.
+- Terrain: several level checks (fns 0x118e1300: per-frame budgets 10 / 25 and 1000 / 2000; 0x1190b5a0: 0.6 at 0 else 1 into a distance
+  product, fn 0x11902d30; 0x118eb8e0: 2048 vs 4096 texture sizes; 0x117f5b00: the terrain's shadows at 0 only under other conditions;
+  0x11911e70 / 0x118debf0: passes at 0). Not applied: what each feeds is not settled.
+- Grass, trees: no battle reader besides the per-model levels above (the grass getter's only caller is fn 0x11841280's type 0x40; the
+  vegetation's own tree LOD uses `tree_lod_scaler` 1.35, no level). In battle they likely change nothing; left as not applied.
+- Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
+  ...). Not applied (a new rendering path).
+- Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
+  domain shaders. Not applied.
+
 ## What the editor applies
 
 - Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
@@ -123,10 +151,11 @@ a frame of the game (the LOD each model draws at each level).
   lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
 - Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
   checked in its engine): anisotropic 8x.
+- Sky, screen space reflections (0 off), particle effects (Attila, ToB): above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): anti-aliasing, texture quality,
-trees, grass, terrain, sky, particle effects, screen space reflections, alpha blending, tessellation, ToB's and
+trees, grass, terrain, screen space reflections, alpha blending, tessellation, ToB's and
 Rome 2's grain, cloud shadows, god rays, Rome 2's lightning and foliage hiding.
 
 ## Editor only: the render scale

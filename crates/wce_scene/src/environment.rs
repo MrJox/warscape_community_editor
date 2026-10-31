@@ -485,6 +485,9 @@ pub struct GraphicsOptions {
     pub building_quality: i32,
     pub unit_quality: i32,
     pub tree_quality: i32,
+    pub sky_quality: i32,
+    pub reflections: i32,
+    pub effects_quality: i32,
 
     /// 0 trilinear, n anisotropic 2^n (fn 0x1177f410).
     pub texture_filtering: i32,
@@ -496,7 +499,7 @@ pub struct GraphicsOptions {
 impl Default for GraphicsOptions {
     fn default() -> Self {
         Self {
-            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, texture_filtering: 3,
+            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, sky_quality: 3, reflections: 2, effects_quality: 3, texture_filtering: 3,
             values: BTreeMap::new(),
         }
     }
@@ -521,6 +524,9 @@ impl GraphicsOptions {
                 "gfx_building_quality" => o.building_quality = (v as i32).clamp(0, 5),
                 "gfx_unit_quality" => o.unit_quality = (v as i32).clamp(0, 5),
                 "gfx_tree_quality" => o.tree_quality = (v as i32).clamp(0, 5),
+                "gfx_sky_quality" => o.sky_quality = (v as i32).clamp(0, 5),
+                "gfx_screen_space_reflections" => o.reflections = (v as i32).clamp(0, 2),
+                "gfx_effects_quality" => o.effects_quality = (v as i32).clamp(0, 5),
                 "gfx_texture_filtering" => o.texture_filtering = (v as i32).clamp(0, 4),
                 _ => {}
             }
