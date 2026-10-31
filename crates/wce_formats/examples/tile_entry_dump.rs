@@ -1,7 +1,7 @@
 //! Differential dump of the tile database entries, climates and index of an Assembly Kit's raw_data folder, for comparing with the
 //! C++ code fed the same folder.
 //!
-//!   tile_dump <raw_data> <cache file>
+//!   tile_entry_dump <raw_data> <cache file>
 
 use std::path::{Path, PathBuf};
 
