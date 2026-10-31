@@ -4,9 +4,11 @@
 
 use wce_foundation::math::{Float3, Float4x4, cross, dot, length, normalize};
 
-/// `g_battle_terrain_on_shadow_cam_depth_offset_battle`: how far the light camera is pulled back behind the slice (a battle with its
-/// terrain on; 150 m without, 14 m on the campaign map).
-pub(crate) const DEPTH_OFFSET: f32 = 5000.0;
+/// How far the light camera is pulled back behind the slice (game units): `shadow_cam_depth_offset_battle`, 150. The coast battle's
+/// memory dump (max settings) has light boxes 241, 450, 936 and 1977 deep for its four cascades (from `g_amHardSplit`), which 150 plus
+/// the slices' extents reproduces within 5 - 20 % and `g_battle_terrain_on_shadow_cam_depth_offset_battle`'s 5000 by no means (it made
+/// one shadow-map depth unit about 3 m at the camera, and the 2500-unit bias wiped out the shadows of everything lower: fences, walls).
+pub(crate) const DEPTH_OFFSET: f32 = 150.0;
 
 /// The fit of one slice: the light's view-projection (clip x, y in -1..1, depth 0..1) and the width of the light box (metres).
 pub(crate) struct LightFit {
@@ -214,12 +216,16 @@ mod tests {
         let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view));
         let corners = slice(Float3::new(0.0, 50.0, 0.0), view, 5.0, 200.0);
         let fit = fit(&corners, light, view, side, 5.0);
+
+        // x reaches 1 / cos(theta) at the widest corner, theta from the x row's 1 / sin(theta) scale.
+        let sx = length(Float3::new(fit.view_proj.m[0][0], fit.view_proj.m[0][1], fit.view_proj.m[0][2]));
+        let x_max = 1.0 / (1.0 - 1.0 / (sx * sx)).sqrt();
         for p in corners {
             let [x, y, z, w] = clip(&fit.view_proj, p);
             assert!(w > 0.0);
             assert!((-1.001..=1.001).contains(&(y / w)), "y {}", y / w);
             assert!((-0.001..=1.001).contains(&(z / w)), "z {}", z / w);
-            assert!((x / w).abs() < 1.2, "x {}", x / w);
+            assert!((x / w).abs() <= x_max * 1.001, "x {} past {x_max}", x / w);
         }
     }
 

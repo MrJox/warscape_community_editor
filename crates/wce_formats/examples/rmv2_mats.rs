@@ -13,6 +13,12 @@ fn main() {
     let mut extra = DecodeableExtraData::default();
     extra.set_disk_file_path(Some(&path));
     let m = RigidModel::decode(&mut Cursor::new(data), &Some(extra)).expect("decode");
+    // Every LOD's switch distance and mesh blocks (vertex counts) first.
+    for (k, l) in m.lods().iter().enumerate() {
+        let blocks = l.mesh_blocks().iter().map(|b| format!("{:?} {}", b.mesh().material_type(), b.mesh().vertices().len())).collect::<Vec<_>>();
+        println!("lod {k}: distance {} blocks [{}]", l.visibility_distance(), blocks.join(", "));
+    }
+
     let Some(lod) = m.lods().first() else { return };
     for (i, block) in lod.mesh_blocks().iter().enumerate() {
         let mesh = block.mesh();
