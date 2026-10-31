@@ -117,7 +117,14 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
    (`wce_autogen_preset`); the Tile settings keep the last preset per kind (the old last parameters and sets are dropped). Script:
    `ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]` (`-`: the tile's last run, else the kind's last
    preset).
-5. **Brush.** The mode, the stroke (scatter, preview, commit to `Stroke N` with its polygons), Ctrl erase, the bands overlay.
+5. **Brush** (done). The window's Fill the tile / Brush mode (radius, a density factor). `ground_coverage::classify` (regions and bands
+   over the whole tile) + `scatter` (a dab: the band cells under the circle filled up to the preset's densities, counting what is
+   there, so dabbing over a covered place adds nothing); `generate` = classify + populate, same results as before. The base a dab
+   needs is worked out at a stroke's start when the tile or the values changed; the coverage's own edits (strokes, fills) don't make it
+   or the water and no-go field stale. While a stroke lasts its rocks and plants show as crosses (the instances come at its end). Ctrl +
+   drag takes the kind's coverage (filled or brushed) away and redoes the polygons of the groups it touched; empty groups go. A fill
+   keeps off the kind's brushed items (`Input::keep_off`). Script: `ground_coverage_brush <paint|erase> <radius> <x> <z> [<x> <z>]...`.
+   Seen on sea_coast/6x4_bb_45: a 10 m stroke 21 rocks, 14 plants, 2 polygons; the same stroke again 0 rocks, 1 plant.
 6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults.
 
 ### Open (to settle while building)

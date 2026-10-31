@@ -210,3 +210,93 @@ fn the_first_versions_layer_becomes_the_cliffs() {
     assert_eq!(d.coverage_settings(Kind::Cliffs).map(|s| s.seed), Some(7));
     assert_eq!(names(&d, d.coverage_layer().unwrap()), ["mine", "Cliffs", "Coast"]);
 }
+
+/// A polygon around each plant, as the generator's would be (one per plant, for the counts).
+fn square_each(plants: &[Placed]) -> Vec<Vec<(f32, f32)>> {
+    plants.iter().map(|p| vec![(p.x - 1.0, p.z - 1.0), (p.x + 1.0, p.z - 1.0), (p.x + 1.0, p.z + 1.0), (p.x - 1.0, p.z + 1.0)]).collect()
+}
+
+/// The types of an element's children.
+fn types(d: &TileDocument, elem: usize) -> Vec<String> {
+    let sc = d.tile().tscene();
+    sc.children(elem).iter().map(|&c| sc.type_of(c).to_owned()).collect()
+}
+
+#[test]
+fn strokes_go_into_the_brushed_group_numbered() {
+    let (_dir, mut d) = open();
+    let s = slope(0, 20.0);
+    let counts = d.add_coverage_stroke(Kind::Coast, s.rocks.clone(), s.plants.clone(), s.exclusions.clone()).unwrap();
+    assert_eq!((counts.rocks, counts.plants, counts.exclusions), (2, 1, 1));
+    d.add_coverage_stroke(Kind::Coast, vec![placed("gaul_rock_01", 50.0, 10.0, 1.0)], vec![], vec![]).unwrap();
+
+    let coast = d.coverage_group(Kind::Coast).unwrap();
+    assert_eq!(names(&d, coast), [BRUSHED_GROUP]);
+    let brushed = d.tile().tscene().children(coast)[0];
+    assert_eq!(names(&d, brushed), ["Stroke 1", "Stroke 2"]);
+    let footprints = d.coverage_footprints(Kind::Coast);
+    assert_eq!(footprints.len(), 4);
+    assert!(footprints.iter().all(|(_, brushed)| *brushed));
+    assert_eq!(d.coverage_items(Kind::Coast), 0, "a run replaces none of them");
+
+    // A stroke of nothing changes nothing.
+    let before = d.tile().tscene().save();
+    assert_eq!(d.add_coverage_stroke(Kind::Coast, vec![], vec![], vec![]).unwrap().rocks, 0);
+    assert_eq!(d.tile().tscene().save(), before);
+}
+
+#[test]
+fn erasing_redoes_the_polygons_and_drops_empty_groups() {
+    let (_dir, mut d) = open();
+    let before = d.tile().tscene().save();
+    d.apply_coverage(Kind::Cliffs, &[slope(1, 20.0), slope(2, 40.0)], &settings(1)).unwrap();
+    let s = slope(0, 60.0);
+    d.add_coverage_stroke(Kind::Cliffs, s.rocks, s.plants, s.exclusions).unwrap();
+
+    // Slope 1's plant (its polygon goes with it), all of Slope 2, and the stroke's rocks and plant (the stroke and Brushed go).
+    let sc = d.tile().tscene();
+    let cliffs = d.coverage_group(Kind::Cliffs).unwrap();
+    let groups = sc.children(cliffs);
+    let (s1, s2) = (sc.children(groups[0]), sc.children(groups[1]));
+    let stroke = sc.children(sc.children(groups[2])[0]);
+    let mut gone = vec![s1[2]];
+    gone.extend(&s2[..3]);
+    gone.extend(&stroke[..3]);
+    let erased = d.erase_coverage(Kind::Cliffs, &gone, &square_each).unwrap();
+    assert_eq!(erased, 7);
+
+    let cliffs = d.coverage_group(Kind::Cliffs).unwrap();
+    assert_eq!(names(&d, cliffs), ["Slope 1"]);
+    let slope1 = d.tile().tscene().children(cliffs)[0];
+    assert_eq!(types(&d, slope1), ["BUILDING_INSTANCE", "BUILDING_INSTANCE"], "its rocks, no plant, so no polygon");
+
+    // The rocks kept where they were.
+    let p = d.tile().world_position(d.tile().tscene().children(slope1)[1]);
+    assert!((p.x - 22.0).abs() < 1e-3 && (p.z - 12.0).abs() < 1e-3, "{p:?}");
+
+    // One undo entry each.
+    d.history_mut().undo();
+    assert_eq!(d.coverage_footprints(Kind::Cliffs).len(), 9);
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(d.tile().tscene().save(), before);
+}
+
+#[test]
+fn erasing_a_plant_keeps_the_polygons_of_the_others() {
+    let (_dir, mut d) = open();
+    let mut s = slope(1, 20.0);
+    s.plants.push(placed("shrubs.shrub_rosec", 30.0, 8.0, 1.0));
+    d.apply_coverage(Kind::Cliffs, &[s], &settings(1)).unwrap();
+    let cliffs = d.coverage_group(Kind::Cliffs).unwrap();
+    let group = d.tile().tscene().children(cliffs)[0];
+    let first_plant = d.tile().tscene().children(group)[2];
+    d.erase_coverage(Kind::Cliffs, &[first_plant], &square_each).unwrap();
+
+    let group = d.tile().tscene().children(d.coverage_group(Kind::Cliffs).unwrap())[0];
+    assert_eq!(types(&d, group), ["BUILDING_INSTANCE", "BUILDING_INSTANCE", "VEGETATION_INSTANCE", "VegetationExclusionPolygonInstance"]);
+    let sc = d.tile().tscene();
+    let poly = sc.children(group)[3];
+    let pts = sc.polygon_points(poly).iter().map(|&pt| d.tile().world_position(pt)).collect::<Vec<_>>();
+    assert!(pts.iter().all(|p| (p.x - 30.0).abs() <= 1.0 + 1e-3), "around the plant left: {pts:?}");
+}

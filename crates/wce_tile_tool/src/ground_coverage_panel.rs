@@ -14,7 +14,7 @@ use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
-use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Kind, Params, RockSize, Seat, State, generate};
+use wce_tile::ground_coverage::{Blocker, Context, Differential, Grid, Input, Kind, Params, RockSize, Seat, State, generate};
 use wce_tile::ground_coverage_presets::{Preset, of_kind, presets_root, scan};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
@@ -47,6 +47,15 @@ pub struct CoverageUi {
     /// The kind changed from elsewhere (a script): the tab bar selects its tab on the next frame.
     select_tab: bool,
 
+    /// Brush mode (else Fill the tile), the brush's radius (metres; 0: the default) and the factor on the preset's densities (0: 1).
+    pub brush: bool,
+    pub brush_radius: f32,
+    pub brush_density: f32,
+
+    /// What the brush's dabs need of the tile, and the stroke under way (`ground_coverage_brush.rs`).
+    pub(crate) base: Option<Box<crate::ground_coverage_brush::BrushBase>>,
+    pub(crate) stroke: Option<crate::ground_coverage_brush::CoverageStroke>,
+
     /// The tile the values were read for (its kind's group's settings, else the kind's last preset).
     loaded_for: Option<DocumentId>,
 
@@ -61,7 +70,7 @@ pub struct CoverageUi {
     confirm: bool,
 
     /// The tile's water and no-go field on the generator's grid, for the tile and its version they were worked out for.
-    context: Option<((DocumentId, u64), std::sync::Arc<Context>)>,
+    pub(crate) context: Option<((DocumentId, u64), std::sync::Arc<Context>)>,
 }
 
 /// What Preview found, for one tile: the result, its lines, which differential each grid cell is in, and a summary.
@@ -80,7 +89,7 @@ type CategoriesSource = (String, Option<usize>, Option<std::path::PathBuf>);
 const NONE: u32 = u32::MAX;
 
 /// A rock whose model was not found counts as this big.
-const UNKNOWN_ROCK: RockSize = RockSize { radius: 1.0, height: 1.0 };
+pub(crate) const UNKNOWN_ROCK: RockSize = RockSize { radius: 1.0, height: 1.0 };
 
 impl TileTool {
     /// Opens the window (Tile panel, "Ground coverage...").
@@ -237,10 +246,11 @@ impl TileTool {
         Ok(format!("ground coverage: preset deleted ({})", path.display()))
     }
 
-    /// Closes the window, and its preview with it (the viewport would go on drawing it).
+    /// Closes the window, and its preview with it (the viewport would go on drawing it); a stroke under way is dropped.
     fn close_coverage(&mut self) {
         self.coverage.open = false;
         self.coverage.preview = None;
+        self.coverage.stroke = None;
     }
 
     /// The window.
@@ -309,6 +319,43 @@ impl TileTool {
 
         let changed = params_rows(self.coverage.kind, &mut self.coverage.params);
 
+        gui::separator_text("Where");
+        let mut brush = i32::from(self.coverage.brush);
+        if gui::radio_button("Fill the tile", brush == 0) {
+            brush = 0;
+        }
+
+        gui::same_line();
+        if gui::radio_button("Brush", brush == 1) {
+            brush = 1;
+        }
+
+        if (brush == 1) != self.coverage.brush {
+            self.coverage.brush = brush == 1;
+            self.coverage.preview = None;
+        }
+
+        if self.coverage.brush {
+            gui::push_text_wrap_pos(0.0);
+            gui::text_disabled("Left drag in the viewport (Select mode) puts the kind's rocks and plants on its terrain under the circle; Ctrl + drag takes the kind's coverage away. The bands show around the mouse once a stroke worked them out.");
+            gui::pop_text_wrap_pos();
+            let mut radius = self.coverage_radius();
+            gui::set_next_item_width(160.0);
+            if gui::drag_float("radius", &mut radius, 0.2, 1.0, 200.0, "%.1f m") {
+                self.coverage.brush_radius = radius;
+            }
+
+            let mut density = if self.coverage.brush_density > 0.0 { self.coverage.brush_density } else { 1.0 };
+            gui::set_next_item_width(160.0);
+            if gui::drag_float("density", &mut density, 0.01, 0.05, 4.0, "x %.2f") {
+                self.coverage.brush_density = density;
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("A factor on the preset's densities, for the brush only");
+            }
+        }
+
         gui::separator_text("Seed");
         // The field holds an i32: a bigger seed (a script's) is shown capped, and kept unless edited.
         let mut seed = self.coverage.seed.min(i32::MAX as u64) as i32;
@@ -326,18 +373,20 @@ impl TileTool {
 
         gui::separator();
         let (mut preview, mut generate_now, mut clear) = (false, false, false);
-        if gui::button(&format!("{}  Preview", icons::EYE)) {
-            preview = true;
-        }
+        if !self.coverage.brush {
+            if gui::button(&format!("{}  Preview", icons::EYE)) {
+                preview = true;
+            }
 
-        gui::same_line();
-        if gui::button(&format!("{}  Generate", icons::SPARKLES)) {
-            generate_now = true;
-        }
-
-        if self.coverage.preview.is_some() {
             gui::same_line();
-            clear = gui::button("Clear preview");
+            if gui::button(&format!("{}  Generate", icons::SPARKLES)) {
+                generate_now = true;
+            }
+
+            if self.coverage.preview.is_some() {
+                gui::same_line();
+                clear = gui::button("Clear preview");
+            }
         }
 
         // A preview of other values is not what Generate would make: it goes.
@@ -489,7 +538,7 @@ impl TileTool {
     }
 
     /// The chosen sets (either may be missing, not both).
-    fn coverage_sets(&mut self, e: &mut Editor) -> Result<(VegetationSet, VegetationSet), String> {
+    pub(crate) fn coverage_sets(&mut self, e: &mut Editor) -> Result<(VegetationSet, VegetationSet), String> {
         let sets = self.vegetation_sets(e);
         let find = |name: &str, kind: SetKind| sets.iter().find(|s| s.name == name && s.kind == kind).cloned().unwrap_or_default();
         let (rocks, plants) = (find(&self.coverage.rocks, SetKind::Building), find(&self.coverage.plants, SetKind::Vegetation));
@@ -502,7 +551,7 @@ impl TileTool {
 
     /// The buildings' categories of the packs' `battlefield_buildings` tables (read once for the game, its packs and the schema; empty
     /// without rpfm's schema, and the kit's tables are what is known then).
-    fn building_categories(&mut self, e: &Editor) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
+    pub(crate) fn building_categories(&mut self, e: &Editor) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
         let (files, schema) = (e.files(), crate::tool::walls_schema_path(e).ok());
         let source = (e.game().key.to_owned(), files.as_ref().map(|f| std::sync::Arc::as_ptr(f).cast::<()>() as usize), schema.clone());
         if let Some((_, c)) = self.coverage.categories.as_ref().filter(|(s, _)| *s == source) {
@@ -535,7 +584,7 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile is open, or stage B fails (no height map, a linking tile's heights missing).
-    fn coverage_context(&mut self, e: &mut Editor) -> Result<std::sync::Arc<Context>, String> {
+    pub(crate) fn coverage_context(&mut self, e: &mut Editor) -> Result<std::sync::Arc<Context>, String> {
         let id = document_id(e).ok_or("no tile is open")?;
         let key = (id, document(e).ok_or("no tile is open")?.history().version());
         if let Some((_, c)) = self.coverage.context.as_ref().filter(|(k, _)| *k == key) {
@@ -603,9 +652,13 @@ impl TileTool {
         let settings = CoverageSettings { params: c.params, seed: c.seed, rocks: c.rocks.clone(), plants: c.plants.clone(), preset: c.preset.clone() };
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
+        let id = document_id(e).ok_or("ground coverage: no tile is open")?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
         let (result, _, _) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, settings.params, settings.seed);
+        let before = d.history().version();
         let c = d.apply_coverage(self.coverage.kind, &result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
+        let after = d.history().version();
+        self.adopt_coverage_version(id, before, after);
 
         // What is in the tile now is the result: the preview would draw over it.
         self.coverage.preview = None;
@@ -651,12 +704,11 @@ impl TileTool {
     }
 }
 
-/// Runs the generator on the tile (around the buildings of the avoided categories): the result, the grid, and the rock keys whose model was
-/// not found.
-#[allow(clippy::too_many_arguments)]
-fn run(
-    d: &TileDocument, kind: Kind, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
-) -> (Vec<Differential>, Grid, Vec<String>) {
+/// What the generator needs of the tile for a rock set: its grid, the buildings it goes around (of the avoided categories, by `categories`:
+/// the packs' tables, else the kit's), the rocks' sizes and the rock keys whose model was not found.
+pub(crate) fn tile_base(
+    d: &TileDocument, rocks: &VegetationSet, categories: &std::collections::BTreeMap<String, String>,
+) -> (Grid, Vec<Blocker>, HashMap<String, RockSize>, Vec<String>) {
     let grid = d.coverage_grid();
     let blockers = d.coverage_blockers(&|k: &str| categories.get(&k.to_lowercase()).cloned());
     let mut unknown = vec![];
@@ -668,8 +720,21 @@ fn run(
         (en.key.clone(), s)
     }).collect::<HashMap<_, _>>();
 
+    (grid, blockers, sizes, unknown)
+}
+
+/// Runs the generator on the tile (around the buildings and the kind's brushed rocks and plants): the result, the grid, and the rock keys
+/// whose model was not found.
+#[allow(clippy::too_many_arguments)]
+fn run(
+    d: &TileDocument, kind: Kind, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
+) -> (Vec<Differential>, Grid, Vec<String>) {
+    let (grid, blockers, sizes, unknown) = tile_base(d, rocks, categories);
+    let keep_off = d.coverage_footprints(kind).into_iter().filter(|(_, brushed)| *brushed).map(|(f, _)| {
+        Blocker { x: f.x, z: f.z, radius: if f.tree { params.plant_radius } else { f.radius } }
+    }).collect::<Vec<_>>();
     let size = |k: &str| sizes.get(k).copied().unwrap_or(UNKNOWN_ROCK);
-    let result = generate(&Input { kind, grid: &grid, context: Some(context), blockers: &blockers, rocks, plants, rock_size: &size, params, seed });
+    let result = generate(&Input { kind, grid: &grid, context: Some(context), blockers: &blockers, keep_off: &keep_off, rocks, plants, rock_size: &size, params, seed });
     (result, grid, unknown)
 }
 
@@ -747,7 +812,7 @@ fn preview_lines(d: &TileDocument, g: &Grid, result: &[Differential]) -> Vec<Ove
 }
 
 /// The outline of a set of grid cells (each a square around its sample), on the terrain.
-fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
+pub(crate) fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
     let set = cells.iter().copied().collect::<HashSet<_>>();
     let h = g.cell * 0.5;
     let at = |x: f32, z: f32| Float3::new(x, g.height(x, z) + 0.3, z);

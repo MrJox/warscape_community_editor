@@ -1732,6 +1732,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("ground_coverage_brush", "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...", "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away", |e, a| {
+        let usage = "usage: ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...";
+        let (Some(what), Some(radius)) = (a.first().cloned(), a.get(1).and_then(|v| number(v))) else { return fail(usage) };
+        let pts = a[2..].chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
+        if pts.is_empty() || a.len() % 2 != 0 || pts.iter().any(|p| p.0.is_none() || p.1.is_none()) || !matches!(what.as_str(), "paint" | "erase") {
+            return fail(usage);
+        }
+
+        let pts = pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).collect::<Vec<_>>();
+        with_tile(e, |t, e| t.coverage_stroke_for_script(e, what == "erase", radius, &pts).map_or_else(fail, ok))
+    });
+
     c.add("veg_set", "veg_set <name>", "place or paint the trees of a vegetation set (as its Create panel entry)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: veg_set <name>") };
         with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))

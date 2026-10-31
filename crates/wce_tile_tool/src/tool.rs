@@ -1532,8 +1532,9 @@ impl TileTool {
         let t = d.tile();
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
         let veg = self.placing == Some(Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg.is_some_and(|b| b.on);
-        let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
-        if (self.mode != TileMode::Select || veg) && self.terrain_hit && e.viewport.hovered {
+        let coverage = self.coverage_brushing(e);
+        let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else if coverage { self.coverage_radius() } else { self.brush.radius_m };
+        if (self.mode != TileMode::Select || veg || coverage) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
             let mut prev = Float3::default();
             for i in 0..=n {
@@ -1570,6 +1571,7 @@ impl TileTool {
         }
 
         self.coverage_overlay(d, &mut o);
+        self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
         if t.display().show_border {
             let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
@@ -3432,6 +3434,15 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                // The ground coverage's brush (its window in Brush mode) puts the kind's coverage (Ctrl: takes it away).
+                if self.coverage_brushing(e) {
+                    if self.terrain_hit {
+                        self.begin_coverage_stroke(e, ev.ctrl);
+                    }
+
+                    return true;
+                }
+
                 // The vegetation brush paints (Ctrl: takes away) instead of placing one.
                 if self.painting_trees(e) {
                     if self.terrain_hit {
@@ -3620,6 +3631,15 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                if self.coverage.stroke.is_some() {
+                    self.on_hover(e, ev);
+                    if self.terrain_hit {
+                        self.coverage_dab();
+                    }
+
+                    return true;
+                }
+
                 if self.stroke_active {
                     self.on_hover(e, ev);
                     let dt = e.clock.dt();
@@ -3677,6 +3697,11 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                if self.coverage.stroke.is_some() {
+                    self.status = self.end_coverage_stroke(e).unwrap_or_else(|err| err);
+                    return true;
+                }
+
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 if self.stroke_active {
                     self.stroke_active = false;
@@ -3694,8 +3719,9 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Click => {
-                // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
-                if self.placing.is_some() || self.drawing {
+                // Placing, drawing or brushing: the click was a point placed or a dab, not a pick (the new building under the mouse would be
+                // selected).
+                if self.placing.is_some() || self.drawing || self.coverage_brushing(e) {
                     return true;
                 }
 
