@@ -1135,8 +1135,10 @@ impl Renderer {
         self.kinds.refresh(scene);
         cam.znear = self.near_plane(scene, &cam);
 
-        if self.states.filtering != self.settings.texture_filtering.clamp(0, 4) {
-            self.states.set_filtering(&self.dev, self.settings.texture_filtering);
+        // Rome 2's filtering levels are not mapped yet (docs/re/graphics_options.md): anisotropic 8x, as before.
+        let filtering = if self.game == game::RenderGame::Rome2 { 3 } else { self.settings.texture_filtering.clamp(0, 4) };
+        if self.states.filtering != filtering {
+            self.states.set_filtering(&self.dev, filtering);
         }
 
         // Fixed-step runs load every texture whole: frame N must be the same every run.

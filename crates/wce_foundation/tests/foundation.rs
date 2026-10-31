@@ -292,3 +292,16 @@ fn graphics_presets() {
         assert!(p.values.iter().all(|(k, _)| ATTILA.option(k).is_some() || THRONES_OF_BRITANNIA.option(k).is_some()), "{}", p.name);
     }
 }
+
+#[test]
+fn rome_2_graphics_presets() {
+    use wce_foundation::graphics::ROME_2;
+    assert_eq!(ROME_2.presets.iter().map(|p| p.name).collect::<Vec<_>>(), ["Low", "Medium", "High", "Very High", "Ultra", "Extreme"]);
+
+    // Its own video memory bounds (600, 800, 1200 MB); Very High sets texture quality 2 whatever the card.
+    assert_eq!(ROME_2.texture_quality_for(700 << 20), 1);
+    let very_high = ROME_2.preset_values(&ROME_2.presets[3], 8 << 30);
+    assert_eq!(very_high.get("gfx_texture_quality").map(String::as_str), Some("2"));
+    assert_eq!(very_high.get("gfx_shadow_quality").map(String::as_str), Some("3"));
+    assert_eq!(ROME_2.matching_preset(&very_high, 8 << 30).map(|p| p.name), Some("Very High"));
+}
