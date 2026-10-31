@@ -1513,7 +1513,7 @@ impl Editor {
         gui::set_cursor_pos_x(gui::cursor_pos_x() + 6.0);
         gui::align_text_to_frame_padding();
 
-        // The game, switched from here as from File > Game (the documents close, asking about unsaved ones).
+        // The game, switched from here (the documents close, asking about unsaved ones).
         let current = self.game();
         gui::set_next_item_width(gui::calc_text_size(current.display_name).x + 60.0);
         if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
@@ -1644,19 +1644,6 @@ impl Editor {
                     Ok(msg) => self.status(&msg, false),
                     Err(msg) => self.status(&format!("open failed: {msg}"), false),
                 }
-            }
-
-            if gui::begin_menu(&format!("{}  Game", icons::SWORDS)) {
-                let current = self.game().key;
-                for game in GameProfile::ALL {
-                    if gui::menu_item(game.display_name, None, game.key == current, true)
-                        && let Err(m) = self.switch_game(game.key)
-                    {
-                        self.status(&m, true);
-                    }
-                }
-
-                gui::end_menu();
             }
 
             if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {

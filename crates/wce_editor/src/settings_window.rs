@@ -222,6 +222,7 @@ impl Editor {
         }
 
         let before = std::mem::replace(self.settings(), draft);
+        self.settings_ref().publish_db_schemas();
         self.save_settings();
         self.set_frame_cap_live(self.settings_ref().frame_cap());
 
@@ -382,6 +383,24 @@ impl Editor {
 
         env_note("WCE_FRAME_CAP");
         help("Holds an interactive session to that many frames per second, so that a laptop GPU does not heat up and throttle itself.");
+
+        gui::separator_text("Game data");
+        let default_schemas = wce_foundation::settings::default_rpfm_schemas_dir().map_or_else(|| "rpfm's schemas folder (not found)".to_owned(), |d| d.display().to_string());
+        let mut schemas = d.db_schemas.clone();
+        if folder_field("DB schemas", &mut schemas, &default_schemas) {
+            d.db_schemas = schemas;
+        }
+
+        env_note("WCE_DB_SCHEMAS");
+        env_note("WCE_RPFM_SCHEMA");
+        let game = d.game_profile();
+        gui::set_cursor_pos_x(LABEL_WIDTH);
+        match wce_foundation::settings::rpfm_schema_path_in(game, d.db_schemas_dir().as_deref()) {
+            Some(p) => gui::text_disabled(&format!("{}: {}", game.display_name, p.display())),
+            None => gui::text_colored(theme::warning(), &format!("{}  {}: no {} here or in rpfm's schemas folder", icons::TRIANGLE_ALERT, game.display_name, game.rpfm_schema)),
+        }
+
+        help("rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses rpfm's own.");
 
         gui::separator_text("Updates");
         gui::checkbox("Check for updates at start", &mut d.updates.check_on_start);

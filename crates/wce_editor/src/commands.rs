@@ -1044,7 +1044,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         e.setup(dir).map_or_else(fail, ok)
     });
 
-    c.add("game", "game [key]", "switch to another game (File > Game: the documents close, asking about unsaved ones); no key: the current game and the others", |e, a| {
+    c.add("game", "game [key]", "switch to another game (the toolbar's game combo: the documents close, asking about unsaved ones); no key: the current game and the others", |e, a| {
         let Some(key) = a.first() else {
             let all = wce_vfs::GameProfile::ALL.iter().map(|g| g.key).collect::<Vec<_>>().join(", ");
             return ok(format!("{} ({all})", e.game().key));

@@ -1,7 +1,7 @@
 //! The Tile tool's settings: the `[tools.tile]` table.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -79,10 +79,6 @@ pub struct TileSettings {
 
     /// Each tile's saved camera views (bookmarks), by the tile's folder (lower case, `/` separators).
     pub camera_views: BTreeMap<String, Vec<CameraView>>,
-
-    /// rpfm's Attila schema (a `schema_att.ron`), for the procedural walls' database rows; none: rpfm's own (`WCE_RPFM_SCHEMA` wins).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rpfm_schema: Option<PathBuf>,
 
     /// Launch in game (`launch.rs`): the battle the game starts into, and its armies (the game's).
     pub launch: LaunchSettings,
@@ -257,6 +253,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), rpfm_schema: None, mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
     }
 }
