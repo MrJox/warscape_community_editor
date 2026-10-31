@@ -29,6 +29,19 @@ fn main() {
     .expect("map");
 
     println!("{}: {} x {}, {} placements, lf {:?}, unknown {:?} ({:.1} s)", m.name, m.width, m.height, m.placements.len(), m.lf.as_ref().map(|f| (f.w, f.h)), m.unknown, t0.elapsed().as_secs_f64());
+    if let Some(k) = a.iter().position(|v| v == "--window") {
+        let w: Vec<i32> = a[k + 1..].iter().take(4).filter_map(|v| v.parse().ok()).collect();
+        let [x0, y0, x1, y1] = w[..] else { panic!("--window x0 y0 x1 y1") };
+        for p in &m.placements {
+            let r = p.rect();
+            if r[0] < x1 && x0 < r[2] && r[1] < y1 && y0 < r[3] {
+                println!("  {}\\{} at ({}, {}) {} x {} rot {:#x}", p.location, p.variation, p.x, p.y, p.w, p.h, p.rotation);
+            }
+        }
+
+        return;
+    }
+
     let found = m.find(loc, var);
     println!("{} placements of {loc}\\{var}; {} of the tile", found.len(), m.find_tile(loc).len());
     for &i in found.iter().take(8) {

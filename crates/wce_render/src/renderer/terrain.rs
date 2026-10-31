@@ -1483,8 +1483,8 @@ impl Renderer {
         self.draw_terrain_patches_with(ents, vs, ps, cull, clip, CustomDraw::None)
     }
 
-    /// [`Self::draw_terrain_patches`], and the custom meshes of each LF group (`how`; the material pass draws the meshes alone). A terrain
-    /// with a custom mesh keeps its patches: the map context gives it a floor at the mesh's foot (see `terrain_custom`).
+    /// [`Self::draw_terrain_patches`], and the custom meshes of each LF group (`how`): a terrain with a custom mesh has no patches drawn (the
+    /// game's tile has none: its mesh is all its geometry), and the material pass draws the meshes alone.
     pub(crate) fn draw_terrain_patches_with(
         &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4, how: CustomDraw,
     ) -> u64 {
@@ -1552,7 +1552,8 @@ impl Renderer {
             let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
             let mut at: HashMap<(usize, usize, i32), usize> = HashMap::new();
             for id in &ids {
-                if material_only {
+                let custom = by_id.get(id).is_some_and(|e| matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some()));
+                if material_only || custom {
                     continue;
                 }
 

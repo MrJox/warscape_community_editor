@@ -53,6 +53,9 @@ const LF_NORMAL_SIDE: i32 = 4096;
 const PLAIN_MARGIN: f64 = 2.0;
 const FAR_MARGIN: f64 = 16.0;
 
+/// How deep a custom-mesh tile's floor lies under the sea (metres): see `Frame::place`.
+const FLOOR_DEPTH: f64 = 40.0;
+
 /// What to build.
 #[derive(Clone)]
 pub struct ContextRequest {
@@ -538,6 +541,17 @@ impl Frame {
             nx: grid.nx, nz: grid.nz, origin_x: grid.ox, origin_z: grid.oz, step: grid.step, heights: grid.heights.clone(), lod: true, material: material.clone(), lf: self.lf.clone(),
             legacy: false, custom: t.custom.clone(), ..Default::default()
         };
+
+        // A custom-mesh tile's floor: the same grid as its own terrain (whose patches are not drawn) at a fixed depth under the sea, off
+        // the LF. Beside the mesh is the sea, and the sea is transparent: with nothing under it the background showed through. The LF
+        // there is the land the cliff drops from, so the floor cannot follow it; it is where the sea tiles' bed is on the open sea's LF
+        // (LF 0: -20 m, and their own -20 m), so their skirts (40 m) reach it. ASSUMPTION: what the game has there was not traced.
+        if t.custom.is_some() {
+            let mut floor = frame;
+            floor.m[1][3] = self.sea_y() - (FLOOR_DEPTH / self.unit) as f32;
+            let ground = Terrain { custom: None, lf: None, ..terrain.clone() };
+            out.push((floor, Payload::Terrain(ground)));
+        }
 
         out.push((frame, Payload::Terrain(terrain)));
         let n = if lod == Lod::Near { t.entities.len() } else { t.mid };
