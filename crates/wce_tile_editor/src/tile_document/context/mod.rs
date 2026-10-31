@@ -16,6 +16,7 @@
 //! their position.
 
 pub mod cache;
+pub mod custom_mesh;
 pub mod stream;
 pub mod template;
 
@@ -457,11 +458,13 @@ impl Frame {
         self.runs_by_climate([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK], |o, _, _| o == 0)
     }
 
-    /// The cells a chunk draws: its own nobody covers and those of its placements (which reach out of it by up to the largest tile).
-    fn owned(&self, key: ChunkKey) -> Vec<([i32; 4], u8)> {
+    /// The cells a chunk draws: its own nobody covers and those of its placements (which reach out of it by up to the largest tile), but
+    /// those in `except`.
+    fn owned(&self, key: ChunkKey, except: &[[i32; 4]]) -> Vec<([i32; 4], u8)> {
         let (me, c) = (self.owner_of(key), [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
         let inside = |x: i32, y: i32| x >= c[0] && x < c[2] && y >= c[1] && y < c[3];
-        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| o == me || (o == 0 && inside(x, y)))
+        let cut = |x: i32, y: i32| except.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
+        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| (o == me || (o == 0 && inside(x, y))) && !cut(x, y))
     }
 
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
@@ -533,7 +536,7 @@ impl Frame {
         let (grid, material) = if lod == Lod::Near { (&t.near, &t.material) } else { (&t.coarse, &t.material_low) };
         let terrain = Terrain {
             nx: grid.nx, nz: grid.nz, origin_x: grid.ox, origin_z: grid.oz, step: grid.step, heights: grid.heights.clone(), lod: true, material: material.clone(), lf: self.lf.clone(),
-            legacy: false, ..Default::default()
+            legacy: false, custom: t.custom.clone(), ..Default::default()
         };
 
         out.push((frame, Payload::Terrain(terrain)));
@@ -560,11 +563,25 @@ impl Frame {
     }
 
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
-    /// rectangle gets LF ground), and LF ground over its cells nobody covers.
-    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>) -> Vec<(Float4x4, Payload)> {
-        // Far: the LF ground over everything it draws, in as few rectangles as its cells make.
+    /// rectangle gets LF ground), and LF ground over its cells nobody covers. `is_custom` says whether a placement's tile is a custom-mesh one.
+    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
+        // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
+        // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
+        // over the sea. Their tiles are few (48 cliffs), opened once for all their placements.
         if lod == Lod::Far {
-            return self.owned(key).into_iter().map(|(r, c)| self.ground(r, true, c)).collect();
+            let mut out = vec![];
+            let mut cut = vec![];
+            for &i in self.by_chunk.get(&key).map_or(&[][..], Vec::as_slice) {
+                if is_custom(i)
+                    && let Some(t) = template(i)
+                {
+                    self.place(i, &t, Lod::Far, &mut out);
+                    cut.push(self.map.placements[i].rect());
+                }
+            }
+
+            out.extend(self.owned(key, &cut).into_iter().map(|(r, c)| self.ground(r, true, c)));
+            return out;
         }
 
         let mut out = vec![];

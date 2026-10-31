@@ -22,6 +22,7 @@ use wce_scene::render_scene::{EntityId, LfMap, Payload, RenderScene, Terrain, Te
 
 use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
+use super::terrain_custom::CustomDraw;
 use wce_foundation::jobs::io_pool;
 use crate::texture::{Texture, load_dds_array, make_rgba_texture, make_solid_texture};
 
@@ -106,7 +107,7 @@ struct PlacedPatch {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Placed {
     key: usize,
-    world: Float4x4,
+    pub(crate) world: Float4x4,
     lf: u64,
     units: f32,
     lod: bool,
@@ -387,6 +388,9 @@ pub(crate) struct TerrainGpuState {
     pub(crate) placed: BTreeMap<EntityId, Placed>,
     pub(crate) mat: BTreeMap<u64, TerrainMatGpu>,
 
+    /// The custom meshes by id (`terrain_custom`).
+    pub(crate) custom: HashMap<u64, super::terrain_custom::CustomGpu>,
+
     /// The LF maps by id, and a zero one for the terrains without (what the unused height texture reads).
     pub(crate) lf: BTreeMap<u64, LfGpu>,
     lf_zero: Option<ID3D11ShaderResourceView>,
@@ -416,7 +420,7 @@ pub(crate) struct TerrainGpuState {
     pub(crate) resolve_vb: Option<ID3D11Buffer>,
     pub(crate) inst_vb: Option<ID3D11Buffer>,
     pub(crate) ds_depth: Option<ID3D11DepthStencilState>,
-    ds_equal: Option<ID3D11DepthStencilState>,
+    pub(crate) ds_equal: Option<ID3D11DepthStencilState>,
     ds_lequal: Option<ID3D11DepthStencilState>,
     pub(crate) ds_stencil: Option<ID3D11DepthStencilState>,
     pub(crate) ds_resolve: Option<ID3D11DepthStencilState>,
@@ -1093,6 +1097,13 @@ impl Renderer {
         }
 
         self.terrain.mat.retain(|_, g| g.used + MATERIAL_KEEP > epoch);
+        for e in &ents {
+            if let Payload::Terrain(Terrain { custom: Some(m), .. }) = &e.payload {
+                self.build_custom(m, epoch);
+            }
+        }
+
+        self.terrain.custom.retain(|_, g| g.used + MATERIAL_KEEP > epoch);
 
         let arrays: std::collections::BTreeSet<(String, bool)> = ents.iter().filter_map(|e| match &e.payload {
             Payload::Terrain(Terrain { material: Some(m), .. }) => Some([(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]),
@@ -1113,8 +1124,12 @@ impl Renderer {
 
         let (zw_rtv, viewz_rtv) = (self.gbuffer.channels[3].rtv.clone(), self.terrain.viewz.rtv.clone());
         let (ds_depth, ds_equal) = (self.terrain.ds_depth.clone(), self.terrain.ds_equal.clone());
-        self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL);
-        self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0);
+        // A custom-mesh tile's mesh instead of its patches (`terrain_custom`).
+        let custom_vs = self.shader(super::terrain_custom::CUSTOM_GEOM_VS);
+        let how = custom_vs.as_deref().map_or(CustomDraw::None, CustomDraw::Depth);
+        self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
+        self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
+        self.ctx.set_input_layout(Some(&geom_il));
 
         // The terrain-blend meshes' view-space depth (`geometry_30`): the resolve places them with it.
         let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
@@ -1320,6 +1335,9 @@ impl Renderer {
             self.draw_lists.vis = vis;
         }
 
+        // ---- 2c. The custom meshes' own material (`custom_geometry`).
+        self.draw_custom_material(&ents);
+
         // ---- 3. The resolve: the terrain pixels into the G-buffer.
         let Payload::Terrain(first) = &ents[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
@@ -1393,11 +1411,14 @@ impl Renderer {
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
-    pub(crate) fn draw_terrain_surface(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>, stencil_ref: u32) {
+    pub(crate) fn draw_terrain_surface(
+        &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>,
+        stencil_ref: u32, how: CustomDraw,
+    ) {
         self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
         let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);
-        let triangles = self.draw_terrain_patches(ents, vs, ps, &cull, &clip);
+        let triangles = self.draw_terrain_patches_with(ents, vs, ps, &cull, &clip, how);
         self.draw_stats.triangles += triangles;
     }
 
@@ -1409,6 +1430,12 @@ impl Renderer {
             let Some(e) = scene.find(id) else { continue };
             let Payload::Terrain(t) = &e.payload else { continue };
             self.build_hf(id, t);
+            if let Some(m) = &t.custom
+                && !self.terrain.custom.contains_key(&m.id)
+            {
+                self.build_custom(m, self.terrain.material_epoch);
+            }
+
             if let Some(lf) = &t.lf {
                 self.build_lf(lf);
             }
@@ -1453,6 +1480,21 @@ impl Renderer {
     /// view-projection the shaders get (game units). Each LF map's terrains are drawn in its frame (see `lf_draw`: the camera constants move
     /// with it and are put back after); the placements of one patch go out as instances of one draw. Returns the triangles drawn.
     fn draw_terrain_patches(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4) -> u64 {
+        self.draw_terrain_patches_with(ents, vs, ps, cull, clip, CustomDraw::None)
+    }
+
+    /// [`Self::draw_terrain_patches`], and the custom meshes of each LF group (`how`; the material pass draws the meshes alone). A terrain
+    /// with a custom mesh keeps its patches: the map context gives it a floor at the mesh's foot (see `terrain_custom`).
+    pub(crate) fn draw_terrain_patches_with(
+        &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4, how: CustomDraw,
+    ) -> u64 {
+        let by_id: HashMap<EntityId, &wce_scene::render_scene::Entity> = ents.iter().map(|e| (e.id, *e)).collect();
+        let material_only = matches!(how, CustomDraw::Material);
+        let geom_il = match how {
+            CustomDraw::Depth(_) => self.layout(vs, "terrain_geom", &geom_layout()),
+            _ => None,
+        };
+
         // Groups by LF map, in the entities' order.
         let mut groups: Vec<(Option<Arc<LfMap>>, Vec<EntityId>)> = vec![];
         for e in ents {
@@ -1510,6 +1552,10 @@ impl Renderer {
             let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
             let mut at: HashMap<(usize, usize, i32), usize> = HashMap::new();
             for id in &ids {
+                if material_only {
+                    continue;
+                }
+
                 let Some(p) = self.terrain.placed.get(id) else { continue };
                 for pp in &p.patches {
                     if !box_in_frustum(cull, pp.bmin, pp.bmax) {
@@ -1581,6 +1627,14 @@ impl Renderer {
                 }
 
                 triangles += u64::from(index_count / 3) * u64::from(count);
+            }
+
+            if !matches!(how, CustomDraw::None) {
+                triangles += self.draw_custom_meshes(&by_id, &ids, how, cull, [sx, sz]);
+                if let Some(il) = &geom_il {
+                    self.ctx.set_input_layout(Some(il));
+                    self.bind(vs);
+                }
             }
         }
 

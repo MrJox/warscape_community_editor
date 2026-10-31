@@ -86,6 +86,9 @@ struct Shared {
     queue: Mutex<Vec<Job>>,
     work: Condvar,
     tiles: Mutex<HashMap<TileKey, Slot>>,
+
+    /// Whether a tile (location, variation) is a custom-mesh one (`is_custom`).
+    custom_tiles: Mutex<HashMap<(String, String), bool>>,
     loaded: Condvar,
     stats: Mutex<Stats>,
     clock: std::sync::atomic::AtomicU64,
@@ -97,6 +100,21 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shared {
+
+    /// Whether a placement's tile is a custom-mesh one (the cliffs), as the first root that has it says (remembered per tile; one the roots
+    /// do not have is not: the packs' form is not read yet).
+    fn is_custom(&self, i: usize) -> bool {
+        let p = &self.frame.map.placements[i];
+        let key = (p.location.clone(), p.variation.clone());
+        if let Some(&known) = lock(&self.custom_tiles).get(&key) {
+            return known;
+        }
+
+        let roots: Vec<PathBuf> = self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
+        let custom = wce_tile::sources::find_tile(&roots, &key.0, &key.1).is_some_and(|d| wce_tile::sources::custom_mesh(&d).is_some());
+        lock(&self.custom_tiles).insert(key, custom);
+        custom
+    }
 
     /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
     fn template(&self, i: usize) -> Option<Arc<Template>> {
@@ -148,7 +166,9 @@ impl Shared {
             None => (load_any_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
         });
 
+        // A custom-mesh tile is not cached (the cache has no place for its mesh; it opens in a fraction of a scene tile's time).
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)
+            && t.custom.is_none()
             && let Err(e) = cache::write(c, *k, t)
         {
             wce_foundation::log::info(format!("map context: not cached: {}: {e}", dir.display()));
@@ -221,7 +241,7 @@ impl Shared {
 
             // Not in the pool: `template` may wait for another worker's tile, and a pool thread waiting inside a parallel loop can take up
             // that very worker's job (a deadlock); only the opening and the cache read run there.
-            let entities = self.frame.build_chunk(job.key, job.lod, &|i| self.template(i));
+            let entities = self.frame.build_chunk(job.key, job.lod, &|i| self.template(i), &|i| self.is_custom(i));
             if tx.send((job.key, job.lod, entities)).is_err() {
                 return;
             }
@@ -272,7 +292,7 @@ impl Streamer {
         let rings = [rq.near, rq.mid, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            pool, frame, rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
+            pool, frame, rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
             clock: Default::default(), stop: AtomicBool::new(false),
         });
 

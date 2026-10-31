@@ -100,7 +100,7 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         let zw_rtv = self.gbuffer.channels[3].rtv.clone();
         let ds_depth = self.terrain.ds_depth.clone();
-        self.draw_terrain_surface(ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL);
+        self.draw_terrain_surface(ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, super::terrain_custom::CustomDraw::None);
 
         // ---- 2. Per material: its boxes accumulated, then textured into the terrain targets.
         let Some(box_il) = self.layout(&blend_vs, "terrain_box_rome2", &box_layout()) else { return };

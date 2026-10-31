@@ -179,8 +179,31 @@ plains (aa .. ad) elsewhere.
   (8 near, ground to 56): 10.3 / 13.4 ms a frame against master's 9.9 / 13.3 ms; the first ring 0.7 s against 2.8 s. Walking the focus east
   12 chunks while 9 new tiles open on the workers: 15.6 ms a frame on average, p95 40 ms, the worst 140 ms (new tiles' maps uploaded on the
   render thread).
-- The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`),
-  and the `cliff_custom` tiles have no `tile.ted` in the kit: their cells show the LF ground.
+- The kit's `plains/3x1/3x1_aa/height_map_0.png` is broken (its PNG signature went through a text-mode newline conversion: `0D 0A 1A 0D 0A`).
+- **Where a placement's tile comes from** (2026-10-31): the first source that has it, in the order every kit-layout loader follows
+  (`wce_tile::sources`): the projects' kit layout, the Assembly Kits in the settings' order, then the packs decompiled into the kit's layout
+  (for Attila only the fallback, read the first time a tile is in no kit; for Rome 2 the neighbours' tree).
+- **Custom-mesh tiles** (`cliff_custom`, 48 entries, 2026-10-31). Not broken in the kit: they are another kind of tile. A variation folder
+  holds `custom_mesh.cs2` (3ds Max's Cas2 export, one mesh per level: `_lod01` .. `_lod05`), `blend_map.tif` (the 16 weights, as a scene
+  tile's) and `lf_mask.tif` (8 x 8 16-bit for a 2 x 2 tile: 4 pixels a cell, the LF's grid; 65535 on the plateau side); no `tile.ted`, no
+  height map. The packs have BOB's `custom_mesh.rigid_model_v2` (material type CustomTerrain, 5 levels at 100 / 200 / 400 / 500 / 1000,
+  texture `terrain\textures\battle\cliff\0_su`), `blend.dds`, `index.dds`, `ground_types.dds`, `hf_height_map.data` (the mesh's heights
+  from above, 2 y, over its rectangle, 1 sample a unit) and an empty `terrain_outlines.xml`.
+  - BOB's mesh is the CS2's (checked on `2x2_lb_rb/aa`, `custom_mesh_check`): the same positions (identical bounds per level), the same
+    triangles in another order and wound the other way; per vertex (36 bytes) P0 float4, N0 u8 x 4 = the CS2 normal (z, y, x bytes, read
+    as B8G8R8A8) and its colour alpha (0 on the plateau, 255 on the faces), N1 / N2 its tangent frame, T0 half2 = the CS2's uv channel 0
+    (rpfm reads the uv as two f32: wrong). BOB keeps a few more vertices apart than the bytes differ by (3501 against 3482), by N1.
+  - The game (findings of a Ghidra spike, `empire.retail.dll`): the tile loader takes `custom_mesh.rigid_model_v2` as the tile's only
+    geometry (no patches); `vs30_custom_geom` (the surface's `vs30_geom` with the position made (x, 2 y, -z, 1), on the LF) draws it into
+    the terrain's depth passes, so the tile's blend box projects its material onto it, and `vs30_custom_geom_mat` + `ps30_custom_geom_mat`
+    add the albedo (`<name>_<climate>_diffuse.dds`, else `_default_`) to the blend accumulation with the weight `10 * N0.w`. `lf_mask` is
+    applied by the kit's tools when a map is built (`apply_per_tile_lf_patches`); the game never reads it.
+  - The editor (`context::custom_mesh`, `renderer::terrain_custom`) draws them so. The tile frame's z runs to the map's south, the scene's
+    to the north: a vertex is at (x, y, depth + z) (the placements say so: a cliff's plateau meets the land tiles south of it). Under the
+    sea beside the mesh the template puts a floor at the mesh's foot (the sea is transparent: with nothing under it the background showed;
+    what the game has there was not traced). In the far ring a cliff keeps its mesh (its LF is the land its face drops from: drawn plain,
+    it stood as a slab over the sea). Not drawn: their shadows. Not read: the packs' form (every Attila cliff is in the kit).
+  - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
