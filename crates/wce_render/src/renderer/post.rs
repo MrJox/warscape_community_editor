@@ -332,7 +332,7 @@ impl Renderer {
     ///   of their input (`g_input_size_ps` = its size and reciprocal, fn 0x11798830).
     /// The three targets: fn 0x1197b480 makes them at their scale of the view (fn 0x117701b0, the descriptor the reflections' buffers use)
     /// in the first of TTF_L8 / TTF_A8R8G8B8 the device takes (fn 0x117ca2f0): TTF_L8 is R8_UNORM (fn 0x118163e0). The samplers (fns
-    /// 0x1174a3f0, 0x11745ae0, the hdr_to_screen shader's): `depth_sampler` point clamp, the blurs' `s_input_sampler` point wrap,
+    /// 0x1174a3f0, 0x11745a90, 0x1174b440): `depth_sampler` point clamp, the blurs' `s_input_sampler` point wrap,
     /// `god_rays_sampler` linear clamp (pass_to_screen).
     fn pass_god_rays(&mut self, env: &EnvironmentParams) -> Option<ID3D11ShaderResourceView> {
         let (Some(rays), Some(bx), Some(by)) = (self.shader(GOD_RAYS_PS), self.shader(GOD_RAYS_BLUR_X_PS), self.shader(GOD_RAYS_BLUR_Y_PS)) else {
