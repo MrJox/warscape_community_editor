@@ -199,9 +199,11 @@ plains (aa .. ad) elsewhere.
     add the albedo (`<name>_<climate>_diffuse.dds`, else `_default_`) to the blend accumulation with the weight `10 * N0.w`. `lf_mask` is
     applied by the kit's tools when a map is built (`apply_per_tile_lf_patches`); the game never reads it.
   - The editor (`context::custom_mesh`, `renderer::terrain_custom`) draws them so. The tile frame's z runs to the map's south, the scene's
-    to the north: a vertex is at (x, y, depth + z) (the placements say so: a cliff's plateau meets the land tiles south of it). Under the
-    sea beside the mesh the template puts a floor at the mesh's foot (the sea is transparent: with nothing under it the background showed;
-    what the game has there was not traced). In the far ring a cliff keeps its mesh (its LF is the land its face drops from: drawn plain,
+    to the north: a vertex is at (x, y, depth + z) (the placements say so: a cliff's plateau meets the land tiles south of it). Its terrain's
+    patches are not drawn (zero heights: the LF there is the land the cliff drops from); under the sea beside the mesh `Frame::place` puts
+    a floor of its own, off the LF, 40 m under the sea (where the sea tiles' bed is on the open sea's LF), so the neighbours' skirts reach
+    it (the sea is transparent: with nothing under it the background showed; at the mesh's foot, 100 m down, the sea tiles' skirts left
+    holes; what the game has there was not traced). In the far ring a cliff keeps its mesh (its LF is the land its face drops from: drawn plain,
     it stood as a slab over the sea). Not drawn: their shadows. Not read: the packs' form (every Attila cliff is in the kit).
   - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same

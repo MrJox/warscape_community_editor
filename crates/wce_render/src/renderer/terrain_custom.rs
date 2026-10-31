@@ -1,6 +1,6 @@
 //! Custom terrain meshes (a custom-mesh tile's `CustomTerrain` mesh: the cliffs), with `rigidterrain.hlsl`'s custom geometry entries. The
-//! game's tile loader takes `custom_mesh.rigid_model_v2` as such a tile's only geometry; its terrain's patches are drawn too (the map
-//! context makes them a floor at the mesh's foot: something under the sea, not traced in the game). The mesh is drawn in two places:
+//! game's tile loader takes `custom_mesh.rigid_model_v2` as such a tile's only geometry, so its terrain's patches are not drawn (the map
+//! context puts a floor under the sea beside it as a terrain of its own); the mesh is drawn in two places:
 //!
 //! 1. the terrain surface pass (`geometry_custom_30`): `vs30_custom_geom` with the surface's pixel shaders (z / w and the view-space depth),
 //!    so the tile's blend box projects its material onto the mesh as onto a patch;

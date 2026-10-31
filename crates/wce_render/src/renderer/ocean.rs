@@ -381,7 +381,8 @@ impl Renderer {
         let terrains = || scene.entities().iter()
             .filter(|e| scene.drawable(e))
             .filter_map(|e| match &e.payload {
-                Payload::Terrain(t) => Some((e, t)),
+                // A custom-mesh tile's own terrain is not its ground (its heights draw nothing; its floor is a terrain of its own).
+                Payload::Terrain(t) if t.custom.is_none() => Some((e, t)),
                 _ => None,
             })
             .filter(|(e, t)| over(e, t));
