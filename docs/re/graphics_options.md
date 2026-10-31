@@ -96,7 +96,16 @@ Not found yet: the grass density per level (the kit's `max_grass.xml` holds one 
 tweakables, 0.4 / 0.65 / 1.0, are not read by any code found), what the effects' 2 / 1 / 0 drive, the texture quality's mip drop,
 and the type codes' enum.
 
-The type code is a model's (its node's +0x50; the campaign path takes its first LOD's first mesh's +0x10): the battle LOD pass
+**Resolved:** the type codes are the RMV2 files' material ids. The v6+ loader (fn 0x1185d050) reads each mesh's type as the first u16 of
+its header (the file's material id) and passes it to the mesh's creation (fn 0x1185b0c0); the campaign path reads LOD 0's first mesh's
+type. Read so, the battle pass gives: Decal (71) and DecalDirtmap (72) models the building level (level 0 keeps from LOD 2, level 1
+from LOD 1), Dirtmap (73), Tree (74) and TreeLeaf (75) models the unit detail level (level 0 drops LOD 0), 91, 92, 110 and 111 the tree
+level (level 0 drops LOD 0); the others (DefaultMaterial 68 among them) none. The engine's own name table (0x11f5ab44) lists the same
+materials (index = id - 29). The LOD flags are the loaded model's, so every instance of a model takes them; that the model's type is its
+LOD 0 first mesh's (the node's +0x50 was not seen written) is the campaign path's reading. Thrones of Britannia has the same two
+functions (0x118806e0, 0x118b5d70); Rome 2 has the per-model one (0x1151ab60) but its battle pass is not found.
+
+Earlier leads, for the record: the type code is a model's (its node's +0x50; the campaign path takes its first LOD's first mesh's +0x10): the battle LOD pass
 (fn 0x1180c370) runs over a rigid node's children (fn 0x1186a3b0, node class fn 0x117c9580). Ruled out as its enum: the RMV2 material
 ids (the files' 74 / 75 trees, 65 units, 69 grass, 68 buildings) and the engine's material name table (0x11f5ab44: index = file id -
 29), the shader techniques' ids (`FUN_118c8440`, numbered per shader file: `water_low` .. `water_ultra` 0x27 .. 0x2a) and a type-id
@@ -106,6 +115,9 @@ a frame of the game (the LOD each model draws at each level).
 ## What the editor applies
 
 - Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
+- Building detail, unit detail (Attila, ToB): the battle pass's LODs switched off (`draw_set::LodQuality`): a switched off LOD is passed
+  over by the LOD selection (its distance 0, not enabled), in every view (camera, shadows, picking). Trees: the level only reaches the
+  materials above (none of Attila's trees use them; its vegetation's density and LOD per level are not found): not applied.
 - Water: the water planes' and the sea's pixel shaders, `ps30_battle_<level>_water_quality` / `ps30_main_<level>_water_quality`
   (the engine registers the techniques `water_low` .. `water_ultra`, fn 0x116ec510); only ultra has the variant with shadows, the
   lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
@@ -114,7 +126,7 @@ a frame of the game (the LOD each model draws at each level).
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): anti-aliasing, texture quality,
-trees, grass, terrain, sky, building detail, particle effects, screen space reflections, alpha blending, tessellation, ToB's and
+trees, grass, terrain, sky, particle effects, screen space reflections, alpha blending, tessellation, ToB's and
 Rome 2's grain, cloud shadows, god rays, Rome 2's lightning and foliage hiding.
 
 ## Editor only: the render scale

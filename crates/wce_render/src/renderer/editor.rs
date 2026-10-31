@@ -754,7 +754,7 @@ impl Renderer {
 
         let (Some(cb), Some(tcb)) = (self.editor.pick_cb.clone(), self.editor.tint_cb.clone()) else { return };
         let vp_m = self.camera.main_view_proj;
-        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, ..Default::default() };
+        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, quality: self.lod_quality(), ..Default::default() };
         let draws = std::mem::take(&mut self.draw_lists.draws);
         let mut vis = Visible::default();
         draws.cull(&view, &mut vis);
@@ -848,7 +848,7 @@ impl Renderer {
 
         // The selected items of both draw sets, culled and gathered once for the two draws.
         let vp_m = self.camera.main_view_proj;
-        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, ..Default::default() };
+        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, quality: self.lod_quality(), ..Default::default() };
         let (draws, terrain_draws) = (std::mem::take(&mut self.draw_lists.draws), std::mem::take(&mut self.draw_lists.terrain_draws));
         // Per set: its visible list and where its instances start in `instances`.
         let mut sets: Vec<(&crate::draw_set::DrawSet, Visible, u32)> = vec![];
@@ -1065,6 +1065,7 @@ impl Renderer {
             eye: params.camera.eye,
             lod_scale: self.settings.lod_scale,
             min_ratio: if top || params.camera.is_ortho() { 0.0 } else { self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32 },
+            quality: self.lod_quality(),
             ..Default::default()
         };
 

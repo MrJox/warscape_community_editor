@@ -595,6 +595,7 @@ impl Renderer {
                     coarser: c as i32,
                     lod_scale: self.settings.lod_scale,
                     min_radius: texel_c[c] * self.settings.shadow_min_texels,
+                    quality: self.lod_quality(),
                     ..Default::default()
                 };
 

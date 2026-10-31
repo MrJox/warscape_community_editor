@@ -158,7 +158,8 @@ const ATTILA_OPTIONS: &[GfxOption] = &[
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS), "3", false),
     opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", false),
+    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", true),
+    opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", false),
     opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "0", false),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
@@ -182,7 +183,8 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS), "3", false),
     opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", false),
+    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", true),
+    opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", false),
     opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "0", false),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
@@ -211,6 +213,7 @@ const ROME_2_OPTIONS: &[GfxOption] = &[
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
+    opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
     opt("gfx_depth_of_field", "Depth of field", GfxKind::Switch, "1", true),
@@ -230,14 +233,14 @@ const ROME_2_OPTIONS: &[GfxOption] = &[
 use PresetValue::{ByVideoMemory as Vram, Fixed as F};
 
 /// The quality options a preset sets to its level.
-const QUALITIES: [&str; 8] = [
+const QUALITIES: [&str; 9] = [
     "gfx_shadow_quality", "gfx_water_quality", "gfx_tree_quality", "gfx_grass_quality", "gfx_terrain_quality", "gfx_sky_quality", "gfx_building_quality",
-    "gfx_effects_quality",
+    "gfx_effects_quality", "gfx_unit_quality",
 ];
 
 /// An Attila preset (fn 0x1175c2f0 fills them; docs/re/graphics_options.md): anti-aliasing, filtering, the level of every quality option,
 /// SSAO, depth of field, distortion, reflections; the texture quality by video memory, the vignette off.
-const fn attila_preset(aa: i32, filtering: i32, level: i32, ssao: i32, dof: i32, distortion: i32, reflections: i32) -> [(&'static str, PresetValue); 16] {
+const fn attila_preset(aa: i32, filtering: i32, level: i32, ssao: i32, dof: i32, distortion: i32, reflections: i32) -> [(&'static str, PresetValue); 17] {
     [
         ("gfx_aa", F(aa)),
         ("gfx_texture_filtering", F(filtering)),
@@ -250,6 +253,7 @@ const fn attila_preset(aa: i32, filtering: i32, level: i32, ssao: i32, dof: i32,
         (QUALITIES[5], F(level)),
         (QUALITIES[6], F(level)),
         (QUALITIES[7], F(level)),
+        (QUALITIES[8], F(level)),
         ("gfx_screen_space_reflections", F(reflections)),
         ("gfx_ssao", F(ssao)),
         ("gfx_depth_of_field", F(dof)),
@@ -259,25 +263,25 @@ const fn attila_preset(aa: i32, filtering: i32, level: i32, ssao: i32, dof: i32,
 }
 
 /// A Thrones of Britannia preset (fn 0x117ce2f0): Attila's and its grain (always off), cloud shadows and god rays.
-const fn thrones_preset(a: [(&'static str, PresetValue); 16], cloud_shadows: i32, god_rays: i32) -> [(&'static str, PresetValue); 19] {
-    let mut out = [("", F(0)); 19];
+const fn thrones_preset(a: [(&'static str, PresetValue); 17], cloud_shadows: i32, god_rays: i32) -> [(&'static str, PresetValue); 20] {
+    let mut out = [("", F(0)); 20];
     let mut i = 0;
-    while i < 16 {
+    while i < 17 {
         out[i] = a[i];
         i += 1;
     }
 
-    out[16] = ("gfx_grain", F(0));
-    out[17] = ("gfx_cloud_shadows", F(cloud_shadows));
-    out[18] = ("gfx_god_rays", F(god_rays));
+    out[17] = ("gfx_grain", F(0));
+    out[18] = ("gfx_cloud_shadows", F(cloud_shadows));
+    out[19] = ("gfx_god_rays", F(god_rays));
     out
 }
 
-const ATTILA_LOW: [(&str, PresetValue); 16] = attila_preset(0, 0, 0, 0, 0, 0, 0);
-const ATTILA_MEDIUM: [(&str, PresetValue); 16] = attila_preset(0, 0, 1, 0, 0, 1, 0);
-const ATTILA_HIGH: [(&str, PresetValue); 16] = attila_preset(0, 0, 2, 0, 0, 1, 1);
-const ATTILA_ULTRA: [(&str, PresetValue); 16] = attila_preset(1, 1, 3, 1, 0, 1, 2);
-const ATTILA_EXTREME: [(&str, PresetValue); 16] = attila_preset(3, 2, 3, 1, 1, 1, 2);
+const ATTILA_LOW: [(&str, PresetValue); 17] = attila_preset(0, 0, 0, 0, 0, 0, 0);
+const ATTILA_MEDIUM: [(&str, PresetValue); 17] = attila_preset(0, 0, 1, 0, 0, 1, 0);
+const ATTILA_HIGH: [(&str, PresetValue); 17] = attila_preset(0, 0, 2, 0, 0, 1, 1);
+const ATTILA_ULTRA: [(&str, PresetValue); 17] = attila_preset(1, 1, 3, 1, 0, 1, 2);
+const ATTILA_EXTREME: [(&str, PresetValue); 17] = attila_preset(3, 2, 3, 1, 1, 1, 2);
 
 const ATTILA_PRESETS: &[GfxPreset] = &[
     GfxPreset { name: "Low", values: &ATTILA_LOW },
@@ -287,11 +291,11 @@ const ATTILA_PRESETS: &[GfxPreset] = &[
     GfxPreset { name: "Extreme", values: &ATTILA_EXTREME },
 ];
 
-const THRONES_LOW: [(&str, PresetValue); 19] = thrones_preset(ATTILA_LOW, 0, 0);
-const THRONES_MEDIUM: [(&str, PresetValue); 19] = thrones_preset(ATTILA_MEDIUM, 1, 0);
-const THRONES_HIGH: [(&str, PresetValue); 19] = thrones_preset(ATTILA_HIGH, 1, 1);
-const THRONES_ULTRA: [(&str, PresetValue); 19] = thrones_preset(ATTILA_ULTRA, 1, 1);
-const THRONES_EXTREME: [(&str, PresetValue); 19] = thrones_preset(ATTILA_EXTREME, 1, 1);
+const THRONES_LOW: [(&str, PresetValue); 20] = thrones_preset(ATTILA_LOW, 0, 0);
+const THRONES_MEDIUM: [(&str, PresetValue); 20] = thrones_preset(ATTILA_MEDIUM, 1, 0);
+const THRONES_HIGH: [(&str, PresetValue); 20] = thrones_preset(ATTILA_HIGH, 1, 1);
+const THRONES_ULTRA: [(&str, PresetValue); 20] = thrones_preset(ATTILA_ULTRA, 1, 1);
+const THRONES_EXTREME: [(&str, PresetValue); 20] = thrones_preset(ATTILA_EXTREME, 1, 1);
 
 const THRONES_PRESETS: &[GfxPreset] = &[
     GfxPreset { name: "Low", values: &THRONES_LOW },
@@ -316,7 +320,7 @@ pub const THRONES_OF_BRITANNIA: GraphicsCatalogue =
 #[allow(clippy::too_many_arguments)]
 const fn rome2_preset(
     aa: i32, filtering: i32, level: i32, shadows: i32, ssao: i32, distortion: i32, cloud_shadows: i32, god_rays: i32, texture: PresetValue,
-) -> [(&'static str, PresetValue); 20] {
+) -> [(&'static str, PresetValue); 21] {
     [
         ("gfx_aa", F(aa)),
         ("gfx_texture_filtering", F(filtering)),
@@ -329,6 +333,7 @@ const fn rome2_preset(
         (QUALITIES[5], F(level)),
         (QUALITIES[6], F(level)),
         (QUALITIES[7], F(level)),
+        (QUALITIES[8], F(level)),
         ("gfx_ssao", F(ssao)),
         ("gfx_depth_of_field", F(0)),
         ("gfx_distortion", F(distortion)),
@@ -341,12 +346,12 @@ const fn rome2_preset(
     ]
 }
 
-const ROME_2_LOW: [(&str, PresetValue); 20] = rome2_preset(0, 0, 0, 0, 0, 0, 0, 0, Vram);
-const ROME_2_MEDIUM: [(&str, PresetValue); 20] = rome2_preset(0, 0, 1, 0, 0, 0, 1, 0, Vram);
-const ROME_2_HIGH: [(&str, PresetValue); 20] = rome2_preset(0, 0, 2, 2, 0, 0, 1, 1, Vram);
-const ROME_2_VERY_HIGH: [(&str, PresetValue); 20] = rome2_preset(0, 0, 3, 3, 0, 1, 1, 1, F(2));
-const ROME_2_ULTRA: [(&str, PresetValue); 20] = rome2_preset(0, 0, 4, 4, 0, 1, 1, 1, Vram);
-const ROME_2_EXTREME: [(&str, PresetValue); 20] = rome2_preset(3, 1, 5, 5, 1, 1, 1, 1, Vram);
+const ROME_2_LOW: [(&str, PresetValue); 21] = rome2_preset(0, 0, 0, 0, 0, 0, 0, 0, Vram);
+const ROME_2_MEDIUM: [(&str, PresetValue); 21] = rome2_preset(0, 0, 1, 0, 0, 0, 1, 0, Vram);
+const ROME_2_HIGH: [(&str, PresetValue); 21] = rome2_preset(0, 0, 2, 2, 0, 0, 1, 1, Vram);
+const ROME_2_VERY_HIGH: [(&str, PresetValue); 21] = rome2_preset(0, 0, 3, 3, 0, 1, 1, 1, F(2));
+const ROME_2_ULTRA: [(&str, PresetValue); 21] = rome2_preset(0, 0, 4, 4, 0, 1, 1, 1, Vram);
+const ROME_2_EXTREME: [(&str, PresetValue); 21] = rome2_preset(3, 1, 5, 5, 1, 1, 1, 1, Vram);
 
 const ROME_2_PRESETS: &[GfxPreset] = &[
     GfxPreset { name: "Low", values: &ROME_2_LOW },

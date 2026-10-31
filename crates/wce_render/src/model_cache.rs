@@ -207,6 +207,10 @@ pub struct GpuModel {
 
     /// LOD 0's solid meshes (not trees, grass or water) seen from above: the editor drapes its polygons over buildings with it.
     pub top: Option<Arc<ModelTop>>,
+
+    /// The material id (the file's) of LOD 0's first mesh: the engine's type of the model for the quality options' LOD switching
+    /// (`draw_set::LodQuality`); 0 for none.
+    pub material: u16,
 }
 
 /// A projected decal mesh of a model: an 8 corner box (ProjectedDecalV3 boxes are turned about y) and the decal's textures by name.
@@ -885,6 +889,7 @@ impl ModelInner {
             path: path.to_owned(),
             bmin: Float3::new(1e30, 1e30, 1e30),
             bmax: Float3::new(-1e30, -1e30, -1e30),
+            material: model.lods().first().and_then(|l| l.mesh_blocks().first()).map_or(0, |b| *b.mesh().material_type() as u16),
             ..Default::default()
         };
 
