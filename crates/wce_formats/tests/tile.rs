@@ -1,4 +1,4 @@
-//! Tests of the tile database entry, climates and index on a fake raw_data folder. `tile_dump` compares them with the C++ code over a kit.
+//! Tests of the tile database entry, climates and index on a fake raw_data folder. `tile_entry_dump` compares them with the C++ code over a kit.
 
 use std::fs;
 use std::path::Path;
