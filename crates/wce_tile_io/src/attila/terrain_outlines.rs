@@ -550,12 +550,18 @@ pub fn terrain_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32
     out.into_bytes()
 }
 
+/// The field the automatic no-go areas are traced from, one value per sample of `heights`: the steep ground, less the go outlines `go`,
+/// blurred as BOB blurs it before tracing.
+pub fn no_go_field(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>]) -> Vec<bool> {
+    let mut field = no_go(heights, w, h, 2.0, 30.0);
+    cut_go_outlines(&mut field, w, h, go);
+    blur(&field, w, h)
+}
+
 /// The automatic no-go areas BOB finds in the final heights (the steep ground, less the go outlines `go`), traced, simplified and kept
 /// as the subtile filter keeps them: their points in the field's space (2 per sample: `x / 2` the column, `y / 2` the row of `heights`).
 pub fn no_go_outlines(heights: &[f32], w: usize, h: usize, go: &[Vec<(f32, f32)>], mask: &[bool], cells: (usize, usize)) -> Vec<Vec<(f32, f32)>> {
-    let mut field = no_go(heights, w, h, 2.0, 30.0);
-    cut_go_outlines(&mut field, w, h, go);
-    let field = blur(&field, w, h);
+    let field = no_go_field(heights, w, h, go);
     let traced = trace(&field, w, h, 6);
     let outlines = traced
         .iter()

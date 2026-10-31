@@ -12,7 +12,7 @@ use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::terrain_bake::{TerrainView, WaterDepth};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_io::attila::TedProject;
-use wce_tile_io::attila::terrain_mesh::water_fields;
+use wce_tile_io::attila::terrain_mesh::{WaterFields, water_fields};
 use wce_tile_io::{TileFiles, TileFormat};
 use wce_tile_model::Blob;
 
@@ -80,6 +80,33 @@ type Outlines = Vec<Vec<[f32; 2]>>;
 
 /// With `nogos`, the automatic no-go areas too.
 fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
+    let (f, raw) = stage_b_fields(d, game)?;
+    let depth = water_depth(&f);
+
+    // The grid's vertices over the tile without its border, row j along +z.
+    let nogos = nogos.then(|| {
+        let (sx, sz) = vertex_spacing(d, &f);
+        f.no_go_outlines(&raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
+    });
+
+    Ok((WaterDepth { w: f.w, h: f.h, depth }, nogos))
+}
+
+/// Metres of water over each vertex of stage B's grid; NaN where there is none.
+pub(crate) fn water_depth(f: &WaterFields) -> Vec<f32> {
+    match &f.water {
+        Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
+        None => vec![f32::NAN; f.w * f.h],
+    }
+}
+
+/// Metres between the vertices of stage B's grid (over the tile without its border), along x and z.
+pub(crate) fn vertex_spacing(d: &TileDocument, f: &WaterFields) -> (f32, f32) {
+    (d.tile().extent_x() as f32 / (f.w - 1).max(1) as f32, d.tile().extent_z() as f32 / (f.h - 1).max(1) as f32)
+}
+
+/// Stage B's fields of the tile and the raw tile they were made from.
+pub(crate) fn stage_b_fields(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>) -> Result<(WaterFields, wce_tile_model::Tile), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
     let p = d.project();
@@ -109,16 +136,5 @@ fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Gam
     let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
     let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
     let f = water_fields(&raw, Path::new(&kit_raw), models)?;
-    let depth = match &f.water {
-        Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
-        None => vec![f32::NAN; f.w * f.h],
-    };
-
-    // The grid's vertices over the tile without its border, row j along +z.
-    let nogos = nogos.then(|| {
-        let (sx, sz) = (d.tile().extent_x() as f32 / (f.w - 1).max(1) as f32, d.tile().extent_z() as f32 / (f.h - 1).max(1) as f32);
-        f.no_go_outlines(&raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
-    });
-
-    Ok((WaterDepth { w: f.w, h: f.h, depth }, nogos))
+    Ok((f, raw))
 }

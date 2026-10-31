@@ -1075,6 +1075,11 @@ impl WaterFields {
         let outlines = super::terrain_outlines::no_go_outlines(&self.heights, self.w, self.h, &go, &self.mask, g.cells_of_tile(raw));
         outlines.into_iter().map(|o| o.into_iter().map(|(x, y)| (x * 0.5, y * 0.5)).collect()).collect()
     }
+
+    /// The field [`Self::no_go_outlines`] traces, one value per vertex of the grid (row j along +z): where units can't walk.
+    pub fn no_go_field(&self, raw: &wce_tile_model::Tile) -> Vec<bool> {
+        super::terrain_outlines::no_go_field(&self.heights, self.w, self.h, &super::compile::go_outlines(raw))
+    }
 }
 
 /// [`WaterFields`] of a raw tile.
