@@ -53,6 +53,11 @@ const LF_NORMAL_SIDE: i32 = 4096;
 const PLAIN_MARGIN: f64 = 2.0;
 const FAR_MARGIN: f64 = 16.0;
 
+/// Whether a tile location is of the `sea` set (`terrain\tiles\battle\sea\...`; not `sea_coast` and the others).
+fn is_sea_set(location: &str) -> bool {
+    location.split(['\\', '/']).filter(|s| !s.is_empty()).nth(3).is_some_and(|set| set.eq_ignore_ascii_case("sea"))
+}
+
 /// How deep a custom-mesh tile's floor lies under the sea (metres): see `Frame::place`.
 const FLOOR_DEPTH: f64 = 40.0;
 
@@ -542,6 +547,18 @@ impl Frame {
             legacy: false, custom: t.custom.clone(), ..Default::default()
         };
 
+        // A sea tile (the `sea` set) on the sea's LF, not the land's: the game draws its sea geometry pass with the battle's
+        // `lf_sea_height_map.dds` bound (fn 0x119256e0 with sea = 1, pass 0x15), 0 (-20 m) on all but 5246 of its pixels; on the land's LF a
+        // sea tile next to a cliff rose up to 40 m out of the sea over its last 32 m, where the game (same camera, from a memory dump)
+        // has open sea. ASSUMPTION: that the game's sea pass is what draws the sea tiles was not traced (which patches it draws); the
+        // sea LF is taken as 0 everywhere (its few other pixels are not read).
+        if is_sea_set(&self.map.placements[i].location) {
+            let mut sea = frame;
+            sea.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
+            out.push((sea, Payload::Terrain(Terrain { lf: None, ..terrain })));
+            return self.place_entities(t, lod, frame, out);
+        }
+
         // A custom-mesh tile's floor: the same grid as its own terrain (whose patches are not drawn) at a fixed depth under the sea, off
         // the LF. Beside the mesh is the sea, and the sea is transparent: with nothing under it the background showed through. The LF
         // there is the land the cliff drops from, so the floor cannot follow it; it is where the sea tiles' bed is on the open sea's LF
@@ -554,6 +571,11 @@ impl Frame {
         }
 
         out.push((frame, Payload::Terrain(terrain)));
+        self.place_entities(t, lod, frame, out);
+    }
+
+    /// A placement's entities moved into the frame (`frame`) and lifted by the LF at their position.
+    fn place_entities(&self, t: &Template, lod: Lod, frame: Float4x4, out: &mut Vec<(Float4x4, Payload)>) {
         let n = if lod == Lod::Near { t.entities.len() } else { t.mid };
         for (w, payload) in &t.entities[..n] {
             // The renderer draws water vertices as they are (no world matrix): moved into the frame here, lifted per vertex.
@@ -581,16 +603,27 @@ impl Frame {
     pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
         // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
-        // over the sea. Their tiles are few (48 cliffs), opened once for all their placements.
+        // over the sea. Their tiles are few (48 cliffs), opened once for all their placements. A sea tile's rectangle is on the sea's LF.
         if lod == Lod::Far {
             let mut out = vec![];
             let mut cut = vec![];
             for &i in self.by_chunk.get(&key).map_or(&[][..], Vec::as_slice) {
+                let p = &self.map.placements[i];
                 if is_custom(i)
                     && let Some(t) = template(i)
                 {
                     self.place(i, &t, Lod::Far, &mut out);
-                    cut.push(self.map.placements[i].rect());
+                    cut.push(p.rect());
+                } else if is_sea_set(&p.location) {
+                    // A sea tile's ground on the sea's LF (`place`): on the land's, next to a cliff it rose out of the sea.
+                    let c = if self.map.climate_of(p).is_some() { p.climate } else { NO_CLIMATE };
+                    let (mut world, ground) = self.ground(p.rect(), true, c);
+                    if let Payload::Terrain(t) = ground {
+                        world.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
+                        out.push((world, Payload::Terrain(Terrain { lf: None, ..t })));
+                    }
+
+                    cut.push(p.rect());
                 }
             }
 

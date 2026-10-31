@@ -205,6 +205,17 @@ plains (aa .. ad) elsewhere.
     it (the sea is transparent: with nothing under it the background showed; at the mesh's foot, 100 m down, the sea tiles' skirts left
     holes; what the game has there was not traced). In the far ring a cliff keeps its mesh (its LF is the land its face drops from: drawn plain,
     it stood as a slab over the sea). Not drawn: their shadows. Not read: the packs' form (every Attila cliff is in the kit).
+  - **Sea tiles on the sea's LF** (2026-10-31). The campaign LF under a cliff tile is land (60 .. 130 m) up to its edge, and the
+    neighbouring `sea` tiles (flat -20 m of their own) are sea (-20 .. +4 m). The game reads the campaign LF as the editor does (a plain
+    bilinear resample, pixel k at k / W, no per-tile patches, `additive_type` never read: Ghidra, the battle terrain loader fn 0x1190cd40,
+    the extracted grid fn 0x11806d80), yet at the same camera (from a memory dump of a battle at `terrain_plains_med/2x1` (594, 667)) the
+    sea tile next to a cliff is open sea where, on the land's LF, its last 32 m rose 39 m out of the water. The battle also loads
+    `lf_sea_height_map.dds` (4064 x 2874 L16, 0 = -20 m on all but 5246 pixels) and binds it for the sea geometry pass (fn 0x119256e0 with
+    sea = 1, pass 0x15; techniques `sea_geometry_30(_new)`, `ps_sea_geom`). The editor draws the `sea` set's tiles on that LF (taken as 0:
+    -20 m) in every ring; drawn so, the matched view agrees with the game's screenshot. ASSUMPTION: that pass is what draws the sea tiles
+    (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Side effect: at a beach the sea tiles sit a
+    few metres lower than on the land's LF, and the open tile (drawn without skirts) leaves a wider gap under the water at its seaward
+    edge (it had a thin one before).
   - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
