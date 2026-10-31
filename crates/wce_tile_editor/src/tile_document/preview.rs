@@ -169,8 +169,6 @@ impl Tile {
             let w = world_transform(&mini, e);
             let w = WorldTransform { position: w.position - origin, ..w };
             let scale = mini.scale(e).unwrap_or(Double3::new(1.0, 1.0, 1.0));
-            // A decal's box takes the scale's magnitudes (`TileDocument::decal_matrix`).
-            let scale = if mini.type_of(e) == "ProjectedDecalInstance" { Double3::new(scale.x.abs(), scale.y.abs(), scale.z.abs()) } else { scale };
             let local = matrix_of(&w, unit, Some(scale * (1.0 / unit)));
             let at = Float3::new(local.m[0][3], local.m[1][3], local.m[2][3]);
             let landscape = mini.doc().get(e, "surface_mode").is_none_or(|m| m == "MSM_LANDSCAPE");

@@ -43,8 +43,9 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
       turned 180 degrees at that placement, and the editor lit the scene with the sun from the opposite side (5deff33). Left:
       - Done: **sand**. The beach's look is the tile's projected decals (`global_terrain_beach_01`, `beach01blend`, `beach01end`:
         ripples by the water, a seaweed and pebble band, pitted dry sand), not the ground textures. TEd's decal scales have a
-        negative z; the binary keeps the magnitudes, and the editor's signed axis drew every decal with its texture turned over (the
-        wet edge inland). Decals now take the magnitudes (`TileDocument::decal_matrix`; docs/re/renderer.md "Projected decals").
+        negative z, and the editor drew decals with the plain `ps30_diffuse`, whose v runs the other way (the wet edge inland) and which
+        shears turned non-square boxes; they are drawn with `ps30_diffuse_bugged` now, exact for any box (docs/re/renderer.md
+        "Projected decals: which pixel shader"; also gen_dun_medium_final_2's smeared roads).
         Also found: the game's ground there is ROME_Atlantic (its texture paths in the dump: agri, forest, grass, mud, rock, sand,
         settlement_1..3, the nine slots of `g_blend_pixel_scale_array`), the battle map cell's climate.
       - **Shallows** (open): the game's water by the shore is clear over the sand under the foam; the editor's foam band is more
