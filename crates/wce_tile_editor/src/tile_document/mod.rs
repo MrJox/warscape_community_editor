@@ -22,6 +22,7 @@ mod cover;
 mod draft;
 pub mod context;
 mod edits;
+pub mod fire;
 mod index;
 pub mod minimap;
 pub mod kit;
@@ -517,6 +518,9 @@ pub struct Tile {
 
     /// The buildings' pieces collapsing between two levels (collapse.rs).
     pub(crate) collapses: collapse::CollapseState,
+
+    /// The burning sequence's preview (fire.rs).
+    pub(crate) fire: fire::FirePreview,
     pub(crate) links_entity: EntityId,
     pub(crate) links_dirty: bool,
     pub(crate) water_dirty: bool,
@@ -717,7 +721,7 @@ impl TileDocument {
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
-            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), links_entity: 0,
+            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),

@@ -2595,8 +2595,10 @@ impl TileDocument {
             }
 
             ins.text("model", "model", &model);
+            self.fire_rows(e, ins);
         }
 
+        let sc = self.tile().tscene();
         ins.text("layer", "layer", &sc.layer_path(e));
 
         let tag = sc.type_of(e).to_owned();
@@ -2632,6 +2634,29 @@ impl TileDocument {
         if self.tile().is_polygon(e) {
             let sc = self.tile().tscene();
             ins.text("points", "points", &sc.polygon_points(e).len().to_string());
+        }
+    }
+
+    /// A building's fire preview (fire.rs): where the sequence is, and playing or stopping it. Not an edit: the file keeps its values.
+    fn fire_rows(&mut self, e: usize, ins: &mut dyn Inspector) {
+        let state = match self.tile().fire_time(e) {
+            Some(t) => {
+                let (amount, stage) = super::fire::fire_at(t);
+                let what = if stage == 1 { "flames" } else if t < super::fire::STAGE_ONE_SECONDS + super::fire::STAGE_TWO_SECONDS { "collapse, smoke" } else { "burnt" };
+                format!("{t:.0} s: {what}, char {amount:.2}")
+            }
+
+            None => "not burning".to_owned(),
+        };
+
+        ins.text("fire", "fire preview", &state);
+        if ins.button("fire_play", "Play the fire", true) {
+            let now = self.tile().fire_now();
+            self.tile_mut().fire_start(e, now);
+        }
+
+        if ins.button("fire_stop", "Stop the fire", self.tile().fire_time(e).is_some()) {
+            self.tile_mut().fire_stop(Some(e));
         }
     }
 

@@ -1995,6 +1995,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
     });
 
+    c.add("tile_fire", "tile_fire play|stop|state [selected | #elem]", "the burning sequence's preview of a building (fire.rs): play it from the start, stop it, or log where it is", |e, a| {
+        let sel = selected(e);
+        let now = e.clock.time();
+        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_fire play|stop|state [selected | #elem]") };
+        let Some(el) = element_arg(d, a.get(1).map_or("selected", String::as_str), primary_of(&sel, d)) else { return fail("no such element") };
+        if d.tile().tscene().type_of(el) != "BUILDING_INSTANCE" {
+            return fail("not a building");
+        }
+
+        match a[0].as_str() {
+            "play" => d.tile_mut().fire_start(el, now),
+            "stop" => d.tile_mut().fire_stop(Some(el)),
+            "state" => {
+                return ok(&d.tile().fire_time(el).map_or("not burning".to_owned(), |t| {
+                    let (amount, stage) = wce_tile_editor::tile_document::fire::fire_at(t);
+                    format!("{t:.2} s, stage {stage}, char {amount:.3}")
+                }));
+            }
+
+            _ => return fail("usage: tile_fire play|stop|state [selected | #elem]"),
+        }
+
+        ok("")
+    });
+
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
         let Some(d) = document(e) else { return fail("no tile open") };
         match d.generate_siege_ai() {

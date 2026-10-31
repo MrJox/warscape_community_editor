@@ -924,7 +924,8 @@ impl Tile {
                     (p4, self.untilted_piece_rows(elem, i), false)
                 } else {
                     let look = self.piece_props_or_building(elem, i);
-                    ([p4[0], p4[1], p4[2], opacity_w(look.opacity)], [[0.0, 0.0, 0.0, 1.0], burn_row(&look), [0.0; 4]], look.burn)
+                    let (p6, burning) = self.burn_of(elem, &look);
+                    ([p4[0], p4[1], p4[2], opacity_w(look.opacity)], [[0.0, 0.0, 0.0, 1.0], p6, [0.0; 4]], burning)
                 };
 
                 let mi = MeshInstance { model, lod: true, p4, p5, p6, p7, burning, ..Default::default() };
@@ -1183,6 +1184,16 @@ impl Tile {
     }
 }
 
+impl Tile {
+    /// A piece's POSITION6 and whether it draws with the fire shaders: its look's, or the burning sequence's preview (fire.rs).
+    fn burn_of(&self, elem: usize, look: &PieceProps) -> ([f32; 4], bool) {
+        match self.fire_look(elem) {
+            Some((amount, _)) => ([amount, 0.0, 0.0, 0.0], true),
+            None => (burn_row(look), look.burn),
+        }
+    }
+}
+
 /// POSITION6 of a piece: x the burn amount, which the fire shaders char the colour by (TEd hands `burn_amount` to the renderer, the
 /// engine puts it there; in a battle the engine ramps it up while the building burns). The plain shaders do not read x.
 fn burn_row(p: &PieceProps) -> [f32; 4] {
@@ -1403,8 +1414,7 @@ impl Tile {
                 if let Payload::MeshInstance(mi) = &mut en.payload {
                     mi.model = model;
                     mi.p4[3] = opacity_w(p.opacity);
-                    mi.p6 = burn_row(&p);
-                    mi.burning = p.burn;
+                    (mi.p6, mi.burning) = self.burn_of(elem, &p);
                 }
             }
 
