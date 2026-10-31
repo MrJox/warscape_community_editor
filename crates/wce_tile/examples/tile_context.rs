@@ -35,5 +35,11 @@ fn main() {
         let p = &m.placements[i];
         let c = m.context(&Spot { x: p.x, y: p.y, rotation: p.rotation }, p.w, p.h, radius);
         println!("  ({}, {}) rot {:#x}: {} neighbours in {:?}, lf mean {:.1} m range {:.1} m", p.x, p.y, p.rotation, c.neighbours.len(), c.window, c.lf_mean, c.lf_range);
+        if a.iter().any(|v| v == "--names") {
+            for (n, _) in &c.neighbours {
+                let q = &m.placements[*n];
+                println!("      {}\\{} at ({}, {})", q.location, q.variation, q.x, q.y);
+            }
+        }
     }
 }

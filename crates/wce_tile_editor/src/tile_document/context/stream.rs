@@ -16,7 +16,7 @@ use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
 
-use super::template::{Template, load_template};
+use super::template::{Template, load_any_template};
 use crate::terrain_bake::TerrainLook;
 use super::{CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
 
@@ -145,7 +145,7 @@ impl Shared {
         let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees, game_kit)));
         let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
-            None => (load_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
+            None => (load_any_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
         });
 
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)
