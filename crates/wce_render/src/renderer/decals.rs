@@ -11,6 +11,7 @@
 //! alpha over the G-buffer's colour channels; the alpha channels (gloss, mask, material id) are kept.
 //!
 //! The boxes are drawn where they are behind the scene (depth test greater or equal, no write), both sides (the camera may be inside one).
+//! Only the pixels with stencil bit `DECAL_RECEIVER` take them: the ground and the TerrainBlend meshes, as the game marks them (its models are 1).
 //!
 //! Parallax (ps30_parallax): the same shader plus three steps of parallax mapping. The `_parallax.dds` maps hold the normal in .w / .y like the
 //! `_normal.dds` ones and a height in .z; the uv moves by (height - 0.5) / 2 along the view direction in the box's frame, times POSITION4.w,
@@ -134,8 +135,13 @@ impl Renderer {
         d.box_ib = immutable_buffer(&dev, &idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
         let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: false.into(), ..Default::default() };
         d.rs = dev.create_rasterizer_state(&rd).ok();
+        // Only the pixels that take decals (the ground and the TerrainBlend meshes: stencil bit `DECAL_RECEIVER`), as the game.
+        let receiver = D3D11_DEPTH_STENCILOP_DESC {
+            StencilFailOp: D3D11_STENCIL_OP_KEEP, StencilDepthFailOp: D3D11_STENCIL_OP_KEEP, StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL,
+        };
         d.ds = dev.create_depth_stencil_state(&D3D11_DEPTH_STENCIL_DESC {
-            DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_GREATER_EQUAL, ..Default::default()
+            DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_GREATER_EQUAL, StencilEnable: true.into(),
+            StencilReadMask: DECAL_RECEIVER, StencilWriteMask: 0, FrontFace: receiver, BackFace: receiver,
         }).ok();
 
         let rgb = (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE) as u8;
@@ -394,7 +400,7 @@ impl Renderer {
 
         let rtvs = self.gbuffer.channels[..3].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
         self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
-        self.ctx.set_depth_stencil_state(self.decals.ds.as_ref(), 0);
+        self.ctx.set_depth_stencil_state(self.decals.ds.as_ref(), u32::from(DECAL_RECEIVER));
         self.ctx.set_rasterizer_state(self.decals.rs.as_ref());
         self.ctx.set_blend_state(self.decals.bs.as_ref());
         self.ctx.set_input_layout(Some(&layout));
