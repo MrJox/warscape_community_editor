@@ -568,7 +568,7 @@ pub struct Tile {
 
     /// The grid cells the heights changed in since the last terrain update (i0, j0, i1, j1; end exclusive), for the normal map's patch.
     pub(crate) heights_changed: Option<[i32; 4]>,
-    pub(crate) terrain_grid: Option<((Option<(usize, u64)>, bool), wce_foundation::math::Float4x4, wce_scene::render_scene::Terrain)>,
+    pub(crate) terrain_grid: Option<((Option<(usize, u64)>, bool, bool), wce_foundation::math::Float4x4, wce_scene::render_scene::Terrain)>,
     pub(crate) ground_info: GroundInfo,
     pub(crate) ground_info_base: GroundInfo,
 
