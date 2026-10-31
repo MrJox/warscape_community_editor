@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use wce_foundation::math::{Double3, Float3};
+use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::{EntityId, MeshInstance, Overlay, Payload, RenderScene, overlay_colour};
 use wce_tile::world_transform::{WorldTransform, euler_matrix};
 use wce_walls::building::{BuildingFiles, folder};
@@ -34,6 +34,9 @@ pub(crate) struct WallPreview {
 
     /// The buildings' frame extents (`Tile::frame_extent`), read once.
     extents: std::cell::RefCell<HashMap<String, Option<(f64, f64)>>>,
+
+    /// The fort pieces' ends from their logic files (`Tile::piece_ends`), read once.
+    ends: std::cell::RefCell<HashMap<String, Vec<wce_walls::logic::PieceEnd>>>,
     entities: HashMap<usize, Vec<EntityId>>,
     keys: HashMap<usize, Vec<String>>,
     pending: HashMap<usize, Instant>,
@@ -78,10 +81,38 @@ impl Tile {
         v
     }
 
-    /// Piece-to-piece snapping (Phase 5g of docs/plans/tile_ted_parity.md; wce's): where a fort piece (a wall building) goes when it is
-    /// moved to `at` (world metres) near another one's end. It takes the other's rotation (the outer sides agree, the wall runs on) and its
-    /// low end goes onto the other's high end, or its high end onto the other's low end: the pair of ends nearest, within `reach` metres.
-    /// The position (scene units) and the world rotation; `None` when no end is near or `elem` is no fort piece.
+    /// A fort piece's ends (piece frame): from its logic file's end caps (`wce_walls::logic::ends`: the joints, the wall's direction there,
+    /// the wall-walk's height), else the two ends of its frame's x extent at z = 0 (height 0, leaving along -x and +x).
+    pub fn piece_ends(&self, key: &str) -> Vec<wce_walls::logic::PieceEnd> {
+        if let Some(v) = self.wall_preview.ends.borrow().get(key) {
+            return v.clone();
+        }
+
+        let logic = self.files.as_deref().and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok());
+        let from_caps = logic.as_deref().and_then(|b| wce_walls::logic::ends(b).ok()).filter(|e| !e.is_empty());
+        let ends = from_caps.clone().unwrap_or_else(|| {
+            self.frame_extent(key).map_or(vec![], |(lo, hi)| {
+                vec![
+                    wce_walls::logic::PieceEnd { at: [lo as f32, 0.0, 0.0], out: [-1.0, 0.0], side: [0.0, -1.0] },
+                    wce_walls::logic::PieceEnd { at: [hi as f32, 0.0, 0.0], out: [1.0, 0.0], side: [0.0, -1.0] },
+                ]
+            })
+        });
+
+        // The fallback waits for the model's bounds; the caps' answer is kept.
+        if from_caps.is_some() || logic.is_some() {
+            self.wall_preview.ends.borrow_mut().insert(key.to_owned(), ends.clone());
+        }
+
+        ends
+    }
+
+    /// Piece-to-piece snapping (Phase 5g of docs/plans/tile_ted_parity.md; wce's; reviewed 2026-10-31 against the logic files): where a fort
+    /// piece (a wall, tower, corner, joiner, gateway, stepped bastion) goes when it is moved to `at` (world metres) near another one's end.
+    /// The ends are the pieces' end caps (`piece_ends`): the piece turns about the vertical so that the wall leaves its end straight into
+    /// the other's (corners and angled joiners included), and its joint goes onto the other's, the wall-walks' heights too (a stepped
+    /// bastion's high end takes the next piece 10 m up). The pair of ends nearest, within `reach` metres. The position (scene units) and
+    /// the world rotation; `None` when no end is near or `elem` is no fort piece.
     pub fn snap_piece(&self, elem: usize, at: Float3, reach: f32) -> Option<WorldTransform> {
         let sc = self.tscene();
         let key = sc.doc().get(elem, "key")?;
@@ -89,25 +120,40 @@ impl Tile {
             return None;
         }
 
-        let (lo, hi) = self.frame_extent(&key)?;
+        let own_ends = self.piece_ends(&key);
         let u = self.unit();
         let own = wce_tile::world_transform::world_transform(sc, elem);
         let p = Double3::new(f64::from(at.x) * u, own.position.y, f64::from(at.z) * u);
+        let heading = |x: f64, z: f64| x.atan2(z);
         let mut best: Option<(f64, WorldTransform)> = None;
-        for a in self.wall_anchors().into_iter().filter(|a| a.elem != elem) {
-            let other = wce_tile::world_transform::world_transform(sc, a.elem);
-            let rot = other.rotation;
-            let x_axis = rot * Double3::new(1.0, 0.0, 0.0);
-            let anchor = Double3::new(a.at[0], a.at[1], a.at[2]);
+        for other in sc.find_all("BUILDING_INSTANCE").into_iter().filter(|&o| o != elem && self.shown(o)) {
+            let Some(other_key) = sc.doc().get(other, "key").filter(|k| k.to_lowercase().contains("_fort_") && !k.to_lowercase().starts_with("wce_")) else { continue };
+            let ow = wce_tile::world_transform::world_transform(sc, other);
+            for t in self.piece_ends(&other_key) {
+                let t_at = ow.position + ow.rotation * Double3::new(f64::from(t.at[0]), f64::from(t.at[1]), f64::from(t.at[2]));
+                let t_out = ow.rotation * Double3::new(f64::from(t.out[0]), 0.0, f64::from(t.out[1]));
+                let t_side = ow.rotation * Double3::new(f64::from(t.side[0]), 0.0, f64::from(t.side[1]));
+                for e in &own_ends {
+                    // The end as it is now (under the cursor, the piece's turn kept): how near it is.
+                    let now = p + own.rotation * Double3::new(f64::from(e.at[0]), 0.0, f64::from(e.at[2]));
+                    let dist = (now.x - t_at.x).hypot(now.z - t_at.z) / u;
+                    if dist > f64::from(reach) || best.as_ref().is_some_and(|b| dist >= b.0) {
+                        continue;
+                    }
 
-            // Which of the other's ends this is: its high end (+x) takes the piece's low end, its low end the piece's high end.
-            let d = anchor - other.position;
-            let own_end = if d.x * x_axis.x + d.z * x_axis.z > 0.0 { lo } else { hi };
-            let position = anchor - rot * Double3::new(own_end, 0.0, 0.0);
-            let end_now = p + own.rotation * Double3::new(own_end, 0.0, 0.0);
-            let dist = (end_now.x - anchor.x).hypot(end_now.z - anchor.z) / u;
-            if dist <= f64::from(reach) && best.as_ref().is_none_or(|b| dist < b.0) {
-                best = Some((dist, WorldTransform { position, rotation: rot }));
+                    // The turn that points the end's way against the other's, then the joints together.
+                    let yaw = heading(-t_out.x, -t_out.z) - heading(f64::from(e.out[0]), f64::from(e.out[1]));
+                    let rotation = Double3x3::rotation_y(yaw);
+
+                    // The outer faces on the same side (a corner does not join head to head, turned inside out).
+                    let side = rotation * Double3::new(f64::from(e.side[0]), 0.0, f64::from(e.side[1]));
+                    if side.x * t_side.x + side.z * t_side.z < 0.0 {
+                        continue;
+                    }
+
+                    let position = t_at - rotation * Double3::new(f64::from(e.at[0]), f64::from(e.at[1]), f64::from(e.at[2]));
+                    best = Some((dist, WorldTransform { position, rotation }));
+                }
             }
         }
 

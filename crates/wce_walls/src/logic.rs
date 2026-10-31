@@ -188,6 +188,100 @@ pub fn extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
     Ok((f("min_x"), f("max_x")))
 }
 
+/// One end of a fort piece where another joins it: the middle of the joint (the outer side of the end's cap platform, piece frame), the
+/// direction the wall leaves the piece there (x, z, unit) and the wall-walk's height at the joint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PieceEnd {
+    pub at: [f32; 3],
+    pub out: [f32; 2],
+
+    /// Across the wall towards its outer face (x, z, unit; the cap lies on the wall-walk's outer band); zero when not known. Two pieces
+    /// join with their outer faces on the same side.
+    pub side: [f32; 2],
+}
+
+/// A fort piece's ends from its logic file (level 0): every end has a cap, a platform of its own piece (not the first) about 2 m along
+/// the wall by 2.5 m across (the kit's Roman walls, towers, corners, joiners, gateways, stepped bastions; 2026-10-31). The joint is the
+/// cap's side across the wall that is farther from the main piece's platforms; the wall leaves through it. Empty when no cap is found.
+///
+/// # Errors
+///
+/// The file doesn't read.
+pub fn ends(bytes: &[u8]) -> Result<Vec<PieceEnd>, String> {
+    let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
+    let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+    let pt = |p: &Value| [p["x"].as_f64().unwrap_or(0.0) as f32, p["y"].as_f64().unwrap_or(0.0) as f32, p["z"].as_f64().unwrap_or(0.0) as f32];
+    // The intact level: index 0 (a piece's levels are not always listed in order).
+    let level0 = |piece: &Value| {
+        let levels = piece["destructs"].as_array().cloned().unwrap_or_default();
+        levels.iter().find(|d| d["index"].as_u64() == Some(0)).or(levels.first()).cloned().unwrap_or(Value::Null)
+    };
+    let platforms = |level: &Value| -> Vec<Vec<[f32; 3]>> {
+        level["platforms"].as_array().map_or(vec![], |ps| ps.iter().map(|p| p["vertices"]["outline"].as_array().map_or(vec![], |o| o.iter().map(pt).collect())).collect())
+    };
+
+    let pieces = v["pieces"].as_array().cloned().unwrap_or_default();
+    let Some(main) = pieces.first() else { return Ok(vec![]) };
+    let body: Vec<[f32; 3]> = platforms(&level0(main)).into_iter().flatten().collect();
+    if body.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let centre = body.iter().fold([0.0f32; 2], |c, p| [c[0] + p[0], c[1] + p[2]]).map(|c| c / body.len() as f32);
+    let flat: Vec<[f32; 2]> = body.iter().map(|p| [p[0], p[2]]).collect();
+    let mut out = vec![];
+    for piece in pieces.iter().skip(1) {
+        for cap in platforms(&level0(piece)).into_iter().filter(|c| c.len() == 4) {
+            out.extend(cap_end(&cap, centre, &flat));
+        }
+    }
+
+    Ok(out)
+}
+
+/// The joint of an end cap (4 points): its side across the wall (about 2.5 m) that is farthest from `centre` (x, z); the wall leaves
+/// through it, square to it. The caps are 2 m by 2.5 m rectangles, or a stepped bastion's quadrilateral with a slanted inner side. Its outer
+/// side: where the cap lies across the wall against the main piece's wall-walk on the joint line (`body`, x and z of the main piece's
+/// platform points), else against `centre`.
+fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]]) -> Option<PieceEnd> {
+    let len = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]).hypot(b[2] - a[2]);
+    let mid = |a: [f32; 3], b: [f32; 3]| [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5];
+    let d = |m: [f32; 3]| (m[0] - centre[0]).hypot(m[2] - centre[1]);
+    let span = (0..4).flat_map(|i| (i + 1..4).map(move |j| (i, j))).map(|(i, j)| len(cap[i], cap[j])).fold(0.0f32, f32::max);
+    if !(2.0..=4.5).contains(&span) {
+        return None;
+    }
+
+    // The joint: the side of about 2.5 m farthest from the centre.
+    let joint = (0..4).map(|i| (cap[i], cap[(i + 1) % 4])).filter(|&(a, b)| (2.2..=2.8).contains(&len(a, b))).max_by(|x, y| d(mid(x.0, x.1)).total_cmp(&d(mid(y.0, y.1))))?;
+    let outer = mid(joint.0, joint.1);
+
+    // Out of the piece: square to the joint, away from the cap's middle.
+    let cap_c = cap.iter().fold([0.0f32; 3], |c, p| [c[0] + p[0] * 0.25, c[1] + p[1] * 0.25, c[2] + p[2] * 0.25]);
+    let (ex, ez) = (joint.1[0] - joint.0[0], joint.1[2] - joint.0[2]);
+    let n = ex.hypot(ez).max(1e-6);
+    let mut out = [ez / n, -ex / n];
+    if (outer[0] - cap_c[0]) * out[0] + (outer[2] - cap_c[2]) * out[1] < 0.0 {
+        out = [-out[0], -out[1]];
+    }
+
+    // The outer face: the side of the wall-walk the cap is on, across the wall. The walk is the main piece's platform points on the joint
+    // line (the walk beside the cap ends there too); without any, the body's centre.
+    let cap_mid = cap.iter().fold([0.0f32; 2], |c, p| [c[0] + p[0] * 0.25, c[1] + p[2] * 0.25]);
+    let across = [-out[1], out[0]];
+    let along = |q: [f32; 2]| (q[0] - outer[0]) * out[0] + (q[1] - outer[2]) * out[1];
+    let cross = |q: [f32; 2]| (q[0] - outer[0]) * across[0] + (q[1] - outer[2]) * across[1];
+    let near: Vec<f32> = body.iter().filter(|&&q| along(q).abs() <= 0.3).map(|&q| cross(q)).collect();
+    let k = if near.is_empty() {
+        (cap_mid[0] - centre[0]) * across[0] + (cap_mid[1] - centre[1]) * across[1]
+    } else {
+        let (lo, hi) = near.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &c| (lo.min(c), hi.max(c)));
+        cross(cap_mid) - (lo + hi) * 0.5
+    };
+    let side = if k.abs() < 0.25 { [0.0, 0.0] } else if k > 0.0 { across } else { [-across[0], -across[1]] };
+    Some(PieceEnd { at: outer, out, side })
+}
+
 /// If a logic file writes back to the same bytes through its serde form unchanged.
 ///
 /// # Errors
@@ -408,4 +502,39 @@ fn set_p3(v: &mut Value, p: [f32; 3]) {
 
 fn point3([x, y, z]: [f32; 3]) -> Value {
     json!({ "x": x, "y": y, "z": z })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_end_cap_gives_its_outer_side_and_the_way_out() {
+        // roman_fort_straight's left cap (x -10..-8, z 0.5..3, 15 m up): the joint at x -10, the wall leaving along -x.
+        let cap = [[-10.0, 15.0, 0.5], [-8.0, 15.0, 0.5], [-8.0, 15.0, 3.0], [-10.0, 15.0, 3.0]];
+        let e = cap_end(&cap, [0.0, 5.0], &[]).expect("a cap");
+        assert_eq!(e.at, [-10.0, 15.0, 1.75]);
+        assert_eq!(e.out, [-1.0, 0.0]);
+        assert_eq!(e.side, [0.0, -1.0], "the outer face towards -z (the cap at z 0.5..3 of the walk's 0.5..9)");
+
+        // roman_fort_internal_corner's other cap (x 0.5..3, z 0..2), the body towards +z: the wall leaves along -z.
+        let cap = [[0.5, 15.0, 0.0], [3.0, 15.0, 0.0], [3.0, 15.0, 2.0], [0.5, 15.0, 2.0]];
+        let e = cap_end(&cap, [-2.0, 18.0], &[]).expect("a cap");
+        assert_eq!(e.at, [1.75, 15.0, 0.0]);
+        assert_eq!(e.out, [0.0, -1.0]);
+
+        // The bastion's high cap, its inner side slanted: the joint at x 10, out along +x.
+        let cap = [[8.0, 25.0, 0.5], [8.97, 25.0, 1.95], [10.0, 25.0, 3.0], [10.0, 25.0, 0.5]];
+        let e = cap_end(&cap, [0.0, 4.0], &[]).expect("a cap");
+        assert_eq!(e.at, [10.0, 25.0, 1.75]);
+        assert_eq!(e.out, [1.0, 0.0]);
+
+        // Not a cap: a long platform.
+        // The bastion's high end: the body's centre is beyond the cap (the tower juts out), the walk by the cap is not (z 1.95..9).
+        let cap = [[8.0, 25.0, 0.5], [10.0, 25.0, 0.5], [10.0, 25.0, 3.0], [8.0, 25.0, 3.0]];
+        let walk = [[6.2, 1.95], [10.0, 1.95], [10.0, 9.0], [6.2, 9.0], [-5.0, -5.0], [8.0, -5.0], [8.0, 4.5]];
+        assert_eq!(cap_end(&cap, [0.0, -1.0], &walk).expect("a cap").side, [0.0, -1.0]);
+
+        assert!(cap_end(&[[-10.0, 15.0, 3.0], [10.0, 15.0, 3.0], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]], [0.0, 5.0], &[]).is_none());
+    }
 }

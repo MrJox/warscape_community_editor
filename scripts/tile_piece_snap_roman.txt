@@ -1,0 +1,26 @@
+# Piece-to-piece snapping on the logic files' end caps (wce_walls::logic::ends; reviewed 2026-10-31): a Roman corner joins a straight wall
+# turned onto its second end (outer faces together), a stepped bastion's low end joins the straight, and a straight joins the bastion's
+# high end 10 units up (the wall-walks' heights). Freeform pieces, so the heights show. Run with WCE_TILE_WORKSPACE set to a scratch folder.
+new_tile wce_roman_join 2 2 10 32
+frames 5
+add_building roman_fort_straight 100 100
+add_building roman_fort_external_corner 160 100
+add_building roman_fort_straight_stepped_up_10m_square_bastion_a 160 160
+add_building roman_fort_straight 200 200
+frames 90
+tile_select 8
+tile_edit selected surface_mode Freeform
+snap vertices on tolerance 4
+grab_to 114 91
+assert_world 115 5 110 0.01
+undo
+tile_select 9
+tile_edit selected surface_mode Freeform
+grab_to 110.5 100
+assert_world 110 5 100 0.01
+tile_select 10
+tile_edit selected surface_mode Freeform
+grab_to 120.5 100
+assert_world 120 10 100 0.01
+snap vertices off tolerance 0
+quit

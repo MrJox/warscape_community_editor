@@ -52,9 +52,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
 
 ## C. Needs review
 
-- Piece-to-piece snapping onto the logic files' platforms (the wall-walks) and collision shapes: the end-to-end join uses the end
-  anchors only. Using them would place things on a wall-walk at its height and join corners, towers and gatehouses by their surfaces
-  (user, 2026-10-30: needs review; first read what the logic files hold for a few wall and gate pieces).
+- Done (2026-10-31): piece-to-piece snapping reviewed against the logic files and rebuilt on their end caps (tile_ted_parity.md, Phase
+  5g): corners, angled joiners and stepped bastions join, outer faces together, at the wall-walks' heights.
 
 ## D. Not planned
 
