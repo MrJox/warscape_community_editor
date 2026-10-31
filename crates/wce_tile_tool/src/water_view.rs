@@ -10,7 +10,7 @@ use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::terrain_bake::{TerrainView, WaterDepth};
 use wce_tile_editor::tile_document::{Job, JobPoll, TileDocument};
 use wce_tile_io::attila::TedProject;
-use wce_tile_io::attila::terrain_mesh::water_fields;
+use wce_tile_io::attila::terrain_mesh::{WaterFields, water_fields};
 use wce_tile_io::{TileFiles, TileFormat};
 use wce_tile_model::Blob;
 
@@ -189,6 +189,17 @@ impl StageBRequest {
     ///
     /// The tile's folder or scene does not read, or stage B failed.
     pub fn run(self, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
+        let extent = self.extent;
+        let (f, raw) = self.fields(game)?;
+        Ok(depth_and_nogos(&f, &raw, nogos, extent))
+    }
+
+    /// Stage B's fields of the tile as [`Self::run`] reads it, and the raw tile they were made from.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::run`].
+    pub fn fields(self, game: Option<&wce_tile_io::attila::workflow::Game>) -> Result<(WaterFields, wce_tile_model::Tile), String> {
         use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
         let mut files = TileFiles::from_kit_dir(&self.dir).map_err(|e| e.to_string())?;
@@ -212,7 +223,7 @@ impl StageBRequest {
         let none = |_: &str| None;
         let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
         let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
-        stage_b_of_files(&files, &self.roots, models, nogos, self.extent)
+        stage_b_fields_of_files(&files, &self.roots, models)
     }
 }
 
@@ -230,6 +241,47 @@ pub fn stage_b_of(
     nogos: bool,
 ) -> Result<(WaterDepth, Option<Outlines>), String> {
     StageBRequest::of(d, game).run(game, nogos)
+}
+
+/// Stage B's fields of the tile as it is now, on this thread, and the raw tile they were made from.
+///
+/// # Errors
+///
+/// As [`StageBRequest::run`].
+pub(crate) fn stage_b_fields(
+    d: &TileDocument,
+    game: Option<&wce_tile_io::attila::workflow::Game>,
+) -> Result<(WaterFields, wce_tile_model::Tile), String> {
+    StageBRequest::of(d, game).fields(game)
+}
+
+/// Metres of water over each vertex of stage B's grid; NaN where there is none.
+pub(crate) fn water_depth(f: &WaterFields) -> Vec<f32> {
+    match &f.water {
+        Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
+        None => vec![f32::NAN; f.w * f.h],
+    }
+}
+
+/// Metres between the vertices of stage B's grid over a tile of `extent` without its border (metres), along x and z.
+fn spacing(f: &WaterFields, extent: (f64, f64)) -> (f32, f32) {
+    (extent.0 as f32 / (f.w - 1).max(1) as f32, extent.1 as f32 / (f.h - 1).max(1) as f32)
+}
+
+/// Metres between the vertices of stage B's grid (over the tile without its border), along x and z.
+pub(crate) fn vertex_spacing(d: &TileDocument, f: &WaterFields) -> (f32, f32) {
+    spacing(f, (d.tile().extent_x(), d.tile().extent_z()))
+}
+
+/// The water depth of stage B's fields, and with `nogos` the automatic no-go areas (in metres, the tile's frame).
+fn depth_and_nogos(f: &WaterFields, raw: &wce_tile_model::Tile, nogos: bool, extent: (f64, f64)) -> (WaterDepth, Option<Outlines>) {
+    // The grid's vertices over the tile without its border, row j along +z.
+    let nogos = nogos.then(|| {
+        let (sx, sz) = spacing(f, extent);
+        f.no_go_outlines(raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
+    });
+
+    (WaterDepth { w: f.w, h: f.h, depth: water_depth(f) }, nogos)
 }
 
 /// A project folder's files as stage B reads them: its tile.wce as TEd's tile.ted (a combined project's variation written as a project of
@@ -263,18 +315,21 @@ pub fn stage_b_of_files(
     nogos: bool,
     extent: (f64, f64),
 ) -> Result<(WaterDepth, Option<Outlines>), String> {
+    let (f, raw) = stage_b_fields_of_files(files, roots, models)?;
+    Ok(depth_and_nogos(&f, &raw, nogos, extent))
+}
+
+/// Stage B's fields of a project's files (as [`stage_b_of_files`]) and the raw tile they were made from.
+///
+/// # Errors
+///
+/// The project does not read, or stage B failed.
+fn stage_b_fields_of_files(
+    files: &TileFiles,
+    roots: &[std::path::PathBuf],
+    models: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Result<(WaterFields, wce_tile_model::Tile), String> {
     let (raw, _) = TedProject.read(files).map_err(|e| e.to_string())?;
     let f = water_fields(&raw, roots, models)?;
-    let depth = match &f.water {
-        Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
-        None => vec![f32::NAN; f.w * f.h],
-    };
-
-    // The grid's vertices over the tile without its border, row j along +z.
-    let nogos = nogos.then(|| {
-        let (sx, sz) = (extent.0 as f32 / (f.w - 1).max(1) as f32, extent.1 as f32 / (f.h - 1).max(1) as f32);
-        f.no_go_outlines(&raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
-    });
-
-    Ok((WaterDepth { w: f.w, h: f.h, depth }, nogos))
+    Ok((f, raw))
 }
