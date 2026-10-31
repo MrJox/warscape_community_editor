@@ -343,8 +343,33 @@ impl Renderer {
             return;
         }
 
-        let (Some(es), Some(bx), Some(by)) = (self.shader(ENV_SPECULAR_PS), self.shader(REFLECTION_BLUR_X_PS), self.shader(REFLECTION_BLUR_Y_PS)) else { return };
+        // gfx_screen_space_reflections 1: half resolution (fn 0x11903ec0's table: 0.5), the half resolution entries.
+        let half = self.settings.reflections == 1 && self.game != super::game::RenderGame::Rome2;
+        let div = if half { 2 } else { 1 };
+        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
+        if self.post.reflection_div != div {
+            self.post.resize_reflection(&self.dev, w, h, div);
+        }
+
+        let (rw, rh) = (w.div_ceil(div), h.div_ceil(div));
+        let (Some(es), Some(bx), Some(by)) = (
+            self.shader(if half { ENV_SPECULAR_HALF_PS } else { ENV_SPECULAR_PS }), self.shader(REFLECTION_BLUR_X_PS),
+            self.shader(if half { REFLECTION_BLUR_Y_HALF_PS } else { REFLECTION_BLUR_Y_PS }),
+        ) else { return };
         wce_prof!("render.environment_specular");
+
+        // The screen's constants of the reflection's size (the engine's views have their target's); the full size back for the last blur.
+        let screen = |cbs: &mut crate::cbuffers::ConstantBuffers, w: u32, h: u32| {
+            let (fw, fh) = (w as f32, h as f32);
+            for name in ["g_screen_size", "g_viewport_dimensions", "g_render_target_dimensions"] {
+                cbs.set_f("camera_VS_PS", name, &[fw, fh, 1.0 / fw, 1.0 / fh]);
+            }
+        };
+
+        if half {
+            screen(&mut self.cbs, rw, rh);
+            self.ctx.set_viewports(&[viewport(0.0, 0.0, rw as f32, rh as f32)]);
+        }
         let f = |v: f32| v.to_le_bytes();
         let i = |v: i32| v.to_le_bytes();
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
@@ -403,6 +428,11 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
 
         // 3. The y blur, added to the light buffer (ONE / ONE, as the game).
+        if half {
+            screen(&mut self.cbs, w, h);
+            self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        }
+
         blur(&mut self.cbs);
         self.upload();
         self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), None);
@@ -419,8 +449,8 @@ impl Renderer {
         self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
     }
 
-    /// gfx_screen_space_reflections at 0: the environment specular pass is off (fn 0x118c2530: on above 0). Level 1's half-size buffers
-    /// (the table at 0x11cca8fc: 0, 0.5, 1) are drawn at full size, as level 2.
+    /// gfx_screen_space_reflections at 0: the environment specular pass is off (fn 0x118c2530: on above 0); 1 draws it at half
+    /// resolution (the table at 0x11cca8fc: 0, 0.5, 1).
     pub(crate) fn reflections_off(&self) -> bool {
         self.game != super::game::RenderGame::Rome2 && self.settings.reflections == 0
     }

@@ -114,6 +114,9 @@ pub(crate) struct PostTargets {
     pub reflection: Target,
     pub reflection_params: Target,
     pub reflection_blur: Target,
+
+    /// The reflection targets' divisor of the view size (1 full, 2 half: gfx_screen_space_reflections 1).
+    pub reflection_div: u32,
     pub stencil: Target,
 }
 
@@ -121,6 +124,15 @@ pub(crate) struct PostTargets {
 pub(crate) const TONEMAP_SIZE: u32 = 256;
 
 impl PostTargets {
+
+    /// (Re)creates the reflection targets at the view size divided by `div`.
+    pub fn resize_reflection(&mut self, dev: &ID3D11Device, w: u32, h: u32, div: u32) {
+        let (w, h) = (w.div_ceil(div).max(1), h.div_ceil(div).max(1));
+        self.reflection = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        self.reflection_params = make_target(dev, w, h, DXGI_FORMAT_R8G8_UNORM);
+        self.reflection_blur = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        self.reflection_div = div;
+    }
 
     /// (Re)creates the targets for a view size; the SSAO result is kept.
     pub fn resize(&mut self, dev: &ID3D11Device, w: u32, h: u32) {
@@ -141,9 +153,7 @@ impl PostTargets {
         self.ldr = sized_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);        // tone-mapped, linear
 
         // The game's: R11G11B10 reflection and x blur, R8G8 parameters (a RenderDoc capture, docs/re/renderer.md).
-        self.reflection = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        self.reflection_params = make_target(dev, w, h, DXGI_FORMAT_R8G8_UNORM);
-        self.reflection_blur = make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        self.resize_reflection(dev, w, h, self.reflection_div.max(1));
         self.stencil = make_target(dev, w, h, DXGI_FORMAT_R8G8_UINT);
         self.stats.clear();
         let (mut sw, mut sh) = (qw, qh);

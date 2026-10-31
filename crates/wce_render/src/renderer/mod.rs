@@ -136,6 +136,10 @@ pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gath
 pub(crate) const ENV_SPECULAR_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
 pub(crate) const REFLECTION_BLUR_X_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_x";
 pub(crate) const REFLECTION_BLUR_Y_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y_fullres";
+
+/// gfx_screen_space_reflections 1: the half resolution entries (the same code as the full resolution ones, at half the size).
+pub(crate) const ENV_SPECULAR_HALF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model";
+pub(crate) const REFLECTION_BLUR_Y_HALF_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y";
 pub(crate) const TM_DOWN_LUMA: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image_store_luma";
 pub(crate) const TM_LUMA_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats";
 pub(crate) const TM_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_luma_stats";
