@@ -4,9 +4,10 @@ A Tile panel button that finds the tile's steep height differentials (slopes, cl
 each one, rocks only up its face to just under the top edge. Everything goes into the layer `(AUTOGEN) Ground Coverage`, with vegetation
 exclusion polygons around the vegetation it adds (BOB drops manual trees that are outside every exclusion polygon, docs/re/vegetation.md).
 
-Status (2026-10-31): the first version (steps 1-4 below) is done and reviewed on `feature/auto_ground_coverage`. It is being redesigned
-into a contextual terrain coverage tool: see [Redesign](#redesign-2026-10-31), which comes first; the sections after it describe the first
-version (what the redesign builds on).
+Status (2026-10-31): redesigned into a contextual terrain coverage tool on `feature/auto_ground_coverage`: steps 1 to 5 of the
+[Redesign](#redesign-2026-10-31) are done (three kinds, a group per kind, presets, the brush) and the defaults by the water were lowered
+after a survey of the kit. What is left is step 6, the user's: see [Where it stands](#where-it-stands-resume-here). The sections after
+the redesign describe the first version (what the redesign builds on).
 
 Status (2026-10-26): steps 1-4 done on `feature/auto_ground_coverage`; step 5 (trying it on kit tiles, tuning the defaults) is the user's.
 Building scale (`wce_scale`) was added for the rocks and is **optional** (`scale the rocks`, off by default): TEd has no building scale and
@@ -101,23 +102,22 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
 1. **Context** (done, e8c3730). `terrain_outlines::no_go_field` (the no-go field less the go outlines, before the blur and the tracing: the field the
    outlines come from) and a `CoverageContext` on the tool (heights, water surface, no-go, sea), resampled to the 1 m grid, cached per
    document version; `water_view::stage_b_of` shared.
-2. **Kinds in the algorithm** (done). `wce_tile::ground_coverage` gets `Kind` and the per-kind detection and bands above. The cliffs' sea
+2. **Kinds in the algorithm** (done, b57be1f). `wce_tile::ground_coverage` gets `Kind` and the per-kind detection and bands above. The cliffs' sea
    and river rule. The window has a kind combo and the script command an optional kind (`... [seed|-] [cliffs|coast|riverbank]`) until
    step 4. Left for step 5: splitting `generate` into classify (regions and bands, cached) and populate (in a set of cells: the tile or a
-   circle). Tests on synthetic
-   fields: a cliff at the sea goes to the coast; a cliff over the sea stays a cliff; a steep bank by a river is a bank, a walkable one
+   circle). Tests on synthetic fields: a cliff at the sea goes to the coast; a cliff over the sea stays a cliff; a steep bank by a river is a bank, a walkable one
    isn't; a pond under 0 m is not the sea.
-3. **Storage** (done). Kind groups (`Cliffs`, `Coast`, `Riverbanks`; their regions `Slope N`, `Shore N`, `Bank N`), a run replaces its
+3. **Storage** (done, 48f76fe). Kind groups (`Cliffs`, `Coast`, `Riverbanks`; their regions `Slope N`, `Shore N`, `Bank N`), a run replaces its
    kind's group but `Brushed`, the settings on the kind's group. Old layers: their `Slope N` groups are moved into `Cliffs` by the next
    run of any kind (what was put in the layer by hand stays); their settings stay on the layer (an attribute can't be taken away), read
    for the cliffs until `Cliffs` has its own. A run that finds nothing still makes its group (it keeps the settings). The fill's spacing
    from the brushed items comes with the brush (step 5).
-4. **Presets** (done). `wce_tile::ground_coverage_presets` (file, scan, a built-in `Default` per kind); the window's kind tabs, preset
+4. **Presets** (done, 1234138). `wce_tile::ground_coverage_presets` (file, scan, a built-in `Default` per kind); the window's kind tabs, preset
    combo (shows "(changed)" when the values are no longer the preset's), Save, Save as, Delete; the kind's group keeps the preset's name
    (`wce_autogen_preset`); the Tile settings keep the last preset per kind (the old last parameters and sets are dropped). Script:
    `ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]` (`-`: the tile's last run, else the kind's last
    preset).
-5. **Brush** (done). The window's Fill the tile / Brush mode (radius, a density factor). `ground_coverage::classify` (regions and bands
+5. **Brush** (done, bf9f998). The window's Fill the tile / Brush mode (radius, a density factor). `ground_coverage::classify` (regions and bands
    over the whole tile) + `scatter` (a dab: the band cells under the circle filled up to the preset's densities, counting what is
    there, so dabbing over a covered place adds nothing); `generate` = classify + populate, same results as before. The base a dab
    needs is worked out at a stroke's start when the tile or the values changed; the coverage's own edits (strokes, fills) don't make it
@@ -125,7 +125,8 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
    drag takes the kind's coverage (filled or brushed) away and redoes the polygons of the groups it touched; empty groups go. A fill
    keeps off the kind's brushed items (`Input::keep_off`). Script: `ground_coverage_brush <paint|erase> <radius> <x> <z> [<x> <z>]...`.
    Seen on sea_coast/6x4_bb_45: a 10 m stroke 21 rocks, 14 plants, 2 polygons; the same stroke again 0 rocks, 1 plant.
-6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults.
+6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults. Started: the kit survey
+   below, the summary saying how low the too low slopes are (7fc689d), lower defaults by the water (fcc4327).
 
 ### Survey of the kit (2026-10-31, step 6's start)
 
@@ -143,11 +144,30 @@ database lists only its 1x1 and 2x2 sea coasts, and the game's packs have only t
 
 Decided (user, 2026-10-31): the built-in minimum rise is 0.5 m for the riverbanks (was 1.5 m) and 1 m for the coast (was 2 m).
 
+With the new defaults: river/2x2_lt_rb 4 banks covered (52 rocks), river/4x4_y_l2_r0_b3 7 (70 rocks), river_start/24x14 36 of 44
+(1,628 rocks), nordic_port_a/minor 7 (197 rocks); the river mouths tried still none (0.6 to 0.8 m high, or under 20 m²). Half of the
+4x4 river tiles' banks are under 0.2 m: steps at the waterline, left alone.
+
+### Where it stands (resume here)
+
+Done and committed: steps 1 to 5 and the defaults above. Not done, the user's (step 6):
+
+- **The brush with the mouse.** It was only driven by the script command; a real drag (Select mode, the window in Brush mode, left drag,
+  Ctrl + drag) is untried. Known limits to judge: while dragging, the stroke's rocks and plants are crosses (the models come at the
+  release); the bands around the mouse show only once a stroke worked them out, and go when the parameters or the terrain change, until
+  the next stroke; the first stroke after a change works out the whole tile (0.07 s on a 2x2 tile, about a second on a big one).
+- **How the coverage looks** on a real coast and river bank, and the defaults of each kind (if half-metre banks are too much, the
+  minimum rise is the setting, per preset).
+
+To check from a fresh checkout: a rock set (a vegetation set of `kind="building"`) and a plant set in the projects'
+`raw_data/art/vegetation_sets`, presets in `raw_data/art/ground_coverage_presets` (or the window's Save as), then the script commands
+`ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]` and `ground_coverage_brush <paint|erase> <radius> <x>
+<z>...` (`wce --script`, with `WCE_SETTINGS_DIR` and `WCE_TILE_WORKSPACE` pointing at scratch folders). Tiles with something to cover:
+river/2x2_lt_rb, river/4x4_*, river_start/24x14 (banks), settlement_nordic_ports/nordic_port_a (coast), mediterranean_mountains/
+custom_pillar_hercules_a (cliffs, a big tile).
+
 ### Open (to settle while building)
 
-- Kit tiles have little of the new kinds: their coasts' no-go ground is under 800 m² a tile, and river/2x2_bl_rt's 9 banks are all under
-  the 1.5 m rise (its 3 cliffs are the banks'). The defaults are tuned in step 6.
-- sea_coast/6x4_bb_45 opens without its entry: it has none (see the survey); not a fault of the editor.
 - The banks' "local water surface" for a river whose surface falls along the tile (the nearest water cell's height is the guess).
 - Whether Ctrl + drag erases every kind or only the window's current one (the plan says the current one).
 
