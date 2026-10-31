@@ -1,8 +1,13 @@
 //! The automatic ground coverage of a tile (experimental, `wce_tile::ground_coverage`): what the generator needs of the tile (its terrain,
-//! the buildings that block a differential, the rocks' sizes) and its result put into the layer `(AUTOGEN) Ground Coverage`, replacing what
-//! the layer held, as one undo entry. Each differential gets an instance group (`Slope 12`) with its rocks (buildings, freeform at their
-//! sunk height), its plants (trees on the landscape) and the vegetation exclusion polygons around them. The parameters, the seed and the
-//! sets' names are kept on the layer (`wce_autogen_*`, dropped for TEd), so a later run starts from them.
+//! the buildings that block a differential, the rocks' sizes) and its result put into the layer `(AUTOGEN) Ground Coverage`, as one undo
+//! entry. The layer has a group per kind of terrain (`Cliffs`, `Coast`, `Riverbanks`); a run of a kind replaces what its group held but
+//! its `Brushed` group (the brush's strokes). Each differential gets an instance group in it (`Slope 12`, `Shore 3`, `Bank 5`) with its
+//! rocks (buildings, freeform at their sunk height), its plants (trees on the landscape) and the vegetation exclusion polygons around them.
+//! The parameters, the seed and the sets' names are kept on the kind's group (`wce_autogen_*`, dropped for TEd), so a later run starts from
+//! them.
+//!
+//! The first version's layer held its `Slope N` groups and its settings itself: they are the cliffs', moved into `Cliffs` by the next run
+//! (its settings stay on the layer, unused once `Cliffs` has its own: an attribute can't be taken away).
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -11,7 +16,7 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_foundation::math::{Double3, Float3};
 use wce_tile::new_instances::NewInstance;
-use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Params, RockSize};
+use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Kind, Params, RockSize};
 use wce_tile::world_transform::{set_world_position, world_transform};
 
 use super::draft::{turned, with_root_attr};
@@ -22,7 +27,29 @@ use super::TileDocument;
 /// The layer the coverage goes into.
 pub const COVERAGE_LAYER: &str = "(AUTOGEN) Ground Coverage";
 
-/// The layer's attributes: the parameters (`Params::to_text`), the seed, the rock set's and the plant set's names.
+/// The group of the brush's strokes in a kind's group: a run of the kind keeps it.
+pub const BRUSHED_GROUP: &str = "Brushed";
+
+/// A kind's group in the layer.
+pub fn kind_group_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Cliffs => "Cliffs",
+        Kind::Coast => "Coast",
+        Kind::Riverbank => "Riverbanks",
+    }
+}
+
+/// What a differential of the kind is called (its group: `Slope 12`).
+pub fn region_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Cliffs => "Slope",
+        Kind::Coast => "Shore",
+        Kind::Riverbank => "Bank",
+    }
+}
+
+/// A kind group's attributes (the first version's layer's): the parameters (`Params::to_text`), the seed, the rock set's and the plant
+/// set's names.
 pub const PARAMS_ATTR: &str = "wce_autogen_params";
 pub const SEED_ATTR: &str = "wce_autogen_seed";
 pub const ROCKS_ATTR: &str = "wce_autogen_rocks";
@@ -56,14 +83,45 @@ impl TileDocument {
         sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == COVERAGE_LAYER)
     }
 
-    /// How many instances the coverage layer holds (what a run replaces).
-    pub fn coverage_items(&self) -> usize {
-        self.coverage_layer().map_or(0, |l| self.tile().instances_below(&[l]).len())
+    /// A kind's group in the coverage layer.
+    pub fn coverage_group(&self, kind: Kind) -> Option<usize> {
+        let sc = self.tile().tscene();
+        sc.children(self.coverage_layer()?).into_iter().find(|&g| sc.type_of(g) == "UserInstanceGroup" && sc.name(g) == kind_group_name(kind))
     }
 
-    /// What the last run used, from the layer's attributes.
-    pub fn coverage_settings(&self) -> Option<CoverageSettings> {
-        let l = self.coverage_layer()?;
+    /// What a run of the kind replaces: its group's children but its brushed group, and for the cliffs the first version's groups.
+    fn coverage_replaced(&self, kind: Kind) -> Vec<usize> {
+        let sc = self.tile().tscene();
+        let mut out: Vec<usize> = self.coverage_group(kind).map(|g| sc.children(g).into_iter().filter(|&c| sc.name(c) != BRUSHED_GROUP).collect()).unwrap_or_default();
+        if kind == Kind::Cliffs {
+            out.extend(self.coverage_old());
+        }
+
+        out
+    }
+
+    /// The first version's groups: the layer's `Slope N` groups (what is put in the layer by hand is left alone).
+    fn coverage_old(&self) -> Vec<usize> {
+        let sc = self.tile().tscene();
+        let Some(l) = self.coverage_layer() else { return vec![] };
+        let old = |c: usize| sc.type_of(c) == "UserInstanceGroup" && sc.name(c).strip_prefix("Slope ").is_some_and(|n| n.parse::<usize>().is_ok());
+        sc.children(l).into_iter().filter(|&c| old(c)).collect()
+    }
+
+    /// How many instances a run of the kind replaces.
+    pub fn coverage_items(&self, kind: Kind) -> usize {
+        let replaced = self.coverage_replaced(kind);
+        if replaced.is_empty() { 0 } else { self.tile().instances_below(&replaced).len() }
+    }
+
+    /// What the last run of the kind used, from its group's attributes (the cliffs': else the first version's layer's).
+    pub fn coverage_settings(&self, kind: Kind) -> Option<CoverageSettings> {
+        let l = match self.coverage_group(kind).filter(|&g| self.tile().tscene().doc().get(g, PARAMS_ATTR).is_some()) {
+            Some(g) => g,
+            None if kind == Kind::Cliffs => self.coverage_layer()?,
+            None => return None,
+        };
+
         let doc = self.tile().tscene().doc();
         let params = doc.get(l, PARAMS_ATTR)?;
         Some(CoverageSettings {
@@ -151,29 +209,42 @@ impl TileDocument {
         any.then_some((lo, hi))
     }
 
-    /// Puts a run's result into the coverage layer (made at the end of the scene graph when the tile has none), replacing what it held, and
-    /// keeps the settings on it. One undo entry; nothing is selected afterwards (the layer's outline would hide what is in it).
+    /// Puts a run's result into the kind's group of the coverage layer (each made when missing: the layer at the end of the scene graph,
+    /// the group at the end of the layer), replacing what the group held but its brushed group, and keeps the settings on the group. The
+    /// first version's groups in the layer are moved into `Cliffs` first (a run of the cliffs replaces them). One undo entry; nothing is
+    /// selected afterwards (the layer's outline would hide what is in it).
     ///
     /// # Errors
     ///
     /// The tile has no scene graph, or a text does not read (nothing changes).
-    pub fn apply_coverage(&mut self, result: &[Differential], settings: &CoverageSettings) -> Result<CoverageCounts, String> {
-        let existing = self.coverage_layer();
+    pub fn apply_coverage(&mut self, kind: Kind, result: &[Differential], settings: &CoverageSettings) -> Result<CoverageCounts, String> {
         let root = self.tile().tscene().scene_graph().ok_or("this tile has no scene graph")?;
         let texts = self.coverage_texts(result)?;
         let mark = self.begin()?;
         let outcome = (|| -> Result<CoverageCounts, String> {
-            let layer = match existing {
-                Some(l) => l,
-                None => self.tscene_mut().add_layer(Some(root), COVERAGE_LAYER)?,
-            };
+            if self.coverage_layer().is_none() {
+                self.tscene_mut().add_layer(Some(root), COVERAGE_LAYER)?;
+            }
 
+            // The first version's groups: the cliffs'.
+            let old = self.coverage_old();
+            if !old.is_empty() {
+                let cliffs = self.kind_group(Kind::Cliffs)?;
+                self.tscene_mut().move_elements(old, cliffs, None)?;
+            }
+
+            // The group with its brushed strokes only (the indices move as the scene changes: found again each time).
+            let group = self.kind_group(kind)?;
             let sc = self.tscene_mut();
-            sc.set_attr(layer, PARAMS_ATTR, &settings.params.to_text());
-            sc.set_attr(layer, SEED_ATTR, &settings.seed.to_string());
-            sc.set_attr(layer, ROCKS_ATTR, &settings.rocks);
-            sc.set_attr(layer, PLANTS_ATTR, &settings.plants);
-            sc.set_children_text(layer, b"")?;
+            sc.set_attr(group, PARAMS_ATTR, &settings.params.to_text());
+            sc.set_attr(group, SEED_ATTR, &settings.seed.to_string());
+            sc.set_attr(group, ROCKS_ATTR, &settings.rocks);
+            sc.set_attr(group, PLANTS_ATTR, &settings.plants);
+            let brushed = sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP).map(|b| sc.element_text(b));
+            sc.set_children_text(group, b"")?;
+            if let Some(text) = brushed {
+                sc.insert_element_text(group, &text)?;
+            }
 
             let mut counts = CoverageCounts::default();
             for (d, (items, polygons)) in result.iter().filter(|d| d.kept()).zip(texts) {
@@ -185,10 +256,11 @@ impl TileDocument {
                 let unit = self.tile().unit();
                 let n = items.len().max(1) as f32;
                 let mid = items.iter().fold(Float3::new(0.0, 0.0, 0.0), |a, (_, p)| Float3::new(a.x + p.x / n, a.y + p.y / n, a.z + p.z / n));
-                let lw = world_transform(self.tile().tscene(), layer);
+                let parent = self.coverage_group(kind).ok_or("the kind's group went")?;
+                let lw = world_transform(self.tile().tscene(), parent);
                 let local = lw.rotation.transpose() * (scene_point(mid, unit) - lw.position);
                 let sc = self.tscene_mut();
-                let group = sc.add_group(Some(layer), &format!("Slope {}", d.number), local)?;
+                let group = sc.add_group(Some(parent), &format!("{} {}", region_name(kind), d.number), local)?;
                 for (text, at) in &items {
                     let e = sc.insert_element_text(group, text)?;
                     set_world_position(sc, e, scene_point(*at, unit));
@@ -221,6 +293,17 @@ impl TileDocument {
                 Err(err)
             }
         }
+    }
+
+    /// The kind's group in the coverage layer (which must be there), made at the end of the layer when missing.
+    fn kind_group(&mut self, kind: Kind) -> Result<usize, String> {
+        if let Some(g) = self.coverage_group(kind) {
+            return Ok(g);
+        }
+
+        let layer = self.coverage_layer().ok_or("no coverage layer")?;
+        self.tscene_mut().add_group(Some(layer), kind_group_name(kind), Double3::ZERO)?;
+        self.coverage_group(kind).ok_or_else(|| "the kind's group was not made".to_owned())
     }
 
     /// The texts of the kept differentials, each: its rocks and plants (text at the origin, world point) and its polygons (world points).
