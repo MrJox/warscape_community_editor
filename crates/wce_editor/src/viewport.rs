@@ -703,6 +703,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
                 moved.m[2][3] = snapped[2];
             }
 
+            if vp_gizmo == GizmoMode::Rotate {
+                moved = e.with_active_tool(|t, e| t.snap_gizmo_rotate(e, primary, &frame, moved)).unwrap_or(moved);
+            }
+
             let delta = moved * inverse(&frame);
             let items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;

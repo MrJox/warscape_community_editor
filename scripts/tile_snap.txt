@@ -1,5 +1,6 @@
 # Snapping (Phase 5g of docs/plans/tile_ted_parity.md): the grid always, the grid within a tolerance (a magnet per axis), onto points
-# (instances, polygon points) within the tolerance, and a freeform grab moved along the ground's normal (PageUp). Run with
+# (instances, polygon points, building corners) within the tolerance, onto edges (polygon edges, building footprint sides), and a freeform
+# grab moved along the ground's normal (PageUp). Run with
 # WCE_TILE_WORKSPACE set to a scratch folder.
 new_tile wce_snap_test 2 2 10 32
 frames 5
@@ -58,4 +59,21 @@ gizmo_drag x 50
 frames 4
 assert_world_xz 48 50 0.01
 snap grid off
+
+# Onto edges: a grab near a polygon's side slides onto it (the closing side too); out of reach it stays. Points come first.
+gizmo off
+add_polygon "NOGO_REGION_POLYGON_INSTANCE||80,80;100,80;100,100;80,100"
+frames 3
+tile_select 8
+snap edges on tolerance 2
+grab_to 90 81
+assert_world_xz 90 80 0.01
+grab_to 81.5 90
+assert_world_xz 80 90 0.01
+grab_to 90 90
+assert_world_xz 90 90 0.01
+snap vertices on
+grab_to 98.8 81
+assert_world_xz 100 80 0.01
+snap edges off vertices off tolerance 0
 quit

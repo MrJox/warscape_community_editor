@@ -100,11 +100,22 @@ impl TileTool {
         }
 
         gui::checkbox("snap to grid", &mut self.snap_grid);
+        gui::same_line();
+        gui::checkbox("heights too", &mut self.snap_heights);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The grid snaps the height too: a freeform item moved up or down with the gizmo goes to whole grid steps (horizontal and vertical snapping).");
+        }
+
         gui::set_next_item_width(120.0);
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
         gui::checkbox("snap to points", &mut self.snap_vertices);
         if gui::is_item_hovered() {
-            gui::set_tooltip("TEd's Snap to vertices: what is grabbed or placed goes onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0). Before the grid.");
+            gui::set_tooltip("Snap to vertices: what is grabbed or placed goes onto the nearest instance, polygon point or building footprint corner within the tolerance (1.5 m when it is 0). Before the edges and the grid.");
+        }
+
+        gui::checkbox("snap to edges", &mut self.snap_edges);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("What is grabbed or placed goes onto the nearest polygon or line edge or building footprint side within the tolerance (1.5 m when it is 0), sliding along it. After the points, before the grid.");
         }
 
         gui::set_next_item_width(120.0);
@@ -118,17 +129,35 @@ impl TileTool {
         if gui::is_item_hovered() {
             gui::set_tooltip("The turn of R / Shift+R while placing, of Ctrl+R / Ctrl+Shift+R and Turn on the selection.");
         }
+
+        gui::set_next_item_width(120.0);
+        gui::drag_float("angle tolerance (deg)", &mut self.angle_tolerance, 0.5, 0.0, 90.0, "%.1f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The rotate gizmo: an item's heading goes to a whole rotate step (north-aligned) when it comes this close to one (a magnet). 0: off.");
+        }
     }
 
     /// The snap chip's tooltip: what of the tile's snapping is on.
     pub(crate) fn snapping_summary(&self) -> Option<String> {
         let grid = format!("the {} m grid", wce_formats::c_num::printf_g(f64::from(self.grid_m)));
-        match (self.snap_grid, self.snap_vertices) {
-            (false, false) => None,
-            (true, false) => Some(grid),
-            (false, true) => Some("points".to_owned()),
-            (true, true) => Some(format!("points, {grid}")),
+        let mut parts = vec![];
+        if self.snap_vertices {
+            parts.push("points".to_owned());
         }
+
+        if self.snap_edges {
+            parts.push("edges".to_owned());
+        }
+
+        if self.snap_grid {
+            parts.push(if self.snap_heights { format!("{grid} (heights too)") } else { grid });
+        }
+
+        if self.angle_tolerance > 0.0 {
+            parts.push(format!("headings within {} deg", wce_formats::c_num::printf_g(f64::from(self.angle_tolerance))));
+        }
+
+        (!parts.is_empty()).then(|| parts.join(", "))
     }
 
     /// The Inspector while a terrain brush is active: its settings and the height under the cursor. False otherwise.

@@ -1019,7 +1019,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "snap", "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off]",
+        "snap", "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [heights on|off] [angle <deg>]",
         "the snapping of the grab and the placing (the viewport's snap chip); no argument: log it",
         |e, a| {
             with_tile(e, |t, _| {
@@ -1029,6 +1029,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     match a[i].as_str() {
                         "grid" => t.snap_grid = on,
                         "vertices" => t.snap_vertices = on,
+                        "edges" => t.snap_edges = on,
+                        "heights" => t.snap_heights = on,
+                        "angle" => t.angle_tolerance = number(&a[i + 1]).unwrap_or(t.angle_tolerance).clamp(0.0, 90.0),
                         "size" => t.grid_m = number(&a[i + 1]).unwrap_or(t.grid_m),
                         "tolerance" => t.snap_tolerance = number(&a[i + 1]).unwrap_or(t.snap_tolerance).max(0.0),
                         other => return fail(format!("unknown snap setting {other}")),
@@ -1037,7 +1040,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     i += 2;
                 }
 
-                ok(format!("grid {} size {} tolerance {} vertices {}", t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices))
+                ok(format!(
+                    "grid {} size {} tolerance {} vertices {} edges {} heights {} angle {}", t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices,
+                    t.snap_edges, t.snap_heights, t.angle_tolerance,
+                ))
             })
         },
     );

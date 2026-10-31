@@ -208,7 +208,11 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   popup has a tolerance (0: the grid always snaps; above, an axis snaps only that close to a grid line, a magnet) and "snap to points"
   (onto the nearest instance or polygon point within the tolerance, 1.5 m at 0), for the grab and now the placing too (it did not
   snap before). While grabbing, PageUp / PageDown move a freeform item along the ground's normal (0.25 m; Shift: 1 m). `snap`,
-  `scripts/tile_snap.txt`. Not done: snap to edges, the angle tolerance, horizontal / vertical snap.
+  `scripts/tile_snap.txt`. Since 2026-10-31, wce's own versions of the rest (user: not TEd's, which is buggy there): *snap to edges*
+  (onto the nearest polygon or line edge or building footprint side, the box of the model's bounds, within the tolerance; after the
+  points, before the grid), the points take the footprints' corners too (`Tile::snap_outlines`), *heights too* (the grid snaps a
+  height moved with the gizmo: horizontal and vertical snapping), and an *angle tolerance* (the rotate gizmo turns a heading onto a
+  whole rotate step, north-aligned, when it comes that close; `Tool::snap_gizmo_rotate`). `snap ... edges|heights on|off angle <deg>`.
 - TEd's snapping, traced 2026-10-30 (`TEd.AssemblyKit.exe`, static): `Ted::GRID_SETTINGS` ("Grid and Snapping Settings", constructor
   `FUN_005516d0`, `get_property` `FUN_00551a70`) holds grid_cell_count 100, grid_major_line_frequency 5, grid_spacing 10, the two
   colours, show_grid on, `horizontal_snap` / `vertical_snap` off (bytes +0x45 / +0x46), `grid_snap_tolerance` 10, `angle_snap_tolerance`

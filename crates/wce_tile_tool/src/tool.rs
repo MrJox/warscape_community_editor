@@ -15,7 +15,7 @@ use wce_formats::tile_entry::TileEntry;
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::log;
 use wce_foundation::settings::{Settings, env_value};
-use wce_foundation::math::{Float3, dot, length};
+use wce_foundation::math::{Float3, Float4x4, dot, length, translation};
 use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
@@ -253,6 +253,15 @@ pub struct TileTool {
 
     /// TEd's SF_SNAP_TO_VERTICES: onto the nearest instance or polygon point within the tolerance (1.5 m when it is 0).
     pub(crate) snap_vertices: bool,
+
+    /// Snap to edges (wce's): onto the nearest polygon or line edge or building footprint side within reach.
+    pub(crate) snap_edges: bool,
+
+    /// The grid snaps heights too (a freeform item moved up or down with the gizmo).
+    pub(crate) snap_heights: bool,
+
+    /// Headings snap to whole rotate steps (north-aligned) when this close (degrees); 0: off.
+    pub(crate) angle_tolerance: f32,
 
     /// The cursor on the ground with the snapping applied (what placing uses).
     pub(crate) snapped_cursor: Float3,
@@ -619,7 +628,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
+            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -1717,16 +1726,18 @@ impl TileTool {
         if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 4.0 }
     }
 
-    /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point (snap to vertices; not `skip`'s own),
-    /// else to the grid (each axis, within the tolerance when there is one).
+    /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point or building corner (snap to points; not
+    /// `skip`'s own), else onto the nearest edge (snap to edges: polygon and line edges, building footprint sides), else to the grid (each
+    /// axis, within the tolerance when there is one).
     pub(crate) fn snap_point(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>) -> Float3 {
         self.snap_axes(t, p, skip, true, true)
     }
 
     /// `snap_point` for a move along some axes only (a gizmo handle): the grid snaps the axes asked for, the points need both.
     pub(crate) fn snap_axes(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>, snap_x: bool, snap_z: bool) -> Float3 {
+        let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
+        let outlines = if (self.snap_vertices || self.snap_edges) && snap_x && snap_z { t.snap_outlines(skip) } else { vec![] };
         if self.snap_vertices && snap_x && snap_z {
-            let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
             let mut best = (reach * reach, None);
             let mut try_point = |q: Float3| {
                 let d2 = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z);
@@ -1736,20 +1747,24 @@ impl TileTool {
             };
 
             for &e in t.instances() {
-                if Some(e) == skip || !t.shown(e) {
+                if Some(e) == skip || !t.shown(e) || t.is_polygon(e) {
                     continue;
                 }
 
-                if t.is_polygon(e) {
-                    t.polygon_world_points(e).into_iter().for_each(&mut try_point);
-                } else {
-                    try_point(t.world_position(e));
-                }
+                try_point(t.world_position(e));
             }
 
+            // The polygons' points and the buildings' footprint corners.
+            outlines.iter().flat_map(|(pts, _)| pts.iter().copied()).for_each(&mut try_point);
             if let Some(q) = best.1 {
                 return Float3::new(q.x, p.y, q.z);
             }
+        }
+
+        if self.snap_edges && snap_x && snap_z
+            && let Some(q) = nearest_on_edges(&outlines, p, reach)
+        {
+            return Float3::new(q.x, p.y, q.z);
         }
 
         if self.snap_grid && self.grid_m > 0.01 {
@@ -1763,6 +1778,16 @@ impl TileTool {
         }
 
         p
+    }
+
+    /// A height on the grid (snap heights), within the tolerance when there is one.
+    pub(crate) fn snap_height(&self, y: f32) -> f32 {
+        if !(self.snap_grid && self.snap_heights && self.grid_m > 0.01) {
+            return y;
+        }
+
+        let s = (y / self.grid_m).round() * self.grid_m;
+        if self.snap_tolerance > 0.0 && (s - y).abs() > self.snap_tolerance { y } else { s }
     }
 
     pub fn end_grab(&mut self, e: &mut Editor, commit: bool) {
@@ -2867,7 +2892,7 @@ impl Tool for TileTool {
         self.context.clear(e);
         let old = std::mem::take(self);
         *self = Self {
-            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, snap_tolerance: old.snap_tolerance, snap_vertices: old.snap_vertices, angle_step: old.angle_step, left_dock: old.left_dock,
+            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, snap_tolerance: old.snap_tolerance, snap_vertices: old.snap_vertices, snap_edges: old.snap_edges, snap_heights: old.snap_heights, angle_tolerance: old.angle_tolerance, angle_step: old.angle_step, left_dock: old.left_dock,
             right_dock: old.right_dock, launched: old.launched, launch_job: old.launch_job, launch_worker: old.launch_worker,
             launch_progress_open: old.launch_progress_open, ..Self::default()
         };
@@ -3823,12 +3848,22 @@ impl Tool for TileTool {
 
         // Only the axes the handle moved: the other stays where it is, off the grid or not.
         let (snap_x, snap_z) = ((to[0] - from[0]).abs() > 1e-3, (to[2] - from[2]).abs() > 1e-3);
-        if !(snap_x || snap_z) || !d.tile().is_instance(elem) {
+        let snap_y = (to[1] - from[1]).abs() > 1e-3;
+        if !(snap_x || snap_z || snap_y) || !d.tile().is_instance(elem) {
             return to;
         }
 
         let p = self.snap_axes(d.tile(), Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
-        [p.x, to[1], p.z]
+        let y = if snap_y { self.snap_height(to[1]) } else { to[1] };
+        [p.x, y, p.z]
+    }
+
+    fn snap_gizmo_rotate(&self, e: &Editor, item: wce_scene::render_scene::SourceRef, _frame: &Float4x4, moved: Float4x4) -> Float4x4 {
+        if self.angle_tolerance <= 0.0 || self.angle_step <= 0.0 || wce_tile_editor::tile_document::elem_of(item.item).is_none() || document_id(e).is_none() {
+            return moved;
+        }
+
+        snap_heading(moved, self.angle_step, self.angle_tolerance)
     }
 
     fn left_drag_selects(&self, _e: &Editor) -> bool {
@@ -3964,4 +3999,63 @@ fn light_plane_distance(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
         let p = o + dir * t;
         (p.x - c.x).hypot(p.z - c.z)
     })
+}
+
+/// The point of the outlines' edges nearest to `p` on the ground (x, z), within `reach`.
+fn nearest_on_edges(outlines: &[(Vec<Float3>, bool)], p: Float3, reach: f32) -> Option<Float3> {
+    let mut best = (reach * reach, None);
+    for (pts, closed) in outlines {
+        let n = pts.len();
+        let edges = if *closed { n } else { n.saturating_sub(1) };
+        for i in 0..edges {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            let (dx, dz) = (b.x - a.x, b.z - a.z);
+            let len2 = dx * dx + dz * dz;
+            let k = if len2 > 1e-9 { (((p.x - a.x) * dx + (p.z - a.z) * dz) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let q = Float3::new(a.x + dx * k, a.y + (b.y - a.y) * k, a.z + dz * k);
+            let d2 = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z);
+            if d2 < best.0 {
+                best = (d2, Some(q));
+            }
+        }
+    }
+
+    best.1
+}
+
+/// A world matrix turned about the vertical through its position so that its heading (where its +z points, from north) is a whole number
+/// of `step` degrees, when it is within `tolerance` degrees of one.
+fn snap_heading(m: Float4x4, step: f32, tolerance: f32) -> Float4x4 {
+    let heading = m.m[0][2].atan2(m.m[2][2]).to_degrees();
+    let target = (heading / step).round() * step;
+    let diff = target - heading;
+    if diff.abs() > tolerance || diff.abs() < 1e-4 {
+        return m;
+    }
+
+    let at = Float3::new(m.m[0][3], m.m[1][3], m.m[2][3]);
+    translation(at) * wce_foundation::math::rotation_y(diff.to_radians()) * translation(Float3::new(-at.x, -at.y, -at.z)) * m
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+
+    #[test]
+    fn edges_and_headings_snap_within_reach() {
+        let square = vec![(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(10.0, 0.0, 0.0), Float3::new(10.0, 0.0, 10.0), Float3::new(0.0, 0.0, 10.0)], true)];
+        let q = nearest_on_edges(&square, Float3::new(4.0, 0.0, 1.0), 1.5).expect("near the bottom edge");
+        assert!((q.x - 4.0).abs() < 1e-5 && q.z.abs() < 1e-5);
+        assert!(nearest_on_edges(&square, Float3::new(5.0, 0.0, 5.0), 1.5).is_none(), "the middle is out of reach");
+        let q = nearest_on_edges(&square, Float3::new(-0.5, 0.0, 5.0), 1.5).expect("the closing edge");
+        assert!(q.x.abs() < 1e-5 && (q.z - 5.0).abs() < 1e-5);
+
+        // 47 degrees snaps to 45 within 3, not within 1.
+        let m = translation(Float3::new(3.0, 0.0, 4.0)) * wce_foundation::math::rotation_y(47f32.to_radians());
+        let s = snap_heading(m, 15.0, 3.0);
+        assert!((s.m[0][2].atan2(s.m[2][2]).to_degrees() - 45.0).abs() < 1e-3);
+        assert!((s.m[0][3] - 3.0).abs() < 1e-5 && (s.m[2][3] - 4.0).abs() < 1e-5, "turned about its own position");
+        let s = snap_heading(m, 15.0, 1.0);
+        assert!((s.m[0][2].atan2(s.m[2][2]).to_degrees() - 47.0).abs() < 1e-3);
+    }
 }
