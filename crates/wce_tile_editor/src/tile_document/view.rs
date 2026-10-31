@@ -221,12 +221,31 @@ impl Tile {
 
     /// The bake / material area: the bordered tile.
     fn blend_area(&self) -> (f64, f64, f64, f64) {
-        let b = self.project.border_m();
+        let b = if self.project.bordered() || self.bordered_blend_map() { 128.0 } else { self.project.border_m() };
         (-b, -b, self.extent_x() + b, self.extent_z() + b)
     }
 
+    /// The tile has a material area: an entry, heights, and a height map with its border or a blend map with one (a tile built without
+    /// the height map's border, `overlap_border_size` 0: TDD's `middle_men_city_esgaroth/minor` decompiled from the packs has a 1024 x 1024
+    /// height map and a 1280 x 1280 blend map; without a material it had none, and in a map context one such tile turned all the ground off).
     fn has_blend_area(&self) -> bool {
-        self.project.has_height() && self.project.has_entry() && self.project.bordered()
+        self.project.has_height() && self.project.has_entry() && (self.project.bordered() || self.bordered_blend_map())
+    }
+
+    /// Whether the tile's blend_map.tif covers it with a one-cell border, by its size alone (TEd's layout: a 242-byte header, then 16
+    /// 16-bit weights a pixel; a bordered map is (cells + 2) * k pixels a side): the file is not read.
+    fn bordered_blend_map(&self) -> bool {
+        let info = &self.project.info;
+        let (cx, cy) = (u64::from(info.cells_x), u64::from(info.cells_y));
+        let Ok(md) = std::fs::metadata(self.project.dir.join("blend_map.tif")) else { return false };
+        let px = md.len().saturating_sub(242);
+        if cx == 0 || cy == 0 || px % 32 != 0 || (px / 32) % ((cx + 2) * (cy + 2)) != 0 {
+            return false;
+        }
+
+        let k2 = px / 32 / ((cx + 2) * (cy + 2));
+        let k = k2.isqrt();
+        k > 0 && k * k == k2
     }
 
     /// The skin of the terrain payload for the current look: baked once per (climate, season) and kept until the look changes. The debug views
