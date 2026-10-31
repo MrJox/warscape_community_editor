@@ -58,6 +58,10 @@ fn is_sea_set(location: &str) -> bool {
     location.split(['\\', '/']).filter(|s| !s.is_empty()).nth(3).is_some_and(|set| set.eq_ignore_ascii_case("sea"))
 }
 
+/// How far above the sea (metres) the land LF under a sea tile may be for the tile to go on the sea's LF (`Frame::on_sea_lf`): the cliff
+/// coasts' sea tiles' medians are -14 .. -20 m, TDD's Long Lake's 626 m.
+const SEA_LF_REACH: f64 = 10.0;
+
 /// How deep a custom-mesh tile's floor lies under the sea (metres): see `Frame::place`.
 const FLOOR_DEPTH: f64 = 40.0;
 
@@ -564,8 +568,9 @@ impl Frame {
         // `lf_sea_height_map.dds` bound (fn 0x119256e0 with sea = 1, pass 0x15), 0 (-20 m) on all but 5246 of its pixels; on the land's LF a
         // sea tile next to a cliff rose up to 40 m out of the sea over its last 32 m, where the game (same camera, from a memory dump)
         // has open sea. ASSUMPTION: that the game's sea pass is what draws the sea tiles was not traced (which patches it draws); the
-        // sea LF is taken as 0 everywhere (its few other pixels are not read).
-        if is_sea_set(&self.map.placements[i].location) {
+        // sea LF is taken as 0 everywhere (its few other pixels are not read). Only a sea tile at the sea (`on_sea_lf`): a mod's lake of
+        // sea tiles high up (TDD's Long Lake, 626 m) stays on the land's LF.
+        if self.on_sea_lf(i) {
             let mut sea = frame;
             sea.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
             out.push((sea, Payload::Terrain(Terrain { lf: None, ..terrain })));
@@ -585,6 +590,23 @@ impl Frame {
 
         out.push((frame, Payload::Terrain(terrain)));
         self.place_entities(t, lod, frame, out);
+    }
+
+    /// Whether a placement is drawn on the sea's LF (`place`): a tile of the `sea` set whose land LF is at or under the sea (the median of
+    /// its cells' quarter-cell samples at most SEA_LF_REACH m above 0; the cliff coasts' are -14 .. -20 m). TDD builds the Long Lake (`rom_third_age_map`) of sea tiles on a flat 626 m LF, and
+    /// its battle sea LF is -20 m there: drawn on it, the lake's tiles sank 646 m into pits between their coast tiles.
+    fn on_sea_lf(&self, i: usize) -> bool {
+        let p = &self.map.placements[i];
+        if !is_sea_set(&p.location) {
+            return false;
+        }
+
+        let r = p.rect();
+        let mut v: Vec<f64> = (r[1] * 4..r[3] * 4).flat_map(|y| (r[0] * 4..r[2] * 4).map(move |x| (x, y)))
+            .map(|(x, y)| self.map.lf_metres((f64::from(x) + 0.5) / 4.0, (f64::from(y) + 0.5) / 4.0))
+            .collect();
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).is_none_or(|&m| m <= SEA_LF_REACH)
     }
 
     /// A placement's entities moved into the frame (`frame`) and lifted by the LF at their position.
@@ -641,7 +663,7 @@ impl Frame {
                 {
                     self.place(i, &t, Lod::Far, &mut out);
                     cut.push(p.rect());
-                } else if is_sea_set(&p.location) {
+                } else if self.on_sea_lf(i) {
                     // A sea tile's ground on the sea's LF (`place`): on the land's, next to a cliff it rose out of the sea.
                     let c = if self.map.climate_of(p).is_some() { p.climate } else { NO_CLIMATE };
                     let (mut world, ground) = self.ground(p.rect(), true, c);

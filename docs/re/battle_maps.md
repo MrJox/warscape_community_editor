@@ -224,6 +224,9 @@ plains (aa .. ad) elsewhere.
     (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Side effect: at a beach the sea tiles sit a
     few metres lower than on the land's LF, and the open tile (drawn without skirts) leaves a wider gap under the water at its seaward
     edge (it had a thin one before).
+    Only where the land LF under the tile is at or under the sea (the median of its quarter-cell samples at most 10 m above 0;
+    `Frame::on_sea_lf`): TDD builds the Long Lake of `rom_third_age_map` from `sea` tiles on a flat 626 m LF, and its battle sea LF is
+    -20 m there; on it the lake's tiles sank 646 m into pits between their coast tiles.
   - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the tiles' alpha is the game's per-size texture (below, 2026-10-31); at the far ring's outer edge
