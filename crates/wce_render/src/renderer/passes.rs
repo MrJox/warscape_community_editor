@@ -25,9 +25,14 @@ pub(crate) const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0
 impl Renderer {
 
     pub(crate) fn pass_gbuffer(&mut self) {
+        // Channel 4 (z / w) starts at the far plane: the game's is its depth buffer, cleared to 1 (RenderDoc, coast.rdc). Cleared to 0, a
+        // pixel with nothing behind the sea read as the near plane, and the fog (which reads it) left those pixels clear: dark slivers of
+        // sea along the horizon where the far ground had gaps.
         let rtvs = self.gbuffer.rtvs();
-        for rtv in rtvs.iter().flatten() {
-            self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+        for (k, rtv) in rtvs.iter().enumerate() {
+            if let Some(rtv) = rtv {
+                self.ctx.clear_render_target_view(rtv, if k == 3 { [1.0, 0.0, 0.0, 0.0] } else { [0.0; 4] });
+            }
         }
 
         if let Some(dsv) = &self.gbuffer.dsv {

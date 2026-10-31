@@ -190,6 +190,7 @@ along the shore (in-game capture of a coastal battle, 2026-10-19). What the game
   whitecap array, `combined_foam.dds` and `water_detail_normal.dds`. Stand-ins: a quadtree grid instead of the radial mesh, displaced by
   the blended sea and swell heights; the sea bed texture built from the scene's terrain heights (512 x 512, encoded for the shader's
   `r * 25 - 20`; it only changes how the waves flatten near the shore).
+  The sea plane reaches 28.8 km around the tile (and past the map's edges in a map context), as the game's mesh does (2026-10-31).
 - **Settled by a RenderDoc capture (2026-10-30)** of a coastal battle (sea_coast/2x2_bb_straight at its campaign placement, cell
   (244, 101), sea surface wind_level_0, camera 63.9 m up; `D:\renderdoc\coast.rdc`, RenderDoc 1.46). RenderDoc runs out of the 32-bit
   game's address space (E_OUTOFMEMORY while loading) unless the game uses less: only the launch pack as mod, textures low, "unlimited

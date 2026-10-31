@@ -26,7 +26,7 @@ Not yet: shadow cascades (split count 0 = unshadowed), SSAO (white), clouds (`cl
 | 0 `gbuffer_channel_1` | normal / max(abs) * 0.5 + 0.5, .w gloss | RGBA8 (assumption) |
 | 1 `gbuffer_channel_2` | sqrt(albedo), .w mask | RGBA8 (assumption) |
 | 2 `gbuffer_channel_3` | specular colour, .w material id / 255 | RGBA8 |
-| 3 `gbuffer_channel_4` | z / w | R32F (assumption) |
+| 3 `gbuffer_channel_4` | z / w, cleared to 1 (the game reads its depth buffer here: "G-buffer channel 4" below) | R32F (assumption) |
 | 4 | per-instance value (rigidcommon VS t0 lookup) | R32F (assumption) |
 
 Render target formats, verified later (2026-10-08, the dumps): G-buffer A8R8G8B8 and R32F, HDR A16B16G16R16F, SSAO R16F.
@@ -503,3 +503,12 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   draws them the other way round. The editor now draws a decal's box with the scale's magnitudes (`TileDocument::decal_matrix`, the
   placement preview too); the map context's cache version went to 4 so cached neighbours are rebuilt.
 - ASSUMPTION: a version 5 file (rows carrying the sign) would mirror a decal in game; no Attila tile of the corpus was checked for one.
+
+## G-buffer channel 4 (2026-10-31, RenderDoc)
+
+- The game's `gbuffer_channel_4` (the fog's, the ocean's, the decals' and the soft particles' depth) is its scene depth buffer (D24S8,
+  coast.rdc: resource 2822, read by the ocean at event 914 and the fog at 945), so where nothing was drawn it holds 1, the far plane.
+  The ocean is drawn into another depth buffer (a depth-only pass, event 897, then the colour pass), so the fog of a sea pixel is that
+  of the ground under it. The editor's channel 4 is an R32F target written with z / w; it was cleared to 0 (the near plane), so a sea
+  pixel with no ground behind it got no fog at all: dark slivers along the horizon where the map context's far ground had gaps. It is
+  cleared to 1 now. The fog shader (`battlefog.hlsl` ps30_main) has no case for the sky: a depth of 1 fogs as far as the far plane.

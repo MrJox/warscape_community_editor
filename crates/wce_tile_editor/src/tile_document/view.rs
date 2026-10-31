@@ -617,10 +617,13 @@ impl Tile {
 
         // The sea plane. Lakes are not the sea: a lakes tile has its water as SIMPLE_MESH_INSTANCE water planes (water_plane models scaled
         // over the lake, at the lake's own height: -6.9 m on lakes/10x10/aa), drawn as models.
+        // It reaches the horizon as the game's does (its mesh's rings go out to 28.8 km around the camera, docs/re/water.md): cut at the
+        // tile's border, the sea ended in a straight edge short of the horizon, the sky showing under it.
         let sea = self.display.show_sea && !self.clip_to_tile;
         if sea {
-            let b = self.project.border_m() as f32;
-            let (x0, z0, x1, z1) = (-b, -b, self.extent_x() as f32 + b, self.extent_z() as f32 + b);
+            let r = (SEA_REACH_M / self.unit()) as f32;
+            let (cx, cz) = (self.extent_x() as f32 * 0.5, self.extent_z() as f32 * 0.5);
+            let (x0, z0, x1, z1) = (cx - r, cz - r, cx + r, cz + r);
             let v = |x: f32, z: f32| WaterVertex { x, y: 0.0, z, across: 0.0, u: x, v: z, flow: 0.0, fade: 1.0 };
             new_water.push(Water { river: false, foam: 0.0, verts: vec![v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1)], indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() });
         }
@@ -1233,6 +1236,9 @@ pub const LIGHT_RADIUS_HANDLE: usize = usize::MAX;
 
 /// `set_highlight`'s hot point that means a civilian shelter's target handle (it is being dragged).
 pub const SHELTER_TARGET_HANDLE: usize = usize::MAX - 1;
+
+/// How far the sea reaches around a tile (metres): the game's sea mesh's outer ring (RenderDoc, coast.rdc; docs/re/water.md).
+const SEA_REACH_M: f64 = 28_768.5;
 
 /// POSITION4.w of an opacity (`Tile::opacity_w`).
 fn opacity_w(opacity: f32) -> f32 {

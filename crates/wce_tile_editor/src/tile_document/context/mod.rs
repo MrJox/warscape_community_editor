@@ -515,11 +515,13 @@ impl Frame {
 
     /// The sea: one plane at 0 m over the cells within `reach` of a frame point (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is
     /// -vertical_offset, -20 m, under the open sea), drawn relative to the open tile like the rest. Where the ground is higher it hides it.
+    /// It goes past the map's edges: the game's sea mesh reaches 28.8 km around the camera whatever the map (docs/re/water.md); cut at the
+    /// edge, the sea ended short of the horizon near one (sea_coast/2x2_bb_straight's campaign placement is 101 cells from the top) and the
+    /// far ground's last edge and skirts showed beyond it as dark lines.
     pub fn sea(&self, at: (f64, f64), reach: i32) -> (Float4x4, Payload) {
         let (cx, cy) = self.cell_of(at.0, at.1);
         let r = f64::from(reach);
-        let c = |v: f64, n: u32| v.clamp(0.0, f64::from(n));
-        let b = bounds(&self.from_map, c(cx - r, self.map.width), c(cy - r, self.map.height), c(cx + r, self.map.width), c(cy + r, self.map.height));
+        let b = bounds(&self.from_map, cx - r, cy - r, cx + r, cy + r);
         let y = self.sea_y();
         let v = |x: f64, z: f64| WaterVertex { x: x as f32, y, z: z as f32, u: x as f32, v: z as f32, fade: 1.0, ..Default::default() };
         // Its version follows its rectangle (the renderer lays a plane's chunks out again when it changes).
