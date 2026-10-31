@@ -373,7 +373,8 @@ The leaf and billboard shaders read `g_tint_colours` for the per-instance tint: 
   samples (a the diffuse alpha times the opacity) chosen from a table per sample count (2x: 1 -> sample 1, 2 -> both; 4x: 4, 3, 7, 15;
   8x: 128, 96, 28, 15, 218, 246, 127, 255). So on a one-sample target the rigid and branch variants draw nothing (their one covered sample
   is not sample 0), and only a real MSAA G-buffer (the lighting reads it, and the light buffer, multisampled: `*_texture_ms`) gives the
-  game's alpha-tested edges. Not done: an MSAA pipeline is its own piece of work. `g_season_type` was 1 in the summer capture (3 in the winter snow
+  game's alpha-tested edges. **The editor has no MSAA support for now** (user, 2026-10-31): its alpha-tested edges (leaves, grass,
+  branches, building materials) are the one-sample shaders' (a cut at alpha 0.5), slightly harder than the game's with MSAA on. `g_season_type` was 1 in the summer capture (3 in the winter snow
   dump): no shader reads it (2026-10-31: all 1,228 vanilla shaders that declare `weather_shared` and TDD's 3,810 dx11 shaders mark it
   unused), so it changes nothing; the editor sends the game's value from the scene's season anyway.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
