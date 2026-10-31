@@ -339,7 +339,7 @@ impl Renderer {
     /// constant (`ground_colour_srv`); every pixel passes the stencil test (the game's geometry has low bits 1, the sky 0, whose specular
     /// colour is 0 anyway).
     pub(crate) fn pass_environment_specular(&mut self) {
-        if self.env.active || self.game == super::game::RenderGame::Rome2 {
+        if self.env.active || self.game == super::game::RenderGame::Rome2 || self.reflections_off() {
             return;
         }
 
@@ -417,6 +417,12 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+    }
+
+    /// gfx_screen_space_reflections at 0: the environment specular pass is off (fn 0x118c2530: on above 0). Level 1's half-size buffers
+    /// (the table at 0x11cca8fc: 0, 0.5, 1) are drawn at full size, as level 2.
+    pub(crate) fn reflections_off(&self) -> bool {
+        self.game != super::game::RenderGame::Rome2 && self.settings.reflections == 0
     }
 
     /// The battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps; in game units, the coast dump 2026-10-31):

@@ -17,18 +17,20 @@ use crate::model_cache::half_to_float;
 use crate::shader_lib::{bind_sampler, bind_srv};
 use crate::texture::load_dds;
 
-/// A SKY_CUBE^2 HDR cube map with a render target per face and mips (the shaders sample it at any roughness).
+/// A square HDR cube map with a render target per face and mips (the shaders sample it at any roughness).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Cube {
+    /// Its faces' size.
+    pub size: u32,
     pub tex: Option<ID3D11Texture2D>,
     pub face_rtv: [Option<ID3D11RenderTargetView>; 6],
     pub srv: Option<ID3D11ShaderResourceView>,
 }
 
 impl Cube {
-    fn new(dev: &ID3D11Device) -> Self {
+    pub(crate) fn new(dev: &ID3D11Device, size: u32) -> Self {
         let cd = D3D11_TEXTURE2D_DESC {
-            Width: SKY_CUBE, Height: SKY_CUBE, MipLevels: 0, ArraySize: 6, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Width: size, Height: size, MipLevels: 0, ArraySize: 6, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0,
             MiscFlags: (D3D11_RESOURCE_MISC_TEXTURECUBE | D3D11_RESOURCE_MISC_GENERATE_MIPS) as u32,
         };
@@ -41,9 +43,13 @@ impl Cube {
             dev.create_render_target_view(&tex, Some(&rd)).ok()
         });
 
-        Self { srv: dev.create_shader_resource_view(&tex, None).ok(), face_rtv, tex: Some(tex) }
+        Self { size, srv: dev.create_shader_resource_view(&tex, None).ok(), face_rtv, tex: Some(tex) }
     }
 }
+
+/// The sky cube's size at sky qualities 1 to 3 ("Sky Large CubeMap", fn 0x11905050); at 0 the game draws the sky through the 256 cube
+/// of its environment map ("Sky Cube EnvMap RT"): `SKY_CUBE`.
+pub(crate) const SKY_CUBE_LARGE: u32 = 1024;
 
 /// The sky cube map (the output of ps30_skygen), and the sky textures (cloud maps, lens flare sprites) by path and colour space.
 #[derive(Clone, Debug, Default)]
@@ -54,7 +60,7 @@ pub(crate) struct SkyCube {
 
 impl SkyCube {
     pub fn new(dev: &ID3D11Device) -> Self {
-        Self { cube: Cube::new(dev), textures: BTreeMap::new() }
+        Self { cube: Cube::new(dev, SKY_CUBE_LARGE), textures: BTreeMap::new() }
     }
 }
 
@@ -89,7 +95,7 @@ impl EnvCube {
         };
 
         Self {
-            cube: Cube::new(dev),
+            cube: Cube::new(dev, SKY_CUBE),
             gbuffer: GBuffer::new(dev, SKY_CUBE, SKY_CUBE),
             ambient_staging: std::array::from_fn(|_| dev.create_texture_2d(&staging, None).ok()),
             ..Default::default()
@@ -141,7 +147,14 @@ impl Renderer {
         let (Some(vs), Some(ps)) = (vs, ps) else { return };
         let proj = perspective_lh(PI / 2.0, 1.0, 0.1, 100.0);
         let Some(layout) = self.layout(&vs, "pos3", &sky_layout()) else { return };
-        self.ctx.set_viewports(&[viewport(0.0, 0.0, SKY_CUBE as f32, SKY_CUBE as f32)]);
+
+        // gfx_sky_quality (Attila, Thrones of Britannia): the large cube above 0. Rome 2's sizes are not read: the old 256.
+        let size = if self.game == super::game::RenderGame::Rome2 || self.settings.sky_quality == 0 { SKY_CUBE } else { SKY_CUBE_LARGE };
+        if self.sky.cube.size != size {
+            self.sky.cube = Cube::new(&self.dev, size);
+        }
+
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, size as f32, size as f32)]);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -152,7 +165,7 @@ impl Renderer {
 
         for f in 0..6 {
             // Directions only: the camera at the render origin.
-            self.set_camera(&face_view(f), &proj, self.camera.origin, SKY_CUBE, SKY_CUBE, time_s);
+            self.set_camera(&face_view(f), &proj, self.camera.origin, size, size, time_s);
             self.upload();
             self.ctx.set_render_targets(&[self.sky.cube.face_rtv[f].clone()], None);
             self.bind(&vs);

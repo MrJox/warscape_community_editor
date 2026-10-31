@@ -902,6 +902,17 @@ impl ParticleSystem {
 
     /// The placed effects of this frame. Effects are loaded on first use (their emitters become constants rows after the weather's);
     /// an effect that stays (same key and name) keeps its emitter state, so its particles carry on.
+    /// Reads every definition again on their next use (the effects' quality variant changed): the weather's and the placed effects'.
+    pub fn reload_definitions(&mut self) {
+        self.loaded = false;
+        self.world_effects.clear();
+        self.world_names.clear();
+        self.world_libs.clear();
+        self.world.clear();
+        self.world_lights.clear();
+        self.world_rigids.clear();
+    }
+
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
         // Definitions no placed effect uses any more are unloaded (a map context's tiles, taken off): every frame's work and the
         // constants rows scale with the loaded ones. The instances, lights and debris of the kept ones follow their new indices.

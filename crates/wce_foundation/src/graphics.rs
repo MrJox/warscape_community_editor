@@ -140,7 +140,7 @@ const LEVELS_ROME_2: &[&str] = &["Low", "Medium", "High", "Very High", "Ultra", 
 const TEXTURE_LEVELS: &[&str] = &["Low", "Medium", "High", "Ultra"];
 const AA: &[&str] = &["Off", "MLAA", "MSAA 2x", "MSAA 4x", "MSAA 8x"];
 const FILTERING: &[&str] = &["Trilinear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"];
-const REFLECTIONS: &[&str] = &["Off", "Low", "High", "Ultra"];
+const REFLECTIONS: &[&str] = &["Off", "Half resolution", "Full resolution"];
 const ALPHA_BLEND: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT"];
 
 const fn opt(key: &'static str, label: &'static str, kind: GfxKind, default: &'static str, applied: bool) -> GfxOption {
@@ -157,11 +157,11 @@ const ATTILA_OPTIONS: &[GfxOption] = &[
     opt("gfx_tree_quality", "Trees", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", false),
+    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS), "3", true),
-    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "0", false),
+    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", true),
+    opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "2", true),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
     opt("gfx_depth_of_field", "Depth of field", GfxKind::Switch, "1", true),
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
@@ -182,11 +182,11 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_tree_quality", "Trees", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS), "2", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", false),
+    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS), "3", true),
     opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS), "3", true),
-    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", false),
-    opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "0", false),
+    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS), "3", true),
+    opt("gfx_screen_space_reflections", "Screen space reflections", GfxKind::Levels(REFLECTIONS), "2", true),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
     opt("gfx_depth_of_field", "Depth of field", GfxKind::Switch, "1", true),
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
