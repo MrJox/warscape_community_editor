@@ -89,7 +89,7 @@ fn components(m: &Values, row: Option<&Row>) -> String {
 
 fn run(args: &[String]) -> Result<i32, String> {
     let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
-    let vfs = Vfs::mount(&Config::new(game, GameProfile::ATTILA)).map_err(|e| e.to_string())?;
+    let vfs = Vfs::mount(&Config::new(game, GameProfile::from_env().clone())).map_err(|e| e.to_string())?;
     let w = load_weather_vfx_from_vfs(&vfs, &args[0])?;
     let d = &w.definition;
     println!(

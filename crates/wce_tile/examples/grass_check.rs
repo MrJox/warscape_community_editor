@@ -39,7 +39,7 @@ fn main() {
     let diff = args.iter().any(|a| a == "--diff");
     let oracle_dir: Option<PathBuf> = args.iter().position(|a| a == "--oracle-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let raw = game.join("assembly_kit").join("raw_data");
-    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::ATTILA)).expect("vfs");
+    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::from_env().clone())).expect("vfs");
     let params = grass::GrassParams::load(&game.join("assembly_kit/working_data/terrain/vegetation/battle/grass/max_grass.xml")).expect("max_grass.xml");
     let mut folders: Vec<String> = vfs
         .list("terrain/tiles/battle/", ".grass_list.bin")

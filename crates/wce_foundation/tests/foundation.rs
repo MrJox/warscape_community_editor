@@ -167,6 +167,32 @@ fn game_folders_tell_games_apart() {
     // Attila's folder is not Rome 2's, though its data folder looks the same.
     assert_eq!(GameProfile::ATTILA.folder_problem(dir.path()), None);
     assert!(GameProfile::ROME_2.folder_problem(dir.path()).is_some_and(|p| p.contains("Rome2.exe")));
+    assert!(GameProfile::THRONES_OF_BRITANNIA.folder_problem(dir.path()).is_some_and(|p| p.contains("thrones.exe")));
+    assert_eq!(GameProfile::by_key("thrones_of_britannia"), Some(&GameProfile::THRONES_OF_BRITANNIA));
+}
+
+#[test]
+fn db_schemas_folder() {
+    use wce_foundation::game::GameProfile;
+    use wce_foundation::settings::rpfm_schema_path_in;
+    let dir = tempfile::tempdir().unwrap();
+    let schemas = dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas).unwrap();
+    std::fs::write(schemas.join("schema_tob.ron"), b"").unwrap();
+
+    // The game's file in the folder; a game without its file there falls back to rpfm's own (whatever this machine has).
+    if std::env::var_os("WCE_RPFM_SCHEMA").is_none() {
+        assert_eq!(rpfm_schema_path_in(&GameProfile::THRONES_OF_BRITANNIA, Some(&schemas)), Some(schemas.join("schema_tob.ron")));
+        assert_ne!(rpfm_schema_path_in(&GameProfile::ATTILA, Some(&schemas)), Some(schemas.join("schema_att.ron")));
+    }
+
+    // TODO(pre-release): the Tile settings' old Attila schema file gives the folder.
+    let paths = Paths::in_dir(dir.path());
+    let old = schemas.join("schema_att.ron");
+    std::fs::write(paths.settings_file(), format!("[tools.tile]\nrpfm_schema = '{}'\nshow_sea = true\n", old.display())).unwrap();
+    let s = Settings::load(paths);
+    assert_eq!(s.db_schemas.as_deref(), Some(schemas.as_path()));
+    assert!(!s.tools["tile"].contains_key("rpfm_schema"));
 }
 
 // TODO(pre-release): remove with the settings' `legacy` module.
