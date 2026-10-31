@@ -131,7 +131,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   0x1192e670). Applied as the most particles alive: 512^2 at the highest level, 256^2 below.
 - Texture quality (fn 0x1188a3c0): a texture's first mip = min(drop - (3 - bias), size class) when drop (3 - level) > 3 - bias; size
   class 0 below 128, 1 below 256, 2 below 512, else 3; bias a u16 table at 0x11c88670 indexed by the texture's +0x108 (unknown: not the
-  RMV2 texture type, whose indices are all 0). Not applied.
+  RMV2 texture type, whose indices are all 0). +0x108 is the texture's category, the first argument of its creation (Attila's
+  fn 0x11700930: category, path, flags). Categories with a bias, by creation site: 0x55 terrain detail maps (2), 0x58 river normals and
+  ice (2), 0x53 cloud sets (2), 0x43 the LF normal maps (3), 0x5d-0x5f the LF height and sea maps (1), 0x50 flag normals (3), 0x54 and
+  0x40 dissolve (2), 0x5a lens flares (1), 0x62 snow normals (1), 0x2e fire and blood maps, 0x2b vfx turbulence (2); the models'
+  `_diffuse` / `_normal` made with a constant category are 0 (never dropped). The meshes' textures (fn 0x1186c880, from the RMV2 mesh
+  creation fn 0x1185b0c0) take their category from the mesh factory's +0xc, a value set at run time: not known. Not applied.
 - Terrain: several level checks (fns 0x118e1300: per-frame budgets 10 / 25 and 1000 / 2000; 0x1190b5a0: 0.6 at 0 else 1 into a distance
   product, fn 0x11902d30; 0x118eb8e0: 2048 vs 4096 texture sizes; 0x117f5b00: the terrain's shadows at 0 only under other conditions;
   0x11911e70 / 0x118debf0: passes at 0). Not applied: what each feeds is not settled.
