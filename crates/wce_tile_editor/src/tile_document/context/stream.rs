@@ -7,6 +7,7 @@
 //! memory up to a budget (the least recently used go first; the scene keeps what it draws).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -121,17 +122,25 @@ impl Shared {
 
         tiles.insert(key.clone(), Slot::Loading);
         drop(tiles);
+        // The first source that has the tile (`wce_tile::sources`): the roots in order, then the provider (the packs' tiles, decompiled on
+        // demand: it returns a folder it has at once, and makes a missing or stale one); without a provider `raw_root` last.
+        let roots: Vec<PathBuf> = self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
         let mut dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
-        // The provider (the packs' tiles, decompiled on demand) returns a folder it has at once, and makes a missing or stale one.
-        if let Some(provide) = self.rq.provider.as_ref() {
-            match provide(&key.0, &key.1) {
-                Ok(made) => dir = made,
-                Err(e) => wce_foundation::log::info(format!("map context: {}\\{}: {e}", key.0, key.1)),
+        match wce_tile::sources::find_tile(&roots, &key.0, &key.1) {
+            Some(found) => dir = found,
+            None => {
+                if let Some(provide) = self.rq.provider.as_ref() {
+                    match provide(&key.0, &key.1) {
+                        Ok(made) => dir = made,
+                        Err(e) => wce_foundation::log::info(format!("map context: {}\\{}: {e}", key.0, key.1)),
+                    }
+                }
             }
         }
 
-        // The game's kit, when the tiles' own has no vegetation parameters.
-        let own_params = self.rq.raw_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
+        // The game's kit, when the tile's own (the root it was found in) has no vegetation parameters.
+        let own_root = wce_tile::tile_project::kit_raw_root(&dir).unwrap_or_else(|| self.rq.raw_root.clone());
+        let own_params = own_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
         let game_kit = self.rq.game_kit.as_deref().filter(|_| !own_params);
         let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees, game_kit)));
         let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {

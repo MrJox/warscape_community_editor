@@ -20,7 +20,7 @@ pub mod stream;
 pub mod template;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
@@ -39,6 +39,7 @@ use wce_vfs::files::Files;
 use template::{BOX_ABOVE, BOX_BELOW, Template};
 
 pub use stream::{ChunkChange, ChunkKey, Lod, Streamer};
+pub use wce_tile::sources::tile_dir;
 
 /// Map cells a side of a chunk.
 pub const CHUNK: i32 = 8;
@@ -66,8 +67,12 @@ pub struct ContextRequest {
     pub mid: i32,
     pub far: i32,
 
-    /// The kit's raw_data folder (the neighbours' tile folders).
+    /// The kit's raw_data folder (the tile database's settings).
     pub raw_root: PathBuf,
+
+    /// The raw_data folders a placement's tile is looked for in, the first that has it wins (`wce_tile::sources`: the projects, then the
+    /// Assembly Kits), then the `provider` (the packs); without a provider `raw_root` after them.
+    pub tile_roots: Vec<PathBuf>,
 
     /// The game's Assembly Kit with the tiles (`TileProject::game_kit`): the neighbours' trees are generated with its parameters when
     /// `raw_root`'s kit has none (the projects' kit layout).
@@ -83,8 +88,8 @@ pub struct ContextRequest {
     /// The folder of the cached templates (none: always open the tiles).
     pub cache: Option<PathBuf>,
 
-    /// For a game whose kit has no tiles (Rome 2): makes a placement's tile folder under `raw_root` (decompiled from the packs) from
-    /// its location and variation, when the folder is missing.
+    /// The fallback when no root has a placement's tile: makes its folder from the packs (decompiled into the kit's layout) from its
+    /// location and variation.
     pub provider: Option<TileProvider>,
 }
 
@@ -105,16 +110,6 @@ const NO_CLIMATE: u8 = u8::MAX;
 
 /// A heights buffer the terrains of a size share.
 type Heights = Arc<Vec<f32>>;
-
-/// The tile folder of a placement: `<raw_data>/<location>/<variation>`.
-pub fn tile_dir(raw_root: &Path, location: &str, variation: &str) -> PathBuf {
-    let mut p = raw_root.to_path_buf();
-    for part in location.split(['\\', '/']).filter(|s| !s.is_empty()) {
-        p.push(part);
-    }
-
-    p.join(variation)
-}
 
 /// A 4 x 4 of the frame transform: x' = a x + b z + c, z' = d x + e z + f, y + dy.
 fn matrix(a: &Affine2, dy: f32) -> Float4x4 {
