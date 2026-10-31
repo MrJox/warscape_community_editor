@@ -3991,8 +3991,7 @@ pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
     raw.parent().map(Path::to_path_buf)
 }
 
-/// rpfm's schema of the current game, for the procedural walls' database rows: `WCE_RPFM_SCHEMA`, else (Attila) the Tile settings'
-/// `rpfm_schema`, else rpfm's own for the game.
+/// rpfm's schema of the current game, for the procedural walls' database rows (`walls_schema_path`).
 ///
 /// # Errors
 ///
@@ -4002,14 +4001,12 @@ fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
     rpfm_lib::schema::Schema::load(&path, None).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-/// Where rpfm's schema of the current game for the walls' database rows is: `WCE_RPFM_SCHEMA`, (Attila) the settings, rpfm's own for the
-/// game.
+/// Where rpfm's schema of the current game for the walls' database rows is: `WCE_RPFM_SCHEMA`, else the DB schemas folder's, else rpfm's
+/// own (`wce_foundation::settings::rpfm_schema_path`).
 fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
     let game = e.game();
-    let configured = e.tool_settings::<TileSettings>(SETTINGS_ID).rpfm_schema.filter(|_| game.key == wce_vfs::GameProfile::ATTILA.key);
-    wce_foundation::settings::env_value("WCE_RPFM_SCHEMA").map(PathBuf::from).or(configured)
-        .or_else(|| wce_tile_io::attila::game_data::default_schema_path(game))
-        .ok_or_else(|| format!("the walls' database rows need rpfm's {} schema: rpfm's {} (or rpfm_schema in the [tools.tile] settings, Attila's)", game.display_name, game.rpfm_schema))
+    wce_foundation::settings::rpfm_schema_path(game)
+        .ok_or_else(|| format!("the walls' database rows need rpfm's {} schema: {} in the DB schemas folder (Settings > General) or rpfm's", game.display_name, game.rpfm_schema))
 }
 
 /// A wall's layout in one line: base, length, corners, runs, steps, attached ends (scene units).

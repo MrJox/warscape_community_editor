@@ -30,10 +30,10 @@ pub fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// rpfm's schema of a game where rpfm keeps it: its config folder (`%APPDATA%\FrodoWazEre\rpfm\config` on Windows, `~/.config/rpfm` on
-/// Linux, `~/Library/Application Support/com.FrodoWazEre.rpfm` on macOS) or the older `<config>/rpfm` layout, then `schemas/<the game's
-/// schema>` (like `schema_att.ron`).
-pub fn default_rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathBuf> {
+/// rpfm's schemas folder: its config folder (`%APPDATA%\FrodoWazEre\rpfm\config` on Windows, `~/.config/rpfm` on Linux,
+/// `~/Library/Application Support/com.FrodoWazEre.rpfm` on macOS) or the older `<config>/rpfm` layout, then `schemas`: the first of them
+/// that is there.
+pub fn default_rpfm_schemas_dir() -> Option<PathBuf> {
     let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
     let home = var("HOME").or_else(|| var("USERPROFILE"));
     let config = var("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|h| h.join(".config")));
@@ -45,7 +45,35 @@ pub fn default_rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathB
 
     folders.extend(config.map(|c| c.join("rpfm")));
     folders.extend(home.map(|h| h.join("Library/Application Support/com.FrodoWazEre.rpfm")));
-    folders.into_iter().map(|f| f.join("schemas").join(game.rpfm_schema)).find(|p| p.is_file())
+    folders.into_iter().map(|f| f.join("schemas")).find(|p| p.is_dir())
+}
+
+/// rpfm's schema of a game where rpfm keeps it (`<rpfm's schemas folder>/<the game's schema>`, like `schema_att.ron`), if it is there.
+pub fn default_rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathBuf> {
+    default_rpfm_schemas_dir().map(|dir| dir.join(game.rpfm_schema)).filter(|p| p.is_file())
+}
+
+/// The DB schemas folder of the settings ([`Settings::db_schemas`]), for [`rpfm_schema_path`]: [`Settings::load`] and the editor's
+/// Settings window put it here, so that the readers of db tables need no settings.
+static DB_SCHEMAS: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// The DB schemas folder: `$WCE_DB_SCHEMAS`, else the settings' (the last [`Settings::load`] or [`Settings::publish_db_schemas`]).
+pub fn db_schemas_dir() -> Option<PathBuf> {
+    env_value("WCE_DB_SCHEMAS").map(PathBuf::from).or_else(|| DB_SCHEMAS.read().ok().and_then(|d| d.clone()))
+}
+
+/// rpfm's schema of a game's db tables: `$WCE_RPFM_SCHEMA` (a file), else the game's schema (like `schema_att.ron`) in the DB schemas
+/// folder ([`db_schemas_dir`]), else in rpfm's own ([`default_rpfm_schema_path`]). None when none of them has it.
+pub fn rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathBuf> {
+    rpfm_schema_path_in(game, db_schemas_dir().as_deref())
+}
+
+/// Like [`rpfm_schema_path`], with `schemas` as the DB schemas folder.
+pub fn rpfm_schema_path_in(game: &crate::game::GameProfile, schemas: Option<&Path>) -> Option<PathBuf> {
+    env_value("WCE_RPFM_SCHEMA")
+        .map(PathBuf::from)
+        .or_else(|| schemas.map(|dir| dir.join(game.rpfm_schema)).filter(|p| p.is_file()))
+        .or_else(|| default_rpfm_schema_path(game))
 }
 
 /// A `;` separated list from the environment.
@@ -261,6 +289,11 @@ pub struct Settings {
     #[serde(skip_serializing)]
     pub output_dir: Option<PathBuf>,
 
+    /// The folder of the db tables' schemas (rpfm's files: `schema_att.ron`, `schema_tob.ron`...), every game's; none, or a game's file
+    /// missing from it: rpfm's own schemas folder ([`rpfm_schema_path`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_schemas: Option<PathBuf>,
+
     pub appearance: Appearance,
     pub camera: CameraSettings,
     pub updates: UpdateSettings,
@@ -280,7 +313,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, appearance: Appearance::default(),
+            version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, db_schemas: None, appearance: Appearance::default(),
             camera: CameraSettings::default(), updates: UpdateSettings::default(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
         }
     }
@@ -355,8 +388,28 @@ impl Settings {
             }
         }
 
+        // TODO(pre-release): the Tile tool's Attila schema file becomes the DB schemas folder (where it is, if it has rpfm's file name).
+        if let Some(old) = settings.tools.get_mut("tile").and_then(|t| t.remove("rpfm_schema")).and_then(|v| v.as_str().map(PathBuf::from))
+            && settings.db_schemas.is_none()
+        {
+            if old.file_name().is_some_and(|n| n == GameProfile::ATTILA.rpfm_schema) {
+                log::info(format!("the Tile settings' rpfm schema {} is read from the DB schemas folder now", old.display()));
+                settings.db_schemas = old.parent().map(Path::to_path_buf);
+            } else {
+                log::warn(format!("the Tile settings' rpfm schema {} is not used any more: set the DB schemas folder (Settings > General)", old.display()));
+            }
+        }
+
         settings.paths = paths;
+        settings.publish_db_schemas();
         settings
+    }
+
+    /// Makes the settings' DB schemas folder the one the db tables are read with ([`rpfm_schema_path`]).
+    pub fn publish_db_schemas(&self) {
+        if let Ok(mut dir) = DB_SCHEMAS.write() {
+            dir.clone_from(&self.db_schemas);
+        }
     }
 
     /// Writes settings.toml: to a temporary file first, then over the old one, so a crash never leaves half a file.
@@ -463,6 +516,11 @@ impl Settings {
     /// The current game's output folder: `$WCE_OUTPUT_DIR`, else the file's.
     pub fn output_dir(&self) -> Option<PathBuf> {
         env_value("WCE_OUTPUT_DIR").map(PathBuf::from).or_else(|| self.game_settings().output_dir)
+    }
+
+    /// The DB schemas folder: `$WCE_DB_SCHEMAS`, else the file's.
+    pub fn db_schemas_dir(&self) -> Option<PathBuf> {
+        env_value("WCE_DB_SCHEMAS").map(PathBuf::from).or_else(|| self.db_schemas.clone())
     }
 
     /// `$WCE_FRAME_CAP`, else the file's.

@@ -42,9 +42,9 @@ pub struct GameData {
     pub warnings: Vec<String>,
 }
 
-/// rpfm's schema of a game where rpfm keeps it (`wce_foundation::settings::default_rpfm_schema_path`).
+/// rpfm's schema of a game: `WCE_RPFM_SCHEMA`, else the DB schemas folder's, else rpfm's own (`wce_foundation::settings::rpfm_schema_path`).
 pub fn default_schema_path(game: &GameProfile) -> Option<PathBuf> {
-    wce_foundation::settings::default_rpfm_schema_path(game)
+    wce_foundation::settings::rpfm_schema_path(game)
 }
 
 impl GameData {
