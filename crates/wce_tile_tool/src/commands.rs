@@ -386,11 +386,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let ui = &mut t.context;
                 ui.game_dir = e.game().campaign_battle_map;
                 ui.refresh_maps(&raw, files.as_deref());
+                // `campaign` is the game's own campaign; another map of the packs by its folder (`cha_attila_map`).
                 let want = if name == "campaign" { GAME_MAP.to_owned() } else { name.clone() };
-                let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}; maps: {}", ui.maps.join(", "))) };
+                let want = if ui.maps.contains(&want) { want } else { format!("{want}{}", crate::context_panel::GAME_FILES) };
+                let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {name}; maps: {}", ui.maps.join(", "))) };
                 ui.map = k as i32;
                 if ui.loaded.as_ref().is_none_or(|l| l.0 != want) {
-                    let db = match wce_tile::battle_map::tile_db::TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database")) {
+                    // A map of the packs names the packs' tiles (a mod's among them): read with their database.
+                    let packs = ui.packs_tree.clone().filter(|_| crate::context_panel::game_map_folder(&want, ui.game_dir).is_some()).and_then(|t| t.raw().ok());
+                    let db_raw = packs.unwrap_or_else(|| raw.clone());
+                    let db = match wce_tile::battle_map::tile_db::TileDatabase::load(&db_raw.join("terrain/tiles/battle/_tile_database")) {
                         Ok(db) => db,
                         Err(err) => return fail(err),
                     };
@@ -461,7 +466,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             ui.game_dir = e.game().campaign_battle_map;
             ui.refresh_maps(&raw, files.as_deref());
             let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
-            let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {want}")) };
+            let want = if ui.maps.contains(&want) { want } else { format!("{want}{}", crate::context_panel::GAME_FILES) };
+            let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {name}; maps: {}", ui.maps.join(", "))) };
             ui.map = k as i32;
             ui.shown = true;
             ui.loaded = None;

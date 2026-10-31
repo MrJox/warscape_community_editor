@@ -1354,21 +1354,16 @@ impl TileTool {
         }
 
         if e.game().features.kit_tiles {
-            if self.context.packs_fallback.is_none()
+            // Another set of packs (mods enabled or not) is another tree.
+            let stale = self.context.packs_tree.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_vfs(v)));
+            if (self.context.packs_fallback.is_none() || stale)
                 && let Some(vfs) = e.vfs().cloned()
             {
-                let (kit, root) = (tiles_kit(e), e.settings_ref().paths().cache_dir().join("neighbours").join(e.game().key));
-                let tree: Arc<std::sync::OnceLock<Result<(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String>>> = Arc::default();
-                let provide: wce_tile_editor::tile_document::context::TileProvider = Arc::new(move |location: &str, variation: &str| {
-                    let (game, raw) = tree.get_or_init(|| {
-                        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs.clone(), kit.as_deref())?);
-                        let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &root)?;
-                        Ok((game, raw))
-                    }).as_ref().map_err(Clone::clone)?;
-                    wce_tile_io::attila::workflow::neighbour_tile(game, raw, location, variation)
-                });
-
+                let tree = Arc::new(crate::context_panel::PacksTree::new(vfs, tiles_kit(e), &e.settings_ref().paths().cache_dir().join("neighbours"), e.game().key));
+                let t = tree.clone();
+                let provide: wce_tile_editor::tile_document::context::TileProvider = Arc::new(move |location: &str, variation: &str| t.tile(location, variation));
                 self.context.packs_fallback = Some(provide);
+                self.context.packs_tree = Some(tree);
             }
 
             return;

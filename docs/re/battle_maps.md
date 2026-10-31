@@ -107,8 +107,11 @@ plains (aa .. ad) elsewhere.
 
 ## The map context in the editor (Tile panel > Map context; commands `map_context`, `map_context_settle`, `map_context_cache`)
 
-- Maps: the game's campaign battle map (terrain.pack `terrain/battles/main_attila_map`: `tile_map.*`, `lf_height_map.dds`, `locations.blm`)
-  and the kit's battle maps (filled by the port, `lf_heights.tif`). `wce_tile::battle_map::context`: the placements, where a tile is
+- Maps: every battle map of the mounted packs (2026-10-31: the folders of `terrain/battles` with a `tile_map.tiles`; the game's own
+  campaign, `main_attila_map`, listed as `campaign (game files)`, the others as `<folder> (game files)`: Attila's `cha_attila_map`, TDD's
+  `rom_third_age_map`; `map_context <folder>` in scripts), read with the packs' tile database (the packs tree in the kit's format,
+  `context_panel::PacksTree`, its folder keyed by the mounted packs: a mod's map names the mod's tiles), each `tile_map.*`,
+  `lf_height_map.dds`, `locations.blm`; Launch in game puts the battle on the chosen one; and the kit's battle maps (filled by the port, `lf_heights.tif`). `wce_tile::battle_map::context`: the placements, where a tile is
   placed, each placement's frame transform (unit tests against `rotate_in_tile_space`).
 - **Streamed** (2026-10-21; `wce_tile_editor::tile_document::context`): the map is cut into chunks of 8 x 8 cells, each drawn at a level by
   its distance from the focus (the orbit camera's target, the fly camera's eye, or the open tile with "follow the camera" off): **near**
