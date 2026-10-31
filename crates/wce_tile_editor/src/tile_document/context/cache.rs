@@ -16,8 +16,8 @@ use super::template::{Grid, Template};
 use crate::terrain_bake::TerrainLook;
 
 const MAGIC: &[u8; 6] = b"WCECTX";
-// 4: decal boxes take the scale's magnitudes (`TileDocument::decal_matrix`).
-const VERSION: u16 = 4;
+// 5: decal boxes keep TEd's signed scale again (4 took the magnitudes; the decal pass now draws with the shaders that expect the sign).
+const VERSION: u16 = 5;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {

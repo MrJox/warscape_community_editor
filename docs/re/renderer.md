@@ -494,15 +494,22 @@ at Rome with the vanilla dry weather: +x 0.61 0.62 0.64 (game 0.52 0.55 0.56), -
 (1.52 1.34 1.22), +z 0.64 0.65 0.66 (0.65 0.64 0.63), -z 0.98 0.92 0.85 (1.02 0.97 0.83); the rest is the clouds' random layout and
 the wind. The river, which reflects the cube, is the game's dark slate now. The cloud grid is the main view's too.
 
-## Projected decals: the scale's sign (2026-10-31, in-game capture)
+## Projected decals: which pixel shader (2026-10-31)
 
-- TEd writes a `ProjectedDecalInstance`'s `scale` with a negative z (every kit decal: `vector(48, 12, -48)`, `(8, 6, -8)`), and
-  `prop_marker.markers` stores the box's rows with the magnitudes (docs/formats/tile_compile.md). The editor built the decal's box from
-  the signed scale, which turned the texture's v over (the shader's uv is (x + 0.5, 0.5 - z) in the box). On sea_coast/2x2_bb_straight
-  at its campaign placement the beach decals then put their wet, dark sea edge inland and the dry pitted sand by the water; the game
-  draws them the other way round. The editor now draws a decal's box with the scale's magnitudes (`TileDocument::decal_matrix`, the
-  placement preview too); the map context's cache version went to 4 so cached neighbours are rebuilt.
-- ASSUMPTION: a version 5 file (rows carrying the sign) would mirror a decal in game; no Attila tile of the corpus was checked for one.
+- The engine's decal material (fn 0x116d3fe0) registers the techniques `main` (`ps30_diffuse`), `main_bugged` (`ps30_diffuse_bugged`),
+  their `_z` and multisample variants and `main_far`, all on `vs30_main` and with stencil 0x81 (see "Which pixels take projected decals").
+  Both pixel shaders take the box as the vertex shader does (POSITION1..3: the rows of the world matrix, POSITION4: the size), but:
+  - `ps30_diffuse` normalises the rows and maps a point by sum_i d_i * row_i / |row_i| * size_i / size^2, uv = (x + 0.5, 0.5 - z): the
+    box's inverse only when the turn does not mix axes of different sizes (square boxes, or turns by quarter turns). A turned 20 x 5
+    road decal (`path_1`) came out sheared and partly cut away (gen_dun_medium_final_2's roads: flat smeared blocks where the game draws
+    ruts).
+  - `ps30_diffuse_bugged` maps by the rows transposed over size^2, the exact inverse for any turn and size, with uv = (x + 0.5, z + 0.5).
+    With TEd's negative z scale (every kit decal) that v is the texture the right way up (the beach decals' wet edge by the sea).
+- The editor draws with the `_bugged` pair (`ps30_parallax_bugged` for the parallax decals) and TEd's signed scale. The first coast fix
+  took the scale's magnitudes with the plain shader, which put the beach the right way up but left turned non-square decals sheared;
+  it was undone. Decals inside models (ruins' rubble, ProjectedDecalV2) have their box's z turned over so they keep the orientation they
+  had. ASSUMPTION: which technique the engine picks per decal was not traced; the `_bugged` one is the one that maps the boxes the game's
+  files give exactly.
 
 ## G-buffer channel 4 (2026-10-31, RenderDoc)
 

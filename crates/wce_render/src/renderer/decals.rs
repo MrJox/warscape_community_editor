@@ -1,10 +1,12 @@
-//! The projected decal pass: the scene's decal entities drawn with the game's rigidprojecteddecal shaders (vs30_main, ps30_diffuse), after the
+//! The projected decal pass: the scene's decal entities drawn with the game's rigidprojecteddecal shaders (vs30_main, ps30_diffuse_bugged), after the
 //! G-buffer and terrain passes and before the lights.
 //!
 //! What the shaders do (from their code): the vertex shader draws a box, the instance's 3x4 world matrix (POSITION1..3) times the unit box
 //! (POSITION0, -0.5 .. 0.5). The pixel shader rebuilds each pixel's world position from the depth channel (gbuffer_channel_4, z / w, through
-//! inv_view_projection), maps it into the box (the matrix rows normalised, scaled by POSITION4 / POSITION4^2: the instance's size), discards
-//! it outside, and projects the decal's textures down the box's y axis: uv = (x + 0.5, 0.5 - z). POSITION5 = (tiled, opacity, snow): tiled
+//! inv_view_projection), maps it into the box (the `_bugged` shaders: the rows transposed times the offset, over POSITION4^2, the instance's
+//! size: the box's inverse), discards it outside, and projects the decal's textures down the box's y axis: uv = (x + 0.5, z + 0.5) (TEd's
+//! negative z scale turns v the right way). The plain ps30_diffuse normalises the rows instead and maps uv = (x + 0.5, 0.5 - z): exact only
+//! for square or unturned boxes (2026-10-31, gen_dun_medium_final_2's roads). POSITION5 = (tiled, opacity, snow): tiled
 //! decals repeat at local * size * g_texture_ratio * 0.1587 with the wrap samplers. It writes the G-buffer normal (channel 1, the decal's normal
 //! map in the box's frame), sqrt(albedo) (channel 2) and the snow parameters (channel 3), each with alpha = diffuse alpha * opacity * how much
 //! the surface faces the box's y axis (from the G-buffer normal, which it reads: a copy, since channel 1 is written). The blend is the source
@@ -13,7 +15,7 @@
 //! The boxes are drawn where they are behind the scene (depth test greater or equal, no write), both sides (the camera may be inside one).
 //! Only the pixels with stencil bit `DECAL_RECEIVER` take them: the ground and the TerrainBlend meshes, as the game marks them (its models are 1).
 //!
-//! Parallax (ps30_parallax): the same shader plus three steps of parallax mapping. The `_parallax.dds` maps hold the normal in .w / .y like the
+//! Parallax (ps30_parallax_bugged): the same shader plus three steps of parallax mapping. The `_parallax.dds` maps hold the normal in .w / .y like the
 //! `_normal.dds` ones and a height in .z; the uv moves by (height - 0.5) / 2 along the view direction in the box's frame, times POSITION4.w,
 //! the instance's `parallax_scale`. POSITION6 (an offset and a turn about y inside the box, which only the parallax shader reads) is 0.
 //! ASSUMPTION: the engine draws a decal with ps30_parallax when its model has a `_parallax.dds` map (the models are all `ProjectedDecal`, with
@@ -32,8 +34,16 @@ use crate::draw_set::Frustum;
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 const DECAL_VS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_vs_vs30_main";
-const DECAL_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_diffuse";
-const DECAL_PARALLAX_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_parallax";
+/// The `_bugged` pixel shaders (the engine's `main_bugged` technique; fn 0x116d3fe0 registers both): they map a pixel into the box by
+/// the instance rows transposed over the size squared, the exact inverse of the box the vertex shader draws for any turn and proportions,
+/// with v = z + 0.5, which TEd's negative z scale turns into the texture's right way up. The plain ones normalise the rows first, exact
+/// only for square or unturned boxes: a turned 20 x 5 road decal came out sheared and cut, and the signed z turned every decal over.
+const DECAL_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_diffuse_bugged";
+const DECAL_PARALLAX_PS: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_parallax_bugged";
+
+/// The plain shaders, where a game has no `_bugged` ones.
+const DECAL_PS_PLAIN: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_diffuse";
+const DECAL_PARALLAX_PS_PLAIN: &str = "dx11_sm_3_0_rigidprojecteddecal.hlsl_ps_ps30_parallax";
 
 /// Floats of one instance: POSITION1..3 (world rows), POSITION4 (size, parallax scale), POSITION5 (tiled, opacity, snow), POSITION6 (offset
 /// and turn inside the box, parallax shader only: 0).
@@ -206,8 +216,12 @@ impl Renderer {
                 // stretched once over it, opaque.
                 Payload::MeshInstance(mi) => match self.models.peek(&mi.model) {
                     (Some(gm), _) => {
+                        // Their boxes' z turned over: the `_bugged` shaders' v runs along +z (TEd's decals carry a negative z scale), and these
+                        // were drawn with v along -z before.
+                        let mut flip = Float4x4::IDENTITY;
+                        flip.m[2][2] = -1.0;
                         for decal in &gm.decals {
-                            push(d, e.id, &decal.texture, &(e.world * decal.matrix), false, 1.0, 0.0);
+                            push(d, e.id, &decal.texture, &(e.world * decal.matrix * flip), false, 1.0, 0.0);
                         }
                     }
 
@@ -361,8 +375,8 @@ impl Renderer {
             return;
         }
 
-        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.shader(DECAL_PS)) else { return };
-        let parallax_ps = self.shader(DECAL_PARALLAX_PS);
+        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.shader(DECAL_PS).or_else(|| self.shader(DECAL_PS_PLAIN))) else { return };
+        let parallax_ps = self.shader(DECAL_PARALLAX_PS).or_else(|| self.shader(DECAL_PARALLAX_PS_PLAIN));
         self.make_decal_resources();
         let el: Vec<InputElement> = std::iter::once(element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false))
             .chain((1..=6).map(|i| element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true)))
