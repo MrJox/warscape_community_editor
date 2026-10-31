@@ -122,7 +122,8 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   256 at 0 (it was 256 at every level).
 - Screen space reflections = the environment specular pass (environment_specular_light, reflections_blur): on above 0 (fn 0x118c2530),
   its buffers at 0, 0.5, 1 of the screen (table 0x11cca8fc, fn 0x11903ec0); at 0 `g_apply_environment_specular` is 1 (fn 0x11904130: the
-  directional light adds the specular). Applied: off at 0; level 1's half-size buffers are drawn at full size.
+  directional light adds the specular). Applied: off at 0, half resolution at 1 (the entries without `_full_res`, the screen constants
+  of the half size for the reflection and the x blur: an assumption).
 - Particle effects: the level is mapped to a variant (fn 0x118f0a30: 0 at 3, 1 at 2, 2 at 0 and 1) and each effect takes that variant
   (fn 0x11894bc0, else variant 0): the vfx files' `quality="1"` / `"2"` property overrides. Applied (`vfx_def::set_quality`). The same
   value also sizes a particle buffer (fns 0x11902c80 / 0x11902c20: 0x10000, 0x4000 at 2, 0x40000 in some cases): not applied (its
