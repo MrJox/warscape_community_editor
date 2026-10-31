@@ -366,7 +366,14 @@ The leaf and billboard shaders read `g_tint_colours` for the per-instance tint: 
   (CULL_NONE; the editor culled back faces, losing the leaf cards facing away) and tinted (above). Left: with MSAA the game uses the
   ps_5_0 leaf shader, which turns the alpha into a coverage mask (`oMask`: floor(saturate(1.11 a) (samples + 1)) samples, none below
   1), so at 2x a leaf texel shows from a = 0.3 and partly covered ones blend in the resolve; the editor has no MSAA and its ps_4_0 shader
-  cuts at a = 0.5, so the crowns are slightly thinner at the edges. `g_season_type` was 1 in the summer capture (3 in the winter snow
+  cuts at a = 0.5, so the crowns are slightly thinner at the edges.
+  The MSAA shaders, 2026-10-31 (vanilla `_ms` variants, disassembled): leaves, grass and billboards (`ps50_gbuffer_ms`,
+  `ps50_gbuffer_grass_ms`) cover n = floor(saturate(1.11 a) (N + 1)) samples, N = `g_num_of_samples`, as bits 0 .. n - 1 of `oMask`
+  (none below 1: discard); the branches and every alpha-tested rigid material (`ps41_gbuffer_alpha_test_ms`) cover n = floor((a + 0.1) N)
+  samples (a the diffuse alpha times the opacity) chosen from a table per sample count (2x: 1 -> sample 1, 2 -> both; 4x: 4, 3, 7, 15;
+  8x: 128, 96, 28, 15, 218, 246, 127, 255). So on a one-sample target the rigid and branch variants draw nothing (their one covered sample
+  is not sample 0), and only a real MSAA G-buffer (the lighting reads it, and the light buffer, multisampled: `*_texture_ms`) gives the
+  game's alpha-tested edges. Not done: an MSAA pipeline is its own piece of work. `g_season_type` was 1 in the summer capture (3 in the winter snow
   dump): no shader reads it (2026-10-31: all 1,228 vanilla shaders that declare `weather_shared` and TDD's 3,810 dx11 shaders mark it
   unused), so it changes nothing; the editor sends the game's value from the scene's season anyway.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
