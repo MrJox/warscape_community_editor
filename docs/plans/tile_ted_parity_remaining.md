@@ -41,7 +41,8 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - **Coast**: the surf band looked narrower and less white than the game's; no capture of the fixed coast launch has a usable camera
       (the dumps held other passes' cameras), so it needs one more (screenshot + dump, near / far 1 / 13000).
     - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
-      two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges.
+      two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges: no MSAA
+      support for now (user, 2026-10-31; docs/re/vegetation.md).
     - Done: settlement buildings the game doesn't show (Rome's camp of round huts): its *Escalation 2* layer, which the game loads
       for the `escalation2` upgrade only; the Game view now leaves out the layers the battle would not load.
     - Done: exposure: the tone mapper's statistics now run on the game's fixed 256 x 256 image halved to 1 x 1; at the Rome view the
