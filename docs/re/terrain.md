@@ -22,7 +22,7 @@ every normal-less mesh are lit differently since (max 29 levels on the dry captu
 | `ps30_blend` | PS | the material pass: projects the tile's maps onto the surface using the depth buffer, writes G-buffer channels 1-3 |
 | `vs30_far_blend` / `ps30_far_blend` | VS/PS | the same for distant terrain (`g_far_*`), from a coarse world-sized map |
 | `ps_blend_common_ts` / `vs_blend_common_ts` | VS/PS | the shared tile-space blend used by the editor and campaign variants |
-| `vs30_custom_geom_mat`, `ps30_custom_geom_gbuffer` | VS/PS | custom geometry (cliffs, roads) with a material instead of tile blending |
+| `vs30_custom_geom`, `vs30_custom_geom_mat`, `ps30_custom_geom_mat`, `ps30_custom_geom_gbuffer` | VS/PS | custom geometry: a custom-mesh tile's mesh (the cliffs), in the depth passes and with its own albedo (`docs/re/battle_maps.md`, custom-mesh tiles) |
 | `ps_sea_geom` | PS | sea surface geometry |
 
 `terrain.hlsl` and `terrainblend.hlsl` hold the campaign-map variants (`ps30_main_coast`, `ps30_main_trade_route`) and the editor visualisations.

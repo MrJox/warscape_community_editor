@@ -5,8 +5,8 @@
 //!
 //! - A **mesh** (type 7): three strings (the name first), a u32; from 1.04 the metadata; from 1.13 an optional property block (u32
 //!   present, u32 type 11, u32, f32, an f32 list, a list of six-float boxes); two u32 lists; the vertices (position, normal, an f32
-//!   colour of four, a list of vec3 coordinates, from 1.03 a list of extras, always empty in the files read); the face groups (a list
-//!   of u32 triples, then a u32 material); a u32.
+//!   colour of four, a list of vec3 texture coordinates (one per channel), from 1.03 a list of extras, always empty in the files read);
+//!   the face groups (a list of u32 triples, then a u32 material); a u32.
 //! - The **scene** (type 12): a list of nodes: name, i32 parent (-1 for the root), a position track (vec3), a rotation track
 //!   (quaternions), from 1.15 a scale track (vec3), up to 1.05 a 4 x 3 matrix, a string, from 1.04 the metadata.
 //! - **Metadata**: string attributes (a key, a list of strings), then integer, float, vec3 and vec4 attributes (a key and a track).
@@ -28,13 +28,18 @@ impl std::error::Error for Cas2Error {}
 
 type Result<T> = std::result::Result<T, Cas2Error>;
 
-/// A rigid mesh: its name, string attributes, vertex positions and triangles (the face groups' in order).
+/// A rigid mesh: its name, string attributes, vertices (position, normal, colour, the texture coordinate channels) and triangles (the face groups'
+/// in order), and each face group's triangle count and material number.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Cas2Mesh {
     pub name: String,
     pub strings: Vec<(String, Vec<String>)>,
     pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub colours: Vec<[f32; 4]>,
+    pub uvs: Vec<Vec<[f32; 3]>>,
     pub faces: Vec<[u32; 3]>,
+    pub groups: Vec<(usize, u32)>,
 }
 
 /// A scene node: its name, parent, string attributes and its transform's first keys (position, rotation as i j k w, scale).
@@ -199,24 +204,27 @@ impl Cas2File {
 
         r.list(Reader::u32)?;
         r.list(Reader::u32)?;
-        let positions = r.list(|r| {
+        let vertices = r.list(|r| {
             let p = r.floats::<3>()?;
-            r.floats::<3>()?;
-            r.floats::<4>()?;
-            r.list(Reader::floats::<3>)?;
+            let n = r.floats::<3>()?;
+            let c = r.floats::<4>()?;
+            let uv = r.list(Reader::floats::<3>)?;
             if from(v, 1.03) && r.u32()? != 0 {
                 return Err(Cas2Error("vertex extras".into()));
             }
 
-            Ok(p)
+            Ok((p, n, c, uv))
         })?;
         let groups = r.list(|r| {
             let faces = r.list(|r| Ok([r.u32()?, r.u32()?, r.u32()?]))?;
-            r.u32()?;
-            Ok(faces)
+            let material = r.u32()?;
+            Ok((faces, material))
         })?;
         r.u32()?;
-        Ok(Cas2Mesh { name, strings, positions, faces: groups.concat() })
+        let (positions, normals, colours) = (vertices.iter().map(|v| v.0).collect(), vertices.iter().map(|v| v.1).collect(), vertices.iter().map(|v| v.2).collect());
+        let uvs = vertices.into_iter().map(|v| v.3).collect();
+        let counts = groups.iter().map(|(f, m)| (f.len(), *m)).collect();
+        Ok(Cas2Mesh { name, strings, positions, normals, colours, uvs, faces: groups.into_iter().flat_map(|(f, _)| f).collect(), groups: counts })
     }
 
     fn scene(r: &mut Reader, v: f32) -> Result<Vec<Cas2Node>> {

@@ -40,6 +40,7 @@ mod states;
 mod targets;
 mod blend_mesh;
 mod terrain;
+mod terrain_custom;
 mod terrain_rome2;
 mod water;
 mod ocean;

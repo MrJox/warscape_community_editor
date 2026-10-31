@@ -22,6 +22,9 @@ Use "grill me" technique when a feature implementation request is submitted.
   tile folder and, if TEd needs it, its `TILES/*.xml` entry in a scratch kit), never on the user's files. Ask the user to run TEd when
   you need clicks or pixels you cannot get safely. Close a TEd you started when done (about 800 MB); never close one the user opened.
 - **Do not kill the user's running `wce.exe`** (a link error LNK1168 means one is running): ask them to close it.
+- **Where data is read from:** kit-layout data (tiles, the tile database, battle maps, prefabs, vegetation parameters) comes from the first
+  source that has it: the projects' kit layout, then the Assembly Kits in the settings' order, then the game's packs as the fallback
+  (`wce_tile::sources`). Models and textures keep the game's order (loose folders, then packs). New loaders follow this order.
 - **Third-party code:** nothing new (a crate included) without asking; permissive licences only; keep `THIRD_PARTY.md` current.
 - **Game content:** never commit game assets or shader binaries. Reverse-engineering notes record formats, behaviour and constants
   (in `docs/re/` and `docs/formats/`), never copied code. Reverse engineering is targeted: black box first (the tools on scratch

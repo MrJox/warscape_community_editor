@@ -102,6 +102,9 @@ pub struct Template {
     pub material: Option<Arc<TerrainMaterial>>,
     pub material_low: Option<Arc<TerrainMaterial>>,
 
+    /// A custom-mesh tile's mesh (the cliffs), drawn instead of its heights' patches.
+    pub custom: Option<Arc<wce_scene::render_scene::CustomTerrainMesh>>,
+
     /// Everything but the terrain, the markers and the grass; the first `mid` of them are drawn in the mid ring too (buildings, rivers).
     pub entities: Vec<(Float4x4, Payload)>,
     pub mid: usize,
@@ -198,7 +201,11 @@ impl Template {
         self.coarse = if k > 1 { self.own.every(m, k).skirted() } else { self.near.clone() };
 
         // The blend box reaches down past the skirt (pixels of it outside every box were drawn black).
-        let (lo, hi) = self.own.range();
+        let (lo, mut hi) = self.own.range();
+        if let Some(c) = &self.custom {
+            hi = hi.max(c.bounds[4]);
+        }
+
         self.material = self.material.take().map(|m| {
             let mut m = (*m).clone();
             (m.y0, m.y1) = (f64::from(lo - SKIRT) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
@@ -222,7 +229,8 @@ impl Template {
             Payload::VfxEmitter(v) => v.mesh.as_ref().map_or(0, |m| m.len() * 36),
             _ => 0,
         } + 160).sum();
-        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + entities;
+        let custom: usize = self.custom.iter().flat_map(|m| &m.lods).map(|l| l.vertices.len() * size_of::<wce_scene::render_scene::CustomTerrainVertex>() + l.indices.len() * 4).sum();
+        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + entities + custom;
     }
 }
 
@@ -248,8 +256,9 @@ pub fn load_any_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: 
     if wce_tile::sources::custom_mesh(dir).is_some() { load_custom_template(dir, look, files) } else { load_template(dir, look, trees, game_kit, files) }
 }
 
-/// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its ground is the map's LF alone (zero heights of its own),
-/// with the material of its blend map.
+/// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2), on the map's LF, with the material
+/// of its blend map projected onto it, over a floor at its foot (see below).
+/// TODO: the packs' form (`custom_mesh.rigid_model_v2`, `blend.dds`, `index.dds`) for a tile no kit has; every Attila cliff is in the kit.
 pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
     let found = wce_tile::tile_project::find_tile_info(dir);
@@ -259,11 +268,20 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     let step = NEIGHBOUR_STEP;
     let o = f64::from(OVERLAP_STEPS) * step;
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
-    let height = |_: f64, _: f64| 0.0f32;
+
+    // The mesh first: the tile's heights are a floor at its lowest point (the cliff's foot, under the sea), hidden under the mesh and the
+    // sea bed beside it (the sea is transparent: with nothing under it the background showed through). ASSUMPTION: what the game has
+    // under the sea of such a tile was not traced; this floor stands in for it.
+    let cs2 = wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_CS2).ok_or_else(|| format!("no custom_mesh.cs2 in {}", dir.display()))?;
+    let parsed = wce_formats::cas2::Cas2File::parse(&std::fs::read(&cs2).map_err(|e| format!("{}: {e}", cs2.display()))?).map_err(|e| format!("{}: {e}", cs2.display()))?;
+    let files = files.ok_or("no game files (the ground's textures)")?;
+    let albedo = super::custom_mesh::albedo(super::custom_mesh::CLIFF_TEXTURE, &look.climate, files.as_ref());
+    let mesh = super::custom_mesh::from_cs2(&parsed, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", cs2.display()))?;
+    let floor = mesh.bounds[1];
+    let height = |_: f64, _: f64| floor;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
 
     // The blend map is the bordered tile's (a cell around it), as a scene tile's.
-    let files = files.ok_or("no game files (the ground's textures)")?;
     let tif = wce_tile::sources::file_any_case(dir, "blend_map.tif").ok_or_else(|| format!("no blend_map.tif in {}", dir.display()))?;
     let blend = wce_tile::blend_field::BlendField::read(&tif).map_err(|e| format!("{}: {e}", tif.display()))?;
     let settings = entry.file().parent().and_then(Path::parent).map(|p| p.join("_settings.xml"));
@@ -276,8 +294,9 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     };
 
     let (m, _) = crate::terrain_material::build_terrain_material(&rq, &blend, &climates, files.as_ref())?;
+    // Its box reaches over the mesh too (`finish`).
     let material = Arc::new(context_material(&m, (-b, -b, ex + b, ez + b), (ex, ez), &own, &height));
-    let mut tpl = Template { extent: (ex, ez), own, material: Some(material), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
+    let mut tpl = Template { extent: (ex, ez), own, material: Some(material), custom: Some(Arc::new(mesh)), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
     tpl.finish();
     Ok(tpl)
 }

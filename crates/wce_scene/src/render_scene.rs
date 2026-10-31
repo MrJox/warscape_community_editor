@@ -318,8 +318,55 @@ pub struct Terrain {
     /// Also as the legacy patches (picking, the environment cube, a scene without the material pass); a map context's ground is not.
     pub legacy: bool,
 
+    /// A custom-mesh tile's geometry (the cliffs): with the material, drawn by the game's custom terrain shaders instead of the height
+    /// patches (the game's tile has no patches then), on the LF as they are.
+    pub custom: Option<Arc<CustomTerrainMesh>>,
+
     /// Change it when the heights or the texture change: the renderer rebuilds the mesh.
     pub version: u64,
+}
+
+/// A custom-mesh tile's mesh (`custom_mesh.cs2` in the kit, BOB's `custom_mesh.rigid_model_v2` in the packs: material type CustomTerrain).
+/// The game's `vs30_custom_geom` draws a vertex at (x, 2 y, -z) of its position (game units), on the LF like the terrain's patches; its
+/// tile's frame has z towards the map's south, the scene's towards the north: in the scene a vertex is at (x, CUSTOM_TERRAIN_Y * y,
+/// depth + z) of its tile's frame (the map's placements say so: a cliff's plateau meets the land tiles south of it, its foot the sea's).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CustomTerrainMesh {
+    /// Unique per mesh (the renderer keeps its buffers by it).
+    pub id: u64,
+
+    /// The levels of detail, finest first; each is drawn up to its distance from the eye (scene units), the last beyond.
+    pub lods: Vec<CustomTerrainLod>,
+
+    /// The albedo texture (`s_albedo_map`, a pack path).
+    pub albedo: String,
+
+    /// The tile's extent along z (scene units).
+    pub depth: f32,
+
+    /// The drawn mesh's box in the tile's frame (scene units, before the LF): min x y z, max x y z.
+    pub bounds: [f32; 6],
+}
+
+/// Scene units per unit of a custom terrain vertex's stored y. ASSUMPTION: the stored x, z are scene units (a 2 x 2 tile's mesh spans
+/// 0 .. 256) and y is too, the shader's doubling being what the game's rows do to x and z (scene -> game units): the packed tile's
+/// `hf_height_map.data` (gameplay heights, game units, a sample a scene unit) is 2 y.
+pub const CUSTOM_TERRAIN_Y: f32 = 1.0;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CustomTerrainLod {
+    pub distance: f32,
+    pub vertices: Arc<Vec<CustomTerrainVertex>>,
+    pub indices: Arc<Vec<u32>>,
+}
+
+/// A vertex as the game's CustomTerrain vertex holds it: the position as stored, the normal and the material weight as the bytes of
+/// `N0` (z, y, x of `n * 0.5 + 0.5`, then the weight: the shader reads them swizzled), the texture coordinates.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CustomTerrainVertex {
+    pub position: [f32; 3],
+    pub normal: [u8; 4],
+    pub uv: [f32; 2],
 }
 
 impl Default for Terrain {
@@ -339,6 +386,7 @@ impl Default for Terrain {
             material: None,
             lf: None,
             legacy: true,
+            custom: None,
             version: 0,
         }
     }
