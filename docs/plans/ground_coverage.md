@@ -38,15 +38,21 @@ All three work on the same 1 m grid; what changes is which cells are the feature
 final heights, its water map, the no-go field) is worked out once per tile version, as the water depth view does (`water_view::stage_b_of`).
 
 - **Inland cliffs**: the current detection (slope above `slope_deg`, closing, regions, foot and top walks, rise and area filters). New rule:
-  a cell whose foot is not above the sea (`foot height <= sea_margin`, the sea at 0 m) is not inland: it is left to the coast. A region
-  whose cells are all left out is dropped (state `AtSea`, shown red in the preview as the others left alone).
-- **Coastal**: the no-go cells within `water_reach` of the sea (a cell at or under 0 m that is sea, not a pond: connected to the tile's
-  edge or to the map context's open sea). Regions as for cliffs. Bands, by height over the sea instead of a walked foot: a **waterline
-  band** from `-below` (rocks half under water) to `+above` metres, rocks only by default; a **face band** above it up to `top_margin`
-  under the top, sparser rocks; plants optional on a **lip band** along the top (off by default: an empty plant set).
+  a cell whose foot is not above the sea (a tile that meets the sea, `foot height <= sea_margin`) or is in a river is not inland: it is
+  left to the coast or the banks. A region whose cells are all left out is dropped (state `ByWater`, shown red in the preview as the
+  others left alone).
+- **Coastal**: the no-go cells within `water_reach` of the sea. **A tile meets the sea when its entry links to the `sea` tile set**
+  (`TILE_LINKS`, `TLT_EQUALS`), as BOB's stage B knows it; a tile's heights alone don't say it (kit river tiles lie all under 0 m). The
+  sea is then the ground under 0 m reached from the tile's edge (a pond is not). Regions as for cliffs. Bands by height over the sea
+  instead of a walked foot: a **waterline band** from `water_below` under the sea (rocks only, half sunk) up to `foot_up` over it, plants
+  on its dry part; a **face band** above it up to `top_margin` under the top, sparser rocks.
 - **Riverbank**: the no-go cells within `water_reach` of river water (stage B's water map: a cell whose water surface is over its
-  ground). Bands by height over the local water surface (the nearest water cell's): a **water's edge band** (rocks and plants: reeds,
-  bushes) and a **bank band** above it (rocks). A river's bed (under water) gets nothing.
+  ground), not under it. Bands by height over the local water surface (the nearest water cell's): a **water's edge band** (rocks, and
+  plants on its dry part: reeds, bushes) and a **bank band** above it (rocks). A river's bed deeper than `water_below` gets nothing.
+
+Done in step 2: the plan's separate lip band (plants along a coast's top) was left out; the coast's plants go on the dry part of its
+waterline band, as the banks'. Stage B's heights, and so its water depth, are in scene units (2 per metre): the depth is divided by the
+tile's `unit_scale`.
 
 Coast and banks use the game's no-go field (not the preset's angle), so the coverage marks exactly the ground units can't walk. Buildings
 are gone around as now (the same categories, `building_clearance`). Exclusion polygons around the plants' clusters, as now, for every kind.
@@ -92,11 +98,13 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
 
 ### Steps (a commit per step, on `feature/auto_ground_coverage`)
 
-1. **Context.** `terrain_outlines::no_go_field` (the no-go field less the go outlines, before the blur and the tracing: the field the
+1. **Context** (done, e8c3730). `terrain_outlines::no_go_field` (the no-go field less the go outlines, before the blur and the tracing: the field the
    outlines come from) and a `CoverageContext` on the tool (heights, water surface, no-go, sea), resampled to the 1 m grid, cached per
    document version; `water_view::stage_b_of` shared.
-2. **Kinds in the algorithm.** `wce_tile::ground_coverage` gets `Kind` and the per-kind detection and bands above; `generate` becomes
-   classify (regions and bands, per kind) + populate (in a set of cells: the tile or a circle). The cliffs' sea rule. Tests on synthetic
+2. **Kinds in the algorithm** (done). `wce_tile::ground_coverage` gets `Kind` and the per-kind detection and bands above. The cliffs' sea
+   and river rule. The window has a kind combo and the script command an optional kind (`... [seed|-] [cliffs|coast|riverbank]`) until
+   step 4. Left for step 5: splitting `generate` into classify (regions and bands, cached) and populate (in a set of cells: the tile or a
+   circle). Tests on synthetic
    fields: a cliff at the sea goes to the coast; a cliff over the sea stays a cliff; a steep bank by a river is a bank, a walkable one
    isn't; a pond under 0 m is not the sea.
 3. **Storage.** Kind groups, fill replaces a kind's regions only, the brushed group kept, old layers read as Cliffs.
@@ -107,8 +115,10 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
 
 ### Open (to settle while building)
 
-- The coast's sea: the tile's cells under 0 m connected to its edge may be a lake under sea level on an inland tile. The map context knows
-  where the open sea is; without it, edge-connected is the guess.
+- Kit tiles have little of the new kinds: their coasts' no-go ground is under 800 m² a tile, and river/2x2_bl_rt's 9 banks are all under
+  the 1.5 m rise (its 3 cliffs are the banks'). The defaults are tuned in step 6.
+- sea_coast/6x4_bb_45 opens without its entry (extent 256 m instead of 768 x 512; stage B's heights 0 .. 0.83): a fault of the
+  project's reading, not of the coverage; its coast is not found (no sea link known).
 - The banks' "local water surface" for a river whose surface falls along the tile (the nearest water cell's height is the guess).
 - Whether Ctrl + drag erases every kind or only the window's current one (the plan says the current one).
 

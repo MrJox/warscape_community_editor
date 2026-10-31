@@ -1714,13 +1714,22 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ground_coverage", "ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed]", "the ground coverage's window from a script: Preview (prints the summary, draws it) or Generate (replaces \"(AUTOGEN) Ground Coverage\" without asking)", |e, a| {
+    c.add("ground_coverage", "ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed|-] [cliffs|coast|riverbank]", "the ground coverage's window from a script: Preview (prints the summary, draws it) or Generate (replaces \"(AUTOGEN) Ground Coverage\" without asking)", |e, a| {
         let (Some(what), Some(rocks), Some(plants)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
-            return fail("usage: ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed]");
+            return fail("usage: ground_coverage <preview|generate> <rock set|-> <plant set|-> [seed|-] [cliffs|coast|riverbank]");
         };
 
         let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
-        with_tile(e, |t, e| t.coverage_for_script(e, &what, &rocks, &plants, seed).map_or_else(fail, ok))
+        let kind = match a.get(4) {
+            Some(k) => match wce_tile::ground_coverage::Kind::from_name(k) {
+                Some(k) => Some(k),
+                None => return fail("the kind is cliffs, coast or riverbank"),
+            },
+
+            None => None,
+        };
+
+        with_tile(e, |t, e| t.coverage_for_script(e, &what, &rocks, &plants, seed, kind).map_or_else(fail, ok))
     });
 
     c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {

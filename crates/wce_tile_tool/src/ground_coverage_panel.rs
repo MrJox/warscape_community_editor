@@ -1,7 +1,8 @@
 //! The automatic ground coverage's window (experimental; `wce_tile::ground_coverage`, `TileDocument::apply_coverage`): opened from the Tile
-//! panel, it takes the parameters, a rock set (of buildings) and a plant set (of trees), and a seed. Preview finds the differentials and
-//! draws them in the viewport (the foot bands green, the faces orange, what is left alone red, a mark where each rock and plant would go,
-//! the exclusion polygons blue; hovering one says why); Generate puts the result into `(AUTOGEN) Ground Coverage`, replacing what it held.
+//! panel, it takes the kind of terrain (inland cliffs, coast, riverbanks), the parameters, a rock set (of buildings) and a plant set (of
+//! trees), and a seed. Preview finds the differentials and draws them in the viewport (the foot bands green, their cells under the water
+//! cyan, the faces orange, what is left alone red, a mark where each rock and plant would go, the exclusion polygons blue; hovering one says
+//! why); Generate puts the result into `(AUTOGEN) Ground Coverage`, replacing what it held.
 //! The last values are kept in the Tile settings; a tile whose layer has the settings of its last run starts from those.
 
 use std::collections::{HashMap, HashSet};
@@ -11,7 +12,7 @@ use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
-use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Params, RockSize, Seat, State, generate};
+use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Kind, Params, RockSize, Seat, State, generate};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL};
@@ -23,6 +24,7 @@ use crate::tool::{TileTool, document, document_id};
 #[derive(Default)]
 pub struct CoverageUi {
     pub open: bool,
+    pub kind: Kind,
     pub params: Params,
     pub seed: u64,
     pub rocks: String,
@@ -69,14 +71,19 @@ impl TileTool {
         self.coverage.open = true;
     }
 
-    /// The window from a script: its sets (`-`: none) and seed (else the tile's), then Preview (the summary) or Generate (without asking).
+    /// The window from a script: its sets (`-`: none), seed (else the tile's) and kind (else the window's; another one starts from its
+    /// defaults), then Preview (the summary) or Generate (without asking).
     ///
     /// # Errors
     ///
     /// Not `preview` or `generate`, no set, or the generation failed.
-    pub fn coverage_for_script(&mut self, e: &mut Editor, what: &str, rocks: &str, plants: &str, seed: Option<u64>) -> Result<String, String> {
+    pub fn coverage_for_script(&mut self, e: &mut Editor, what: &str, rocks: &str, plants: &str, seed: Option<u64>, kind: Option<Kind>) -> Result<String, String> {
         self.open_coverage();
         self.load_coverage_values(e);
+        if let Some(k) = kind.filter(|&k| k != self.coverage.kind) {
+            self.set_coverage_kind(k);
+        }
+
         let name = |s: &str| if s == "-" { String::new() } else { s.to_owned() };
         (self.coverage.rocks, self.coverage.plants) = (name(rocks), name(plants));
         if let Some(s) = seed {
@@ -118,6 +125,13 @@ impl TileTool {
         self.coverage.seed = u64::from((self.random.unit() * 1.0e6) as u32);
     }
 
+    /// Another kind: its default parameters, no preview.
+    fn set_coverage_kind(&mut self, kind: Kind) {
+        self.coverage.kind = kind;
+        self.coverage.params = Params::for_kind(kind);
+        self.coverage.preview = None;
+    }
+
     /// Closes the window, and its preview with it (the viewport would go on drawing it).
     fn close_coverage(&mut self) {
         self.coverage.open = false;
@@ -153,10 +167,21 @@ impl TileTool {
         }
 
         gui::text_wrapped(&format!(
-            "Finds the steep slopes of the tile and puts rocks and plants along their foot and rocks up their faces, with a vegetation exclusion \
-             polygon around each clump of plants. It all goes into the layer \"{COVERAGE_LAYER}\", replacing what that layer holds.",
+            "Finds the kind's terrain and puts rocks and plants along its foot (by the water, its waterline) and rocks up its faces, with a \
+             vegetation exclusion polygon around each clump of plants. It all goes into the layer \"{COVERAGE_LAYER}\", replacing what that \
+             layer holds.",
         ));
         gui::spacing();
+
+        let mut kind = Kind::ALL.iter().position(|&k| k == self.coverage.kind).unwrap_or(0) as i32;
+        gui::set_next_item_width(260.0);
+        if gui::combo("kind", &mut kind, &["Inland cliffs", "Coast", "Riverbanks"]) {
+            self.set_coverage_kind(Kind::ALL[kind as usize]);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(kind_tip(self.coverage.kind));
+        }
 
         let sets = self.vegetation_sets(e);
         set_combo("rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
@@ -165,7 +190,7 @@ impl TileTool {
             gui::text_disabled("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
         }
 
-        let changed = params_rows(&mut self.coverage.params);
+        let changed = params_rows(self.coverage.kind, &mut self.coverage.params);
 
         gui::separator_text("Seed");
         // The field holds an i32: a bigger seed (a script's) is shown capped, and kept unless edited.
@@ -326,13 +351,19 @@ impl TileTool {
         let started = std::time::Instant::now();
         let (f, raw) = crate::water_view::stage_b_fields(d, game.as_deref()).map_err(|err| format!("ground coverage: the tile's water and no-go areas: {err}"))?;
         let (sx, sz) = crate::water_view::vertex_spacing(d, &f);
-        let c = std::sync::Arc::new(Context::resample(&d.coverage_grid(), f.w, f.h, sx, sz, &crate::water_view::water_depth(&f), &f.no_go_field(&raw)));
+        // Stage B's heights, so its water's depth, are in scene units (`unit` per metre).
+        let unit = d.tile().unit() as f32;
+        let depth = crate::water_view::water_depth(&f).iter().map(|w| w / unit).collect::<Vec<_>>();
+        let mut c = Context::resample(&d.coverage_grid(), f.w, f.h, sx, sz, &depth, &f.no_go_field(&raw));
+        c.has_sea = d.project().entry.as_ref().is_some_and(|en| en.links().iter().any(|l| l.link_set == "sea" && l.test == "TLT_EQUALS"));
         let m2 = |n: usize| n as f32 * GRID_CELL * GRID_CELL;
         let (no_go, wet) = (c.no_go.iter().filter(|&&b| b).count(), c.water_depth.iter().filter(|&&d| d > 0.0).count());
         wce_foundation::log::info(format!(
-            "ground coverage: the tile's water and no-go areas worked out in {:.2} s ({:.0} m2 no-go, {:.0} m2 under rivers and water planes)",
-            started.elapsed().as_secs_f64(), m2(no_go), m2(wet),
+            "ground coverage: the tile's water and no-go areas worked out in {:.2} s ({:.0} m2 no-go, {:.0} m2 under rivers and water planes, {})",
+            started.elapsed().as_secs_f64(), m2(no_go), m2(wet), if c.has_sea { "by the sea" } else { "no sea" },
         ));
+
+        let c = std::sync::Arc::new(c);
         self.coverage.context = Some((key, c.clone()));
         Ok(c)
     }
@@ -344,7 +375,7 @@ impl TileTool {
         let context = self.coverage_context(e)?;
         let doc = document_id(e).ok_or("no tile is open")?;
         let d = document(e).ok_or("no tile is open")?;
-        let (result, grid, unknown) = run(d, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
+        let (result, grid, unknown) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
         let lines = preview_lines(d, &grid, &result);
         let owner = owners(&grid, &result);
         let mut summary = summary_of(&result);
@@ -376,7 +407,7 @@ impl TileTool {
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
-        let (result, _, _) = run(d, &context, &rocks, &plants, &categories, settings.params, settings.seed);
+        let (result, _, _) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, settings.params, settings.seed);
         let c = d.apply_coverage(&result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
 
         // What is in the tile now is the result: the preview would draw over it.
@@ -415,6 +446,7 @@ impl TileTool {
                 ),
                 Some(State::TooLow(r)) => format!("Slope {}: left alone, too low ({r:.1} m, the least is {:.1} m)", d.number, pr.min_rise),
                 Some(State::TooSmall(a)) => format!("Slope {}: left alone, too small ({a:.0} m2, the least is {:.0} m2)", d.number, pr.min_area),
+                Some(State::ByWater) => format!("Slope {}: left alone, its foot is at the sea or in a river (Coast, Riverbanks)", d.number),
                 None => String::new(),
             });
         }
@@ -423,8 +455,9 @@ impl TileTool {
 
 /// Runs the generator on the tile (around the buildings of the avoided categories): the result, the grid, and the rock keys whose model was
 /// not found.
+#[allow(clippy::too_many_arguments)]
 fn run(
-    d: &TileDocument, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
+    d: &TileDocument, kind: Kind, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
 ) -> (Vec<Differential>, Grid, Vec<String>) {
     let grid = d.coverage_grid();
     let blockers = d.coverage_blockers(&|k: &str| categories.get(&k.to_lowercase()).cloned());
@@ -438,7 +471,7 @@ fn run(
     }).collect::<HashMap<_, _>>();
 
     let size = |k: &str| sizes.get(k).copied().unwrap_or(UNKNOWN_ROCK);
-    let result = generate(&Input { grid: &grid, context: Some(context), blockers: &blockers, rocks, plants, rock_size: &size, params, seed });
+    let result = generate(&Input { kind, grid: &grid, context: Some(context), blockers: &blockers, rocks, plants, rock_size: &size, params, seed });
     (result, grid, unknown)
 }
 
@@ -447,10 +480,12 @@ fn summary_of(result: &[Differential]) -> String {
     let kept = result.iter().filter(|d| d.kept()).collect::<Vec<_>>();
     let count = |f: fn(&State) -> bool| result.iter().filter(|d| d.state.as_ref().is_some_and(f)).count();
     let (low, small) = (count(|s| matches!(s, State::TooLow(_))), count(|s| matches!(s, State::TooSmall(_))));
+    let water = count(|s| matches!(s, State::ByWater));
+    let by_water = if water == 0 { String::new() } else { format!(", {water} by the water (Coast, Riverbanks)") };
     let around = kept.iter().filter(|d| d.avoided != 0).count();
     format!(
         "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s), {around} of them around buildings; left alone: {low} too \
-         low, {small} too small.",
+         low, {small} too small{by_water}.",
         result.len(), kept.len(), kept.iter().map(|d| d.rocks.len()).sum::<usize>(), kept.iter().map(|d| d.plants.len()).sum::<usize>(),
         kept.iter().map(|d| d.exclusions.len()).sum::<usize>(),
     )
@@ -468,18 +503,19 @@ fn owners(g: &Grid, result: &[Differential]) -> Vec<u32> {
     owner
 }
 
-/// The preview's lines: the outlines of the foot bands (green) and faces (orange) of the kept differentials and of the ones left alone
-/// (red), a cross where each rock (grey) and plant (green) goes, and the exclusion polygons (blue).
+/// The preview's lines: the outlines of the foot bands (green), their cells under the water (cyan) and faces (orange) of the kept
+/// differentials and of the ones left alone (red), a cross where each rock (grey) and plant (green) goes, and the exclusion polygons (blue).
 fn preview_lines(d: &TileDocument, g: &Grid, result: &[Differential]) -> Vec<OverlayVertex> {
     let mut o = Overlay::default();
     let (green, orange, red) = (overlay_colour(0.3, 0.9, 0.3, 1.0), overlay_colour(1.0, 0.6, 0.15, 1.0), overlay_colour(0.95, 0.2, 0.2, 1.0));
-    let (grey, blue) = (overlay_colour(0.8, 0.8, 0.8, 1.0), overlay_colour(0.3, 0.6, 1.0, 1.0));
+    let (grey, blue, cyan) = (overlay_colour(0.8, 0.8, 0.8, 1.0), overlay_colour(0.3, 0.6, 1.0, 1.0), overlay_colour(0.3, 0.95, 0.95, 1.0));
     let t = d.tile();
     let up = 0.3;
     for dif in result {
         if dif.kept() {
             outline(g, &dif.foot, green, &mut o);
             outline(g, &dif.face, orange, &mut o);
+            outline(g, &dif.wet, cyan, &mut o);
         } else {
             outline(g, &dif.cells, red, &mut o);
         }
@@ -543,6 +579,15 @@ fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
     }
 }
 
+/// What a kind of terrain is, for its tooltip.
+fn kind_tip(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Cliffs => "Inland slopes and cliffs steeper than the angle, whose foot is over the sea and out of the rivers",
+        Kind::Coast => "The ground by the sea (under 0 m, reached from the tile's edge) that units can't walk; its bands measured from the sea",
+        Kind::Riverbank => "The ground by a river or a water plane that units can't walk; its bands measured from the water's surface",
+    }
+}
+
 /// A combo of the sets of a kind (and none).
 fn set_combo(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, chosen: &mut String) {
     let preview = if chosen.is_empty() { format!("none ({hint})") } else { chosen.clone() };
@@ -569,7 +614,7 @@ fn set_combo(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, cho
 }
 
 /// The parameters' rows; whether one changed.
-fn params_rows(p: &mut Params) -> bool {
+fn params_rows(kind: Kind, p: &mut Params) -> bool {
     let mut changed = false;
     let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
         gui::set_next_item_width(160.0);
@@ -580,7 +625,15 @@ fn params_rows(p: &mut Params) -> bool {
     };
 
     gui::separator_text("Slopes");
-    f("steeper than", &mut p.slope_deg, 0.2, 5.0, 85.0, "%.1f deg", "A slope steeper than this is a differential");
+    if kind.by_water() {
+        gui::text_disabled("Where units can't walk (the game's no-go areas, steeper than 30 deg), by the water.");
+        f("from the water", &mut p.water_reach, 0.1, 0.0, 50.0, "%.1f m", "How far from the water the no-go ground may be to count");
+        f("under the water", &mut p.water_below, 0.05, 0.0, 10.0, "%.1f m", "How deep into the water the waterline band goes (rocks only)");
+    } else {
+        f("steeper than", &mut p.slope_deg, 0.2, 5.0, 85.0, "%.1f deg", "A slope steeper than this is a differential");
+        f("foot over the sea", &mut p.sea_margin, 0.05, 0.0, 50.0, "%.1f m", "A slope whose foot is lower is the coast's (and one whose foot is in a river, the banks')");
+    }
+
     f("rise at least", &mut p.min_rise, 0.05, 0.0, 100.0, "%.1f m", "A lower one (a ramp, a bump) is left alone");
     f("area at least", &mut p.min_area, 1.0, 0.0, 10000.0, "%.0f m2", "A smaller one is left alone");
 
