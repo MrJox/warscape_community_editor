@@ -20,6 +20,7 @@ pub mod prefab_refs;
 pub mod prefabs;
 pub mod project_files;
 pub mod river_files;
+pub mod sources;
 pub mod splines;
 pub mod properties;
 pub mod property_enums;

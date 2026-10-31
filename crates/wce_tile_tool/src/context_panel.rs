@@ -41,6 +41,14 @@ pub struct ContextUi {
     /// For a game whose kit has no tiles (Rome 2): the neighbours' tree (a `raw_data` with the whole database's entries) and what makes a
     /// tile's folder in it (`workflow::neighbour_tile`). See [`Self::raw_of`].
     pub neighbours: Option<(PathBuf, TileProvider)>,
+
+    /// For a game whose kit has tiles: the packs' tiles, for a placement whose tile no kit has (`TileTool::prepare_neighbours`).
+    pub packs_fallback: Option<TileProvider>,
+
+    /// The `raw_data` folders a placement's tile is looked for in, in order (`TileTool::kit_roots`: the projects, then the kits), and
+    /// when they were looked up (`gui::time`).
+    pub tile_roots: Vec<PathBuf>,
+    pub tile_roots_time: Option<f64>,
     pub shown: bool,
     pub maps: Vec<String>,
     pub map: i32,
@@ -100,7 +108,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, build_look: None, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
@@ -262,10 +270,10 @@ impl ContextUi {
         let raw = self.raw_of(d)?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, far: self.far_ring(), raw_root: raw, game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            mid: self.mid, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
-            provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()),
+            provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()).or_else(|| self.packs_fallback.clone()),
         })
     }
 

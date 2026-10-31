@@ -1343,10 +1343,38 @@ impl TileTool {
         Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.len()))
     }
 
-    /// For a game whose kit has no tiles (Rome 2): the map context's neighbours come from the packs, decompiled on demand into a tree in
-    /// the cache (`workflow::neighbour_root`, written once). Nothing for a game with kit tiles, or once done.
+    /// Where the map context's neighbours come from (`wce_tile::sources`): the projects and the kits (looked up again every two seconds),
+    /// then the packs, decompiled on demand into a tree in the cache (`workflow::neighbour_root`, written once). For a game whose kit has
+    /// tiles the packs are only the fallback, read the first time a tile is in no kit; for one without (Rome 2) they are the neighbours'
+    /// tree.
     pub(crate) fn prepare_neighbours(&mut self, e: &mut Editor) {
-        if e.game().features.kit_tiles || self.context.neighbours.is_some() {
+        if self.context.tile_roots_time.is_none_or(|t| gui::time() - t > 2.0) {
+            self.context.tile_roots = self.kit_roots(e);
+            self.context.tile_roots_time = Some(gui::time());
+        }
+
+        if e.game().features.kit_tiles {
+            if self.context.packs_fallback.is_none()
+                && let Some(vfs) = e.vfs().cloned()
+            {
+                let (kit, root) = (tiles_kit(e), e.settings_ref().paths().cache_dir().join("neighbours").join(e.game().key));
+                let tree: Arc<std::sync::OnceLock<Result<(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String>>> = Arc::default();
+                let provide: wce_tile_editor::tile_document::context::TileProvider = Arc::new(move |location: &str, variation: &str| {
+                    let (game, raw) = tree.get_or_init(|| {
+                        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs.clone(), kit.as_deref())?);
+                        let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &root)?;
+                        Ok((game, raw))
+                    }).as_ref().map_err(Clone::clone)?;
+                    wce_tile_io::attila::workflow::neighbour_tile(game, raw, location, variation)
+                });
+
+                self.context.packs_fallback = Some(provide);
+            }
+
+            return;
+        }
+
+        if self.context.neighbours.is_some() {
             return;
         }
 
