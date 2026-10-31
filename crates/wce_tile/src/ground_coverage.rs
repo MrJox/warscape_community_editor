@@ -212,9 +212,14 @@ impl Params {
         out.join(" ")
     }
 
-    /// From [`Self::to_text`]; what is missing or does not read keeps its default.
+    /// From [`Self::to_text`]; what is missing or does not read keeps its default (the cliffs').
     pub fn from_text(text: &str) -> Self {
-        let mut p = Self::default();
+        Self::from_text_for(Kind::Cliffs, text)
+    }
+
+    /// From [`Self::to_text`]; what is missing or does not read keeps the kind's default.
+    pub fn from_text_for(kind: Kind, text: &str) -> Self {
+        let mut p = Self::for_kind(kind);
         for (name, value) in text.split_whitespace().filter_map(|kv| kv.split_once('=')) {
             if name == "scale_rocks" {
                 p.scale_rocks = value == "true";

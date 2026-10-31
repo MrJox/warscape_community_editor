@@ -69,7 +69,7 @@ fn slope(number: usize, x: f32) -> Differential {
 }
 
 fn settings(seed: u64) -> CoverageSettings {
-    CoverageSettings { params: Params { min_rise: 5.0, ..Default::default() }, seed, rocks: "rocks".to_owned(), plants: "bushes".to_owned() }
+    CoverageSettings { params: Params { min_rise: 5.0, ..Default::default() }, seed, rocks: "rocks".to_owned(), plants: "bushes".to_owned(), preset: "steep".to_owned() }
 }
 
 /// The names of an element's children.
