@@ -304,6 +304,26 @@ impl Grid {
         Self { x0, z0, cell, nx, nz, heights }
     }
 
+    /// The sample nearest a point; none off the grid (more than half a cell out).
+    pub fn index_of(&self, x: f32, z: f32) -> Option<usize> {
+        let (fx, fz) = (((x - self.x0) / self.cell).round(), ((z - self.z0) / self.cell).round());
+        (fx >= 0.0 && fz >= 0.0 && (fx as usize) < self.nx && (fz as usize) < self.nz).then(|| fz as usize * self.nx + fx as usize)
+    }
+
+    /// The column, the row of the sample nearest an x, a z (clamped to the grid).
+    pub fn index_x(&self, x: f32) -> usize {
+        (((x - self.x0) / self.cell).round().max(0.0) as usize).min(self.nx - 1)
+    }
+
+    pub fn index_z(&self, z: f32) -> usize {
+        (((z - self.z0) / self.cell).round().max(0.0) as usize).min(self.nz - 1)
+    }
+
+    /// Whether a point is on the tile (between the first and the last samples).
+    pub fn contains(&self, x: f32, z: f32) -> bool {
+        x >= self.x0 && z >= self.z0 && x <= self.x0 + (self.nx - 1) as f32 * self.cell && z <= self.z0 + (self.nz - 1) as f32 * self.cell
+    }
+
     /// The centre of a sample, in metres.
     pub fn at(&self, i: usize) -> (f32, f32) {
         (self.x0 + (i % self.nx) as f32 * self.cell, self.z0 + (i / self.nx) as f32 * self.cell)
@@ -391,6 +411,9 @@ pub struct Input<'a> {
     /// The water and the no-go field on the grid's samples; none: no water, all walkable (the coast and the banks find nothing).
     pub context: Option<&'a Context>,
     pub blockers: &'a [Blocker],
+
+    /// What the rocks and plants keep off (their radius, no clearance): the brushed ones a fill goes around.
+    pub keep_off: &'a [Blocker],
     pub rocks: &'a VegetationSet,
     pub plants: &'a VegetationSet,
 
@@ -416,7 +439,7 @@ pub enum State {
 }
 
 /// A placed rock or plant: its key, where (metres, `y` the height of its origin), its scale and its turn (degrees).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Placed {
     pub key: String,
     pub x: f32,
@@ -456,17 +479,59 @@ impl Differential {
     }
 }
 
+/// What a kind finds on the grid before anything goes on it: its differentials with their bands (no rocks or plants yet), each cell's base
+/// and band.
+#[derive(Clone, Debug, Default)]
+pub struct Classified {
+    pub regions: Vec<Differential>,
+    base: Vec<f32>,
+
+    /// Each cell's band in a kept differential: [`Band::None`] out of them.
+    band: Vec<Band>,
+}
+
+/// A cell's band.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Band {
+    #[default]
+    None,
+    Foot,
+    Wet,
+    Face,
+}
+
+impl Classified {
+    /// The band of the cell nearest a point (none off the grid).
+    pub fn band_at(&self, g: &Grid, x: f32, z: f32) -> Band {
+        g.index_of(x, z).and_then(|i| self.band.get(i).copied()).unwrap_or_default()
+    }
+}
+
 /// Finds the differentials of the grid and what goes on them.
 pub fn generate(input: &Input) -> Vec<Differential> {
+    let mut c = classify(input);
+    let buildings = Buildings::new(input.blockers, input.params.building_clearance);
+    let keep_off = Buildings::new(input.keep_off, 0.0);
+
+    // 5 and 6. What goes on the kept ones.
+    for d in c.regions.iter_mut().filter(|d| d.kept()) {
+        populate(input, &buildings, &keep_off, &c.base, d);
+    }
+
+    c.regions
+}
+
+/// Steps 1 to 4: the differentials and their bands (the kept ones'), less the cells near a building.
+pub fn classify(input: &Input) -> Classified {
     let g = input.grid;
     let p = &input.params;
     let n = g.nx * g.nz;
     if g.nx < 3 || g.nz < 3 || g.heights.len() != n {
-        return vec![];
+        return Classified::default();
     }
 
     // 1. The kind's cells, closed, in regions; the height each cell's bands are measured from (its base); and the cells left to another kind.
-    let Some(Features { mask, base, others }) = features(input) else { return vec![] };
+    let Some(Features { mask, base, others }) = features(input) else { return Classified::default() };
     let mut label = vec![NONE; n];
     let mut regions: Vec<Differential> = vec![];
     for start in 0..n {
@@ -591,14 +656,16 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         d.wet.retain(|&i| !near[i]);
     }
 
-    let buildings = Buildings::new(input.blockers, p.building_clearance);
-
-    // 5 and 6. What goes on the kept ones.
+    let mut band = vec![Band::None; n];
     for d in regions.iter_mut() {
         if d.kept() {
             d.foot.sort_unstable();
             d.wet.sort_unstable();
-            populate(input, &buildings, &base, d);
+            for (cells, b) in [(&d.foot, Band::Foot), (&d.wet, Band::Wet), (&d.face, Band::Face)] {
+                for &i in cells {
+                    band[i] = b;
+                }
+            }
         } else {
             d.foot.clear();
             d.face.clear();
@@ -606,7 +673,129 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         }
     }
 
-    regions
+    Classified { regions, base, band }
+}
+
+/// Rocks and plants thrown into the band cells within `radius` of `at` (the brush's dab), up to the preset's densities (times `factor`)
+/// counting what is there (`rocks`, `plants`: the tile's coverage and the stroke's, their radius): a dab over a covered place adds
+/// nothing. Clear of the buildings and of what is there.
+#[allow(clippy::too_many_arguments)]
+pub fn scatter(input: &Input, c: &Classified, at: (f32, f32), radius: f32, factor: f32, rocks: &[Blocker], plants: &[Blocker], seed: u64) -> (Vec<Placed>, Vec<Placed>) {
+    let g = input.grid;
+    let p = &input.params;
+    if c.band.len() != g.nx * g.nz {
+        return (vec![], vec![]);
+    }
+
+    let mut rnd = Random::new(seed);
+    let buildings = Buildings::new(input.blockers, p.building_clearance);
+    let mut taken = rocks.iter().chain(plants).copied().collect::<Vec<_>>();
+    let in_circle = |x: f32, z: f32| (x - at.0).hypot(z - at.1) <= radius;
+    let cells = |bands: &[Band]| {
+        let (x0, x1) = (g.index_x(at.0 - radius), g.index_x(at.0 + radius));
+        let (z0, z1) = (g.index_z(at.1 - radius), g.index_z(at.1 + radius));
+        (z0..=z1).flat_map(|z| (x0..=x1).map(move |x| z * g.nx + x)).filter(|&i| bands.contains(&c.band[i]) && { let (x, z) = g.at(i); in_circle(x, z) }).collect::<Vec<_>>()
+    };
+
+    // How many more a band's cells take: its area times the density, less those already in it.
+    let wanted = |cells: &[usize], bands: &[Band], density: f32, there: &[Blocker]| {
+        let had = there.iter().filter(|b| in_circle(b.x, b.z) && bands.contains(&c.band_at(g, b.x, b.z))).count();
+        ((cells.len() as f32 * g.cell * g.cell * density * factor).round() as usize).saturating_sub(had)
+    };
+
+    let mut out_rocks = vec![];
+    if !input.rocks.entries.is_empty() {
+        for (bands, density, range) in [(&[Band::Foot, Band::Wet][..], p.rock_density_foot, p.rock_scale_foot), (&[Band::Face][..], p.rock_density_face, p.rock_scale_face)] {
+            let cells = cells(bands);
+            if cells.is_empty() {
+                continue;
+            }
+
+            for _ in 0..wanted(&cells, bands, density, rocks) {
+                let at = rnd.point_in(g, &cells);
+                if let Some(r) = throw_rock(input, &buildings, &Buildings::new(&taken, 0.0), &mut rnd, at, range) {
+                    out_rocks.push(r);
+                }
+            }
+        }
+    }
+
+    // The plants keep their spacing from each other, and off the rocks (the new ones too).
+    let mut out_plants: Vec<Placed> = vec![];
+    let foot = cells(&[Band::Foot]);
+    if !input.plants.entries.is_empty() && !foot.is_empty() {
+        let count = wanted(&foot, &[Band::Foot], p.plant_density, plants);
+        taken.extend(out_rocks.iter().map(|r| Blocker { x: r.x, z: r.z, radius: (input.rock_size)(&r.key).radius * r.scale * 0.8 }));
+        let mut tries = count * 30;
+        while out_plants.len() < count && tries > 0 {
+            tries -= 1;
+            let at = rnd.point_in(g, &foot);
+            let near = |b: &Blocker| (b.x - at.0).hypot(b.z - at.1) < b.radius.max(p.plant_spacing);
+            if plants.iter().any(near) || out_plants.iter().any(|o| (o.x - at.0).hypot(o.z - at.1) < p.plant_spacing) {
+                let _ = (rnd.unit(), rnd.unit(), rnd.unit());
+                continue;
+            }
+
+            if let Some(pl) = throw_plant(input, &buildings, &Buildings::new(&taken, 0.0), &c.base, &mut rnd, at) {
+                out_plants.push(pl);
+            }
+        }
+    }
+
+    (out_rocks, out_plants)
+}
+
+/// A rock at a point (a draw of the key, the scale and the turn), unless it reaches into a building's clearance or onto what it keeps off,
+/// or is off the tile.
+fn throw_rock(input: &Input, buildings: &Buildings, keep_off: &Buildings, rnd: &mut Random, (x, z): (f32, f32), range: (f32, f32)) -> Option<Placed> {
+    let g = input.grid;
+    let p = &input.params;
+    let entry = input.rocks.pick(rnd.unit())?;
+    let own = entry.scale.map_or(1.0, |r| rnd.range(r));
+    let scale = rnd.range(range) * own;
+    let scale = if p.scale_rocks { scale } else { 1.0 };
+    let size = (input.rock_size)(&entry.key);
+    let (r, h) = (size.radius * scale, size.height * scale);
+    let centre = g.height(x, z);
+    let ring = (0..8).map(|k| {
+        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+        g.height(x + r * a.cos(), z + r * a.sin())
+    });
+
+    // On the tile (a cell at its edge reaches half a cell out), as the plants.
+    if !buildings.clear(x, z, r) || !keep_off.clear(x, z, r) || !g.contains(x, z) {
+        return None;
+    }
+
+    let ground = match p.seat {
+        Seat::Centre => centre,
+        // Never over the centre's ground (at the foot of a cliff the ring's uphill side is high): it would float there.
+        Seat::Average => ((centre + ring.sum::<f32>()) / 9.0).min(centre),
+        Seat::Lowest => ring.fold(centre, f32::min),
+    };
+
+    let y = (ground - p.sink * h).max(centre - (1.0 - p.min_visible) * h);
+    let yaw = rnd.unit() * 360.0;
+    Some(Placed { key: entry.key.clone(), x, y, z, scale, yaw })
+}
+
+/// A plant at a point (a draw of the key, the scale and the turn), unless it is under the water (by the water), near a building, on what it
+/// keeps off, or off the tile. The spacing from the other plants is the caller's.
+fn throw_plant(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[f32], rnd: &mut Random, (x, z): (f32, f32)) -> Option<Placed> {
+    let g = input.grid;
+    let p = &input.params;
+    let pick = rnd.unit();
+    let (scale_r, yaw_r) = (rnd.unit(), rnd.unit());
+
+    // By the water, none under it (a point in a cell at the waterline may be).
+    let dry = !input.kind.by_water() || g.index_of(x, z).is_none_or(|i| g.height(x, z) >= base[i]);
+    if !dry || !buildings.clear(x, z, p.plant_radius) || !keep_off.clear(x, z, p.plant_radius) || !g.contains(x, z) {
+        return None;
+    }
+
+    let entry = input.plants.pick(pick)?;
+    let (lo, hi) = entry.scale.unwrap_or(p.plant_scale);
+    Some(Placed { key: entry.key.clone(), x, y: g.height(x, z), z, scale: lo + (hi - lo) * scale_r, yaw: yaw_r * 360.0 })
 }
 
 const NONE: usize = usize::MAX;
@@ -854,11 +1043,10 @@ impl<'a> Buildings<'a> {
 }
 
 /// Rocks and plants on a kept differential (clear of the buildings), and the exclusion polygons around its plants.
-fn populate(input: &Input, buildings: &Buildings, base: &[f32], d: &mut Differential) {
+fn populate(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[f32], d: &mut Differential) {
     let g = input.grid;
     let p = &input.params;
     let mut rnd = Random::new(input.seed ^ (d.number as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
-    let (xmax, zmax) = (g.x0 + (g.nx - 1) as f32 * g.cell, g.z0 + (g.nz - 1) as f32 * g.cell);
     let area = |cells: &[usize]| cells.len() as f32 * g.cell * g.cell;
 
     // Rocks: at the foot (by the water, in the shallows too) and on the face, standing on the ground under them and sunk into it.
@@ -870,70 +1058,43 @@ fn populate(input: &Input, buildings: &Buildings, base: &[f32], d: &mut Differen
 
         let count = (area(cells) * density).round() as usize;
         for _ in 0..count {
-            let (x, z) = rnd.point_in(g, cells);
-            let Some(entry) = input.rocks.pick(rnd.unit()) else { break };
-            let own = entry.scale.map_or(1.0, |r| rnd.range(r));
-            let scale = rnd.range(range) * own;
-            let scale = if p.scale_rocks { scale } else { 1.0 };
-            let size = (input.rock_size)(&entry.key);
-            let (r, h) = (size.radius * scale, size.height * scale);
-            let centre = g.height(x, z);
-            let ring = (0..8).map(|k| {
-                let a = k as f32 * std::f32::consts::FRAC_PI_4;
-                g.height(x + r * a.cos(), z + r * a.sin())
-            });
-
-            // On the tile (a cell at its edge reaches half a cell out), as the plants.
-            if !buildings.clear(x, z, r) || x < g.x0 || z < g.z0 || x > xmax || z > zmax {
-                continue;
+            let at = rnd.point_in(g, cells);
+            if let Some(r) = throw_rock(input, buildings, keep_off, &mut rnd, at, range) {
+                d.rocks.push(r);
             }
-
-            let ground = match p.seat {
-                Seat::Centre => centre,
-                // Never over the centre's ground (at the foot of a cliff the ring's uphill side is high): it would float there.
-                Seat::Average => ((centre + ring.sum::<f32>()) / 9.0).min(centre),
-                Seat::Lowest => ring.fold(centre, f32::min),
-            };
-
-            let y = (ground - p.sink * h).max(centre - (1.0 - p.min_visible) * h);
-            let yaw = rnd.unit() * 360.0;
-            d.rocks.push(Placed { key: entry.key.clone(), x, y, z, scale, yaw });
         }
     }
 
     // Plants: at the foot, apart from each other and off the rocks.
     if !d.foot.is_empty() && !input.plants.entries.is_empty() {
         let count = (area(&d.foot) * p.plant_density).round() as usize;
-        let rocks = d.rocks.iter().map(|r| (r.x, r.z, (input.rock_size)(&r.key).radius * r.scale * 0.8)).collect::<Vec<_>>();
+        let rocks = d.rocks.iter().map(|r| Blocker { x: r.x, z: r.z, radius: (input.rock_size)(&r.key).radius * r.scale * 0.8 }).collect::<Vec<_>>();
+        let rocks = Buildings::new(&rocks, 0.0);
         let mut tries = count * 30;
         while d.plants.len() < count && tries > 0 {
             tries -= 1;
-            let (x, z) = rnd.point_in(g, &d.foot);
-            let pick = rnd.unit();
-            let (scale_r, yaw_r) = (rnd.unit(), rnd.unit());
-            // By the water, none under it (a point in a cell at the waterline may be).
-            let cell = |v: f32, v0: f32, n: usize| (((v - v0) / g.cell).round().max(0.0) as usize).min(n - 1);
-            let dry = !input.kind.by_water() || g.height(x, z) >= base[cell(z, g.z0, g.nz) * g.nx + cell(x, g.x0, g.nx)];
-            let clear = dry
-                && buildings.clear(x, z, p.plant_radius)
-                && d.plants.iter().all(|o| (o.x - x).hypot(o.z - z) >= p.plant_spacing)
-                && rocks.iter().all(|&(rx, rz, rr)| (rx - x).hypot(rz - z) >= rr);
-            if !clear || x < g.x0 || z < g.z0 || x > xmax || z > zmax {
-                continue;
+            let at = rnd.point_in(g, &d.foot);
+            let spaced = d.plants.iter().all(|o| (o.x - at.0).hypot(o.z - at.1) >= p.plant_spacing) && rocks.clear(at.0, at.1, 0.0);
+            match throw_plant(input, buildings, keep_off, base, &mut rnd, at) {
+                Some(pl) if spaced => d.plants.push(pl),
+                _ => {}
             }
-
-            let Some(entry) = input.plants.pick(pick) else { break };
-            let (lo, hi) = entry.scale.unwrap_or(p.plant_scale);
-            d.plants.push(Placed { key: entry.key.clone(), x, y: g.height(x, z), z, scale: lo + (hi - lo) * scale_r, yaw: yaw_r * 360.0 });
         }
     }
 
-    // The exclusion polygons: a convex hull of circles around each cluster's plants, kept on the tile.
+    d.exclusions = exclusions(g, &d.plants, p);
+}
+
+/// The exclusion polygons around plants: a convex hull of circles (`plant_radius + exclusion_margin`) around each cluster's, kept on the
+/// tile.
+pub fn exclusions(g: &Grid, plants: &[Placed], p: &Params) -> Vec<Vec<(f32, f32)>> {
+    let (xmax, zmax) = (g.x0 + (g.nx - 1) as f32 * g.cell, g.z0 + (g.nz - 1) as f32 * g.cell);
     let pad = p.plant_radius + p.exclusion_margin;
-    for cluster in clusters(&d.plants, p.cluster_distance, p.max_cluster) {
+    let mut out = vec![];
+    for cluster in clusters(plants, p.cluster_distance, p.max_cluster) {
         let mut pts = vec![];
         for &k in &cluster {
-            let pl = &d.plants[k];
+            let pl = &plants[k];
             for s in 0..12 {
                 let a = s as f32 * std::f32::consts::TAU / 12.0;
                 pts.push(((pl.x + pad * a.cos()).clamp(g.x0, xmax), (pl.z + pad * a.sin()).clamp(g.z0, zmax)));
@@ -942,9 +1103,11 @@ fn populate(input: &Input, buildings: &Buildings, base: &[f32], d: &mut Differen
 
         let hull = convex_hull(pts);
         if hull.len() >= 3 {
-            d.exclusions.push(hull);
+            out.push(hull);
         }
     }
+
+    out
 }
 
 /// Groups of plants (their indices): single linkage within `distance`, without letting a group's box get wider than `widest` across.
@@ -1059,7 +1222,7 @@ mod tests {
 
     fn run(g: &Grid, blockers: &[Blocker], seed: u64) -> Vec<Differential> {
         let (rocks, plants) = sets();
-        generate(&Input { kind: Kind::Cliffs, grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, params: Params::default(), seed })
+        generate(&Input { kind: Kind::Cliffs, grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params: Params::default(), seed })
     }
 
     #[test]
@@ -1153,7 +1316,7 @@ mod tests {
         assert!(run(&g, &[], 5).iter().flat_map(|d| &d.rocks).all(|r| r.scale == 1.0));
         let (rocks, plants) = sets();
         let params = Params { scale_rocks: true, ..Default::default() };
-        let out = generate(&Input { kind: Kind::Cliffs, grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
+        let out = generate(&Input { kind: Kind::Cliffs, grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params, seed: 5 });
         assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
     }
 
@@ -1170,7 +1333,7 @@ mod tests {
     fn run_kind(kind: Kind, g: &Grid, c: &Context) -> Vec<Differential> {
         let (rocks, plants) = sets();
         let params = Params::for_kind(kind);
-        generate(&Input { kind, grid: g, context: Some(c), blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 3 })
+        generate(&Input { kind, grid: g, context: Some(c), blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params, seed: 3 })
     }
 
     fn kept(out: &[Differential]) -> Vec<&Differential> {
@@ -1253,6 +1416,56 @@ mod tests {
         let (g, mut c) = field(river, river_depth);
         c.no_go.iter_mut().for_each(|b| *b = false);
         assert!(run_kind(Kind::Riverbank, &g, &c).is_empty());
+    }
+
+    fn cliff_input<'a>(g: &'a Grid, rocks: &'a VegetationSet, plants: &'a VegetationSet, keep_off: &'a [Blocker]) -> Input<'a> {
+        Input { kind: Kind::Cliffs, grid: g, context: None, blockers: &[], keep_off, rocks, plants, rock_size: &size, params: Params::default(), seed: 1 }
+    }
+
+    fn blockers(items: &[Placed]) -> Vec<Blocker> {
+        items.iter().map(|p| Blocker { x: p.x, z: p.z, radius: 1.0 }).collect()
+    }
+
+    #[test]
+    fn a_dab_fills_the_bands_under_it_once() {
+        let g = step(10.0, 5.0);
+        let (rocks, plants) = sets();
+        let input = cliff_input(&g, &rocks, &plants, &[]);
+        let c = classify(&input);
+        assert_eq!(c.regions.iter().filter(|d| d.kept()).count(), 1);
+
+        // On the cliff: rocks and plants, all in the bands and in the circle.
+        let (r, p) = scatter(&input, &c, (42.0, 30.0), 8.0, 1.0, &[], &[], 11);
+        assert!(!r.is_empty() && !p.is_empty(), "{} rocks, {} plants", r.len(), p.len());
+        for it in r.iter().chain(&p) {
+            assert!((it.x - 42.0).hypot(it.z - 30.0) <= 8.0 + 1.0);
+            assert_ne!(c.band_at(&g, it.x, it.z), Band::None, "({}, {})", it.x, it.z);
+        }
+
+        assert!(p.iter().all(|pl| c.band_at(&g, pl.x, pl.z) == Band::Foot), "plants at the foot only");
+
+        // Again over what it put: (about) nothing more.
+        let (r2, p2) = scatter(&input, &c, (42.0, 30.0), 8.0, 1.0, &blockers(&r), &blockers(&p), 12);
+        assert!(r2.len() <= 1 && p2.len() <= 1, "{} rocks, {} plants more", r2.len(), p2.len());
+
+        // On the flat far from it: nothing.
+        let (r3, p3) = scatter(&input, &c, (10.0, 30.0), 5.0, 1.0, &[], &[], 13);
+        assert!(r3.is_empty() && p3.is_empty());
+    }
+
+    #[test]
+    fn a_fill_keeps_off_the_brushed_items() {
+        let g = step(10.0, 5.0);
+        let (rocks, plants) = sets();
+        let all = generate(&cliff_input(&g, &rocks, &plants, &[]));
+        let near = |it: &Placed| (it.x - 42.0).hypot(it.z - 30.0) < 6.0;
+        assert!(all.iter().flat_map(|d| d.rocks.iter().chain(&d.plants)).any(near));
+
+        // A brushed patch 5 m across there: the fill goes around it.
+        let patch = [Blocker { x: 42.0, z: 30.0, radius: 5.0 }];
+        let out = generate(&cliff_input(&g, &rocks, &plants, &patch));
+        assert!(!out.iter().flat_map(|d| d.rocks.iter().chain(&d.plants)).any(|it| (it.x - 42.0).hypot(it.z - 30.0) < 5.0));
+        assert!(out.iter().flat_map(|d| &d.rocks).count() > 0);
     }
 
     #[test]

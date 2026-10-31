@@ -2265,8 +2265,15 @@ impl TileTool {
         let veg = self.placing == Some(Placing::Draft)
             && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
             && self.veg.is_some_and(|b| b.on);
-        let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
-        if (self.mode != TileMode::Select || veg) && self.terrain_hit && e.viewport.hovered {
+        let coverage = self.coverage_brushing(e);
+        let radius = if veg {
+            self.veg.map_or(1.0, |b| b.radius)
+        } else if coverage {
+            self.coverage_radius()
+        } else {
+            self.brush.radius_m
+        };
+        if (self.mode != TileMode::Select || veg || coverage) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
             let mut prev = Float3::default();
             for i in 0..=n {
@@ -2341,6 +2348,7 @@ impl TileTool {
         }
 
         self.coverage_overlay(d, &mut o);
+        self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
         if t.display().show_border {
             let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
@@ -4403,6 +4411,15 @@ impl TileTool {
             return true;
         }
 
+        // The ground coverage's brush (its window in Brush mode) puts the kind's coverage (Ctrl: takes it away).
+        if self.coverage_brushing(e) {
+            if self.terrain_hit {
+                self.begin_coverage_stroke(e, ev.ctrl);
+            }
+
+            return true;
+        }
+
         // The vegetation brush paints (Ctrl: takes away) instead of placing one.
         if self.painting_trees(e) {
             if self.terrain_hit {
@@ -4573,6 +4590,13 @@ impl TileTool {
                 }
             }
 
+            Some(Gesture::CoverageStroke) => {
+                self.on_hover(e, ev);
+                if self.terrain_hit {
+                    self.coverage_dab();
+                }
+            }
+
             Some(Gesture::TerrainStroke) => {
                 self.on_hover(e, ev);
                 let dt = e.clock.dt();
@@ -4641,8 +4665,9 @@ impl TileTool {
 
     /// A click in the viewport: picks what is under the mouse (a model piece, an instance along the ray, a shape on the ground).
     fn on_click(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
-        // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
-        if self.placing.is_some() || self.drawing {
+        // Placing, drawing or brushing: the click was a point placed or a dab, not a pick (the new building under the mouse would be
+        // selected).
+        if self.placing.is_some() || self.drawing || self.coverage_brushing(e) {
             return true;
         }
 
@@ -5878,8 +5903,9 @@ impl Tool for TileTool {
         self.gesture.as_ref().map(Gesture::name)
     }
 
-    fn claims_left_button(&self, _e: &Editor) -> bool {
+    fn claims_left_button(&self, e: &Editor) -> bool {
         self.flip.is_some()
+            || self.coverage_brushing(e)
             || self.mode != TileMode::Select
             || self.drawing
             || self.grabbing()

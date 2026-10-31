@@ -16,19 +16,23 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_foundation::math::{Double3, Float3};
 use wce_tile::new_instances::NewInstance;
-use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Kind, Params, RockSize};
+use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Kind, Params, Placed, RockSize, State};
 use wce_tile::world_transform::{set_world_position, world_transform};
 
 use super::draft::{turned, with_root_attr};
 use super::edits::{point_instance, scene_point};
 use super::index::{destruct_number, static_piece};
 use super::TileDocument;
+use super::brush::Footprint;
 
 /// The layer the coverage goes into.
 pub const COVERAGE_LAYER: &str = "(AUTOGEN) Ground Coverage";
 
 /// The group of the brush's strokes in a kind's group: a run of the kind keeps it.
 pub const BRUSHED_GROUP: &str = "Brushed";
+
+/// Polygons, as lists of (x, z) points (metres).
+pub type Polygons = Vec<Vec<(f32, f32)>>;
 
 /// A kind's group in the layer.
 pub fn kind_group_name(kind: Kind) -> &'static str {
@@ -151,8 +155,10 @@ impl TileDocument {
         let layer = self.coverage_layer();
         let kit = self.tile().building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project().dir));
         let mut sizes = std::collections::HashMap::<String, Option<RockSize>>::new();
-        self.footprints().into_iter()
-            .filter(|f| sc.type_of(f.elem) == "BUILDING_INSTANCE" && layer.is_none_or(|l| !sc.is_descendant(f.elem, l)))
+        // The scene's buildings as they are now (the tile's index of its instances is rebuilt once a frame: an edit just made is not in it).
+        sc.find_all("BUILDING_INSTANCE").into_iter()
+            .filter(|&e| sc.doc().elements()[e].children.is_empty() && layer.is_none_or(|l| !sc.is_descendant(e, l)))
+            .map(|e| self.footprint(e))
             .filter_map(|f| {
                 let key = sc.doc().get(f.elem, "key").unwrap_or_default();
                 let cat = category(&key).or_else(|| kit.category(&key).map(str::to_owned))?;
@@ -258,26 +264,8 @@ impl TileDocument {
                     continue;
                 }
 
-                // The group at the middle of what it holds (its pivot), every item at its world point.
-                let unit = self.tile().unit();
-                let n = items.len().max(1) as f32;
-                let mid = items.iter().fold(Float3::new(0.0, 0.0, 0.0), |a, (_, p)| Float3::new(a.x + p.x / n, a.y + p.y / n, a.z + p.z / n));
                 let parent = self.coverage_group(kind).ok_or("the kind's group went")?;
-                let lw = world_transform(self.tile().tscene(), parent);
-                let local = lw.rotation.transpose() * (scene_point(mid, unit) - lw.position);
-                let sc = self.tscene_mut();
-                let group = sc.add_group(Some(parent), &format!("{} {}", region_name(kind), d.number), local)?;
-                for (text, at) in &items {
-                    let e = sc.insert_element_text(group, text)?;
-                    set_world_position(sc, e, scene_point(*at, unit));
-                }
-
-                let gw = world_transform(sc, group);
-                for pts in &polygons {
-                    let local = pts.iter().map(|&p| gw.rotation.transpose() * (scene_point(p, unit) - gw.position)).collect::<Vec<Double3>>();
-                    sc.add_polygon(Some(group), "VegetationExclusionPolygonInstance", "Polygon Instance", &local, &BTreeMap::new())?;
-                }
-
+                self.add_item_group(parent, &format!("{} {}", region_name(kind), d.number), &items, &polygons)?;
                 counts.slopes += 1;
                 counts.rocks += d.rocks.len();
                 counts.plants += d.plants.len();
@@ -291,6 +279,194 @@ impl TileDocument {
             Ok(counts) => {
                 self.push_splice("Generate ground coverage".to_owned(), mark, vec![], vec![]);
                 Ok(counts)
+            }
+
+            Err(err) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(err)
+            }
+        }
+    }
+
+    /// A group (at the middle of what it holds: its pivot) in `parent` with the items (text at the origin, world point) and the polygons
+    /// (world points).
+    fn add_item_group(&mut self, parent: usize, name: &str, items: &[(Vec<u8>, Float3)], polygons: &[Vec<Float3>]) -> Result<usize, String> {
+        let unit = self.tile().unit();
+        let n = items.len().max(1) as f32;
+        let mid = items.iter().fold(Float3::new(0.0, 0.0, 0.0), |a, (_, p)| Float3::new(a.x + p.x / n, a.y + p.y / n, a.z + p.z / n));
+        let lw = world_transform(self.tile().tscene(), parent);
+        let local = lw.rotation.transpose() * (scene_point(mid, unit) - lw.position);
+        let sc = self.tscene_mut();
+        let group = sc.add_group(Some(parent), name, local)?;
+        for (text, at) in items {
+            let e = sc.insert_element_text(group, text)?;
+            set_world_position(sc, e, scene_point(*at, unit));
+        }
+
+        self.add_exclusions(group, polygons)?;
+        Ok(group)
+    }
+
+    /// Exclusion polygons (world points) into a group.
+    fn add_exclusions(&mut self, group: usize, polygons: &[Vec<Float3>]) -> Result<(), String> {
+        let unit = self.tile().unit();
+        let sc = self.tscene_mut();
+        let gw = world_transform(sc, group);
+        for pts in polygons {
+            let local = pts.iter().map(|&p| gw.rotation.transpose() * (scene_point(p, unit) - gw.position)).collect::<Vec<Double3>>();
+            sc.add_polygon(Some(group), "VegetationExclusionPolygonInstance", "Polygon Instance", &local, &BTreeMap::new())?;
+        }
+
+        Ok(())
+    }
+
+    /// The groups the kind's rocks and plants are in: its regions' (`Slope 12`) and its strokes' (`Brushed` > `Stroke 3`).
+    fn coverage_item_groups(&self, kind: Kind) -> Vec<usize> {
+        let sc = self.tile().tscene();
+        let Some(group) = self.coverage_group(kind) else { return vec![] };
+        sc.children(group).into_iter().flat_map(|c| if sc.name(c) == BRUSHED_GROUP { sc.children(c) } else { vec![c] }).filter(|&c| sc.is_layer(c)).collect()
+    }
+
+    /// The kind's rocks and plants (filled and brushed) and whether each is brushed. A footprint whose model has not loaded yet counts
+    /// 1 m across.
+    pub fn coverage_footprints(&self, kind: Kind) -> Vec<(Footprint, bool)> {
+        let sc = self.tile().tscene();
+        let Some(group) = self.coverage_group(kind) else { return vec![] };
+        let brushed = sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP);
+        self.coverage_item_groups(kind)
+            .into_iter()
+            .flat_map(|g| sc.children(g))
+            .filter(|&e| matches!(sc.type_of(e), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE"))
+            .map(|e| {
+                let mut f = self.footprint(e);
+                if f.radius <= 0.0 {
+                    f.radius = 1.0;
+                }
+
+                (f, brushed.is_some_and(|b| sc.is_descendant(e, b)))
+            })
+            .collect()
+    }
+
+    /// A stroke of the brush into the kind's `Brushed` group (each made when missing, the first version's groups moved into `Cliffs` first,
+    /// as a run does): a `Stroke N` group with its rocks, plants and the exclusion polygons around its plants. One undo entry.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no scene graph, or a text does not read (nothing changes).
+    pub fn add_coverage_stroke(&mut self, kind: Kind, rocks: Vec<Placed>, plants: Vec<Placed>, exclusions: Polygons) -> Result<CoverageCounts, String> {
+        let root = self.tile().tscene().scene_graph().ok_or("this tile has no scene graph")?;
+        let counts = CoverageCounts { slopes: 1, rocks: rocks.len(), plants: plants.len(), exclusions: exclusions.len() };
+        let stroke = Differential { state: Some(State::Kept), rocks, plants, exclusions, ..Default::default() };
+        let mut texts = self.coverage_texts(std::slice::from_ref(&stroke))?;
+        let (items, polygons) = texts.pop().unwrap_or_default();
+        if items.is_empty() {
+            return Ok(CoverageCounts::default());
+        }
+
+        let mark = self.begin()?;
+        let outcome = (|| -> Result<(), String> {
+            if self.coverage_layer().is_none() {
+                self.tscene_mut().add_layer(Some(root), COVERAGE_LAYER)?;
+            }
+
+            let old = self.coverage_old();
+            if !old.is_empty() {
+                let cliffs = self.kind_group(Kind::Cliffs)?;
+                self.tscene_mut().move_elements(old, cliffs, None)?;
+            }
+
+            let group = self.kind_group(kind)?;
+            let sc = self.tile().tscene();
+            let brushed = match sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP) {
+                Some(b) => b,
+                None => self.tscene_mut().add_group(Some(group), BRUSHED_GROUP, Double3::ZERO)?,
+            };
+
+            let sc = self.tile().tscene();
+            let number = sc.children(brushed).iter().filter_map(|&c| sc.name(c).strip_prefix("Stroke ").and_then(|n| n.parse::<usize>().ok())).max().unwrap_or(0) + 1;
+            self.add_item_group(brushed, &format!("Stroke {number}"), &items, &polygons)?;
+            Ok(())
+        })();
+
+        match outcome {
+            Ok(()) => {
+                self.push_splice("Brush ground coverage".to_owned(), mark, vec![], vec![]);
+                Ok(counts)
+            }
+
+            Err(err) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(err)
+            }
+        }
+    }
+
+    /// Takes the kind's rocks and plants `elems` away: each group they were in gets the exclusion polygons of the plants left in it again
+    /// (`exclusions`), and goes when nothing is left in it (an empty `Brushed` too). One undo entry; how many went.
+    ///
+    /// # Errors
+    ///
+    /// A text does not read (nothing changes).
+    pub fn erase_coverage(&mut self, kind: Kind, elems: &[usize], exclusions: &dyn Fn(&[Placed]) -> Polygons) -> Result<usize, String> {
+        let gone = elems.iter().copied().collect::<std::collections::HashSet<_>>();
+        let sc = self.tile().tscene();
+
+        // Each touched group: what stays (its rocks and plants as text) and the polygons of its plants.
+        let mut touched = vec![];
+        let mut erased = 0;
+        for group in self.coverage_item_groups(kind) {
+            let children = sc.children(group);
+            let hit = children.iter().filter(|c| gone.contains(c)).count();
+            if hit == 0 {
+                continue;
+            }
+
+            erased += hit;
+            let kept = children.iter().copied().filter(|c| !gone.contains(c) && sc.type_of(*c) != "VegetationExclusionPolygonInstance").collect::<Vec<_>>();
+            let plants = kept.iter().filter(|&&c| sc.type_of(c) == "VEGETATION_INSTANCE").map(|&c| {
+                let p = self.tile().world_position(c);
+                Placed { x: p.x, y: p.y, z: p.z, ..Default::default() }
+            }).collect::<Vec<_>>();
+            let t = self.tile();
+            let polygons = exclusions(&plants).into_iter().map(|poly| poly.into_iter().map(|(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect()).collect::<Vec<_>>();
+            let text = kept.iter().flat_map(|&c| sc.element_text(c)).collect::<Vec<u8>>();
+            touched.push((group, kept.is_empty(), text, polygons));
+        }
+
+        if touched.is_empty() {
+            return Ok(0);
+        }
+
+        // From the last group back: an edit moves the indices after it only.
+        touched.sort_by_key(|t| std::cmp::Reverse(t.0));
+        let mark = self.begin()?;
+        let outcome = (|| -> Result<(), String> {
+            for (group, empty, text, polygons) in &touched {
+                if *empty {
+                    self.tscene_mut().remove(*group)?;
+                } else {
+                    self.tscene_mut().set_children_text(*group, text)?;
+                    self.add_exclusions(*group, polygons)?;
+                }
+            }
+
+            if let Some(group) = self.coverage_group(kind) {
+                let sc = self.tile().tscene();
+                if let Some(b) = sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP && sc.children(c).is_empty()) {
+                    self.tscene_mut().remove(b)?;
+                }
+            }
+
+            Ok(())
+        })();
+
+        match outcome {
+            Ok(()) => {
+                self.push_splice("Erase ground coverage".to_owned(), mark, vec![], vec![]);
+                Ok(erased)
             }
 
             Err(err) => {

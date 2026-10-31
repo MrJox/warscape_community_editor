@@ -48,6 +48,9 @@ pub(crate) enum Gesture {
     /// A vegetation brush stroke: its trees planted or taken away so far, put into the tile when it ends.
     VegStroke(Stroke),
 
+    /// A ground coverage brush stroke (its rocks and plants so far: `CoverageUi::stroke`), put into the tile when it ends.
+    CoverageStroke,
+
     /// A polygon's or spline's point dragged (`TileTool::poly_point`), or a spline's handle of it (`handle`: its controlOut (true) or
     /// controlIn). Nothing moves until the mouse has gone [`POINT_DRAG_PIXELS`] from where it was pressed (`press`): a click only picks
     /// the point (user 2026-11-16: a click moved it a little, and the whole line was made again). Then the point keeps its offset from the
@@ -93,7 +96,7 @@ impl Gesture {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Grab(_) => "the grab",
-            Self::TerrainStroke | Self::VegStroke(_) => "the brush stroke",
+            Self::TerrainStroke | Self::VegStroke(_) | Self::CoverageStroke => "the brush stroke",
             Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } => "the handle drag",
             Self::AltRotate(_) => "the rotation",
         }
@@ -135,6 +138,11 @@ impl TileTool {
             None => return,
             Some(Gesture::VegStroke(stroke)) => {
                 self.status = self.commit_veg_stroke(e, id, stroke);
+                return;
+            }
+
+            Some(Gesture::CoverageStroke) => {
+                self.status = self.end_coverage_stroke(e).unwrap_or_else(|err| err);
                 return;
             }
 
