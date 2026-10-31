@@ -419,19 +419,22 @@ impl Renderer {
         self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
     }
 
-    /// The battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps):
+    /// The battle cascade splits (ShadowMapView, fns 0x11794320 / 0x11794430 / 0x11784c00, verified on all three dumps; in game units, the coast dump 2026-10-31):
     /// - far = camera near + sum(row) with the quality row (30, 90, 210, 450) -> 781 (fn 0x11751fc0, table dll+0x1c88aa0);
     /// - range = the depth-buffer analysis (min, max visible view depth, max clamped to far), max *= shadow_split_enlargement_safe_zone (1.05);
     ///   start = min, scale = (max - min) / (far - near);
     /// - s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)] (shadow_split_blend_fraction
     ///   0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2) (final_shadow_split_blend_fraction 0.2).
     pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
+        // In game units, as the rows (the depth analysis is in scene units); the slices go back to scene units below. Mixed, every
+        // cascade came out twice the game's length (coast dump: 9.9, 41, 134, 352, 819 against the editor's 9.8, 73, 261, 700, 1640).
+        let u = self.camera.units;
         let row = SHADOW_ROWS[self.settings.shadow_quality.clamp(0, 3) as usize];
         let n = cam.znear.max(1.0);
         let far_q = n + row[0] + row[1] + row[2] + row[3];
         let (mut start, mut scale) = (n, 1.0f32);
         if self.depth_range.valid {
-            let (lo, hi) = (self.depth_range.min, self.depth_range.max.min(far_q) * 1.05);
+            let (lo, hi) = (self.depth_range.min * u, (self.depth_range.max * u).min(far_q) * 1.05);
             if lo < hi {
                 start = lo;
                 scale = (hi - lo).max(1.0) / (far_q - n);
@@ -450,10 +453,15 @@ impl Renderer {
             slice_near[i] = splits[i] - 0.1 * (splits[i] - splits[i - 1]);
         }
 
+        let fade_w = (splits[4] - splits[3]) * 0.2;
+        let fade_y = (splits[4] - (far_q - fade_w)).max(1e-4) / fade_w * 0.2;
+        for s in splits.iter_mut().chain(slice_near.iter_mut()) {
+            *s /= u;
+        }
+
         // Rome 2 (fn 0x114765e0): no depth analysis nor overlap; from the camera's near, its battle row of lengths (game units) of the
         // four cascade qualities. Its light pass reads x, y unprojected: an ortho fit (shadow_fit::fit_rome2).
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let u = self.camera.units;
         if rome2 {
             splits[0] = n;
             for i in 1..=4 {
@@ -463,8 +471,6 @@ impl Renderer {
             slice_near.copy_from_slice(&splits[..4]);
         }
 
-        let fade_w = (splits[4] - splits[3]) * 0.2;
-        let fade_y = (splits[4] - (far_q - fade_w)).max(1e-4) / fade_w * 0.2;
         // The slices are fitted around the camera relative to the render origin: fitted absolute, 10^5 units from the scene's origin, the
         // light's matrices lost their precision once moved back to the origin and the shadows (the trees' most) flickered as the camera moved.
         let o = self.camera.origin;
@@ -513,7 +519,15 @@ impl Renderer {
                 continue;
             }
 
-            let fit = shadow_fit::fit(&pts, light_dir, view_dir, side, slice_near[c]);
+            // Fitted in game units (the pull-back and the warp's near distance are the game's numbers), then taking scene units.
+            let mut fit = shadow_fit::fit(&pts.map(|p| p * u), light_dir, view_dir, side, slice_near[c] * u);
+            for r in &mut fit.view_proj.m {
+                for v in r.iter_mut().take(3) {
+                    *v *= u;
+                }
+            }
+
+            fit.width /= u;
             light_rel[c] = fit.view_proj;
             light_vp[c] = fit.view_proj * translation(-o);
             texel_c[c] = fit.width / tile;

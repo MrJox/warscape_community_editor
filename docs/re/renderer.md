@@ -322,8 +322,7 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
   game is not checked; at most 9 cm).
 - Light depth range (fn 0x117329a0): the fitted extent plus a pull-back tweakable, `g_battle_terrain_on_shadow_cam_depth_offset_battle`
   5000 m with battle terrain on, `shadow_cam_depth_offset_battle` 150 m without, `shadow_cam_depth_offset_campaign` 14 m on the
-  campaign map. The editor keeps its 4000 m range (part of the light-fit item below); at the depths the casters sit the bias unit is
-  2^-24 of the range either way.
+  campaign map. Corrected 2026-10-31 (below, "Shadow cascades: units and pull-back"): the coast dump's boxes fit 150, not 5000.
 
 ## Remaining engine items, status (2026-10-08)
 - Lighting cross-fade: linear (b - a) * t + a on every field (fn 0x175f4e0). Colour conversion: pow 2.2 (verified).
@@ -536,4 +535,22 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   `decal_list`): outside the escalation layers, 15 313 of its decals pair with the game's records by position and all but one have the
   same axes, so the boxes themselves were right (the tilted ones, rock clumps and some `path_1`, are tilted in the game too).
 - Not marked: the legacy terrain patches (a scene whose ground has no material) draw as models, so decals skip them.
+
+## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
+
+- Fences, stone walls and carts cast no shadow in the editor (gen_dun_medium_final_2). The cause was the light's depth scale: at the
+  camera one shadow-map depth unit (2^-24 near z = 1) was about 1e-4 per game unit along the light in the editor and 4e-3 in the game, so
+  the shadow rasterizers' bias (DepthBias 2500, slope 1.8, the game's) pushed casters about 3 m back in the editor against 3 cm in the
+  game, and anything lower than that lost its shadow. Two unit mix-ups and a wrong constant made it:
+  - The Attila splits added the quality row (game units: 30, 90, 210, 450) to the camera's near and the depth analysis in scene units:
+    every cascade was twice the game's length (the dump's `g_split_distances` 9.9, 41.0, 134.3, 352.0, 818.6 against the editor's 9.8,
+    72.5, 260.6, 699.6, 1640.1 at the same view). They are computed in game units now and match (9.8, 41.0, 134.5).
+  - The light fit took scene-unit corners and near distances with a game-unit pull-back; it is fitted in game units now (as Rome 2's).
+  - The pull-back: the dump's `g_amHardSplit` gives, per cascade, the warp's n (from the y row: f / (f - n) and its constant), the
+    slice's extent h = f - n and the box depth (from the depth row minus half the w row: 2n / depth along the light): n 64.5, 188.5,
+    532.6, 1313.2; h 57.8, 187.9, 485.2, 1117.0; depth 241.5, 449.7, 935.6, 1976.7. Pull-back 150 (`shadow_cam_depth_offset_battle`)
+    gives n 62.2, 179.0, 502.4, 1236.2 and depth 222.4, 387.5, 772.7, 1598.3 (the rest is the view's slightly other pitch); 5000
+    (`g_battle_terrain_on_...`) gives n 249 and depth 5072 for the first cascade. `shadow_fit::DEPTH_OFFSET` is 150.
+- ASSUMPTION: which of the two tweakables a battle uses (the game's condition for "battle terrain on") was not traced; one max-settings
+  coast battle used 150.
 
