@@ -86,8 +86,10 @@ impl Tile {
     /// The matrix an instance's model is drawn with: [`Tile::world_matrix`], tilted to the terrain for a tree.
     pub fn drawn_matrix(&self, elem: usize) -> Float4x4 {
         let w = self.world_matrix(elem);
-        if self.tscene().type_of(elem) != "VEGETATION_INSTANCE" {
-            return w;
+        match self.tscene().type_of(elem) {
+            "VEGETATION_INSTANCE" => {}
+            "ProjectedDecalInstance" => return self.decal_matrix(elem),
+            _ => return w,
         }
 
         let p = Float3::new(w.m[0][3], w.m[1][3], w.m[2][3]);

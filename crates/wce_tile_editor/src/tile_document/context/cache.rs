@@ -16,7 +16,8 @@ use super::template::{Grid, Template};
 use crate::terrain_bake::TerrainLook;
 
 const MAGIC: &[u8; 6] = b"WCECTX";
-const VERSION: u16 = 3;
+// 4: decal boxes take the scale's magnitudes (`TileDocument::decal_matrix`).
+const VERSION: u16 = 4;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {
