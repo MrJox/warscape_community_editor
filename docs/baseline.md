@@ -274,3 +274,15 @@ machine (AMD Radeon RX 7900 XTX, the game in `D:\Juegos\Steam\steamapps\common\T
 the tile shots at the end of a run save a dock layout into the settings folder, which changes the viewport's size in the next run, and
 the window's frames before the capture step the weather particles against that viewport's depth. `shots.sh` now gives every capture a
 settings folder of its own with only the settings file (`fresh_settings`); two runs are byte-identical, all six shots.
+
+## The screenshots re-recorded again (2026-10-31, `ingame-checks`)
+
+The renderer changed what the six `scripts/shots.sh` captures show: the shadow cascades in game units with the 150 pull-back (shadows
+of low objects, sharper shadows overall), G-buffer channel 4 cleared to the far plane (the fog of pixels with nothing behind them, and
+soft particles against the sky: most of the snow shot's pixels), the decals (`ps30_diffuse_bugged`, the stencil bit, the anisotropic
+samplers) and the sea (its reach, finer cells near the camera). Against the previous references: dry 1280x720 14.5 % of the pixels
+differ (max 133 levels), dry 800x600 13.7 %, rain 3.2 %, snow 87.5 % (mean 1.6 levels), monte_rosa 16.6 %, the Rome settlement 95.0 %
+(mean 2.5 levels); checked by eye. New references in `build/gates_base_perf/` (the previous ones in
+`build/gates_base_perf_before_ingame_2/`), recorded as before (the user's machine, settings without mod packs through
+`WCE_SETTINGS_DIR`), with the editor on a separate desktop; two runs are byte-identical. `shots.sh`'s comparison needs numpy and
+pillow (a throwaway venv, docs: machine notes); without them it reports every shot as differing.

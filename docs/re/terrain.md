@@ -232,7 +232,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   point / clamp; `s_normal_array` trilinear / wrap. `s_snow_normals` (fn 0x116f7b40) trilinear / wrap. The editor uses anisotropic 8 for the quality class.
 - **`g_overlay_view_projection` (verified)**: identity is the declared default (directional_light_PS fn 0x116d45c0, waterplane_VS fn 0x116d8fb0); a tile has
   no overlay, so it stays. `s_overlay` (trilinear / clamp) must be (0, 0, 0, 1) for "no overlay" (see the resolve note above).
-- **Assumptions / open** (in-game captures exist since 2026-10-30, docs/plans/tile_ted_parity_remaining.md): the far-blend
+- **Assumptions / open** (in-game captures exist since 2026-10-30, docs/plans/tile_ted_parity.md, "In-game checks"): the far-blend
   and map-wide normal layers, season mixing (settled: none seen, "Seasons and snow"; see "Seasons and snow" for the snow normals), the second and third
   layer indices of the resolve (`g_layer1/2_texture_index`, the mask is black so they stay off; fn 0x118839d0 sets them from ints at the
   drawable's +0x270 + 0x80 / + 0x84 and binds the mask from its +0x34 object, vfunc +0xac, beside the far maps: the map-level path, not followed further), neighbour tiles (their alpha feather and the overlap between tiles), one detail texture pair per climate.

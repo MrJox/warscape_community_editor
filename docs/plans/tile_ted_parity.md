@@ -1,10 +1,10 @@
 # Tile tool: TEd feature parity
 
-**Status (2026-10-30).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
+**Status (2026-10-31).** Started 2026-10-09 from the user's report on the Tile tool: layers could not be edited, water did not
 render, terrain did not look like the game, some buildings stood at the wrong height, and "what else does TEd have". Every phase is
-done; the in-game captures (2026-10-29 / 30, branch `ingame-checks`) settled the season and climate questions, the battle sea and
-the burning look. What is left (a few TEd tools still to trace, renderer differences the captures showed) is listed in
-`tile_ted_parity_remaining.md`, worked through in its order. The editor itself is described in
+done, and so is the list of leftovers worked through on the branch `ingame-checks` (2026-10-29 .. 31: the in-game captures and the
+renderer differences they showed, the last TEd tools; folded in below, "In-game checks"). What remains are small renderer details
+and things to confirm in game, listed there. The editor itself is described in
 `docs/editor.md` ("Tile tool"); what each `tile.ted` element type can do (create / edit / draw / export) is in
 `docs/tile_entity_types.md`. Findings are in `docs/formats/tile_ted.md` (placement, layer flags, TEd's modules, Property Editor),
 `docs/formats/tile_database.md` (the entry), `docs/re/terrain.md`, `docs/re/water.md` and `docs/re/tile_links.md`.
@@ -31,7 +31,8 @@ the burning look. What is left (a few TEd tools still to trace, renderer differe
   and water against; and, if possible, a RenderDoc / PIX capture of a coastal battle (the sea's radial mesh and sea bed texture). Not
   supplied yet; the terrain and water shots are compared only run against run. **Deferred** (user, 2026-10-26: the user takes the shots
   later). Done (2026-10-29): the winter battle on a river map, a screenshot from the user: the river is not frozen (docs/re/water.md).
-  Done (2026-10-29): a burning building in game, three screenshots from the user (Phase 5d below).
+  Done (2026-10-29): a burning building in game, three screenshots from the user (Phase 5d below). Done (2026-10-30 / 31): settlement,
+  river and coast captures with the cameras from memory dumps, and RenderDoc captures of a coastal battle ("In-game checks" below).
 
 ### Phase 1
 - Done (2026-10-26): the gizmo at a constant screen size. Its handles are a length in points (settings `appearance.gizmo_size`,
@@ -88,7 +89,7 @@ the burning look. What is left (a few TEd tools still to trace, renderer differe
   bed stays as authored (BOB carves it).
 - Water rendering (2026-10-27): the river's uv, fade, foam and `g_refraction_depth` settled from the shaders, the water takes shadows
   (`rendering_remaining.md`, docs/re/water.md "Settled"). Winter ice: settled in game (2026-10-29), a winter battle's
-  river is open water, as the editor draws it. **Deferred to the in-game checks** (with the reference shots): the battle sea's radial mesh and sea bed texture (GPU-only: a RenderDoc / PIX capture of a coastal battle, docs/re/water.md).
+  river is open water, as the editor draws it. Done (2026-10-30, RenderDoc): the battle sea's radial mesh and sea bed texture (docs/re/water.md, "Settled by a RenderDoc capture").
 
 ### Phase 5a: terrain painting
 Done: the height brushes, the blend brush, the ground type brush, the falloff curve editor, the image brush, the stroke along a line,
@@ -164,7 +165,7 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   in its attribute, shows where TEd shows it and undoes; a piece's own rows (visible, opacity, position, destruction level) act on that
   piece alone, and a piece starts from the building's look values (`Tile::piece_props_or_building`). Rows that only store data (weak_wall, ai_breachable, dockable, indestructible, toggleable, capture_location; a piece's active, draggable,
   surface_mode, show_collision, seasons) change nothing in the viewport, as in TEd. Script commands `assert_attr`, `assert_piece`,
-  `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials is left for the renderer plan.
+  `assert_instance_param`. **Phase 5d is done**; the blended forward pass for faded opaque materials too (2026-10-30, `pass_faded`).
 
 ### Phase 5e
 - Point-light radius gizmo: done (2026-10-28). A selected light shows its reach as three circles (the renderer's selection overlay,
@@ -221,8 +222,8 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   through `set_property(10)`; edges and vertices are only settable in the settings dialog. No code reads `horizontal_snap` or
   `vertical_snap` at their offsets (in the object or its container); the gizmo's slots (`SelectModeProxy::on_manipulator_moved` /
   `_rotated`, `FUN_0048e370` / `FUN_0048e4d0`) take the position and angle back from the application through virtuals, and the code that
-  applies the snap mode behind them was not found statically. wce keeps its grid and angle snapping; edges, vertices and the horizontal /
-  vertical switches would need TEd run (a black box test) to know what they do.
+  applies the snap mode behind them was not found statically. Settled (user, 2026-10-31): wce has its own edges, points, heights and
+  angle tolerance (above), not TEd's, which is buggy there.
 - Camera bookmarks: done (2026-10-28; wce's). The toolbar's camera button: the tile's saved views (a click goes there, x forgets one),
   the current view saved by a name; kept in the settings by the tile's folder (`[tools.tile] camera_views`), not in the tile
   (`view_save`, `view_go`, `scripts/tile_camera_views.txt`).
@@ -301,6 +302,28 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
 - Stats view: done (2026-10-28). TEd's `stats_view` is only a module name in its scripts (no stats view in its executable) and the
   game's per-tile budgets are not known, so the Tile panel's Stats shows numbers, no limits: instances by type, building keys and those
   without a model, the files on disk, what the last frame drew (`tile_stats.rs`). **Phase 6b is done.**
+
+### In-game checks (2026-10-29 .. 31, branch `ingame-checks`)
+Captures with the cameras read from memory dumps (the game's camera in scene units: x / 2 + half, y / 2 + offset, z / 2 + half; check
+a dump's `camera_near_far`, 1 / 13000: a dump can hold another pass's camera), the editor's matching renders, RenderDoc captures of a
+coastal battle at low settings (`D:\renderdoc\coast.rdc`; RenderDoc runs out of the 32-bit game's memory at high settings).
+- Ground: one season's ground, the battle map's cell climate (a tile launched alone gets `default`); Launch in game writes no
+  `<Climate>` / `<Season>` and writes `<sea_surface_name>` (docs/re/terrain.md, docs/re/game_command_line.md).
+- The battle sea: its radial mesh and sea bed texture, the surf band, the 180 degree turn of the battle's frame at a coast placement
+  (the sun, the wind and the game coordinates follow it), the shallows, the sea reaching 28.8 km (docs/re/water.md).
+- The renderer (docs/re/renderer.md): roofs (`g_apply_environment_specular` 0), the environment specular pass, the rivers' order and
+  `g_ssr_enabled`, the exposure statistics, trees (the climate's tree list, two-sided, tinted), faded buildings, the escalation layers
+  in the Game view, G-buffer channel 4 cleared to the far plane (the fog at the horizon), projected decals (`ps30_diffuse_bugged` with
+  TEd's signed scale, anisotropic samplers, only on the ground and TerrainBlend meshes by the stencil bit the game uses), the shadow
+  cascades in game units with the 150 pull-back (fences and walls cast shadows).
+- `where` reads the launched battle's game coordinates; the image gates' references re-recorded (2026-10-30, and again 2026-10-31 after the decal, shadow and sea changes).
+- Left (small): the far sea fogs fully where nothing lies under it (beyond the tile's ground or past the map's edge) while the game
+  has its 16 km LF under its sea: a sea bed at -20 m there would close it; the game's waterline steps from its 8-bit, 2 m sea bed
+  texture; decals skip the legacy terrain patches (a scene whose ground has no material); no MSAA (user, 2026-10-31).
+- To confirm in game: which decal technique the engine picks per decal (the editor draws all with the `_bugged` one, exact for the
+  files' boxes); which shadow pull-back a battle uses (one coast battle at max settings used 150, not 5000); the dun roads, fence
+  shadows and the coast's beach after these fixes. The dark draped rocks of gen_dun_medium_final_2 are TDD's `rocklarge_*` textures
+  (a different layout than the vanilla rock models' uv), in game as well.
 
 ## Ideas for later (user, 2026-10-27)
 - Polygons painted with a brush instead of drawn point by point (exclusion polygons, and the no-go areas, which are to be handled as
