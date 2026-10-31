@@ -170,6 +170,11 @@ pub(crate) const GOD_RAYS_PS: &str = "dx11_sm_3_0_hdr_god_rays.hlsl_ps_ps30_god_
 pub(crate) const GOD_RAYS_BLUR_X_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_horizontal_blur_r_channel_wide";
 pub(crate) const GOD_RAYS_BLUR_Y_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_vertical_blur_r_channel_wide";
 
+/// MLAA (gfx_aa 1): its three passes, the shader model 4 ones (mlaa_pass1_sm4 .. mlaa_pass3_sm4).
+pub(crate) const MLAA_EDGES_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_pixelshader_seperatinglines";
+pub(crate) const MLAA_LINE_LENGTH_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_computelinelength_ps";
+pub(crate) const MLAA_BLEND_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_blend_ps";
+
 /// The film grain's state: the generator, the time since its last move, its offset (`hdr_to_screen_PS.grain_tex_offset`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Grain {
@@ -424,6 +429,9 @@ pub struct RenderSettings {
     /// gfx_god_rays: the sun's rays (Thrones of Britannia's HDR_GOD_RAYS views, added by hdr_to_screen).
     pub god_rays: bool,
 
+    /// gfx_aa: 1 is MLAA (`pass_mlaa`); the MSAA levels (2..4) are drawn without anti-aliasing yet.
+    pub aa: i32,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -501,6 +509,7 @@ impl Default for RenderSettings {
             grain: false,
             cloud_shadows: false,
             god_rays: false,
+            aa: 0,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -541,6 +550,7 @@ impl RenderSettings {
         self.grain = o.grain;
         self.cloud_shadows = o.cloud_shadows;
         self.god_rays = o.god_rays;
+        self.aa = o.aa;
         self.texture_filtering = o.texture_filtering;
     }
 }
@@ -1473,6 +1483,10 @@ impl Renderer {
             self.pass_to_screen(&env);
             if self.settings.lens_flare {
                 self.pass_lens_flare(&env, (cam.eye - o) * self.camera.units, time_s);
+            }
+
+            if self.settings.aa == 1 && self.game != game::RenderGame::Rome2 {
+                self.pass_mlaa();
             }
         }
 

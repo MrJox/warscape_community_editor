@@ -124,6 +124,12 @@ pub(crate) struct PostTargets {
     pub god_rays: SizedTarget,
     pub god_rays_x: SizedTarget,
     pub god_rays_y: SizedTarget,
+
+    /// MLAA (gfx_aa 1; fns 0x11765d60, 0x11765e60): the separating lines' mask and the line lengths (horizontal, vertical; twice, the
+    /// iterations alternate), R8_UINT at the view's size; the blended image, copied back into `final_`. Made when first drawn.
+    pub mlaa_edges: SizedTarget,
+    pub mlaa_counts: [SizedTarget; 4],
+    pub mlaa_out: SizedTarget,
 }
 
 /// The side of the tone mapper's downsampled image (luma statistics, bloom), whatever the view's size.
