@@ -1,7 +1,7 @@
 //! The heights a custom-mesh tile's (cliff's) vertices are drawn at in a game map, as the game's `vs30_custom_geom` gives them: the LF at
 //! the vertex's map position (metres, `LF * 3000 - 20`) plus 2 y. Per placement over a window of cells: the plateau's vertices (weight
 //! 0) and the faces' (the rest), their lowest, median and highest heights, and the LF under them. `$WCE_LOW`: also every plateau vertex
-//! above the skirt (y > 0) drawn below 20 m, where it is.
+//! above the skirt (y > 0) drawn below 20 m, where it is. `$WCE_ROWS`: the map cells the plateau (above the skirt) lies over.
 //!
 //!   cargo run --release -p wce_tile_editor --example cliff_heights -- <game dir> <folder with tile_map.index/.tiles/lf_height_map.dds> <x0> <y0> <x1> <y1>
 
@@ -61,6 +61,16 @@ fn main() {
             } else {
                 face.push(l + 2.0 * y);
             }
+        }
+
+        if std::env::var_os("WCE_ROWS").is_some() {
+            let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+            for v in mesh.lods[0].vertices.iter().filter(|v| v.normal[3] == 0 && v.position[1] > 0.0) {
+                let (u, w) = to_map.apply(f64::from(v.position[0]), depth + f64::from(v.position[2]));
+                (lo, hi) = ((lo.0.min(u), lo.1.min(w)), (hi.0.max(u), hi.1.max(w)));
+            }
+
+            println!("    plateau (above the skirt) over cells x {:.2} .. {:.2}, y {:.2} .. {:.2}", lo.0, hi.0, lo.1, hi.1);
         }
 
         let name = format!("{}\\{}", p.location.rsplit(['\\', '/']).next().unwrap_or_default(), p.variation);
