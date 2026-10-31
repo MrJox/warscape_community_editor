@@ -170,12 +170,13 @@ impl Kind {
 }
 
 impl Params {
-    /// The defaults for a kind: by the water, a narrower foot band (the waterline) and fewer plants.
+    /// The defaults for a kind: by the water, a narrower foot band (the waterline) and fewer plants, and lower slopes (the kit's river banks
+    /// stand 0.2 to 1.4 m over their water, its river mouths and ports' shores 0.6 to 1.8 m over the sea).
     pub fn for_kind(kind: Kind) -> Self {
         match kind {
             Kind::Cliffs => Self::default(),
-            Kind::Coast => Self { min_rise: 2.0, foot_up: 2.0, foot_out: 3.0, rock_density_foot: 1.0 / 8.0, plant_density: 1.0 / 30.0, ..Self::default() },
-            Kind::Riverbank => Self { min_rise: 1.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
+            Kind::Coast => Self { min_rise: 1.0, foot_up: 2.0, foot_out: 3.0, rock_density_foot: 1.0 / 8.0, plant_density: 1.0 / 30.0, ..Self::default() },
+            Kind::Riverbank => Self { min_rise: 0.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
         }
     }
 }

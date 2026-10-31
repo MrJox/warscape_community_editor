@@ -138,15 +138,16 @@ Riverbanks on the first variation of every river, river_shallow, river_start and
 ground by their water. River tiles have 8 to 153 banks each, nearly all too low: 0.2 to 1.4 m over the water, half under 0.2 to 0.4 m
 (the minimum is 1.5 m). At 0.5 m, river/2x2_lt_rb covers 4 banks (52 rocks, 23 plants) in thin strips along both sides.
 
-sea_coast's 4x3 and 6x4 tiles open without their entries (no sea link known, extent 256 m): their coasts can't be found until that is
-fixed.
+sea_coast's 4x3 and 6x4 tiles open without their entries (no sea link known, extent 256 m) because they have none: the kit's tile
+database lists only its 1x1 and 2x2 sea coasts, and the game's packs have only those (the bigger folders are leftovers BOB never builds).
+
+Decided (user, 2026-10-31): the built-in minimum rise is 0.5 m for the riverbanks (was 1.5 m) and 1 m for the coast (was 2 m).
 
 ### Open (to settle while building)
 
 - Kit tiles have little of the new kinds: their coasts' no-go ground is under 800 m² a tile, and river/2x2_bl_rt's 9 banks are all under
   the 1.5 m rise (its 3 cliffs are the banks'). The defaults are tuned in step 6.
-- sea_coast/6x4_bb_45 opens without its entry (extent 256 m instead of 768 x 512; stage B's heights 0 .. 0.83): a fault of the
-  project's reading, not of the coverage; its coast is not found (no sea link known).
+- sea_coast/6x4_bb_45 opens without its entry: it has none (see the survey); not a fault of the editor.
 - The banks' "local water surface" for a river whose surface falls along the tile (the nearest water cell's height is the guess).
 - Whether Ctrl + drag erases every kind or only the window's current one (the plan says the current one).
 
