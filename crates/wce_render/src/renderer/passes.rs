@@ -371,16 +371,10 @@ impl Renderer {
         ) else { return };
         wce_prof!("render.environment_specular");
 
-        // The screen's constants of the reflection's size (the engine's views have their target's); the full size back for the last blur.
-        let screen = |cbs: &mut crate::cbuffers::ConstantBuffers, w: u32, h: u32| {
-            let (fw, fh) = (w as f32, h as f32);
-            for name in ["g_screen_size", "g_viewport_dimensions", "g_render_target_dimensions"] {
-                cbs.set_f("camera_VS_PS", name, &[fw, fh, 1.0 / fw, 1.0 / fh]);
-            }
-        };
-
+        // The camera's screen constants stay the full screen's: the reflection and the x blur divide their pixel's position by
+        // g_buffers_scale (fn 0x118e0b90 writes the table's 0.5 / 1 to both), the y blur draws the full screen.
+        let scale = if half { 0.5 } else { 1.0 };
         if half {
-            screen(&mut self.cbs, rw, rh);
             self.ctx.set_viewports(&[viewport(0.0, 0.0, rw as f32, rh as f32)]);
         }
         let f = |v: f32| v.to_le_bytes();
@@ -396,7 +390,7 @@ impl Renderer {
         let p: [(usize, Vec<u8>); 11] = [
             (0, i(0).to_vec()), (4, f(1.0).to_vec()), (8, f(20.0).to_vec()), (16, [f(0.4), f(1.0)].concat()), (24, [f(0.9), f(1.0)].concat()),
             (32, f(0.1).to_vec()), (36, [f(0.996), f(0.99)].concat()), (48, [f(2.0), f(5.0)].concat()), (56, f(0.06).to_vec()),
-            (64, [f(0.5), f(0.5), f(28672.0), f(-28672.0)].concat()), (80, f(1.0).to_vec()),
+            (64, [f(0.5), f(0.5), f(28672.0), f(-28672.0)].concat()), (80, f(scale).to_vec()),
         ];
         for (at, bytes) in &p {
             self.cbs.set_at("parameters", *at, bytes);
@@ -424,7 +418,7 @@ impl Renderer {
 
         // 2. The x blur.
         let blur = |cbs: &mut crate::cbuffers::ConstantBuffers| {
-            for (at, bytes) in [(0, i(0).to_vec()), (4, f(0.98).to_vec()), (8, f(0.5).to_vec()), (12, f(1.0).to_vec())] {
+            for (at, bytes) in [(0, i(0).to_vec()), (4, f(0.98).to_vec()), (8, f(0.5).to_vec()), (12, f(scale).to_vec())] {
                 cbs.set_at("parameters", at, &bytes);
             }
         };
@@ -442,7 +436,6 @@ impl Renderer {
 
         // 3. The y blur, added to the light buffer (ONE / ONE, as the game).
         if half {
-            screen(&mut self.cbs, w, h);
             self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
         }
 
@@ -450,8 +443,10 @@ impl Renderer {
         self.upload();
         self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), None);
         self.ctx.set_blend_state(self.states.bs_add_one.as_ref());
-        bind_srv(&self.ctx, &by, "gbuffer_channel_1_sampler", self.gbuffer.channels[0].srv.as_ref());
-        bind_srv(&self.ctx, &by, "gbuffer_channel_3_sampler", self.gbuffer.channels[2].srv.as_ref());
+        // The half resolution one also reads channels 2 (its .w weighs a Fresnel term) and 4 (the depth, for the view's direction).
+        for k in 0..4 {
+            bind_srv(&self.ctx, &by, &format!("gbuffer_channel_{}_sampler", k + 1), self.gbuffer.channels[k].srv.as_ref());
+        }
         bind_srv(&self.ctx, &by, "s_reflection_buffer", self.post.reflection_blur.srv.as_ref());
         bind_srv(&self.ctx, &by, "s_blur_parameters_buffer", self.post.reflection_params.srv.as_ref());
         ps_samplers(&self.ctx, &by, &self.states.s_clamp_point);

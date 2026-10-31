@@ -122,8 +122,11 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   256 at 0 (it was 256 at every level).
 - Screen space reflections = the environment specular pass (environment_specular_light, reflections_blur): on above 0 (fn 0x118c2530),
   its buffers at 0, 0.5, 1 of the screen (table 0x11cca8fc, fn 0x11903ec0); at 0 `g_apply_environment_specular` is 1 (fn 0x11904130: the
-  directional light adds the specular). Applied: off at 0, half resolution at 1 (the entries without `_full_res`, the screen constants
-  of the half size for the reflection and the x blur: an assumption).
+  directional light adds the specular). The camera's screen constants stay the full screen's: fn 0x118e0b90 writes the table's value to
+  the reflection's and the blurs' `g_buffers_scale` each frame, and the reflection and the x blur divide their pixel's position by it
+  (their uv = (position + offset) * g_screen_size.zw / g_buffers_scale, the depth texel = position / g_buffers_scale); fn 0x118ec730
+  takes the `_full_res` entries when it is 1. The y blur draws the full screen; its half resolution entry also reads G-buffer channels
+  2 (.w weighs a Fresnel term) and 4 (the depth, for the view's direction). Applied: off at 0, half resolution at 1.
 - Particle effects: the level is mapped to a variant (fn 0x118f0a30: 0 at 3, 1 at 2, 2 at 0 and 1) and each effect takes that variant
   (fn 0x11894bc0, else variant 0): the vfx files' `quality="1"` / `"2"` property overrides. Applied (`vfx_def::set_quality`). The same
   value sizes the particle system (fn 0x118f96a0 -> its init, fn 0x1184d6e0): 0x40000 (512^2) at 0 when the graphics system's flag
@@ -144,13 +147,16 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   vegetation's own tree LOD uses `tree_lod_scaler` 1.35, no level). In battle they likely change nothing; left as not applied.
 - Film grain (ToB; fns 0x117d7da0, 0x1179af90): `commontextures/grain.dds` through `grain_sampler` (linear, wrap) in hdr_to_screen's
   ENABLE_GRAIN variants; `grain_tex_offset` moves when 1000 / grain_fps (24) ms have passed: two numbers of the MSVC generator
-  (seed * 0x343fd + 0x269ec3), x the second, y the first, top 16 bits * 1 / 65535. Applied (the texture read as UNORM: its sRGB flag
-  is not read).
+  (seed * 0x343fd + 0x269ec3), x the second, y the first, top 16 bits * 1 / 65535. Applied. The texture is UNORM: its creation flags
+  (0x280) lack 0x2000, the sRGB bit of the texture creation (fn 0x117700d0: `_diffuse` 0x2180 / 0x2100, `_normal` 0x180,
+  `no_texture_srgb` 0x2002180 against `no_texture` 0x2000180, the sun and moon disks 0x2100).
 - Cloud shadows (ToB; fn 0x117c3680): off (the graphics system's +0x747fe clear): g_cloud_shade_params 0, the shade never applies. On,
   in battle: `terrain/textures/common/cloud_shade.dds` through `cloud_shade_sampler`, params (offset x, y, cloud_shade_battle_scale
-  0.0005, 1.0); the offset moves by the change of seconds * cloud_shade_battle_speed (50) / 4096 along a direction (fn 0x118089e0),
-  wrapped into 0..1 (the campaign: cloud_shade_campaign_scale 0.01, w 0.998). Applied, with the battle wind's direction for fn
-  0x118089e0's and the texture read as UNORM (both assumptions).
+  0.0005, 1.0); the offset moves by the change of the battle's seconds (its +0x378, vtable 0x108) * cloud_shade_battle_speed (50) /
+  4096 along the wind's direction, wrapped into 0..1 (the campaign: cloud_shade_campaign_scale 0.01, w 0.998). The direction is fn
+  0x118089e0 on the battle's weather (+0x21f8): (cos, sin) of its degrees (+0x30) * 0.0174533, the battle's vtable 0x78 that also
+  fills the shaders' wind direction (fn 0x1199a770); fn 0x1196ebd0 scales it by the gusting strength for the wind's velocity. The
+  texture is UNORM (creation flags 0x180, no sRGB bit 0x2000; see the grain). Applied.
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
