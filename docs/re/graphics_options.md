@@ -141,6 +141,11 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   ENABLE_GRAIN variants; `grain_tex_offset` moves when 1000 / grain_fps (24) ms have passed: two numbers of the MSVC generator
   (seed * 0x343fd + 0x269ec3), x the second, y the first, top 16 bits * 1 / 65535. Applied (the texture read as UNORM: its sRGB flag
   is not read).
+- Cloud shadows (ToB; fn 0x117c3680): off (the graphics system's +0x747fe clear): g_cloud_shade_params 0, the shade never applies. On,
+  in battle: `terrain/textures/common/cloud_shade.dds` through `cloud_shade_sampler`, params (offset x, y, cloud_shade_battle_scale
+  0.0005, 1.0); the offset moves by the change of seconds * cloud_shade_battle_speed (50) / 4096 along a direction (fn 0x118089e0),
+  wrapped into 0..1 (the campaign: cloud_shade_campaign_scale 0.01, w 0.998). Applied, with the battle wind's direction for fn
+  0x118089e0's and the texture read as UNORM (both assumptions).
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
