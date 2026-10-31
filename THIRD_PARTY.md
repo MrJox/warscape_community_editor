@@ -1,7 +1,8 @@
 # Third-party code
 
-Permissive licences only. Ask before adding anything. Nothing is vendored: the code comes from crates.io (see the Rust dependencies
-below), and `third_party/` only keeps the licence of a project whose format knowledge was ported.
+Permissive licences only. Ask before adding anything. Nothing is vendored but the fonts and NIS's shaders (below): the code comes from
+crates.io (see the Rust dependencies below), and `third_party/` otherwise only keeps the licence of a project whose format knowledge was
+ported.
 
 ## Format knowledge from other projects
 
@@ -18,6 +19,14 @@ The one exception to "nothing is vendored": the UI's fonts are files in `crates/
 |---|---|---|---|
 | Inter (Rasmus Andersson), `Inter-Regular.ttf` | 4.1 | SIL Open Font License 1.1 (`Inter-LICENSE.txt`) | the UI text |
 | Lucide icons, `lucide.ttf` (from the `lucide-static` npm package) | 1.61.0 | ISC (`lucide-LICENSE.txt`) | the icons merged into the UI font (`wce_editor::icons`) |
+
+## Shaders (vendored)
+
+The second exception to "nothing is vendored", agreed for the render scale (2026-10-31): a shader library compiled at run time.
+
+| Project | Version | Licence | Where | Used for |
+|---|---|---|---|---|
+| NVIDIA Image Scaling (NIS), `NIS_Scaler.h`, `NIS_Main.hlsl` | SDK v1.0.3 | MIT (`third_party/nis/LICENSE`) | `third_party/nis` (unchanged); `NIS_Config.h`'s configuration and coefficient tables ported to Rust in `crates/wce_render/src/renderer/nis.rs` and `nis_coef.rs` | the editor-only render scale: the scene drawn smaller is enlarged and sharpened to the viewport |
 
 ## Linux build dependencies (not vendored)
 

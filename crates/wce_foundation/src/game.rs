@@ -52,6 +52,9 @@ pub struct GameProfile {
 
     /// Launch in game: the test battle's vanilla armies and what the game's battle XML has.
     pub launch: LaunchFacts,
+
+    /// The game's graphics options and presets.
+    pub graphics: &'static crate::graphics::GraphicsCatalogue,
 }
 
 /// How the game's own packs are found.
@@ -153,6 +156,7 @@ impl GameProfile {
             alliance_indices: true,
             tile_upgrades: true,
         },
+        graphics: &crate::graphics::ATTILA,
     };
 
     /// Total War: Rome II. Its manifest lists neither the patch packs (`*_rome2.pack`) nor the right sizes, so the packs are rpfm's list.
@@ -189,6 +193,7 @@ impl GameProfile {
             alliance_indices: false,
             tile_upgrades: false,
         },
+        graphics: &crate::graphics::ROME_2,
     };
 
     /// Total War Saga: Thrones of Britannia: Attila's engine and Assembly Kit, other builds (docs/re/thrones_renderer.md). Its manifest
@@ -218,6 +223,7 @@ impl GameProfile {
             alliance_indices: true,
             tile_upgrades: true,
         },
+        graphics: &crate::graphics::THRONES_OF_BRITANNIA,
     };
 
     /// Every supported game, the default first.

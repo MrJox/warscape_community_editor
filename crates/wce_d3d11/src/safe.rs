@@ -248,6 +248,7 @@ pub trait DeviceExt {
     fn create_pixel_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11PixelShader>;
     fn create_geometry_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11GeometryShader>;
     fn create_compute_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11ComputeShader>;
+    fn create_unordered_access_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>) -> windows_core::Result<ID3D11UnorderedAccessView>;
     fn create_input_layout(&self, elements: &[InputElement], bytecode: &[u8]) -> windows_core::Result<ID3D11InputLayout>;
     fn create_query(&self, kind: D3D11_QUERY) -> windows_core::Result<ID3D11Query>;
 }
@@ -379,6 +380,13 @@ impl DeviceExt for ID3D11Device {
         created(hr, out)
     }
 
+    fn create_unordered_access_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>) -> windows_core::Result<ID3D11UnorderedAccessView> {
+        let mut out = None;
+        // SAFETY: a description by reference, or none.
+        let hr = unsafe { self.CreateUnorderedAccessView(resource, desc.map(|d| d as *const _), Some(&mut out)) };
+        created(hr, out)
+    }
+
     fn create_input_layout(&self, elements: &[InputElement], bytecode: &[u8]) -> windows_core::Result<ID3D11InputLayout> {
         let descs = elements.iter().map(|e| e.0).collect::<Vec<_>>();
         let mut out = None;
@@ -504,6 +512,8 @@ pub trait ContextExt {
     fn ps_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn gs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn cs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
+    fn cs_set_unordered_access_views(&self, start: u32, views: &[Option<ID3D11UnorderedAccessView>]);
+    fn dispatch(&self, x: u32, y: u32, z: u32);
 
     fn draw(&self, vertices: u32, first: u32);
     fn draw_indexed(&self, indices: u32, first: u32, base_vertex: i32);
@@ -687,6 +697,16 @@ impl ContextExt for ID3D11DeviceContext {
     fn cs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]) {
         // SAFETY: a binding call with a slice.
         unsafe { self.CSSetSamplers(start, Some(samplers)) };
+    }
+
+    fn cs_set_unordered_access_views(&self, start: u32, views: &[Option<ID3D11UnorderedAccessView>]) {
+        // SAFETY: a binding call with a slice (its length is the count); no initial counts (no append / consume buffers).
+        unsafe { self.CSSetUnorderedAccessViews(start, views.len() as u32, Some(views.as_ptr()), None) };
+    }
+
+    fn dispatch(&self, x: u32, y: u32, z: u32) {
+        // SAFETY: a dispatch call; out-of-range reads are defined.
+        unsafe { self.Dispatch(x, y, z) };
     }
 
     fn draw(&self, vertices: u32, first: u32) {

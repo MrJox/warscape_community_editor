@@ -18,7 +18,7 @@ use wce_formats::xml_doc::{XmlDoc, decode_entities, encode_entities};
 use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_render::renderer::View;
-use wce_scene::environment::{EnvironmentParams, read_environment, read_graphics_options};
+use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, SourceRef};
 use wce_vfs::normalize;
 use wce_weather::sample_map_document::SampleMapDocument;
@@ -751,9 +751,16 @@ impl Tool for WeatherTool {
         *self = Self { picker, ..Self::default() };
     }
 
+    fn settings_applied(&mut self, e: &mut Editor) {
+        // The game's output gamma and brightness may be the editor's now (Settings > Game, Graphics).
+        let go = e.graphics_options();
+        self.output_gamma = go.gamma;
+        self.output_brightness = go.brightness;
+    }
+
     fn activated(&mut self, e: &mut Editor) {
         let Some(vfs) = e.vfs().cloned() else { return };
-        let go = read_graphics_options(e.game());
+        let go = e.graphics_options();
         self.output_gamma = go.gamma;
         self.output_brightness = go.brightness;
         if !self.default_env_loaded {

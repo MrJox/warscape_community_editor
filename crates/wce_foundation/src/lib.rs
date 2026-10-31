@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod clock;
 pub mod game;
+pub mod graphics;
 pub mod jobs;
 pub mod log;
 pub mod math;

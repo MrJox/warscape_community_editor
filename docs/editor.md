@@ -205,6 +205,11 @@ which has the same choice of game and **Back to <the game before>** (mounted aga
 The db tables (the buildings' data, the weather's climate phases, the procedural walls' rows) are read with rpfm's schema of the game
 (`wce_foundation::settings::rpfm_schema_path`): `$WCE_RPFM_SCHEMA`, else the game's file (`GameProfile::rpfm_schema`) in the **DB
 schemas** folder (Settings > General, `db_schemas`, `$WCE_DB_SCHEMAS`; every game's), else in rpfm's own schemas folder.
+**Graphics** (Settings > Game, per game; docs/re/graphics_options.md): the game's own options (its `preferences.script.txt`, the
+default), or the editor's copy (`[games.<id>.graphics]`: `use_game = false`, `options`), never written to the game's file; the game's
+options as its options screen has them (`GameProfile::graphics`), its presets (the values its engine sets, the texture quality by
+the card's video memory), each option marked when the renderer does not apply it yet. Editor only: the render scale (50 .. 100 %,
+`render_scale`, `sharpness`): the scene drawn smaller and enlarged with NVIDIA Image Scaling.
 
 ### Appearance
 

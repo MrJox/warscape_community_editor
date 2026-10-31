@@ -39,10 +39,11 @@ const OCEAN_VS: &str = "dx11_sm_4_0_ocean.hlsl_vs_vs30_main";
 
 /// Rome 2's (`sm_3_0`; a forward pass).
 const R2_OCEAN_VS: &str = "dx11_sm_3_0_ocean.hlsl_vs_vs30_main";
-const R2_OCEAN_PS: &str = "dx11_sm_3_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
 
-/// The "ultra" quality level.
-const OCEAN_PS: &str = "dx11_sm_4_0_ocean.hlsl_ps_ps30_main_ultra_water_quality";
+/// The sea's pixel shader at a gfx_water_quality level (`sm_4_0`; Rome 2's `sm_3_0`).
+fn ocean_ps(quality: i32, rome2: bool) -> String {
+    format!("dx11_sm_{}_0_ocean.hlsl_ps_ps30_main_{}_water_quality", if rome2 { 3 } else { 4 }, super::water::water_level(quality))
+}
 
 /// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`); the game's is 1024 x 1024
 /// (2 m texels; a RenderDoc capture at the lowest graphics settings, docs/re/water.md).
@@ -456,7 +457,8 @@ impl Renderer {
         // Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass: the lit colour only, its constants and textures named otherwise
         // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), self.shader(if rome2 { R2_OCEAN_PS } else { OCEAN_PS })) else { return false };
+        let ocean_ps = ocean_ps(self.settings.water_quality, rome2);
+        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), self.shader(&ocean_ps)) else { return false };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
         let Some(layout) = self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el) else { return false };

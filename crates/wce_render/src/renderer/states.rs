@@ -6,6 +6,7 @@ use crate::particles::blend_state;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct States {
+    /// The "quality" samplers (wrap and clamp): their filter follows gfx_texture_filtering ([`Self::set_filtering`]).
     pub s_wrap_aniso: Option<ID3D11SamplerState>,
     pub s_clamp_aniso: Option<ID3D11SamplerState>,
     pub s_wrap_linear: Option<ID3D11SamplerState>,
@@ -13,6 +14,9 @@ pub(crate) struct States {
     pub s_clamp_linear: Option<ID3D11SamplerState>,
     pub s_clamp_point: Option<ID3D11SamplerState>,
     pub s_shadow_cmp: Option<ID3D11SamplerState>,
+
+    /// The texture filtering the quality samplers were made for.
+    pub filtering: i32,
     pub ds_gbuffer: Option<ID3D11DepthStencilState>,
     pub ds_sky: Option<ID3D11DepthStencilState>,
     pub ds_light: Option<ID3D11DepthStencilState>,
@@ -32,6 +36,23 @@ pub(crate) struct States {
 }
 
 impl States {
+    /// Makes the quality samplers for a gfx_texture_filtering value: 0 trilinear, n anisotropic 2^n (the engine's texture-quality sampler
+    /// class, fn 0x1177f410: anisotropic 2 / 4 / 8 / 16, else trilinear; docs/re/terrain.md).
+    pub fn set_filtering(&mut self, dev: &ID3D11Device, filtering: i32) {
+        let filtering = filtering.clamp(0, 4);
+        let s = D3D11_SAMPLER_DESC {
+            Filter: if filtering == 0 { D3D11_FILTER_MIN_MAG_MIP_LINEAR } else { D3D11_FILTER_ANISOTROPIC },
+            AddressU: D3D11_TEXTURE_ADDRESS_WRAP, AddressV: D3D11_TEXTURE_ADDRESS_WRAP, AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
+            MaxAnisotropy: 1 << filtering.max(1), MaxLOD: D3D11_FLOAT32_MAX, ..Default::default()
+        };
+
+        self.s_wrap_aniso = dev.create_sampler_state(&s).ok();
+        self.s_clamp_aniso = dev.create_sampler_state(&D3D11_SAMPLER_DESC {
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, ..s
+        }).ok();
+        self.filtering = filtering;
+    }
+
     pub fn new(dev: &ID3D11Device) -> Self {
         let mut st = Self::default();
         let mut s = D3D11_SAMPLER_DESC {
@@ -39,10 +60,7 @@ impl States {
             MaxAnisotropy: 8, MaxLOD: D3D11_FLOAT32_MAX, ..Default::default()
         };
 
-        st.s_wrap_aniso = dev.create_sampler_state(&s).ok();
-        st.s_clamp_aniso = dev.create_sampler_state(&D3D11_SAMPLER_DESC {
-            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, ..s
-        }).ok();
+        st.set_filtering(dev, 3);
 
         // The engine's sampler objects store D3D11 enums (filter 21 = MIN_MAG_MIP_LINEAR, address 1 = WRAP, 3 = CLAMP).
         s.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;

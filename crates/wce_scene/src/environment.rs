@@ -3,6 +3,7 @@
 //! Every value comes from the lossless XML document, so inspector edits show up on the next frame. Transforms not yet verified
 //! against the game are marked ASSUMPTION.
 
+use std::collections::BTreeMap;
 use std::f32::consts::PI;
 use std::path::PathBuf;
 
@@ -468,10 +469,10 @@ pub fn blend_environments(a: &EnvironmentParams, b: &EnvironmentParams, t: f32) 
     r
 }
 
-/// The player's graphics options (`%APPDATA%/The Creative Assembly/Attila/scripts/preferences.script.txt`) that change how weather
-/// renders: gamma and brightness (colorimetry), vignette (lens-flare vignette pass), depth of field, SSAO, distortion and shadow
-/// quality (which selects the cascade split row).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The graphics options the renderer applies (`wce_foundation::graphics`): gamma and brightness (colorimetry), vignette (lens-flare
+/// vignette pass), depth of field, SSAO, distortion, shadow quality (which selects the cascade split row), water quality (the water
+/// shaders' level) and texture filtering; and every `gfx_*` value read, for the options screen.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GraphicsOptions {
     pub gamma: f32,
     pub brightness: f32,
@@ -480,11 +481,47 @@ pub struct GraphicsOptions {
     pub distortion: bool,
     pub depth_of_field: i32,
     pub shadow_quality: i32,
+    pub water_quality: i32,
+
+    /// 0 trilinear, n anisotropic 2^n (fn 0x1177f410).
+    pub texture_filtering: i32,
+
+    /// The `gfx_*` values these come from.
+    pub values: BTreeMap<String, String>,
 }
 
 impl Default for GraphicsOptions {
     fn default() -> Self {
-        Self { gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3 }
+        Self {
+            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, texture_filtering: 3,
+            values: BTreeMap::new(),
+        }
+    }
+}
+
+impl GraphicsOptions {
+    /// The options of `gfx_*` values (a value missing keeps its default).
+    pub fn from_values(values: BTreeMap<String, String>) -> Self {
+        let mut o = Self::default();
+        for (key, value) in &values {
+            let v = strtod(value).unwrap_or(0.0) as f32;
+            let on = value == "true" || (value != "false" && v != 0.0);
+            match key.as_str() {
+                "gfx_gamma_setting" if v > 0.1 => o.gamma = v,
+                "gfx_brightness_setting" if v > 0.0 => o.brightness = v,
+                "gfx_vignette" => o.vignette = on,
+                "gfx_ssao" => o.ssao = on,
+                "gfx_distortion" => o.distortion = on,
+                "gfx_depth_of_field" => o.depth_of_field = v as i32,
+                "gfx_shadow_quality" => o.shadow_quality = (v as i32).clamp(0, 3),
+                "gfx_water_quality" => o.water_quality = (v as i32).clamp(0, 4),
+                "gfx_texture_filtering" => o.texture_filtering = (v as i32).clamp(0, 4),
+                _ => {}
+            }
+        }
+
+        o.values = values;
+        o
     }
 }
 
@@ -507,34 +544,35 @@ fn preferences_path(game: &GameProfile) -> Option<PathBuf> {
 
 /// Reads the graphics options from a preferences text (`key value;` lines).
 pub fn parse_graphics_options(text: &str) -> GraphicsOptions {
-    let mut o = GraphicsOptions::default();
-    for line in text.split('\n') {
-        let mut tokens = line.split_ascii_whitespace();
-        let (Some(key), Some(value)) = (tokens.next(), tokens.next()) else { continue };
-        let value = value.strip_suffix(';').unwrap_or(value);
-        let v = strtod(value).unwrap_or(0.0) as f32;
-        let on = value == "true" || (value != "false" && v != 0.0);
-        match key {
-            "gfx_gamma_setting" if v > 0.1 => o.gamma = v,
-            "gfx_brightness_setting" if v > 0.0 => o.brightness = v,
-            "gfx_vignette" => o.vignette = on,
-            "gfx_ssao" => o.ssao = on,
-            "gfx_distortion" => o.distortion = on,
-            "gfx_depth_of_field" => o.depth_of_field = v as i32,
-            "gfx_shadow_quality" => o.shadow_quality = (v as i32).clamp(0, 3),
-            _ => {}
-        }
-    }
-
-    o
+    GraphicsOptions::from_values(wce_foundation::graphics::parse_preferences(text))
 }
 
-/// The player's graphics options in a game; the defaults when the game's preferences can't be read.
-pub fn read_graphics_options(game: &GameProfile) -> GraphicsOptions {
+/// The `gfx_*` values of the player's preferences file in a game; none when it can't be read.
+pub fn read_game_graphics_values(game: &GameProfile) -> BTreeMap<String, String> {
     preferences_path(game)
         .and_then(|path| std::fs::read(path).ok())
-        .map(|bytes| parse_graphics_options(&String::from_utf8_lossy(&bytes)))
+        .map(|bytes| wce_foundation::graphics::parse_preferences(&String::from_utf8_lossy(&bytes)))
         .unwrap_or_default()
+}
+
+/// The player's graphics options in a game (its preferences file); the defaults when it can't be read.
+pub fn read_graphics_options(game: &GameProfile) -> GraphicsOptions {
+    GraphicsOptions::from_values(read_game_graphics_values(game))
+}
+
+/// A game's graphics options as the editor's settings choose them: the game's file, or the editor's own values over it.
+pub fn graphics_options(game: &GameProfile, settings: &wce_foundation::settings::GraphicsSettings) -> GraphicsOptions {
+    let mut values = read_game_graphics_values(game);
+    if !settings.use_game {
+        values.extend(settings.options.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+
+    GraphicsOptions::from_values(values)
+}
+
+/// Where the game's preferences file is (for the Settings window).
+pub fn preferences_file(game: &GameProfile) -> Option<PathBuf> {
+    preferences_path(game)
 }
 
 /// The output gamma and brightness of the graphics options in a game.
