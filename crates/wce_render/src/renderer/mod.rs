@@ -44,6 +44,8 @@ mod terrain_custom;
 mod terrain_rome2;
 mod water;
 mod ocean;
+mod nis;
+mod nis_coef;
 
 pub(crate) use draws::SceneDraws;
 pub(crate) use post::{DepthRange, ToneMap};
@@ -369,6 +371,18 @@ pub struct RenderSettings {
     /// gfx_shadow_quality: the cascade split row (ShadowMapView +0x84).
     pub shadow_quality: i32,
 
+    /// gfx_water_quality: the water planes' and the sea's pixel shaders (the engine's `water_low` .. `water_ultra`; Rome 2's extreme is
+    /// ultra).
+    pub water_quality: i32,
+
+    /// gfx_texture_filtering: the materials' and the terrain's "quality" samplers, trilinear or anisotropic 2^n (fn 0x1177f410).
+    pub texture_filtering: i32,
+
+    /// Editor only: the scene is drawn at this fraction of the target's size (0.5 .. 1) and enlarged with NVIDIA Image Scaling (`nis.rs`)
+    /// with this sharpness (0 .. 1); 1 draws it at the target's size, as before.
+    pub render_scale: f32,
+    pub sharpness: f32,
+
     /// The game view: the scene as the game shows it, without the editor's overlays (markers, polygons, the grid), the selection outline
     /// and the tint; overlays are not picked either.
     pub game_view: bool,
@@ -425,6 +439,10 @@ impl Default for RenderSettings {
             depth_of_field: true,
             distortion: true,
             shadow_quality: 3,
+            water_quality: 3,
+            texture_filtering: 3,
+            render_scale: 1.0,
+            sharpness: 0.5,
             game_view: false,
             show_grid: false,
             grid_step: 10.0,
@@ -452,6 +470,8 @@ impl RenderSettings {
         self.distortion = o.distortion;
         self.depth_of_field = o.depth_of_field > 0;
         self.shadow_quality = o.shadow_quality;
+        self.water_quality = o.water_quality;
+        self.texture_filtering = o.texture_filtering;
     }
 }
 
@@ -643,6 +663,14 @@ pub struct Renderer {
     pub(crate) models: ModelCache,
     pub(crate) gpu_timer: GpuTimer,
     pub(crate) states: States,
+
+    /// Bytes of the GPU's own video memory (0 unknown): the game's presets choose the texture quality by it.
+    pub video_memory: u64,
+
+    /// The render scale's upscaler, the scene's image at its size, and whether NIS failed (the scale is then off).
+    nis: nis::Nis,
+    scaled: Option<RenderTarget>,
+    nis_failed: bool,
     pub(crate) res: SharedResources,
 
     /// The main view's targets (the environment cube's while its faces render), and the post-processing ones.
@@ -739,11 +767,13 @@ impl Renderer {
     /// Fails if the helper shaders don't compile.
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, files: Arc<dyn Files>) -> Result<Self, RenderError> {
         // Which GPU renders matters for reproducing pixels (two adapters: results differ between them).
+        let mut video_memory = 0;
         if let Ok(dxgi) = dev.cast::<IDXGIDevice>() {
             // SAFETY: plain queries of the device's adapter.
             unsafe {
                 if let Some(info) = dxgi.GetAdapter().and_then(|a| a.cast::<IDXGIAdapter1>()).ok().and_then(|a| adapter_info(&a)) {
                     wce_foundation::log::info(format!("GPU: {}", info.name));
+                    video_memory = info.video_memory;
                 }
             }
         }
@@ -777,6 +807,10 @@ impl Renderer {
             models,
             gpu_timer: GpuTimer::new(dev, ctx),
             states: States::new(dev),
+            video_memory,
+            nis: nis::Nis::default(),
+            scaled: None,
+            nis_failed: false,
             res: SharedResources::new(dev)?,
             gbuffer: GBuffer::default(),
             post: PostTargets::default(),
@@ -1082,15 +1116,28 @@ impl Renderer {
         wce_prof!("render.total");
         let mut cam = view_params.camera;
         let time_s = view_params.time_s;
-        let (width, height) = (target.width(), target.height());
-        if width < 8 || height < 8 {
+        let (out_w, out_h) = (target.width(), target.height());
+        if out_w < 8 || out_h < 8 {
             return;
         }
+
+        // The render scale (editor only): the scene at a fraction of the target's size, enlarged by NIS at the end.
+        let scale = self.settings.render_scale;
+        let (width, height) = if scale.is_finite() && scale < 0.999 && !self.nis_failed {
+            let s = scale.max(0.5);
+            (((out_w as f32 * s).round() as u32).max(8), ((out_h as f32 * s).round() as u32).max(8))
+        } else {
+            (out_w, out_h)
+        };
 
         let env = scene.environment.resolved().turned(scene.world_yaw);
         self.world_yaw = scene.world_yaw;
         self.kinds.refresh(scene);
         cam.znear = self.near_plane(scene, &cam);
+
+        if self.states.filtering != self.settings.texture_filtering.clamp(0, 4) {
+            self.states.set_filtering(&self.dev, self.settings.texture_filtering);
+        }
 
         // Fixed-step runs load every texture whole: frame N must be the same every run.
         self.textures.set_streaming(!self.settings.deterministic);
@@ -1317,21 +1364,51 @@ impl Renderer {
 
         self.gpu_timer.mark("display + overlay");
 
-        // Final: copies final_ with alpha = 1 for the viewport.
-        self.pass_display(target);
+        // Final: copies final_ with alpha = 1 for the viewport; scaled, into the scene's size first (the overlays test the scene's depth),
+        // enlarged into the target after them.
+        let mut scaled = ((width, height) != (out_w, out_h)).then(|| {
+            let mut t = self.scaled.take().unwrap_or_default();
+            if t.width() != width || t.height() != height {
+                t.create(&self.dev, width, height);
+            }
+
+            t
+        });
+        let display = scaled.as_ref().filter(|t| t.valid()).unwrap_or(target);
+        self.pass_display(display);
         if self.settings.view == View::Final && !self.settings.game_view {
             {
                 wce_prof!("render.tint");
-                self.pass_tint(scene, target);
+                self.pass_tint(scene, display);
             }
 
             {
                 wce_prof!("render.selection_outline");
-                self.pass_selection_outline(scene, target);
+                self.pass_selection_outline(scene, display);
             }
 
             wce_prof!("render.overlay");
-            self.pass_overlay(scene, target);
+            self.pass_overlay(scene, display);
+        }
+
+        if let Some(t) = scaled.take() {
+            wce_prof!("render.nis");
+            self.ctx.set_render_targets(&[], None);
+            let done = match t.srv() {
+                Some(srv) => self.nis.upscale(&self.dev, &self.ctx, srv, (width, height), target, self.settings.sharpness),
+                None => Ok(false),
+            };
+
+            match done {
+                Ok(true) => {}
+                Ok(false) => self.nis_failed = true,
+                Err(e) => {
+                    self.nis_failed = true;
+                    self.error(format!("the render scale is off: {}", e.0));
+                }
+            }
+
+            self.scaled = Some(t);
         }
 
         self.gpu_timer.end_frame();

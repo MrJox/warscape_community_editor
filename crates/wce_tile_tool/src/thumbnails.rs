@@ -18,7 +18,6 @@ use wce_foundation::math::{Float3, Float4x4, length, normalize};
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, ViewParams};
 use wce_scene::camera::Camera;
-use wce_scene::environment::read_graphics_options;
 use wce_scene::render_scene::{MeshInstance, Payload, RenderScene, SourceRef};
 
 /// The size of a thumbnail, pixels.
@@ -169,7 +168,7 @@ impl Thumbnails {
             let Some(vfs) = e.vfs().cloned() else { return self.cancel() };
             match Renderer::new(e.device(), e.context(), vfs) {
                 Ok(mut r) => {
-                    r.settings.apply_graphics_options(&read_graphics_options(e.game()));
+                    r.settings.apply_graphics_options(&e.graphics_options());
                     r.settings.deterministic = true;
                     self.renderer = Some(r);
                 }

@@ -22,7 +22,7 @@ use wce_render::files::Files;
 use wce_render::renderer::Renderer;
 use wce_formats::xml_doc::XmlDoc;
 use wce_scene::camera::Camera;
-use wce_scene::environment::{EnvironmentParams, read_environment, read_graphics_options};
+use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, EnvironmentSlot, RenderScene};
 use wce_vfs::{Config, GameProfile, Vfs, normalize};
 
@@ -484,6 +484,30 @@ impl Editor {
         self.renderer.is_some()
     }
 
+    /// The current game's graphics options as the settings choose them (the game's preferences file, or the editor's own values).
+    pub fn graphics_options(&self) -> wce_scene::environment::GraphicsOptions {
+        let graphics = self.settings.games.get(&self.settings.game).map(|g| g.graphics.clone()).unwrap_or_default();
+        wce_scene::environment::graphics_options(self.game(), &graphics)
+    }
+
+    /// Puts the current game's graphics settings in the renderer (its options, the render scale) and the output gamma and brightness.
+    pub fn apply_graphics_settings(&mut self) {
+        let go = self.graphics_options();
+        let graphics = self.settings.games.get(&self.settings.game).map(|g| g.graphics.clone()).unwrap_or_default();
+        self.output_gamma = go.gamma;
+        self.output_brightness = go.brightness;
+        if let Some(r) = self.renderer.as_mut() {
+            r.settings.apply_graphics_options(&go);
+            r.settings.render_scale = graphics.render_scale();
+            r.settings.sharpness = graphics.sharpness.clamp(0.0, 1.0);
+        }
+
+        if let Some(env) = self.scene.environment.active.as_mut() {
+            env.output_gamma = go.gamma;
+            env.output_brightness = go.brightness;
+        }
+    }
+
     /// The settings, to change them; `save_settings` writes them.
     pub fn settings(&mut self) -> &mut Settings {
         &mut self.settings
@@ -756,11 +780,7 @@ impl Editor {
             let renderer = Renderer::new(&self.dev, &self.ctx, vfs.clone()).map_err(|e| e.0)?;
             Ok((vfs, renderer))
         }) {
-            Ok((vfs, mut renderer)) => {
-                let go = read_graphics_options(self.game());
-                renderer.settings.apply_graphics_options(&go);
-                self.output_gamma = go.gamma;
-                self.output_brightness = go.brightness;
+            Ok((vfs, renderer)) => {
                 self.first_run = false;
                 let mut msg = format!("Mounted {} packs, {} files.", vfs.packs().len(), vfs.files().len());
                 for m in vfs.missing_mods() {
@@ -769,6 +789,7 @@ impl Editor {
 
                 self.vfs = Some(vfs);
                 self.renderer = Some(renderer);
+                self.apply_graphics_settings();
                 self.status(&msg, false);
                 true
             }

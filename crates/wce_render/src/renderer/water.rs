@@ -25,8 +25,16 @@ const RIVER_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_
 const SEA_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";
 const SEA_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_battle";
 
-/// The "ultra" quality level.
-const SEA_PS: &str = "dx11_sm_3_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";
+/// The water planes' pixel shader at a gfx_water_quality level (the engine's techniques `water_low` .. `water_ultra`, fn 0x116ec510;
+/// Rome 2's extreme draws ultra). Only ultra has the variants with shadows.
+pub(crate) fn sea_ps(quality: i32) -> String {
+    format!("dx11_sm_3_0_waterplane.hlsl_ps_ps30_battle_{}_water_quality", water_level(quality))
+}
+
+/// The water quality level's name in the shaders' entry points.
+pub(crate) fn water_level(quality: i32) -> &'static str {
+    ["low", "medium", "high", "ultra"][quality.clamp(0, 3) as usize]
+}
 const REFRACTION_PS: &str = "dx11_sm_3_0_waterrefraction.hlsl_ps_ps30_main_3_channel";
 
 /// water_refraction_PS.g_refraction_depth (and directional_light_PS's, which writes the same weight into the light buffer's alpha): the weight of
@@ -139,11 +147,13 @@ impl Renderer {
 
         wce_prof!("render.water");
         let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
+        let sea_ps = sea_ps(self.settings.water_quality);
+        let ultra = self.settings.water_quality >= 3;
         let ps = match (rivers, self.settings.shadows) {
             (true, true) => self.shader(RIVER_PS_SHADOWS).or_else(|| self.shader(RIVER_PS)),
             (true, false) => self.shader(RIVER_PS),
-            (false, true) => self.shader(SEA_PS_SHADOWS).or_else(|| self.shader(SEA_PS)),
-            (false, false) => self.shader(SEA_PS),
+            (false, true) if ultra => self.shader(SEA_PS_SHADOWS).or_else(|| self.shader(&sea_ps)),
+            (false, _) => self.shader(&sea_ps),
         };
         let (Some(vs), Some(ps)) = (vs, ps) else { return };
         if self.water.ds.is_none() {

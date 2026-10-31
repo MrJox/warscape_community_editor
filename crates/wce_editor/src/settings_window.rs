@@ -34,6 +34,9 @@ pub(crate) struct SettingsWindow {
 
     /// Dear ImGui's style editor, to work on a theme.
     style_editor: bool,
+
+    /// The `gfx_*` values of the game's preferences file, by game key (read when the Game page shows that game).
+    game_graphics: Option<(String, std::collections::BTreeMap<String, String>)>,
 }
 
 /// The labels' column.
@@ -224,6 +227,7 @@ impl Editor {
         let before = std::mem::replace(self.settings(), draft);
         self.settings_ref().publish_db_schemas();
         self.save_settings();
+        self.apply_graphics_settings();
         self.set_frame_cap_live(self.settings_ref().frame_cap());
 
         // Another game: the switch closes the documents and mounts it (or opens the first-run dialog).
@@ -490,6 +494,133 @@ impl Editor {
         folder_list("overlays", &mut d.game_mut().overlay_folders);
         env_note("WCE_OVERLAY");
         help("Read before every pack, after the projects' loose files; the first one wins.");
+        self.draw_graphics_section();
+    }
+
+    /// The game's graphics options (`wce_foundation::graphics`): the game's own (read-only here) or the editor's, its presets, and the
+    /// editor's render scale.
+    fn draw_graphics_section(&mut self) {
+        let video_memory = self.renderer.as_ref().map_or(0, |r| r.video_memory);
+        let sw = &mut self.settings_window;
+        let Some(d) = sw.draft.as_mut() else { return };
+        let profile = d.game_profile();
+        let catalogue = profile.graphics;
+        if sw.game_graphics.as_ref().is_none_or(|(key, _)| key != profile.key) {
+            sw.game_graphics = Some((profile.key.to_owned(), wce_scene::environment::read_game_graphics_values(profile)));
+        }
+
+        let game_values = sw.game_graphics.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
+        gui::separator_text("Graphics");
+        let g = &mut d.game_mut().graphics;
+        label("Options");
+        if gui::checkbox(&format!("Use {}'s own##use_game", profile.display_name), &mut g.use_game) && !g.use_game && g.options.is_empty() {
+            // The editor's copy starts as the game's.
+            g.options = catalogue.options.iter().map(|o| (o.key.to_owned(), game_values.get(o.key).cloned().unwrap_or_else(|| o.default.to_owned()))).collect();
+        }
+
+        gui::set_cursor_pos_x(LABEL_WIDTH);
+        match wce_scene::environment::preferences_file(profile).filter(|p| p.is_file()) {
+            Some(p) => gui::text_disabled(&format!("The game's: {}", p.display())),
+            None => gui::text_colored(theme::warning(), &format!("{}  {}'s preferences file is not there: its defaults", icons::TRIANGLE_ALERT, profile.display_name)),
+        }
+
+        gui::set_cursor_pos_x(LABEL_WIDTH);
+        if gui::small_button(&format!("{}  Read the game's file again", icons::REFRESH_CW)) {
+            sw.game_graphics = None;
+        }
+
+        help("The options the game's options screen has, per game: the game's preferences file, or (unticked) the editor's own copy, which never changes the game's file. Options marked \"not applied yet\" are drawn as the game's highest level (an effect the editor does not draw yet: off).");
+        let use_game = g.use_game;
+        let value = |key: &str, g: &wce_foundation::settings::GraphicsSettings| -> String {
+            let own = (!use_game).then(|| g.options.get(key).cloned()).flatten();
+            own.or_else(|| game_values.get(key).cloned()).or_else(|| catalogue.option(key).map(|o| o.default.to_owned())).unwrap_or_default()
+        };
+
+        let values: std::collections::BTreeMap<String, String> = catalogue.options.iter().map(|o| (o.key.to_owned(), value(o.key, g))).collect();
+        gui::begin_disabled(use_game);
+        label("Preset");
+        let current = catalogue.matching_preset(&values, video_memory).map_or("Custom", |p| p.name);
+        gui::set_next_item_width(200.0);
+        if gui::begin_combo("##gfx_preset", current) {
+            for p in catalogue.presets {
+                if gui::selectable(p.name, p.name == current, 0) {
+                    g.options.extend(catalogue.preset_values(p, video_memory));
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        if catalogue.presets.is_empty() {
+            gui::same_line();
+            gui::text_disabled("(the game's presets are not known yet)");
+        }
+
+        for o in catalogue.options {
+            let current = values.get(o.key).cloned().unwrap_or_default();
+            label(o.label);
+            let id = format!("##{}", o.key);
+            let mut new = None;
+            match o.kind {
+                wce_foundation::graphics::GfxKind::Toggle | wce_foundation::graphics::GfxKind::Switch => {
+                    let mut on = wce_foundation::graphics::parse_number(&current) != 0.0;
+                    if gui::checkbox(&id, &mut on) {
+                        new = Some(wce_foundation::graphics::format_value(o.kind, i32::from(on)));
+                    }
+                }
+
+                wce_foundation::graphics::GfxKind::Levels(names) => {
+                    let n = (wce_foundation::graphics::parse_number(&current) as i32).clamp(0, names.len() as i32 - 1);
+                    gui::set_next_item_width(200.0);
+                    if gui::begin_combo(&id, names[n as usize]) {
+                        for (i, name) in names.iter().enumerate() {
+                            if gui::selectable(name, i as i32 == n, 0) {
+                                new = Some(i.to_string());
+                            }
+                        }
+
+                        gui::end_combo();
+                    }
+                }
+
+                wce_foundation::graphics::GfxKind::Float { min, max } => {
+                    let mut v = wce_foundation::graphics::parse_number(&current);
+                    gui::set_next_item_width(200.0);
+                    if gui::slider_float(&id, &mut v, min, max, "%.2f") {
+                        new = Some(format!("{v:.2}"));
+                    }
+                }
+            }
+
+            if !o.applied {
+                gui::same_line();
+                gui::text_disabled("not applied yet");
+            }
+
+            if let Some(v) = new {
+                g.options.insert(o.key.to_owned(), v);
+            }
+        }
+
+        gui::end_disabled();
+        gui::separator_text("Editor only (not in the game)");
+        label("Render scale");
+        let mut percent = g.render_scale() * 100.0;
+        gui::set_next_item_width(200.0);
+        if gui::slider_float("##render_scale", &mut percent, 50.0, 100.0, "%.0f %%") {
+            g.render_scale = (percent / 5.0).round() * 5.0 / 100.0;
+        }
+
+        label("Sharpness");
+        gui::begin_disabled(g.render_scale() >= 0.999);
+        let mut sharp = g.sharpness.clamp(0.0, 1.0) * 100.0;
+        gui::set_next_item_width(200.0);
+        if gui::slider_float("##sharpness", &mut sharp, 0.0, 100.0, "%.0f %%") {
+            g.sharpness = sharp / 100.0;
+        }
+
+        gui::end_disabled();
+        help("For a slower GPU: the scene is drawn at this share of the viewport's width and height and enlarged with NVIDIA Image Scaling (spatial upscaling and sharpening; it changes the sharpness, not what is drawn). 100 % draws it at full size, as the game.");
     }
 
     fn draw_appearance_page(&mut self) {

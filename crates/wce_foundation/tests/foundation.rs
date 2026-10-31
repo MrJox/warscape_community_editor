@@ -268,3 +268,27 @@ fn job_pool_order() {
     assert_eq!(*order.lock().unwrap(), [("late", 0.1), ("first", 1.0), ("second", 1.0)]);
     assert_eq!(JobPool::current_priority(), 0.0);
 }
+
+#[test]
+fn graphics_presets() {
+    use wce_foundation::graphics::{ATTILA, THRONES_OF_BRITANNIA, parse_preferences};
+    let values = parse_preferences("gfx_shadow_quality 2; # gfx_shadow_quality <int>, Set shadow quality #\ngfx_ssao true;\nnot_gfx 1;\n");
+    assert_eq!(values.get("gfx_shadow_quality").map(String::as_str), Some("2"));
+    assert_eq!(values.get("gfx_ssao").map(String::as_str), Some("true"));
+    assert_eq!(values.len(), 2);
+
+    // The presets' texture quality follows the card's video memory (MB bounds 800, 1600, 2600).
+    assert_eq!(ATTILA.texture_quality_for(512 << 20), 0);
+    assert_eq!(ATTILA.texture_quality_for(2048 << 20), 2);
+    assert_eq!(ATTILA.texture_quality_for(24 << 30), 3);
+
+    // A preset's values are recognised as that preset; ToB's set its own three effects too.
+    let high = &THRONES_OF_BRITANNIA.presets[2];
+    let values = THRONES_OF_BRITANNIA.preset_values(high, 8 << 30);
+    assert_eq!(values.get("gfx_god_rays").map(String::as_str), Some("true"));
+    assert_eq!(values.get("gfx_texture_quality").map(String::as_str), Some("3"));
+    assert_eq!(THRONES_OF_BRITANNIA.matching_preset(&values, 8 << 30).map(|p| p.name), Some("High"));
+    for p in ATTILA.presets.iter().chain(THRONES_OF_BRITANNIA.presets) {
+        assert!(p.values.iter().all(|(k, _)| ATTILA.option(k).is_some() || THRONES_OF_BRITANNIA.option(k).is_some()), "{}", p.name);
+    }
+}

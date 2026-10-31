@@ -14,7 +14,7 @@ use wce_imgui::renderer::D3D11Renderer;
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::ViewParams;
 use wce_scene::camera::Camera;
-use wce_scene::environment::{EnvironmentParams, read_graphics_options};
+use wce_scene::environment::EnvironmentParams;
 use wce_scene::render_scene::{EntityId, Payload, RenderScene, SourceRef};
 
 use crate::editor::Editor;
@@ -317,11 +317,10 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     let outline_style = e.selection_outline_style();
     let selection = e.selection_entities();
     let tint = e.tint_entities();
-    let game = e.game();
+    let go = e.scene.environment.active.is_none().then(|| e.graphics_options());
     let Some(r) = e.renderer.as_mut() else { return };
-    if e.scene.environment.active.is_none() {
+    if let Some(go) = go {
         // Nothing lights the scene yet: the default environment with the player's output settings.
-        let go = read_graphics_options(game);
         e.scene.environment.active = Some(EnvironmentParams { output_gamma: go.gamma, output_brightness: go.brightness, ..Default::default() });
     }
 

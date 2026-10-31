@@ -189,10 +189,53 @@ pub struct GameSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<PathBuf>,
 
+    /// The renderer's graphics options for this game: the game's own (its preferences file) or the editor's, and the editor's render
+    /// scale.
+    #[serde(skip_serializing_if = "GraphicsSettings::is_default")]
+    pub graphics: GraphicsSettings,
+
     /// The tools' fields that are about this game's files (recent tiles, a tile's weather...): `[games.<id>.tools.<tool>]`. The rest of a
     /// tool's table is the editor's, in `[tools.<tool>]`; see [`Settings::set_game_fields`].
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, toml::Table>,
+}
+
+/// A game's graphics options in the editor (`crate::graphics`): the game's own, or a copy of them the editor keeps, and what only the
+/// editor has.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphicsSettings {
+    /// The game's options (its `preferences.script.txt`), as the game draws; off: [`Self::options`].
+    pub use_game: bool,
+
+    /// The editor's options (`gfx_*` keys, values as the preferences file writes them), when `use_game` is off: made from the game's file
+    /// when it is turned off. An option missing here takes the game's value.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
+
+    /// Editor only (no game has it): the scene is drawn at this fraction of the viewport's size (0.5 .. 1) and enlarged with NVIDIA Image
+    /// Scaling; 1 draws it at full size.
+    pub render_scale: f32,
+
+    /// NVIDIA Image Scaling's sharpening, 0 .. 1, when the render scale is below 1.
+    pub sharpness: f32,
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        Self { use_game: true, options: BTreeMap::new(), render_scale: 1.0, sharpness: 0.5 }
+    }
+}
+
+impl GraphicsSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The render scale in its range.
+    pub fn render_scale(&self) -> f32 {
+        if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 1.0) } else { 1.0 }
+    }
 }
 
 /// How the editor looks.
