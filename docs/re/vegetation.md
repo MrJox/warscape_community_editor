@@ -367,7 +367,8 @@ The leaf and billboard shaders read `g_tint_colours` for the per-instance tint: 
   ps_5_0 leaf shader, which turns the alpha into a coverage mask (`oMask`: floor(saturate(1.11 a) (samples + 1)) samples, none below
   1), so at 2x a leaf texel shows from a = 0.3 and partly covered ones blend in the resolve; the editor has no MSAA and its ps_4_0 shader
   cuts at a = 0.5, so the crowns are slightly thinner at the edges. `g_season_type` was 1 in the summer capture (3 in the winter snow
-  dump); the editor sends 0 (the RenderSettings default); which shaders read it was not looked at.
+  dump): no shader reads it (2026-10-31: all 1,228 vanilla shaders that declare `weather_shared` and TDD's 3,810 dx11 shaders mark it
+  unused), so it changes nothing; the editor sends the game's value from the scene's season anyway.
 - **Procedural generation.** `wce_tile::vegetation` reimplements the tree and grass generators (above); the editor generates a list the tile
   has no packed file for (or `gen:<list>` / grass *generated*). Open:
   - Settled: the atlantic family (ROME_Destruct on forest tiles, the settlement / farm / road climate lists) and outfield_tents differ

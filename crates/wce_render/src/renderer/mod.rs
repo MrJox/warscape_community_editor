@@ -388,7 +388,8 @@ pub struct RenderSettings {
     /// wind_dir_random: the battle's random direction comes from this seed.
     pub wind_dir_seed: u32,
 
-    /// weather_shared.g_season_type (snow dump: 3 in winter).
+    /// weather_shared.g_season_type (snow dump: 3 in winter; a summer capture: 1). Unread by every shader; a scene with a vegetation season
+    /// sets it.
     pub season: i32,
 
     /// weather_shared.g_snow_mask (the battle map has snow).
@@ -1054,6 +1055,12 @@ impl Renderer {
     /// Draws a scene (lit by its environment slot) as a view sees it into a target, at the target's size.
     pub fn render(&mut self, scene: &RenderScene, view_params: &ViewParams, target: &mut RenderTarget) {
         self.grass.season.clone_from(&scene.vegetation_season);
+
+        // The battle's season as the game sends it (summer 1 in a capture, winter 3 in a dump; spring 0 and autumn 2 by their order). No
+        // shader reads it (every vanilla and TDD shader declares it unused, 2026-10-31): kept for fidelity only.
+        if let Some(k) = ["sp", "su", "au", "wi"].iter().position(|s| scene.vegetation_season.eq_ignore_ascii_case(s)) {
+            self.settings.season = k as i32;
+        }
         self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
         wce_prof!("render.total");
         let mut cam = view_params.camera;
