@@ -107,7 +107,11 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
    circle). Tests on synthetic
    fields: a cliff at the sea goes to the coast; a cliff over the sea stays a cliff; a steep bank by a river is a bank, a walkable one
    isn't; a pond under 0 m is not the sea.
-3. **Storage.** Kind groups, fill replaces a kind's regions only, the brushed group kept, old layers read as Cliffs.
+3. **Storage** (done). Kind groups (`Cliffs`, `Coast`, `Riverbanks`; their regions `Slope N`, `Shore N`, `Bank N`), a run replaces its
+   kind's group but `Brushed`, the settings on the kind's group. Old layers: their `Slope N` groups are moved into `Cliffs` by the next
+   run of any kind (what was put in the layer by hand stays); their settings stay on the layer (an attribute can't be taken away), read
+   for the cliffs until `Cliffs` has its own. A run that finds nothing still makes its group (it keeps the settings). The fill's spacing
+   from the brushed items comes with the brush (step 5).
 4. **Presets.** The file format, scan, built-ins, the window's kind tabs and preset combo; the script command becomes
    `ground_coverage <preview|generate> <kind> <preset|-> [seed]`.
 5. **Brush.** The mode, the stroke (scatter, preview, commit to `Stroke N` with its polygons), Ctrl erase, the bands overlay.
