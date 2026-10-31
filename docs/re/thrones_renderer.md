@@ -25,7 +25,7 @@ tile sources: the vanilla tiles are opened from the packs (extracted into the pr
 reflection, 505 another reflection, none missing, 28 new. Of the shaders the editor uses, all are there; six reflect otherwise:
 
 - `hdr_to_screen` (`ps30_main_high` and its depth of field / distortion variants): `god_rays_sampler` (added: colour += 0.1 x its
-  red) and `grain_tex_offset` (unused). The editor binds black to the god rays (`pass_to_screen`), as the game with them off. The
+  red) and `grain_tex_offset` (unused). The editor binds its god rays there when on, black when off, as the game. The
   alpha is unchanged.
 - `directionallight ps30_slm_highdef` (gather 5.0): `directional_light_PS` 96 bytes (80): `g_cloud_shade_params` and
   `cloud_shade_sampler`. The shade multiplies the sun where the G-buffer's z / w is below `g_cloud_shade_params.w`, sampled at
@@ -48,8 +48,7 @@ New shaders: `hdr_god_rays.hlsl` (`vs30_main`, `ps30_god_rays`), `gaussianblur p
 
 Three options Attila lacks (`preferences.script.txt`): `gfx_grain` (film grain: `grain_texture`, `grain_tex_offset`),
 `gfx_cloud_shadows` (`terrain/textures/common/cloud_shade`; `cloud_shade_battle_scale` / `_speed`, `cloud_shade_campaign_*`) and
-`gfx_god_rays`. The editor draws the grain and the cloud shadows as the options ask (docs/re/graphics_options.md); the god rays
-stay off (their pass's constants, `hdr_god_rays_PS`, are not mapped).
+`gfx_god_rays`. The editor draws the three as the options ask (docs/re/graphics_options.md).
 
 ## Environment
 

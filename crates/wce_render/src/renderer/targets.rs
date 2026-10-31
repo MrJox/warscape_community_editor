@@ -118,6 +118,12 @@ pub(crate) struct PostTargets {
     /// The reflection targets' divisor of the view size (1 full, 2 half: gfx_screen_space_reflections 1).
     pub reflection_div: u32,
     pub stencil: Target,
+
+    /// Thrones of Britannia's god rays (gfx_god_rays): HDR_GOD_RAYS at half the view's size, its x and y blurs at the view's (fn
+    /// 0x117a88a0); made when first drawn.
+    pub god_rays: SizedTarget,
+    pub god_rays_x: SizedTarget,
+    pub god_rays_y: SizedTarget,
 }
 
 /// The side of the tone mapper's downsampled image (luma statistics, bloom), whatever the view's size.
