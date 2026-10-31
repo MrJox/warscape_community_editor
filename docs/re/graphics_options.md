@@ -140,9 +140,21 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   0x40 dissolve (2), 0x5a lens flares (1), 0x62 snow normals (1), 0x2e fire and blood maps, 0x2b vfx turbulence (2); the models'
   `_diffuse` / `_normal` made with a constant category are 0 (never dropped). The meshes' textures (fn 0x1186c880, from the RMV2 mesh
   creation fn 0x1185b0c0) take their category from the mesh factory's +0xc, a value set at run time: not known. Not applied.
-- Terrain: several level checks (fns 0x118e1300: per-frame budgets 10 / 25 and 1000 / 2000; 0x1190b5a0: 0.6 at 0 else 1 into a distance
-  product, fn 0x11902d30; 0x118eb8e0: 2048 vs 4096 texture sizes; 0x117f5b00: the terrain's shadows at 0 only under other conditions;
-  0x11911e70 / 0x118debf0: passes at 0). Not applied: what each feeds is not settled.
+- Terrain (+0x48, the graphics system's +0x71694). Its readers, none with a difference the editor can reproduce:
+  - fn 0x118e1300: per-frame work budgets for the terrain's streaming (10 at 0, else 25; 1000 at 0 / 1, 2000 at 2 / 3; a config
+    variable overrides both). How fast tiles arrive, not how they look.
+  - fn 0x118eb8e0: the terrain virtual texture's cache (`virtualtexture.hlsl`, docs/re/terrain.md): atlas 2048 at 0 else 4096; outside the
+    campaign extent 0x80000 / 2 levels / 256 pages at 0, 0x100000 / 3 levels / 512 pages above (0x200000 at 3 on some hardware). The
+    battle terrain in the game's dumps is the screen-space path (`ps_height_map_cb`), the editor's; the editor has no virtual texture.
+  - fn 0x11902d30 (fn 0x1190b5a0: 0.6 at 0, else 1): a range = `terrain_visible_tiles` (config, 600) * the terrain's tile scale * 128,
+    used by fns 0x118e06f0 / 0x1192c5a0 to mark the quadtree nodes around the camera into a pool of slots (+0x94, 0x104 bytes each).
+    What the slots hold is not traced.
+  - fn 0x117f5b00 (vtable 0x11cc19d0 + 0x10c, the meshes of material 67 `ProjectedDecal`, fn 0x1185b0c0's case 0x43): such a decal is
+    queued when the level is above 0, or at 0 only while one of two views of the scene (+0x468 / +0x46c, flagged for a redraw at +0x5c
+    whenever the terrain changes: fns 0x118eeda0, 0x11902900, 0x11905c30) asks for one. Those views are not identified.
+  - fn 0x118debf0 (the terrain node's per-view draw, by the view's type at +0x70): view types 0x3b / 0x3c at 0 also flush a batch
+    (fn 0x11811730 -> 0x1189b9a0); view type 0x15 at 0 also draws fn 0x118da4e0's set. The view types are not mapped to names.
+  Not applied.
 - Grass, trees: no battle reader besides the per-model levels above (the grass getter's only caller is fn 0x11841280's type 0x40; the
   vegetation's own tree LOD uses `tree_lod_scaler` 1.35, no level). In battle they likely change nothing; left as not applied.
 - Film grain (ToB; fns 0x117d7da0, 0x1179af90): `commontextures/grain.dds` through `grain_sampler` (linear, wrap) in hdr_to_screen's
