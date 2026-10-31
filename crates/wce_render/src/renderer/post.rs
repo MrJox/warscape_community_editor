@@ -256,6 +256,9 @@ impl Renderer {
 
         let Some(ps) = ps else { return };
 
+        // Before the bindings below: its passes leave their own.
+        let god_rays = if self.settings.god_rays && ps.textures.contains_key("god_rays_sampler") { self.pass_god_rays(env) } else { None };
+
         // The DOF constants (fn 0x172aae0): with use_DOF, the environment's DOF block: focus_distance = DOF_focus's first value, focal_length =
         // the second, blur_kernel_scale = DOF_blur_size; otherwise the battle camera's (dump: 0, 1000, 1).
         let (focus, focal, kernel_scale) = if dof { (env.dof_focus[0], env.dof_focus[1], env.dof_blur_size) } else { (0.0, 1000.0, 1.0) };
@@ -306,9 +309,9 @@ impl Renderer {
             self.bind(&ps);
         }
 
-        // Thrones of Britannia's adds 0.1 x the god rays' red (gfx_god_rays; docs/re/thrones_renderer.md), which the editor doesn't draw:
-        // black, as the game with them off (the slot is empty after `fullscreen_to` too; this keeps it so whatever the passes before).
-        bind_srv(&self.ctx, &ps, "god_rays_sampler", self.res.black_srv.as_ref());
+        // Thrones of Britannia's adds 0.1 x the god rays' red (gfx_god_rays; docs/re/thrones_renderer.md); black with them off, as the game
+        // (the slot is empty after `fullscreen_to` too; this keeps it so whatever the passes before).
+        bind_srv(&self.ctx, &ps, "god_rays_sampler", god_rays.as_ref().or(self.res.black_srv.as_ref()));
         if let Some(distortion) = &distortion {
             bind_srv(&self.ctx, &ps, "distortion_sampler", Some(distortion));
             bind_sampler(&self.ctx, &ps, "distortion_sampler", self.states.s_clamp_linear.as_ref());
@@ -317,6 +320,62 @@ impl Renderer {
 
         let (rtv, w, h) = (self.post.final_.rtv.clone(), self.gbuffer.w, self.gbuffer.h);
         self.fullscreen_to(&rtv, w, h, &ps);
+    }
+
+    /// Thrones of Britannia's god rays (gfx_god_rays; the views of fn 0x117a88a0), drawn before hdr_to_screen, which adds 0.1 x their red:
+    /// - HDR_GOD_RAYS (half the view's size, fn 0x1174a6c0): hdr_god_rays `ps30_god_rays`, 1 where the depth (G-buffer channel 4) a step
+    ///   of min(d, 0.1) from the sun towards the pixel is the sky's (>= 0.99999), faded by (1 - min(1.7 d, 1))^2 (d: the pixel's distance
+    ///   to the sun in uv), else 0. `sun_position` (fn 0x11798900) = the view projection of the camera plus the direction to the sun ((1, 0,
+    ///   0) when shorter than 0.01): ((x / w + 1) / 2, 0.5 - y / w / 2, z / w); nothing tests a sun behind the camera.
+    /// - HDR_GOD_RAYS_BLURX / _BLURY (the view's size, fns 0x1174a190 / 0x1174a2c0): the 9 tap gaussian blurs of the red, stepping a texel
+    ///   of their input (`g_input_size_ps` = its size and reciprocal, fn 0x11798830).
+    /// ASSUMPTIONS: the blurs' scale 1 is of the view (the god rays' 0.5 is, as its shader's uv says; the blurs' shaders take the camera's
+    /// screen size for their uv); the samplers (point for the depth, linear for the blurs' inputs) and the R16F format are the editor's.
+    fn pass_god_rays(&mut self, env: &EnvironmentParams) -> Option<ID3D11ShaderResourceView> {
+        let (Some(rays), Some(bx), Some(by)) = (self.shader(GOD_RAYS_PS), self.shader(GOD_RAYS_BLUR_X_PS), self.shader(GOD_RAYS_BLUR_Y_PS)) else {
+            return None;
+        };
+        wce_prof!("render.god_rays");
+
+        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
+        let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
+        if self.post.god_rays.w != hw || self.post.god_rays.h != hh || self.post.god_rays_x.w != w || self.post.god_rays_x.h != h {
+            let dev = &self.dev;
+            self.post.god_rays = SizedTarget { t: make_target(dev, hw, hh, DXGI_FORMAT_R16_FLOAT), w: hw, h: hh };
+            self.post.god_rays_x = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R16_FLOAT), w, h };
+            self.post.god_rays_y = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R16_FLOAT), w, h };
+        }
+
+        let to_sun = env.to_sun();
+        let dir = if to_sun.x * to_sun.x + to_sun.y * to_sun.y + to_sun.z * to_sun.z < 0.01 * 0.01 { Float3::new(1.0, 0.0, 0.0) } else { to_sun };
+        let p = self.camera.cb_view_proj.transform_point(self.camera.cb_eye + dir);
+        self.cbs.set_f("hdr_god_rays_PS", "sun_position", &[(p.x + 1.0) * 0.5, 0.5 - p.y * 0.5, p.z]);
+        self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+
+        // Each pass's target before its input: the input, the target of the pass before, can't be read while bound for writing.
+        let rtv = self.post.god_rays.t.rtv.clone();
+        self.ctx.set_render_targets(std::slice::from_ref(&rtv), None);
+        self.bind(&rays);
+        bind_srv(&self.ctx, &rays, "depth_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_sampler(&self.ctx, &rays, "depth_sampler", self.states.s_clamp_point.as_ref());
+        self.fullscreen_to(&rtv, hw, hh, &rays);
+
+        for (ps, input, (iw, ih), out) in [
+            (&bx, self.post.god_rays.t.srv.clone(), (hw, hh), self.post.god_rays_x.t.rtv.clone()),
+            (&by, self.post.god_rays_x.t.srv.clone(), (w, h), self.post.god_rays_y.t.rtv.clone()),
+        ] {
+            let (fw, fh) = (iw as f32, ih as f32);
+            self.cbs.set_f("gaussian_blur", "g_input_size_ps", &[fw, fh, 1.0 / fw, 1.0 / fh]);
+            self.ctx.set_render_targets(std::slice::from_ref(&out), None);
+            self.bind(ps);
+            bind_srv(&self.ctx, ps, "s_input_sampler", input.as_ref());
+            bind_sampler(&self.ctx, ps, "s_input_sampler", self.states.s_clamp_linear.as_ref());
+            self.fullscreen_to(&out, w, h, ps);
+        }
+
+        self.post.god_rays_y.t.srv.clone()
     }
 
     /// The lens flare and vignette (LENSE_FLARE_SHADER), drawn on the final image after hdr_to_screen (fn 0x1173ec10). The constants as fn

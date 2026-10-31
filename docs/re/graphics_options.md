@@ -169,6 +169,15 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   0x118089e0 on the battle's weather (+0x21f8): (cos, sin) of its degrees (+0x30) * 0.0174533, the battle's vtable 0x78 that also
   fills the shaders' wind direction (fn 0x1199a770); fn 0x1196ebd0 scales it by the gusting strength for the wind's velocity. The
   texture is UNORM (creation flags 0x180, no sRGB bit 0x2000; see the grain). Applied.
+- God rays (ToB; the views of fn 0x117a88a0, before hdr_to_screen, which adds 0.1 x their red through `god_rays_sampler`):
+  HDR_GOD_RAYS (fn 0x1174a6c0, half the view's size) draws hdr_god_rays `ps30_god_rays`: 1 where the depth a step of min(d, 0.1) from
+  the sun towards the pixel is the sky's (>= 0.99999), faded by (1 - min(1.7 d, 1))^2, d the pixel's distance to the sun in uv;
+  `sun_position` (fn 0x11798900) = the view projection of the camera plus the direction to the sun ((1, 0, 0) under 0.01 long):
+  ((x / w + 1) / 2, 0.5 - y / w / 2, z / w), with no test for a sun behind the camera. HDR_GOD_RAYS_BLURX / _BLURY (fns 0x1174a190 /
+  0x1174a2c0, scale 1) blur its red with gaussianblur `ps30_gaussian_horizontal_blur_R_channel_wide` / `vertical_..._wide` (the blur
+  shader table's 10 and 11, fn 0x11745ae0), stepping a texel of their input (`g_input_size_ps` = its size, fn 0x11798830). Applied
+  (`Renderer::pass_god_rays`). Assumed: the blurs' scale 1 is of the view (their shaders take the camera's screen size for the uv,
+  where the god rays' shader halves it); the samplers and the R16F targets.
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
@@ -185,12 +194,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
 - Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
   checked in its engine): anisotropic 8x.
-- Sky, screen space reflections (0 off), particle effects (Attila, ToB): above.
+- Sky, screen space reflections (0 off, 1 half resolution), particle effects (Attila, ToB): above.
+- ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): anti-aliasing, texture quality,
-trees, grass, terrain, screen space reflections, alpha blending, tessellation, ToB's and
-Rome 2's grain, cloud shadows, god rays, Rome 2's lightning and foliage hiding.
+trees, grass, terrain, alpha blending, tessellation, Rome 2's grain, cloud shadows, god rays, lightning and foliage hiding.
 
 ## Editor only: the render scale
 

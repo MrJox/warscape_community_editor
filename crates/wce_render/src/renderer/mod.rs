@@ -164,6 +164,12 @@ pub(crate) const CLOUD_SHADE_BATTLE_SPEED: f32 = 50.0;
 /// Thrones of Britannia's film grain texture (fn 0x117d7da0; UNORM: created with flags 0x280, without the sRGB bit 0x2000).
 pub(crate) const GRAIN_TEXTURE: &str = "commontextures/grain.dds";
 
+/// Thrones of Britannia's god rays (gfx_god_rays): the sky mask towards the sun (renderer shader 2), its wide blurs (gaussian blur
+/// shaders 10 and 11, fn 0x11745ae0's order).
+pub(crate) const GOD_RAYS_PS: &str = "dx11_sm_3_0_hdr_god_rays.hlsl_ps_ps30_god_rays";
+pub(crate) const GOD_RAYS_BLUR_X_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_horizontal_blur_r_channel_wide";
+pub(crate) const GOD_RAYS_BLUR_Y_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_vertical_blur_r_channel_wide";
+
 /// The film grain's state: the generator, the time since its last move, its offset (`hdr_to_screen_PS.grain_tex_offset`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Grain {
@@ -415,6 +421,9 @@ pub struct RenderSettings {
     /// gfx_cloud_shadows: the clouds' shade over the sun (Thrones of Britannia's directional light).
     pub cloud_shadows: bool,
 
+    /// gfx_god_rays: the sun's rays (Thrones of Britannia's HDR_GOD_RAYS views, added by hdr_to_screen).
+    pub god_rays: bool,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -491,6 +500,7 @@ impl Default for RenderSettings {
             effects_quality: 3,
             grain: false,
             cloud_shadows: false,
+            god_rays: false,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -530,6 +540,7 @@ impl RenderSettings {
         self.effects_quality = o.effects_quality;
         self.grain = o.grain;
         self.cloud_shadows = o.cloud_shadows;
+        self.god_rays = o.god_rays;
         self.texture_filtering = o.texture_filtering;
     }
 }
