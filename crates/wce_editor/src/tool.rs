@@ -183,6 +183,13 @@ pub trait Tool: Any {
         to
     }
 
+    /// Where the rotate gizmo leaves `item` (its world matrix `moved`, from `frame` at the drag's start): the tool's snapping. The default
+    /// leaves it.
+    fn snap_gizmo_rotate(&self, editor: &Editor, item: SourceRef, frame: &wce_foundation::math::Float4x4, moved: wce_foundation::math::Float4x4) -> wce_foundation::math::Float4x4 {
+        let _ = (editor, item, frame);
+        moved
+    }
+
     /// The tool's commands; they reach the tool through `Editor::with_tool`.
     fn register_commands(&self, commands: &mut CommandRegistry<Editor>) {
         let _ = commands;

@@ -1006,6 +1006,34 @@ impl Tile {
         self.rebuild_polygon_over(scene, layer, elem, &solids);
     }
 
+    /// What the snapping's edges and corners are (scene units, as `polygon_world_points`): each shown polygon's or line's points (a spline:
+    /// its curve; closed unless `polygon_closed` is 0) and each shown building's footprint, the box of its model's bounds on the ground
+    /// (closed). `skip`'s own are left out.
+    pub fn snap_outlines(&self, skip: Option<usize>) -> Vec<(Vec<Float3>, bool)> {
+        let mut out = vec![];
+        for &e in self.instances() {
+            if Some(e) == skip || !self.shown(e) {
+                continue;
+            }
+
+            let ty = self.tscene().type_of(e);
+            if self.is_polygon(e) {
+                let spline = wce_tile::splines::is_spline(ty);
+                let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+                let points = if spline { self.spline_world_curve(e) } else { self.polygon_world_points(e) };
+                if points.len() > 1 {
+                    out.push((points, closed));
+                }
+            } else if ty == "BUILDING_INSTANCE" && let Some(m) = self.model_of(e).filter(|m| m.ok && m.resolved) {
+                let w = self.world_matrix(e);
+                let corners = [(m.bmin.x, m.bmin.z), (m.bmax.x, m.bmin.z), (m.bmax.x, m.bmax.z), (m.bmin.x, m.bmax.z)];
+                out.push((corners.iter().map(|&(x, z)| w.transform_point(Float3::new(x, 0.0, z))).collect(), true));
+            }
+        }
+
+        out
+    }
+
     /// The polygon (or line) on its cover: filled when it is a closed polygon, its edges as ribbons, in its type's colour.
     fn rebuild_polygon_over(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, solids: &[Solid]) {
         let mut o = Overlay { pickable: false, ..Default::default() };

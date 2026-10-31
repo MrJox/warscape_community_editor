@@ -5,10 +5,8 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
 
 ## A. Can be done now
 
-1. **Snapping leftovers** (Phase 5g): traced statically (2026-10-30, tile_ted_parity.md "TEd's snapping"): the settings, their defaults
-   and the bits are known; `horizontal_snap` / `vertical_snap` have no reader; the code that applies edges / vertices snapping was not
-   found. Left: a black box test in TEd (the user runs it: Grid and Snapping Settings with Edges, then Vertices, moving a building near
-   another), then the editor's version.
+1. Done (2026-10-31): **Snapping leftovers**: traced statically (tile_ted_parity.md "TEd's snapping"); then wce's own (user: not TEd's):
+   snap to edges, footprint corners, heights, the angle tolerance (`scripts/tile_snap.txt`, unit test).
 2. Done (2026-10-30): **Normal (Grouped) weight gate**: the Blendmap Filters' test; a pixel they leave out takes the share of its 5 x 5
    box that passes (`blend_field::grouped_gate`, unit test; docs/re/terrain.md).
 3. Done (2026-10-31): **Burning sequence**: traced (docs/re/buildings.md) and played by the fire preview (user: play it; `fire.rs`,
