@@ -202,6 +202,31 @@ impl Default for EnvironmentParams {
 
 impl EnvironmentParams {
 
+    /// The environment as seen in a scene turned `yaw` degrees about the vertical from the battle's frame (the battle's +z, its north, is
+    /// the scene's (sin yaw, cos yaw)): the sun's azimuth turns with it, and the ambient cube's four sides are read again along the turned
+    /// directions (exact for quarter turns; between them each side mixes its two neighbours by cos^2 / sin^2). ASSUMPTION: left / right
+    /// are -x / +x, back / front -z / +z (a half turn swaps both pairs whatever they are). The wind's direction is turned by the renderer.
+    pub fn turned(&self, yaw: f32) -> Self {
+        let mut e = self.clone();
+        if yaw.abs() < 1e-4 {
+            return e;
+        }
+
+        e.sun_azimuth += yaw;
+
+        // The cube of the battle's frame read along a scene direction: battle direction = R(-yaw) * scene direction.
+        let (s, c) = (yaw * DEG).sin_cos();
+        let side = |x: f32, z: f32| {
+            let (bx, bz) = (c * x - s * z, s * x + c * z);
+            let px = if bx >= 0.0 { self.ambient_right } else { self.ambient_left };
+            let pz = if bz >= 0.0 { self.ambient_front } else { self.ambient_back };
+            px * (bx * bx) + pz * (bz * bz)
+        };
+
+        (e.ambient_right, e.ambient_left, e.ambient_front, e.ambient_back) = (side(1.0, 0.0), side(-1.0, 0.0), side(0.0, 1.0), side(0.0, -1.0));
+        e
+    }
+
     /// The unit vector pointing at the sun. Verified (memory dump): azimuth from +Z towards +X, elevation above the horizon.
     pub fn to_sun(&self) -> Float3 {
         let (az, el) = (self.sun_azimuth * DEG, self.sun_elevation * DEG);

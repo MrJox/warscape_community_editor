@@ -32,6 +32,18 @@ impl MapFrame {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BattleFrame {
     pub origin: Float3,
+
+    /// The battle's frame turned in the scene (degrees; `RenderScene::world_yaw`).
+    pub yaw: f32,
+}
+
+impl BattleFrame {
+    /// A scene point in the battle's frame (scene units, not scaled to game units).
+    pub fn local(&self, p: Float3) -> Float3 {
+        let d = p - self.origin;
+        let (s, c) = self.yaw.to_radians().sin_cos();
+        Float3::new(c * d.x - s * d.z, d.y, s * d.x + c * d.z)
+    }
 }
 
 /// The side of the grid the terrains are bucketed on (scene units).
@@ -143,7 +155,7 @@ impl GroundProbe {
 /// The readout's lines: the camera, its target (orbit) or nothing (fly), the cursor's ground point.
 pub fn lines(cam: &Camera, orbit: bool, cursor: Option<Float3>, game_units: f32, map: Option<&MapFrame>, battle: Option<&BattleFrame>) -> Vec<String> {
     let point = |name: &str, p: Float3, height: bool| {
-        let g = (p - battle.map_or(Float3::default(), |b| b.origin)) * game_units;
+        let g = battle.map_or(p, |b| b.local(p)) * game_units;
         let mut s = format!("{name:<7}{:>10.1} {:>8.1} {:>10.1}   game {:>10.1} {:>8.1} {:>10.1}", p.x, p.y, p.z, g.x, g.y, g.z);
         if let Some(m) = map {
             let (cx, cy) = m.cell(p.x, p.z);

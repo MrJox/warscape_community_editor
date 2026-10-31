@@ -93,5 +93,12 @@ pointing at the XML). Root `<battle>`:
 - `<battle_map_definition>`: `<name>Terrain/battles/<map>/</name>`, `<tile_map_position x y>` (fractions of the map's tile map:
   Londinium 0.152559, 0.22547 on `main_attila_map`), `<tile_upgrade>` (`level1`, `escalation3`: tile_upgrades.xml keys).
 - `<playable_area dimension="1924">`.
+- **The battle's frame** (2026-10-31, a coast tile at its campaign placement, a screenshot and two memory dumps with the main camera): the
+  game's coordinates are north-aligned (a tile alone: the tile's own +z; at a map placement: the map's north), centred on the tile, height
+  0 at the sea. At this placement the tile is turned 180 degrees in it: the camera maps onto the editor's scene only turned, and the
+  environment's sun (`lighting_VS_PS.sun_direction`, the azimuth from +z towards +x) is the battle frame's. The editor turns the
+  environment's world directions by the map context's north (`RenderScene::world_yaw`: the sun's azimuth, the wind, the ambient cube's
+  sides) and `where` reads the game's coordinates turned (`BattleFrame::yaw`); before, at that placement, the sun shone from the
+  opposite side.
 
 Other names in the dll near it: `next_battle`, `intro_movie_file`, `gate_opened`, `placed_deployables`, `is_tutorial`.

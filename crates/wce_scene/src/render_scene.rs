@@ -742,6 +742,11 @@ pub struct RenderScene {
     /// the plain ones.
     pub vegetation_season: String,
 
+    /// How the battle's frame is turned in this scene (degrees about the vertical; the battle's +z, its north, is the scene's (sin, cos) of
+    /// it): the environment's world directions (the sun, the wind, the ambient cube's sides) are turned by it. 0 for a tile alone; a tile
+    /// at a map placement is turned as the map turns it (in-game captures: 180 degrees at a coast placement).
+    pub world_yaw: f32,
+
     /// Game units per scene unit. A tile's scene is the battle world at 1 / unit_scale (half metres horizontally, its models halved), but the
     /// game draws in its own units, two per scene unit (a settlement tile is 2048 of them; `RENDER_PARAMS` `unit_scale` 2), and its shaders'
     /// world-space values (terrain texture repeats, detail and fade distances, fog, decal tiling...) are in those. The renderer scales the
@@ -803,6 +808,7 @@ impl Default for RenderScene {
             structure_base: 0,
             environment: EnvironmentSlot::default(),
             vegetation_season: String::new(),
+            world_yaw: 0.0,
             game_units: 1.0,
             sea_level: 0.0,
             battle_centre: [0.0, 0.0],

@@ -654,6 +654,9 @@ pub struct Renderer {
     pub(crate) snow_weather: f32,
     pub(crate) snow_region: Option<f32>,
     pub(crate) snow_bound: f32,
+
+    /// The scene's turn of the battle's frame (`RenderScene::world_yaw`, degrees), for the wind.
+    pub(crate) world_yaw: f32,
     pub(crate) particles: ParticleSystem,
 
     /// Rome 2's effects (its own particle system and per-effect shaders).
@@ -780,6 +783,7 @@ impl Renderer {
             snow_weather: 0.0,
             snow_region: None,
             snow_bound: 0.0,
+            world_yaw: 0.0,
             particles,
             vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
@@ -1032,7 +1036,8 @@ impl Renderer {
         }
 
         let def = self.particles.effect().definition.clone();
-        let degrees = self.wind_direction_degrees(env);
+        // The wind's angle runs from +x towards +z: the scene's turn takes it the other way round.
+        let degrees = self.wind_direction_degrees(env) - self.world_yaw;
         self.wind.update(Some(&def), degrees, time_s, self.clock.dt);
         let (w, cbs) = (&self.wind, &mut self.cbs);
         cbs.set_f("weather_shared", "g_wind", &[w.smoothed.x, w.smoothed.y]);
@@ -1070,7 +1075,8 @@ impl Renderer {
             return;
         }
 
-        let env = scene.environment.resolved();
+        let env = scene.environment.resolved().turned(scene.world_yaw);
+        self.world_yaw = scene.world_yaw;
         self.kinds.refresh(scene);
         cam.znear = self.near_plane(scene, &cam);
 
