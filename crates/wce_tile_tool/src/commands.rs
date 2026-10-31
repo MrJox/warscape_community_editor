@@ -487,6 +487,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("map_context_view", "map_context_view <distance> [minimap on|off]", "the camera's view distance while the map context shows (scene units; the game's is 13000), and the minimap", |e, a| {
+        let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return fail("usage: map_context_view <distance> [minimap on|off]") };
+        with_tile(e, |t, e| {
+            t.context.view_distance = d.max(crate::context_panel::GAME_FAR_PLANE);
+            if let Some(m) = a.get(2) {
+                t.context.minimap = m == "on";
+            }
+
+            t.context.stream(e);
+            ok(format!("view distance {:.0}", t.context.view_distance))
+        })
+    });
+
     c.add("map_context_snow", "map_context_snow on|off [amount]", "the season's snow where the map has it (the Map context section's switch and amount)", |e, a| {
         let on = match a.first().map(String::as_str) {
             Some("on") => true,

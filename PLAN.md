@@ -44,6 +44,9 @@ Each open item lives in one plan; the others point to it.
 - **The BOB oracle gate:** `scripts/gates.sh` has no `oracle` label; BOB comparisons run through `bob_tile_check` and the RE scripts.
 - **`scripts/shots.sh`:** the two dry captures differ from their baseline by up to 2 levels in about 3 % of the pixels since before the
   merge's phase 7; re-baseline them or find the cause.
+- **Map context: lakes at altitude** (2026-10-31, TDD's `rom_third_age_map`, the Long Lake around Esgaroth, about 580 m above the sea):
+  the lake tiles' water draws as flat slabs with vertical walls at wrong heights. Not traced yet (how the game sets a lake's water level
+  on the LF: the tiles' water planes, the `lakes` set, the sea pass's `lf_sea_height_map`).
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
   VFX editor (see weather.md), battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
   (keyframed scenes, recording).
