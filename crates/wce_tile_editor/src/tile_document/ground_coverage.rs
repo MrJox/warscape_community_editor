@@ -48,12 +48,13 @@ pub fn region_name(kind: Kind) -> &'static str {
     }
 }
 
-/// A kind group's attributes (the first version's layer's): the parameters (`Params::to_text`), the seed, the rock set's and the plant
-/// set's names.
+/// A kind group's attributes (the first version's layer's, but the preset): the parameters (`Params::to_text`), the seed, the rock set's
+/// and the plant set's names, and the preset's (`ground_coverage_presets`) the values came from.
 pub const PARAMS_ATTR: &str = "wce_autogen_params";
 pub const SEED_ATTR: &str = "wce_autogen_seed";
 pub const ROCKS_ATTR: &str = "wce_autogen_rocks";
 pub const PLANTS_ATTR: &str = "wce_autogen_plants";
+pub const PRESET_ATTR: &str = "wce_autogen_preset";
 
 /// What a run used, as kept on the layer.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -62,6 +63,9 @@ pub struct CoverageSettings {
     pub seed: u64,
     pub rocks: String,
     pub plants: String,
+
+    /// The preset the values came from (they may have been changed since); empty: none known (the first version's).
+    pub preset: String,
 }
 
 /// What a run put in.
@@ -125,10 +129,11 @@ impl TileDocument {
         let doc = self.tile().tscene().doc();
         let params = doc.get(l, PARAMS_ATTR)?;
         Some(CoverageSettings {
-            params: Params::from_text(&params),
+            params: Params::from_text_for(kind, &params),
             seed: doc.get(l, SEED_ATTR).and_then(|s| s.parse().ok()).unwrap_or(0),
             rocks: doc.get(l, ROCKS_ATTR).unwrap_or_default(),
             plants: doc.get(l, PLANTS_ATTR).unwrap_or_default(),
+            preset: doc.get(l, PRESET_ATTR).unwrap_or_default(),
         })
     }
 
@@ -240,6 +245,7 @@ impl TileDocument {
             sc.set_attr(group, SEED_ATTR, &settings.seed.to_string());
             sc.set_attr(group, ROCKS_ATTR, &settings.rocks);
             sc.set_attr(group, PLANTS_ATTR, &settings.plants);
+            sc.set_attr(group, PRESET_ATTR, &settings.preset);
             let brushed = sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP).map(|b| sc.element_text(b));
             sc.set_children_text(group, b"")?;
             if let Some(text) = brushed {
