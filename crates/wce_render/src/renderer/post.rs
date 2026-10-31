@@ -312,6 +312,7 @@ impl Renderer {
         // Thrones of Britannia's adds 0.1 x the god rays' red (gfx_god_rays; docs/re/thrones_renderer.md); black with them off, as the game
         // (the slot is empty after `fullscreen_to` too; this keeps it so whatever the passes before).
         bind_srv(&self.ctx, &ps, "god_rays_sampler", god_rays.as_ref().or(self.res.black_srv.as_ref()));
+        bind_sampler(&self.ctx, &ps, "god_rays_sampler", self.states.s_clamp_linear.as_ref());
         if let Some(distortion) = &distortion {
             bind_srv(&self.ctx, &ps, "distortion_sampler", Some(distortion));
             bind_sampler(&self.ctx, &ps, "distortion_sampler", self.states.s_clamp_linear.as_ref());
@@ -329,8 +330,10 @@ impl Renderer {
     ///   0) when shorter than 0.01): ((x / w + 1) / 2, 0.5 - y / w / 2, z / w); nothing tests a sun behind the camera.
     /// - HDR_GOD_RAYS_BLURX / _BLURY (the view's size, fns 0x1174a190 / 0x1174a2c0): the 9 tap gaussian blurs of the red, stepping a texel
     ///   of their input (`g_input_size_ps` = its size and reciprocal, fn 0x11798830).
-    /// ASSUMPTIONS: the blurs' scale 1 is of the view (the god rays' 0.5 is, as its shader's uv says; the blurs' shaders take the camera's
-    /// screen size for their uv); the samplers (point for the depth, linear for the blurs' inputs) and the R16F format are the editor's.
+    /// The three targets: fn 0x1197b480 makes them at their scale of the view (fn 0x117701b0, the descriptor the reflections' buffers use)
+    /// in the first of TTF_L8 / TTF_A8R8G8B8 the device takes (fn 0x117ca2f0): TTF_L8 is R8_UNORM (fn 0x118163e0). The samplers (fns
+    /// 0x1174a3f0, 0x11745ae0, the hdr_to_screen shader's): `depth_sampler` point clamp, the blurs' `s_input_sampler` point wrap,
+    /// `god_rays_sampler` linear clamp (pass_to_screen).
     fn pass_god_rays(&mut self, env: &EnvironmentParams) -> Option<ID3D11ShaderResourceView> {
         let (Some(rays), Some(bx), Some(by)) = (self.shader(GOD_RAYS_PS), self.shader(GOD_RAYS_BLUR_X_PS), self.shader(GOD_RAYS_BLUR_Y_PS)) else {
             return None;
@@ -341,9 +344,9 @@ impl Renderer {
         let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
         if self.post.god_rays.w != hw || self.post.god_rays.h != hh || self.post.god_rays_x.w != w || self.post.god_rays_x.h != h {
             let dev = &self.dev;
-            self.post.god_rays = SizedTarget { t: make_target(dev, hw, hh, DXGI_FORMAT_R16_FLOAT), w: hw, h: hh };
-            self.post.god_rays_x = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R16_FLOAT), w, h };
-            self.post.god_rays_y = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R16_FLOAT), w, h };
+            self.post.god_rays = SizedTarget { t: make_target(dev, hw, hh, DXGI_FORMAT_R8_UNORM), w: hw, h: hh };
+            self.post.god_rays_x = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R8_UNORM), w, h };
+            self.post.god_rays_y = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R8_UNORM), w, h };
         }
 
         let to_sun = env.to_sun();
@@ -371,7 +374,7 @@ impl Renderer {
             self.ctx.set_render_targets(std::slice::from_ref(&out), None);
             self.bind(ps);
             bind_srv(&self.ctx, ps, "s_input_sampler", input.as_ref());
-            bind_sampler(&self.ctx, ps, "s_input_sampler", self.states.s_clamp_linear.as_ref());
+            bind_sampler(&self.ctx, ps, "s_input_sampler", self.states.s_wrap_point.as_ref());
             self.fullscreen_to(&out, w, h, ps);
         }
 

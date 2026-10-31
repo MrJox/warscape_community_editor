@@ -176,8 +176,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   ((x / w + 1) / 2, 0.5 - y / w / 2, z / w), with no test for a sun behind the camera. HDR_GOD_RAYS_BLURX / _BLURY (fns 0x1174a190 /
   0x1174a2c0, scale 1) blur its red with gaussianblur `ps30_gaussian_horizontal_blur_R_channel_wide` / `vertical_..._wide` (the blur
   shader table's 10 and 11, fn 0x11745ae0), stepping a texel of their input (`g_input_size_ps` = its size, fn 0x11798830). Applied
-  (`Renderer::pass_god_rays`). Assumed: the blurs' scale 1 is of the view (their shaders take the camera's screen size for the uv,
-  where the god rays' shader halves it); the samplers and the R16F targets.
+  (`Renderer::pass_god_rays`). The targets (fn 0x1197b480): "Screen Texture"s of their scale (fn 0x117701b0; the size is the screen's
+  * the scale, truncated, fn 0x11808810), in the first of TTF_L8 / TTF_A8R8G8B8 the device takes (fn 0x117ca2f0), TTF_L8 being
+  R8_UNORM (fn 0x118163e0; the TTF_* enum counts from TTF_FROM_FILE 0, names at 0x11d83d84). The samplers are D3D11_SAMPLER_DESCs
+  from their parameter's +8 (fn 0x117d9760: filter, address u, v, w, ...; 16 copies with MinLOD 0..15): `depth_sampler` point
+  clamp, the blurs' `s_input_sampler` point wrap (fn 0x11745ae0; the y blur's taps past the bottom edge read the top's: a faint strip
+  along the bottom under a sun near the top), hdr_to_screen's `god_rays_sampler` linear clamp (fn 0x1174b440).
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
