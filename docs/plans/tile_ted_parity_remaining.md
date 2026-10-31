@@ -38,8 +38,15 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - Done: a tree on a steep bank lay along it (the trees' second, untilted matrix; 20c8eea).
     - Done: the environment specular pass (`environment_specular_light.hlsl`, blurred in x and y; f7247be).
     - Done: the river: `g_ssr_enabled` 1 and the rivers before the environment specular pass, as the game (docs/re/water.md).
-    - **Coast**: the surf band looked narrower and less white than the game's; no capture of the fixed coast launch has a usable camera
-      (the dumps held other passes' cameras), so it needs one more (screenshot + dump, near / far 1 / 13000).
+    - Coast (2026-10-31, a screenshot and two dumps at max settings, sea_coast/2x2_bb_straight at its campaign placement, the camera
+      matched): the surf band now matches the game's closely (foam width, whitecaps); found and fixed on the way: the battle's frame is
+      turned 180 degrees at that placement, and the editor lit the scene with the sun from the opposite side (5deff33). Left:
+      - **Sand**: the game's beach shows crisp dune ripples and brown patches near the camera; the editor's is smoother and paler
+        (the ground textures or their near detail at the beach: to compare layer by layer).
+      - **Shallows**: the game's water by the shore is clear over the sand under the foam; the editor's foam band is more opaque.
+      - **Horizon (editor only)**: with the map context the far sea bed's chunk seams (the skirts at level-of-detail boundaries, 20
+        units down) show as thin dark lines along the horizon through the sea; the game's far ground is its low-resolution height map,
+        without them.
     - Done: trees fuller and darker: the tree list follows the ground's climate (08cc811); the leaves and branches are drawn
       two-sided and tinted by their materials' colours (docs/re/vegetation.md). Left: the game's MSAA alpha-to-coverage edges: no MSAA
       support for now (user, 2026-10-31; docs/re/vegetation.md).
