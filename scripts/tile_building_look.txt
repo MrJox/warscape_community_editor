@@ -45,4 +45,18 @@ undo
 undo
 frames 3
 assert_piece 0 burning 0
+
+# the fire preview (fire.rs): the burning sequence plays without editing the file: char 0.3 * t / 18 in stage one, 0.3 .. 1 over stage two,
+# then burnt; stopping it gives the building its own look back.
+tile_fire play selected
+frames 540
+assert_piece 0 burning 1
+assert_instance_param 8 0.15 0.01
+frames 840
+assert_instance_param 8 0.65 0.01
+frames 600
+assert_instance_param 8 1
+tile_fire stop selected
+frames 3
+assert_piece 0 burning 0
 quit

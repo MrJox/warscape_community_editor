@@ -21,10 +21,9 @@
 //! placed the same way: the torches' `action_vfx_torch_fire_small`, a lighthouse's fire. Shown: the untagged effects that loop (not the
 //! `destruction_vfx_*` bursts a piece plays once when it reaches its level), and the `ip_fire` ones while the building burns (its `burn`
 //! property). A burning piece also plays `burning_entity` over its whole mesh: the engine's fire on a burning entity (flames, smoke,
-//! embers and a light, from the piece's triangles), whatever its `.meta` holds. The capture smoke, the fire transitions and the timed
-//! fires belong to battle events and are not shown, nor are the engine's other burning stages (`burning_entity_pre_smoke` before,
-//! `burning_entity_collapse` and `burning_entity_aftermath` after; their timing, `BUILDING_FIRE_STAGE_*_DURATION`, was not traced), nor
-//! `burning_entity_small`, which the engine picks for some entities (a type check not identified).
+//! embers and a light, from the piece's triangles; empire.retail.dll fn 0x104bb1e0 attaches it, its emitters emit from the entity's mesh,
+//! `AllowEmitFromMesh`), whatever its `.meta` holds. The fire preview (fire.rs) plays the later stages the same way: the collapse and the
+//! aftermath. The capture smoke and the timed fires belong to battle events and are not shown.
 //! ASSUMPTION: an effect's `scale` is applied like a placed VFXInstance's; its bone and its string flag are not used.
 
 use std::collections::{HashMap, HashSet};
@@ -41,10 +40,6 @@ use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderSc
 use super::index::{copied_piece, destruct_number, piece_copy, static_piece};
 use super::view::{piece_local, piece_model};
 use super::{Tile, item_of};
-
-/// The effect a burning piece plays over its mesh (empire.retail.dll fn 0x104bb1e0 attaches it to the burning entity; its emitters
-/// emit from the entity's mesh, `AllowEmitFromMesh`).
-const BURNING_EFFECT: &str = "burning_entity";
 
 /// Two columns closer than this (metres) are the same joint.
 const JOINT_TOLERANCE_M: f32 = 0.5;
@@ -152,8 +147,9 @@ fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
     Ok(out)
 }
 
-/// A placed piece whose effects play: its world matrix, its file, the element and whether it burns.
-type PlacedPiece = (Float4x4, String, usize, bool);
+/// A placed piece whose effects play: its world matrix, its file, the element and its fire stage (0: none; 1: the flames, a `burn` or
+/// the first stage of the fire preview; 2: the preview's collapse and aftermath, fire.rs).
+type PlacedPiece = (Float4x4, String, usize, u8);
 
 /// Whether an effect of a `.meta` plays on a standing piece in the editor (see the module notes).
 pub(super) fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
@@ -325,7 +321,8 @@ impl Tile {
             let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { return (out, pieces) };
             let burns = self.tscene().doc().get(e, "burn").is_some_and(|v| v.trim() == "true");
             let piece_burns = (0..m.pieces.len()).any(|k| self.piece_props(e, k).is_some_and(|p| p.burn));
-            if !burns && !piece_burns && !self.relevant_building(&key) {
+            let preview = self.fire_look(e).map(|(_, stage)| stage);
+            if !burns && !piece_burns && preview.is_none() && !self.relevant_building(&key) {
                 return (out, pieces);
             }
 
@@ -342,7 +339,8 @@ impl Tile {
                 let levels = m.piece_levels.get(k).copied().unwrap_or(m.levels).max(1);
                 let state = level.clamp(0, i64::from(levels) - 1) as usize;
                 let piece_world = props.as_ref().map_or(world, |p| world * piece_local(p));
-                pieces.push((piece_world, self.piece_file(piece, level, levels), e, props.as_ref().map_or(burns, |p| p.burn || burns)));
+                let stage = preview.unwrap_or_else(|| u8::from(props.as_ref().map_or(burns, |p| p.burn || burns)));
+                pieces.push((piece_world, self.piece_file(piece, level, levels), e, stage));
                 let Some(states) = piece_name(piece).and_then(|n| columns.as_ref()?.get(&n).cloned()) else { continue };
                 for c in states.get(state).into_iter().flatten() {
                     out.push((piece_world * c.local, c.key.clone(), e));
@@ -375,7 +373,7 @@ impl Tile {
         };
 
         let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, e)| hash(h, w, key, *e));
-        let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, e, burns)| hash(h ^ u64::from(*burns), w, file, *e));
+        let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, e, stage)| hash(h ^ u64::from(*stage), w, file, *e));
         if signature == self.columns.signature && (placed.is_empty() && pieces.is_empty() || !self.columns.by_elem.is_empty()) {
             return;
         }
@@ -453,24 +451,26 @@ impl Tile {
                     }
 
                     ids.push(id);
-                    effect_pieces.push((world, file, elem, false));
+                    effect_pieces.push((world, file, elem, 0));
                 }
             }
 
             // The pieces' effects, in their model space; a burning piece's fire over its whole mesh.
-            for (world, file, elem, burns) in effect_pieces {
-                if let Some(mesh) = burns.then(|| self.piece_triangles(&file)).flatten() {
-                    let vfx = VfxEmitter { effect: BURNING_EFFECT.to_owned(), scale: 1.0 / unit, mesh: Some(mesh) };
-                    let id = scene.add(layer, world, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
-                    if let Some(en) = scene.find_mut(id) {
-                        en.locked = true;
-                    }
+            for (world, file, elem, stage) in effect_pieces {
+                if let Some(mesh) = (stage > 0).then(|| self.piece_triangles(&file)).flatten() {
+                    for effect in super::fire::stage_effects(stage) {
+                        let vfx = VfxEmitter { effect: (*effect).to_owned(), scale: 1.0 / unit, mesh: Some(mesh.clone()) };
+                        let id = scene.add(layer, world, Payload::VfxEmitter(vfx), self.source(item_of(elem)));
+                        if let Some(en) = scene.find_mut(id) {
+                            en.locked = true;
+                        }
 
-                    ids.push(id);
+                        ids.push(id);
+                    }
                 }
 
                 let Some(effects) = self.piece_effects(&file) else { continue };
-                for fx in effects.iter().filter(|fx| shown_effect(fx, burns)) {
+                for fx in effects.iter().filter(|fx| shown_effect(fx, stage == 1)) {
                     let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
                     let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale / unit, mesh: None };
                     let id = scene.add(layer, at, Payload::VfxEmitter(vfx), self.source(item_of(elem)));

@@ -151,6 +151,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
     noted from screenshots (2026-10-29, `docs/re/buildings.md`); compared (2026-10-29): the char now matches at
     burn_amount 0.3 (the fire map was read as sRGB; fixed), the game's likely amount; the flames now cover the
     building as the game's do (the engine's `burning_entity` over each burning piece's mesh; `docs/re/buildings.md`, "The flames"). `burn` is exported (`on_fire`); `burn_amount` is a preview only.
+    The **fire preview** (2026-10-31, user: the sequence plays): a building's Inspector has *Play the fire* / *Stop the fire* and the
+    preview's state (`tile_fire play|stop|state`); the building plays the engine's stages without an edit (`tile_document/fire.rs`):
+    18 s of flames with the char rising to 0.3, then the collapse and aftermath effects with the char rising to 1 over 10 s, then burnt
+    until stopped. ASSUMPTION: the second stage follows at once; the pre-smoke and the small set are not played (docs/re/buildings.md).
   - `glow_amount`: nothing reads it in TEd's engine or the game (the game's glows are unit and deployable highlights). Hidden from the
     Property Editor (user, 2026-10-28).
   - `dirt_level` never reaches the renderer; `building_tech_level` has no effect in TEd (no case in its property handler, no model

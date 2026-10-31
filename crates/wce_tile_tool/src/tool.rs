@@ -3162,7 +3162,9 @@ impl Tool for TileTool {
             (None, self.place_point().0)
         };
 
+        let now = e.clock.time();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        d.tile_mut().update_fire(&mut e.scene, now);
         d.tile_mut().update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at);
         let hot = if self.light_drag.is_some() {

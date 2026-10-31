@@ -11,9 +11,8 @@ below. Each item goes back into `tile_ted_parity.md` when it is done; this file 
    another), then the editor's version.
 2. Done (2026-10-30): **Normal (Grouped) weight gate**: the Blendmap Filters' test; a pixel they leave out takes the share of its 5 x 5
    box that passes (`blend_field::grouped_gate`, unit test; docs/re/terrain.md).
-3. **Burning sequence** (Phase 5d follow-up): traced (2026-10-30, docs/re/buildings.md "Burning, the sequence"): the char ramps 0 to
-   0.3 over 18 s while burning, then 0.3 to 1 over 10 s in the second stage; the four effect stages and the `_small` set. Left: the
-   user's choice, whether the editor plays the sequence (a "play the fire" preview in the Inspector) or `burn` stays a static preview.
+3. Done (2026-10-31): **Burning sequence**: traced (docs/re/buildings.md) and played by the fire preview (user: play it; `fire.rs`,
+   the Inspector's *Play the fire*, `tile_fire`, `scripts/tile_building_look.txt`).
 4. Done (2026-10-30): **Faded opaque materials**: the blended forward pass (`pass_faded`, the materials' `ps30_alpha_blend_40`).
 5. Done (2026-10-30): `scripts/tile_building_props.txt` runs through again (the orientation row is `euler` since the Global / Local
    coordinates).
