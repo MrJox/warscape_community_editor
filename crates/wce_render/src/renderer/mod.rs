@@ -165,7 +165,7 @@ pub(crate) const CLOUD_SHADE_BATTLE_SPEED: f32 = 50.0;
 pub(crate) const GRAIN_TEXTURE: &str = "commontextures/grain.dds";
 
 /// Thrones of Britannia's god rays (gfx_god_rays): the sky mask towards the sun (renderer shader 2), its wide blurs (gaussian blur
-/// shaders 10 and 11, fn 0x11745ae0's order).
+/// shaders 10 and 11, fn 0x11745a90's order).
 pub(crate) const GOD_RAYS_PS: &str = "dx11_sm_3_0_hdr_god_rays.hlsl_ps_ps30_god_rays";
 pub(crate) const GOD_RAYS_BLUR_X_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_horizontal_blur_r_channel_wide";
 pub(crate) const GOD_RAYS_BLUR_Y_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps30_gaussian_vertical_blur_r_channel_wide";
