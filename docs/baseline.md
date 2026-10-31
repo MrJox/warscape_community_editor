@@ -270,7 +270,7 @@ trees (untilted matrix 20c8eea; tint and two-sided bf14300), the environment cub
 fixed 256 x 256 statistics (49e2974), the rivers' reflection (889cc38) and the faded instances' forward pass (7bd618c). `scripts/shots.sh`
 now finds the kit as `gates.sh` does (`assembly_kit` when the two tilemap kits are missing). New references recorded on the user's
 machine (AMD Radeon RX 7900 XTX, the game in `D:\Juegos\Steam\steamapps\common\Total War Attila`, settings without mod packs through
-`WCE_SETTINGS_DIR`) in `build/gates_base_perf/`. Two runs: dry (1280 x 720 and 800 x 600) and both tiles byte-identical; **rain and
-snow are not**: the precipitation particles land elsewhere from run to run (rain 3 % of the pixels, snow 49 %, the rest through the
-exposure), so those two fail the one-level rule against any reference. Nothing in the particles changed on this branch; whether master
-does the same was not checked (it needs a second build).
+`WCE_SETTINGS_DIR`) in `build/gates_base_perf/`. The rain and snow shots first differed between runs (3 % and 49 % of the pixels):
+the tile shots at the end of a run save a dock layout into the settings folder, which changes the viewport's size in the next run, and
+the window's frames before the capture step the weather particles against that viewport's depth. `shots.sh` now gives every capture a
+settings folder of its own with only the settings file (`fresh_settings`); two runs are byte-identical, all six shots.

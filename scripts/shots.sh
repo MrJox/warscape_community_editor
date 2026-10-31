@@ -11,6 +11,16 @@ REF="${2:-$ROOT/build/gates_base_perf}"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 mkdir -p "$OUT"
+
+# Each capture starts from the settings file alone, in a folder of its own: a dock layout saved by an earlier run changes the viewport's size,
+# and the window's frames before the capture step the weather particles against that viewport's depth (the rain and snow shots differed).
+SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
+fresh_settings() {
+    rm -rf "$OUT/settings"
+    mkdir -p "$OUT/settings"
+    cp "$SETTINGS_SRC/settings.toml" "$OUT/settings/" 2>/dev/null
+    export WCE_SETTINGS_DIR="$(cygpath -w "$OUT/settings")"
+}
 bad=0
 # wce captures: byte-identical, or (GPU float noise: a handful of pixels one level off) within one level in under 0.05 % of the pixels
 same_capture() {   # <name>: compares $OUT/<name> with $REF/<name>
@@ -34,10 +44,12 @@ PY
 # offscreen captures through wce.exe (no window shows them): each environment opened in the weather tool, same camera and clock
 for env in dry rain snow; do
     name="capture_${env}_1280x720.png"
+    fresh_settings
     "$BIN/wce.exe" --tool weather --open "weather/charlemagne/med_sp_land_day_$env.environment" --cam 0.6 0.35 120 --frames 20 --capture 1280x720 "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
     same_capture "$name" || bad=1
 done
 name="capture_dry_800x600.png"
+fresh_settings
 "$BIN/wce.exe" --tool weather --open "weather/charlemagne/med_sp_land_day_dry.environment" --cam 0.6 0.35 120 --frames 20 --capture 800x600 "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
 same_capture "$name" || bad=1
 # two tiles through the tile tool (terrain with polygons; a settlement with its real building models)
@@ -46,6 +58,7 @@ KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
 [ -d "$KIT" ] || KIT="$GAME/assembly_kit/raw_data/terrain/tiles/battle"   # one kit (assembly_kit) instead of the two tilemap kits
 for t in atlantic_mountains/custom_monte_rosa/aa settlement_western_cities/western_city_rome/medium; do
     name="capture_tile_$(echo "$t" | tr '/' '_').png"
+    fresh_settings
     "$BIN/wce.exe" --tile "$KIT/$t" --cam 0.8 0.7 900 --frames 3 --capture 1280x720 "$(cygpath -w "$OUT/$name")" > "$OUT/$name.log" 2>&1 || bad=1
     same_capture "$name" || bad=1
 done
