@@ -222,8 +222,18 @@ impl Renderer {
             eye: self.camera.eye,
             min_ratio: self.settings.min_pixels * self.camera.px_ratio,
             lod_scale: self.settings.lod_scale * lod_scale_factor,
+            quality: self.lod_quality(),
             ..Default::default()
         }
+    }
+
+    /// The quality options' levels that switch LODs off: the building, unit and tree levels (all at their highest: none), not in Rome 2
+    /// (its pass is not found).
+    pub(crate) fn lod_quality(&self) -> crate::draw_set::LodQuality {
+        let s = &self.settings;
+        let levels = [s.building_quality, s.unit_quality, s.tree_quality];
+        let off = self.game != super::game::RenderGame::Rome2 && levels.iter().any(|&l| l < 2);
+        crate::draw_set::LodQuality(off.then_some(levels))
     }
 
     /// The terrain patches of visible terrain entities (their own draw set: a brush stroke only rebuilds this one).

@@ -93,6 +93,9 @@ struct ModelEntry {
 
     /// Batch ids.
     lod_batch: Vec<u32>,
+
+    /// The engine's model type (`GpuModel::material`) for the quality options' LOD switching.
+    material: u16,
 }
 
 /// A batch: a mesh of a model at one LOD (0 is the model's own meshes).
@@ -132,13 +135,47 @@ pub struct View {
 
     /// Items farther than this (their sphere's nearest point) are skipped; 0: no limit.
     pub max_distance: f32,
+
+    /// The quality options' levels that switch LODs off.
+    pub quality: LodQuality,
+}
+
+/// The quality options' levels that switch a model's first LODs off in battle (docs/re/graphics_options.md: Attila's fn 0x1180c370 and
+/// fn 0x11841280, Thrones of Britannia's the same): gfx_building_quality, gfx_unit_quality and gfx_tree_quality. `None`: no LOD is off
+/// (the highest levels, and Rome 2, whose pass is not found).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LodQuality(pub Option<[i32; 3]>);
+
+impl LodQuality {
+    /// The LODs switched off for a model of this type with `n` LODs: a range of LOD indices (the last LOD always stays).
+    pub fn off(&self, material: u16, n: usize) -> std::ops::Range<usize> {
+        let Some([building, unit, tree]) = self.0 else { return 0..0 };
+        let last = n.saturating_sub(1);
+
+        // The level a model's type takes (fn 0x11841280, battle) and the pass's numbers for it: (first kept when spared, end of the run,
+        // start of the run) as uVar6, uVar5, uVar3 of fn 0x1180c370.
+        let (spare, end, start) = match material {
+            0x47 | 0x48 => (0, match building { 0 => 2, 1 => 1, _ => 0 }, 0),
+            0x49 | 0x4a | 0x4b | 0x6c => (0, usize::from(unit == 0), 0),
+            0x5b | 0x5c | 0x6e | 0x6f => (0, usize::from(tree == 0), 0),
+            0x6b if building == 0 => (0, 1, 0),
+            0x6b => (1, 2, 1),
+            _ => return 0..0,
+        };
+
+        let first = if spare < last { start } else { last };
+        first..end.min(last).max(first)
+    }
 }
 
 impl Default for View {
 
     /// As the C++ default: LOD distances unscaled.
     fn default() -> Self {
-        Self { frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0, max_distance: 0.0 }
+        Self {
+            frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0, max_distance: 0.0,
+            quality: LodQuality::default(),
+        }
     }
 }
 
@@ -285,6 +322,7 @@ impl DrawSet {
             lod_distance: vec![],
             lod_first: vec![],
             lod_batch: vec![],
+            material: m.material,
         };
 
         let lods = std::iter::once((&m.meshes, m.distance)).chain(m.lods.iter().map(|l| (&l.meshes, l.distance)));
@@ -472,7 +510,10 @@ impl DrawSet {
                     let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
                     let d = dist * inv_scale / item_scale.max(1e-3);
                     let last = me.lod_distance.len() - 1;
-                    while lod < last && d > me.lod_distance[lod] {
+
+                    // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
+                    let off = v.quality.off(me.material, last + 1);
+                    while lod < last && (off.contains(&lod) || d > me.lod_distance[lod]) {
                         lod += 1;
                     }
 

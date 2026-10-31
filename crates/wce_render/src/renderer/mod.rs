@@ -375,6 +375,12 @@ pub struct RenderSettings {
     /// ultra).
     pub water_quality: i32,
 
+    /// gfx_building_quality, gfx_unit_quality, gfx_tree_quality: the first LODs of some models are switched off at the low levels
+    /// (`draw_set::LodQuality`).
+    pub building_quality: i32,
+    pub unit_quality: i32,
+    pub tree_quality: i32,
+
     /// gfx_texture_filtering: the materials' and the terrain's "quality" samplers, trilinear or anisotropic 2^n (fn 0x1177f410).
     pub texture_filtering: i32,
 
@@ -440,6 +446,9 @@ impl Default for RenderSettings {
             distortion: true,
             shadow_quality: 3,
             water_quality: 3,
+            building_quality: 3,
+            unit_quality: 3,
+            tree_quality: 3,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -471,6 +480,9 @@ impl RenderSettings {
         self.depth_of_field = o.depth_of_field > 0;
         self.shadow_quality = o.shadow_quality;
         self.water_quality = o.water_quality;
+        self.building_quality = o.building_quality;
+        self.unit_quality = o.unit_quality;
+        self.tree_quality = o.tree_quality;
         self.texture_filtering = o.texture_filtering;
     }
 }
