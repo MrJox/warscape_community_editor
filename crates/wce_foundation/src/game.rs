@@ -191,8 +191,37 @@ impl GameProfile {
         },
     };
 
+    /// Total War Saga: Thrones of Britannia: Attila's engine and Assembly Kit, other builds (docs/re/thrones_renderer.md). Its manifest
+    /// lists every pack but `blood.pack`.
+    pub const THRONES_OF_BRITANNIA: GameProfile = GameProfile {
+        key: "thrones_of_britannia",
+        display_name: "Total War Saga: Thrones of Britannia",
+        steam_folder: "Total War Saga Thrones of Britannia",
+        steam_app_id: 712_100,
+        appdata_folder: "ThronesofBritannia",
+        data_dir: "data",
+        exe: "thrones.exe",
+        used_mods_file: "used_mods.txt",
+        vanilla: VanillaPacks::Manifest { file: "manifest.txt", extra: &["blood.pack"] },
+        rpfm_schema: "schema_tob.ron",
+        campaign_battle_map: "terrain/battles/vik_attila_map",
+        default_environment: "weather/vikings/at_sp_land_day_dry.environment",
+        features: GameFeatures { kit_tiles: true, civilians: true, escalation: true, lite_buildings: true, variation_db: true },
+        unsupported_tools: &[],
+        // Wessex against East Engle (keys of the release's factions and main_units tables).
+        launch: LaunchFacts {
+            defender_faction: "vik_fact_west_seaxe",
+            defender_unit: "eng_fyrd_spearmen",
+            attacker_faction: "vik_fact_east_engle",
+            attacker_unit: "dan_spearmen",
+            subculture: "vik_sub_cult_english",
+            alliance_indices: true,
+            tile_upgrades: true,
+        },
+    };
+
     /// Every supported game, the default first.
-    pub const ALL: [&'static GameProfile; 2] = [&Self::ATTILA, &Self::ROME_2];
+    pub const ALL: [&'static GameProfile; 3] = [&Self::ATTILA, &Self::ROME_2, &Self::THRONES_OF_BRITANNIA];
 
     /// False for a tool this game hides (`unsupported_tools`).
     pub fn supports_tool(&self, id: &str) -> bool {

@@ -101,7 +101,7 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|| game.join("assembly_kit/working_data/BattleTerrain/vegetation"));
     let raw = game.join("assembly_kit").join("raw_data");
-    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::ATTILA)).expect("vfs");
+    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::from_env().clone())).expect("vfs");
     let params = GenerationParams::load(&params_dir).expect("params");
     let mut tiles: HashMap<String, Vec<String>> = HashMap::new();
     for l in vfs.list("terrain/tiles/battle/", SUFFIX) {

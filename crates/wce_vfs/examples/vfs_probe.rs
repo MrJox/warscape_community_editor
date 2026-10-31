@@ -1,6 +1,6 @@
 //! Mounts the packs and prints what the editor would see, in the format of the C++ `vfs_probe`.
 //!
-//!   WCE_GAME=<game folder> cargo run -p wce_vfs --example vfs_probe [--find <substring>]... [--extract <prefix> <folder>]... [path-to-read...]
+//!   WCE_GAME=<game folder> [WCE_GAME_KEY=<game key>] cargo run -p wce_vfs --example vfs_probe [--find <substring>]... [--extract <prefix> <folder>]... [path-to-read...]
 //!
 //! `--extract` writes every file under a path prefix, as the packs give it, below a folder.
 
@@ -21,7 +21,7 @@ fn main() {
 
     let game_dir = std::env::var("WCE_GAME").expect("WCE_GAME must be the game folder");
     let started = std::time::Instant::now();
-    let vfs = Vfs::mount(&Config::new(game_dir, GameProfile::ATTILA)).unwrap();
+    let vfs = Vfs::mount(&Config::new(game_dir, GameProfile::from_env().clone())).unwrap();
     println!("mounted {} packs, {} files in {:.1} s", vfs.packs().len(), vfs.files().len(), started.elapsed().as_secs_f32());
     for mod_name in vfs.missing_mods() {
         println!("  MISSING mod {mod_name} (in used_mods.txt, not in data/)");

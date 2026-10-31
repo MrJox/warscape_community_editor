@@ -29,7 +29,7 @@ fn main() {
     let only: Option<String> = args.iter().position(|a| a == "--category").and_then(|i| args.get(i + 1)).cloned();
     let oracle_dir: Option<PathBuf> = args.iter().position(|a| a == "--oracle-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let raw = game.join("assembly_kit").join("raw_data");
-    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::ATTILA)).expect("vfs");
+    let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::from_env().clone())).expect("vfs");
     let params = GenerationParams::load(&game.join("assembly_kit/working_data/BattleTerrain/vegetation")).expect("params");
     let lists = vfs.list("terrain/tiles/battle/", ".tree_list.bin");
     let mut tiles: HashMap<String, Vec<String>> = HashMap::new();

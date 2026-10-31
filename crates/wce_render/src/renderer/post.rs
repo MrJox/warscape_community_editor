@@ -265,6 +265,10 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "frame_sampler", self.post.ldr.t.srv.as_ref());
         bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
         bind_srv(&self.ctx, &ps, "s_fog_of_war_mask", self.res.black_srv.as_ref());
+
+        // Thrones of Britannia's adds 0.1 x the god rays' red (gfx_god_rays; docs/re/thrones_renderer.md), which the editor doesn't draw:
+        // black, as the game with them off (the slot is empty after `fullscreen_to` too; this keeps it so whatever the passes before).
+        bind_srv(&self.ctx, &ps, "god_rays_sampler", self.res.black_srv.as_ref());
         if let Some(distortion) = &distortion {
             bind_srv(&self.ctx, &ps, "distortion_sampler", Some(distortion));
             bind_sampler(&self.ctx, &ps, "distortion_sampler", self.states.s_clamp_linear.as_ref());
