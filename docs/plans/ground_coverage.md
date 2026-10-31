@@ -127,6 +127,20 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
    Seen on sea_coast/6x4_bb_45: a 10 m stroke 21 rocks, 14 plants, 2 polygons; the same stroke again 0 rocks, 1 plant.
 6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults.
 
+### Survey of the kit (2026-10-31, step 6's start)
+
+Coast (test sets, built-in values) on the first variation of every sea_coast, sea_coast_landing, river_mouth folder and two of each
+port: the kit's coasts are beaches. 37 sea coast and landing tiles found no coast at all; their no-go ground (0 to 1,700 m²) is under
+the sea or away from it. River mouths: 0 to 4 slopes, 0.6 to 1.8 m over the sea, 2 covered at the 2 m minimum. Ports: nordic_port_a 4
+to 5 covered (180 to 216 rocks), western_port_a/medium 2, the others none.
+
+Riverbanks on the first variation of every river, river_shallow, river_start and lakes folder: river_shallow and lakes have no no-go
+ground by their water. River tiles have 8 to 153 banks each, nearly all too low: 0.2 to 1.4 m over the water, half under 0.2 to 0.4 m
+(the minimum is 1.5 m). At 0.5 m, river/2x2_lt_rb covers 4 banks (52 rocks, 23 plants) in thin strips along both sides.
+
+sea_coast's 4x3 and 6x4 tiles open without their entries (no sea link known, extent 256 m): their coasts can't be found until that is
+fixed.
+
 ### Open (to settle while building)
 
 - Kit tiles have little of the new kinds: their coasts' no-go ground is under 800 m² a tile, and river/2x2_bl_rt's 9 banks are all under
