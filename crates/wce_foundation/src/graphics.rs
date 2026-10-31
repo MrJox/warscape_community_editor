@@ -139,6 +139,8 @@ const LEVELS: &[&str] = &["Low", "Medium", "High", "Ultra"];
 const LEVELS_ROME_2: &[&str] = &["Low", "Medium", "High", "Very High", "Ultra", "Extreme"];
 const TEXTURE_LEVELS: &[&str] = &["Low", "Medium", "High", "Ultra"];
 const AA: &[&str] = &["Off", "MLAA", "MSAA 2x", "MSAA 4x", "MSAA 8x"];
+/// Attila's and Thrones of Britannia's, whose MLAA the editor draws (its MSAA not yet: drawn without anti-aliasing).
+const AA_MLAA: &[&str] = &["Off", "MLAA", "MSAA 2x (not applied yet)", "MSAA 4x (not applied yet)", "MSAA 8x (not applied yet)"];
 const FILTERING: &[&str] = &["Trilinear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"];
 const REFLECTIONS: &[&str] = &["Off", "Half resolution", "Full resolution"];
 const ALPHA_BLEND: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT"];
@@ -149,7 +151,7 @@ const fn opt(key: &'static str, label: &'static str, kind: GfxKind, default: &'s
 
 /// Attila's options that change the battle renderer (not the units', the fleets' or the window's).
 const ATTILA_OPTIONS: &[GfxOption] = &[
-    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA), "0", false),
+    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA_MLAA), "0", true),
     opt("gfx_texture_filtering", "Texture filtering", GfxKind::Levels(FILTERING), "3", true),
     opt("gfx_texture_quality", "Texture quality", GfxKind::Levels(TEXTURE_LEVELS), "3", false),
     opt("gfx_shadow_quality", "Shadows", GfxKind::Levels(LEVELS), "3", true),
@@ -172,9 +174,9 @@ const ATTILA_OPTIONS: &[GfxOption] = &[
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
 ];
 
-/// Thrones of Britannia's: Attila's and three effects of its own, which the editor does not draw yet (docs/re/thrones_renderer.md).
+/// Thrones of Britannia's: Attila's and three effects of its own (docs/re/thrones_renderer.md).
 const THRONES_OPTIONS: &[GfxOption] = &[
-    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA), "0", false),
+    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA_MLAA), "0", true),
     opt("gfx_texture_filtering", "Texture filtering", GfxKind::Levels(FILTERING), "3", true),
     opt("gfx_texture_quality", "Texture quality", GfxKind::Levels(TEXTURE_LEVELS), "3", false),
     opt("gfx_shadow_quality", "Shadows", GfxKind::Levels(LEVELS), "3", true),

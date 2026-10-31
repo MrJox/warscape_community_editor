@@ -182,6 +182,15 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   from their parameter's +8 (fn 0x117d9760: filter, address u, v, w, ...; 16 copies with MinLOD 0..15): `depth_sampler` point
   clamp, the blurs' `s_input_sampler` point wrap (fn 0x11745a90; the y blur's taps past the bottom edge read the top's: a faint strip
   along the bottom under a sun near the top), hdr_to_screen's `god_rays_sampler` linear clamp (fn 0x1174b440).
+- Anti-aliasing 1, MLAA (Attila, ToB; the views of fn 0x117377d0, after the lens flare and vignette, on the final image: the image view
+  is fn 0x116dd4e0's): MLAA_PASS1_EDGES (fn 0x116df850) draws `mlaa_pixelshader_seperatinglines` with `g_LuminanceThreshold` 0.1 (the
+  view's +0x68; the cbuffer's default 0.0625, fn 0x116ce880); MLAA_PASS2_PREPASS (fn 0x116e0240) clears; MLAA_PASS2_BLEND_WEIGHTS (fn
+  0x116e0100), registered three times, draws `mlaa_computelinelength_ps` with `g_IterationDepth` = its draw count mod 3 (fn 0x11728db0),
+  reading the line lengths written last and writing the other pair (fn 0x11749530 swaps them); MLAA_PASS3_FINAL_BLEND (fn 0x116e0750)
+  draws `mlaa_blend_ps` into the frame. The edge mask and the four line length targets are R8_UINT at the view's size on DX11 (fns
+  0x11765d60, 0x11765e60: TTF_R8_UINT, else TTF_R16F / TTF_G16R16F). The sm_4_0 shaders (mlaa_pass*_sm4). Same in ToB (its pass 1
+  0.1, pass 2 3 iterations). Applied (`Renderer::pass_mlaa`; the editor blends into a target of its own, copied back). The MSAA
+  levels (2..4) are not: drawn without anti-aliasing. Rome 2 has the same shaders; its engine is not checked: not applied.
 - Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
   ...). Not applied (a new rendering path).
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
@@ -198,12 +207,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
 - Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
   checked in its engine): anisotropic 8x.
-- Sky, screen space reflections (0 off, 1 half resolution), particle effects (Attila, ToB): above.
+- Sky, screen space reflections (0 off, 1 half resolution), particle effects, MLAA (Attila, ToB): above.
 - ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
-Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): anti-aliasing, texture quality,
-trees, grass, terrain, alpha blending, tessellation, Rome 2's grain, cloud shadows, god rays, lightning and foliage hiding.
+Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): MSAA (and Rome 2's MLAA), texture
+quality, trees, grass, terrain, alpha blending, tessellation, Rome 2's grain, cloud shadows, god rays, lightning and foliage hiding.
 
 ## Editor only: the render scale
 

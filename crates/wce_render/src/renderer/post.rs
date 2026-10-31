@@ -381,6 +381,82 @@ impl Renderer {
         self.post.god_rays_y.t.srv.clone()
     }
 
+    /// MLAA (gfx_aa 1; Attila's and Thrones of Britannia's views of fn 0x117377d0), on the final image after the lens flare and vignette
+    /// (the image view is fn 0x116dd4e0's, the lens flare's):
+    /// - MLAA_PASS1_EDGES (fn 0x116df850): `MLAA_PixelShader_SeperatingLines` marks where the luminance steps by more than
+    ///   `g_LuminanceThreshold` (0.1, the view's; the shader's default 0.0625) towards the next pixel right and down.
+    /// - MLAA_PASS2_PREPASS (fn 0x116e0240) clears the line lengths; MLAA_PASS2_BLEND_WEIGHTS (fn 0x116e0100), registered three times, draws
+    ///   `MLAA_ComputeLineLength_PS` with `g_IterationDepth` = its draw count mod 3 (0, 1, 2), each draw reading the lengths the one before
+    ///   wrote and writing the other pair (fns 0x11728db0, 0x11749530).
+    /// - MLAA_PASS3_FINAL_BLEND (fn 0x116e0750): `MLAA_Blend_PS` blends each line's pixels with their neighbours, the rest as they are.
+    /// The targets (fns 0x11765d60, 0x11765e60): R8_UINT at the view's size (TTF_R8_UINT on DX11). The game blends into its frame; the
+    /// editor into its own target, copied back into `final_`.
+    pub(crate) fn pass_mlaa(&mut self) {
+        let (Some(edges_ps), Some(length_ps), Some(blend_ps)) = (self.shader(MLAA_EDGES_PS), self.shader(MLAA_LINE_LENGTH_PS), self.shader(MLAA_BLEND_PS)) else {
+            return;
+        };
+        wce_prof!("render.mlaa");
+
+        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
+        if self.post.mlaa_out.w != w || self.post.mlaa_out.h != h {
+            let dev = &self.dev;
+            let uint = || SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R8_UINT), w, h };
+            self.post.mlaa_edges = uint();
+            self.post.mlaa_counts = [uint(), uint(), uint(), uint()];
+            self.post.mlaa_out = SizedTarget { t: make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM), w, h };
+        }
+
+        self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        let image = self.post.final_.srv.clone();
+
+        // 1. The separating lines.
+        self.cbs.set_f("cbData", "g_LuminanceThreshold", &[0.1]);
+        let rtv = self.post.mlaa_edges.t.rtv.clone();
+        self.ctx.set_render_targets(std::slice::from_ref(&rtv), None);
+        self.bind(&edges_ps);
+        bind_srv(&self.ctx, &edges_ps, "g_txInitialImage_10", image.as_ref());
+        self.fullscreen_to(&rtv, w, h, &edges_ps);
+
+        // 2. The line lengths: the pair read first cleared (the prepass), then three iterations, each writing the other pair.
+        let (mut read, mut write) = ((2, 3), (0, 1));
+        for k in [read.0, read.1] {
+            if let Some(rtv) = &self.post.mlaa_counts[k].t.rtv {
+                self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+            }
+        }
+
+        for depth in 0..3 {
+            self.cbs.set_f("cbData", "g_IterationDepth", &[depth as f32]);
+            let (counts, edges) = (&self.post.mlaa_counts, &self.post.mlaa_edges);
+            self.ctx.set_render_targets(&[counts[write.0].t.rtv.clone(), counts[write.1].t.rtv.clone()], None);
+            self.bind(&length_ps);
+            bind_srv(&self.ctx, &length_ps, "g_txMask_10", edges.t.srv.as_ref());
+            bind_srv(&self.ctx, &length_ps, "g_txHorzCount_10", counts[read.0].t.srv.as_ref());
+            bind_srv(&self.ctx, &length_ps, "g_txVertCount_10", counts[read.1].t.srv.as_ref());
+            self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+            self.upload();
+            self.fullscreen(&length_ps);
+            null_ps_srvs(&self.ctx, 4);
+            std::mem::swap(&mut read, &mut write);
+        }
+
+        // 3. The blend, from the pair written last.
+        let rtv = self.post.mlaa_out.t.rtv.clone();
+        self.ctx.set_render_targets(std::slice::from_ref(&rtv), None);
+        self.bind(&blend_ps);
+        bind_srv(&self.ctx, &blend_ps, "g_txInitialImage_10", image.as_ref());
+        bind_srv(&self.ctx, &blend_ps, "g_txHorzCount_10", self.post.mlaa_counts[read.0].t.srv.as_ref());
+        bind_srv(&self.ctx, &blend_ps, "g_txVertCount_10", self.post.mlaa_counts[read.1].t.srv.as_ref());
+        self.fullscreen_to(&rtv, w, h, &blend_ps);
+
+        if let (Some(dst), Some(src)) = (&self.post.final_.tex, &self.post.mlaa_out.t.tex) {
+            self.ctx.set_render_targets(&[], None);
+            self.ctx.copy_resource(dst, src);
+        }
+    }
+
     /// The lens flare and vignette (LENSE_FLARE_SHADER), drawn on the final image after hdr_to_screen (fn 0x1173ec10). The constants as fn
     /// 0x1172b1b0 sets them: sun_position = camera + to_sun * 7600 (both dumps), sun_flare = SUN_MESH sun_flare, time = the battle clock,
     /// half_texel_offset = 0.5 / size, vignette_strength = 1, pos_transform = (1, 1, 0, 0). Textures (fn 0x116dd4e0): lense_flare_1 =
