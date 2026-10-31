@@ -16,7 +16,6 @@ use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_io::attila::workflow::Game;
 use wce_vfs::{GameProfile, Vfs};
 
-use crate::context_panel::GAME_MAP;
 use crate::launch::{self, Battle, BattleMap, BattleWeather, Delivery, LAUNCH_PACK, Running};
 use crate::settings::{LaunchArmy, LaunchDelivery, LaunchMap, LaunchSettings, SETTINGS_ID, TileSettings};
 use crate::tool::{ExportInputs, TileTool, document_id};
@@ -491,16 +490,16 @@ impl TileTool {
         }
 
         let Some((name, map, _)) = &self.context.loaded else { return (None, " (no map in the Map context: the tile alone)".to_owned()) };
-        if name != GAME_MAP {
+        let Some(folder) = crate::context_panel::game_map_folder(name, game.campaign_battle_map) else {
             return (None, format!(" ({name} is a kit map, not in the game's packs: the tile alone)"));
-        }
+        };
 
         let Some(spot) = self.context.spot() else { return (None, " (no placement in the Map context: the tile alone)".to_owned()) };
         let (w, h) = if matches!(spot.rotation, 0x20 | 0x80) { (cells.1, cells.0) } else { cells };
         let x = (f64::from(spot.x) + f64::from(w) / 2.0) / f64::from(map.width.max(1));
         let y = (f64::from(spot.y) + f64::from(h) / 2.0) / f64::from(map.height.max(1));
         let set = location.split('/').nth(3).unwrap_or_default();
-        (Some(BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x, y, settlement: set.starts_with("settlement") }), String::new())
+        (Some(BattleMap::Position { map: format!("{folder}/"), x, y, settlement: set.starts_with("settlement") }), String::new())
     }
 
     /// Each frame: once, what an editor closed while its game ran left (the launch pack, the launch folders) is removed when the game is

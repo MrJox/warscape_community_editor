@@ -29,6 +29,63 @@ const APPLY_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
 /// The campaign battle map of the game's files.
 pub const GAME_MAP: &str = "campaign (game files)";
 
+/// The label of the other battle maps in the game's packs: `<folder> (game files)` (the other campaigns', a mod's).
+pub const GAME_FILES: &str = " (game files)";
+
+/// The packs' tiles in the kit's layout (`workflow::neighbour_root`: every tile database entry of the mounted packs, mods included; the
+/// tiles' folders decompiled on demand), made the first time something needs it (reading the game's tile data takes a while). Its folder
+/// is keyed by the mounted packs, so another set of mods gets its own tree.
+pub struct PacksTree {
+    vfs: Arc<wce_vfs::Vfs>,
+    kit: Option<PathBuf>,
+    root: PathBuf,
+    built: std::sync::OnceLock<Result<(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String>>,
+}
+
+impl PacksTree {
+    /// `cache` is the folder the trees go in (`<cache>/neighbours`), `key` the game's.
+    pub fn new(vfs: Arc<wce_vfs::Vfs>, kit: Option<PathBuf>, cache: &Path, key: &str) -> Self {
+        let packs = vfs.packs().iter().fold(0xCBF2_9CE4_8422_2325u64, |h, p| {
+            let len = std::fs::metadata(&p.path).map_or(0, |m| m.len());
+            p.name.to_lowercase().bytes().chain(len.to_le_bytes()).fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+        });
+
+        Self { vfs, kit, root: cache.join(format!("{key}_{packs:016x}")), built: std::sync::OnceLock::new() }
+    }
+
+    fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {
+        self.built.get_or_init(|| {
+            let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.vfs.clone(), self.kit.as_deref())?);
+            let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &self.root)?;
+            Ok((game, raw))
+        }).as_ref().map_err(Clone::clone)
+    }
+
+    /// Whether it is the tree of these mounted packs.
+    pub fn same_vfs(&self, vfs: &Arc<wce_vfs::Vfs>) -> bool {
+        Arc::ptr_eq(&self.vfs, vfs)
+    }
+
+    /// Its `raw_data` folder (the packs' tile database in the kit's format).
+    ///
+    /// # Errors
+    ///
+    /// The game's tile data does not read, or the tree can't be written.
+    pub fn raw(&self) -> Result<PathBuf, String> {
+        self.get().map(|(_, raw)| raw.clone())
+    }
+
+    /// A tile's folder, decompiled from the packs the first time.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::raw`], or no pack has the tile, or it does not decompile.
+    pub fn tile(&self, location: &str, variation: &str) -> Result<PathBuf, String> {
+        let (game, raw) = self.get()?;
+        wce_tile_io::attila::workflow::neighbour_tile(game, raw, location, variation)
+    }
+}
+
 pub enum Job {
     Map(String, Result<(Arc<PlacedMap>, Option<BattleLocations>), String>),
     Built(u64, Box<Streamer>),
@@ -42,8 +99,10 @@ pub struct ContextUi {
     /// tile's folder in it (`workflow::neighbour_tile`). See [`Self::raw_of`].
     pub neighbours: Option<(PathBuf, TileProvider)>,
 
-    /// For a game whose kit has tiles: the packs' tiles, for a placement whose tile no kit has (`TileTool::prepare_neighbours`).
+    /// For a game whose kit has tiles: the packs' tiles, for a placement whose tile no kit has (`TileTool::prepare_neighbours`), and their
+    /// tree (whose tile database reads the game's battle maps: a mod's map names the mod's tiles).
     pub packs_fallback: Option<TileProvider>,
+    pub packs_tree: Option<Arc<PacksTree>>,
 
     /// The `raw_data` folders a placement's tile is looked for in, in order (`TileTool::kit_roots`: the projects, then the kits), and
     /// when they were looked up (`gui::time`).
@@ -108,7 +167,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, far_view: 0, trees: true,
             follow: true, status: String::new(), busy: String::new(), rx: None, streamer: None, layer: 0, doc: 0, build: 0, build_look: None, chunks: HashMap::new(), waiting: vec![],
             gone: vec![], sea: None,
             sea_at: (0.0, 0.0), db: None, maps_for: PathBuf::new(), snow_on: true, snow_amount: 1.0, snow_map: None, snow_key: None,
@@ -131,12 +190,36 @@ pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabas
     Ok(db)
 }
 
-/// Reads a map (slow for the kit's campaign map: BOB's fill of 2032 x 1437 cells takes about a minute). `game_dir` is the folder of the
-/// game's campaign battle map in the packs.
-pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files: Option<&dyn Files>) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
+/// The folder in the packs of a map of the list (`GAME_MAP`: the game's own campaign, `game_dir`; `<folder> (game files)`), none for a kit
+/// map.
+pub fn game_map_folder(name: &str, game_dir: &str) -> Option<String> {
     if name == GAME_MAP {
+        return Some(game_dir.to_owned());
+    }
+
+    name.strip_suffix(GAME_FILES).map(|f| format!("terrain/battles/{f}"))
+}
+
+/// The battle maps in the packs (base game and mods): the folders of `terrain/battles` with a `tile_map.tiles`, as the list names them
+/// (`game_dir`, the game's own campaign, first as `GAME_MAP`).
+pub fn game_maps(files: &dyn Files, game_dir: &str) -> Vec<String> {
+    let mut folders: Vec<String> = files.list("terrain/battles/", "/tile_map.tiles").into_iter()
+        .filter_map(|p| p.strip_suffix("/tile_map.tiles").map(str::to_owned))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    let own = folders.iter().any(|f| f.eq_ignore_ascii_case(game_dir));
+    own.then(|| GAME_MAP.to_owned()).into_iter()
+        .chain(folders.into_iter().filter(|f| !f.eq_ignore_ascii_case(game_dir)).map(|f| format!("{}{GAME_FILES}", f.rsplit('/').next().unwrap_or_default())))
+        .collect()
+}
+
+/// Reads a map (slow for the kit's campaign map: BOB's fill of 2032 x 1437 cells takes about a minute). `game_dir` is the folder of the
+/// game's campaign battle map in the packs; a map of the packs (`game_map_folder`) is read from them.
+pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files: Option<&dyn Files>) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
+    if let Some(folder) = game_map_folder(name, game_dir) {
         let files = files.ok_or("no game files")?;
-        let read = |n: &str| files.read(&format!("{game_dir}/{n}"));
+        let read = |n: &str| files.read(&format!("{folder}/{n}"));
         let index = read("tile_map.index")?;
         let tiles = read("tile_map.tiles")?;
         let lf = read("lf_height_map.dds").ok();
@@ -179,8 +262,8 @@ impl ContextUi {
 
         self.maps_for = raw.to_path_buf();
         self.maps.clear();
-        if files.is_some_and(|f| f.exists(&format!("{}/tile_map.tiles", self.game_dir))) {
-            self.maps.push(GAME_MAP.to_owned());
+        if let Some(f) = files {
+            self.maps.extend(game_maps(f, self.game_dir));
         }
 
         self.maps.extend(kit_maps(raw));
@@ -201,10 +284,13 @@ impl ContextUi {
         let (tx, rx) = channel();
         let raw = raw.to_path_buf();
         let game_dir = self.game_dir;
+        let packs = self.packs_tree.clone().filter(|_| game_map_folder(&name, game_dir).is_some());
         self.busy = format!("reading {name}...");
         self.rx = Some(rx);
         self.build_look = None;
         std::thread::spawn(move || {
+            // A map of the packs names the packs' tiles (a mod's among them): read with their database.
+            let db = packs.and_then(|p| p.raw().ok()).and_then(|r| TileDatabase::load(&r.join("terrain/tiles/battle/_tile_database")).ok()).map_or(db, Arc::new);
             let r = load_map(&name, game_dir, &raw, &db, files.as_deref());
             let _ = tx.send(Job::Map(name, r));
         });
@@ -433,7 +519,7 @@ impl ContextUi {
     /// The map's folder in the kit (its season maps).
     fn map_dir(&self, raw: &Path) -> Option<PathBuf> {
         let (name, _, _) = self.loaded.as_ref()?;
-        let folder = if name == GAME_MAP { self.game_dir.rsplit('/').next().unwrap_or_default() } else { name.as_str() };
+        let folder = game_map_folder(name, self.game_dir).map_or_else(|| name.clone(), |f| f.rsplit('/').next().unwrap_or_default().to_owned());
         Some(raw.join("terrain/battles").join(folder))
     }
 
