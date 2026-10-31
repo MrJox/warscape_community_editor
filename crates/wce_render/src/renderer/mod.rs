@@ -155,12 +155,13 @@ pub(crate) const TM_R2_LOG_Y: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr
 pub(crate) const TM_R2_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_cie_log_y_xy_to_quarter_size_log_y_stats";
 pub(crate) const TM_R2_STATS_DOWN: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_quarter_size_log_y_stats";
 pub(crate) const TM_TONE_MAP: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_basic_tone_mapper";
-/// Thrones of Britannia's cloud shadows (fn 0x117c3680): the texture, cloud_shade_battle_scale and cloud_shade_battle_speed.
+/// Thrones of Britannia's cloud shadows (fn 0x117c3680): the texture (UNORM: created with flags 0x180, without the sRGB bit 0x2000),
+/// cloud_shade_battle_scale and cloud_shade_battle_speed.
 pub(crate) const CLOUD_SHADE_TEXTURE: &str = "terrain/textures/common/cloud_shade.dds";
 pub(crate) const CLOUD_SHADE_BATTLE_SCALE: f32 = 0.0005;
 pub(crate) const CLOUD_SHADE_BATTLE_SPEED: f32 = 50.0;
 
-/// Thrones of Britannia's film grain texture (fn 0x117d7da0).
+/// Thrones of Britannia's film grain texture (fn 0x117d7da0; UNORM: created with flags 0x280, without the sRGB bit 0x2000).
 pub(crate) const GRAIN_TEXTURE: &str = "commontextures/grain.dds";
 
 /// The film grain's state: the generator, the time since its last move, its offset (`hdr_to_screen_PS.grain_tex_offset`).
@@ -1264,7 +1265,8 @@ impl Renderer {
         }
         self.clock.dt = if self.clock.last_time < 0.0 { 0.016 } else { (time_s - self.clock.last_time).max(0.0) };
 
-        // The cloud shade moves with the wind (fn 0x117c3680: the change of seconds * speed / 4096 along the wind's direction).
+        // The cloud shade moves with the wind (fn 0x117c3680: the change of seconds * speed / 4096 along the wind's direction, fn 0x118089e0:
+        // the battle weather's (cos, sin) of the wind's degrees, as wind_VS.wind_direction).
         if self.settings.cloud_shadows {
             let step = self.clock.dt * CLOUD_SHADE_BATTLE_SPEED / 4096.0;
             let d = self.wind.direction;

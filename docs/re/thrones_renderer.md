@@ -48,8 +48,8 @@ New shaders: `hdr_god_rays.hlsl` (`vs30_main`, `ps30_god_rays`), `gaussianblur p
 
 Three options Attila lacks (`preferences.script.txt`): `gfx_grain` (film grain: `grain_texture`, `grain_tex_offset`),
 `gfx_cloud_shadows` (`terrain/textures/common/cloud_shade`; `cloud_shade_battle_scale` / `_speed`, `cloud_shade_campaign_*`) and
-`gfx_god_rays`. The editor draws all three off. To draw them on: the god rays pass's constants (`hdr_god_rays_PS`), the cloud
-shade's parameters in battle (fn: the users of `cloud_shade_battle_scale`), the grain texture and its offset.
+`gfx_god_rays`. The editor draws the grain and the cloud shadows as the options ask (docs/re/graphics_options.md); the god rays
+stay off (their pass's constants, `hdr_god_rays_PS`, are not mapped).
 
 ## Environment
 
