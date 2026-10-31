@@ -1,7 +1,7 @@
 //! Streams the map context of a tile without the app (time, memory, entities), as the Tile panel's Map context does: the chunks around the
 //! open tile, then (`--walk <cells>`) around a focus moved that far east, step by step.
 //!
-//!   cargo run --release -p wce_tile_editor --example context_check -- <game dir> <tile folder> <map name | campaign> [placement] [near] [mid]
+//!   cargo run --release -p wce_tile_editor --example context_check -- <game dir> <tile folder> <map name | campaign> [placement | x,y] [near] [mid]
 //!       [far] [--no-cache | --clear-cache] [--walk <cells>] [--model <pattern>] [--water] [--coasts] [--settlements <cells>]
 //!       [--lf-grid <cell x> <cell y> <steps>] [--climates <cells>]
 //!   context_check - <tile folder> - --heights x z [x z ...]   (the tile's own heights at points of its frame)
@@ -76,7 +76,14 @@ fn main() {
     println!("map {} ({:.1} s)", m.name, t0.elapsed().as_secs_f64());
 
     let found = m.find(&project.info.location, &project.info.variation);
-    let spot = match found.get(n(3, 0) as usize) {
+    // The placement: its number among the tile's, or its cell (`x,y`).
+    let at = a.get(3).and_then(|v| v.split_once(',')).and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?)));
+    let chosen = match at {
+        Some((x, y)) => found.iter().find(|&&i| (m.placements[i].x, m.placements[i].y) == (x, y)),
+        None => found.get(n(3, 0) as usize),
+    };
+
+    let spot = match chosen {
         Some(&i) => Spot { x: m.placements[i].x, y: m.placements[i].y, rotation: m.placements[i].rotation },
         None => Spot { x: m.width as i32 / 2, y: m.height as i32 / 2, rotation: 0x10 },
     };

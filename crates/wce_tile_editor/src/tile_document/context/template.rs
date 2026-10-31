@@ -226,6 +226,62 @@ impl Template {
     }
 }
 
+/// The material of a tile over `[x0, z0, x1, z1]` (its border cropped off past what the heights cover), with its normal map from the
+/// heights, its alpha map and its box; new ids.
+fn context_material(m: &TerrainMaterial, (x0, z0, x1, z1): (f64, f64, f64, f64), (ex, ez): (f64, f64), own: &Grid, height: &(dyn Fn(f64, f64) -> f32 + Sync)) -> TerrainMaterial {
+    let step = NEIGHBOUR_STEP;
+    let mut m = m.clone();
+    crop_material(&mut m, x0, z0, x1, z1);
+    let (gx, gz) = (((m.x1 - m.x0) / step).round().max(1.0) as i32 + 1, ((m.z1 - m.z0) / step).round().max(1.0) as i32 + 1);
+    let over = Grid::sample(gx, gz, m.x0, m.z0, step, height);
+    m.normal = terrain_normal_image(&over.heights, over.nx, over.nz, step, step, m.blend.w.max(1), m.blend.h.max(1));
+    m.alpha = alpha_map(&m, ex, ez);
+    let (lo, hi) = own.range();
+    (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
+    m.id = next_id(&MATERIAL_IDS);
+    m.normal_id = next_id(&NORMAL_IDS);
+    m
+}
+
+/// Opens a neighbour tile: a scene's ([`load_template`]) or a custom mesh's ([`load_custom_template`]).
+pub fn load_any_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
+    if wce_tile::sources::custom_mesh(dir).is_some() { load_custom_template(dir, look, files) } else { load_template(dir, look, trees, game_kit, files) }
+}
+
+/// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its ground is the map's LF alone (zero heights of its own),
+/// with the material of its blend map.
+pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
+    let t0 = std::time::Instant::now();
+    let found = wce_tile::tile_project::find_tile_info(dir);
+    let entry = found.entry.as_ref().ok_or_else(|| format!("no tile database entry for {}", dir.display()))?;
+    let (cx, cz) = (found.info.cells_x.max(1), found.info.cells_y.max(1));
+    let (ex, ez) = (f64::from(cx) * 128.0, f64::from(cz) * 128.0);
+    let step = NEIGHBOUR_STEP;
+    let o = f64::from(OVERLAP_STEPS) * step;
+    let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
+    let height = |_: f64, _: f64| 0.0f32;
+    let own = Grid::sample(nx, nz, -o, -o, step, &height);
+
+    // The blend map is the bordered tile's (a cell around it), as a scene tile's.
+    let files = files.ok_or("no game files (the ground's textures)")?;
+    let tif = wce_tile::sources::file_any_case(dir, "blend_map.tif").ok_or_else(|| format!("no blend_map.tif in {}", dir.display()))?;
+    let blend = wce_tile::blend_field::BlendField::read(&tif).map_err(|e| format!("{}: {e}", tif.display()))?;
+    let settings = entry.file().parent().and_then(Path::parent).map(|p| p.join("_settings.xml"));
+    let kit = settings.and_then(|s| wce_formats::tile_climate::ClimateList::load(&s).ok()).unwrap_or_default();
+    let kind = Some(entry.kind()).filter(|k| !k.is_empty()).unwrap_or_else(|| "battle".to_owned());
+    let climates = crate::climate_db::effective_climates(kit, &kind, Some(files.as_ref()));
+    let b = 128.0;
+    let rq = crate::terrain_material::MaterialRequest {
+        folder: dir.to_path_buf(), groups: entry.texture_group(), x0: -b, z0: -b, x1: ex + b, z1: ez + b, y0: -BOX_BELOW, y1: BOX_ABOVE, look: look.clone(), id: 0,
+    };
+
+    let (m, _) = crate::terrain_material::build_terrain_material(&rq, &blend, &climates, files.as_ref())?;
+    let material = Arc::new(context_material(&m, (-b, -b, ex + b, ez + b), (ex, ez), &own, &height));
+    let mut tpl = Template { extent: (ex, ez), own, material: Some(material), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
+    tpl.finish();
+    Ok(tpl)
+}
+
 /// Opens a neighbour tile (slow: the whole tile document; run it away from the UI thread); `game_kit` is `TileProject::game_kit`.
 pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
@@ -270,19 +326,7 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let material = scratch.find(t.terrain_entity).and_then(|e| match &e.payload {
         Payload::Terrain(tr) => tr.material.clone(),
         _ => None,
-    }).map(|m| {
-        let mut m = (*m).clone();
-        crop_material(&mut m, -border, -border, ex + border, ez + border);
-        let (gx, gz) = (((m.x1 - m.x0) / step).round().max(1.0) as i32 + 1, ((m.z1 - m.z0) / step).round().max(1.0) as i32 + 1);
-        let over = Grid::sample(gx, gz, m.x0, m.z0, step, &height);
-        m.normal = terrain_normal_image(&over.heights, over.nx, over.nz, step, step, m.blend.w.max(1), m.blend.h.max(1));
-        m.alpha = alpha_map(&m, ex, ez);
-        let (lo, hi) = own.range();
-        (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
-        m.id = next_id(&MATERIAL_IDS);
-        m.normal_id = next_id(&NORMAL_IDS);
-        Arc::new(m)
-    });
+    }).map(|m| Arc::new(context_material(&m, (-border, -border, ex + border, ez + border), (ex, ez), &own, &height)));
 
     let mut entities: Vec<(Float4x4, Payload)> = scratch
         .entities()
