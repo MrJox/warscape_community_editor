@@ -126,8 +126,9 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   of the half size for the reflection and the x blur: an assumption).
 - Particle effects: the level is mapped to a variant (fn 0x118f0a30: 0 at 3, 1 at 2, 2 at 0 and 1) and each effect takes that variant
   (fn 0x11894bc0, else variant 0): the vfx files' `quality="1"` / `"2"` property overrides. Applied (`vfx_def::set_quality`). The same
-  value also sizes a particle buffer (fns 0x11902c80 / 0x11902c20: 0x10000, 0x4000 at 2, 0x40000 in some cases): not applied (its
-  meaning against the editor's 512^2 is not known).
+  value sizes the particle system (fn 0x118f96a0 -> its init, fn 0x1184d6e0): 0x40000 (512^2) at 0 when the graphics system's flag
+  +0x715c8 is set (the dumps at maximum settings: width 512), else 0x10000 (256^2; 0x4000 only on GPUs below shader model 4, fn
+  0x1192e670). Applied as the most particles alive: 512^2 at the highest level, 256^2 below.
 - Texture quality (fn 0x1188a3c0): a texture's first mip = min(drop - (3 - bias), size class) when drop (3 - level) > 3 - bias; size
   class 0 below 128, 1 below 256, 2 below 512, else 3; bias a u16 table at 0x11c88670 indexed by the texture's +0x108 (unknown: not the
   RMV2 texture type, whose indices are all 0). Not applied.
