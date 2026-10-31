@@ -391,6 +391,9 @@ pub(crate) struct TerrainGpuState {
     /// The custom meshes by id (`terrain_custom`).
     pub(crate) custom: HashMap<u64, super::terrain_custom::CustomGpu>,
 
+    /// The map context terrains left out for want of a material or heights, said once each.
+    unusable_logged: std::collections::HashSet<EntityId>,
+
     /// The LF maps by id, and a zero one for the terrains without (what the unused height texture reads).
     pub(crate) lf: BTreeMap<u64, LfGpu>,
     lf_zero: Option<ID3D11ShaderResourceView>,
@@ -965,8 +968,18 @@ impl Renderer {
 
             total += 1;
             if t.material.is_none() || t.nx < 2 || t.nz < 2 || t.heights.is_empty() || !is_ground_world(&e.world) {
-                // Rome 2 has no legacy ground to fall back on: a terrain without a material (still loading, or none made) is left out.
-                if self.game == super::game::RenderGame::Rome2 {
+                // Rome 2 has no legacy ground to fall back on, nor has a map context's terrain (not `legacy`): a terrain without a material
+                // (still loading, or none made) is left out. Falling back for it turned the whole ground off: the context's has no
+                // legacy patches.
+                if self.game == super::game::RenderGame::Rome2 || !t.legacy {
+                    if !t.legacy && self.terrain.unusable_logged.insert(e.id) {
+                        let (m, ok) = (&e.world.m, t.material.is_some());
+                        wce_foundation::log::warn(format!(
+                            "terrain: a map context terrain at ({:.0}, {:.0}) is left out: {}", m[0][3], m[2][3],
+                            if !ok { "no material" } else if t.heights.is_empty() || t.nx < 2 || t.nz < 2 { "no heights" } else { "not a ground transform" }
+                        ));
+                    }
+
                     total -= 1;
                     continue;
                 }
