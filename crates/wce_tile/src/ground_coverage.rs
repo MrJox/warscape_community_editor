@@ -4,14 +4,21 @@
 //!
 //! Everything here is in metres on a grid of the terrain's heights; the editor turns the result into instances.
 //!
-//! 1. A cell is steep when its slope is above `slope_deg`. A closing (dilate, erode) joins a cliff broken by a ledge; the 8-connected
-//!    regions of that are the differentials.
-//! 2. Each cell of a region walks down the steepest descent to the first cell out of the region (its foot) and up to the first one out
-//!    (its top): along a long cliff the foot and the top change, so they are per cell.
-//! 3. A region is kept when its rise (the 95th percentile of top - foot over its cells) and its area are big enough.
-//! 4. Foot band: the region's cells up to `foot_up` over their foot, and the cells out of it within `foot_out` on its low side (nearer the
-//!    foot's height than the top's). Face band: the region's cells above that, up to `top_margin` under their top. The cells within
-//!    `building_clearance` of a building's footprint are taken out of both: the coverage goes around the buildings.
+//! There are three kinds of terrain (`Kind`), which differ in steps 1 and 2: the cells they find and the height their bands are measured
+//! from (each cell's base).
+//!
+//! 1. Cliffs: a cell is steep when its slope is above `slope_deg`. Coast: the game's no-go cells within `water_reach` of the sea (of a tile
+//!    whose entry links to the sea: the ground under 0 m reached from the tile's edge). Riverbank: the no-go cells within `water_reach` of the water (stage B's water map),
+//!    not under it. A closing (dilate, erode) joins a feature broken by a ledge; the 8-connected regions of that are the differentials.
+//! 2. Each cell of a region walks up the steepest ascent to the first cell out of the region (its top). Its base: for a cliff, where it
+//!    walks down the steepest descent to (its foot); by the sea, 0 m; by a river, the nearest water's surface. Along a long cliff the foot
+//!    and the top change, so they are per cell. A cliff's cell whose foot is at the sea (`sea_margin`) or in the water is the coast's or
+//!    the banks': it gets no bands.
+//! 3. A region is kept when its rise (the 95th percentile of top - base over its cells) and its area are big enough.
+//! 4. Foot band: the region's cells up to `foot_up` over their base, and the cells out of it within `foot_out` on its low side (nearer the
+//!    base's height than the top's); by the water, down to `water_below` under its surface, the cells under it apart (`wet`: rocks only).
+//!    Face band: the region's cells above that, up to `top_margin` under their top. The cells within `building_clearance` of a building's
+//!    footprint are taken out of the bands: the coverage goes around the buildings.
 //! 5. Rocks are thrown into both bands (bigger at the foot), plants into the foot band, from a random sequence seeded by the seed and the
 //!    region, so that a region's result doesn't depend on the others; one whose own radius reaches into a building's clearance is dropped.
 //! 6. The plants are clustered (single linkage within `cluster_distance`, no cluster wider than `max_cluster`); each cluster gets the convex
@@ -83,6 +90,15 @@ pub struct Params {
     /// Metres: a plant's radius, and the margin around it, in its exclusion polygon.
     pub plant_radius: f32,
     pub exclusion_margin: f32,
+
+    /// Cliffs: metres over the sea a cliff's foot must be for the cliff to be inland (a lower one is the coast's).
+    pub sea_margin: f32,
+
+    /// Coast and banks: metres from the water (the sea, a river) the no-go ground may be to count.
+    pub water_reach: f32,
+
+    /// Coast and banks: metres under the water the waterline band goes (rocks only: half sunk ones in the shallows).
+    pub water_below: f32,
 }
 
 impl Default for Params {
@@ -110,6 +126,56 @@ impl Default for Params {
             max_cluster: 30.0,
             plant_radius: 1.0,
             exclusion_margin: 2.0,
+            sea_margin: 1.0,
+            water_reach: 6.0,
+            water_below: 0.6,
+        }
+    }
+}
+
+/// The kind of terrain the coverage is for: what it finds, and what its bands are measured from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Kind {
+    /// Inland slopes and cliffs (steeper than `slope_deg`) whose foot is over the sea and out of the water: bands from the foot each cell
+    /// walks down to.
+    #[default]
+    Cliffs,
+
+    /// The no-go ground by the sea (of a tile that meets it: the ground under 0 m reached from its edge): bands from the sea's surface (0 m).
+    Coast,
+
+    /// The no-go ground by a river or a water plane (stage B's water map): bands from the nearest water's surface.
+    Riverbank,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Cliffs, Kind::Coast, Kind::Riverbank];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Cliffs => "cliffs",
+            Kind::Coast => "coast",
+            Kind::Riverbank => "riverbank",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.name() == name)
+    }
+
+    /// Whether its bands are measured from water (the waterline band reaches under it).
+    pub fn by_water(self) -> bool {
+        self != Kind::Cliffs
+    }
+}
+
+impl Params {
+    /// The defaults for a kind: by the water, a narrower foot band (the waterline) and fewer plants.
+    pub fn for_kind(kind: Kind) -> Self {
+        match kind {
+            Kind::Cliffs => Self::default(),
+            Kind::Coast => Self { min_rise: 2.0, foot_up: 2.0, foot_out: 3.0, rock_density_foot: 1.0 / 8.0, plant_density: 1.0 / 30.0, ..Self::default() },
+            Kind::Riverbank => Self { min_rise: 1.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
         }
     }
 }
@@ -162,10 +228,11 @@ impl Params {
         p
     }
 
-    const NAMES: [&'static str; 23] = [
+    const NAMES: [&'static str; 26] = [
         "slope_deg", "min_rise", "min_area", "foot_up", "foot_out", "top_margin", "rock_density_foot", "rock_density_face", "plant_density",
         "plant_spacing", "rock_scale_foot_min", "rock_scale_foot_max", "rock_scale_face_min", "rock_scale_face_max", "plant_scale_min",
         "plant_scale_max", "sink", "min_visible", "building_clearance", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
+        "sea_margin", "water_reach", "water_below",
     ];
 
     fn numbers(&self) -> Vec<(&'static str, f32)> {
@@ -198,6 +265,9 @@ impl Params {
             "max_cluster" => &mut self.max_cluster,
             "plant_radius" => &mut self.plant_radius,
             "exclusion_margin" => &mut self.exclusion_margin,
+            "sea_margin" => &mut self.sea_margin,
+            "water_reach" => &mut self.water_reach,
+            "water_below" => &mut self.water_below,
             _ => return None,
         })
     }
@@ -269,13 +339,17 @@ pub struct Context {
 
     /// Where units can't walk (BOB's automatic no-go areas: steeper than 30 degrees, less the go outlines).
     pub no_go: Vec<bool>,
+
+    /// Whether the tile meets the sea (its entry links to the `sea` tile set). A tile's heights are not the sea's: an inland tile may be
+    /// all under 0 m.
+    pub has_sea: bool,
 }
 
 impl Context {
     /// Stage B's fields, `w` x `h` vertices over the tile (row j along +z) `sx` and `sz` metres apart from (0, 0), at the grid's samples
-    /// (the nearest vertex). `depth`: NaN or under 0 where there is no water.
+    /// (the nearest vertex); no sea. `depth`: metres, NaN or under 0 where there is no water.
     pub fn resample(g: &Grid, w: usize, h: usize, sx: f32, sz: f32, depth: &[f32], no_go: &[bool]) -> Self {
-        let mut c = Self { water_depth: Vec::with_capacity(g.nx * g.nz), no_go: Vec::with_capacity(g.nx * g.nz) };
+        let mut c = Self { water_depth: Vec::with_capacity(g.nx * g.nz), no_go: Vec::with_capacity(g.nx * g.nz), has_sea: false };
         for i in 0..g.nx * g.nz {
             let (x, z) = g.at(i);
             let vx = ((x / sx).round().max(0.0) as usize).min(w.saturating_sub(1));
@@ -306,9 +380,10 @@ pub struct RockSize {
 
 /// What a generation takes.
 pub struct Input<'a> {
+    pub kind: Kind,
     pub grid: &'a Grid,
 
-    /// The water and the no-go field on the grid's samples; none: no water, all walkable.
+    /// The water and the no-go field on the grid's samples; none: no water, all walkable (the coast and the banks find nothing).
     pub context: Option<&'a Context>,
     pub blockers: &'a [Blocker],
     pub rocks: &'a VegetationSet,
@@ -330,6 +405,9 @@ pub enum State {
 
     /// Its area (square metres) is under the minimum.
     TooSmall(f32),
+
+    /// A cliff whose foot is at the sea or in a river everywhere (the coast's, the banks').
+    ByWater,
 }
 
 /// A placed rock or plant: its key, where (metres, `y` the height of its origin), its scale and its turn (degrees).
@@ -354,6 +432,9 @@ pub struct Differential {
     pub cells: Vec<usize>,
     pub foot: Vec<usize>,
     pub face: Vec<usize>,
+
+    /// By the water, the foot band's cells under it (rocks only).
+    pub wet: Vec<usize>,
     pub rocks: Vec<Placed>,
     pub plants: Vec<Placed>,
 
@@ -379,10 +460,8 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         return vec![];
     }
 
-    // 1. Steep cells, closed, in regions.
-    let tan = p.slope_deg.to_radians().tan();
-    let steep = (0..n).map(|i| slope(g, i) > tan).collect::<Vec<_>>();
-    let mask = erode(g, &dilate(g, &steep));
+    // 1. The kind's cells, closed, in regions; the height each cell's bands are measured from (its base); and the cells left to another kind.
+    let Some(Features { mask, base, others }) = features(input) else { return vec![] };
     let mut label = vec![NONE; n];
     let mut regions: Vec<Differential> = vec![];
     for start in 0..n {
@@ -409,18 +488,20 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         regions.push(Differential { number: r + 1, cells, ..Default::default() });
     }
 
-    // 2. The foot and the top of every cell of a region.
-    let foot = walk(g, &mask, true);
+    // 2. The top of every cell of a region.
     let top = walk(g, &mask, false);
+    let theirs = |i: usize| others[i];
 
     // 3. Rise and area.
     let area_of = |cells: usize| cells as f32 * g.cell * g.cell;
     for d in &mut regions {
-        let mut rises = d.cells.iter().map(|&i| g.heights[top[i]] - g.heights[foot[i]]).collect::<Vec<_>>();
+        let mut rises = d.cells.iter().filter(|&&i| !theirs(i)).map(|&i| g.heights[top[i]] - base[i]).collect::<Vec<_>>();
         rises.sort_unstable_by(f32::total_cmp);
-        d.rise = rises.get((rises.len() - 1) * 95 / 100).copied().unwrap_or(0.0);
+        d.rise = rises.get(rises.len().saturating_sub(1) * 95 / 100).copied().unwrap_or(0.0);
         d.area = area_of(d.cells.len());
-        d.state = Some(if d.rise < p.min_rise {
+        d.state = Some(if rises.is_empty() {
+            State::ByWater
+        } else if d.rise < p.min_rise {
             State::TooLow(d.rise)
         } else if d.area < p.min_area {
             State::TooSmall(d.area)
@@ -429,15 +510,17 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         });
     }
 
-    // 4. The bands of the kept ones: their own cells, then the low side out of them (nearest region first, breadth first).
+    // 4. The bands of the kept ones: their own cells, then the low side out of them (nearest region first, breadth first); by the water,
+    //    down to `water_below` under it, the cells under it apart (rocks only).
     let mut ring = vec![NONE; n];
     let mut source = vec![NONE; n];
     let mut queue = std::collections::VecDeque::new();
+    let wet = |h: f32, f: f32| input.kind.by_water() && h < f;
     for d in regions.iter_mut().filter(|d| d.kept()) {
-        for &i in &d.cells {
-            let (h, f, t) = (g.heights[i], g.heights[foot[i]], g.heights[top[i]]);
+        for &i in d.cells.iter().filter(|&&i| !theirs(i)) {
+            let (h, f, t) = (g.heights[i], base[i], g.heights[top[i]]);
             if h - f <= p.foot_up {
-                d.foot.push(i);
+                if wet(h, f) { d.wet.push(i) } else { d.foot.push(i) }
             } else if h <= t - p.top_margin {
                 d.face.push(i);
             }
@@ -448,11 +531,12 @@ pub fn generate(input: &Input) -> Vec<Differential> {
     }
 
     let reach = p.foot_out / g.cell;
+    let floor = if input.kind.by_water() { p.water_below } else { f32::INFINITY };
     while let Some(i) = queue.pop_front() {
         let s = source[i];
         let r = label[s];
         let (sx, sz) = ((s % g.nx) as f32, (s / g.nx) as f32);
-        let (f, t) = (g.heights[foot[s]], g.heights[top[s]]);
+        let (f, t) = (base[s], g.heights[top[s]]);
         for nb in g.neighbours(i) {
             if mask[nb] || ring[nb] != NONE {
                 continue;
@@ -460,10 +544,10 @@ pub fn generate(input: &Input) -> Vec<Differential> {
 
             let (x, z) = ((nb % g.nx) as f32, (nb / g.nx) as f32);
             let h = g.heights[nb];
-            if (x - sx).hypot(z - sz) <= reach && (h - f).abs() < (h - t).abs() {
+            if (x - sx).hypot(z - sz) <= reach && (h - f).abs() < (h - t).abs() && h >= f - floor {
                 ring[nb] = r;
                 source[nb] = s;
-                regions[r].foot.push(nb);
+                if wet(h, f) { regions[r].wet.push(nb) } else { regions[r].foot.push(nb) }
                 queue.push_back(nb);
             }
         }
@@ -499,6 +583,7 @@ pub fn generate(input: &Input) -> Vec<Differential> {
         d.avoided = a.len();
         d.foot.retain(|&i| !near[i]);
         d.face.retain(|&i| !near[i]);
+        d.wet.retain(|&i| !near[i]);
     }
 
     let buildings = Buildings::new(input.blockers, p.building_clearance);
@@ -507,10 +592,12 @@ pub fn generate(input: &Input) -> Vec<Differential> {
     for d in regions.iter_mut() {
         if d.kept() {
             d.foot.sort_unstable();
-            populate(input, &buildings, d);
+            d.wet.sort_unstable();
+            populate(input, &buildings, &base, d);
         } else {
             d.foot.clear();
             d.face.clear();
+            d.wet.clear();
         }
     }
 
@@ -518,6 +605,119 @@ pub fn generate(input: &Input) -> Vec<Differential> {
 }
 
 const NONE: usize = usize::MAX;
+
+/// What a kind finds on the grid.
+struct Features {
+    /// Its cells (closed: a feature broken by a ledge stays one).
+    mask: Vec<bool>,
+
+    /// The height every cell's bands are measured from: a cliff's walked foot, the sea's surface, the nearest water's surface.
+    base: Vec<f32>,
+
+    /// The cells of the mask that are another kind's: a cliff's whose foot is at the sea (`sea_margin`) or in the water. They get no bands.
+    others: Vec<bool>,
+}
+
+/// What the kind finds; none when it needs the context and there is none.
+fn features(input: &Input) -> Option<Features> {
+    let g = input.grid;
+    let p = &input.params;
+    let n = g.nx * g.nz;
+    let closed = |m: &[bool]| erode(g, &dilate(g, m));
+    match input.kind {
+        Kind::Cliffs => {
+            let tan = p.slope_deg.to_radians().tan();
+            let mask = closed(&(0..n).map(|i| slope(g, i) > tan).collect::<Vec<_>>());
+            let foot = walk(g, &mask, true);
+            let base = (0..n).map(|i| if foot[i] == NONE { g.heights[i] } else { g.heights[foot[i]] }).collect::<Vec<_>>();
+            let tile_sea = input.context.is_some_and(|c| c.has_sea);
+            let wet = |i: usize| input.context.and_then(|c| c.water_depth.get(i)).is_some_and(|&d| d > 0.0);
+            let others = (0..n).map(|i| mask[i] && ((tile_sea && base[i] <= p.sea_margin) || (foot[i] != NONE && wet(foot[i])))).collect();
+            Some(Features { mask, base, others })
+        }
+
+        Kind::Coast => {
+            let c = input.context.filter(|c| c.no_go.len() == n && c.has_sea)?;
+            let sea = sea(g);
+            let near = nearest(g, &sea, p.water_reach);
+            let mut mask = closed(&(0..n).map(|i| c.no_go[i] && near[i] != NONE && !sea[i]).collect::<Vec<_>>());
+            for (m, s) in mask.iter_mut().zip(&sea) {
+                *m &= !s;
+            }
+
+            Some(Features { mask, base: vec![0.0; n], others: vec![false; n] })
+        }
+
+        Kind::Riverbank => {
+            let c = input.context.filter(|c| c.no_go.len() == n && c.water_depth.len() == n)?;
+            let water = c.water_depth.iter().map(|&d| d > 0.0).collect::<Vec<_>>();
+            let near = nearest(g, &water, p.water_reach);
+            let mut mask = closed(&(0..n).map(|i| c.no_go[i] && near[i] != NONE && !water[i]).collect::<Vec<_>>());
+            for (m, w) in mask.iter_mut().zip(&water) {
+                *m &= !w;
+            }
+
+            // A cell's water is the nearest wet cell's surface (further than the reach for the cells the closing added).
+            let far = nearest(g, &water, p.water_reach + 2.0 * g.cell);
+            let surface = |w: usize| g.heights[w] + c.water_depth[w];
+            let base = (0..n).map(|i| if far[i] == NONE { g.heights[i] } else { surface(far[i]) }).collect();
+            Some(Features { mask, base, others: vec![false; n] })
+        }
+    }
+}
+
+/// The sea of a tile that meets it ([`Context::has_sea`]): the samples under 0 m that are reached from the tile's edge through others
+/// under it (a pond under 0 m inland is not the sea).
+fn sea(g: &Grid) -> Vec<bool> {
+    let n = g.nx * g.nz;
+    let mut sea = vec![false; n];
+    let mut queue = (0..n)
+        .filter(|&i| {
+            let (x, z) = (i % g.nx, i / g.nx);
+            (x == 0 || z == 0 || x == g.nx - 1 || z == g.nz - 1) && g.heights[i] < 0.0
+        })
+        .collect::<Vec<_>>();
+    for &i in &queue {
+        sea[i] = true;
+    }
+
+    while let Some(i) = queue.pop() {
+        for nb in g.neighbours(i) {
+            if !sea[nb] && g.heights[nb] < 0.0 {
+                sea[nb] = true;
+                queue.push(nb);
+            }
+        }
+    }
+
+    sea
+}
+
+/// For every sample within `reach` metres (straight) of a source sample, that source (breadth first from all of them: about the nearest);
+/// NONE for the others. A source is its own.
+fn nearest(g: &Grid, sources: &[bool], reach: f32) -> Vec<usize> {
+    let mut near = vec![NONE; sources.len()];
+    let mut queue = std::collections::VecDeque::new();
+    for (i, _) in sources.iter().enumerate().filter(|(_, s)| **s) {
+        near[i] = i;
+        queue.push_back(i);
+    }
+
+    let reach = reach / g.cell;
+    while let Some(i) = queue.pop_front() {
+        let s = near[i];
+        let (sx, sz) = ((s % g.nx) as f32, (s / g.nx) as f32);
+        for nb in g.neighbours(i) {
+            let (x, z) = ((nb % g.nx) as f32, (nb / g.nx) as f32);
+            if near[nb] == NONE && (x - sx).hypot(z - sz) <= reach {
+                near[nb] = s;
+                queue.push_back(nb);
+            }
+        }
+    }
+
+    near
+}
 
 /// tan of the slope at a sample (central differences, one-sided at the edges).
 fn slope(g: &Grid, i: usize) -> f32 {
@@ -649,15 +849,16 @@ impl<'a> Buildings<'a> {
 }
 
 /// Rocks and plants on a kept differential (clear of the buildings), and the exclusion polygons around its plants.
-fn populate(input: &Input, buildings: &Buildings, d: &mut Differential) {
+fn populate(input: &Input, buildings: &Buildings, base: &[f32], d: &mut Differential) {
     let g = input.grid;
     let p = &input.params;
     let mut rnd = Random::new(input.seed ^ (d.number as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let (xmax, zmax) = (g.x0 + (g.nx - 1) as f32 * g.cell, g.z0 + (g.nz - 1) as f32 * g.cell);
     let area = |cells: &[usize]| cells.len() as f32 * g.cell * g.cell;
 
-    // Rocks: at the foot and on the face, standing on the lowest ground under them and sunk into it.
-    for (cells, density, range) in [(&d.foot, p.rock_density_foot, p.rock_scale_foot), (&d.face, p.rock_density_face, p.rock_scale_face)] {
+    // Rocks: at the foot (by the water, in the shallows too) and on the face, standing on the ground under them and sunk into it.
+    let shore = d.foot.iter().chain(&d.wet).copied().collect::<Vec<_>>();
+    for (cells, density, range) in [(&shore, p.rock_density_foot, p.rock_scale_foot), (&d.face, p.rock_density_face, p.rock_scale_face)] {
         if cells.is_empty() || input.rocks.entries.is_empty() {
             continue;
         }
@@ -705,7 +906,11 @@ fn populate(input: &Input, buildings: &Buildings, d: &mut Differential) {
             let (x, z) = rnd.point_in(g, &d.foot);
             let pick = rnd.unit();
             let (scale_r, yaw_r) = (rnd.unit(), rnd.unit());
-            let clear = buildings.clear(x, z, p.plant_radius)
+            // By the water, none under it (a point in a cell at the waterline may be).
+            let cell = |v: f32, v0: f32, n: usize| (((v - v0) / g.cell).round().max(0.0) as usize).min(n - 1);
+            let dry = !input.kind.by_water() || g.height(x, z) >= base[cell(z, g.z0, g.nz) * g.nx + cell(x, g.x0, g.nx)];
+            let clear = dry
+                && buildings.clear(x, z, p.plant_radius)
                 && d.plants.iter().all(|o| (o.x - x).hypot(o.z - z) >= p.plant_spacing)
                 && rocks.iter().all(|&(rx, rz, rr)| (rx - x).hypot(rz - z) >= rr);
             if !clear || x < g.x0 || z < g.z0 || x > xmax || z > zmax {
@@ -849,7 +1054,7 @@ mod tests {
 
     fn run(g: &Grid, blockers: &[Blocker], seed: u64) -> Vec<Differential> {
         let (rocks, plants) = sets();
-        generate(&Input { grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, params: Params::default(), seed })
+        generate(&Input { kind: Kind::Cliffs, grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, params: Params::default(), seed })
     }
 
     #[test]
@@ -943,8 +1148,106 @@ mod tests {
         assert!(run(&g, &[], 5).iter().flat_map(|d| &d.rocks).all(|r| r.scale == 1.0));
         let (rocks, plants) = sets();
         let params = Params { scale_rocks: true, ..Default::default() };
-        let out = generate(&Input { grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
+        let out = generate(&Input { kind: Kind::Cliffs, grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 5 });
         assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
+    }
+
+    /// A grid of `height(x, z)` over 100 x 60 m, its no-go field the samples steeper than 30 degrees, and `depth(x)` metres of water; a
+    /// tile that meets the sea.
+    fn field(height: impl Fn(f32, f32) -> f32, depth: impl Fn(f32) -> f32) -> (Grid, Context) {
+        let g = Grid::sample(0.0, 0.0, 100.0, 60.0, 1.0, height);
+        let tan = 30f32.to_radians().tan();
+        let no_go = (0..g.nx * g.nz).map(|i| slope(&g, i) > tan).collect();
+        let water_depth = (0..g.nx * g.nz).map(|i| depth(g.at(i).0)).collect();
+        (g, Context { water_depth, no_go, has_sea: true })
+    }
+
+    fn run_kind(kind: Kind, g: &Grid, c: &Context) -> Vec<Differential> {
+        let (rocks, plants) = sets();
+        let params = Params::for_kind(kind);
+        generate(&Input { kind, grid: g, context: Some(c), blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, params, seed: 3 })
+    }
+
+    fn kept(out: &[Differential]) -> Vec<&Differential> {
+        out.iter().filter(|d| d.kept()).collect()
+    }
+
+    /// The sea (2 m deep) up to x = 40, a cliff up to 10 m over 5 m.
+    fn sea_cliff(x: f32, _: f32) -> f32 {
+        -2.0 + ((x - 40.0) / 5.0).clamp(0.0, 1.0) * 12.0
+    }
+
+    #[test]
+    fn a_cliff_at_the_sea_is_the_coasts() {
+        let (g, c) = field(sea_cliff, |_| 0.0);
+        let cliffs = run_kind(Kind::Cliffs, &g, &c);
+        assert!(kept(&cliffs).is_empty());
+        assert!(cliffs.iter().any(|d| d.state == Some(State::ByWater)), "{:?}", cliffs.iter().map(|d| d.state).collect::<Vec<_>>());
+
+        let coast = run_kind(Kind::Coast, &g, &c);
+        let shore = kept(&coast);
+        assert_eq!(shore.len(), 1, "{:?}", coast.iter().map(|d| d.state).collect::<Vec<_>>());
+        assert!((shore[0].rise - 10.0).abs() < 0.5, "measured from the sea: {}", shore[0].rise);
+        assert!(!shore[0].rocks.is_empty());
+        assert!(shore[0].plants.iter().all(|pl| g.height(pl.x, pl.z) >= 0.0), "no plant under the sea");
+    }
+
+    #[test]
+    fn a_cliff_over_the_sea_stays_a_cliff() {
+        // The sea up to x = 10, a beach up to 5 m by x = 30 (19 degrees: walkable), the cliff 10 m from the beach's top.
+        let (g, c) = field(|x, _| -2.0 + ((x - 10.0) / 20.0).clamp(0.0, 1.0) * 7.0 + ((x - 40.0) / 5.0).clamp(0.0, 1.0) * 10.0, |_| 0.0);
+        assert_eq!(kept(&run_kind(Kind::Cliffs, &g, &c)).len(), 1);
+        assert!(kept(&run_kind(Kind::Coast, &g, &c)).is_empty(), "too far from the sea");
+    }
+
+    #[test]
+    fn a_tile_away_from_the_sea_has_none_under_0_m() {
+        let (g, mut c) = field(|x, z| sea_cliff(x, z) - 20.0, |_| 0.0);
+        c.has_sea = false;
+        assert_eq!(kept(&run_kind(Kind::Cliffs, &g, &c)).len(), 1, "an inland cliff, all under 0 m");
+        assert!(run_kind(Kind::Coast, &g, &c).is_empty());
+    }
+
+    #[test]
+    fn a_pond_under_the_sea_level_is_not_the_sea() {
+        // 5 m high, a pit to -3 m in the middle with steep sides, away from the edges.
+        let (g, c) = field(|x, z| 5.0 - 8.0 * (1.0 - ((x - 50.0).hypot(z - 30.0) - 8.0) / 3.0).clamp(0.0, 1.0), |_| 0.0);
+        assert!(kept(&run_kind(Kind::Coast, &g, &c)).is_empty());
+    }
+
+    /// 3 m high, a river 10 m wide (its bed at 0 m, its surface at 1 m) with banks 4 m wide on each side (37 degrees).
+    fn river(x: f32, _: f32) -> f32 {
+        let d = (x - 50.0).abs();
+        3.0 * ((d - 5.0) / 4.0).clamp(0.0, 1.0)
+    }
+
+    fn river_depth(x: f32) -> f32 {
+        (1.0 - river(x, 0.0)).max(0.0)
+    }
+
+    #[test]
+    fn a_steep_bank_is_covered_from_the_waters_surface() {
+        let (g, mut c) = field(river, river_depth);
+        c.has_sea = false;
+        let out = run_kind(Kind::Riverbank, &g, &c);
+        let banks = kept(&out);
+        assert_eq!(banks.len(), 2, "{:?}", out.iter().map(|d| (d.state, d.rise)).collect::<Vec<_>>());
+        for d in banks {
+            assert!((d.rise - 2.0).abs() < 0.5, "from the surface (1 m) to the top (3 m): {}", d.rise);
+            assert!(!d.wet.is_empty(), "the waterline band reaches into the water");
+            assert!(d.wet.iter().all(|&i| g.heights[i] >= 1.0 - 0.6 - 1e-3), "no deeper than water_below");
+            assert!(d.plants.iter().all(|pl| g.height(pl.x, pl.z) >= 1.0 - 0.2), "no plant under the water");
+        }
+
+        let cliffs = run_kind(Kind::Cliffs, &g, &c);
+        assert!(kept(&cliffs).is_empty() && cliffs.iter().any(|d| d.state == Some(State::ByWater)), "the banks', not a cliff");
+    }
+
+    #[test]
+    fn a_walkable_bank_is_left_alone() {
+        let (g, mut c) = field(river, river_depth);
+        c.no_go.iter_mut().for_each(|b| *b = false);
+        assert!(run_kind(Kind::Riverbank, &g, &c).is_empty());
     }
 
     #[test]
