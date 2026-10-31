@@ -285,4 +285,4 @@ differ (max 133 levels), dry 800x600 13.7 %, rain 3.2 %, snow 87.5 % (mean 1.6 l
 (mean 2.5 levels); checked by eye. New references in `build/gates_base_perf/` (the previous ones in
 `build/gates_base_perf_before_ingame_2/`), recorded as before (the user's machine, settings without mod packs through
 `WCE_SETTINGS_DIR`), with the editor on a separate desktop; two runs are byte-identical. `shots.sh`'s comparison needs numpy and
-pillow (a throwaway venv, docs: machine notes); without them it reports every shot as differing.
+pillow (in a throwaway venv when the system Python lacks them); without them it reports every shot as differing.
