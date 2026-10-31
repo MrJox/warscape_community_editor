@@ -2,8 +2,8 @@
 //! panel, it takes the kind of terrain (inland cliffs, coast, riverbanks), the parameters, a rock set (of buildings) and a plant set (of
 //! trees), and a seed. Preview finds the differentials and draws them in the viewport (the foot bands green, their cells under the water
 //! cyan, the faces orange, what is left alone red, a mark where each rock and plant would go, the exclusion polygons blue; hovering one says
-//! why); Generate puts the result into `(AUTOGEN) Ground Coverage`, replacing what it held.
-//! The last values are kept in the Tile settings; a tile whose layer has the settings of its last run starts from those.
+//! why); Generate puts the result into the kind's group of `(AUTOGEN) Ground Coverage`, replacing what the group held but its brushed
+//! strokes. The last values are kept in the Tile settings; a tile whose kind's group has the settings of its last run starts from those.
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,7 +15,7 @@ use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour
 use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Kind, Params, RockSize, Seat, State, generate};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
-use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL};
+use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL, kind_group_name};
 
 use crate::settings::{GroundCoverage, SETTINGS_ID, TileSettings};
 use crate::tool::{TileTool, document, document_id};
@@ -81,7 +81,7 @@ impl TileTool {
         self.open_coverage();
         self.load_coverage_values(e);
         if let Some(k) = kind.filter(|&k| k != self.coverage.kind) {
-            self.set_coverage_kind(k);
+            self.set_coverage_kind(e, k);
         }
 
         let name = |s: &str| if s == "-" { String::new() } else { s.to_owned() };
@@ -104,7 +104,7 @@ impl TileTool {
         }
     }
 
-    /// The values for a tile: its layer's last run, else the Tile settings with a new seed.
+    /// The values for a tile, once per tile: its kind's last run, else the Tile settings' with a new seed.
     fn load_coverage_values(&mut self, e: &mut Editor) {
         let id = document_id(e);
         if self.coverage.loaded_for == id {
@@ -112,24 +112,30 @@ impl TileTool {
         }
 
         self.coverage.loaded_for = id;
+        self.load_kind_values(e);
+    }
+
+    /// The kind's values for the tile: its last run (its group's settings), else the Tile settings' sets and (for the cliffs) parameters,
+    /// the kind's defaults otherwise, with a new seed. No preview.
+    fn load_kind_values(&mut self, e: &mut Editor) {
+        let kind = self.coverage.kind;
         self.coverage.preview = None;
-        if let Some(s) = document(e).and_then(|d| d.coverage_settings()) {
+        if let Some(s) = document(e).and_then(|d| d.coverage_settings(kind)) {
             (self.coverage.params, self.coverage.seed, self.coverage.rocks, self.coverage.plants) = (s.params, s.seed, s.rocks, s.plants);
             return;
         }
 
         let s = e.tool_settings::<TileSettings>(SETTINGS_ID).ground_coverage;
-        self.coverage.params = if s.params.is_empty() { Params::default() } else { Params::from_text(&s.params) };
+        self.coverage.params = if s.params.is_empty() || kind != Kind::Cliffs { Params::for_kind(kind) } else { Params::from_text(&s.params) };
         self.coverage.rocks = s.rocks;
         self.coverage.plants = s.plants;
         self.coverage.seed = u64::from((self.random.unit() * 1.0e6) as u32);
     }
 
-    /// Another kind: its default parameters, no preview.
-    fn set_coverage_kind(&mut self, kind: Kind) {
+    /// Another kind, with its values for the tile ([`Self::load_kind_values`]).
+    fn set_coverage_kind(&mut self, e: &mut Editor, kind: Kind) {
         self.coverage.kind = kind;
-        self.coverage.params = Params::for_kind(kind);
-        self.coverage.preview = None;
+        self.load_kind_values(e);
     }
 
     /// Closes the window, and its preview with it (the viewport would go on drawing it).
@@ -168,15 +174,15 @@ impl TileTool {
 
         gui::text_wrapped(&format!(
             "Finds the kind's terrain and puts rocks and plants along its foot (by the water, its waterline) and rocks up its faces, with a \
-             vegetation exclusion polygon around each clump of plants. It all goes into the layer \"{COVERAGE_LAYER}\", replacing what that \
-             layer holds.",
+             vegetation exclusion polygon around each clump of plants. It goes into the kind's group in the layer \"{COVERAGE_LAYER}\", \
+             replacing what the group holds but its brushed strokes.",
         ));
         gui::spacing();
 
         let mut kind = Kind::ALL.iter().position(|&k| k == self.coverage.kind).unwrap_or(0) as i32;
         gui::set_next_item_width(260.0);
         if gui::combo("kind", &mut kind, &["Inland cliffs", "Coast", "Riverbanks"]) {
-            self.set_coverage_kind(Kind::ALL[kind as usize]);
+            self.set_coverage_kind(e, Kind::ALL[kind as usize]);
         }
 
         if gui::is_item_hovered() {
@@ -258,7 +264,7 @@ impl TileTool {
 
         if generate_now {
             self.keep_coverage_values(e);
-            if document(e).is_some_and(|d| d.coverage_items() > 0) {
+            if document(e).is_some_and(|d| d.coverage_items(self.coverage.kind) > 0) {
                 self.coverage.confirm = true;
             } else {
                 let _ = self.generate_coverage(e);
@@ -277,8 +283,12 @@ impl TileTool {
             return;
         }
 
-        let n = document(e).map_or(0, |d| d.coverage_items());
-        gui::text_wrapped(&format!("\"{COVERAGE_LAYER}\" holds {n} item(s). They are replaced, edits made to them by hand too (Ctrl+Z undoes it)."));
+        let n = document(e).map_or(0, |d| d.coverage_items(self.coverage.kind));
+        let group = kind_group_name(self.coverage.kind);
+        gui::text_wrapped(&format!(
+            "\"{COVERAGE_LAYER}\" > \"{group}\" holds {n} item(s) from the last run. They are replaced, edits made to them by hand too (Ctrl+Z \
+             undoes it); the brushed strokes stay.",
+        ));
         if gui::button("Replace") {
             gui::close_current_popup();
             let _ = self.generate_coverage(e);
@@ -408,12 +418,13 @@ impl TileTool {
         let context = self.coverage_context(e)?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
         let (result, _, _) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, settings.params, settings.seed);
-        let c = d.apply_coverage(&result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
+        let c = d.apply_coverage(self.coverage.kind, &result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
 
         // What is in the tile now is the result: the preview would draw over it.
         self.coverage.preview = None;
         e.selection.clear();
-        Ok(format!("ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\"", c.slopes, c.rocks, c.plants, c.exclusions))
+        let group = kind_group_name(self.coverage.kind);
+        Ok(format!("ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\" > \"{group}\"", c.slopes, c.rocks, c.plants, c.exclusions))
     }
 
     /// The preview's lines, into the tool's overlay (only over the tile it was made for).
