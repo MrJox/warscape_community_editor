@@ -493,3 +493,13 @@ the sky and both cloud planes on every face, the bottom face and the side faces'
 at Rome with the vanilla dry weather: +x 0.61 0.62 0.64 (game 0.52 0.55 0.56), -x 0.98 0.95 0.87 (1.11 1.05 0.89), top 1.50 1.41 1.37
 (1.52 1.34 1.22), +z 0.64 0.65 0.66 (0.65 0.64 0.63), -z 0.98 0.92 0.85 (1.02 0.97 0.83); the rest is the clouds' random layout and
 the wind. The river, which reflects the cube, is the game's dark slate now. The cloud grid is the main view's too.
+
+## Projected decals: the scale's sign (2026-10-31, in-game capture)
+
+- TEd writes a `ProjectedDecalInstance`'s `scale` with a negative z (every kit decal: `vector(48, 12, -48)`, `(8, 6, -8)`), and
+  `prop_marker.markers` stores the box's rows with the magnitudes (docs/formats/tile_compile.md). The editor built the decal's box from
+  the signed scale, which turned the texture's v over (the shader's uv is (x + 0.5, 0.5 - z) in the box). On sea_coast/2x2_bb_straight
+  at its campaign placement the beach decals then put their wet, dark sea edge inland and the dry pitted sand by the water; the game
+  draws them the other way round. The editor now draws a decal's box with the scale's magnitudes (`TileDocument::decal_matrix`, the
+  placement preview too); the map context's cache version went to 4 so cached neighbours are rebuilt.
+- ASSUMPTION: a version 5 file (rows carrying the sign) would mirror a decal in game; no Attila tile of the corpus was checked for one.

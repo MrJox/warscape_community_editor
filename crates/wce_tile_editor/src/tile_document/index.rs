@@ -315,6 +315,27 @@ impl Tile {
         matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(s)))
     }
 
+    /// The box a projected decal paints: `world_matrix` with the scale's magnitudes. TEd's decal scales have a negative z (every kit decal);
+    /// the binary's records keep the magnitudes (`prop_marker.markers`, docs/formats/tile_decompile.md "Rotations"), and the signed axis
+    /// turned the texture's v over: on sea_coast/2x2_bb_straight the beach decals' sea edge (dark wet gravel) lay inland and the dry,
+    /// pitted sand by the water, where the game draws them the other way round (in-game capture, 2026-10-31).
+    pub fn decal_matrix(&self, elem: usize) -> Float4x4 {
+        let mut m = self.world_matrix(elem);
+        let s = if self.idx.valid && elem < self.idx.scale.len() {
+            self.idx.scale[elem].map(f64::from)
+        } else {
+            self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x, s.y, s.z])
+        };
+
+        for (c, _) in s.iter().enumerate().filter(|(_, v)| **v < 0.0) {
+            for row in m.m.iter_mut().take(3) {
+                row[c] = -row[c];
+            }
+        }
+
+        m
+    }
+
     /// The model a VEGETATION_INSTANCE is drawn with: its key's, converted for the shown list's climate (the instance's own model when the
     /// converted key has none).
     pub(crate) fn vegetation_instance_model(&self, elem: usize) -> Option<String> {

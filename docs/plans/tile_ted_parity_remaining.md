@@ -41,8 +41,12 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
     - Coast (2026-10-31, a screenshot and two dumps at max settings, sea_coast/2x2_bb_straight at its campaign placement, the camera
       matched): the surf band now matches the game's closely (foam width, whitecaps); found and fixed on the way: the battle's frame is
       turned 180 degrees at that placement, and the editor lit the scene with the sun from the opposite side (5deff33). Left:
-      - **Sand**: the game's beach shows crisp dune ripples and brown patches near the camera; the editor's is smoother and paler
-        (the ground textures or their near detail at the beach: to compare layer by layer).
+      - Done: **sand**. The beach's look is the tile's projected decals (`global_terrain_beach_01`, `beach01blend`, `beach01end`:
+        ripples by the water, a seaweed and pebble band, pitted dry sand), not the ground textures. TEd's decal scales have a
+        negative z; the binary keeps the magnitudes, and the editor's signed axis drew every decal with its texture turned over (the
+        wet edge inland). Decals now take the magnitudes (`TileDocument::decal_matrix`; docs/re/renderer.md "Projected decals").
+        Also found: the game's ground there is ROME_Atlantic (its texture paths in the dump: agri, forest, grass, mud, rock, sand,
+        settlement_1..3, the nine slots of `g_blend_pixel_scale_array`), the battle map cell's climate.
       - **Shallows**: the game's water by the shore is clear over the sand under the foam; the editor's foam band is more opaque.
       - **Horizon (editor only)**: with the map context the far sea bed's chunk seams (the skirts at level-of-detail boundaries, 20
         units down) show as thin dark lines along the horizon through the sea; the game's far ground is its low-resolution height map,
