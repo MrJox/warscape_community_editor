@@ -980,18 +980,54 @@ impl TileProject {
         self.height.as_ref().map_or(0.0, |h| h.sample(self.pixel_x(x_m), self.pixel_z(z_m)))
     }
 
-    /// BOB's `final_heights.dds` of the tile (the heights the game draws), when it is there and not older than the height map, the scene and
-    /// the editor's file (a tile edited since its export would show its old heights).
+    /// BOB's `final_heights.dds` of the tile (the heights the game draws), when it is there and still the tile's: more than 64 m from every
+    /// edge an export is the editing heights (checked on the kit: 0 .. 0.16 m, 0.97 m on an 8 x 8 baked 1.2 % low), so it is current when
+    /// 90 % of samples there agree within 0.25 m or 2 % of the height scale (a tile without such an inside, 1 x 1, takes it). The files'
+    /// times say nothing: the kit's height maps are often minutes newer than their export (the install's copy order).
     pub fn final_heights(&self) -> Option<FinalHeights> {
-        let path = self.dir.join("final_heights.dds");
-        let time = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-        let baked = time(path.clone())?;
-        if ["height_map_0.png", TED_FILE, WCE_FILE].iter().filter_map(|f| time(self.dir.join(f))).any(|t| t > baked) {
-            return None;
+        let f = FinalHeights::parse(&std::fs::read(self.dir.join("final_heights.dds")).ok()?, self.extent_x(), self.extent_z())?;
+        let tol = 0.25f64.max(0.02 * self.height.as_ref().map_or(0.0, |h| h.scale().abs()));
+        let (ex, ez) = (self.extent_x(), self.extent_z());
+        let (mut n, mut ok) = (0, 0);
+        let mut z = 70.0;
+        while z < ez - 70.0 {
+            let mut x = 70.0;
+            while x < ex - 70.0 {
+                n += 1;
+                ok += usize::from((f.at(x, z) - self.height_at(x, z)).abs() <= tol);
+                x += 8.0;
+            }
+
+            z += 8.0;
         }
 
-        FinalHeights::parse(&std::fs::read(path).ok()?, self.extent_x(), self.extent_z())
+        (n == 0 || ok * 10 >= n * 9).then_some(f)
     }
+
+    /// The editing height at a point of the tile with the export's edge fade (`edge_fade` of the distances to the nearest edge across x
+    /// and along z): what the game would draw of the tile as it is now (the map context's open tile, edited live).
+    pub fn faded_height_at(&self, x_m: f64, z_m: f64) -> f64 {
+        let (dx, dz) = (x_m.min(self.extent_x() - x_m), z_m.min(self.extent_z() - z_m));
+        self.height_at(x_m, z_m) * edge_fade(dx) * edge_fade(dz)
+    }
+}
+
+/// The export's weight of a tile's own height at `d` m from a land edge (BOB's final_heights against the editing heights, the kit's
+/// `western_city_rome/small` and `plains/2x2/2x2_aa`, `final_fade_check`): 0 to 2 m, `1 - exp(-(d - 2)^2 / 930)` to 16 m, then through
+/// the measured 0.4087 (24), 0.6253 (32), 0.7959 (40), 0.9067 (48), 0.9674 (56), 0.9933 (63) to 1 from 64 m. ASSUMPTION: a corner takes
+/// the product of its two edges' weights; BOB's corners fade more (0.10 against 0.38 at (32, 32)), its rule not found. Edges linked to the
+/// sea (kept at -20 by the export) are not told apart.
+pub fn edge_fade(d: f64) -> f64 {
+    const KNOTS: [(f64, f64); 8] = [(16.0, 0.1912), (24.0, 0.4087), (32.0, 0.6253), (40.0, 0.7959), (48.0, 0.9067), (56.0, 0.9674), (63.0, 0.9933), (64.0, 1.0)];
+    if d <= 2.0 {
+        return 0.0;
+    }
+
+    if d <= 16.0 {
+        return 1.0 - (-(d - 2.0).powi(2) / 930.0).exp();
+    }
+
+    KNOTS.windows(2).find(|k| d <= k[1].0).map_or(1.0, |k| k[0].1 + (k[1].1 - k[0].1) * (d - k[0].0) / (k[1].0 - k[0].0))
 }
 
 /// BOB's `final_heights.dds`: R32F metres over the tile without its border, sample (i, j) at (i, j) * extent / (n - 1) of the tile's frame.

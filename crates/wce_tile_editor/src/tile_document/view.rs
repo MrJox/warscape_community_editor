@@ -798,12 +798,15 @@ impl Tile {
     pub(crate) fn update_terrain(&mut self, scene: &mut RenderScene, first: bool) {
         // The heights as they were the last time: the grid and the normal map are kept (a paint stroke changes only the ground's maps;
         // making the grid, the normal map and the water again cost a frame each dab on a city).
-        let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile);
+        // In a map context the tile's own heights fade to the LF at its edges as the export's do (`faded_height_at`), as the game would
+        // draw it: a step to the neighbours' faded edges cast a long shadow line.
+        let faded = self.clip_to_tile && self.context_lf.is_some();
+        let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile, faded);
         let same_heights = !first && self.terrain_entity != 0 && self.terrain_grid.as_ref().is_some_and(|(k, _, _)| *k == heights);
 
         // Where the heights changed since (the same field: its data where it was; another one is all new), in the grid's cells.
         let changed = self.project.height.as_mut().and_then(HeightField::take_changed);
-        let same_field = self.terrain_grid.as_ref().is_some_and(|((v, clip), _, _)| v.map(|v| v.0) == heights.0.map(|v| v.0) && *clip == heights.1);
+        let same_field = self.terrain_grid.as_ref().is_some_and(|((v, clip, fade), _, _)| v.map(|v| v.0) == heights.0.map(|v| v.0) && *clip == heights.1 && *fade == heights.2);
         self.heights_changed = changed.filter(|_| same_field && !first && !self.clip_to_tile).map(|(x0, y0, x1, y1)| [x0 as i32, y0 as i32, x1 as i32, y1 as i32]);
         if !same_heights {
             // Landscape rivers lie on the terrain; the link cells are draped over it.
@@ -857,7 +860,12 @@ impl Tile {
                 for (i, h) in row.iter_mut().enumerate() {
                     let x = (px0 + i as i32 * stride).min(px1) as u32;
                     let y = (pz0 + j as i32 * stride).min(pz1) as u32;
-                    *h = (hf.metres(x, y) / unit) as f32;
+                    *h = if faded {
+                        let (xm, zm) = (f64::from(x) * p.mpp_x() - p.border_m(), f64::from(y) * p.mpp_z() - p.border_m());
+                        (p.faded_height_at(xm, zm) / unit) as f32
+                    } else {
+                        (hf.metres(x, y) / unit) as f32
+                    };
                 }
             });
 

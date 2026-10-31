@@ -218,7 +218,7 @@ plains (aa .. ad) elsewhere.
     edge (it had a thin one before).
   - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
 - ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
-  lattice (4.6 cm steps: the 16-bit LF); the alpha feather is synthetic (the tiles' final_alpha is not read); at the far ring's outer edge
+  lattice (4.6 cm steps: the 16-bit LF); the tiles' alpha is the game's per-size texture (below, 2026-10-31); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
   (several arriving in one frame hitch it) - fixed, below.
 - **Uploads off the render thread** (2026-10-21): a streamed chunk's terrains get their GPU side (the patches' vertex buffers, the
@@ -280,6 +280,19 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
   (1 to 2 levels, the compression): the export does not touch the texture weights at the edges; tiles' textures meet through
   `final_alpha`. What the game draws where both neighbours' alpha is near 0 (the map-wide ground: `config.xml`'s default texture groups
   in the cell's climate, the far / outfield maps?) is the engine's side, not traced yet.
+- **The game's alpha** (2026-10-31): the tile loader reads `terrain	extures\%slpha\%dx%d.dds` (the entry's
+  `custom_alpha_blend_texture` instead when it names one: lakes, river mouths, custom mountains), DXT5 over the tile with its border
+  ((cells + 2) * 128 pixels a side, the blend map's grid; `2x3.dds` is 512 wide, 640 high). `ps30_blend` reads its R only
+  (`r * 1.1 - 0.1 < 0` discards): 1 over the tile and an irregular part of its border, falling to 0 32 .. 96 m out in noisy, organic shapes
+  (the four channels are four such outlines), so neighbours overlap and the resolve's division by the weights' sum crossfades them. The
+  map context gives its neighbours this alpha (a straight synthetic 4 m feather made every tile a visible square).
+- **The map context's heights at seams** (2026-10-31): a neighbour is drawn from its `final_heights.dds` when that is still the tile's (90 %
+  of the samples more than 70 m from the edges within 0.25 m or 2 % of the height scale: the export equals the editing heights there; the
+  files' times are useless, the kit's height maps are often minutes newer than their exports); the open tile from its editing heights
+  with the export's fade (`TileProject::faded_height_at`, `edge_fade`), live. Measured fade (`final_fade_check`, western_city_rome/small,
+  plains/2x2/2x2_aa): 0 to 2 m, `1 - exp(-(d - 2)^2 / 930)` to 16 m, then 0.4087 (24), 0.6253 (32), 0.7959 (40), 0.9067 (48), 0.9674 (56),
+  0.9933 (63), 1 from 64. Corners fade more than the product of their edges' weights (0.10 against 0.38 at (32, 32) of plains/2x2): the
+  editor's open tile takes the product (ASSUMPTION), and does not tell sea-linked edges (-20 in the export) apart.
 - The packed tile has `hf_height_map.data` ("CHMF" version 5, 1025 x 1025, min / max floats -20 / 22.1): the game's copy of the final
   heights, presumably. It also has a tree list per climate (`rome_med.tree_list.bin` ...).
 
