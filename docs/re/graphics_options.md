@@ -73,6 +73,29 @@ by fn 0x1144c3b0:
 By video memory (virtual +0x19c, MB): above 1200: 3, above 800: 2, above 600: 1, else 0. Its water techniques are registered in the
 other order (`water_ultra` 0x1f .. `water_low` 0x22, fn 0x113ded70) and how its six levels pick one of the four is not found yet.
 
+## How the engine reads the quality options (Attila; work in progress)
+
+The `gfx_*` option objects (registered by fn 0x100be850 into an array at 0x11db3ec0 by id: texture 0x14, sky 0x16, unit 0x17,
+building 0x18, tree 0x1a, grass 0x1b, terrain 0x1c, effects 0x1e) are only read by the preferences file's code. The renderer reads the
+graphics system's live settings struct, at `DAT_12a21d18 + 0x7164c` (the screen's layout above), through getters of its vtable
+(0x11c9bb70): +0x1b4 shadows (0x71674: ShadowMapView, fn 0x117665e0: map 1024 / 2048 / 2048 and cascades), +0x1b8 unit detail
+(0x7166c), +0x1bc grass (0x7167c), +0x1c0 building (0x71670); trees (0x71678), terrain (0x71694), texture (0x71654) and effects
+(0x71690) are read by offset.
+
+- Per model (fn 0x11841280, model type, battle): the level that applies to a model by a type code at its node's +0x50: building detail
+  by default; 0x40 grass's; 0x49 .. 0x4b, 0x6c unit detail's; 0x5b, 0x5c, 0x6e, 0x6f trees'; 0x69 terrain's (battle). The type codes
+  are not RMV2 material ids (the trees' meshes are 74 / 75, the units' 65, the grass 69, the buildings' 68): which enum is not known.
+- Battle LODs (fn 0x1180c370): at a low level a model's first LODs are switched off (enabled byte +0x44 and distance +0x38 zeroed):
+  types 0x47 / 0x48: level 0 keeps from LOD 2, level 1 from LOD 1; 0x49 .. 0x4b, 0x5b, 0x5c, 0x6c, 0x6e, 0x6f: level 0 from LOD 1; 0x6b:
+  level 0 from LOD 1, else LOD 1 off; 0x41 (with +0x124 off): the last LOD only; the others: all LODs.
+- Campaign LOD distances (fn 0x117fbd00, the campaign levels): scale 0.25 / 0.5 / 0.75 / 1 by level (type 0x40: 0.15 / 0.25 / 0.5 / 1).
+- Effects (fns 0x118f6290, 0x1191a170): fn 0x118f0a30 maps the level to 2 (levels 0, 1), 1 (2), 0 (3+) for the particle systems.
+- Texture quality also sets the tree impostors' step (fn 0x11924370: 0.1 / 0.1 / 0.05 / 0.025, size 1024).
+
+Not found yet: the grass density per level (the kit's `max_grass.xml` holds one density; the engine's `grass_low / med / hi_max_threshold`
+tweakables, 0.4 / 0.65 / 1.0, are not read by any code found), what the effects' 2 / 1 / 0 drive, the texture quality's mip drop,
+and the type codes' enum.
+
 ## What the editor applies
 
 - Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
