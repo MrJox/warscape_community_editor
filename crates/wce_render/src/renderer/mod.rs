@@ -1201,6 +1201,7 @@ impl Renderer {
         let effects = if self.game == game::RenderGame::Rome2 { 3 } else { self.settings.effects_quality };
         if self.effects_applied != Some(effects) {
             wce_assets::vfx_def::set_quality(effects);
+            self.particles.set_limit(effects);
             if self.effects_applied.is_some() {
                 self.particles.reload_definitions();
                 self.vfx_scene = (0, u64::MAX, 0, 0, 0, 0);

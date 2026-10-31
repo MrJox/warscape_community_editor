@@ -602,6 +602,9 @@ pub struct ParticleSystem {
     cb_ps_sim: Option<ID3D11Buffer>,
     spawn_vb: Option<ID3D11Buffer>,
     spawn_capacity: usize,
+
+    /// The most particles alive (gfx_effects_quality: [`Particles::set_limit`]).
+    limit: u32,
     s_linear_clamp: Option<ID3D11SamplerState>,
     s_linear_wrap: Option<ID3D11SamplerState>,
     s_point_clamp: Option<ID3D11SamplerState>,
@@ -697,6 +700,7 @@ impl ParticleSystem {
             cb_ps_sim: None,
             spawn_vb: None,
             spawn_capacity: 0,
+            limit: WIDTH * WIDTH,
             s_linear_clamp: None,
             s_linear_wrap: None,
             s_point_clamp: None,
@@ -745,7 +749,13 @@ impl ParticleSystem {
     }
 
     pub fn capacity(&self) -> u32 {
-        WIDTH * WIDTH
+        self.limit.min(WIDTH * WIDTH)
+    }
+
+    /// The most particles alive: the game's particle buffer by gfx_effects_quality (fn 0x118f96a0, docs/re/graphics_options.md): 512^2
+    /// at the highest level (the dumps' width at maximum settings), 256^2 below.
+    pub fn set_limit(&mut self, effects_quality: i32) {
+        self.limit = if effects_quality >= 3 { WIDTH * WIDTH } else { 256 * 256 };
     }
 
     pub fn errors(&self) -> &[String] {
