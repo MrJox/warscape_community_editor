@@ -743,12 +743,22 @@ fn summary_of(result: &[Differential]) -> String {
     let kept = result.iter().filter(|d| d.kept()).collect::<Vec<_>>();
     let count = |f: fn(&State) -> bool| result.iter().filter(|d| d.state.as_ref().is_some_and(f)).count();
     let (low, small) = (count(|s| matches!(s, State::TooLow(_))), count(|s| matches!(s, State::TooSmall(_))));
+
+    // How low the too low ones are (what "rise at least" would have to come down to), from the lowest to the highest.
+    let mut rises = result.iter().filter_map(|d| match d.state { Some(State::TooLow(r)) => Some(r), _ => None }).collect::<Vec<_>>();
+    rises.sort_unstable_by(f32::total_cmp);
+    let low = match (rises.first(), rises.get(rises.len() / 2), rises.last()) {
+        (Some(a), Some(m), Some(b)) if rises.len() > 1 => format!("{low} too low ({a:.1} .. {b:.1} m, half under {m:.1} m)"),
+        (Some(a), _, _) => format!("{low} too low ({a:.1} m)"),
+        _ => format!("{low} too low"),
+    };
+
     let water = count(|s| matches!(s, State::ByWater));
     let by_water = if water == 0 { String::new() } else { format!(", {water} by the water (Coast, Riverbanks)") };
     let around = kept.iter().filter(|d| d.avoided != 0).count();
     format!(
-        "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s), {around} of them around buildings; left alone: {low} too \
-         low, {small} too small{by_water}.",
+        "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s), {around} of them around buildings; left alone: {low}, \
+         {small} too small{by_water}.",
         result.len(), kept.len(), kept.iter().map(|d| d.rocks.len()).sum::<usize>(), kept.iter().map(|d| d.plants.len()).sum::<usize>(),
         kept.iter().map(|d| d.exclusions.len()).sum::<usize>(),
     )
