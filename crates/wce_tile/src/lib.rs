@@ -10,6 +10,7 @@ pub mod brush_image;
 pub mod building_db;
 pub mod falloff;
 pub mod ground_coverage;
+pub mod ground_coverage_presets;
 pub mod ground_type_field;
 pub mod ground_types;
 pub mod height_field;

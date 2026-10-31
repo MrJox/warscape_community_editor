@@ -1,11 +1,13 @@
 //! The automatic ground coverage's window (experimental; `wce_tile::ground_coverage`, `TileDocument::apply_coverage`): opened from the Tile
-//! panel, it takes the kind of terrain (inland cliffs, coast, riverbanks), the parameters, a rock set (of buildings) and a plant set (of
-//! trees), and a seed. Preview finds the differentials and draws them in the viewport (the foot bands green, their cells under the water
+//! panel, a tab per kind of terrain (inland cliffs, coast, riverbanks), each with its presets (`wce_tile::ground_coverage_presets`: the
+//! parameters, a rock set of buildings and a plant set of trees; saved, saved as, deleted here), and a seed. Preview finds the differentials and draws them in the viewport (the foot bands green, their cells under the water
 //! cyan, the faces orange, what is left alone red, a mark where each rock and plant would go, the exclusion polygons blue; hovering one says
 //! why); Generate puts the result into the kind's group of `(AUTOGEN) Ground Coverage`, replacing what the group held but its brushed
-//! strokes. The last values are kept in the Tile settings; a tile whose kind's group has the settings of its last run starts from those.
+//! strokes. A tile whose kind's group has the settings of its last run starts from those, else from the kind's last preset (the Tile
+//! settings remember it).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
@@ -13,11 +15,12 @@ use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
 use wce_tile::ground_coverage::{Context, Differential, Grid, Input, Kind, Params, RockSize, Seat, State, generate};
+use wce_tile::ground_coverage_presets::{Preset, of_kind, presets_root, scan};
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL, kind_group_name};
 
-use crate::settings::{GroundCoverage, SETTINGS_ID, TileSettings};
+use crate::settings::{SETTINGS_ID, TileSettings};
 use crate::tool::{TileTool, document, document_id};
 
 /// The window's state.
@@ -30,7 +33,21 @@ pub struct CoverageUi {
     pub rocks: String,
     pub plants: String,
 
-    /// The tile the values were read for (the layer's settings, else the Tile settings).
+    /// The preset the values came from (they may have been changed since): `Default` for the kind's built-in one; empty: none known
+    /// (a run of the first version's).
+    pub preset: String,
+
+    /// The presets' files, read on first use and again after a change.
+    presets: Option<Arc<Vec<Preset>>>,
+
+    /// Save as: the name being typed. Delete: asked whether to.
+    save_as: Option<String>,
+    delete_ask: bool,
+
+    /// The kind changed from elsewhere (a script): the tab bar selects its tab on the next frame.
+    select_tab: bool,
+
+    /// The tile the values were read for (its kind's group's settings, else the kind's last preset).
     loaded_for: Option<DocumentId>,
 
     pub preview: Option<Preview>,
@@ -71,21 +88,25 @@ impl TileTool {
         self.coverage.open = true;
     }
 
-    /// The window from a script: its sets (`-`: none), seed (else the tile's) and kind (else the window's; another one starts from its
-    /// defaults), then Preview (the summary) or Generate (without asking).
+    /// The window from a script: the kind, its preset (by name, `Default` the built-in one; `-`: the values the window starts from for the
+    /// tile) and the seed (else the values'), then Preview (the summary) or Generate (without asking).
     ///
     /// # Errors
     ///
-    /// Not `preview` or `generate`, no set, or the generation failed.
-    pub fn coverage_for_script(&mut self, e: &mut Editor, what: &str, rocks: &str, plants: &str, seed: Option<u64>, kind: Option<Kind>) -> Result<String, String> {
+    /// Not `preview` or `generate`, no such preset, no set, or the generation failed.
+    pub fn coverage_for_script(&mut self, e: &mut Editor, what: &str, kind: Kind, preset: &str, seed: Option<u64>) -> Result<String, String> {
         self.open_coverage();
         self.load_coverage_values(e);
-        if let Some(k) = kind.filter(|&k| k != self.coverage.kind) {
-            self.set_coverage_kind(e, k);
+        if kind != self.coverage.kind {
+            self.set_coverage_kind(e, kind);
+            self.coverage.select_tab = true;
         }
 
-        let name = |s: &str| if s == "-" { String::new() } else { s.to_owned() };
-        (self.coverage.rocks, self.coverage.plants) = (name(rocks), name(plants));
+        if preset != "-" {
+            let p = self.find_preset(e, kind, preset).ok_or_else(|| format!("ground coverage: no {} preset '{preset}'", kind.name()))?;
+            self.use_preset(e, &p);
+        }
+
         if let Some(s) = seed {
             self.coverage.seed = s;
         }
@@ -104,7 +125,7 @@ impl TileTool {
         }
     }
 
-    /// The values for a tile, once per tile: its kind's last run, else the Tile settings' with a new seed.
+    /// The values for a tile, once per tile ([`Self::load_kind_values`]).
     fn load_coverage_values(&mut self, e: &mut Editor) {
         let id = document_id(e);
         if self.coverage.loaded_for == id {
@@ -115,20 +136,21 @@ impl TileTool {
         self.load_kind_values(e);
     }
 
-    /// The kind's values for the tile: its last run (its group's settings), else the Tile settings' sets and (for the cliffs) parameters,
-    /// the kind's defaults otherwise, with a new seed. No preview.
+    /// The kind's values for the tile: its last run (its group's settings), else its last preset (the built-in one when there is none or
+    /// it went) with a new seed. No preview.
     fn load_kind_values(&mut self, e: &mut Editor) {
         let kind = self.coverage.kind;
         self.coverage.preview = None;
+        (self.coverage.save_as, self.coverage.delete_ask) = (None, false);
         if let Some(s) = document(e).and_then(|d| d.coverage_settings(kind)) {
-            (self.coverage.params, self.coverage.seed, self.coverage.rocks, self.coverage.plants) = (s.params, s.seed, s.rocks, s.plants);
+            let c = &mut self.coverage;
+            (c.params, c.seed, c.rocks, c.plants, c.preset) = (s.params, s.seed, s.rocks, s.plants, s.preset);
             return;
         }
 
-        let s = e.tool_settings::<TileSettings>(SETTINGS_ID).ground_coverage;
-        self.coverage.params = if s.params.is_empty() || kind != Kind::Cliffs { Params::for_kind(kind) } else { Params::from_text(&s.params) };
-        self.coverage.rocks = s.rocks;
-        self.coverage.plants = s.plants;
+        let last = e.tool_settings::<TileSettings>(SETTINGS_ID).ground_coverage.last_preset.get(kind.name()).cloned().unwrap_or_default();
+        let p = self.find_preset(e, kind, &last).unwrap_or_else(|| Preset::builtin(kind));
+        self.use_preset(e, &p);
         self.coverage.seed = u64::from((self.random.unit() * 1.0e6) as u32);
     }
 
@@ -138,15 +160,87 @@ impl TileTool {
         self.load_kind_values(e);
     }
 
+    /// The folder of the presets: the projects'.
+    fn presets_folder(e: &mut Editor) -> std::path::PathBuf {
+        presets_root(&Self::workspace_dir(e).join("raw_data"))
+    }
+
+    /// The presets' files, read on first use and again after a change.
+    fn coverage_presets(&mut self, e: &mut Editor) -> Arc<Vec<Preset>> {
+        if let Some(p) = &self.coverage.presets {
+            return p.clone();
+        }
+
+        let p = Arc::new(scan(&Self::presets_folder(e)));
+        self.coverage.presets = Some(p.clone());
+        p
+    }
+
+    /// A kind's preset by its name (`Default`: the built-in one).
+    fn find_preset(&mut self, e: &mut Editor, kind: Kind, name: &str) -> Option<Preset> {
+        of_kind(&self.coverage_presets(e), kind).into_iter().find(|p| p.name == name)
+    }
+
+    /// The preset's values (not the seed), remembered as the kind's last. No preview.
+    fn use_preset(&mut self, e: &mut Editor, p: &Preset) {
+        let c = &mut self.coverage;
+        (c.params, c.rocks, c.plants, c.preset) = (p.params, p.rocks.clone(), p.plants.clone(), p.name.clone());
+        c.preview = None;
+        self.remember_preset(e);
+    }
+
+    /// The preset in use is the kind's last.
+    fn remember_preset(&self, e: &mut Editor) {
+        if self.coverage.preset.is_empty() {
+            return;
+        }
+
+        let (kind, name) = (self.coverage.kind.name().to_owned(), self.coverage.preset.clone());
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
+            s.ground_coverage.last_preset.insert(kind, name);
+        });
+    }
+
+    /// Writes the values to the preset in use (a file), or to a new one named `name`; then it is the one in use.
+    fn save_preset(&mut self, e: &mut Editor, name: Option<&str>) -> Result<String, String> {
+        let kind = self.coverage.kind;
+        let path = match name {
+            Some(n) => {
+                let n = crate::veg_sets::set_file_name(n)?;
+                let path = Self::presets_folder(e).join(format!("{n}.wce"));
+                if path.exists() {
+                    return Err(format!("there is a preset '{n}' already: pick it and Save"));
+                }
+
+                path
+            }
+
+            None => self.find_preset(e, kind, &self.coverage.preset.clone()).and_then(|p| p.path).ok_or("the built-in preset can't be saved: Save as")?,
+        };
+
+        let c = &self.coverage;
+        let p = Preset { name: String::new(), folder: String::new(), path: Some(path.clone()), kind, params: c.params, rocks: c.rocks.clone(), plants: c.plants.clone() };
+        p.save()?;
+        self.coverage.presets = None;
+        self.coverage.preset = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        self.remember_preset(e);
+        Ok(format!("ground coverage: preset saved ({})", path.display()))
+    }
+
+    /// Deletes the preset in use (a file); the built-in one is used then.
+    fn delete_preset(&mut self, e: &mut Editor) -> Result<String, String> {
+        let kind = self.coverage.kind;
+        let path = self.find_preset(e, kind, &self.coverage.preset.clone()).and_then(|p| p.path).ok_or("the built-in preset can't be deleted")?;
+        std::fs::remove_file(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        self.coverage.presets = None;
+        self.use_preset(e, &Preset::builtin(kind));
+        Ok(format!("ground coverage: preset deleted ({})", path.display()))
+    }
+
     /// Closes the window, and its preview with it (the viewport would go on drawing it).
     fn close_coverage(&mut self) {
         self.coverage.open = false;
         self.coverage.preview = None;
-    }
-
-    fn keep_coverage_values(&self, e: &mut Editor) {
-        let c = GroundCoverage { params: self.coverage.params.to_text(), rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
-        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.ground_coverage = c);
     }
 
     /// The window.
@@ -179,21 +273,38 @@ impl TileTool {
         ));
         gui::spacing();
 
-        let mut kind = Kind::ALL.iter().position(|&k| k == self.coverage.kind).unwrap_or(0) as i32;
-        gui::set_next_item_width(260.0);
-        if gui::combo("kind", &mut kind, &["Inland cliffs", "Coast", "Riverbanks"]) {
-            self.set_coverage_kind(e, Kind::ALL[kind as usize]);
+        // The tabs follow the kind (a script may set it), and set it when clicked.
+        let mut picked = None;
+        if gui::begin_tab_bar("##coveragekinds") {
+            for k in Kind::ALL {
+                let select = self.coverage.select_tab && k == self.coverage.kind;
+                if gui::begin_tab_item(kind_title(k), if select { gui::TAB_SET_SELECTED } else { 0 }) {
+                    picked = Some(k);
+                    gui::end_tab_item();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(kind_tip(k));
+                }
+            }
+
+            gui::end_tab_bar();
         }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip(kind_tip(self.coverage.kind));
+        match picked {
+            Some(k) if self.coverage.select_tab && k == self.coverage.kind => self.coverage.select_tab = false,
+            Some(k) if !self.coverage.select_tab && k != self.coverage.kind => self.set_coverage_kind(e, k),
+            _ => {}
         }
 
+        self.preset_rows(e);
         let sets = self.vegetation_sets(e);
         set_combo("rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
         set_combo("plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
         if !sets.iter().any(|s| s.kind == SetKind::Building) {
+            gui::push_text_wrap_pos(0.0);
             gui::text_disabled("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
+            gui::pop_text_wrap_pos();
         }
 
         let changed = params_rows(self.coverage.kind, &mut self.coverage.params);
@@ -229,12 +340,6 @@ impl TileTool {
             clear = gui::button("Clear preview");
         }
 
-        gui::same_line();
-        if gui::button("Defaults") {
-            self.coverage.params = Params::default();
-            self.coverage.preview = None;
-        }
-
         // A preview of other values is not what Generate would make: it goes.
         if (changed || reseeded) && self.coverage.preview.is_some() {
             self.coverage.preview = None;
@@ -255,7 +360,7 @@ impl TileTool {
         }
 
         if preview {
-            self.keep_coverage_values(e);
+            self.remember_preset(e);
             match self.compute_coverage(e) {
                 Ok(p) => self.coverage.preview = Some(p),
                 Err(err) => self.status = err,
@@ -263,7 +368,7 @@ impl TileTool {
         }
 
         if generate_now {
-            self.keep_coverage_values(e);
+            self.remember_preset(e);
             if document(e).is_some_and(|d| d.coverage_items(self.coverage.kind) > 0) {
                 self.coverage.confirm = true;
             } else {
@@ -272,6 +377,87 @@ impl TileTool {
         }
 
         self.draw_coverage_confirm(e);
+    }
+
+    /// The preset in use (and whether the values are still its), the others to pick, and Save, Save as, Delete.
+    fn preset_rows(&mut self, e: &mut Editor) {
+        let kind = self.coverage.kind;
+        let presets = of_kind(&self.coverage_presets(e), kind);
+        let current = presets.iter().find(|p| p.name == self.coverage.preset).cloned();
+        let c = &self.coverage;
+        let label = |p: &Preset| if p.is_builtin() { format!("{} (built in)", p.name) } else if p.folder.is_empty() { p.name.clone() } else { format!("{}   {}", p.name, p.folder) };
+        let shown = match &current {
+            Some(p) if p.same_values(&c.params, &c.rocks, &c.plants) => label(p),
+            Some(p) => format!("{} (changed)", label(p)),
+            None if c.preset.is_empty() => "none (the tile's last run)".to_owned(),
+            None => format!("{} (not found)", c.preset),
+        };
+
+        let mut pick = None;
+        gui::set_next_item_width(260.0);
+        if gui::begin_combo("preset", &shown) {
+            for p in &presets {
+                if gui::selectable(&label(p), p.name == c.preset, 0) {
+                    pick = Some(p.clone());
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        if let Some(p) = pick {
+            self.use_preset(e, &p);
+        }
+
+        let file = current.as_ref().is_some_and(|p| !p.is_builtin());
+        let mut result = None;
+        if let Some(mut name) = self.coverage.save_as.take() {
+            gui::set_next_item_width(200.0);
+            let enter = gui::input_text("##presetname", Some("the new preset's name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+            gui::same_line();
+            let ok = gui::small_button("Save") || enter;
+            gui::same_line();
+            if ok && !name.trim().is_empty() {
+                result = Some(self.save_preset(e, Some(&name)));
+            } else if !gui::small_button("Cancel") {
+                self.coverage.save_as = Some(name);
+            }
+        } else if self.coverage.delete_ask {
+            gui::text_colored(theme::warning(), &format!("Delete the preset '{}'?", self.coverage.preset));
+            gui::same_line();
+            if gui::small_button("Delete") {
+                result = Some(self.delete_preset(e));
+                self.coverage.delete_ask = false;
+            }
+
+            gui::same_line();
+            if gui::small_button("Cancel") {
+                self.coverage.delete_ask = false;
+            }
+        } else {
+            gui::begin_disabled(!file);
+            if gui::small_button(&format!("{}  Save", icons::SAVE)) {
+                result = Some(self.save_preset(e, None));
+            }
+
+            gui::end_disabled();
+            gui::same_line();
+            if gui::small_button("Save as...") {
+                self.coverage.save_as = Some(String::new());
+            }
+
+            gui::same_line();
+            gui::begin_disabled(!file);
+            if gui::small_button(&format!("{}  Delete", icons::X)) {
+                self.coverage.delete_ask = true;
+            }
+
+            gui::end_disabled();
+        }
+
+        if let Some(r) = result {
+            self.status = r.unwrap_or_else(|err| err);
+        }
     }
 
     fn draw_coverage_confirm(&mut self, e: &mut Editor) {
@@ -413,7 +599,8 @@ impl TileTool {
 
     fn generate_coverage_into(&mut self, e: &mut Editor) -> Result<String, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
-        let settings = CoverageSettings { params: self.coverage.params, seed: self.coverage.seed, rocks: self.coverage.rocks.clone(), plants: self.coverage.plants.clone() };
+        let c = &self.coverage;
+        let settings = CoverageSettings { params: c.params, seed: c.seed, rocks: c.rocks.clone(), plants: c.plants.clone(), preset: c.preset.clone() };
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
@@ -590,6 +777,15 @@ fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
     }
 }
 
+/// A kind's tab.
+fn kind_title(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Cliffs => "Inland cliffs",
+        Kind::Coast => "Coast",
+        Kind::Riverbank => "Riverbanks",
+    }
+}
+
 /// What a kind of terrain is, for its tooltip.
 fn kind_tip(kind: Kind) -> &'static str {
     match kind {
@@ -637,7 +833,9 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
 
     gui::separator_text("Slopes");
     if kind.by_water() {
+        gui::push_text_wrap_pos(0.0);
         gui::text_disabled("Where units can't walk (the game's no-go areas, steeper than 30 deg), by the water.");
+        gui::pop_text_wrap_pos();
         f("from the water", &mut p.water_reach, 0.1, 0.0, 50.0, "%.1f m", "How far from the water the no-go ground may be to count");
         f("under the water", &mut p.water_below, 0.05, 0.0, 10.0, "%.1f m", "How deep into the water the waterline band goes (rocks only)");
     } else {
@@ -723,7 +921,9 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
     };
 
     f("clearance", &mut p.building_clearance, 0.05, 0.0, 50.0, "%.1f m", "What every rock and plant keeps from a building's footprint");
+    gui::push_text_wrap_pos(0.0);
     gui::text_disabled("Gone around: houses, fort walls, towers, gates, bridges. Not rocks, props or ground pieces.");
+    gui::pop_text_wrap_pos();
 
     gui::separator_text("Vegetation exclusion");
     let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {

@@ -164,13 +164,12 @@ impl LaunchArmy {
     }
 }
 
-/// The ground coverage's window (`ground_coverage_panel.rs`): its parameters (`Params::to_text`; empty: the defaults) and sets.
+/// The ground coverage's window (`ground_coverage_panel.rs`): the last preset of each kind (by the kinds' names: `cliffs`, `coast`,
+/// `riverbank`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GroundCoverage {
-    pub params: String,
-    pub rocks: String,
-    pub plants: String,
+    pub last_preset: BTreeMap<String, String>,
 }
 
 /// What new things stand on (`placement_modes.rs`).

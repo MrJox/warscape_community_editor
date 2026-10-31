@@ -267,7 +267,7 @@ impl TileTool {
 }
 
 /// A set's name as its file's: trimmed, not empty, with no character or name a file system refuses (Windows' the strictest).
-fn set_file_name(name: &str) -> Result<&str, String> {
+pub(crate) fn set_file_name(name: &str) -> Result<&str, String> {
     const RESERVED: [&str; 22] = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
     let name = name.trim();
     let bad = name.is_empty()

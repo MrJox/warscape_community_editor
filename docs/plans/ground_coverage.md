@@ -112,8 +112,11 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
    run of any kind (what was put in the layer by hand stays); their settings stay on the layer (an attribute can't be taken away), read
    for the cliffs until `Cliffs` has its own. A run that finds nothing still makes its group (it keeps the settings). The fill's spacing
    from the brushed items comes with the brush (step 5).
-4. **Presets.** The file format, scan, built-ins, the window's kind tabs and preset combo; the script command becomes
-   `ground_coverage <preview|generate> <kind> <preset|-> [seed]`.
+4. **Presets** (done). `wce_tile::ground_coverage_presets` (file, scan, a built-in `Default` per kind); the window's kind tabs, preset
+   combo (shows "(changed)" when the values are no longer the preset's), Save, Save as, Delete; the kind's group keeps the preset's name
+   (`wce_autogen_preset`); the Tile settings keep the last preset per kind (the old last parameters and sets are dropped). Script:
+   `ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]` (`-`: the tile's last run, else the kind's last
+   preset).
 5. **Brush.** The mode, the stroke (scatter, preview, commit to `Stroke N` with its polygons), Ctrl erase, the bands overlay.
 6. **Check in the app** on kit tiles with a coast and a river (the user), then tune each kind's defaults.
 
