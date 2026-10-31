@@ -449,9 +449,14 @@ impl Renderer {
                     bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
                 }
 
-                for n in ["s_diffuse_map_clamp", "s_normal", "s_shroud"] {
-                    bind_sampler(ctx, &ps, n, self.states.s_clamp_linear.as_ref());
+                // The decal material's diffuse and normal samplers are the texture-quality class (fn 0x116e7430: vtable 0x11c8bab8, the
+                // texture filtering setting: anisotropic), clamped or wrapped; the plain trilinear clamp blurred the decals at low angles
+                // (the beach, the camp's planks).
+                for n in ["s_diffuse_map_clamp", "s_normal"] {
+                    bind_sampler(ctx, &ps, n, self.states.s_clamp_aniso.as_ref());
                 }
+
+                bind_sampler(ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
             }
 
             let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));

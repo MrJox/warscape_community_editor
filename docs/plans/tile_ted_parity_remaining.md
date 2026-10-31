@@ -48,12 +48,13 @@ Captures, the cameras read from the dumps, the editor's matching renders and the
         "Projected decals: which pixel shader"; also gen_dun_medium_final_2's smeared roads).
         Also found: the game's ground there is ROME_Atlantic (its texture paths in the dump: agri, forest, grass, mud, rock, sand,
         settlement_1..3, the nine slots of `g_blend_pixel_scale_array`), the battle map cell's climate.
-      - **Shallows** (open): the game's water by the shore is clear over the sand under the foam; the editor's foam band is more
-        opaque. Ruled out (2026-10-31): the water constants (`g_sea_bed_light_scatter`, `g_refraction_light_scatter`,
-        `g_deep_water_colour`, `g_transparency_exponential_scale` equal the game's dump), the ground under the shore (the editor's
-        heights along the camera's line equal the game's sea bed texture from coast.rdc within 0.1 - 0.2 m, its 0 m line at the same
-        place) and the waves' phase (captures 5 s apart: the waterline does not move). Left: the shading's inputs (the refraction
-        copy, the shadowed shader variant); needs the game's frame at that view (RenderDoc runs out of memory at max settings).
+      - Done: **shallows**. The look was the sand, not the water: the decal pass sampled its diffuse and normal maps with a plain
+        trilinear clamp, where the game's decal material takes the texture-quality (anisotropic) samplers (fn 0x116e7430), so the beach
+        blurred at the low angle up to and under the water's edge. Ruled out on the way: the water constants (equal to the dump's), the
+        ground under the shore (the editor's heights equal the game's sea bed texture within 0.1 - 0.2 m), the waves' phase, the
+        refraction copy (the game's is half resolution too, 960 x 540, coast.rdc event 879). The sea mesh is also finer near the camera
+        now (0.5 m cells, as the game's radial rings), though at this view it changed nothing visible. Left: the game's waterline
+        shows small steps from its 8-bit, 2 m sea bed texture (the editor's is exact float heights).
       - Done: **horizon**. The dark slivers were sea pixels with no ground behind them: the fog reads `gbuffer_channel_4`, which the
         game's is its depth buffer cleared to 1 (the far plane) and the editor's an R32F target cleared to 0 (the near plane: no fog).
         It is cleared to 1 now (docs/re/renderer.md "G-buffer channel 4"). Also: the sea reaches 28.8 km as the game's mesh (the lone

@@ -54,8 +54,14 @@ const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
 /// The sea quadtree: its leaves are `CHUNK_CELLS` cells a side; a node is split while the camera is nearer than `SPLIT_DISTANCE`
-/// times its size (game units), down to `CHUNK_SIZE` (4 m cells).
+/// times its size (game units), down to `MIN_CHUNK` (0.5 m cells). The planes are laid out in `CHUNK_SIZE` squares first.
 const CHUNK_SIZE: f32 = 128.0;
+
+/// The smallest leaf: 0.5 m cells within about 24 m of the camera, 1 m to 48, 2 m to 96, 4 m to 192, as the game's radial mesh's rings
+/// (0.5 m to 32 m from its centre, 1 m to 64, 2 m to 96, 4 m to 128; RenderDoc, docs/re/water.md). With 4 m cells everywhere near the
+/// camera the shore's waterline (where the vertex shader sinks the sea under land) was smeared over 4 m triangles: the sea reached up the
+/// beach as a thin, blurred film where the game's edge is sharp.
+const MIN_CHUNK: f32 = 16.0;
 const CHUNK_CELLS: u32 = 32;
 const SPLIT_DISTANCE: f32 = 1.5;
 
@@ -101,7 +107,7 @@ impl SeaNode {
     fn splits(&self, eye: Float3, y: f32) -> bool {
         let size = self.w.max(self.h);
         let (dx, dz) = ((self.x0 - eye.x).max(eye.x - self.x0 - self.w).max(0.0), (self.z0 - eye.z).max(eye.z - self.z0 - self.h).max(0.0));
-        size > CHUNK_SIZE && (dx * dx + dz * dz + (eye.y - y) * (eye.y - y)).sqrt() < SPLIT_DISTANCE * size
+        size > MIN_CHUNK && (dx * dx + dz * dz + (eye.y - y) * (eye.y - y)).sqrt() < SPLIT_DISTANCE * size
     }
 
     fn contains(&self, x: f32, z: f32) -> bool {
@@ -535,7 +541,7 @@ impl Renderer {
 
                 // Per edge (west, east, south, north): how many of this chunk's cells one of the neighbour's spans (the neighbour leaf at
                 // the edge's middle; a larger one spans the whole edge).
-                let (step, half) = (0.25 * CHUNK_SIZE / CHUNK_CELLS as f32, (0.5 * n.w, 0.5 * n.h));
+                let (step, half) = (0.25 * MIN_CHUNK / CHUNK_CELLS as f32, (0.5 * n.w, 0.5 * n.h));
                 let ratio = |x: f32, z: f32| leaf_width_at(root, x, z, eye, p.y).filter(|&w| w > n.w * 1.001).map_or(1, |w| (w / n.w).round() as u32);
                 let edges = [
                     ratio(n.x0 - step, n.z0 + half.1), ratio(n.x0 + n.w + step, n.z0 + half.1),
