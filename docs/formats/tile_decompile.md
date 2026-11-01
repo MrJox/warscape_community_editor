@@ -152,7 +152,10 @@ the rows at 0, 1/8 .. 6/8 of the length.
   0.5 m lead-in segment holds them.
 - Over the packs' meshes (`examples/river_fit_check.rs`: Rome 2's 283 with a river block, 69,573 rows; Attila's 228, 9,512 rows) every
   row lies within 1.9 cm of the fitted curves, with its width, flow and foam, and its alpha within 0.002. Rome 2's rivers come out at
-  about 13 rows a segment (a 2x2 river tile: 9 to 11 points), Attila's at under 2 (its rows are sparse).
+  about 13 rows a segment (a 2x2 river tile: 9 to 11 points), Attila's at under 2 (its rows are sparse). Thrones of Britannia's 155
+  (within 1.6 cm) are Attila's type 90 but five that keep Rome 2's type 48 (`river_ford/2x2_lt_tl_ford`, `2x2_lt_tr_ford`,
+  `2x2_tl_rb_ford`, `2x2_tl_rt_ford`, the campaign's `sea_coast/16x19_nile_eastbank`): read either way, an edited river is written in
+  the game's own format (Attila's for Thrones of Britannia).
 - Written as TEd's (`decompile::river_nodes`): a layer `Decompiled rivers` of `SplineRiverInstance`s (freeform, at their first point,
   the points relative) and their `river_spline<n>.xml`. The scene's x and z are the file's doubled and its widths too
   (`wce_tile::river_files`); its heights the file's (the factor 1 of TEd's older rivers, which the editor's save keeps).
