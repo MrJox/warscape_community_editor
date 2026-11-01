@@ -738,9 +738,10 @@ impl Renderer {
 
             self.ctx.set_rasterizer_state(rs_shadow.as_ref());
 
-            // Rome 2 culls the rigid casters' back faces (a capture of a battle: CullMode BACK, depth bias 1, slope 2, as its terrain; only the
-            // swaying vegetation draws two-sided). Two-sided, a roof's own top was in the map and shaded it in bands.
-            let rs_shadow_rigid = if rome2 { rs_shadow_terrain.clone() } else { rs_shadow.clone() };
+            // Rome 2 culls the rigid casters' light-facing faces (a capture of a battle: CullMode BACK in its light space, depth bias 1, slope 2;
+            // only the swaying vegetation draws two-sided). The editor's light space is mirrored against the game's (front faces are the
+            // light-facing ones here): FRONT. Two-sided, or culling the other side, a roof's own top was in the map and shaded it in bands.
+            let rs_shadow_rigid = if rome2 { self.states.rs_shadow_rome2_front.clone() } else { rs_shadow.clone() };
 
             let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
             let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));

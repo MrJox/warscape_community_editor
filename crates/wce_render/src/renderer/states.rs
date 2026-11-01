@@ -29,9 +29,12 @@ pub(crate) struct States {
     pub rs_shadow_terrain: Option<ID3D11RasterizerState>,
     /// Rome 2's (fn 0x11456f70): DepthBias 1, SlopeScaledDepthBias 2.
     pub rs_shadow_rome2: Option<ID3D11RasterizerState>,
-    /// Rome 2's baked shadow map (shadow_baked.rs): no constant bias (its offset is in the projection), a slope-scaled one for sloped
+    /// Rome 2's baked shadow map (shadow_baked.rs): its light-facing faces culled (its projection's handedness: BACK; FRONT shaded the
+    /// roofs), no constant bias (its offset is in the projection), a slope-scaled one for sloped
     /// roofs, whose higher neighbour texels shaded them in stripes; not clipped above the map's height range.
     pub rs_shadow_baked: Option<ID3D11RasterizerState>,
+    /// Rome 2's rigid casters: their light-facing faces culled (passes.rs, the cascade loop).
+    pub rs_shadow_rome2_front: Option<ID3D11RasterizerState>,
     pub rs_shadow_terrain_rome2: Option<ID3D11RasterizerState>,
     pub bs_opaque: Option<ID3D11BlendState>,
     pub bs_alpha: Option<ID3D11BlendState>,
@@ -153,6 +156,7 @@ impl States {
         st.rs_shadow_terrain = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, ..rd }).ok();
         let r2 = D3D11_RASTERIZER_DESC { DepthBias: 1, SlopeScaledDepthBias: 2.0, ..rd };
         st.rs_shadow_rome2 = dev.create_rasterizer_state(&r2).ok();
+        st.rs_shadow_rome2_front = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_FRONT, ..r2 }).ok();
         st.rs_shadow_baked = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, DepthBias: 0, SlopeScaledDepthBias: 4.0, DepthClipEnable: false.into(), ..rd }).ok();
         st.rs_shadow_terrain_rome2 = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, ..r2 }).ok();
         let sm = D3D11_SAMPLER_DESC {
