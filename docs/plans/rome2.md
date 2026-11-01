@@ -136,6 +136,8 @@ Status legend: **done**, **partial**, **todo**.
 
 ## Phase 3: editor — partial
 
+- **todo** Rivers are broken in Rome 2 (user report 2026-11-01; not looked at yet).
+- **todo** Launch in game on Rome 2: the battle shows only water across the map (user report 2026-11-01; not looked at yet).
 - **done** The tile's weather follows its climate (2026-11-01): a map context gives the tile its placement's climate after the tile picked
   its weather; a weather of another climate's folder gives way to the new climate's first dry one (`WeatherUi::follow_climate`).
 - **done** The dark slabs after camera jumps in a map context (2026-11-01): the baked shadow map (4 km wide) took the map context's
