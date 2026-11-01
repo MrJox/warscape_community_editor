@@ -53,8 +53,13 @@ up to 1600: 1 (0 when the device class is 2), up to 2600: 2, above: 3. Unit and 
 
 ## Rome 2
 
-The same struct (0x7c bytes; the options screen's panel holds it at +0xc8: the code at 0x11292400 .. 0x11293a80): +0x1c .. +0x1f are its fade near units, hide
-dead bodies, hide foliage and lightning check boxes (no screen space reflections), +0x70 alpha blending (`dropdown_aoit`). Its quality
+The same struct (0x7c bytes; the options screen's panel holds it at +0xc8: the code at 0x11292400 .. 0x11293a80), but with the
+shader model at +0x00 (the GPU profile parser fn 0x114162a0 writes each key at its offset): +0x04 AA, +0x08 texture filtering, +0x0c
+texture quality, +0x14 SSAO, +0x18 depth of field, bytes +0x1c .. +0x1f distortion, grain, cloud shadows, god rays, +0x20 .. +0x23 the
+fade near units, hide dead bodies, hide foliage and lightning check boxes (no screen space reflections), +0x24 unit, +0x28 building,
++0x2c shadows, +0x30 trees, +0x34 grass, +0x38 water, +0x44 sky, +0x48 effects, +0x4c terrain, +0x70 vignette, +0x72 tessellation, +0x74
+alpha blending (`dropdown_aoit`; the downgrade fn 0x11430fb0 zeroes it). The renderer reads the copy at the graphics system
+(`DAT_1418b53c`) + 0x71664. Its quality
 options have six levels (Low, Medium, High, Very High, Ultra, Extreme: the options screen's layout) and the slider six presets, filled
 by fn 0x1144c3b0:
 
@@ -70,8 +75,32 @@ by fn 0x1144c3b0:
 | Depth of field, grain, hide foliage, vignette, alpha blending | off | off | off | off | off | off |
 | Texture quality | memory | memory | memory | 2 | memory | memory |
 
-By video memory (virtual +0x19c, MB): above 1200: 3, above 800: 2, above 600: 1, else 0. Its water techniques are registered in the
-other order (`water_ultra` 0x1f .. `water_low` 0x22, fn 0x113ded70) and how its six levels pick one of the four is not found yet.
+By video memory (virtual +0x19c, MB): above 1200: 3, above 800: 2, above 600: 1, else 0.
+
+How its renderer applies them (static analysis, 2026-11-01; the functions in Rome 2's `empire.retail.dll`):
+- Water: its techniques are registered in the other order (`water_ultra` 0x1f .. `water_low` 0x22, fn 0x113ded70). The water planes and
+  rivers (fn 0x1147db20, `waterplane.hlsl`): low at levels 0 .. 2, medium at 3, high at 4, ultra at 5. The sea (fn 0x1147dbf0,
+  `ocean.hlsl`): the same, but at 5 ultra only when its coast water's `coast_amplitude_mask_1` texture answers true (fn 0x1141cfe0 ->
+  Sea Display +0x124, virtual +0x40), else high (a capture at Extreme drew high). The shadowed variants follow the shadow level, not the
+  water's. The planar reflection's views (fns 0x11455f10, 0x113d7f10) and the foam grid only above 2.
+- Shadows (ShadowMapView fn 0x11456060): 0 none (no `ENABLE_SHADOWS`, no baked map); 1, 2 a 2048 x 1024 atlas of two 1024 cascades;
+  3 2048 x 2048, three 1024 cascades; 4, 5 4096 x 4096, four 2048 cascades (5's 8192 only with the tweaker `shadowmap_extreme_quality`,
+  off). The cascades' lengths from the camera's near (fn 0x114765e0, table 0x118ff698, battle rows): (30, 120) at 1 and 2, (15, 40, 120)
+  at 3, (15, 35, 90, 200) at 4 and 5. Range `shadow_farz` 360 at every level; fade (3, half the next to last split end). The baked map
+  (fn 0x115ec490): 4096 at 3 and 5, 2048 at 1, 2 and 4. Point light shadows only at 5 (fn 0x115e0990; their maps 256 .. 1024 by level).
+- Texture filtering (fn 0x1142b590): Attila's.
+- Sky (fn 0x115bf020, Attila's with six levels): the cube 512 at 0 .. 2, 1024 at 3 .. 5; no level draws through the 256 env map.
+- Effects (fns 0x115b2130, 0x115be0d0, 0x115d9ca0): variant 2 at 0 .. 2, 1 at 3, 0 at 4 and 5 (Attila's scheme at other thresholds).
+- Anti-aliasing: 0 off, 1 MLAA (fn 0x11429450, Attila's passes and constants), 2 .. 4 MSAA 2x .. 8x (techniques switched to their `_ms`
+  variants, fn 0x1147d680; far fewer `_ms` techniques than Attila's: not traced).
+- Building and unit detail: no switch-off pass (Attila's fn 0x1180c370); fn 0x114dfc60 scales the LODs' switch distances by a level's
+  `lod_multiplier_for_*` (0.25, 0.25, 0.35, 0.5, 2, 3), from per-type base distances (units 5 / 10 / 30 / 100, buildings 100 / 200 / 300 /
+  600, ...).
+- God rays (fn 0x114281a0): Thrones of Britannia's views and shaders; drawn when on, the weather not night or storm, the sun strong
+  enough and ahead of the camera (fn 0x1144f020).
+- Alpha blending: its OIT views are built, but every test of them calls fn 0x100d31d0, which returns false: alpha-tested foliage at
+  every level.
+- Tessellation: Attila's rule (fn 0x11560510; the terrain's off by the `terrain_tess` tweaker).
 
 ## How the engine reads the quality options (Attila; work in progress)
 
@@ -252,8 +281,13 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
 - ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
-Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): Rome 2's anti-aliasing, texture
-quality, trees, grass, terrain, Rome 2's alpha blending, grain, cloud shadows, god rays, lightning and foliage hiding.
+- Rome 2 (2026-11-01, above): shadows (`rome2_cascades`: the cascades, their lengths, the baked map's size; levels 1 and 2 keep the
+  2 x 2 atlas layout at the game's tile size), water (`rome2_water`, the planar reflection from 3), sky, effects (the Attila level of the
+  same variant; ASSUMPTION: the particle pool follows it), texture filtering, MLAA, god rays (not its weather and sun gates), tessellation
+  (its hull and domain shaders' names), alpha blending (alpha test at every level, as its engine).
+
+Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): texture quality, trees, grass, terrain,
+Rome 2's MSAA (drawn without anti-aliasing), building and unit detail (its LOD distance multipliers), lightning and foliage hiding.
 
 ## Editor only: the render scale
 

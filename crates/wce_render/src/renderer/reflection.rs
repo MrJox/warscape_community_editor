@@ -53,7 +53,7 @@ impl Renderer {
     /// Draws the reflection of the sky in the sea's plane as `cam` sees it (Rome 2 only); the caller sets its own camera again after.
     pub(crate) fn render_water_reflection(&mut self, env: &EnvironmentParams, cam: &Camera, width: u32, height: u32, time_s: f32) {
         self.reflection.valid = false;
-        if self.game != game::RenderGame::Rome2 {
+        if self.game != game::RenderGame::Rome2 || self.settings.water_quality < super::ROME2_REFLECTION_LEVEL {
             return;
         }
 

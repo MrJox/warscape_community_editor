@@ -153,11 +153,11 @@ impl Renderer {
 
         wce_prof!("render.water");
         let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
-        // Rome 2's six levels are not mapped to its four techniques yet: high, as its sea at the highest level (ROME2_WATER).
-        let quality = if self.game == super::game::RenderGame::Rome2 { super::ocean::ROME2_WATER } else { self.settings.water_quality };
+        let quality = if self.game == super::game::RenderGame::Rome2 { super::rome2_water(self.settings.water_quality, false) } else { self.settings.water_quality };
         let sea_ps = sea_ps(quality);
         let ultra = quality >= 3;
-        let ps = match (rivers, self.settings.shadows) {
+        let shadows = if self.game == super::game::RenderGame::Rome2 { self.rome2_shadows_on() } else { self.settings.shadows };
+        let ps = match (rivers, shadows) {
             (true, true) => self.shader(RIVER_PS_SHADOWS).or_else(|| self.shader(RIVER_PS)),
             (true, false) => self.shader(RIVER_PS),
             (false, true) if ultra => self.shader(SEA_PS_SHADOWS).or_else(|| self.shader(&sea_ps)),

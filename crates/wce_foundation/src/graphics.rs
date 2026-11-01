@@ -141,10 +141,13 @@ const TEXTURE_LEVELS: &[&str] = &["Low", "Medium", "High", "Ultra"];
 const AA: &[&str] = &["Off", "MLAA", "MSAA 2x", "MSAA 4x", "MSAA 8x"];
 const FILTERING: &[&str] = &["Trilinear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"];
 const REFLECTIONS: &[&str] = &["Off", "Half resolution", "Full resolution"];
-const ALPHA_BLEND: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT"];
 /// Attila's and Thrones of Britannia's: the editor draws the standard OIT for both (AOIT orders its fragments with Intel's pixel
 /// synchronisation, `g_IntelExt`).
 const ALPHA_BLEND_OIT: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT (drawn as standard OIT)"];
+/// Rome 2's: its engine's OIT test returns false (fn 0x100d31d0), so every level draws alpha-tested foliage.
+const ALPHA_BLEND_ROME_2: &[&str] = &["Alpha test", "Standard OIT (the game draws alpha test)", "Accelerated AOIT (the game draws alpha test)"];
+/// Rome 2's: its MSAA path (fewer `_ms` techniques than Attila's) is not ported; MLAA is Attila's.
+const AA_ROME_2: &[&str] = &["Off", "MLAA", "MSAA 2x (drawn without)", "MSAA 4x (drawn without)", "MSAA 8x (drawn without)"];
 
 const fn opt(key: &'static str, label: &'static str, kind: GfxKind, default: &'static str, applied: bool) -> GfxOption {
     GfxOption { key, label, kind, default, applied }
@@ -203,33 +206,33 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
 ];
 
-/// Rome 2's: six levels (to Extreme), no screen space reflections, and its effects of its own (lightning, the foliage hiding). Its
-/// water quality (four techniques for six levels) and texture filtering are not mapped yet: the editor draws high water (the game's sea at
-/// Extreme, from a capture) and 8x.
+/// Rome 2's: six levels (to Extreme), no screen space reflections, and its effects of its own (lightning, the foliage hiding). Shadows,
+/// water, sky, effects, filtering, MLAA, god rays, tessellation and alpha blending as its engine applies them (docs/re/graphics_options.md,
+/// "Rome 2"); its building and unit detail scale the LOD distances (not ported).
 const ROME_2_OPTIONS: &[GfxOption] = &[
-    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA), "0", false),
-    opt("gfx_texture_filtering", "Texture filtering", GfxKind::Levels(FILTERING), "3", false),
+    opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA_ROME_2), "0", true),
+    opt("gfx_texture_filtering", "Texture filtering", GfxKind::Levels(FILTERING), "3", true),
     opt("gfx_texture_quality", "Texture quality", GfxKind::Levels(TEXTURE_LEVELS), "3", false),
-    opt("gfx_shadow_quality", "Shadows", GfxKind::Levels(LEVELS_ROME_2), "4", false),
-    opt("gfx_water_quality", "Water", GfxKind::Levels(LEVELS_ROME_2), "4", false),
+    opt("gfx_shadow_quality", "Shadows", GfxKind::Levels(LEVELS_ROME_2), "4", true),
+    opt("gfx_water_quality", "Water", GfxKind::Levels(LEVELS_ROME_2), "4", true),
     opt("gfx_tree_quality", "Trees", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS_ROME_2), "4", false),
-    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS_ROME_2), "4", false),
+    opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS_ROME_2), "4", true),
     opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
-    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS_ROME_2), "4", false),
+    opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS_ROME_2), "4", true),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),
     opt("gfx_depth_of_field", "Depth of field", GfxKind::Switch, "1", true),
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
     opt("gfx_vignette", "Vignette", GfxKind::Toggle, "true", true),
     opt("gfx_grain", "Film grain", GfxKind::Toggle, "false", true),
     opt("gfx_cloud_shadows", "Cloud shadows", GfxKind::Toggle, "false", true),
-    opt("gfx_god_rays", "God rays", GfxKind::Toggle, "false", false),
+    opt("gfx_god_rays", "God rays", GfxKind::Toggle, "false", true),
     opt("gfx_lightning", "Lightning", GfxKind::Toggle, "false", false),
     opt("gfx_hide_foliage", "Hide foliage", GfxKind::Toggle, "false", false),
-    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND), "0", false),
-    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
+    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND_ROME_2), "0", true),
+    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", true),
     opt("gfx_gamma_setting", "Gamma", GfxKind::Float { min: 1.0, max: 3.0 }, "2.2", true),
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
 ];

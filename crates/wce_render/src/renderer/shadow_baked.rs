@@ -24,9 +24,14 @@ use super::*;
 use crate::draw_set::{Frustum, View as DrawView, Visible};
 use crate::shader_lib::{bind_sampler, bind_srv};
 
-/// The map's size (the game's) and the units it covers (the capture's scale, 1 / 0.00023408).
-const BAKED_SIZE: u32 = 4096;
+/// The units the map covers (the capture's scale, 1 / 0.00023408).
 const BAKED_SPAN: f32 = 4272.0;
+
+/// The map's side at a gfx_shadow_quality (fn 0x115ec490: `baked_shadowmap_resolution_high_log2` 12 at levels 3 and 5,
+/// `baked_shadowmap_resolution_log2` 11 at 1, 2 and 4; none at 0).
+fn baked_size(level: i32) -> u32 {
+    if level == 3 || level >= 5 { 4096 } else { 2048 }
+}
 
 /// Height to depth (the capture's): depth = BAKED_DEPTH_SCALE * y + BAKED_DEPTH_OFFSET, heights from -23 to 416 units over the sea.
 const BAKED_DEPTH_SCALE: f32 = -0.002_276_255_3;
@@ -56,12 +61,16 @@ pub(crate) struct BakedShadow {
 
     /// The map holds this frame's casters.
     pub valid: bool,
+
+    /// Its side.
+    size: u32,
 }
 
 impl BakedShadow {
-    fn make(&mut self, dev: &ID3D11Device) {
+    fn make(&mut self, dev: &ID3D11Device, size: u32) {
+        self.size = size;
         let td = D3D11_TEXTURE2D_DESC {
-            Width: BAKED_SIZE, Height: BAKED_SIZE, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Width: size, Height: size, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
@@ -108,7 +117,7 @@ impl Renderer {
 
     /// Makes the baked map again when what it shows changed (Rome 2, shadows on), and sets its constants.
     pub(crate) fn pass_baked_shadows(&mut self, scene: &RenderScene, cam: &Camera, light_dir: Float3) {
-        if self.game != game::RenderGame::Rome2 || !self.settings.shadows || self.env.active {
+        if self.game != game::RenderGame::Rome2 || !self.rome2_shadows_on() || self.env.active {
             self.baked.valid = false;
             self.set_baked_constants(Float3::default());
             return;
@@ -125,13 +134,18 @@ impl Renderer {
 
         // Kept while the terrain's material is not ready (a map context's chunks still uploading after the camera jumped): the draw lists
         // then hold the terrain's own patches, and a map made of them shaded the ground in slabs until it was made again.
+        let size = baked_size(self.settings.shadow_quality);
+        if self.baked.size != size {
+            (self.baked.dsv, self.baked.srv, self.baked.valid) = (None, None, false);
+        }
+
         if self.baked.valid && (self.baked.key == Some(key)) {
             self.set_baked_constants(Float3::default());
             return;
         }
 
         if self.baked.dsv.is_none() {
-            self.baked.make(&self.dev);
+            self.baked.make(&self.dev, size);
         }
 
         let (Some(dsv), Some(vs), Some(ps)) = (self.baked.dsv.clone(), self.shader(SHADOW_VS), self.shader(SHADOW_PS)) else {
@@ -165,7 +179,7 @@ impl Renderer {
         let abs = rel * translation(-o);
         self.ctx.set_render_targets(&[], Some(&dsv));
         self.ctx.clear_depth_stencil_view(&dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
-        self.ctx.set_viewports(&[viewport(0.0, 0.0, BAKED_SIZE as f32, BAKED_SIZE as f32)]);
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, size as f32, size as f32)]);
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_shadow_baked.as_ref());
         self.ctx.set_input_layout(Some(&layout));
@@ -180,7 +194,7 @@ impl Renderer {
 
         let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
         let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
-        let texel = BAKED_SPAN / BAKED_SIZE as f32 / u;
+        let texel = BAKED_SPAN / size as f32 / u;
         let view = DrawView {
             frustum: Frustum::from_view_projection(&abs),
             eye: cam.eye,

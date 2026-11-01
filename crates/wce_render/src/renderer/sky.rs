@@ -51,6 +51,10 @@ impl Cube {
 /// of its environment map ("Sky Cube EnvMap RT"): `SKY_CUBE`.
 pub(crate) const SKY_CUBE_LARGE: u32 = 1024;
 
+/// Rome 2's sky cube below sky quality 3 ("Sky Small CubeMap", fn 0x115bf020, the same function with six levels: 512 at 0 .. 2, 1024 at
+/// 3 .. 5; no level draws the sky through the environment map).
+pub(crate) const SKY_CUBE_SMALL_ROME2: u32 = 512;
+
 /// The sky cube map (the output of ps30_skygen), and the sky textures (cloud maps, lens flare sprites) by path and colour space.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SkyCube {
@@ -148,8 +152,13 @@ impl Renderer {
         let proj = perspective_lh(PI / 2.0, 1.0, 0.1, 100.0);
         let Some(layout) = self.layout(&vs, "pos3", &sky_layout()) else { return };
 
-        // gfx_sky_quality (Attila, Thrones of Britannia): the large cube above 0. Rome 2's sizes are not read: the old 256.
-        let size = if self.game == super::game::RenderGame::Rome2 || self.settings.sky_quality == 0 { SKY_CUBE } else { SKY_CUBE_LARGE };
+        // gfx_sky_quality: Attila's and Thrones of Britannia's large cube above 0; Rome 2's from 3, its small one below.
+        let size = match self.game {
+            super::game::RenderGame::Rome2 if self.settings.sky_quality < 3 => SKY_CUBE_SMALL_ROME2,
+            super::game::RenderGame::Rome2 => SKY_CUBE_LARGE,
+            _ if self.settings.sky_quality == 0 => SKY_CUBE,
+            _ => SKY_CUBE_LARGE,
+        };
         if self.sky.cube.size != size {
             self.sky.cube = Cube::new(&self.dev, size);
         }
