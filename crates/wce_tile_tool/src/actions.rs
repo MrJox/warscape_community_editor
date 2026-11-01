@@ -380,7 +380,7 @@ impl TileTool {
             return;
         }
 
-        if gui::menu_item(&format!("{}  Add here...", icons::PLUS), Some("Shift+A"), false, true) {
+        if gui::menu_item(&format!("{}  Add here...", icons::PLUS), wce_editor::shortcuts::label("tile.quick_add").as_deref(), false, true) {
             self.request_quick_add();
         }
 
@@ -399,7 +399,7 @@ impl TileTool {
         }
 
         let one = |label: &str, icon: &str| format!("{icon}  {label}");
-        if gui::menu_item(&one("Grab on the ground", icons::GRAB), Some("G"), false, some) {
+        if gui::menu_item(&one("Grab on the ground", icons::GRAB), wce_editor::shortcuts::label("tile.grab").as_deref(), false, some) {
             self.begin_grab(e);
             return;
         }
@@ -472,47 +472,47 @@ impl TileTool {
         }
 
         gui::separator();
-        if gui::menu_item(&one("Copy", icons::COPY), Some("Ctrl+C"), false, some) {
+        if gui::menu_item(&one("Copy", icons::COPY), wce_editor::shortcuts::label("tile.copy").as_deref(), false, some) {
             self.copy_selection(e, false);
             return;
         }
 
-        if gui::menu_item(&one("Cut", icons::SCISSORS), Some("Ctrl+X"), false, some) {
+        if gui::menu_item(&one("Cut", icons::SCISSORS), wce_editor::shortcuts::label("tile.cut").as_deref(), false, some) {
             self.copy_selection(e, true);
             return;
         }
 
         let can_paste = !self.clipboard.is_empty();
-        if gui::menu_item(&one("Paste here", icons::CLIPBOARD), Some("Ctrl+V"), false, can_paste) {
+        if gui::menu_item(&one("Paste here", icons::CLIPBOARD), wce_editor::shortcuts::label("tile.paste").as_deref(), false, can_paste) {
             self.paste(e, true);
             return;
         }
 
-        if gui::menu_item(&one("Paste in place", icons::CLIPBOARD), Some("Ctrl+Shift+V"), false, can_paste) {
+        if gui::menu_item(&one("Paste in place", icons::CLIPBOARD), wce_editor::shortcuts::label("tile.paste_in_place").as_deref(), false, can_paste) {
             self.paste(e, false);
             return;
         }
 
         let Some(d) = document(e) else { return };
-        if gui::menu_item(&one("Duplicate", icons::COPY), Some("Ctrl+D"), false, some)
+        if gui::menu_item(&one("Duplicate", icons::COPY), wce_editor::shortcuts::label("tile.duplicate").as_deref(), false, some)
             && let Some(s) = sel
             && let Err(err) = d.duplicate(s)
         {
             self.status = err;
         }
 
-        if gui::menu_item(&one("Turn", icons::ROTATE_CW), Some("Ctrl+R"), false, some)
+        if gui::menu_item(&one("Turn", icons::ROTATE_CW), wce_editor::shortcuts::label("tile.turn").as_deref(), false, some)
             && let Some(s) = sel
         {
             d.rotate(s, self.angle_step);
         }
 
-        if gui::menu_item(&one("Group", icons::GROUP), Some("Ctrl+G"), false, some) {
+        if gui::menu_item(&one("Group", icons::GROUP), wce_editor::shortcuts::label("tile.group").as_deref(), false, some) {
             self.status = self.group_selection(e).unwrap_or_else(|err| err);
             return;
         }
 
-        if gui::menu_item(&one("Ungroup", icons::UNGROUP), Some("Ctrl+U"), false, some) {
+        if gui::menu_item(&one("Ungroup", icons::UNGROUP), wce_editor::shortcuts::label("tile.ungroup").as_deref(), false, some) {
             self.status = self.ungroup_selection(e).unwrap_or_else(|err| err);
             return;
         }
@@ -522,7 +522,7 @@ impl TileTool {
         }
 
         gui::separator();
-        if gui::menu_item(&one("Delete", icons::TRASH_2), Some("Del"), false, some) {
+        if gui::menu_item(&one("Delete", icons::TRASH_2), wce_editor::shortcuts::label("tile.delete").as_deref(), false, some) {
             self.request_delete(e);
         }
     }

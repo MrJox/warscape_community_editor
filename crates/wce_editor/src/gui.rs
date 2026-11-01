@@ -353,6 +353,12 @@ pub fn button(label: &str) -> bool {
     call!(sys::igButton(c.as_ptr(), v2(0.0, 0.0)))
 }
 
+/// A button of a given size (0: fit the label).
+pub fn button_sized(label: &str, size: Vec2) -> bool {
+    let c = cs(label);
+    call!(sys::igButton(c.as_ptr(), size))
+}
+
 pub fn small_button(label: &str) -> bool {
     let c = cs(label);
     call!(sys::igSmallButton(c.as_ptr()))
@@ -730,6 +736,10 @@ pub fn mouse_pos() -> Vec2 {
     call!(sys::igGetMousePos())
 }
 
+pub fn frame_height() -> f32 {
+    call!(sys::igGetFrameHeight())
+}
+
 pub fn frame_height_with_spacing() -> f32 {
     call!(sys::igGetFrameHeightWithSpacing())
 }
@@ -889,6 +899,12 @@ pub fn is_key_pressed(key: i32, repeat: bool) -> bool {
 
 pub fn is_key_down(key: i32) -> bool {
     call!(sys::igIsKeyDown_Nil(key))
+}
+
+/// Dear ImGui's name of a key (`A`, `F2`, `PageUp`, `LeftShift`).
+pub fn key_name(key: i32) -> String {
+    // SAFETY: GetKeyName reads a static table (no context needed) and returns a static string.
+    unsafe { std::ffi::CStr::from_ptr(sys::igGetKeyName(key)) }.to_string_lossy().into_owned()
 }
 
 /// Queues key events (the `key` command; also outside a frame).

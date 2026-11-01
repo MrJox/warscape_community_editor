@@ -356,6 +356,12 @@ pub struct Settings {
     pub appearance: Appearance,
     pub camera: CameraSettings,
     pub updates: UpdateSettings,
+
+    /// The keyboard shortcuts the user changed: an action's id and its two keys (`Ctrl+Shift+Z`, empty: none); the others have their
+    /// defaults (`wce_editor::shortcuts`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub shortcuts: BTreeMap<String, Vec<String>>,
+
     pub games: BTreeMap<String, GameSettings>,
 
     /// Each tool's own table, read and written with the tool's type (see [`Self::tool`]).
@@ -373,7 +379,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, db_schemas: None, appearance: Appearance::default(),
-            camera: CameraSettings::default(), updates: UpdateSettings::default(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
+            camera: CameraSettings::default(), updates: UpdateSettings::default(), shortcuts: BTreeMap::new(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
         }
     }
 }

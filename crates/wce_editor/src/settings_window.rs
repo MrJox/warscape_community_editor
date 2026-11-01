@@ -17,6 +17,7 @@ pub(crate) enum Page {
     General,
     Game,
     Appearance,
+    Shortcuts,
     Folders,
 
     /// A tool's page, by its index.
@@ -37,6 +38,10 @@ pub(crate) struct SettingsWindow {
 
     /// The `gfx_*` values of the game's preferences file, by game key (read when the Game page shows that game).
     game_graphics: Option<(String, std::collections::BTreeMap<String, String>)>,
+
+    /// The Shortcuts page: its filter, and the key being read (an action's id and the slot).
+    shortcut_filter: String,
+    capture: Option<(&'static str, usize)>,
 }
 
 /// The labels' column.
@@ -166,6 +171,8 @@ fn open_folder(path: &Path) {
 impl Editor {
     /// Opens the Settings window (on a fresh copy of the settings) or closes it without applying.
     pub fn show_settings_window(&mut self, open: bool) {
+        self.settings_window.capture = None;
+        crate::shortcuts::set_capturing(false);
         self.settings_window.draft = open.then(|| self.settings_ref().clone());
         self.settings_window.opened = self.settings_window.draft.clone();
         self.mod_checks_reset();
@@ -177,6 +184,7 @@ impl Editor {
             "general" => Page::General,
             "game" => Page::Game,
             "appearance" => Page::Appearance,
+            "shortcuts" => Page::Shortcuts,
             "folders" => Page::Folders,
             id => match self.tool_ids().iter().position(|t| t == id) {
                 Some(i) if self.tool_supported(i) && self.with_tool_at(i, |t, _| t.has_settings()).unwrap_or(false) => Page::Tool(i),
@@ -226,6 +234,7 @@ impl Editor {
 
         let before = std::mem::replace(self.settings(), draft);
         self.settings_ref().publish_db_schemas();
+        crate::shortcuts::set_overrides(&self.settings_ref().shortcuts);
         self.save_settings();
         self.apply_graphics_settings();
         self.set_frame_cap_live(self.settings_ref().frame_cap());
@@ -305,22 +314,35 @@ impl Editor {
             gui::end_child();
 
             gui::separator();
+
+            // Keys that clash must be changed first (Settings > Shortcuts shows them).
+            let clashes = self.settings_window.draft.as_ref().map_or(0, |d| crate::shortcuts::clashes(&d.shortcuts).len());
+            if clashes > 0 {
+                gui::text_colored(theme::error(), &format!("{}  {clashes} shortcut clash(es): see Shortcuts", icons::TRIANGLE_ALERT));
+                gui::same_line();
+            }
+
             let w = gui::calc_text_width("Cancel") + gui::calc_text_width("Apply") + gui::calc_text_width("OK") + 80.0;
             gui::same_line_at(gui::window_width() - w);
+            gui::begin_disabled(clashes > 0);
             if gui::button("OK") {
                 self.apply_settings_window();
                 open = false;
             }
 
+            gui::end_disabled();
             gui::same_line();
             if gui::button("Cancel") {
                 open = false;
             }
 
             gui::same_line();
+            gui::begin_disabled(clashes > 0);
             if gui::button("Apply") {
                 self.apply_settings_window();
             }
+
+            gui::end_disabled();
         }
 
         gui::end();
@@ -334,6 +356,7 @@ impl Editor {
             (Page::General, format!("{}  General", icons::SETTINGS)),
             (Page::Game, format!("{}  Game", icons::HARD_DRIVE)),
             (Page::Appearance, format!("{}  Appearance", icons::PALETTE)),
+            (Page::Shortcuts, format!("{}  Shortcuts", icons::KEYBOARD)),
         ];
 
         for i in self.shown_tools() {
@@ -352,10 +375,16 @@ impl Editor {
     }
 
     fn draw_settings_page(&mut self) {
+        // A key being read stops when its page is left.
+        if self.settings_window.page != Page::Shortcuts && self.settings_window.capture.take().is_some() {
+            crate::shortcuts::set_capturing(false);
+        }
+
         match self.settings_window.page {
             Page::General => self.draw_general_page(),
             Page::Game => self.draw_game_page(),
             Page::Appearance => self.draw_appearance_page(),
+            Page::Shortcuts => self.draw_shortcuts_page(),
             Page::Folders => self.draw_folders_page(),
             Page::Tool(i) => {
                 self.with_tool_at(i, |t, e| {
@@ -663,6 +692,136 @@ impl Editor {
         gui::set_cursor_pos_x(LABEL_WIDTH);
         gui::checkbox("Dear ImGui's style editor", &mut self.settings_window.style_editor);
         help("Edits the live style (not saved): to try out colours and sizes for a theme in theme.rs.");
+    }
+
+    /// Every action's two keys, by group: a click on a key reads the next key pressed (with its modifiers; again: stop), the cross clears it,
+    /// the arrow puts the action's defaults back. Keys that clash (the same key for two actions whose keys are read at the same time) are red.
+    fn draw_shortcuts_page(&mut self) {
+        use crate::shortcuts::{self, Chord};
+        let sw = &mut self.settings_window;
+        let Some(d) = sw.draft.as_mut() else { return };
+
+        // The key being read: taken, then the reading stops.
+        if let Some((id, slot)) = sw.capture
+            && let Some(a) = shortcuts::actions().into_iter().find(|a| a.id == id)
+            && let Some(c) = shortcuts::captured(a.held)
+        {
+            let mut keys = shortcuts::keys_in(&a, &d.shortcuts);
+            keys[slot] = Some(c);
+            shortcuts::set_keys_in(&a, &mut d.shortcuts, keys);
+            sw.capture = None;
+        }
+
+        shortcuts::set_capturing(sw.capture.is_some());
+
+        gui::separator_text("Shortcuts");
+        gui::set_next_item_width(-gui::calc_text_width("Reset all") - 40.0);
+        gui::input_text("##shortcut_filter", Some(&format!("{}  filter by action or key", icons::SEARCH)), &mut sw.shortcut_filter, 64, 0);
+        gui::same_line();
+        if gui::button("Reset all") {
+            d.shortcuts.clear();
+            sw.capture = None;
+        }
+
+        let clashes = shortcuts::clashes(&d.shortcuts);
+        let clash_of = |id: &str, c: &Chord| {
+            clashes.iter().find_map(|(a, b, k)| (k == c && (a.id == id || b.id == id)).then(|| if a.id == id { b.label } else { a.label }))
+        };
+
+        let words = sw.shortcut_filter.to_lowercase().split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+        let mut group = "";
+        let mut table_open = false;
+        for a in shortcuts::actions() {
+            let keys = shortcuts::keys_in(&a, &d.shortcuts);
+            let text = format!("{} {} {}", a.group, a.label, keys.iter().flatten().map(Chord::text).collect::<Vec<_>>().join(" ")).to_lowercase();
+            if !words.iter().all(|w| text.contains(w)) {
+                continue;
+            }
+
+            if a.group != group {
+                if table_open {
+                    gui::end_table();
+                }
+
+                group = a.group;
+                gui::separator_text(group);
+                table_open = gui::begin_table(&format!("##keys_{group}"), 4, gui::TABLE_SIZING_STRETCH_PROP, gui::v2(0.0, 0.0));
+                if table_open {
+                    gui::table_setup_column("action", gui::COLUMN_WIDTH_STRETCH, 0.0);
+                    gui::table_setup_column("key 1", gui::COLUMN_WIDTH_FIXED, 170.0);
+                    gui::table_setup_column("key 2", gui::COLUMN_WIDTH_FIXED, 170.0);
+                    gui::table_setup_column("reset", gui::COLUMN_WIDTH_FIXED, gui::frame_height());
+                }
+            }
+
+            if !table_open {
+                continue;
+            }
+
+            gui::table_next_row();
+            gui::table_next_column();
+            let clashing = keys.iter().flatten().find_map(|c| clash_of(a.id, c).map(|other| (c.text(), other)));
+            match &clashing {
+                Some(_) => gui::text_colored(theme::error(), a.label),
+                None => gui::text(a.label),
+            }
+
+            if let Some((key, other)) = &clashing
+                && gui::is_item_hovered()
+            {
+                gui::set_tooltip(&format!("{key} is also {other}"));
+            }
+
+            let mut keys_now = keys;
+            for slot in 0..2 {
+                gui::table_next_column();
+                let reading = sw.capture == Some((a.id, slot));
+                let label = if reading { "press a key...".to_owned() } else { keys[slot].map_or_else(|| "-".to_owned(), |c| c.text()) };
+                let bad = keys[slot].is_some_and(|c| clash_of(a.id, &c).is_some());
+                if bad {
+                    gui::push_style_color(gui::COL_TEXT, { let c = theme::error(); gui::v4(c[0], c[1], c[2], c[3]) });
+                }
+
+                if gui::button_sized(&format!("{label}##{}{slot}", a.id), gui::v2(130.0, 0.0)) {
+                    sw.capture = if reading { None } else { Some((a.id, slot)) };
+                }
+
+                if bad {
+                    gui::pop_style_color(1);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(if reading { "Press the keys (with Ctrl, Shift, Alt); click again to stop" } else { "Click, then press the keys" });
+                }
+
+                gui::same_line();
+                gui::begin_disabled(keys[slot].is_none());
+                if gui::small_button(&format!("{}##clear{}{slot}", icons::X, a.id)) {
+                    keys_now[slot] = None;
+                }
+
+                gui::end_disabled();
+            }
+
+            if keys_now != keys {
+                shortcuts::set_keys_in(&a, &mut d.shortcuts, keys_now);
+            }
+
+            gui::table_next_column();
+            gui::begin_disabled(!d.shortcuts.contains_key(a.id));
+            if gui::small_button(&format!("{}##reset{}", icons::UNDO_2, a.id)) {
+                d.shortcuts.remove(a.id);
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("Default: {}", if a.defaults.is_empty() { "none".to_owned() } else { a.defaults.join(", ") }));
+            }
+        }
+
+        if table_open {
+            gui::end_table();
+        }
     }
 
     fn draw_folders_page(&mut self) {

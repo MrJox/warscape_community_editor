@@ -12,6 +12,7 @@ pub mod images;
 pub mod panels;
 pub mod perf;
 pub mod settings_window;
+pub mod shortcuts;
 pub mod steam_detect;
 pub mod theme;
 pub mod tool;
