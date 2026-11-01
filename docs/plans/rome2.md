@@ -81,8 +81,11 @@ Status legend: **done**, **partial**, **todo**.
   custom meshes' are).
 - **checked, nothing to do** The sea tiles' LF scale (400 in the game): the sea LF is 0 around Carthage (5246 non-zero pixels on the whole
   map, as Attila's), so `LF * 400 - 20` is the editor's -20.
-- **todo** The bright `day_dry_01` looks washed out at a distance since the grain variant (+7 .. 18 %); the grain's code matches the game
-  at `day_dry_05`: needs a capture of the game in `day_dry_01` to tell.
+- **done** A bright weather against the game (2026-11-01, `D:enderdocome2_carthage_bright.rdc` / `_bright_close.rdc`; the game
+  picked `rome_med/su/land/day/dry/day_dry_04`, matched by its sun direction and colour): the editor's sunlit ground was 10 .. 20 %
+  brighter; Rome 2's light pass applies the cloud shade (`cloud_shade.dds`, as Thrones of Britannia), which the editor had off. With it:
+  within 2 .. 12 % (the shade's drifting offset differs). `day_dry_01`'s far haze looking into the sun is the weather's own (the same
+  pipeline matches the game's `day_dry_04` and `day_dry_05`); not compared with the game in that file.
 - **todo** The shore foam band: the game's land LF is a 256 x 256 window of the campaign LF around the battle (64 game units a texel,
   whole-texel aligned with `lf_height_map.dds`, 0.26 m mean difference); at Carthage's shore the game's ground is 0.6 m under its sea bed,
   the editor's 0.07 m. Not traced further (the editor's sub-texel placement of the open tile on the LF, its `bias_y`).
