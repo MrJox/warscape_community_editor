@@ -25,10 +25,22 @@ the battle river shader has no fade at the ends and no foam, `g_refraction_depth
 
 ## To check in game
 
-- Alpha blending (gfx_alpha_blend, docs/re/graphics_options.md): the near leaves and grass the order-independent transparency draws
-  (forward lit) come out lighter than the same leaves through the G-buffer. Compare a forest edge within 25 m in game with alpha
-  blending on and off (Attila or ToB), at the same camera and time, and against the editor's: whether the game shows the same step at
-  25 m, and which brightness is right.
+- **Graphics settings, all together** (Attila and ToB; implemented 2026-10-31 .. 11-01 from static RE and RenderDoc captures, none
+  compared with the game at each level; docs/re/graphics_options.md, docs/plans/msaa.md). With a fixed battle camera, capture the game
+  at each level and the editor with the same `[graphics]` overrides:
+  - Shadows (the split rows per level), building and unit detail (the LODs switched off), water (the shader per level), texture
+    filtering, sky (the cube's size), screen space reflections (off / half / full), particle effects (the quality variants, the
+    particle limit).
+  - ToB: film grain, cloud shadows (their speed and direction with the wind), god rays (the glow near the sun, the strip along the
+    bottom edge from the blur's wrap).
+  - MLAA (threshold and line lengths).
+  - Alpha blending: the near leaves and grass the OIT draws (forward lit) come out lighter than the same leaves through the G-buffer.
+    Compare a forest edge within 25 m with alpha blending on and off: whether the game shows the same step at 25 m, and which
+    brightness is right; AOIT is drawn as the standard OIT.
+  - Tessellation: no vanilla model has a displacement map (RMV2 texture type 6), so a mod's model is needed (or one with a type 6
+    texture added) to see the game's displacement against the editor's.
+  - MSAA 2x / 4x / 8x: the coverage edges of the trees and grass, the brightness change from the resolve (the tone mapper's white point),
+    snowy terrain tiles, OIT with MSAA; and a RenderDoc capture at 4x / 8x against the 2x one the port follows.
 - Building collapses: the dust emission mesh and box, the effect group size, the debris, the bursts' timing, `.meta` effects on bones,
   the playback speed (docs/re/buildings.md, "Collapses between levels"). Not done: `SOUND_BUILDING` (the editor has no audio).
 - TDD's dead tree bark is near black: `tdd_pack6_weather_1.0.0.pack` ships dark 512 x 2048 `dead_tree_{dry,wet}_diffuse` (and `_ab`)
