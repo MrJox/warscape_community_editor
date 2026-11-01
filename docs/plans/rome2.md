@@ -150,7 +150,11 @@ Status legend: **done**, **partial**, **todo**.
   `waterplane.hlsl` reads an RGB normal map, its `sea/water_detail_normal.dds` is DXT5nm, so every normal tilted and the sun's
   unscaled specular term glared; the river's normal map bound (ASSUMPTION: the engine's `t_normal` for water planes not traced). The
   lakes come out dark: their planar reflection is not drawn.
-- **todo** Launch in game on Rome 2: the battle shows only water across the map (user report 2026-11-01; not looked at yet).
+- **partial** Launch in game on Rome 2 (user report 2026-11-01: only water across the map): with the tile alone. Rome 2's battles all
+  name a battle map's folder (its benchmark `terrain/battles/benchmark/`, `terrain/battles/alesia/`, `BattleTerrain/presets/...`), and
+  its battle map loader (fn 0x114e8a40) reads the folder's `tile_map.index` / `.tiles` (fns 0x115ba230, 0x115baa10): no lone-tile
+  path found (static only). Launch in game says so for Rome 2 and points at the Map context's placement (`terrain/battles/main_rome_map/`
+  with `tile_map_position`, the form of its own battles). **To test in game**: a launch at a placement.
 - **done** The tile's weather follows its climate (2026-11-01): a map context gives the tile its placement's climate after the tile picked
   its weather; a weather of another climate's folder gives way to the new climate's first dry one (`WeatherUi::follow_climate`).
 - **done** The dark slabs after camera jumps in a map context (2026-11-01): the baked shadow map (4 km wide) took the map context's
