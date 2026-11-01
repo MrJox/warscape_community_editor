@@ -663,7 +663,7 @@ impl Renderer {
         let whitecaps = o.sea.as_ref().and_then(|s| s.whitecaps.clone()).or_else(|| o.no_foam.clone());
         bind_srv(ctx, &ps, "sea_surface_sampler", sea_srv.as_ref());
         bind_srv(ctx, &ps, "swell_surface_sampler", swell_srv.as_ref());
-        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
         bind_srv(ctx, &ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "colour_overlay_texture_sampler", o.clear.as_ref());

@@ -246,6 +246,12 @@ impl Renderer {
             };
 
             self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
+
+            // With MSAA the terrain's own passes run on the one-sample depth: the meshes are placed there too (their depth and mark).
+            if self.gbuffer.ms.is_some() {
+                let d = blend_mesh::BlendDraw { targets: self.gbuffer.rtvs(), dsv: self.gbuffer.dsv.clone(), ..d };
+                self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
+            }
         }
 
         self.draw_lists.terrain_draws = terrain_draws;
@@ -364,8 +370,8 @@ impl Renderer {
     }
 
     pub(crate) fn pass_directional_light(&mut self) {
-        let Some(ps) = self.shader(DIR_LIGHT_PS) else { return };
-        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
+        let Some(ps) = self.scene_shader(DIR_LIGHT_PS) else { return };
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
@@ -379,6 +385,7 @@ impl Renderer {
             bind_srv(&self.ctx, &ps, &format!("gbuffer_channel_{}_sampler", i + 1), self.gbuffer.channels[i].srv.as_ref());
         }
 
+        self.bind_gbuffer_ms(&ps);
         bind_srv(&self.ctx, &ps, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
         bind_srv(&self.ctx, &ps, "s_environment", if self.env.active || !self.env.valid { self.sky.cube.srv.as_ref() } else { self.env.cube.srv.as_ref() });
         bind_srv(&self.ctx, &ps, "s_overlay", self.res.overlay_none_srv.as_ref());
@@ -427,8 +434,8 @@ impl Renderer {
 
         let (rw, rh) = (w.div_ceil(div), h.div_ceil(div));
         let (Some(es), Some(bx), Some(by)) = (
-            self.shader(if half { ENV_SPECULAR_HALF_PS } else { ENV_SPECULAR_PS }), self.shader(REFLECTION_BLUR_X_PS),
-            self.shader(if half { REFLECTION_BLUR_Y_HALF_PS } else { REFLECTION_BLUR_Y_PS }),
+            self.scene_shader(if half { ENV_SPECULAR_HALF_PS } else { ENV_SPECULAR_PS }), self.scene_shader(REFLECTION_BLUR_X_PS),
+            self.scene_shader(if half { REFLECTION_BLUR_Y_HALF_PS } else { REFLECTION_BLUR_Y_PS }),
         ) else { return };
         wce_prof!("render.environment_specular");
 
@@ -468,6 +475,13 @@ impl Renderer {
         bind_srv(&self.ctx, &es, "s_light_accumulation_buffer", self.gbuffer.hdr.srv.as_ref());
         bind_srv(&self.ctx, &es, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
         bind_srv(&self.ctx, &es, "t_depth_stencil_int", self.post.stencil.srv.as_ref());
+
+        // With MSAA the MS G-buffer, light buffer and the real stencil (the shader marches where its low four bits are 1: geometry).
+        self.bind_gbuffer_ms(&es);
+        if let Some(ms) = &self.gbuffer.ms {
+            bind_srv(&self.ctx, &es, "t_light_accumulation_buffer_ms", ms.hdr.srv.as_ref());
+            bind_srv(&self.ctx, &es, "t_depth_stencil_int_ms", ms.depth.stencil_srv.as_ref());
+        }
         bind_srv(&self.ctx, &es, "t_jitter", self.res.jitter_srv.as_ref());
         ps_samplers(&self.ctx, &es, &self.states.s_clamp_point);
         for name in ["s_environment", "s_terrain", "s_ssao", "s_light_accumulation_buffer"] {
@@ -488,6 +502,7 @@ impl Renderer {
         self.upload();
         self.ctx.set_render_targets(std::slice::from_ref(&self.post.reflection_blur.rtv), None);
         bind_srv(&self.ctx, &bx, "gbuffer_channel_1_sampler", self.gbuffer.channels[0].srv.as_ref());
+        self.bind_gbuffer_ms(&bx);
         bind_srv(&self.ctx, &bx, "s_reflection_buffer", self.post.reflection.srv.as_ref());
         bind_srv(&self.ctx, &bx, "s_blur_parameters_buffer", self.post.reflection_params.srv.as_ref());
         ps_samplers(&self.ctx, &bx, &self.states.s_clamp_point);
@@ -508,6 +523,8 @@ impl Renderer {
         for k in 0..4 {
             bind_srv(&self.ctx, &by, &format!("gbuffer_channel_{}_sampler", k + 1), self.gbuffer.channels[k].srv.as_ref());
         }
+
+        self.bind_gbuffer_ms(&by);
         bind_srv(&self.ctx, &by, "s_reflection_buffer", self.post.reflection_blur.srv.as_ref());
         bind_srv(&self.ctx, &by, "s_blur_parameters_buffer", self.post.reflection_params.srv.as_ref());
         ps_samplers(&self.ctx, &by, &self.states.s_clamp_point);
@@ -535,6 +552,26 @@ impl Renderer {
         let ready = self.post.oit.ready() && [OIT_LEAF_PS, OIT_GRASS_PS, OIT_RESOLVE_PS].iter().all(|n| self.shader(n).is_some());
         let (lo, hi) = (OIT_RANGE.0 / self.camera.units, OIT_RANGE.1 / self.camera.units);
         ready.then_some((lo * lo, hi * hi))
+    }
+
+    /// With MSAA, after the G-buffer's last writer (the decals): the game's `ps_resolve_Nx` (resolve_depth_buffer.hlsl, the farthest
+    /// sample) writes the MS depth into the one-sample depth, the scene's channel 4 for the one-sample readers (SSAO, the depth
+    /// analysis, the water's refraction, the particles' soft edges, fog, `hdr_to_screen`, the overlays).
+    pub(crate) fn resolve_scene_depth(&mut self) {
+        let Some(ms) = &self.gbuffer.ms else { return };
+        let index = match ms.samples { 2 => 0, 4 => 1, _ => 2 };
+        let ms_depth = ms.depth.depth_srv.clone();
+        let Some(ps) = self.shader(RESOLVE_DEPTH_PS[index]) else { return };
+        self.ctx.set_render_targets(&[], self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.states.ds_depth_write.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, self.gbuffer.w as f32, self.gbuffer.h as f32)]);
+        self.bind(&ps);
+        bind_srv(&self.ctx, &ps, "t_multisampled_depthbuffer", ms_depth.as_ref());
+        self.upload();
+        self.fullscreen(&ps);
+        null_ps_srvs(&self.ctx, 4);
+        self.ctx.set_render_targets(&[], None);
     }
 
     pub(crate) fn reflections_off(&self) -> bool {
@@ -820,20 +857,21 @@ impl Renderer {
     }
 
     pub(crate) fn pass_fog(&mut self) {
-        let Some(ps) = self.shader(FOG_PS) else { return };
+        let Some(ps) = self.scene_shader(FOG_PS) else { return };
         if !self.settings.fog {
             return;
         }
 
         self.ctx.set_render_targets(&[], None);
         self.bind(&ps);
-        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
+        self.bind_gbuffer_ms(&ps);
         bind_srv(&self.ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
         bind_sampler(&self.ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
 
         // Fog over geometry only (stencil 1): sky pixels keep the sky.
-        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
 

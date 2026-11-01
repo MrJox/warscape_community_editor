@@ -67,6 +67,7 @@ pub(crate) struct DecalGpu {
     normal_copy: Target,
     copy_w: u32,
     copy_h: u32,
+    copy_samples: u32,
 
     /// Per decal model: its textures.
     textures: BTreeMap<String, DecalTextures>,
@@ -375,8 +376,8 @@ impl Renderer {
             return;
         }
 
-        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.shader(DECAL_PS).or_else(|| self.shader(DECAL_PS_PLAIN))) else { return };
-        let parallax_ps = self.shader(DECAL_PARALLAX_PS).or_else(|| self.shader(DECAL_PARALLAX_PS_PLAIN));
+        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.scene_shader(DECAL_PS).or_else(|| self.scene_shader(DECAL_PS_PLAIN))) else { return };
+        let parallax_ps = self.scene_shader(DECAL_PARALLAX_PS).or_else(|| self.scene_shader(DECAL_PARALLAX_PS_PLAIN));
         self.make_decal_resources();
         let el: Vec<InputElement> = std::iter::once(element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false))
             .chain((1..=6).map(|i| element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true)))
@@ -395,13 +396,14 @@ impl Renderer {
         }
 
         // The G-buffer normal before the decals.
-        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
-        if self.decals.normal_copy.tex.is_none() || self.decals.copy_w != w || self.decals.copy_h != h {
-            self.decals.normal_copy = make_target(&self.dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM);
-            (self.decals.copy_w, self.decals.copy_h) = (w, h);
+        let (w, h, samples) = (self.gbuffer.w, self.gbuffer.h, self.gbuffer.samples());
+        if self.decals.normal_copy.tex.is_none() || self.decals.copy_w != w || self.decals.copy_h != h || self.decals.copy_samples != samples {
+            self.decals.normal_copy = super::targets::make_target_ms(&self.dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples);
+            (self.decals.copy_w, self.decals.copy_h, self.decals.copy_samples) = (w, h, samples);
         }
 
-        if let (Some(dst), Some(src)) = (&self.decals.normal_copy.tex, &self.gbuffer.channels[0].tex) {
+        let normals = self.gbuffer.ms.as_ref().map_or_else(|| self.gbuffer.channels[0].tex.clone(), |m| m.channels[0].tex.clone());
+        if let (Some(dst), Some(src)) = (&self.decals.normal_copy.tex, &normals) {
             self.ctx.copy_resource(dst, src);
         }
 
@@ -413,7 +415,7 @@ impl Renderer {
         self.upload();
 
         let rtvs = self.gbuffer.scene_rtvs()[..3].to_vec();
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv_read_depth().as_ref());
         self.ctx.set_depth_stencil_state(self.decals.ds.as_ref(), u32::from(DECAL_RECEIVER));
         self.ctx.set_rasterizer_state(self.decals.rs.as_ref());
         self.ctx.set_blend_state(self.decals.bs.as_ref());
@@ -442,6 +444,9 @@ impl Renderer {
                 // Rome 2's names for the same two (two targets written: the normal and the albedo).
                 bind_srv(ctx, &ps, "s_depth_buffer", self.gbuffer.channels[3].srv.as_ref());
                 bind_srv(ctx, &ps, "s_gbuffer_normal_wrap", self.decals.normal_copy.srv.as_ref());
+                bind_srv(ctx, &ps, "t_gbuffer_normal_ms", self.decals.normal_copy.srv.as_ref());
+                self.bind_gbuffer_ms(&ps);
+                let ctx = &self.ctx;
                 bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
                 bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
                 ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);

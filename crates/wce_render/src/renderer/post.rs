@@ -78,11 +78,14 @@ pub(crate) struct DepthRange {
     pub valid: bool,
     pub min: f32,
     pub max: f32,
+
+    /// The staging holds the resolved D24S8 depth (MSAA) rather than channel 4's R32F z / w.
+    pub d24: bool,
 }
 
 impl Default for DepthRange {
     fn default() -> Self {
-        Self { staging: Default::default(), w: 0, h: 0, frame: 0, valid: false, min: 1.0, max: 781.0 }
+        Self { staging: Default::default(), w: 0, h: 0, frame: 0, valid: false, min: 1.0, max: 781.0, d24: false }
     }
 }
 
@@ -112,6 +115,9 @@ impl Renderer {
 
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+
+        // With MSAA the light buffer is resolved first (the game's ResolveSubresource before its tone mapping, docs/plans/msaa.md).
+        self.resolve_scene_hdr();
 
         // 1. A quarter-size copy with the luma in .w (Rome 2: the colour only).
         self.bind_post(&down, &self.states.s_clamp_linear.clone());
@@ -296,7 +302,7 @@ impl Renderer {
         self.bind(&ps);
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
         bind_srv(&self.ctx, &ps, "frame_sampler", self.post.ldr.t.srv.as_ref());
-        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(&self.ctx, &ps, "s_fog_of_war_mask", self.res.black_srv.as_ref());
 
         if grain {
@@ -361,7 +367,7 @@ impl Renderer {
         let rtv = self.post.god_rays.t.rtv.clone();
         self.ctx.set_render_targets(std::slice::from_ref(&rtv), None);
         self.bind(&rays);
-        bind_srv(&self.ctx, &rays, "depth_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, &rays, "depth_sampler", self.gbuffer.depth_srv().as_ref());
         bind_sampler(&self.ctx, &rays, "depth_sampler", self.states.s_clamp_point.as_ref());
         self.fullscreen_to(&rtv, hw, hh, &rays);
 
@@ -391,6 +397,15 @@ impl Renderer {
     /// - MLAA_PASS3_FINAL_BLEND (fn 0x116e0750): `MLAA_Blend_PS` blends each line's pixels with their neighbours, the rest as they are.
     /// The targets (fns 0x11765d60, 0x11765e60): R8_UINT at the view's size (TTF_R8_UINT on DX11). The game blends into its frame; the
     /// editor into its own target, copied back into `final_`.
+    /// With MSAA: the MS light buffer averaged into the one-sample one the tone mapping and the debug views read.
+    pub(crate) fn resolve_scene_hdr(&mut self) {
+        let Some(ms) = &self.gbuffer.ms else { return };
+        if let (Some(dst), Some(src)) = (&self.gbuffer.hdr.tex, &ms.hdr.tex) {
+            self.ctx.set_render_targets(&[], None);
+            self.ctx.resolve_subresource(dst, src, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        }
+    }
+
     pub(crate) fn pass_mlaa(&mut self) {
         let (Some(edges_ps), Some(length_ps), Some(blend_ps)) = (self.shader(MLAA_EDGES_PS), self.shader(MLAA_LINE_LENGTH_PS), self.shader(MLAA_BLEND_PS)) else {
             return;
@@ -533,9 +548,12 @@ impl Renderer {
     /// The Depth Buffer Analysis Shadow Map View equivalent: the min / max view depth of the visible geometry from the G-buffer depth channel
     /// (z / w), read back two frames later. Sky pixels (z / w = 0 after the clear) are skipped.
     pub(crate) fn analyse_depth(&mut self, cam: &Camera) {
-        if self.depth_range.staging[0].is_none() || self.depth_range.w != self.gbuffer.w || self.depth_range.h != self.gbuffer.h {
+        // With MSAA the scene's depth is the resolved D24S8 one (no R32F channel 4 is drawn).
+        let d24 = self.gbuffer.ms.is_some();
+        if self.depth_range.staging[0].is_none() || self.depth_range.w != self.gbuffer.w || self.depth_range.h != self.gbuffer.h || self.depth_range.d24 != d24 {
+            let format = if d24 { DXGI_FORMAT_R24G8_TYPELESS } else { DXGI_FORMAT_R32_FLOAT };
             let sd = D3D11_TEXTURE2D_DESC {
-                Width: self.gbuffer.w, Height: self.gbuffer.h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Width: self.gbuffer.w, Height: self.gbuffer.h, MipLevels: 1, ArraySize: 1, Format: format, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
                 Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0,
             };
 
@@ -546,9 +564,11 @@ impl Renderer {
             self.depth_range.w = self.gbuffer.w;
             self.depth_range.h = self.gbuffer.h;
             self.depth_range.frame = 0;
+            self.depth_range.d24 = d24;
         }
 
-        if let (Some(staging), Some(depth)) = (&self.depth_range.staging[(self.depth_range.frame & 1) as usize], &self.gbuffer.channels[3].tex) {
+        let source = if d24 { self.gbuffer.depth.tex.clone() } else { self.gbuffer.channels[3].tex.clone() };
+        if let (Some(staging), Some(depth)) = (&self.depth_range.staging[(self.depth_range.frame & 1) as usize], &source) {
             self.ctx.copy_resource(staging, depth);
         }
 
@@ -564,7 +584,7 @@ impl Renderer {
         for y in (0..self.gbuffer.h as usize).step_by(2) {
             let Some(row) = ms.row(y, self.gbuffer.w as usize * 4) else { break };
             for texel in row.as_chunks::<4>().0.iter().step_by(2) {
-                let d = f32::from_ne_bytes(*texel);
+                let d = if d24 { (u32::from_ne_bytes(*texel) & 0x00ff_ffff) as f32 / 16_777_215.0 } else { f32::from_ne_bytes(*texel) };
                 if d.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) || d >= 1.0 {
                     continue;
                 }
@@ -635,7 +655,7 @@ impl Renderer {
 
         // blur_y's name for its input.
         bind_sampler(&self.ctx, ps, "blur_x_target_sampler", self.states.s_clamp_linear.as_ref());
-        bind_srv(&self.ctx, ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(&self.ctx, ps, "jitter_texture_sampler", self.res.jitter_srv.as_ref());
         if let Some(src) = &src {
             bind_srv(&self.ctx, ps, "resolve_target_sampler", Some(src));
@@ -663,7 +683,7 @@ impl Renderer {
             View::Albedo => (2, self.gbuffer.channels[1].srv.clone()),
             View::Normal => (3, self.gbuffer.channels[0].srv.clone()),
             View::Specular => (3, self.gbuffer.channels[2].srv.clone()),
-            View::Depth => (4, self.gbuffer.channels[3].srv.clone()),
+            View::Depth => (4, self.gbuffer.depth_srv()),
             View::SkyCube => (5, self.gbuffer.hdr.srv.clone()),
             View::Bloom => (1, self.post.bloom_a.t.srv.clone()),
             View::Quarter => (1, self.post.quarter.t.srv.clone()),

@@ -1353,7 +1353,11 @@ impl Renderer {
         // ---- 2c. The custom meshes' own material (`custom_geometry`).
         self.draw_custom_material(&ents);
 
-        // ---- 3. The resolve: the terrain pixels into the G-buffer.
+        // ---- 3. The resolve: the terrain pixels into the G-buffer (with MSAA its depth and mark expanded into the MS depth first).
+        if self.gbuffer.ms.is_some() {
+            self.terrain_depth_to_ms();
+        }
+
         let Payload::Terrain(first) = &ents[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
@@ -1423,6 +1427,25 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+    }
+
+    /// With MSAA (docs/plans/msaa.md): the terrain drew its depth and its stencil mark into the one-sample depth; the game's
+    /// `ps_antiresolve_with_fixed_stencil` (resolve_depth_buffer.hlsl) writes that depth into every sample of the MS depth where the mark
+    /// is set (it discards elsewhere), where it is nearer than what the meshes left, with the terrain's mark as the stencil reference.
+    fn terrain_depth_to_ms(&mut self) {
+        let Some(ps) = self.shader(ANTIRESOLVE_DEPTH_PS) else { return };
+        let (depth, stencil) = (self.gbuffer.depth.depth_srv.clone(), self.gbuffer.depth.stencil_srv.clone());
+        let Some(ms_dsv) = self.gbuffer.ms.as_ref().and_then(|m| m.depth.dsv.clone()) else { return };
+        self.ctx.set_render_targets(&[], Some(&ms_dsv));
+        self.ctx.set_depth_stencil_state(self.terrain.ds_depth.as_ref(), TERRAIN_STENCIL);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, self.gbuffer.w as f32, self.gbuffer.h as f32)]);
+        self.bind(&ps);
+        bind_srv(&self.ctx, &ps, "t_depthbuffer", depth.as_ref());
+        bind_srv(&self.ctx, &ps, "t_stencilbuffer", stencil.as_ref());
+        self.upload();
+        self.fullscreen(&ps);
+        null_ps_srvs(&self.ctx, 4);
     }
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
