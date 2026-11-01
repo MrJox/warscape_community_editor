@@ -2279,6 +2279,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("tile_set_common", "tile_set_common <attribute> <value>", "set a property on every selected element, as the Inspector does with several selected (one undo entry)", |e, a| {
+        let (Some(id), [attr, value]) = (crate::tool::document_id(e), a) else { return fail("usage: tile_set_common <attribute> <value>") };
+        let elems = selected(e);
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        d.set_common(&elems, attr, value).map(|n| format!("{n} of {} changed", elems.len())).map_or_else(fail, ok)
+    });
+
     c.add("assert_attr_near", "assert_attr_near <element | selected> <attribute> <number> <tolerance>", "test: the element's attribute is a number this close", |e, a| {
         let selected = primary(e);
         let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });

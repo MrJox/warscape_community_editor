@@ -877,6 +877,10 @@ impl Document for TileDocument {
         self.inspect_item(item, inspector);
     }
 
+    fn inspect_many(&mut self, items: &[SourceRef], inspector: &mut dyn Inspector) -> bool {
+        self.inspect_elements(items, inspector)
+    }
+
     fn describe(&self, item: SourceRef) -> String {
         self.tile().describe(item)
     }

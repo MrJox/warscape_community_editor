@@ -135,6 +135,13 @@ pub trait Document: Any {
         let _ = (item, inspector);
     }
 
+    /// Several items selected (of this document, the first one's): the properties they have in common, an edit setting them all. False when
+    /// the document does not do that (the Inspector shows the first item).
+    fn inspect_many(&mut self, items: &[SourceRef], inspector: &mut dyn Inspector) -> bool {
+        let _ = (items, inspector);
+        false
+    }
+
     fn describe(&self, item: SourceRef) -> String {
         let _ = item;
         String::new()
