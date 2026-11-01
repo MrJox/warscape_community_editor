@@ -1849,17 +1849,18 @@ impl TileTool {
     }
 
     fn handle_keys(&mut self, e: &mut Editor) {
+        use wce_editor::shortcuts::pressed;
         let io = gui::io();
         if document_id(e).is_none() || io.WantTextInput {
             return;
         }
 
         let sel = primary(e);
-        if gui::is_key_pressed(gui::KEY_ESCAPE, false) && self.box_select.armed {
-            self.box_select = Default::default();
-            self.status = "box select cancelled".to_owned();
-        } else if gui::is_key_pressed(gui::KEY_ESCAPE, false) {
-            if self.grabbing {
+        if pressed("tile.cancel", false) {
+            if self.box_select.armed {
+                self.box_select = Default::default();
+                self.status = "box select cancelled".to_owned();
+            } else if self.grabbing {
                 self.end_grab(e, false);
             } else if self.drawing || self.placing.is_some() {
                 self.stop_making();
@@ -1868,10 +1869,10 @@ impl TileTool {
             }
         }
 
-        // While grabbing: PageUp / PageDown move a freeform item along the ground's normal (a quarter metre; Shift: a metre).
+        // While grabbing: move a freeform item along the ground's normal (a quarter metre; the "more" keys: a metre).
         if self.grabbing {
-            let step = if io.KeyShift { 1.0 } else { 0.25 };
-            let dk = if gui::is_key_pressed(gui::KEY_PAGE_UP, true) { step } else if gui::is_key_pressed(gui::KEY_PAGE_DOWN, true) { -step } else { 0.0 };
+            let steps = [("tile.grab_raise", 0.25), ("tile.grab_lower", -0.25), ("tile.grab_raise_more", 1.0), ("tile.grab_lower_more", -1.0)];
+            let dk: f32 = steps.iter().filter(|(id, _)| pressed(id, true)).map(|(_, d)| d).sum();
             if dk != 0.0 {
                 self.grab_normal_offset += dk;
                 self.status = format!("grab: {:+.2} m along the ground's normal", self.grab_normal_offset);
@@ -1883,22 +1884,26 @@ impl TileTool {
             self.end_grab(e, false);
         }
 
-        // While placing: R / Shift+R turn it; Alt held turns it where it is with the mouse. Shift+A over the viewport: the quick-add popup.
-        if !io.KeyCtrl && self.placing.is_some() && gui::is_key_pressed(gui::KEY_R, false) {
-            self.turn_placing(if io.KeyShift { -self.angle_step } else { self.angle_step });
+        // While placing: turn it (Alt held turns it where it is with the mouse). Over the viewport: the quick-add popup.
+        if self.placing.is_some() {
+            if pressed("tile.turn_placing", false) {
+                self.turn_placing(self.angle_step);
+            }
+
+            if pressed("tile.turn_placing_back", false) {
+                self.turn_placing(-self.angle_step);
+            }
         }
 
         self.alt_turn_placing(e);
 
-        if io.KeyShift && !io.KeyCtrl && e.viewport.hovered && !gui::is_mouse_down(1) && gui::is_key_pressed(gui::KEY_A, false) {
+        if e.viewport.hovered && !gui::is_mouse_down(1) && pressed("tile.quick_add", false) {
             self.request_quick_add();
         }
 
-        if io.KeyCtrl {
-            let grabbing = self.grabbing;
-            if gui::is_key_pressed(gui::KEY_D, false)
-                && let (Some(s), false) = (sel, grabbing)
-            {
+        let grabbing = self.grabbing;
+        if let (Some(s), false) = (sel, grabbing) {
+            if pressed("tile.duplicate", false) {
                 let d = document(e).expect("a tile");
                 self.status = match d.duplicate(s) {
                     Ok(_) => "duplicated".to_owned(),
@@ -1906,49 +1911,54 @@ impl TileTool {
                 };
             }
 
-            if gui::is_key_pressed(gui::KEY_R, false)
-                && let (Some(s), false) = (sel, grabbing)
-            {
-                let step = if io.KeyShift { -self.angle_step } else { self.angle_step };
-                document(e).expect("a tile").rotate(s, step);
+            for (id, step) in [("tile.turn", self.angle_step), ("tile.turn_back", -self.angle_step)] {
+                if pressed(id, false) {
+                    document(e).expect("a tile").rotate(s, step);
+                }
             }
+        }
 
-            let all = selected(e);
-            if gui::is_key_pressed(gui::KEY_G, false) && !all.is_empty() && !grabbing {
+        let all = selected(e);
+        if !all.is_empty() && !grabbing {
+            if pressed("tile.group", false) {
                 self.status = self.group_selection(e).unwrap_or_else(|err| err);
             }
 
-            if gui::is_key_pressed(gui::KEY_U, false) && !all.is_empty() && !grabbing {
+            if pressed("tile.ungroup", false) {
                 self.status = self.ungroup_selection(e).unwrap_or_else(|err| err);
             }
+        }
 
-            // Copy / cut / paste (at the mouse; Shift: where they were).
-            if !grabbing && gui::is_key_pressed(gui::KEY_C, false) {
+        // Copy / cut / paste (at the mouse, or where they were).
+        if !grabbing {
+            if pressed("tile.copy", false) {
                 self.copy_selection(e, false);
             }
 
-            if !grabbing && gui::is_key_pressed(gui::KEY_X, false) {
+            if pressed("tile.cut", false) {
                 self.copy_selection(e, true);
             }
 
-            if !grabbing && gui::is_key_pressed(gui::KEY_V, false) {
-                self.paste(e, !io.KeyShift);
+            if pressed("tile.paste", false) {
+                self.paste(e, true);
             }
 
-            return;
+            if pressed("tile.paste_in_place", false) {
+                self.paste(e, false);
+            }
         }
 
-        if gui::is_key_pressed(gui::KEY_G, false) && sel.is_some() {
+        if pressed("tile.grab", false) && sel.is_some() {
             self.begin_grab(e);
         }
 
-        // B: box select (the next drag draws the rectangle).
-        if gui::is_key_pressed(gui::KEY_B, false) && !self.grabbing && self.mode == TileMode::Select && !self.drawing && self.placing.is_none() {
+        // Box select (the next drag draws the rectangle).
+        if pressed("tile.box_select", false) && !self.grabbing && self.mode == TileMode::Select && !self.drawing && self.placing.is_none() {
             self.box_select = crate::selection_tools::BoxSelect { armed: true, ..Default::default() };
             self.status = "box select: drag a rectangle (Shift adds, Ctrl takes away; Esc cancels)".to_owned();
         }
 
-        if gui::is_key_pressed(gui::KEY_DELETE, false) && !self.grabbing {
+        if pressed("tile.delete", false) && !self.grabbing {
             let is_polygon = sel.is_some_and(|s| document(e).is_some_and(|d| d.tile().is_polygon(s)));
             if let (Some(s), Some(pt), true) = (sel, self.poly_point, is_polygon) {
                 let d = document(e).expect("a tile");
@@ -1963,7 +1973,7 @@ impl TileTool {
             }
         }
 
-        if self.drawing && (gui::is_key_pressed(gui::KEY_ENTER, false) || gui::is_key_pressed(gui::KEY_KEYPAD_ENTER, false)) {
+        if self.drawing && pressed("tile.finish_drawing", false) {
             self.finish_drawing(e);
         }
     }
@@ -2904,6 +2914,39 @@ pub fn set_sea_state(e: &mut Editor, key: &str) {
     e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.sea_state = key.to_owned());
 }
 
+/// The Tile tool's keys (Settings > Shortcuts).
+const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
+    use wce_editor::shortcuts::{Action, Scope};
+    const fn a(id: &'static str, group: &'static str, label: &'static str, defaults: &'static [&'static str]) -> Action {
+        Action { id, scope: Scope::Tool("tile"), group, label, defaults, held: false }
+    }
+
+    &[
+        a("tile.cancel", "Tile", "Cancel: stop placing, drawing, grabbing or box select; back to Select", &["Escape"]),
+        a("tile.grab", "Tile", "Grab on the ground", &["G"]),
+        a("tile.box_select", "Tile", "Box select", &["B"]),
+        a("tile.delete", "Tile", "Delete", &["Delete"]),
+        a("tile.rename", "Tile", "Rename (Scene tree)", &["F2"]),
+        a("tile.duplicate", "Tile", "Duplicate", &["Ctrl+D"]),
+        a("tile.turn", "Tile", "Turn the selection by the rotate step", &["Ctrl+R"]),
+        a("tile.turn_back", "Tile", "Turn the selection back by the rotate step", &["Ctrl+Shift+R"]),
+        a("tile.group", "Tile", "Group", &["Ctrl+G"]),
+        a("tile.ungroup", "Tile", "Ungroup", &["Ctrl+U"]),
+        a("tile.copy", "Tile", "Copy", &["Ctrl+C"]),
+        a("tile.cut", "Tile", "Cut", &["Ctrl+X"]),
+        a("tile.paste", "Tile", "Paste at the mouse", &["Ctrl+V"]),
+        a("tile.paste_in_place", "Tile", "Paste in place", &["Ctrl+Shift+V"]),
+        a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Shift+A"]),
+        a("tile.turn_placing", "Tile: placing and drawing", "Turn what is placed", &["R"]),
+        a("tile.turn_placing_back", "Tile: placing and drawing", "Turn what is placed back", &["Shift+R"]),
+        a("tile.finish_drawing", "Tile: placing and drawing", "Finish drawing", &["Enter", "KeypadEnter"]),
+        a("tile.grab_raise", "Tile: grabbing", "Raise along the ground's normal (0.25 m)", &["PageUp"]),
+        a("tile.grab_lower", "Tile: grabbing", "Lower along the ground's normal (0.25 m)", &["PageDown"]),
+        a("tile.grab_raise_more", "Tile: grabbing", "Raise along the ground's normal (1 m)", &["Shift+PageUp"]),
+        a("tile.grab_lower_more", "Tile: grabbing", "Lower along the ground's normal (1 m)", &["Shift+PageDown"]),
+    ]
+};
+
 impl Tool for TileTool {
     fn id(&self) -> &str {
         "tile"
@@ -2931,6 +2974,10 @@ impl Tool for TileTool {
 
     fn game_settings_fields(&self) -> &'static [&'static str] {
         crate::settings::GAME_FIELDS
+    }
+
+    fn shortcuts(&self) -> &'static [wce_editor::shortcuts::Action] {
+        SHORTCUTS
     }
 
     fn has_settings(&self) -> bool {

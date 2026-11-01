@@ -109,7 +109,7 @@ impl TileTool {
             return;
         }
 
-        if gui::menu_item("Box select", Some("B"), false, true) {
+        if gui::menu_item("Box select", wce_editor::shortcuts::label("tile.box_select").as_deref(), false, true) {
             self.box_select = BoxSelect { armed: true, ..Default::default() };
             self.status = "box select: drag a rectangle (Shift adds, Ctrl takes away; Esc cancels)".to_owned();
         }

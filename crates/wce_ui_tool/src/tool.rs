@@ -1010,10 +1010,13 @@ linked by the component name '{}'", r.path, r.via));
         // keys
         if hovered && self.drag.is_none() {
             if let Some(i) = sel {
-                let step = if io.KeyShift { 10 } else { 1 };
-                let nudge = [(sys::ImGuiKey_LeftArrow, -step, 0), (sys::ImGuiKey_RightArrow, step, 0), (sys::ImGuiKey_UpArrow, 0, -step), (sys::ImGuiKey_DownArrow, 0, step)];
+                use wce_editor::shortcuts::pressed;
+                let nudge = [
+                    ("ui.nudge_left", -1, 0), ("ui.nudge_right", 1, 0), ("ui.nudge_up", 0, -1), ("ui.nudge_down", 0, 1),
+                    ("ui.nudge_left_10", -10, 0), ("ui.nudge_right_10", 10, 0), ("ui.nudge_up_10", 0, -10), ("ui.nudge_down_10", 0, 10),
+                ];
                 for (key, dx, dy) in nudge {
-                    if gui::is_key_pressed(key as i32, true) {
+                    if pressed(key, true) {
                         if let Some(en) = entries.get(i).filter(|en| en.kind == EntryKind::Entry) {
                             let path = en.path.clone();
                             let (x, y) = (en.x + dx, en.y + dy);
@@ -1025,11 +1028,11 @@ linked by the component name '{}'", r.path, r.via));
                     }
                 }
 
-                if gui::is_key_pressed(gui::KEY_DELETE, false) {
+                if pressed("ui.delete", false) {
                     self.delete_selected(e);
                 }
 
-                if io.KeyCtrl && gui::is_key_pressed(gui::KEY_D, false) {
+                if pressed("ui.duplicate", false) {
                     self.duplicate_selected(e);
                 }
             }
@@ -2187,6 +2190,27 @@ fn parent_entry_path(path: &[usize]) -> Vec<usize> {
     path[..path.len().saturating_sub(2)].to_vec()
 }
 
+/// The UI tool's keys (Settings > Shortcuts).
+const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
+    use wce_editor::shortcuts::{Action, Scope};
+    const fn a(id: &'static str, label: &'static str, defaults: &'static [&'static str]) -> Action {
+        Action { id, scope: Scope::Tool("ui"), group: "UI", label, defaults, held: false }
+    }
+
+    &[
+        a("ui.delete", "Delete", &["Delete"]),
+        a("ui.duplicate", "Duplicate", &["Ctrl+D"]),
+        a("ui.nudge_left", "Nudge left (1 px)", &["LeftArrow"]),
+        a("ui.nudge_right", "Nudge right (1 px)", &["RightArrow"]),
+        a("ui.nudge_up", "Nudge up (1 px)", &["UpArrow"]),
+        a("ui.nudge_down", "Nudge down (1 px)", &["DownArrow"]),
+        a("ui.nudge_left_10", "Nudge left (10 px)", &["Shift+LeftArrow"]),
+        a("ui.nudge_right_10", "Nudge right (10 px)", &["Shift+RightArrow"]),
+        a("ui.nudge_up_10", "Nudge up (10 px)", &["Shift+UpArrow"]),
+        a("ui.nudge_down_10", "Nudge down (10 px)", &["Shift+DownArrow"]),
+    ]
+};
+
 impl Tool for UiTool {
     fn id(&self) -> &str {
         "ui"
@@ -2194,6 +2218,10 @@ impl Tool for UiTool {
 
     fn game_settings_fields(&self) -> &'static [&'static str] {
         crate::settings::GAME_FIELDS
+    }
+
+    fn shortcuts(&self) -> &'static [wce_editor::shortcuts::Action] {
+        SHORTCUTS
     }
 
     fn title(&self) -> &str {
@@ -2257,11 +2285,11 @@ impl Tool for UiTool {
                 }
             }
 
-            if gui::menu_item("Duplicate", Some("Ctrl+D"), false, true) {
+            if gui::menu_item("Duplicate", wce_editor::shortcuts::label("ui.duplicate").as_deref(), false, true) {
                 self.duplicate_selected(e);
             }
 
-            if gui::menu_item("Delete", Some("Del"), false, true) {
+            if gui::menu_item("Delete", wce_editor::shortcuts::label("ui.delete").as_deref(), false, true) {
                 self.delete_selected(e);
             }
 

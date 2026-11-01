@@ -219,6 +219,8 @@ impl Editor {
             panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
+        crate::shortcuts::register(crate::shortcuts::EDITOR);
+        crate::shortcuts::set_overrides(&e.settings.shortcuts);
         e.frame_cap = e.settings.frame_cap();
         e.viewport.gizmo_points = e.settings.appearance.gizmo_size;
         e.apply_camera_settings();
@@ -363,6 +365,8 @@ impl Editor {
     pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
         tool.register_commands(&mut self.commands);
         self.settings.set_game_fields(tool.id(), tool.game_settings_fields());
+        crate::shortcuts::register(tool.shortcuts());
+        crate::shortcuts::set_overrides(&self.settings.shortcuts);
         self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens() });
         self.tools.push(Some(tool));
     }
@@ -1427,48 +1431,48 @@ impl Editor {
             return;
         }
 
-        // Save works from anywhere, a text field too; the other shortcuts not while typing into a field.
-        let io = gui::io();
-        if io.KeyCtrl && gui::is_key_pressed(gui::KEY_S, false) {
-            let _ = CommandRegistry::run(self, if io.KeyShift { "save_all" } else { "save" });
+        // Save works from anywhere, a text field too; the other shortcuts not while typing into a field (`shortcuts`: Settings > Shortcuts).
+        use crate::shortcuts::pressed;
+        if pressed("save", false) {
+            let _ = CommandRegistry::run(self, "save");
+        }
+
+        if pressed("save_all", false) {
+            let _ = CommandRegistry::run(self, "save_all");
         }
 
         let io = gui::io();
         if !io.WantTextInput {
-            if io.KeyCtrl {
-                for (k, i) in self.shown_tools().into_iter().take(9).enumerate() {
-                    if gui::is_key_pressed(gui::KEY_1 + k as i32, false) {
-                        let id = self.tool_info[i].id.clone();
-                        self.set_tool(&id);
-                    }
+            for (k, i) in self.shown_tools().into_iter().take(9).enumerate() {
+                if pressed(&format!("tool_{}", k + 1), false) {
+                    let id = self.tool_info[i].id.clone();
+                    self.set_tool(&id);
                 }
             }
 
-            if io.KeyCtrl && gui::is_key_pressed(gui::KEY_Z, true) {
-                let _ = CommandRegistry::run(self, if io.KeyShift { "redo" } else { "undo" });
+            if pressed("undo", true) {
+                let _ = CommandRegistry::run(self, "undo");
             }
 
-            if io.KeyCtrl && gui::is_key_pressed(gui::KEY_Y, true) {
+            if pressed("redo", true) {
                 let _ = CommandRegistry::run(self, "redo");
             }
 
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
             let claimed = self.with_tool_at(self.active_tool, |t, e| t.claims_left_button(e)).unwrap_or(false);
-            if !io.KeyCtrl && self.viewport.hovered && !claimed {
-                // 1..4: the gizmo, in the toolbar's order (none, move, rotate, scale); WASD and Q / E are the camera's.
-                if !io.KeyAlt {
-                    for i in 0..4 {
-                        if gui::is_key_pressed(gui::KEY_1 + i, false) {
-                            self.viewport.gizmo = GizmoMode::from_index(i as usize);
-                        }
+            if self.viewport.hovered && !claimed {
+                // The gizmo, in the toolbar's order (none, move, rotate, scale).
+                for (i, id) in ["gizmo_none", "gizmo_move", "gizmo_rotate", "gizmo_scale"].into_iter().enumerate() {
+                    if pressed(id, false) {
+                        self.viewport.gizmo = GizmoMode::from_index(i);
                     }
                 }
 
-                if gui::is_key_pressed(gui::KEY_F, false) {
+                if pressed("focus", false) {
                     self.focus_selection();
                 }
 
-                if !io.KeyAlt && !io.KeyShift && gui::is_key_pressed(gui::KEY_L, false) {
+                if pressed("local_coordinates", false) {
                     self.viewport.local_coordinates = !self.viewport.local_coordinates;
                 }
             }
@@ -1671,7 +1675,7 @@ impl Editor {
                 self.mods_popup = true;
             }
 
-            if gui::menu_item(&format!("{}  Save", icons::SAVE), Some("Ctrl+S"), false, can_save && modified) {
+            if gui::menu_item(&format!("{}  Save", icons::SAVE), crate::shortcuts::label("save").as_deref(), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
 
@@ -1692,7 +1696,7 @@ impl Editor {
 
             let unsaved = self.docs.unsaved().len();
             let label = if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
-            if gui::menu_item(&label, Some("Ctrl+Shift+S"), false, unsaved > 0) {
+            if gui::menu_item(&label, crate::shortcuts::label("save_all").as_deref(), false, unsaved > 0) {
                 let _ = CommandRegistry::run(self, "save_all");
             }
 
@@ -1743,11 +1747,11 @@ impl Editor {
                 _ => format!("{}  Redo", icons::REDO_2),
             };
 
-            if gui::menu_item(&undo, Some("Ctrl+Z"), false, h.is_some_and(|h| h.0)) {
+            if gui::menu_item(&undo, crate::shortcuts::label("undo").as_deref(), false, h.is_some_and(|h| h.0)) {
                 let _ = CommandRegistry::run(self, "undo");
             }
 
-            if gui::menu_item(&redo, Some("Ctrl+Y"), false, h.is_some_and(|h| h.1)) {
+            if gui::menu_item(&redo, crate::shortcuts::label("redo").as_deref(), false, h.is_some_and(|h| h.1)) {
                 let _ = CommandRegistry::run(self, "redo");
             }
 
@@ -1774,7 +1778,7 @@ impl Editor {
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
             gui::separator();
-            if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), Some("F"), false, !self.selection.is_empty()) {
+            if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), crate::shortcuts::label("focus").as_deref(), false, !self.selection.is_empty()) {
                 self.focus_selection();
             }
 

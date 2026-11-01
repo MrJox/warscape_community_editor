@@ -808,15 +808,16 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             input.cursor = Some([2.0 * (mouse_x - origin.x) / size.x.max(1.0) - 1.0, 1.0 - 2.0 * (mouse_y - origin.y) / size.y.max(1.0)]);
         }
 
-        // WASD moves, Q / E turn (the fly camera: down / up), Shift faster: bare keys over the viewport (Ctrl and Alt are other shortcuts').
-        if !io.WantTextInput && !ctrl && !alt {
-            input.forward = gui::is_key_down(gui::KEY_W);
-            input.back = gui::is_key_down(gui::KEY_S);
-            input.left = gui::is_key_down(gui::KEY_A);
-            input.right = gui::is_key_down(gui::KEY_D);
-            input.turn_left = gui::is_key_down(gui::KEY_Q);
-            input.turn_right = gui::is_key_down(gui::KEY_E);
-            input.fast = shift;
+        // WASD moves, Q / E turn (the fly camera: down / up), Shift faster: keys held over the viewport (`shortcuts`, the camera's).
+        if !io.WantTextInput {
+            use crate::shortcuts::down;
+            input.forward = down("camera_forward");
+            input.back = down("camera_back");
+            input.left = down("camera_left");
+            input.right = down("camera_right");
+            input.turn_left = down("camera_turn_left");
+            input.turn_right = down("camera_turn_right");
+            input.fast = down("camera_fast");
 
             // Moving is not a click.
             if input.forward || input.back || input.left || input.right || input.turn_left || input.turn_right {

@@ -767,12 +767,12 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     actions.push(RowAction::AddLayer(el, row.key.clone()));
                 }
 
-                if !sel.is_empty() && gui::menu_item("Group", Some("Ctrl+G"), false, true) {
+                if !sel.is_empty() && gui::menu_item("Group", wce_editor::shortcuts::label("tile.group").as_deref(), false, true) {
                     actions.push(RowAction::Group(sel.clone()));
                 }
 
                 let has_group = sel.iter().any(|&s| matches!(sc.type_of(s), "UserInstanceGroup" | "INSTANCE_GROUP"));
-                if has_group && gui::menu_item("Ungroup", Some("Ctrl+U"), false, true) {
+                if has_group && gui::menu_item("Ungroup", wce_editor::shortcuts::label("tile.ungroup").as_deref(), false, true) {
                     actions.push(RowAction::Ungroup(sel.clone()));
                 }
 
@@ -829,7 +829,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
                 gui::separator();
                 if !is_graph {
-                    if gui::menu_item("Rename", Some("F2"), false, true) {
+                    if gui::menu_item("Rename", wce_editor::shortcuts::label("tile.rename").as_deref(), false, true) {
                         actions.push(RowAction::Rename(el));
                     }
 
@@ -837,7 +837,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                         actions.push(RowAction::DuplicateLayer(el));
                     }
 
-                    if gui::menu_item("Delete", Some("Del"), false, true) {
+                    if gui::menu_item("Delete", wce_editor::shortcuts::label("tile.delete").as_deref(), false, true) {
                         actions.push(RowAction::Delete);
                     }
                 }
@@ -1041,7 +1041,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     if window_hovered && !gui::io().WantTextInput {
         let sel = selected(e);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        if gui::is_key_pressed(gui::KEY_F2, false) && sel.len() == 1 && d.tile().tscene().type_of(sel[0]) != "SCENE_GRAPH" {
+        if wce_editor::shortcuts::pressed("tile.rename", false) && sel.len() == 1 && d.tile().tscene().type_of(sel[0]) != "SCENE_GRAPH" {
             actions.push(RowAction::Rename(sel[0]));
         }
     }

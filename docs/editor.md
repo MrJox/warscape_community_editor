@@ -220,6 +220,20 @@ when the appearance changes, so the Settings window shows a change at once. Pane
 success, highlight, the dim text) from `theme` instead of fixed values, so that every theme keeps them readable; what is drawn over the 3D view keeps
 its own colours. Appearance > "Dear ImGui's style editor" edits the live style, to work on a theme.
 
+### Shortcuts
+
+`shortcuts.rs`: every key the editor and its tools react to is an action (id, scope, group, label, up to two default keys): the editor's
+(`shortcuts::EDITOR`: save, undo / redo, the tools 1..9, the gizmo, focus, global / local, the camera's held keys) and each tool's
+(`Tool::shortcuts`: the Tile tool's grab, box select, delete, duplicate, turn, group, copy / paste, quick add, rename, placing and grabbing keys;
+the UI tool's delete, duplicate and nudges). Code reads `shortcuts::pressed(id)` / `down(id)` and menus show `shortcuts::label(id)`. A chord matches
+when its key is pressed and Ctrl, Shift and Alt are exactly its own; a held action ignores Shift unless its chord has it, and a modifier key bound
+alone (the camera's *faster*, Left / Right Shift) matches whatever else is held. Variants are actions of their own (*Turn back*, *Paste in place*).
+Dialog keys (Esc cancels, Enter confirms) and text editing are not actions. **Settings > Shortcuts** lists them by group with a filter: a click on
+a key reads the next key pressed with its modifiers (no action fires meanwhile; a click again stops), the cross clears it, the arrow puts the defaults
+back, *Reset all*. Two actions whose keys are read at the same time (the same scope; the editor's with any; the viewport's with a tool's) may not
+share a key: such keys are red, the tooltip names the other action, and OK / Apply wait until it is changed. `[shortcuts]` in settings.toml keeps
+only the changed actions (`undo = ["Ctrl+K", ""]`). Commands `shortcut <id> [key 1 | -] [key 2 | -]`, test `assert_shortcut_clashes <n>`.
+
 When the game folder is not set or does not exist the editor starts without the game and shows the first-run dialog: it picks the game, fills in the Steam
 library's folder of it (registry `SteamPath` + `libraryfolders.vdf`), lets you browse, and **Save and continue** (command `setup`) writes the settings, mounts
 and starts the active tool; **Quit** leaves the editor. Its mod pack list (also File > Mod packs and the Settings window's Game page) has a search

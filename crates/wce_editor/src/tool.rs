@@ -238,6 +238,11 @@ pub trait Tool: Any {
         &[]
     }
 
+    /// The actions its keys do (`shortcuts`: rebindable in Settings > Shortcuts; read with `shortcuts::pressed`).
+    fn shortcuts(&self) -> &'static [crate::shortcuts::Action] {
+        &[]
+    }
+
     /// The tool's page in the Settings window. It edits `draft`, the window's copy of the settings (the tool's table: `Settings::tool` and
     /// `Settings::set_tool`); OK or Apply put it in place and call `settings_applied`.
     fn draw_settings(&mut self, draft: &mut Settings) {

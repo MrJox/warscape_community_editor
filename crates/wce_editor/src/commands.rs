@@ -928,6 +928,49 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame", mouse,
     );
 
+    c.add(
+        "shortcut", "shortcut <action id> [key 1 | -] [key 2 | -]",
+        "an action's keys (Settings > Shortcuts): with the Settings window open, in its copy (Apply keeps them); else for this session. No keys: \
+         log them",
+        |e, a| {
+            use crate::shortcuts::{self, Chord};
+            let Some(id) = a.first() else { return fail("usage: shortcut <action id> [key 1 | -] [key 2 | -]") };
+            let Some(action) = shortcuts::actions().into_iter().find(|x| x.id == id) else { return fail(format!("no action {id}")) };
+            if a.len() == 1 {
+                return ok(shortcuts::keys(id).iter().map(|k| k.map_or_else(|| "-".to_owned(), |c| c.text())).collect::<Vec<_>>().join(" "));
+            }
+
+            let mut keys = [None, None];
+            for (slot, text) in a[1..].iter().take(2).enumerate() {
+                if text != "-" {
+                    let Some(k) = Chord::parse(text) else { return fail(format!("{text} is not a key")) };
+                    keys[slot] = Some(k);
+                }
+            }
+
+            match e.settings_window.draft.as_mut() {
+                Some(d) => shortcuts::set_keys_in(&action, &mut d.shortcuts, keys),
+                None => {
+                    shortcuts::set_keys_in(&action, &mut e.settings().shortcuts, keys);
+                    shortcuts::set_overrides(&e.settings_ref().shortcuts);
+                }
+            }
+
+            ok("")
+        },
+    );
+
+    c.add("assert_shortcut_clashes", "assert_shortcut_clashes <n>", "test: the Settings window's copy (else the settings) has n shortcut clashes", |e, a| {
+        let Some(n) = a.first().and_then(|n| n.parse::<usize>().ok()) else { return fail("usage: assert_shortcut_clashes <n>") };
+        let table = e.settings_window.draft.as_ref().map_or_else(|| e.settings_ref().shortcuts.clone(), |d| d.shortcuts.clone());
+        let found = crate::shortcuts::clashes(&table);
+        if found.len() == n {
+            ok("")
+        } else {
+            fail(format!("{} clashes: {}", found.len(), found.iter().map(|(x, y, k)| format!("{} / {} ({})", x.id, y.id, k.text())).collect::<Vec<_>>().join(", ")))
+        }
+    });
+
     c.add("type", "type <text>", "type text into the focused text field, as the keyboard would", |_, a| {
         let Some(text) = a.first() else { return fail("usage: type <text>") };
         gui::add_input_text(text);
