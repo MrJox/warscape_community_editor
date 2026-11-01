@@ -35,6 +35,21 @@ impl BuildingDb {
         db
     }
 
+    /// The tables of these raw_data folders (`<raw_data>/db`), the first ones' records winning: the projects' kit layout, then the Assembly
+    /// Kits in the settings' order.
+    pub fn load_raw_dirs(raw_dirs: &[std::path::PathBuf]) -> Self {
+        let mut db = Self::default();
+        for raw in raw_dirs.iter().rev() {
+            for name in ["battlefield_buildings.xml", "TWaD_battlefield_buildings.xml"] {
+                if let Ok(bytes) = std::fs::read(raw.join("db").join(name)) {
+                    db.add_xml(&String::from_utf8_lossy(&bytes));
+                }
+            }
+        }
+
+        db
+    }
+
     /// Reads the `<battlefield_buildings>` records of an export: the text of `<key>` and `<category>` of each. Records of a later table win
     /// (the mod's table overrides the game's).
     pub fn add_xml(&mut self, xml: &str) {

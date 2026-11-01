@@ -3,6 +3,10 @@
 //! areas, the AI regions and hints, rivers and roads. A click on an entry starts placing it (clicks on the terrain, previewed under the
 //! mouse; R / Shift+R turn it, Esc stops) or drawing it (clicks, Enter finishes). While it is placed or drawn, the Inspector shows its
 //! properties (`Draft`), which every copy takes; they are kept per type until reset.
+//!
+//! As in TEd, the buildings and the prefabs are in folders: a building in its `battlefield_buildings` category (the projects' kit layout's
+//! table, then the Assembly Kits'), a prefab in its folder below `art/prefabs`; the folders come first, then the entries without one. The
+//! prefabs of the projects folder (the editor's, whose prefabs placed inside stay references) are marked.
 
 use std::sync::Arc;
 
@@ -61,6 +65,12 @@ pub struct Entry {
     pub label: String,
     pub make: Make,
 
+    /// Its folder in the category (`/` separated; empty: none): a building's category, a prefab's folder.
+    pub folder: String,
+
+    /// A prefab of the projects folder (the editor's: the prefabs placed in it stay references).
+    pub project: bool,
+
     /// Lower case words searched (the label, the type, the folder).
     search: String,
 }
@@ -68,7 +78,7 @@ pub struct Entry {
 impl Entry {
     /// The new vegetation set (not saved) as an entry, to place or paint with it.
     pub fn new_set_entry() -> Self {
-        Self { category: 1, label: "new vegetation set".to_owned(), make: Make::VegSet { name: String::new() }, search: String::new() }
+        Self { category: 1, label: "new vegetation set".to_owned(), make: Make::VegSet { name: String::new() }, folder: String::new(), project: false, search: String::new() }
     }
 
     /// Its id in the favourites and the recent entries.
@@ -84,10 +94,29 @@ impl Entry {
     fn icon(&self) -> &'static str {
         match &self.make {
             Make::Place { kind, .. } | Make::Draw { kind } => crate::entity_types::type_icon(kind),
+            Make::Prefab { .. } if self.project => PROJECT_PREFAB_ICON,
             Make::Prefab { .. } => icons::COMPONENT,
             Make::VegSet { .. } => icons::TREES,
         }
     }
+}
+
+/// The mark of a prefab of the projects folder.
+pub(crate) const PROJECT_PREFAB_ICON: &str = icons::LINK_2;
+
+/// What the tooltip of a prefab of the projects folder says.
+pub(crate) const PROJECT_PREFAB_TIP: &str = "A prefab of the projects folder (the editor's .wce): the prefabs placed in it stay references, and edits of it are saved there.";
+
+/// The order of an entry in its category: its folder's parts, each before the entries (folders first), then the entry.
+fn folder_order(folder: &str) -> Vec<(u8, String)> {
+    folder.split('/').filter(|p| !p.is_empty()).map(|p| (0, p.to_lowercase())).chain([(1, String::new())]).collect()
+}
+
+/// The rows of a category shown by folder: each run of rows in the same folder, and how many rows each folder holds (its sub-folders' too).
+#[derive(Clone, Debug, Default)]
+struct FolderRows {
+    runs: Vec<(String, Vec<usize>)>,
+    counts: std::collections::HashMap<String, usize>,
 }
 
 /// What the entries were made for: the tile and the prefab library's version.
@@ -100,6 +129,10 @@ pub struct CreateUi {
     entries: Option<(EntriesStamp, Arc<Vec<Entry>>)>,
     filter: String,
     shown: Vec<Vec<usize>>,
+    folders: Vec<FolderRows>,
+
+    /// The buildings' categories (`battlefield_buildings` of the projects' kit layout and the Assembly Kits), read once.
+    building_db: Option<Arc<wce_tile::building_db::BuildingDb>>,
     shown_for: String,
     marks: Option<(Vec<String>, Vec<String>)>,
     quick_filter: String,
@@ -163,10 +196,16 @@ impl TileTool {
             return entries.clone();
         }
 
+        let db = self.create.building_db.get_or_insert_with(|| {
+            let mut raws = vec![e.settings_ref().kit_projects_dir().join("raw_data")];
+            raws.extend(e.settings_ref().assembly_kit_raw_dirs());
+            Arc::new(wce_tile::building_db::BuildingDb::load_raw_dirs(&raws))
+        }).clone();
+
         let mut out = vec![];
         let entry = |category: usize, label: String, make: Make, extra: &str| {
             let search = format!("{label} {extra}").to_lowercase();
-            Entry { category, label, make, search }
+            Entry { category, label, make, folder: String::new(), project: false, search }
         };
 
         // The vegetation sets, at the top of the vegetation.
@@ -184,7 +223,15 @@ impl TileTool {
                     None => key.clone(),
                 };
 
-                out.push(entry(category, label, Make::Place { kind: kind.to_owned(), key: key.clone() }, kind));
+                let mut en = entry(category, label, Make::Place { kind: kind.to_owned(), key: key.clone() }, kind);
+                if kind == "BUILDING_INSTANCE"
+                    && let Some(c) = db.category(key)
+                {
+                    en.search.push_str(&format!(" {}", c.to_lowercase()));
+                    en.folder = c.to_owned();
+                }
+
+                out.push(en);
             }
         }
 
@@ -201,12 +248,17 @@ impl TileTool {
         }
 
         let lib = self.prefab_library(e);
+        let projects = self.prefab_folders(e).into_iter().next();
         for p in lib.entries() {
-            let label = if p.folder.is_empty() { p.key.clone() } else { format!("{}   {}", p.key, p.folder) };
-            out.push(entry(6, label, Make::Prefab { key: p.key.clone() }, "prefab"));
+            let project = projects.as_ref().is_some_and(|r| *r == p.root);
+            let mut en = entry(6, p.key.clone(), Make::Prefab { key: p.key.clone() }, &format!("prefab {}{}", p.folder, if project { " project" } else { "" }));
+            en.folder.clone_from(&p.folder);
+            en.project = project;
+            out.push(en);
         }
 
-        out.sort_by_key(|en| en.category);
+        // By category, then folder (stable: the order within a folder stays the catalogue's).
+        out.sort_by_cached_key(|en| (en.category, folder_order(&en.folder)));
         let entries = Arc::new(out);
         self.create.entries = Some((stamp, entries.clone()));
         self.create.shown_for = "\u{1}".to_owned();
@@ -529,6 +581,8 @@ impl TileTool {
             if let Some(p) = lib.get(&key) {
                 ins.text("folder", "folder", &p.folder);
                 ins.text("file", "file", &p.path.display().to_string());
+                let project = self.prefab_folders(e).first() == Some(&p.root);
+                ins.text("source", "from", if project { "the projects folder: prefabs placed in it stay references" } else { "an Assembly Kit (TEd's): prefabs placed in it are copies" });
             }
 
             let mut yaw = self.create.prefab_yaw;
@@ -577,6 +631,24 @@ impl TileTool {
                 self.create.shown[en.category].push(i);
             }
         }
+
+        self.create.folders = self.create.shown.iter().map(|rows| {
+            let mut f = FolderRows::default();
+            for &i in rows {
+                let folder = &entries[i].folder;
+                match f.runs.last_mut() {
+                    Some((last, run)) if last == folder => run.push(i),
+                    _ => f.runs.push((folder.clone(), vec![i])),
+                }
+
+                let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
+                for n in 1..=parts.len() {
+                    *f.counts.entry(parts[..n].join("/")).or_default() += 1;
+                }
+            }
+
+            f
+        }).collect();
 
         self.create.shown_for = stamp;
     }
@@ -638,6 +710,11 @@ impl TileTool {
             return;
         }
 
+        if en.project && gui::begin_tooltip() {
+            gui::text_colored(theme::palette().success, &format!("{PROJECT_PREFAB_ICON}  {PROJECT_PREFAB_TIP}"));
+            gui::end_tooltip();
+        }
+
         let img = self.thumbnail(e, en, true);
         if !gui::begin_tooltip() {
             return;
@@ -656,7 +733,16 @@ impl TileTool {
     fn create_row(&self, en: &Entry, favourite: bool, uid: &str) -> (bool, bool, bool) {
         let on = self.making.as_deref() == Some(en.label.as_str());
         let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
+        if en.project {
+            let c = theme::palette().success;
+            gui::push_style_color(gui::COL_TEXT, gui::v4(c[0], c[1], c[2], c[3]));
+        }
+
         let clicked = gui::selectable_sized(&format!("{}  {}##{uid}", en.icon(), en.label), on, 0, gui::v2(width, 0.0));
+        if en.project {
+            gui::pop_style_color(1);
+        }
+
         let hovered = gui::is_item_hovered();
         gui::same_line();
         gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
@@ -670,6 +756,58 @@ impl TileTool {
         let star = gui::small_button(&format!("{}##star{uid}", icons::STAR));
         gui::pop_style_color(2);
         (clicked, star, hovered)
+    }
+
+    /// Sets the Create panel's search (a script).
+    pub fn set_create_filter(&mut self, words: &str) {
+        words.clone_into(&mut self.create.filter);
+    }
+
+    /// A category's rows in their folders: a tree node per folder (open while a filter is typed), `rows` drawing each run of rows.
+    fn folder_tree(&self, category: usize, folders: &FolderRows, filtering: bool, mut rows: impl FnMut(&Self, &[usize])) {
+        // The folders open now (their nodes pushed), and the folder whose node is closed (what is below it is not drawn).
+        let mut open: Vec<&str> = vec![];
+        let mut closed: Option<Vec<&str>> = None;
+        for (folder, run) in &folders.runs {
+            let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
+            if let Some(shut) = &closed {
+                if parts.starts_with(shut) {
+                    continue;
+                }
+
+                closed = None;
+            }
+
+            let common = open.iter().zip(&parts).take_while(|(a, b)| a == b).count();
+            while open.len() > common {
+                gui::tree_pop();
+                open.pop();
+            }
+
+            while open.len() < parts.len() {
+                let path = parts[..=open.len()].join("/");
+                if filtering {
+                    gui::set_next_item_open(true, gui::COND_ALWAYS);
+                }
+
+                let count = folders.counts.get(&path).copied().unwrap_or_default();
+                let label = format!("{}  {} ({count})", icons::FOLDER, parts[open.len()]);
+                if !gui::tree_node_ex_id(&format!("create_cat{category}/{path}"), gui::TREE_SPAN_AVAIL_WIDTH, &label) {
+                    closed = Some(parts[..=open.len()].to_vec());
+                    break;
+                }
+
+                open.push(parts[open.len()]);
+            }
+
+            if closed.is_none() {
+                rows(self, run);
+            }
+        }
+
+        for _ in open {
+            gui::tree_pop();
+        }
     }
 
     /// The Create panel.
@@ -804,21 +942,24 @@ impl TileTool {
                     gui::text_wrapped("No prefabs. TEd keeps them in <Assembly Kit>/raw_data/art/prefabs; new ones are saved in the projects folder's assembly_kit/raw_data/art/prefabs.");
                 }
 
-                gui::clipped(rows.len(), |r| {
-                    let i = rows[r];
-                    let en = &entries[i];
-                    let (cl, s, h) = self.create_row(en, favourites.contains(&en.id()), &i.to_string());
-                    if cl {
-                        start = Some(i);
-                    }
+                let folders = self.create.folders.get(c).cloned().unwrap_or_default();
+                self.folder_tree(c, &folders, filtering, |t, rows| {
+                    gui::clipped(rows.len(), |r| {
+                        let i = rows[r];
+                        let en = &entries[i];
+                        let (cl, s, h) = t.create_row(en, favourites.contains(&en.id()), &i.to_string());
+                        if cl {
+                            start = Some(i);
+                        }
 
-                    if h {
-                        hovered = Some(i);
-                    }
+                        if h {
+                            hovered = Some(i);
+                        }
 
-                    if s {
-                        star = Some(i);
-                    }
+                        if s {
+                            star = Some(i);
+                        }
+                    });
                 });
 
                 gui::tree_pop();
@@ -946,7 +1087,11 @@ impl TileTool {
                 }
 
                 gui::same_line();
-                gui::text_disabled(CATEGORIES[en.category]);
+                if en.folder.is_empty() {
+                    gui::text_disabled(CATEGORIES[en.category]);
+                } else {
+                    gui::text_disabled(&format!("{} / {}", CATEGORIES[en.category], en.folder));
+                }
             });
         }
 
@@ -975,7 +1120,7 @@ pub fn thumbnail_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &
         kind => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
     };
 
-    let en = Entry { category: 0, label: key.to_owned(), make, search: String::new() };
+    let en = Entry { category: 0, label: key.to_owned(), make, folder: String::new(), project: false, search: String::new() };
     if !TileTool::has_thumbnail(&en) {
         return Err(format!("{what} has no thumbnails"));
     }
@@ -998,7 +1143,7 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     };
 
     let label = if key.is_empty() { crate::entity_types::type_name(what).to_owned() } else { key.to_owned() };
-    let en = Entry { category: 0, label, make, search: String::new() };
+    let en = Entry { category: 0, label, make, folder: String::new(), project: false, search: String::new() };
     t.start_making(e, &en);
     Ok(())
 }
@@ -1009,7 +1154,7 @@ pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Resu
         return Err(format!("no vegetation set '{name}'"));
     }
 
-    let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, search: String::new() };
+    let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, folder: String::new(), project: false, search: String::new() };
     t.start_making(e, &en);
     Ok(())
 }
