@@ -262,6 +262,15 @@ impl Renderer {
 
         let Some(ps) = ps else { return };
 
+        // With MSAA the game's `ps50_main_high_ms` of the same variant (the depth of field and distortion read the MS depth); the
+        // one-sample shader if there is none.
+        let ps = if self.gbuffer.ms.is_some() {
+            let ms_name = ps.name.replace("_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high", "_sm_5_0_hdr_to_screen.hlsl_ps_ps50_main_high_ms");
+            self.shader(&ms_name).unwrap_or(ps)
+        } else {
+            ps
+        };
+
         // Before the bindings below: its passes leave their own.
         let god_rays = if self.settings.god_rays && ps.textures.contains_key("god_rays_sampler") { self.pass_god_rays(env) } else { None };
 
@@ -304,6 +313,7 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "frame_sampler", self.post.ldr.t.srv.as_ref());
         bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(&self.ctx, &ps, "s_fog_of_war_mask", self.res.black_srv.as_ref());
+        self.bind_gbuffer_ms(&ps);
 
         if grain {
             // The grain (fn 0x1179af90, ToB): commontextures/grain.dds through grain_sampler (linear, wrap), moved to a random offset

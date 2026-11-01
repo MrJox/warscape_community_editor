@@ -50,12 +50,12 @@ No MLAA with MSAA. The tone mapper's `..._with_bloom_and_gamma_ms_Nx` techniques
    `hdr_to_screen`'s `_ms` variant.
 3. **The rest.** Done: water refraction's `_ms` read, MLAA off with MSAA, the environment cube (one sample), the overlays (on the
    resolved depth), picking (its own view). Open:
-   - Snowy terrain tiles: their boxes mark bit 0 of the one-sample stencil, which the antiresolve's fixed reference does not carry into
-     the MS stencil, so the snowy resolve (`ds_resolve_snow`) misses those samples.
+   - Done 2026-11-01: snowy terrain tiles (the terrain's depth is expanded into the MS depth right after its depth pass, and a snowy
+     tile's boxes draw again into the MS depth-stencil alone, so their mark reaches the samples the snowy resolve tests; checked with
+     every tile forced snowy: the same snowy ground with and without MSAA). `hdr_to_screen`: the game's `ps50_main_high_ms` of each
+     variant (depth of field, distortion, ToB's grain), reading the MS depth, the one-sample shader if missing.
    - OIT with MSAA: the fragments are stored per pixel against the MS depth and resolved into every sample; the game's OIT with MSAA
      was not checked.
-   - The `hdr_to_screen` `_ms` techniques (the game's depth-of-field / distortion variants read the MS depth); the editor's read the
-     resolved one.
    - The selection outline and the editor's own passes on the MS targets (they draw after the image, on the one-sample depth).
    - A capture of the game at 4x / 8x to compare.
 
