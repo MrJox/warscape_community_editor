@@ -51,3 +51,25 @@ No MLAA with MSAA. The tone mapper's `..._with_bloom_and_gamma_ms_Nx` techniques
    the environment cube (stays s1), the render scale.
 
 Each step: captures at 2x / 4x / 8x against MSAA off and against `rome.rdc`.
+
+## Design (2026-11-01)
+
+The game's helpers, `resolve_depth_buffer.hlsl` (DEPTH_BUFFER_RESOLVE_SHADER, fn at 0x116d3d44's object): `ps_resolve_2x/4x/8x`
+(sm_5_0) write the farthest sample (max) of `t_multisampled_depthbuffer` as SV_Depth; `ps_antiresolve_with_fixed_stencil` (sm_3_0)
+writes `t_depthbuffer` as SV_Depth where `t_stencilbuffer`.y is at least 1 (else discards), the stencil from the state's reference;
+`ps_copy` copies a depth.
+
+The game's G-buffer channel 4 is its depth buffer: with MSAA the editor reads the MS depth-stencil (an SRV on it) as
+`gbuffer_channel_4_texture_ms`, and the resolved s1 depth as the s1 channel 4.
+
+Steps 1 and 2 go together: the lighting tests the G-buffer's stencil marks (geometry, terrain, decals), which a depth resolve can't bring
+back to s1, so an "MS geometry, s1 lighting" stage would not draw right. With MSAA (and not for the environment cube):
+- `GBuffer` keeps its s1 targets and gains MS ones: channels 1..3, the light buffer, the depth-stencil (with depth and stencil SRVs).
+  Accessors pick the MS or s1 ones; every pass takes its targets through them.
+- Terrain: its depth and intermediates stay s1; `antiresolve` writes its depth into the MS depth (depth-tested, the terrain's stencil as
+  the reference); its resolve draws into the MS channels.
+- Meshes, grass, blend meshes, decals: MS targets; the `_ms` techniques where the game has them.
+- After the decals: `ps_resolve_Nx` into the s1 depth: SSAO, refraction, particles' soft depth, the depth analysis, the overlays read it.
+- Lights, environment specular (its stencil stand-in MS too), blur y, fog: `_ms` variants into the MS light buffer; sky, sun, clouds,
+  water, OIT's resolve, faded meshes, particles into the MS light buffer with the MS depth.
+- `ResolveSubresource` of the light buffer before the tone mapping; `hdr_to_screen`'s `_ms` variant; no MLAA.
