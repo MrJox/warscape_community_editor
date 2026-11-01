@@ -33,6 +33,7 @@ pub(crate) struct States {
     pub bs_additive_alpha: Option<ID3D11BlendState>,
     pub bs_add_one: Option<ID3D11BlendState>,
     pub bs_sun: Option<ID3D11BlendState>,
+    pub bs_premultiplied: Option<ID3D11BlendState>,
 }
 
 impl States {
@@ -121,6 +122,9 @@ impl States {
         });
 
         st.bs_sun = blend_state(dev, alpha);
+
+        // The OIT resolve (fn 0x116e2690, its blend object at +0x338): ONE / INV_SRC_ALPHA, add, on colour and alpha (premultiplied colour).
+        st.bs_premultiplied = blend_state(dev, D3D11_RENDER_TARGET_BLEND_DESC { SrcBlend: D3D11_BLEND_ONE, SrcBlendAlpha: D3D11_BLEND_ONE, ..alpha });
 
         // The lens flare sprites (fn 0x116de600, blend object +0x6da): ONE / ONE add on colour and alpha.
         st.bs_add_one = blend_state(dev, D3D11_RENDER_TARGET_BLEND_DESC {

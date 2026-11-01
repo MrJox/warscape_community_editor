@@ -130,6 +130,9 @@ pub(crate) struct PostTargets {
     pub mlaa_edges: SizedTarget,
     pub mlaa_counts: [SizedTarget; 4],
     pub mlaa_out: SizedTarget,
+
+    /// The order-independent transparency's buffers (gfx_alpha_blend). Made when first drawn.
+    pub oit: OitBuffers,
 }
 
 /// The side of the tone mapper's downsampled image (luma statistics, bloom), whatever the view's size.
@@ -200,5 +203,64 @@ impl ShadowMap {
         let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R32_FLOAT, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D), ..Default::default() };
         sd.Anonymous.Texture2D.MipLevels = 1;
         Self { dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(), srv: dev.create_shader_resource_view(&tex, Some(&sd)).ok() }
+    }
+}
+
+/// The order-independent transparency's buffers (gfx_alpha_blend; fn 0x11766000): per pixel the index of its last fragment (a raw buffer,
+/// cleared to 0xffffffff, the list's end), and the fragments (12 bytes: packed colour, alpha and depth, the next's index) with an append
+/// counter, `OIT_FRAGMENTS_PER_PIXEL` per pixel.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OitBuffers {
+    pub head_uav: Option<ID3D11UnorderedAccessView>,
+    pub head_srv: Option<ID3D11ShaderResourceView>,
+    pub fragments_uav: Option<ID3D11UnorderedAccessView>,
+    pub fragments_srv: Option<ID3D11ShaderResourceView>,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// D3D11_BUFFER_UAV_FLAG_RAW, D3D11_BUFFER_UAV_FLAG_COUNTER (not in the generated bindings).
+const UAV_FLAG_RAW: u32 = 1;
+const UAV_FLAG_COUNTER: u32 = 4;
+const FRAGMENT_STRIDE: u32 = 12;
+
+impl OitBuffers {
+    /// The buffers for a view size; none (all `None`) when the device refuses them.
+    pub fn new(dev: &ID3D11Device, w: u32, h: u32, per_pixel: u32) -> Self {
+        let pixels = w * h;
+        let bind = (D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE) as u32;
+        let head = dev.create_buffer(&D3D11_BUFFER_DESC {
+            ByteWidth: pixels * 4, Usage: D3D11_USAGE_DEFAULT, BindFlags: bind, MiscFlags: D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS as u32, ..Default::default()
+        }, None);
+        let fragments = dev.create_buffer(&D3D11_BUFFER_DESC {
+            ByteWidth: pixels * per_pixel * FRAGMENT_STRIDE, Usage: D3D11_USAGE_DEFAULT, BindFlags: bind,
+            MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED as u32, StructureByteStride: FRAGMENT_STRIDE, ..Default::default()
+        }, None);
+        // Without them the size is kept (not asked for again every frame) and `ready` is false.
+        let (Ok(head), Ok(fragments)) = (head, fragments) else { return Self { w, h, ..Self::default() } };
+
+        let uav = |format, n, flags| D3D11_UNORDERED_ACCESS_VIEW_DESC {
+            Format: format, ViewDimension: D3D11_UAV_DIMENSION_BUFFER,
+            Anonymous: D3D11_UNORDERED_ACCESS_VIEW_DESC_0 { Buffer: D3D11_BUFFER_UAV { FirstElement: 0, NumElements: n, Flags: flags } },
+        };
+        let srv = |format, n| {
+            let mut d = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_BUFFER), ..Default::default() };
+            d.Anonymous.Buffer = D3D11_BUFFER_SRV { Anonymous: D3D11_BUFFER_SRV_0 { FirstElement: 0 }, Anonymous2: D3D11_BUFFER_SRV_1 { NumElements: n } };
+            d
+        };
+
+        // The pixel shaders write the head through a raw view; the resolve reads it as a Buffer<uint>.
+        Self {
+            head_uav: dev.create_unordered_access_view(&head, Some(&uav(DXGI_FORMAT_R32_TYPELESS, pixels, UAV_FLAG_RAW))).ok(),
+            head_srv: dev.create_shader_resource_view(&head, Some(&srv(DXGI_FORMAT_R32_UINT, pixels))).ok(),
+            fragments_uav: dev.create_unordered_access_view(&fragments, Some(&uav(DXGI_FORMAT_UNKNOWN, pixels * per_pixel, UAV_FLAG_COUNTER))).ok(),
+            fragments_srv: dev.create_shader_resource_view(&fragments, Some(&srv(DXGI_FORMAT_UNKNOWN, pixels * per_pixel))).ok(),
+            w,
+            h,
+        }
+    }
+
+    pub fn ready(&self) -> bool {
+        self.head_uav.is_some() && self.head_srv.is_some() && self.fragments_uav.is_some() && self.fragments_srv.is_some()
     }
 }

@@ -43,6 +43,8 @@ impl Renderer {
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
 
+        // The near leaves are this view's (none if it draws nothing): the OIT pass must never see another view's.
+        self.draw_lists.vis_oit = Visible::default();
         if self.draw_lists.draws.items() == 0 && self.draw_lists.terrain_draws.items() == 0 {
             return;
         }
@@ -67,7 +69,15 @@ impl Renderer {
         let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
         let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
         terrain_draws.cull(&view, &mut vis_terrain);
-        draws.cull(&view, &mut vis);
+
+        // gfx_alpha_blend: the near leaves are the order-independent transparency's (`pass_oit`).
+        let mut vis_oit = Visible::default();
+        match self.oit_range() {
+            Some(range) => draws.cull_split(&view, &mut vis, Some((&mut vis_oit, range))),
+            None => draws.cull(&view, &mut vis),
+        }
+
+        self.draw_lists.vis_oit = vis_oit;
 
         // The ground is drawn by the terrain pass (game shaders), not as flat rigid patches.
         if self.terrain.active && !self.env.active {
@@ -459,6 +469,23 @@ impl Renderer {
 
     /// gfx_screen_space_reflections at 0: the environment specular pass is off (fn 0x118c2530: on above 0); 1 draws it at half
     /// resolution (the table at 0x11cca8fc: 0, 0.5, 1).
+    /// gfx_alpha_blend above 0 (Attila, ToB; the camera's view, with the OIT shaders and buffers): the squared distances (scene units) of
+    /// the leaves and grass the order-independent transparency draws (`OIT_RANGE`).
+    pub(crate) fn oit_range(&mut self) -> Option<(f32, f32)> {
+        if self.settings.alpha_blend < 1 || self.game == super::game::RenderGame::Rome2 || self.env.active {
+            return None;
+        }
+
+        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
+        if self.post.oit.w != w || self.post.oit.h != h {
+            self.post.oit = super::targets::OitBuffers::new(&self.dev, w, h, OIT_FRAGMENTS_PER_PIXEL);
+        }
+
+        let ready = self.post.oit.ready() && [OIT_LEAF_PS, OIT_GRASS_PS, OIT_RESOLVE_PS].iter().all(|n| self.shader(n).is_some());
+        let (lo, hi) = (OIT_RANGE.0 / self.camera.units, OIT_RANGE.1 / self.camera.units);
+        ready.then_some((lo * lo, hi * hi))
+    }
+
     pub(crate) fn reflections_off(&self) -> bool {
         self.game != super::game::RenderGame::Rome2 && self.settings.reflections == 0
     }

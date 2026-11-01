@@ -79,6 +79,10 @@ pub(crate) struct SceneDraws {
     /// The first instance of each set in the ring as the camera's G-buffer pass wrote them (the terrain pass draws the same instances).
     pub gbuffer_firsts: [u32; 2],
 
+    /// The camera's near leaves, which the order-independent transparency draws instead of the G-buffer pass (gfx_alpha_blend; empty
+    /// without it).
+    pub vis_oit: Visible,
+
     /// The effects' debris (particles::EffectRigid): per model, items of `draws` added for them and moved every frame (the unused ones
     /// out of sight). Emptied with the set.
     pub rigid_pool: HashMap<String, Vec<u32>>,
