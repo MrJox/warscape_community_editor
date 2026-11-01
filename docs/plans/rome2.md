@@ -59,6 +59,17 @@ Status legend: **done**, **partial**, **todo**.
   the game (`D:\renderdoc\rome2_carthage.rdc`): the high water technique (no whitecaps), the game's screen-space reflection over the
   mirrored sky, the sea bed without the LF; at the same camera and weather the image is within a few per cent of the game's. Open: the
   shore foam band (the LF at the coast, docs/re/rome2_renderer.md); the land LF's window texture and the sea LF's `* 400` for sea tiles.
+- **done** Distant shadows (2026-11-01, the capture; user report: shadows ended at a distance): the baked shadow map past the
+  cascades (`renderer/shadow_baked.rs`): the casters seen along the sun, depth = height, 4272 units over 4096 texels, faded in from
+  238.7 units (the cascades end at 341) and out towards 1922. The game scrolls one map toroidally around the camera; the editor renders
+  it around the camera on a 128-unit grid. ASSUMPTION: the capture's constants (span, height range, fades) hold for every battle.
+- **done** Grass and ground brightness (2026-11-01, the capture; user report: grass too bright): ps_height_map_cb's noise on (albedo times
+  0.3 + 0.7 x `terrain_noise` at world xz / 1000) and the mid-distance detail at (20, 400) game units (it was off, and at doubled
+  distances); Rome 2's grass_PS constants (g_alpha (1, 0.75), normal decode (2, -1), lod distance 200). Open: sand still about 15 %
+  brighter at the beach view.
+- **todo** Seen in the capture, not done: the game's depth of field blurs the distant city (the editor draws it sharp); with the bright
+  `day_dry_01` weather the editor's image is washed out since the grain variant (not compared with the game: the capture is
+  `day_dry_05`).
 - **done** The output (2026-11-01, the capture): `hdr_to_screen`'s grain variants with gfx_grain (the image 1.7 x brighter before gamma
   with it); the vignette is the tone mapper's `vignette_buffer` (gfx_vignette; no lens-flare vignette). Gamma and brightness were the
   game's already.
