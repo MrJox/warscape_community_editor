@@ -111,7 +111,12 @@ impl Renderer {
         // pass below marks them as terrain pixels, and the terrain pass projects the terrain's material onto them (blend_mesh.rs).
         self.draw_lists.gbuffer_firsts = firsts;
         let game = self.game;
-        let shaders = GBUFFER_PASSES.map(|(kind, _, fire, vs, ps, _)| (!fire || game.has_fire_shaders(kind)).then(|| self.shader(vs).zip(self.shader(ps))).flatten());
+        // With MSAA the coverage techniques where the game has them (else the one-sample shader).
+        let ms = self.gbuffer.ms.is_some();
+        let shaders = GBUFFER_PASSES.map(|(kind, alpha, fire, vs, ps, _)| {
+            let ms_ps = ms.then(|| gbuffer_ms_ps(kind, alpha, ps)).flatten().and_then(|name| self.shader(&name));
+            (!fire || game.has_fire_shaders(kind)).then(|| self.shader(vs).zip(ms_ps.or_else(|| self.shader(ps)))).flatten()
+        });
         let pass_in = |m: &GpuMesh, fire: bool| {
             let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1 && p.2 == fire)?;
             let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1 && p.2 == fire).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());

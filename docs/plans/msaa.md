@@ -1,6 +1,8 @@
 # MSAA (gfx_aa 2..4)
 
-Status 2026-11-01: mapped from the game, not implemented yet. MLAA (gfx_aa 1) is done (`Renderer::pass_mlaa`).
+Status 2026-11-01: steps 1 and 2 done (Attila, ToB; not Rome 2): the multisampled scene, its lighting and the coverage techniques.
+Measured on the ToB city tile's near view, hard edge steps (neighbours more than 60 apart): 31007 without, 27746 at 2x, 25243 at 4x,
+23475 at 8x. Step 3 is what remains (below). MLAA (gfx_aa 1) is separate (`Renderer::pass_mlaa`).
 
 ## The game's frame at 2x (`D:\renderdoc\rome.rdc`, Rome at its campaign placement, MSAA 2x)
 
@@ -46,8 +48,16 @@ No MLAA with MSAA. The tone mapper's `..._with_bloom_and_gamma_ms_Nx` techniques
 2. **Lighting into an MS light buffer.** Directional and point lights, decals, environment specular and its blur, fog with their `_ms`
    techniques; rivers, sea, sky, clouds, sun and particles drawn into the MS light buffer; `ResolveSubresource` before tone mapping;
    `hdr_to_screen`'s `_ms` variant.
-3. **The rest.** Water refraction's `_ms` read, the editor's overlays and picking (the id channel), OIT and MLAA with MSAA (MLAA off),
-   the environment cube (stays s1), the render scale.
+3. **The rest.** Done: water refraction's `_ms` read, MLAA off with MSAA, the environment cube (one sample), the overlays (on the
+   resolved depth), picking (its own view). Open:
+   - Snowy terrain tiles: their boxes mark bit 0 of the one-sample stencil, which the antiresolve's fixed reference does not carry into
+     the MS stencil, so the snowy resolve (`ds_resolve_snow`) misses those samples.
+   - OIT with MSAA: the fragments are stored per pixel against the MS depth and resolved into every sample; the game's OIT with MSAA
+     was not checked.
+   - The `hdr_to_screen` `_ms` techniques (the game's depth-of-field / distortion variants read the MS depth); the editor's read the
+     resolved one.
+   - The selection outline and the editor's own passes on the MS targets (they draw after the image, on the one-sample depth).
+   - A capture of the game at 4x / 8x to compare.
 
 Each step: captures at 2x / 4x / 8x against MSAA off and against `rome.rdc`.
 

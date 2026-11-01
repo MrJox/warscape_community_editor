@@ -189,8 +189,14 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   reading the line lengths written last and writing the other pair (fn 0x11749530 swaps them); MLAA_PASS3_FINAL_BLEND (fn 0x116e0750)
   draws `mlaa_blend_ps` into the frame. The edge mask and the four line length targets are R8_UINT at the view's size on DX11 (fns
   0x11765d60, 0x11765e60: TTF_R8_UINT, else TTF_R16F / TTF_G16R16F). The sm_4_0 shaders (mlaa_pass*_sm4). Same in ToB (its pass 1
-  0.1, pass 2 3 iterations). Applied (`Renderer::pass_mlaa`; the editor blends into a target of its own, copied back). The MSAA
-  levels (2..4) are not: drawn without anti-aliasing. Rome 2 has the same shaders; its engine is not checked: not applied.
+  0.1, pass 2 3 iterations). Applied (`Renderer::pass_mlaa`; the editor blends into a target of its own, copied back). Rome 2 has
+  the same shaders; its engine is not checked: not applied.
+- Anti-aliasing 2..4, MSAA 2x / 4x / 8x (Attila, ToB): the game's frame mapped from `rome.rdc` (2x) and the editor's port in
+  docs/plans/msaa.md: the G-buffer, light buffer and depth-stencil multisampled, the terrain's depth expanded into them and the depth
+  resolved for the one-sample readers by `resolve_depth_buffer.hlsl`, the lights, decals, environment specular, blurs, fog and
+  refraction in their per-sample `_ms` variants, the alpha-tested materials, trees and grass in their coverage `_ms` techniques, the
+  light buffer resolved before the tone mapping (whose white point the averaged highlights lower: the image a little brighter, as the
+  game's). Applied. Rome 2: not applied.
 - Alpha blending (+0x70; 1 standard OIT, fn 0x11763cc0: with feature level above 2; 2 Intel's AOIT, fn 0x11725c20; the automatic
   downgrade "Disabled Alpha-blending" sets 0, fn 0x1173da30):
   - Which geometry (fn 0x117f3780 the grass, fn 0x117f3a74 the leaves): a renderable whose squared distance (+0xbc) is within
@@ -246,7 +252,7 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
 - ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
-Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): MSAA (and Rome 2's MLAA), texture
+Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): Rome 2's anti-aliasing, texture
 quality, trees, grass, terrain, Rome 2's alpha blending, grain, cloud shadows, god rays, lightning and foliage hiding.
 
 ## Editor only: the render scale

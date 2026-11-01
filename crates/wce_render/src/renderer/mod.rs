@@ -191,6 +191,18 @@ pub(crate) fn ms_name(name: &str) -> String {
     format!("{}_ms", name.replace("_sm_3_0_", "_sm_4_1_").replace("_sm_4_0_", "_sm_4_1_").replace(".hlsl_ps_ps30_", ".hlsl_ps_ps41_"))
 }
 
+/// With MSAA, the G-buffer pixel shader of a pass (docs/plans/msaa.md): the game's `_ms` techniques turn the alpha into a coverage mask
+/// (`oMask`, `g_num_of_samples`; docs/re/vegetation.md): the alpha-tested rigid materials' `ps41_gbuffer_alpha_test_ms`, the trees' and
+/// grass's `ps50_..._ms`. The opaque passes keep theirs (nothing to cover).
+pub(crate) fn gbuffer_ms_ps(kind: MeshKind, alpha_tested: bool, ps: &str) -> Option<String> {
+    match kind {
+        MeshKind::TreeLeaf => Some("dx11_sm_5_0_rigidleaf_v3.hlsl_ps_ps50_gbuffer_ms".to_owned()),
+        MeshKind::TreeBranch => Some("dx11_sm_5_0_rigidbranch_v3.hlsl_ps_ps50_gbuffer_ms".to_owned()),
+        MeshKind::TreeBillboard => Some("dx11_sm_5_0_rigidtreebillboard.hlsl_ps_ps50_gbuffer_ms".to_owned()),
+        _ => alpha_tested.then(|| ms_name(ps)),
+    }
+}
+
 /// MSAA's depth helpers (resolve_depth_buffer.hlsl, DEPTH_BUFFER_RESOLVE_SHADER): the one-sample depth into the MS one where the stencil is
 /// set, and the MS depth resolved to its farthest sample (per sample count).
 pub(crate) const ANTIRESOLVE_DEPTH_PS: &str = "dx11_sm_3_0_resolve_depth_buffer.hlsl_ps_ps_antiresolve_with_fixed_stencil";
