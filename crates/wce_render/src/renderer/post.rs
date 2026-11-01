@@ -243,7 +243,9 @@ impl Renderer {
 
     pub(crate) fn pass_to_screen(&mut self, env: &EnvironmentParams) {
         let mut distortion = if self.settings.distortion { self.particles.distortion().cloned() } else { None };
-        let dof = env.use_dof && self.settings.depth_of_field;
+        // Rome 2's depth of field is a pass of its own (dof.rs), always on in battle with gfx_depth_of_field; hdr_to_screen reads its image.
+        let rome2_dof = (self.game == super::game::RenderGame::Rome2 && self.settings.depth_of_field).then(|| self.pass_dof_rome2(env)).flatten();
+        let dof = env.use_dof && self.settings.depth_of_field && self.game != super::game::RenderGame::Rome2;
         let mut ps = None;
 
         // gfx_grain (Thrones of Britannia, Rome 2: a capture of a Rome 2 battle draws the same variant): the shaders' ENABLE_GRAIN
@@ -321,7 +323,7 @@ impl Renderer {
         self.ctx.set_render_targets(&[], None);
         self.bind(&ps);
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
-        bind_srv(&self.ctx, &ps, "frame_sampler", self.post.ldr.t.srv.as_ref());
+        bind_srv(&self.ctx, &ps, "frame_sampler", rome2_dof.as_ref().or(self.post.ldr.t.srv.as_ref()));
         bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(&self.ctx, &ps, "s_fog_of_war_mask", self.res.black_srv.as_ref());
         self.bind_gbuffer_ms(&ps);
