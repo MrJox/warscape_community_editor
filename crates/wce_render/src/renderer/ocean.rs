@@ -45,6 +45,11 @@ fn ocean_ps(quality: i32, rome2: bool) -> String {
     format!("dx11_sm_{}_0_ocean.hlsl_ps_ps30_main_{}_water_quality", if rome2 { 3 } else { 4 }, super::water::water_level(quality))
 }
 
+/// The technique Rome 2's sea takes at its highest water quality (5, "extreme"): `high` (2), not `ultra`, whose whitecaps (combined_foam's
+/// red over the deep sea) the game does not draw (a RenderDoc capture of a battle at Carthage, 2026-11-01: ps30_main_high_water_quality's
+/// code). Rome 2's six levels are not mapped to the four techniques yet.
+pub(crate) const ROME2_WATER: i32 = 2;
+
 /// Rome 2's sea with the sun's shadows, the variant its lighting uses (hardware gather, shader model 5): the plain one's inputs plus
 /// `shadowmap_PS`, `g_tShadowBuffer_SM50` and the baked shadows (out of reach: `g_vBakedShadowmapParams`).
 fn r2_ocean_ps_shadows(quality: i32) -> String {
@@ -271,8 +276,19 @@ pub(crate) struct OceanGpu {
 }
 
 /// The ground height of the scene's terrains at a point, if one covers it (the first that does).
-fn ground_at(terrains: &[(&Entity, &wce_scene::render_scene::Terrain)], x: f32, z: f32) -> Option<f32> {
-    terrains.iter().find_map(|(e, t)| t.ground_at(&e.world, x, z))
+/// The sea bed info's ground at a world point (scene units over the sea at `sea_y`): a terrain's own heights, without its LF. The game's
+/// texture leaves the LF out (a capture of a Rome 2 battle at Carthage, 2026-11-01: the ground drawn 0.6 m under the texture's value at the
+/// shore, the LF's share there), so near a coast the water is deeper than the texture says and the shore foam (where it reads -1.6 .. -0.6
+/// m) has the depth to show; measured against the drawn ground, the foam's band was a few pixels wide. A terrain without an LF: its height
+/// over the sea.
+fn ground_at(terrains: &[(&Entity, &wce_scene::render_scene::Terrain)], x: f32, z: f32, sea_y: f32) -> Option<f32> {
+    terrains.iter().find_map(|(e, t)| {
+        let g = t.ground_at(&e.world, x, z)?;
+        Some(match &t.lf {
+            Some(lf) => g - lf.height_at(x, z),
+            None => g - sea_y,
+        })
+    })
 }
 
 /// A dynamic R16G16 texture the CPU writes every frame.
@@ -430,7 +446,7 @@ impl Renderer {
             let z = -SEA_BED_HALF + (j as f32 + 0.5) * texel;
             for (i, out) in row.iter_mut().enumerate() {
                 let x = -SEA_BED_HALF + (i as f32 + 0.5) * texel;
-                let h = ground_at(&terrains, x / u + o.x, z / u + o.z).map_or(lo, |h| (h - o.y) * u);
+                let h = ground_at(&terrains, x / u + o.x, z / u + o.z, o.y).map_or(lo, |h| h * u);
                 *out = ((h - lo) / range).clamp(0.0, 1.0);
             }
         });
@@ -476,9 +492,9 @@ impl Renderer {
         // Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass: the lit colour only, its constants and textures named otherwise
         // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let ocean_ps = ocean_ps(if rome2 { 3 } else { self.settings.water_quality }, rome2);
+        let ocean_ps = ocean_ps(if rome2 { ROME2_WATER } else { self.settings.water_quality }, rome2);
         let ps = match rome2 && self.settings.shadows {
-            true => self.shader(&r2_ocean_ps_shadows(3)).or_else(|| self.shader(&ocean_ps)),
+            true => self.shader(&r2_ocean_ps_shadows(ROME2_WATER)).or_else(|| self.shader(&ocean_ps)),
             false => self.shader(&ocean_ps),
         };
         let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), ps) else { return false };

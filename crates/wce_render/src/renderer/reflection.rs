@@ -4,18 +4,31 @@
 //! of a camera at the eye mirrored in the water's plane, looking at the mirrored target with +y up, whose picture is the mirror image
 //! upside down.
 //!
-//! ASSUMPTIONS (no capture of Rome 2's frame): the game renders the mirrored scene itself (it has `_reflection` techniques of the
-//! directional light and the terrain); this pass draws the sky dome and the cloud planes only, at half the screen's size, so the sea
-//! reflects the sky and not the land or buildings. The water's plane is the sea's level.
+//! As the game (a RenderDoc capture of a battle at Carthage, 2026-11-01, `rome2_carthage.rdc`): the mirrored camera (its projection
+//! oblique at the water) draws the sky dome and the cloud planes into a half-size target, before the G-buffer; the land and buildings come
+//! later, from the screen-space reflection (`helpers.hlsl` `scree_space_reflections_ps`, after the water's refraction copy, before the
+//! sea): for each pixel the scene point under it (the depth), the water's height there, the view ray reflected off it and marched through
+//! the depth buffer; the scene copy at the hit, faded towards the screen's edges, with the march's length and with the camera's height
+//! over the water (none above 250 units), blended over the sky by its alpha. Not done here: the game's fog pass over the mirrored sky
+//! (fog_VS_PS with the mirrored camera, alpha blended) and the oblique near plane (no geometry is drawn mirrored). The water's plane is the
+//! sea's level.
 
 use wce_scene::camera::Camera;
 use wce_scene::environment::EnvironmentParams;
 
 use super::targets::GBuffer;
 use super::*;
+use crate::shader_lib::{bind_sampler, bind_srv};
 
-/// The reflection's size: a fraction of the screen's.
+/// The reflection's size: a fraction of the screen's (the game's: half).
 const REFLECTION_DIV: u32 = 2;
+
+const SSR_PS: &str = "dx11_sm_3_0_helpers.hlsl_ps_scree_space_reflections_ps";
+
+/// screen_space_refl_params as the capture has them: the water height map's 2048-unit square around the battle's centre, its heights
+/// between 0 and 1, the quality factor of the highest water quality (the march takes 200 * it steps).
+const SSR_PLAYABLE_AREA: f32 = 2048.0;
+const SSR_QUALITY: f32 = 0.8;
 
 /// The reflection's targets (the sky and clouds draw into a G-buffer's light buffer, swapped with the main view's while they render).
 #[derive(Clone, Debug, Default)]
@@ -24,6 +37,11 @@ pub(crate) struct WaterReflection {
 
     /// The texture holds this frame's reflection.
     pub valid: bool,
+
+    /// The screen-space reflection's water height map: one texel, water (alpha 1) at height 0 everywhere. The game's is 256 x 256 over
+    /// the playable area, alpha marking the water; its only effect is to skip the pixels with no water under them, whose reflection the sea
+    /// never reads.
+    pub water_height: Option<ID3D11ShaderResourceView>,
 }
 
 impl Renderer {
@@ -71,5 +89,49 @@ impl Renderer {
         self.cloud_layer.dt = save_dt;
         std::mem::swap(&mut self.gbuffer, &mut self.reflection.gbuffer);
         self.reflection.valid = true;
+    }
+
+    /// The screen-space reflection of the scene over the mirrored sky (Rome 2): after the refraction copy (its input, the scene before the
+    /// water) and before the sea, with the view's camera.
+    pub(crate) fn water_reflection_ssr(&mut self) {
+        if !self.reflection.valid || self.game != game::RenderGame::Rome2 {
+            return;
+        }
+
+        let Some(ps) = self.shader(SSR_PS) else { return };
+        wce_prof!("render.water_reflection_ssr");
+        if self.reflection.water_height.is_none() {
+            self.reflection.water_height = solid_srv(&self.dev, DXGI_FORMAT_R8G8B8A8_UNORM, &[0, 0, 0, 255]);
+        }
+
+        let (vp, eye) = (self.camera.cb_view_proj, self.camera.cb_eye);
+        let cbs = &mut self.cbs;
+        cbs.set_m("screen_space_refl_params", "view_projection_matrix", vp.data());
+        cbs.set_m("screen_space_refl_params", "inv_view_projection_matrix", inverse(&vp).data());
+        cbs.set_f("screen_space_refl_params", "camera_position_and_reflection_height", &[eye.x, eye.y, eye.z, 0.0]);
+        cbs.set_f("screen_space_refl_params", "min_water_height", &[0.0]);
+        cbs.set_f("screen_space_refl_params", "max_water_height", &[1.0]);
+        cbs.set_f("screen_space_refl_params", "tiles_per_dim", &[256.0]);
+        cbs.set_f("screen_space_refl_params", "playable_area_size", &[SSR_PLAYABLE_AREA]);
+        cbs.set_f("screen_space_refl_params", "quality_factor", &[SSR_QUALITY]);
+
+        let (w, h) = (self.reflection.gbuffer.w, self.reflection.gbuffer.h);
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_render_targets(std::slice::from_ref(&self.reflection.gbuffer.hdr.rtv), None);
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
+        self.upload();
+        bind_srv(&self.ctx, &ps, "scene_tex", self.water.refr.srv.as_ref());
+        bind_srv(&self.ctx, &ps, "depth_tex", self.gbuffer.depth_srv().as_ref());
+        bind_srv(&self.ctx, &ps, "water_height_tex", self.reflection.water_height.as_ref());
+        bind_sampler(&self.ctx, &ps, "scene_tex", self.states.s_clamp_linear.as_ref());
+        bind_sampler(&self.ctx, &ps, "depth_tex", self.states.s_clamp_point.as_ref());
+        bind_sampler(&self.ctx, &ps, "water_height_tex", self.states.s_clamp_point.as_ref());
+        self.fullscreen(&ps);
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, self.gbuffer.w as f32, self.gbuffer.h as f32)]);
     }
 }
