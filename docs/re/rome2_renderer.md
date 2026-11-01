@@ -158,6 +158,13 @@ its square (x, z in [-1024, 1024] around the world origin, the battle's centre; 
   sea is drawn around the battle's centre (its camera and cascade constants moved to that frame for the draw,
   `Renderer::shift_camera_constants`), so the sea bed square, and the foam, stays on the battle as the game's. The sea bed leaves the
   terrains' LF out.
+- Shadows past the cascades: `g_tBakedShadowBuffer` (4096 x 4096 R16, sampled with a linear LESS_EQUAL comparison, wrapping)
+  and `g_vBakedShadowmapScale` (1 / 4272, 1 / 4272, -1 / 439.3), `_Offset` (toroidal, around the camera; depth 0.9467), `_Shear` (the
+  sun's x / -y and z / -y times the scale), `_Params` (1 / 1922, 238.7, -1 / 47.74, 6): see `renderer/shadow_baked.rs`. The light pass
+  resets its samplers before it binds the shadow ones: the baked sampler is bound after (on a plain sampler `sample_c` returns 0: all
+  shadowed).
+- The terrain resolve's and the grass's `ps_height_map_cb`: `g_mid_distance_details` (20, 400, 3, 0.6) in game units, `g_noise_params`
+  (0.7, 0.3, 0.001, 0); grass_PS `g_inv_lod_distance` 0.005, `g_alpha` (1, 0.75), `g_normal_scale_bias` (2, -1), `g_distance_scale` 1.
 - Open: the shore foam band is still narrower than the game's at Carthage: the game's ground there is 0.6 m under its sea bed, the
   editor's 0.07 m. The game's land LF is a 256 x 256 window over 16384 units (64 units a texel, `LF * 3000 - 20`; the sea tiles' the sea
   LF, 4064 x 2874, at `LF * 400 - 20`); the editor samples the campaign's 8128 x 5748 LF: the two differ by about 0.5 m at that coast. To
