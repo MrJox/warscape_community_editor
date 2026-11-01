@@ -125,14 +125,33 @@ Shadows: `vs30_shadow` is `vs30_geom` again; `ps30_shadow` is shared.
 into the HDR target over the same chunks, surfaces and depth-stencil state as Attila's G-buffer ocean. The same vertex input. Renamed:
 `ocean_VS.g_vs_sea_bed_info` / `ocean_PS.g_ps_sea_bed_info` (Attila's `g_vs_sea_info`), the detail normals' scales and speeds in
 `ocean_PS` (Attila's `OceanSharedConstants`), the sky cube `s_sky` (Attila's `s_environment`), the foam `combined_foam_texture_sampler`
-(`sea/combined_foam.dds`), the sea bed info read by the pixel shader too. `reflection_texture_sampler` is the game's planar reflection,
-which the renderer does not make: black (the sky's reflection comes from the cube). To check against a frame of the game: the
-reflection's share, the colours.
+(`sea/combined_foam.dds`), the sea bed info read by the pixel shader too. With shadows the game's variant is
+`dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_ocean` (the plain one's inputs plus `shadowmap_PS` and the shadow maps): the
+sea receives the sun's shadows (the lighthouse's on the water in the user's Carthage screenshots, 2026-11-01).
+
+What the pixel shader does (DXBC, 2026-11-01): the sky's reflection comes from `reflection_texture_sampler` alone, sampled at the
+pixel's screen position upside down `(x, 1 - y)` plus 0.065 of the normal, times a Fresnel term and 0.65; the sky cube `s_sky` only
+fogs. So the planar reflection is the view of a camera at the eye mirrored in the water's plane looking at the mirrored target with +y
+up (its picture is the mirror image upside down). Without it (black until 2026-11-01) the sea was dark grey. The colour: the deep water
+colour lit (sun times the shadow, ambient), mixed towards the refraction (the scene behind) by `exp(-0.2 d)` of the water's depth d; the
+whitecaps: `combined_foam`'s red at the sea uv, faded over 1000 units, sharpened by its green / blue at 15 x, plus the shore foam under
+1.6 m of water; all of it times `saturate(-ground * 1.667)` of the sea bed: no foam where the sea bed info reads 0, as everywhere outside
+its square (x, z in [-1024, 1024] around the world origin, the battle's centre; the vertex shader's flattening likewise).
+
+The editor (`renderer/reflection.rs`, `ocean.rs`): the reflection is the mirrored sky and cloud planes at half the screen's size, in the
+light buffer's units. ASSUMPTION: the game renders the mirrored scene itself (it has `_reflection` techniques of the directional light
+and the terrain); the land and buildings are not reflected here. The sea is drawn around the battle's centre (its camera and cascade
+constants moved to that frame for the draw, `Renderer::shift_camera_constants`), so the sea bed square, and with it the foam, stays on
+the battle as the game's; around the render origin it followed the camera and showed as a straight edge across the sea. Far from the
+battle (8192 game units) it falls back to the render origin.
+
+Open (needs a capture of the game: RenderDoc on Windows captures Rome 2, 32-bit): the open sea's whitecaps, strong in the editor within
+the battle square, none in the user's screenshots; the sea's colour (turquoise in the game, grey-blue here); what the reflection holds.
 
 ## Rivers and water planes (`water.rs`)
 
 `rigidriver ps30_main_battle_river` and `waterplane ps30_battle_ultra_water_quality` are forward passes too (one colour target, into the
-HDR target), with the planar reflection `s_terrain_reflection` (black, as the sea's) and the sky cube `s_sky` (the water plane; Attila's
+HDR target), with the planar reflection `s_terrain_reflection` (the mirrored sky, as the sea's) and the sky cube `s_sky` (the water plane; Attila's
 `s_environment`). The river's vertex shader reads the LF window from `lf_block_cb` and `s_low_res_height_map` (Attila's
 `t_low_res_height_map`, `vs_height_map_cb`); `vs_height_map_cb` keeps the LF / HF scales and offset, so the renderer's LF scale 0 leaves
 the ribbon at its mesh height (+ 0.4, the shader's).
