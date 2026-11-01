@@ -107,7 +107,7 @@ impl Renderer {
 
     /// Makes the baked map again when what it shows changed (Rome 2, shadows on), and sets its constants.
     pub(crate) fn pass_baked_shadows(&mut self, scene: &RenderScene, cam: &Camera, light_dir: Float3) {
-        if self.game != game::RenderGame::Rome2 || !self.settings.shadows || self.env.active || std::env::var("WCE_NOBAKED").is_ok() {
+        if self.game != game::RenderGame::Rome2 || !self.settings.shadows || self.env.active {
             self.baked.valid = false;
             self.set_baked_constants(Float3::default());
             return;
