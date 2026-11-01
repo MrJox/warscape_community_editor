@@ -169,6 +169,9 @@ pub struct GpuMesh {
     /// The VFS path the diffuse texture was loaded from (empty for none): the grass pass derives the seasonal variants from it.
     pub diffuse_path: String,
 
+    /// The material's normal map's path (the climate variants, `Renderer::climate_variant`).
+    pub normal_path: String,
+
     /// The tessellation displacement map (RMV2 texture type 6, linear), if the material has one: with tessellation on the G-buffer pass
     /// draws the mesh tessellated (the game's `gbuffer_displacement_sm5`).
     pub displacement: Option<SharedTexture>,
@@ -883,6 +886,7 @@ impl ModelInner {
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
                 ],
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
+                normal_path: material.textures().iter().find(|t| *t.tex_type() == TextureType::Normal).map(|t| t.path().replace('\\', "/")).unwrap_or_default(),
                 displacement: material.textures().iter().any(|t| *t.tex_type() == TextureType::Displacement)
                     .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
@@ -1516,6 +1520,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
         tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white()],
         diffuse_path: String::new(),
+        normal_path: String::new(),
         displacement: None,
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),

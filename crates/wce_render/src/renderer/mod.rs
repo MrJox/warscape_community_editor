@@ -837,6 +837,9 @@ pub struct Renderer {
     pub(crate) post: PostTargets,
     pub(crate) shadow_map: ShadowMap,
     pub(crate) baked: shadow_baked::BakedShadow,
+
+    /// The scene's climate, lower case (`rome_med`).
+    pub(crate) climate: String,
     pub(crate) draw_lists: SceneDraws,
     pub(crate) camera: CameraState,
     pub(crate) clock: FrameClock,
@@ -981,6 +984,7 @@ impl Renderer {
             post: PostTargets::default(),
             shadow_map: ShadowMap::new(dev, SHADOW_SIZE),
             baked: shadow_baked::BakedShadow::default(),
+            climate: String::new(),
             draw_lists: SceneDraws::default(),
             camera: CameraState::default(),
             clock: FrameClock::default(),
@@ -1339,6 +1343,9 @@ impl Renderer {
     /// Draws a scene (lit by its environment slot) as a view sees it into a target, at the target's size.
     pub fn render(&mut self, scene: &RenderScene, view_params: &ViewParams, target: &mut RenderTarget) {
         self.grass.season.clone_from(&scene.vegetation_season);
+        if !self.climate.eq_ignore_ascii_case(&scene.climate) {
+            self.climate = scene.climate.to_lowercase();
+        }
 
         // The battle's season as the game sends it (summer 1 in a capture, winter 3 in a dump; spring 0 and autumn 2 by their order). No
         // shader reads it (every vanilla and TDD shader declares it unused, 2026-10-31): kept for fidelity only.

@@ -153,6 +153,28 @@ impl Renderer {
         found.then_some(path)
     }
 
+    /// Rome 2's climate variant of a building texture: `<prefix>_<climate>_<marker><rest>` (`cliff_diffuse.dds` -> `cliff_rome_med_diffuse.dds`,
+    /// the custom terrain meshes' rule, fn 0x114b80a0), if that file exists (looked up once). ASSUMPTION: the engine resolves the buildings'
+    /// textures so too (the packs ship such variants of the cliffs and rocks only: `cliff_`, `rock01_`, `rock03_`, `rockstraight_`).
+    pub(crate) fn climate_variant(&mut self, path: &str, marker: &str) -> Option<ID3D11ShaderResourceView> {
+        if self.game != super::game::RenderGame::Rome2 || self.climate.is_empty() || path.is_empty() {
+            return None;
+        }
+
+        let at = path.rfind(marker)?;
+        let variant = format!("{}_{}{}", &path[..at], self.climate, &path[at..]);
+        let found = match self.grass.variants.get(&variant) {
+            Some(&f) => f,
+            None => {
+                let f = self.files.exists(&variant);
+                self.grass.variants.insert(variant.clone(), f);
+                f
+            }
+        };
+
+        found.then(|| self.textures.get(&variant, marker == "_diffuse")).flatten().and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+    }
+
     /// The burnt look the shader blends in by the instance's burn (TEXCOORD4): the resolver's `_br` variant, black without one.
     fn grass_burn(&mut self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
         self.diffuse_variant(mesh, "br")
