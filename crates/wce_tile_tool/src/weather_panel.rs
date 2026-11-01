@@ -48,6 +48,9 @@ pub(crate) struct WeatherUi {
 
     /// Words (and-ed) the listed files must contain.
     search: String,
+
+    /// The tile's climate the choice was last checked against (`follow_climate`).
+    climate: String,
 }
 
 /// True when `file` holds every word of `search` (case-insensitive).
@@ -76,6 +79,7 @@ impl WeatherUi {
         self.tile = d.source_key();
         self.load_database(e, &dir);
 
+        self.climate = look.climate.clone();
         let remembered = e.tool_settings::<TileSettings>(SETTINGS_ID).weathers.get(&self.tile).cloned();
         self.choice = remembered.unwrap_or_else(|| {
             let mut query = BTreeMap::from([("map".to_owned(), "default_map".to_owned())]);
@@ -102,6 +106,31 @@ impl WeatherUi {
         let file = self.choice.file.clone();
         if let Err(m) = e.set_weather_preview(Some(&file).filter(|f| !f.is_empty()).map(String::as_str)) {
             e.status(&format!("the tile's weather: {m}"), true);
+        }
+    }
+
+    /// The tile's climate changed (its map context's placement gave it one, or its terrain look changed): a weather of another climate's
+    /// folder (`weather/<climate>/...`) gives way to the new climate's first dry one, as the game lights a battle with its climate's weather.
+    pub(crate) fn follow_climate(&mut self, e: &mut Editor, climate: &str) {
+        if self.tile.is_empty() || self.climate.eq_ignore_ascii_case(climate) {
+            return;
+        }
+
+        self.climate = climate.to_owned();
+        let folder = self.choice.file.replace('\\', "/").to_lowercase();
+        let folder = folder.strip_prefix("weather/").and_then(|f| f.split('/').next()).unwrap_or_default().to_owned();
+        if folder.is_empty() || folder.eq_ignore_ascii_case(climate) {
+            return;
+        }
+
+        if let Some(v) = self.value_of("climate", climate) {
+            self.choice.query.insert("climate".to_owned(), v);
+        }
+
+        let Some(file) = self.first_dry() else { return };
+        match self.set_file(e, &file) {
+            Ok(_) => log::info(format!("the tile's weather: {file} (the first dry one of its climate, {climate})")),
+            Err(m) => e.status(&format!("the tile's weather: {m}"), true),
         }
     }
 
