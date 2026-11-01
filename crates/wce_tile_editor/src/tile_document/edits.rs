@@ -725,7 +725,12 @@ impl TileDocument {
         };
 
         let mark = self.begin()?;
+        let before = self.tile().tscene().doc().elements().len();
         let mut copy = self.tscene_mut().duplicate(tmpl)?;
+
+        // The copy went in after the template: a layer from the copy on moved down by as many elements as it has.
+        let added = self.tile().tscene().doc().elements().len() - before;
+        let into = into.map(|l| if l >= copy { l + added } else { l });
         if let Some(into) = into.filter(|&l| self.tile().layer_of(copy) != Some(l)) {
             let world = world_transform(self.tile().tscene(), copy);
             copy = self.tscene_mut().move_element(copy, into, None)?;
