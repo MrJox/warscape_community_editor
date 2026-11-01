@@ -218,14 +218,18 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
 - Tessellation (settings +0x6e, the graphics system's +0x716ba; two readers):
   - Rigid meshes (fn 0x1188fc40, the G-buffer pass): technique 0x42 `gbuffer_displacement_sm5` (fn 0x116e80f0: rigidcommon
     `vs30_displacement`, `hs_main_sm5`, `ds_main_sm5`, the material's `ps30_gbuffer`) only for an opaque mesh with a displacement
-    texture (the mesh's +0x178; with the texture slots at +0x108 + 4 * (type + 0x18) that is type 4, which the material resolver
-    fn 0x1186c880 handles and rpfm_lib does not decode), on feature level 3, with a global flag. The domain shader moves each vertex
+    texture (the mesh's +0x178: its texture slots start at +0x160 for type 0, by the binding fn 0x11885cb0, so RMV2 texture type 6),
+    on feature level 3, with a global flag. The domain shader moves each vertex
     along its normal by the map's red * `g_tesselation_displacement_scale` * the vertex's position.w; `rigid_tesselation_factor` 5,
     `rigid_tesselation_displacement_scale` 0.4 (tweakers).
   - The terrain (fn 0x11927c10): techniques 0x11 / 0x12 instead of 0x2f / 0x31, but only when the `terrain_tess` tweaker is not 1. It
     is 1 by default, which turns the option off for the terrain.
-  - So with the defaults no battle the editor draws changes (no model it loads has a type 4 texture). Not applied (no hull / domain
-    shader path).
+  - No vanilla Attila, ToB or Rome 2 model has a type 6 texture (the packs' texture records: types 0, 1, 3, 5, 7, 8, 10 to 15, 17
+    only), so it matters for mods. Applied (Attila, ToB): rpfm_lib decodes type 6 (`TextureType::Displacement`, on rpfm's
+    feature/rmv2_displacement_texture branch; the workspace takes rpfm from a checkout next to it), the mesh keeps it
+    (`GpuMesh::displacement`), and the G-buffer pass draws such opaque, unburnt rigid meshes in a second round with the displacement
+    vertex shader, the hull and domain shaders (3 control point patches; `t_tesselation_displacement_map` sampled linear, wrap)
+    and the material's pixel shader. The terrain side stays off, as the game's default.
 
 ## What the editor applies
 
@@ -243,7 +247,7 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): MSAA (and Rome 2's MLAA), texture
-quality, trees, grass, terrain, tessellation, Rome 2's alpha blending, grain, cloud shadows, god rays, lightning and foliage hiding.
+quality, trees, grass, terrain, Rome 2's alpha blending, grain, cloud shadows, god rays, lightning and foliage hiding.
 
 ## Editor only: the render scale
 

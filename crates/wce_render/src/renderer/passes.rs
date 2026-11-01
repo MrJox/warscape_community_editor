@@ -121,69 +121,114 @@ impl Renderer {
             burning.then(|| pass_in(m, true)).flatten().or_else(|| pass_in(m, false))
         };
 
-        for (pass, pair) in shaders.iter().enumerate() {
-            let Some((vs, ps)) = pair.clone() else { continue };
-            if !self.env.active {
-                self.gpu_timer.mark(GBUFFER_PASSES[pass].5);
+        // gfx_tesselation (fn 0x1188fc40: technique 0x42 for an opaque mesh with a displacement map, in the G-buffer pass): those meshes are
+        // drawn in a second round, through rigidcommon's displacement vertex shader, hull and domain shaders, with their material's pixel shader.
+        let tess_stages = if self.settings.tessellation && game != super::game::RenderGame::Rome2 {
+            match (self.shader(TESS_VS), self.shader(TESS_HS), self.shader(TESS_DS)) {
+                (Some(v), Some(h), Some(d)) => Some((v, h, d)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let tessellated = |m: &GpuMesh, pass: usize| {
+            tess_stages.is_some() && m.displacement.is_some() && !GBUFFER_PASSES[pass].1 && !GBUFFER_PASSES[pass].2 && !m.kind.is_tree()
+        };
+
+        for tess in [false, true] {
+            if tess && tess_stages.is_none() {
+                continue;
             }
 
-            let pass_layout = match GBUFFER_PASSES[pass].0 {
-                MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
-                MeshKind::TreeBillboard => billboard_layout.as_ref(),
-                _ => Some(&layout),
-            };
-
-            let Some(pass_layout) = pass_layout else { continue };
-            self.ctx.set_input_layout(Some(pass_layout));
-
-            // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE).
-            let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf);
-            self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
-
-            let slots = self.slots_of(&ps);
-            let mut bound = false;
-            let fire = GBUFFER_PASSES[pass].2;
-            // Faded instances are the blended forward pass's (`pass_faded`).
-            let (instances, triangles) = self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning, faded| {
-                if faded || pass_of(m, burning) != Some(pass) {
-                    return false;
+            for (pass, pair) in shaders.iter().enumerate() {
+                let Some((plain_vs, ps)) = pair.clone() else { continue };
+                let vs = match (&tess_stages, tess) {
+                    (Some((v, _, _)), true) => v.clone(),
+                    _ => plain_vs,
+                };
+                if !self.env.active && !tess {
+                    self.gpu_timer.mark(GBUFFER_PASSES[pass].5);
                 }
 
-                // With snow regions a tree batch snows by its model's mark (MODEL_SNOW_SUFFIX), the rest at the regions' intensity.
-                if let Some(region) = r.snow_region {
-                    r.set_snowing(if m.kind.is_tree() && !m.snow { r.snow_weather } else { region });
-                }
+                let pass_layout = match GBUFFER_PASSES[pass].0 {
+                    MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
+                    MeshKind::TreeBillboard => billboard_layout.as_ref(),
+                    _ => Some(&layout),
+                };
 
-                if !bound {
-                    r.bind(&vs);
-                    for &slot in vs.textures.values() {
-                        r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                let Some(pass_layout) = pass_layout else { continue };
+                self.ctx.set_input_layout(Some(pass_layout));
+
+                // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE).
+                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf);
+                self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
+
+                let slots = self.slots_of(&ps);
+                let mut bound = false;
+                let fire = GBUFFER_PASSES[pass].2;
+                // Faded instances are the blended forward pass's (`pass_faded`).
+                let (instances, triangles) = self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning, faded| {
+                    if faded || pass_of(m, burning) != Some(pass) || tessellated(m, pass) != tess {
+                        return false;
                     }
 
-                    r.bind(&ps);
-                    // Linear, as the game's s_fire_map samplers (docs/re/samplers.tsv): its channels are masks, not a colour.
-                    let fire_map = if fire { r.textures.get(FIRE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
-                    bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
-                    let snow = r.snow_normals_srv();
-                    bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
+                    // With snow regions a tree batch snows by its model's mark (MODEL_SNOW_SUFFIX), the rest at the regions' intensity.
+                    if let Some(region) = r.snow_region {
+                        r.set_snowing(if m.kind.is_tree() && !m.snow { r.snow_weather } else { region });
+                    }
 
-                    // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
-                    bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());
-                    bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
-                    r.upload();
-                    ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
-                    bound = true;
+                    if !bound {
+                        r.bind(&vs);
+                        for &slot in vs.textures.values() {
+                            r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                        }
+
+                        r.bind(&ps);
+                        // Linear, as the game's s_fire_map samplers (docs/re/samplers.tsv): its channels are masks, not a colour.
+                        let fire_map = if fire { r.textures.get(FIRE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
+                        bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
+                        let snow = r.snow_normals_srv();
+                        bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
+
+                        // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
+                        bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());
+                        bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
+                        if let (true, Some((_, hs, ds))) = (tess, &tess_stages) {
+                            r.cbs.set_f("rigid_config_PS", "g_tesselation_factor", &[TESS_FACTOR]);
+                            r.cbs.set_f("rigid_config_PS", "g_tesselation_displacement_scale", &[TESS_DISPLACEMENT_SCALE]);
+                            r.bind(hs);
+                            r.bind(ds);
+                            bind_sampler(&r.ctx, ds, "s_displacement_map", r.states.s_wrap_linear.as_ref());
+                            r.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+                        }
+
+                        r.upload();
+                        ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
+                        bound = true;
+                    }
+
+                    if let (true, Some((_, _, ds)), Some(map)) = (tess, &tess_stages, &m.displacement) {
+                        let srv = map.read().ok().and_then(|t| t.srv.clone());
+                        bind_srv(&r.ctx, ds, "t_tesselation_displacement_map", srv.as_ref());
+                    }
+
+                    r.bind_mesh_material(&ps, &slots, m);
+                    true
+                });
+
+                self.draw_stats.triangles += triangles;
+                if !self.env.active {
+                    self.draw_stats.camera_triangles += triangles;
+                    self.draw_stats.camera_instances += instances;
                 }
-
-                r.bind_mesh_material(&ps, &slots, m);
-                true
-            });
-
-            self.draw_stats.triangles += triangles;
-            if !self.env.active {
-                self.draw_stats.camera_triangles += triangles;
-                self.draw_stats.camera_instances += instances;
             }
+        }
+
+        // The tessellated round leaves its stages bound.
+        if tess_stages.is_some() {
+            self.ctx.hs_set_shader(None);
+            self.ctx.ds_set_shader(None);
+            self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         }
 
         // The terrain-blend meshes' geometry pass (`custom_geometry`): depth, the G-buffer depth channel and stencil 2, the mark of the terrain pixels (the blend boxes and

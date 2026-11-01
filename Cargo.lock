@@ -1719,7 +1719,6 @@ dependencies = [
 [[package]]
 name = "rpfm_lib"
 version = "5.3.3"
-source = "git+https://github.com/Frodo45127/rpfm.git?branch=develop#576f3973422daad445c9fd28201552f5a002def1"
 dependencies = [
  "base64 0.22.1",
  "bitflags",

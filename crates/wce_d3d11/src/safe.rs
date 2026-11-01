@@ -247,6 +247,8 @@ pub trait DeviceExt {
     fn create_vertex_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11VertexShader>;
     fn create_pixel_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11PixelShader>;
     fn create_geometry_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11GeometryShader>;
+    fn create_hull_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11HullShader>;
+    fn create_domain_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11DomainShader>;
     fn create_compute_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11ComputeShader>;
     fn create_unordered_access_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>) -> windows_core::Result<ID3D11UnorderedAccessView>;
     fn create_input_layout(&self, elements: &[InputElement], bytecode: &[u8]) -> windows_core::Result<ID3D11InputLayout>;
@@ -370,6 +372,20 @@ impl DeviceExt for ID3D11Device {
         let mut out = None;
         // SAFETY: the bytecode is a slice; the runtime validates it.
         let hr = unsafe { self.CreateGeometryShader(bytecode, None, Some(&mut out)) };
+        created(hr, out)
+    }
+
+    fn create_hull_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11HullShader> {
+        let mut out = None;
+        // SAFETY: the bytecode is a slice; the runtime validates it.
+        let hr = unsafe { self.CreateHullShader(bytecode, None, Some(&mut out)) };
+        created(hr, out)
+    }
+
+    fn create_domain_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11DomainShader> {
+        let mut out = None;
+        // SAFETY: the bytecode is a slice; the runtime validates it.
+        let hr = unsafe { self.CreateDomainShader(bytecode, None, Some(&mut out)) };
         created(hr, out)
     }
 
@@ -507,14 +523,20 @@ pub trait ContextExt {
     fn vs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
     fn ps_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
     fn gs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
+    fn hs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
+    fn ds_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
     fn cs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]);
     fn vs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
     fn ps_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
     fn gs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
+    fn hs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
+    fn ds_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
     fn cs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]);
     fn vs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn ps_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn gs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
+    fn hs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
+    fn ds_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn cs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]);
     fn cs_set_unordered_access_views(&self, start: u32, views: &[Option<ID3D11UnorderedAccessView>]);
     fn dispatch(&self, x: u32, y: u32, z: u32);
@@ -673,6 +695,16 @@ impl ContextExt for ID3D11DeviceContext {
         unsafe { self.GSSetConstantBuffers(start, Some(buffers)) };
     }
 
+    fn hs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.HSSetConstantBuffers(start, Some(buffers)) };
+    }
+
+    fn ds_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.DSSetConstantBuffers(start, Some(buffers)) };
+    }
+
     fn cs_set_constant_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>]) {
         // SAFETY: a binding call with a slice.
         unsafe { self.CSSetConstantBuffers(start, Some(buffers)) };
@@ -693,6 +725,16 @@ impl ContextExt for ID3D11DeviceContext {
         unsafe { self.GSSetShaderResources(start, Some(views)) };
     }
 
+    fn hs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.HSSetShaderResources(start, Some(views)) };
+    }
+
+    fn ds_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.DSSetShaderResources(start, Some(views)) };
+    }
+
     fn cs_set_shader_resources(&self, start: u32, views: &[Option<ID3D11ShaderResourceView>]) {
         // SAFETY: a binding call with a slice.
         unsafe { self.CSSetShaderResources(start, Some(views)) };
@@ -711,6 +753,16 @@ impl ContextExt for ID3D11DeviceContext {
     fn gs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]) {
         // SAFETY: a binding call with a slice.
         unsafe { self.GSSetSamplers(start, Some(samplers)) };
+    }
+
+    fn hs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.HSSetSamplers(start, Some(samplers)) };
+    }
+
+    fn ds_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]) {
+        // SAFETY: a binding call with a slice.
+        unsafe { self.DSSetSamplers(start, Some(samplers)) };
     }
 
     fn cs_set_samplers(&self, start: u32, samplers: &[Option<ID3D11SamplerState>]) {

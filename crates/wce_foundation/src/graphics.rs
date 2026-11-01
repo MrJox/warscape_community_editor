@@ -172,7 +172,7 @@ const ATTILA_OPTIONS: &[GfxOption] = &[
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
     opt("gfx_vignette", "Vignette", GfxKind::Toggle, "true", true),
     opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND_OIT), "0", true),
-    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
+    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", true),
     opt("gfx_gamma_setting", "Gamma", GfxKind::Float { min: 1.0, max: 3.0 }, "2.2", true),
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
 ];
@@ -200,7 +200,7 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_cloud_shadows", "Cloud shadows", GfxKind::Toggle, "false", true),
     opt("gfx_god_rays", "God rays", GfxKind::Toggle, "false", true),
     opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND_OIT), "0", true),
-    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
+    opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", true),
     opt("gfx_gamma_setting", "Gamma", GfxKind::Float { min: 1.0, max: 3.0 }, "2.2", true),
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
 ];
