@@ -318,7 +318,7 @@ impl Renderer {
         let ps = self.shader(SKY_PS);
         let (Some(vs), Some(ps)) = (vs, ps) else { return };
         let Some(layout) = self.layout(&vs, "pos3", &sky_layout()) else { return };
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_input_layout(Some(&layout));
@@ -420,7 +420,7 @@ impl Renderer {
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.res.sun_vb), &[16], &[0]);
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
 
         // The SUN_SHADER blend (fn 0x116fcf80 area, blend object +0x23b): SRC_ALPHA / INV_SRC_ALPHA on colour and alpha.
@@ -500,7 +500,7 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "clouds", &el) else { return };
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());

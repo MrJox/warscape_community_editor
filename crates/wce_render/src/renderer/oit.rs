@@ -53,7 +53,7 @@ impl Renderer {
 
         // 1. The fragments: the lists emptied, the fragment counter reset by the binding.
         self.ctx.clear_unordered_access_view_uint(&head_uav, [u32::MAX; 4]);
-        self.ctx.set_render_targets_and_uavs(&[], self.gbuffer.dsv.as_ref(), &[Some(head_uav), Some(fragments_uav)], &[0, 0]);
+        self.ctx.set_render_targets_and_uavs(&[], self.gbuffer.scene_dsv().as_ref(), &[Some(head_uav), Some(fragments_uav)], &[0, 0]);
         self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         null_ps_srvs(&self.ctx, 16);
@@ -111,7 +111,7 @@ impl Renderer {
         self.ctx.set_render_targets_and_uavs(&[], None, &[None, None], &[u32::MAX, u32::MAX]);
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         self.ctx.set_blend_state(self.states.bs_premultiplied.as_ref());
-        let rtv = self.gbuffer.hdr.rtv.clone();
+        let rtv = self.gbuffer.scene_hdr_rtv();
         self.ctx.set_render_targets(std::slice::from_ref(&rtv), None);
         self.bind(&resolve);
         bind_srv(&self.ctx, &resolve, "g_head_fragment_index_SRV", oit.head_srv.as_ref());

@@ -1415,7 +1415,7 @@ impl Renderer {
         self.pass_ssao(&cam);
         self.gpu_timer.mark("sky/clouds/light/fog");
         self.ctx.set_viewports(&[main_vp]);
-        if let Some(rtv) = &self.gbuffer.hdr.rtv {
+        if let Some(rtv) = &self.gbuffer.scene_hdr_rtv() {
             self.ctx.clear_render_target_view(rtv, [0.0; 4]);
         }
 
@@ -1459,8 +1459,8 @@ impl Renderer {
             dt: self.clock.dt,
             wind_velocity: self.wind.vfx_velocity,
             wind_variance: self.wind.vfx_variance,
-            target: self.gbuffer.hdr.rtv.clone(),
-            depth: self.gbuffer.dsv.clone(),
+            target: self.gbuffer.scene_hdr_rtv(),
+            depth: self.gbuffer.scene_dsv(),
             depth_zw: self.gbuffer.channels[3].srv.clone(),
             sky: self.sky.cube.srv.clone(),
             width,

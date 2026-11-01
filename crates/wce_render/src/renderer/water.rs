@@ -192,7 +192,7 @@ impl Renderer {
             self.draw_ocean(scene, &water);
             if !model_water {
                 null_ps_srvs(&self.ctx, 16);
-                self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+                self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
                 return;
             }
         }
@@ -234,11 +234,11 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 16);
         // Rome 2's river and water plane shaders are forward passes: the lit colour only.
         let rtvs = if self.game == super::game::RenderGame::Rome2 {
-            vec![self.gbuffer.hdr.rtv.clone()]
+            vec![self.gbuffer.scene_hdr_rtv()]
         } else {
-            vec![self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()]
+            self.gbuffer.scene_rtvs()[..3].iter().cloned().chain([self.gbuffer.scene_hdr_rtv()]).collect()
         };
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         // Rivers are stencil 2 (the fog pass, stencil 1, leaves them: their shader fogs itself); the water planes 1.
         self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), if rivers { 2 } else { 1 });
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -308,6 +308,6 @@ impl Renderer {
         }
 
         null_ps_srvs(&self.ctx, 16);
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
     }
 }

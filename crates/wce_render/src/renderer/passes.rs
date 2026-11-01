@@ -28,18 +28,24 @@ impl Renderer {
         // Channel 4 (z / w) starts at the far plane: the game's is its depth buffer, cleared to 1 (RenderDoc, coast.rdc). Cleared to 0, a
         // pixel with nothing behind the sea read as the near plane, and the fog (which reads it) left those pixels clear: dark slivers of
         // sea along the horizon where the far ground had gaps.
-        let rtvs = self.gbuffer.rtvs();
-        for (k, rtv) in rtvs.iter().enumerate() {
+        for (k, rtv) in self.gbuffer.rtvs().iter().enumerate() {
             if let Some(rtv) = rtv {
                 self.ctx.clear_render_target_view(rtv, if k == 3 { [1.0, 0.0, 0.0, 0.0] } else { [0.0; 4] });
             }
         }
 
-        if let Some(dsv) = &self.gbuffer.dsv {
+        let rtvs = self.gbuffer.scene_rtvs();
+        if let Some(ms) = &self.gbuffer.ms {
+            for rtv in ms.channels.iter().filter_map(|t| t.rtv.as_ref()) {
+                self.ctx.clear_render_target_view(rtv, [0.0; 4]);
+            }
+        }
+
+        for dsv in [self.gbuffer.dsv.clone(), self.gbuffer.ms.as_ref().and_then(|m| m.depth.dsv.clone())].iter().flatten() {
             self.ctx.clear_depth_stencil_view(dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0, 0);
         }
 
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
 
@@ -235,7 +241,7 @@ impl Renderer {
         // the resolve only touch those), so that the terrain textures are projected onto the meshes.
         if blend_in_terrain {
             let d = blend_mesh::BlendDraw {
-                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.rtvs(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: TERRAIN_STENCIL,
+                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.scene_rtvs(), dsv: self.gbuffer.scene_dsv(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: TERRAIN_STENCIL,
                 blend: self.states.bs_opaque.clone(),
             };
 
@@ -302,7 +308,7 @@ impl Renderer {
         let Some(vs) = self.shader(RIGID_VS) else { return };
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         wce_prof!("render.faded");
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_sky.as_ref(), 0);
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
@@ -359,7 +365,7 @@ impl Renderer {
 
     pub(crate) fn pass_directional_light(&mut self) {
         let Some(ps) = self.shader(DIR_LIGHT_PS) else { return };
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
@@ -496,7 +502,7 @@ impl Renderer {
 
         blur(&mut self.cbs);
         self.upload();
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), None);
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], None);
         self.ctx.set_blend_state(self.states.bs_add_one.as_ref());
         // The half resolution one also reads channels 2 (its .w weighs a Fresnel term) and 4 (the depth, for the view's direction).
         for k in 0..4 {
@@ -509,7 +515,7 @@ impl Renderer {
         self.fullscreen(&by);
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
     }
 
     /// gfx_screen_space_reflections at 0: the environment specular pass is off (fn 0x118c2530: on above 0); 1 draws it at half
@@ -827,7 +833,7 @@ impl Renderer {
         bind_sampler(&self.ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
 
         // Fog over geometry only (stencil 1): sky pixels keep the sky.
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
 

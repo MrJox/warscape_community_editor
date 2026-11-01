@@ -21,8 +21,13 @@ pub(crate) struct SizedTarget {
 
 /// A target of a size and format.
 pub(crate) fn make_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) -> Target {
+    make_target_ms(dev, w, h, fmt, 1)
+}
+
+/// A target of a size, format and sample count (its SRV a Texture2DMS above 1).
+pub(crate) fn make_target_ms(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT, samples: u32) -> Target {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
+        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: samples.max(1), Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
         BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
     };
 
@@ -34,6 +39,56 @@ pub(crate) fn make_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) 
 fn sized_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) -> SizedTarget {
     let (w, h) = (w.max(1), h.max(1));
     SizedTarget { t: make_target(dev, w, h, fmt), w, h }
+}
+
+/// A D24S8 depth-stencil readable as depth (R24_UNORM_X8, the game's G-buffer channel 4) and stencil (X24_G8_UINT), of a sample count.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DepthStencil {
+    pub tex: Option<ID3D11Texture2D>,
+    pub dsv: Option<ID3D11DepthStencilView>,
+    pub depth_srv: Option<ID3D11ShaderResourceView>,
+    pub stencil_srv: Option<ID3D11ShaderResourceView>,
+}
+
+impl DepthStencil {
+    pub fn new(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
+        let samples = samples.max(1);
+        let td = D3D11_TEXTURE2D_DESC {
+            Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R24G8_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: samples, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        };
+
+        let Ok(tex) = dev.create_texture_2d(&td, None) else { return Self::default() };
+        let ms = samples > 1;
+        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC {
+            Format: DXGI_FORMAT_D24_UNORM_S8_UINT, ViewDimension: if ms { D3D11_DSV_DIMENSION_TEXTURE2DMS } else { D3D11_DSV_DIMENSION_TEXTURE2D }, ..Default::default()
+        };
+        let srv = |format| {
+            let dim = if ms { D3D11_SRV_DIMENSION_TEXTURE2DMS } else { D3D11_SRV_DIMENSION_TEXTURE2D };
+            let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: format, ViewDimension: D3D11_SRV_DIMENSION(dim), ..Default::default() };
+            if !ms {
+                sd.Anonymous.Texture2D.MipLevels = 1;
+            }
+            dev.create_shader_resource_view(&tex, Some(&sd)).ok()
+        };
+
+        Self {
+            dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(),
+            depth_srv: srv(DXGI_FORMAT_R24_UNORM_X8_TYPELESS),
+            stencil_srv: srv(DXGI_FORMAT_X24_TYPELESS_G8_UINT),
+            tex: Some(tex),
+        }
+    }
+}
+
+/// The main view's multisampled targets (gfx_aa 2..4; docs/plans/msaa.md): G-buffer channels 1..3, the light buffer and the
+/// depth-stencil, whose depth is the MS channel 4 (as the game's).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MsTargets {
+    pub samples: u32,
+    pub channels: [Target; 3],
+    pub hdr: Target,
+    pub depth: DepthStencil,
 }
 
 /// A depth-stencil texture's view.
@@ -57,6 +112,12 @@ pub(crate) struct GBuffer {
     pub channels: [Target; 5],
     pub hdr: Target,
     pub dsv: Option<ID3D11DepthStencilView>,
+
+    /// The depth-stencil `dsv` views, readable (with MSAA: the resolved scene depth, the s1 channel 4).
+    pub depth: DepthStencil,
+
+    /// With MSAA (the main view only), the multisampled targets the scene is drawn into.
+    pub ms: Option<MsTargets>,
 }
 
 impl GBuffer {
@@ -65,6 +126,19 @@ impl GBuffer {
     /// depth channel TTF_R32F (R16F on low settings, fn 0x118f62b0), HDR light accumulation TTF_A16B16G16R16F (fns 0x118f4a80, 0x117659b0).
     /// The id channel is editor-only.
     pub fn new(dev: &ID3D11Device, w: u32, h: u32) -> Self {
+        Self::with_samples(dev, w, h, 1)
+    }
+
+    /// With `samples` above 1, the multisampled targets too (gfx_aa 2..4).
+    pub fn with_samples(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
+        let depth = DepthStencil::new(dev, w, h, 1);
+        let ms = (samples > 1).then(|| MsTargets {
+            samples,
+            channels: std::array::from_fn(|_| make_target_ms(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples)),
+            hdr: make_target_ms(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, samples),
+            depth: DepthStencil::new(dev, w, h, samples),
+        });
+
         Self {
             w,
             h,
@@ -76,8 +150,38 @@ impl GBuffer {
                 make_target(dev, w, h, DXGI_FORMAT_R32_UINT),        // per-instance value (uint output, debug layer)
             ],
             hdr: make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT),
-            dsv: depth_target(dev, w, h, DXGI_FORMAT_D24_UNORM_S8_UINT),
+            dsv: depth.dsv.clone(),
+            depth,
+            ms,
         }
+    }
+
+    /// The sample count the scene is drawn at (1 without MSAA).
+    pub fn samples(&self) -> u32 {
+        self.ms.as_ref().map_or(1, |m| m.samples)
+    }
+
+    /// The light buffer the scene's lighting draws into: the multisampled one with MSAA.
+    pub fn scene_hdr_rtv(&self) -> Option<ID3D11RenderTargetView> {
+        self.ms.as_ref().map_or_else(|| self.hdr.rtv.clone(), |m| m.hdr.rtv.clone())
+    }
+
+    /// The depth-stencil the scene is drawn with: the multisampled one with MSAA.
+    pub fn scene_dsv(&self) -> Option<ID3D11DepthStencilView> {
+        self.ms.as_ref().map_or_else(|| self.dsv.clone(), |m| m.depth.dsv.clone())
+    }
+
+    /// The geometry's colour targets: with MSAA the multisampled channels 1..3 (channel 4 is the depth, the id is not drawn).
+    pub fn scene_rtvs(&self) -> Vec<Option<ID3D11RenderTargetView>> {
+        match &self.ms {
+            Some(m) => vec![m.channels[0].rtv.clone(), m.channels[1].rtv.clone(), m.channels[2].rtv.clone(), None, None],
+            None => self.rtvs(),
+        }
+    }
+
+    /// The scene's depth as a one-sample texture (channel 4, z / w): with MSAA the resolved depth.
+    pub fn depth_srv(&self) -> Option<ID3D11ShaderResourceView> {
+        if self.ms.is_some() { self.depth.depth_srv.clone() } else { self.channels[3].srv.clone() }
     }
 
     /// The colour targets of the geometry pass.
