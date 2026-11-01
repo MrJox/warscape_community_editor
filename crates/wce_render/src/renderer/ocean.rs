@@ -45,6 +45,12 @@ fn ocean_ps(quality: i32, rome2: bool) -> String {
     format!("dx11_sm_{}_0_ocean.hlsl_ps_ps30_main_{}_water_quality", if rome2 { 3 } else { 4 }, super::water::water_level(quality))
 }
 
+/// Rome 2's sea with the sun's shadows, the variant its lighting uses (hardware gather, shader model 5): the plain one's inputs plus
+/// `shadowmap_PS`, `g_tShadowBuffer_SM50` and the baked shadows (out of reach: `g_vBakedShadowmapParams`).
+fn r2_ocean_ps_shadows(quality: i32) -> String {
+    format!("dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_ocean.hlsl_ps_ps30_main_{}_water_quality", super::water::water_level(quality))
+}
+
 /// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`); the game's is 1024 x 1024
 /// (2 m texels; a RenderDoc capture at the lowest graphics settings, docs/re/water.md).
 const SEA_BED_SIZE: u32 = 1024;
@@ -52,6 +58,9 @@ const SEA_BED_HALF: f32 = 1024.0;
 
 /// The sea bed's height range (`g_vs_sea_info.xy`) and `g_transparency_exponential_scale`: the dumps' values, not in the tables.
 const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
+
+/// How far (game units) the render origin may be from the battle's centre for the sea to be drawn around the centre.
+const OCEAN_ORIGIN_REACH: f32 = 8192.0;
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
 /// The sea quadtree: its leaves are `CHUNK_CELLS` cells a side; a node is split while the camera is nearer than `SPLIT_DISTANCE`
@@ -361,10 +370,20 @@ impl Renderer {
         self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps });
     }
 
+    /// The origin of the sea's positions (scene units): the battle's centre, as the game's world origin, where its shaders put the sea bed
+    /// info texture's square (x, z in [-1024, 1024] game units: the shore's foam and the waves' flattening within it, none outside); the
+    /// render origin when the camera is far from the battle (a map context's other places), where the battle's frame loses precision.
+    fn ocean_origin(&self, scene: &RenderScene) -> Float3 {
+        let o = self.camera.origin;
+        let [cx, cz] = scene.battle_centre;
+        let far = OCEAN_ORIGIN_REACH / self.camera.units;
+        if (o.x - cx).abs() > far || (o.z - cz).abs() > far { o } else { Float3::new(cx, o.y, cz) }
+    }
+
     /// The sea bed info texture of the scene's terrains over it (rebuilt when they change).
     fn ocean_sea_bed(&mut self, scene: &RenderScene) {
         // The texture covers game units; the terrains are in scene units. The terrains over it (a map context has hundreds, most farther).
-        let (u, o) = (self.camera.units, self.camera.origin);
+        let (u, o) = (self.camera.units, self.ocean_origin(scene));
         let half = SEA_BED_HALF / u;
         let over = |e: &Entity, t: &wce_scene::render_scene::Terrain| {
             let m = &e.world.m;
@@ -458,7 +477,11 @@ impl Renderer {
         // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
         let rome2 = self.game == super::game::RenderGame::Rome2;
         let ocean_ps = ocean_ps(if rome2 { 3 } else { self.settings.water_quality }, rome2);
-        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), self.shader(&ocean_ps)) else { return false };
+        let ps = match rome2 && self.settings.shadows {
+            true => self.shader(&r2_ocean_ps_shadows(3)).or_else(|| self.shader(&ocean_ps)),
+            false => self.shader(&ocean_ps),
+        };
+        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), ps) else { return false };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
         let Some(layout) = self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el) else { return false };
@@ -475,8 +498,8 @@ impl Renderer {
         self.ocean_neutral();
         self.ocean_sea_state();
 
-        // The planes' chunk layouts, made again when a plane's version (or the render origin) moves on.
-        let o = self.camera.origin;
+        // The planes' chunk layouts, made again when a plane's version (or the sea's origin) moves on.
+        let o = self.ocean_origin(scene);
         if self.water.ocean.origin != o {
             self.water.ocean.origin = o;
             self.water.ocean.planes.clear();
@@ -671,26 +694,37 @@ impl Renderer {
         bind_srv(ctx, &ps, "g_foam_anim_texture", whitecaps.as_ref());
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());
 
-        // Rome 2's names: the sky cube, the foam texture; its planar reflection is not rendered (black: no reflected objects, the sky's
-        // reflection comes from the cube).
+        // Rome 2's names: the sky cube, the foam texture; its planar reflection (the mirrored sky, `render_water_reflection`).
         let sky = if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() };
         bind_srv(ctx, &ps, "s_sky", sky);
         bind_srv(ctx, &ps, "combined_foam_texture_sampler", foam.as_ref());
-        bind_srv(ctx, &ps, "reflection_texture_sampler", self.res.black_srv.as_ref());
+        let reflection = self.water_reflection_srv();
+        bind_srv(ctx, &ps, "reflection_texture_sampler", reflection.as_ref());
         bind_sampler(ctx, &ps, "sea_bed_info_texture_sampler", self.states.s_clamp_linear.as_ref());
         bind_srv(ctx, &ps, "sea_bed_info_texture_sampler", o.sea_bed.as_ref());
+        bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
+        bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
+        bind_srv(ctx, &ps, "g_tBakedShadowBuffer", self.res.white_srv.as_ref());
+        bind_sampler(ctx, &ps, "sBakedShadowBuffer", self.states.s_shadow_cmp.as_ref());
 
+        // The camera (and the cascades) in the sea's frame for its draws, the view's again after.
+        let shift = self.ocean_origin(scene) - self.camera.origin;
+        self.shift_camera_constants(shift);
+        self.upload();
+        let o = &self.water.ocean;
         if o.vb.is_some()
             && let Some((ib, count)) = &o.ib
         {
-            ctx.set_vertex_buffers(0, &[o.vb.clone()], &[OCEAN_VERTEX], &[0]);
-            ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
+            self.ctx.set_vertex_buffers(0, &[o.vb.clone()], &[OCEAN_VERTEX], &[0]);
+            self.ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
             for c in &chunks {
-                ctx.draw_indexed(*count, 0, c.base as i32);
+                self.ctx.draw_indexed(*count, 0, c.base as i32);
                 self.draw_stats.draw_calls += 1;
             }
         }
 
+        self.shift_camera_constants(Float3::default());
+        self.upload();
         null_ps_srvs(&self.ctx, 16);
         true
     }

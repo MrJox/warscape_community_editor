@@ -271,8 +271,9 @@ impl Renderer {
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
-        // Rome 2's planar reflection is not made (as the sea's): black.
-        bind_srv(ctx, &ps, "s_terrain_reflection", self.res.black_srv.as_ref());
+        // Rome 2's planar reflection (the mirrored sky, as the sea's).
+        let reflection = self.water_reflection_srv();
+        bind_srv(ctx, &ps, "s_terrain_reflection", reflection.as_ref());
         let inst = if rivers { self.water.river_inst_vb.clone() } else { self.water.sea_inst_vb.clone() };
         let inst_stride = if rivers { 64u32 } else { 96 };
         for e in water.iter().copied() {

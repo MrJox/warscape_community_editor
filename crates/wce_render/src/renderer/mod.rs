@@ -44,6 +44,7 @@ mod terrain_custom;
 mod terrain_rome2;
 mod water;
 mod ocean;
+mod reflection;
 mod nis;
 mod oit;
 mod nis_coef;
@@ -637,6 +638,9 @@ pub(crate) struct CameraState {
     pub cb_view_proj: Float4x4,
     pub cb_eye: Float3,
 
+    /// The shadow cascades' matrices as uploaded (`g_amHardSplit`, game units around the render origin).
+    pub shadow_splits: [f32; 64],
+
     /// The render origin (scene units, y 0): what the shaders get (the camera, instances, terrain, decals, lights, the sea, the effects) is
     /// relative to it, the scene and culling stay absolute. Far from the scene's own origin (a map context, a whole campaign map away from
     /// the open tile) float32 positions of 10^5 lost the depth's and the ground textures' precision: the terrain swam as the camera moved.
@@ -669,7 +673,7 @@ impl Default for CameraState {
     fn default() -> Self {
         Self {
             main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0, cb_view: Float4x4::IDENTITY,
-            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(), origin: Float3::default(),
+            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(), origin: Float3::default(), shadow_splits: [0.0; 64],
         }
     }
 }
@@ -833,6 +837,7 @@ pub struct Renderer {
     pub(crate) draw_stats: DrawStats,
     pub(crate) sky: SkyCube,
     pub(crate) env: EnvCube,
+    pub(crate) reflection: reflection::WaterReflection,
     pub(crate) sun: SunGpu,
     pub(crate) cloud_layer: CloudLayer,
     pub(crate) wind: WindSim,
@@ -975,6 +980,7 @@ impl Renderer {
             draw_stats: DrawStats::default(),
             sky: SkyCube::new(dev),
             env: EnvCube::new(dev),
+            reflection: reflection::WaterReflection::default(),
             sun: SunGpu::new(dev),
             cloud_layer: CloudLayer::default(),
             wind: WindSim::default(),
@@ -1232,6 +1238,30 @@ impl Renderer {
         cbs.set_f("camera_VS_PS", "g_hide_foliage", &[1.0]);
     }
 
+    /// The camera's constants for positions relative to the render origin moved by `shift` (scene units); a zero shift puts the view's
+    /// own back. For a pass whose shaders read positions in a frame of their own (the sea's, around the battle's centre).
+    pub(crate) fn shift_camera_constants(&mut self, shift: Float3) {
+        let s = self.camera.units;
+        let t = translation(shift * s);
+        let (view, vp, eye) = (self.camera.cb_view * t, self.camera.cb_view_proj * t, self.camera.cb_eye - shift * s);
+        let cbs = &mut self.cbs;
+        cbs.set_f("camera_VS_PS", "camera_position", &[eye.x, eye.y, eye.z]);
+        cbs.set_m("camera_VS_PS", "view", view.data());
+        cbs.set_m("camera_VS_PS", "view_projection", vp.data());
+        cbs.set_m("camera_VS_PS", "inv_view", inverse(&view).data());
+        cbs.set_m("camera_VS_PS", "inv_view_projection", inverse(&vp).data());
+
+        // The cascades read world positions in the same frame.
+        let mut splits = self.camera.shadow_splits;
+        for c in splits.chunks_exact_mut(16) {
+            let mut m = Float4x4::IDENTITY;
+            m.m.as_flattened_mut().copy_from_slice(c);
+            c.copy_from_slice((m * t).data());
+        }
+
+        self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &splits);
+    }
+
     /// The full-screen triangle with a pixel shader.
     pub(crate) fn fullscreen(&self, ps: &GameShader) {
         self.ctx.set_input_layout(None);
@@ -1438,6 +1468,13 @@ impl Renderer {
         }
 
         self.apply_engine_ambient(&env);
+
+        // Rome 2's water reflection (the mirrored sky), with the camera of this view; the main camera is set after.
+        if !self.kinds.water.is_empty() {
+            self.render_water_reflection(&env, &cam, width, height, time_s);
+        } else {
+            self.reflection.valid = false;
+        }
 
         // The camera relative to the render origin (built from the relative eye: the absolute view's translation alone lost the precision).
         let aspect = width as f32 / height as f32;
