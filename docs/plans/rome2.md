@@ -151,6 +151,13 @@ Status legend: **done**, **partial**, **todo**.
   `waterplane.hlsl` reads an RGB normal map, its `sea/water_detail_normal.dds` is DXT5nm, so every normal tilted and the sun's
   unscaled specular term glared; the river's normal map bound (ASSUMPTION: the engine's `t_normal` for water planes not traced). The
   lakes come out dark: their planar reflection is not drawn.
+- **done** Editable rivers (user request 2026-11-01): the decompile fits splines to the baked river block (docs/formats/tile_decompile.md,
+  "Rivers": every row of the packs' 283 river blocks within 2 cm) and writes them as TEd's `SplineRiverInstance`s and
+  `river_spline<n>.xml`; the editor draws them in Rome 2's vertex layout. Saving: unchanged rivers keep the carried meshes; a river edit
+  only replaces the meshes' river block, in Rome 2's format (type 48), and remakes `hf_water_map.data` (docs/formats/tile_compile.md,
+  "A decompiled tile's rivers"). Projects decompiled before keep drawing the baked block (no splines): `open_exported ... --fresh`
+  decompiles them again. Open: a terrain edit remakes the whole mesh in the port's (Attila's) format, not Rome 2's 0x42 blocks; not
+  checked in game.
 - **partial** Launch in game on Rome 2 (user report 2026-11-01: only water across the map): with the tile alone. Rome 2's battles all
   name a battle map's folder (its benchmark `terrain/battles/benchmark/`, `terrain/battles/alesia/`, `BattleTerrain/presets/...`), and
   its battle map loader (fn 0x114e8a40) reads the folder's `tile_map.index` / `.tiles` (fns 0x115ba230, 0x115baa10): no lone-tile

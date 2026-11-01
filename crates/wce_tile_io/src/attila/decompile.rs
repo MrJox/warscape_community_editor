@@ -1557,6 +1557,86 @@ fn fallback_database(databases: &[TileDatabase], binary: &Tile, location: &str, 
     Ok(db)
 }
 
+/// The rivers baked into a tile's terrain mesh (the packs ship no river splines) as TEd's: splines fitted to the block's rows
+/// (`river::fit_splines`), per river a `SplineRiverInstance` and its `river_spline<n>.xml`. The mesh is the files' frame (z the other
+/// way: file z = extent - z); the scene's x and z are the file's doubled, its widths too (`wce_tile::river_files`: the file's width is the
+/// point's halved), its heights the file's (the factor 1 TEd's older rivers have, which the editor's save keeps: the editor draws a river
+/// at its points' heights).
+fn river_nodes(mesh: &[u8], extent_z: f64) -> (Vec<Node>, Vec<wce_tile_model::RiverSplines>) {
+    use super::river::{fit_splines, read_river_block, river_rows};
+    let Some(block) = read_river_block(mesh) else { return (vec![], vec![]) };
+    let g = |v: f64| crate::xml::values::Num::G.quantise(v);
+    let (mut instances, mut files) = (vec![], vec![]);
+    for (n, rows) in river_rows(&block).iter().enumerate() {
+        let segments = fit_splines(rows);
+        if segments.is_empty() {
+            continue;
+        }
+
+        // The points: each segment's start, then the last one's end; per point its controls, values and the alpha there.
+        let file = |p: [f32; 3]| [f64::from(p[0]), f64::from(p[1]), extent_z - f64::from(p[2])];
+        let scene = |p: [f32; 3]| {
+            let f = file(p);
+            [2.0 * f[0], f[1], 2.0 * f[2]]
+        };
+        let mut root = Node::new("SEGMENTED_SPLINE");
+        for seg in &segments {
+            let mut spline = Node::new("SPLINE");
+            for (k, (p, alpha)) in seg.points.iter().zip([seg.alpha[0], seg.alpha[0], seg.alpha[1], seg.alpha[1]]).enumerate() {
+                let f = file(*p);
+                spline.children.push(node(
+                    &format!("POINT{k}"),
+                    vec![
+                        ("width", Value::Float(g(f64::from(seg.width[0])))), ("x", Value::Float(g(f[0]))), ("y", Value::Float(g(f[1]))),
+                        ("foam_amount", Value::Float(g(f64::from(seg.foam[0])))), ("z", Value::Float(g(f[2]))),
+                        ("alpha_fade", Value::Float(g(f64::from(alpha)))), ("flow_speed", Value::Float(g(f64::from(seg.flow[0])))),
+                    ],
+                ));
+            }
+
+            root.children.push(spline);
+        }
+
+        files.push(wce_tile_model::RiverSplines { index: Some(n as u32), root });
+        let origin = scene(segments[0].points[0]);
+        let rel = |p: [f32; 3]| {
+            let s = scene(p);
+            Value::Vec3([g(s[0] - origin[0]), g(s[1] - origin[1]), g(s[2] - origin[2])])
+        };
+        let mut river = node(
+            "SplineRiverInstance",
+            vec![
+                ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])), ("lf_offset", Value::Float(0.0)),
+                ("position", Value::Vec3(origin.map(r32))), ("step_size", Value::Float(10.0)), ("flatten", i(0)), ("select_all_points", i(0)),
+                ("closed", i(0)), ("name", s("River Spline")), ("surface_mode", s("MSM_FREEFORM")), ("orientation", Value::Euler([0.0; 3])),
+            ],
+        );
+        let points = river.wrapped_mut("points");
+        for k in 0..=segments.len() {
+            let (values, alpha, at, control_out) = match segments.get(k) {
+                Some(seg) => (seg, seg.alpha[0], seg.points[0], seg.points[1]),
+                None => {
+                    let last = &segments[k - 1];
+                    (last, last.alpha[1], last.points[3], last.points[3])
+                }
+            };
+            let control_in = if k == 0 { at } else { segments[k - 1].points[2] };
+            points.push(node(
+                "point",
+                vec![
+                    ("width", Value::Float(r32(2.0 * f64::from(values.width[0])))), ("foam_amount", Value::Float(r32(f64::from(values.foam[0])))),
+                    ("alpha_fade", Value::Float(r32(f64::from(alpha)))), ("terrain_offset", Value::Float(0.0)), ("controlIn", rel(control_in)),
+                    ("position", rel(at)), ("flow_speed", Value::Float(r32(f64::from(values.flow[0])))), ("controlOut", rel(control_out)),
+                ],
+            ));
+        }
+
+        instances.push(river);
+    }
+
+    (instances, files)
+}
+
 /// The TEd project of an exported tile. `folder` is the tile's folder in the pack (`terrain/tiles/battle/<set>/<tile>/<variation>`).
 ///
 /// # Errors
@@ -1929,6 +2009,21 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     {
         use super::stage_b::{CARRIED_DIR, fingerprints, group_of};
         let (files, _) = super::TileBinary.write(binary).map_err(|e| e.to_string())?;
+        // The rivers the meshes hold, as splines to edit (the fingerprints include them: the meshes are written back while unchanged).
+        if let Some(mesh) = files.folder.get("mesh.rigid_model_v2").and_then(|b| b.bytes().ok()) {
+            let (rivers, splines) = river_nodes(&mesh, extent.1);
+            if !rivers.is_empty() {
+                let mut l = layer("Decompiled rivers", "LayerExportType_Normal");
+                l.wrapped_mut("children").extend(rivers);
+                if let Some(p) = out.scene.as_mut() {
+                    graph(p).wrapped_mut("children").push(l);
+                }
+
+                losses.note(format!("rivers: {} fitted to the water baked into the terrain mesh as splines (the packs have none)", splines.len()));
+                out.rivers = splines;
+            }
+        }
+
         let mut any = false;
         for (name, data) in files.folder.into_iter().filter(|(n, _)| group_of(n).is_some()) {
             out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{name}"), data });

@@ -884,26 +884,16 @@ pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) 
         }
     }
 
-    // The river's block (type 90): its vertices numbered by first use, 8 f32 each.
-    let mut number = vec![u32::MAX; river.vertices.len()];
-    let (mut river_order, mut river_indices) = (vec![], vec![]);
-    for &i in river.triangles.iter().flatten() {
-        if number[i as usize] == u32::MAX {
-            number[i as usize] = river_order.len() as u32;
-            river_order.push(i);
-        }
-
-        river_indices.push(number[i as usize] as u16);
-    }
-
-    let vbytes = blocks.iter().map(|b| b.order.len() as u32 * 8).sum::<u32>() + river_order.len() as u32 * 32;
-    let ibytes = blocks.iter().map(|b| b.indices.len() as u32 * 2).sum::<u32>() + river_indices.len() as u32 * 2;
+    let river = super::river::river_block(river);
+    let (river_vb, river_ib) = river.as_ref().map_or((0, 0), |r| (r.vertex_bytes, r.index_bytes));
+    let vbytes = blocks.iter().map(|b| b.order.len() as u32 * 8).sum::<u32>() + river_vb;
+    let ibytes = blocks.iter().map(|b| b.indices.len() as u32 * 2).sum::<u32>() + river_ib;
     let mut o = b"RMV2".to_vec();
     let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
     put(&mut o, 6);
     put(&mut o, 1);
     o.resize(0x8c, 0);
-    let count = blocks.len() as u32 + u32::from(!river_order.is_empty());
+    let count = blocks.len() as u32 + u32::from(river.is_some());
     for v in [count, vbytes, ibytes, 0xa0, 70.0f32.to_bits()] {
         put(&mut o, v);
     }
@@ -942,37 +932,8 @@ pub fn rmv2(verts: &[Vertex], tris: &[[u32; 3]], is_surface: impl Fn(&[u32; 3]) 
         }
     }
 
-    if !river_order.is_empty() {
-        // `FUN_100228f0`: the bounds of the river's vertices, y at -0.1 and 0.1.
-        let (mut lo, mut hi) = ([f32::MAX, -0.1, f32::MAX], [f32::MIN, 0.1, f32::MIN]);
-        for v in &river.vertices {
-            for k in [0, 2] {
-                lo[k] = lo[k].min(v[k]);
-                hi[k] = hi[k].max(v[k]);
-            }
-        }
-
-        let (vb, ib) = (river_order.len() as u32 * 32, river_indices.len() as u32 * 2);
-        for v in [0x5a, 0x50 + vb + ib, 0x50, river_order.len() as u32, 0x50 + vb, river_indices.len() as u32] {
-            put(&mut o, v);
-        }
-
-        for v in lo.into_iter().chain(hi) {
-            put(&mut o, v.to_bits());
-        }
-
-        let start = o.len();
-        o.extend_from_slice(b"rigid_default");
-        o.resize(start + 32, 0);
-        for &i in &river_order {
-            for c in river.vertices[i as usize] {
-                put(&mut o, c.to_bits());
-            }
-        }
-
-        for &i in &river_indices {
-            o.extend_from_slice(&i.to_le_bytes());
-        }
+    if let Some(r) = river {
+        o.extend_from_slice(&r.bytes);
     }
 
     o
@@ -1096,7 +1057,7 @@ pub fn water_fields(raw: &wce_tile_model::Tile, raw_data: &std::path::Path, mode
 
     let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
     super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
-    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t));
+    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), super::river::RiverFormat::Attila);
     let planes = super::compile::instances(raw, "SIMPLE_MESH_INSTANCE");
     let water = (!river.triangles.is_empty() || !planes.is_empty()).then(|| {
         let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
@@ -1113,7 +1074,8 @@ pub fn water_fields(raw: &wce_tile_model::Tile, raw_data: &std::path::Path, mode
 /// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it) and `terrain_outlines.xml`, from the project's height map, the variation's
 /// numbers, its tile links (the height influence joins them, [`super::tile_links::blend_links`] eases the heights into the linking
 /// tiles', under the kit's `raw_data`) and `protection_map.dds`; with a river (its block in both meshes) or water planes,
-/// `hf_water_map.data`. `models` gives a model's bytes by its key (BOB's VFS: the game's packs) for the water planes.
+/// `hf_water_map.data`. `models` gives a model's bytes by its key (BOB's VFS: the game's packs) for the water planes; `river_format`
+/// the game's river block.
 ///
 /// # Errors
 ///
@@ -1124,6 +1086,7 @@ pub fn terrain_files(
     angle: f32,
     stamps: &[Stamp],
     models: &dyn Fn(&str) -> Option<Vec<u8>>,
+    river_format: super::river::RiverFormat,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
     use super::bob_tile::{CELL, HeightNumbers, InfluenceLinks, chmf, final_heights, influence};
     let linking = linking_tiles(raw_data);
@@ -1150,7 +1113,7 @@ pub fn terrain_files(
     let prot = protection_map(raw);
     let prot = prot.as_ref().map(|(p, pw, ph)| (p.as_slice(), *pw, *ph));
     let cos = cos_degrees(angle);
-    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t));
+    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), river_format);
     let g = Grid { w, h, t, mask: links.mask.clone() };
     // The outfield's step: 1 << ((density == 128) + 3).
     let outfield = MeshKind { step: if t == CELL { 16 } else { 8 }, ..OUTFIELD };

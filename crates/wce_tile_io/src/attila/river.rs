@@ -4,6 +4,8 @@
 
 use wce_tile_model::{Node, Tile};
 
+pub use crate::conventions::RiverFormat;
+
 /// A segment of a river file (`WS_SCENE_NODE_DYNAMIC::RIVER_SPLINE`, as `FUN_10011a20` reads it): the cubic Bézier's four points
 /// (z flipped into the mesh's), and per end (POINT0, POINT3) the foam, alpha fade, flow speed and width.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,15 +17,16 @@ pub struct RiverSegment {
     pub width: [f32; 2],
 }
 
-/// A river vertex as the RMV2 block stores it: x, y, z, flow speed, the width across (0 on the strip's first edge), the distance
-/// along the river, alpha fade, the position across (0 to 1).
+/// A river vertex as the RMV2 block stores it ([`RiverFormat`]): Attila's x, y, z, flow speed, the width across (0 on the strip's
+/// first edge), the distance along the river, alpha fade, the position across (0 to 1); Rome 2's the same values in another order.
 pub type RiverVertex = [f32; 8];
 
-/// The rivers' mesh: vertices and triangles (indices into the vertices), every river in file order.
+/// The rivers' mesh: vertices and triangles (indices into the vertices), every river in file order, in a game's block format.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RiverMesh {
     pub vertices: Vec<RiverVertex>,
     pub triangles: Vec<[u32; 3]>,
+    pub format: RiverFormat,
 }
 
 /// `CA::UniString::parse(float &)` (CALibs.AssemblyKit.dll), which `XML_VALUE::as_float32` reads attributes with: in f32, the
@@ -272,8 +275,9 @@ impl Spline {
 /// `tesselate_river_spline`: per river, its spline sampled where `optimise_spline` (density 20, tolerance 0.02) keeps points,
 /// merged with 0, 1/8 .. 6/8; at each, five vertices across the width (the tangent's ground direction turned left, from -width / 2 to
 /// width / 2), the segment's foam / alpha / flow / width lerped by the segment's own parameter (clamped); then two triangles per
-/// square, (next c, this c, next c + 1) and (this c, this c + 1, next c + 1).
-pub fn tessellate(rivers: &[Vec<RiverSegment>]) -> RiverMesh {
+/// square, (next c, this c, next c + 1) and (this c, this c + 1, next c + 1). The vertices in `format`'s order (Rome 2's: the same
+/// rows, ASSUMPTION: its BOB lerps the foam as the other values).
+pub fn tessellate(rivers: &[Vec<RiverSegment>], format: RiverFormat) -> RiverMesh {
     const ACROSS: usize = 5;
     let fixed = (0..7).scan(0.0f32, |v, _| {
         let out = *v;
@@ -281,7 +285,7 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>]) -> RiverMesh {
         Some(out)
     });
     let fixed = fixed.collect::<Vec<_>>();
-    let mut mesh = RiverMesh::default();
+    let mut mesh = RiverMesh { format, ..Default::default() };
     for river in rivers {
         let mut spline = Spline::new();
         for s in river {
@@ -301,7 +305,7 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>]) -> RiverMesh {
             let c = ((f64::from(along - spline.starts[i])) / f64::from(spline.lengths[i])) as f32;
             let c = c.clamp(0.0, 1.0);
             let lerp = |e: [f32; 2]| (e[1] - e[0]) * c + e[0];
-            let (alpha, width, flow) = (lerp(s.alpha), lerp(s.width), lerp(s.flow));
+            let (alpha, width, flow, foam) = (lerp(s.alpha), lerp(s.width), lerp(s.flow), lerp(s.foam));
             let p = spline.position(u);
             let half = 0.5 * width;
             let t = spline.tangent(u);
@@ -318,7 +322,11 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>]) -> RiverMesh {
                 let s = (half - -half) * across + -half;
                 let off_z = s * -dx + 0.0 * dx;
                 let off_x = s * dz + 0.0 * dz;
-                mesh.vertices.push([p[0] + off_x, p[1], p[2] + off_z, flow, across * width, u * spline.total, alpha, across]);
+                let (x, z) = (p[0] + off_x, p[2] + off_z);
+                mesh.vertices.push(match format {
+                    RiverFormat::Attila => [x, p[1], z, flow, across * width, u * spline.total, alpha, across],
+                    RiverFormat::Rome2 => [x, p[1], z, flow, across, u, alpha, foam],
+                });
             }
         }
 
@@ -333,6 +341,390 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>]) -> RiverMesh {
     }
 
     mesh
+}
+
+/// A row of a tessellated river: its centre (the vertex at 0.5 across), where it is along the river (0 to 1), and the values there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RiverRow {
+    pub centre: [f32; 3],
+    pub along: f32,
+    pub width: f32,
+    pub flow: f32,
+    pub alpha: f32,
+    pub foam: f32,
+}
+
+/// The foam of a river whose block has none (Attila's): TEd's default.
+const DEFAULT_FOAM: f32 = 0.1;
+
+/// The rivers of a river block as [`tessellate`] made them: the strips (connected triangles) in the order of their first vertices, each
+/// its rows of five vertices across in order along (a repeated row once). Rows without their five vertices are left out.
+pub fn river_rows(mesh: &RiverMesh) -> Vec<Vec<RiverRow>> {
+    fn root(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+
+        i
+    }
+
+    let mut parent = (0..mesh.vertices.len()).collect::<Vec<_>>();
+    for t in &mesh.triangles {
+        let a = root(&mut parent, t[0] as usize);
+        for &k in &t[1..] {
+            let b = root(&mut parent, k as usize);
+            parent[b] = a;
+        }
+    }
+
+    // A vertex's place across (0 to 1) and along (Attila's in metres, Rome 2's 0 to 1).
+    let place = |v: &RiverVertex| match mesh.format {
+        RiverFormat::Attila => (v[7], v[5]),
+        RiverFormat::Rome2 => (v[4], v[5]),
+    };
+    let used = mesh.triangles.iter().flatten().map(|&i| i as usize).collect::<std::collections::BTreeSet<_>>();
+    let mut strips: Vec<(usize, Vec<usize>)> = vec![];
+    for i in used {
+        let r = root(&mut parent, i);
+        match strips.iter_mut().find(|(k, _)| *k == r) {
+            Some((_, v)) => v.push(i),
+            None => strips.push((r, vec![i])),
+        }
+    }
+
+    strips
+        .into_iter()
+        .filter_map(|(_, vs)| {
+            let total = vs.iter().map(|&i| place(&mesh.vertices[i]).1).fold(0.0f32, f32::max);
+            let mut by_along: std::collections::BTreeMap<u32, Vec<&RiverVertex>> = std::collections::BTreeMap::new();
+            for &i in &vs {
+                let v = &mesh.vertices[i];
+                by_along.entry(place(v).1.to_bits()).or_default().push(v);
+            }
+
+            let mut rows = by_along
+                .into_values()
+                .filter_map(|mut row| {
+                    row.sort_by(|a, b| place(a).0.total_cmp(&place(b).0));
+                    row.dedup_by(|a, b| place(a).0 == place(b).0);
+                    if row.len() != 5 {
+                        return None;
+                    }
+
+                    let (c, e0, e4) = (row[2], row[0], row[4]);
+                    let width = (e4[0] - e0[0]).hypot(e4[2] - e0[2]);
+                    let (along, foam) = match mesh.format {
+                        RiverFormat::Attila => (if total > 0.0 { c[5] / total } else { 0.0 }, DEFAULT_FOAM),
+                        RiverFormat::Rome2 => (c[5], c[7]),
+                    };
+                    Some(RiverRow { centre: [c[0], c[1], c[2]], along, width, flow: c[3], alpha: c[6], foam })
+                })
+                .collect::<Vec<_>>();
+            rows.sort_by(|a, b| a.along.total_cmp(&b.along));
+            (rows.len() >= 2).then_some(rows)
+        })
+        .collect()
+}
+
+/// The largest distance (metres) of a fitted segment's curve from the rows it covers that is accepted.
+const FIT_TOLERANCE: f32 = 0.02;
+
+/// The most rows one segment covers.
+const FIT_MOST_ROWS: usize = 400;
+
+/// The length of the lead-in segment that holds a river's first row's values when they are not the next row's (metres).
+const LEAD_IN: f32 = 0.5;
+
+/// Splines that [`tessellate`] makes `rows` again: Bézier segments from row to row, each over the longest run of rows from the last one's
+/// end that it passes within [`FIT_TOLERANCE`] and whose width, flow and foam are one (TEd's splines hold them per segment: point i's)
+/// and alpha a line (lerped between the ends). A row's place on its segment is its share of the run (BOB samples the river by length
+/// and a segment by its own parameter, linearly); the inner control points are the least-squares fit to the rows inside, the ends the
+/// end rows.
+pub fn fit_splines(rows: &[RiverRow]) -> Vec<RiverSegment> {
+    let mut out = vec![];
+    let mut a = 0;
+    let mut owned;
+    let mut rows = rows;
+    // The first row's values differ from the next's (the first spline point's segment ends before it): a short lead-in with them, the
+    // rest from its end.
+    if let [r0, r1, ..] = rows
+        && ((r0.width - r1.width).abs() > 0.01 || (r0.flow - r1.flow).abs() > 1e-4 || (r0.foam - r1.foam).abs() > 1e-4)
+    {
+        let (r0, r1) = (rows[0], rows[1]);
+        let chord = (r1.centre[0] - r0.centre[0]).hypot(r1.centre[2] - r0.centre[2]);
+        let f = if chord > 0.0 { (LEAD_IN / chord).min(0.5) } else { 0.5 };
+        let start = RiverRow {
+            centre: [0, 1, 2].map(|k| r0.centre[k] + (r1.centre[k] - r0.centre[k]) * f),
+            along: r0.along + (r1.along - r0.along) * f,
+            alpha: r0.alpha + (r1.alpha - r0.alpha) * f,
+            ..r1
+        };
+        let mut lead = line(&r0, &start);
+        (lead.width, lead.flow, lead.foam) = ([r0.width; 2], [r0.flow; 2], [r0.foam; 2]);
+        out.push(lead);
+        owned = rows.to_vec();
+        owned[0] = start;
+        rows = &owned;
+    }
+
+    while a + 1 < rows.len() {
+        // Past a change of the values no run fits; a curve that misses the rows may fit a longer run (more rows inside to fit to).
+        let (mut best, mut changes) = (None, None);
+        for b in a + 1..rows.len().min(a + FIT_MOST_ROWS + 1) {
+            match fit_segment(&rows[a..=b], a == 0) {
+                Ok(seg) => best = Some((b, seg)),
+                Err(Misfit::Values) => {
+                    changes = Some(b);
+                    break;
+                }
+                Err(Misfit::Curve) => {}
+            }
+        }
+
+        // Two rows whose values differ: a line with the second's.
+        let (b, seg) = best.unwrap_or_else(|| (a + 1, line(&rows[a], &rows[a + 1])));
+        out.push(seg);
+        a = b;
+
+        // The values change right after the run: the spline's point lies between its last row (on the run's curve) and the next, whose
+        // curve goes on from there. A line between the two bridges them, the curve after it fitted from the next row.
+        if changes == Some(b + 1) {
+            out.push(line(&rows[b], &rows[b + 1]));
+            a = b + 1;
+        }
+    }
+
+    out
+}
+
+/// A straight segment between two rows with the second's values (the first is the segment before's end).
+fn line(r0: &RiverRow, r1: &RiverRow) -> RiverSegment {
+    let (p0, p3) = (r0.centre, r1.centre);
+    let at = |t: f32| [0, 1, 2].map(|k| p0[k] + (p3[k] - p0[k]) * t);
+    RiverSegment {
+        points: [p0, at(1.0 / 3.0), at(2.0 / 3.0), p3],
+        foam: [r1.foam; 2],
+        alpha: [r0.alpha, r1.alpha],
+        flow: [r1.flow; 2],
+        width: [r1.width; 2],
+    }
+}
+
+/// Why a run of rows does not fit one segment.
+enum Misfit {
+    /// Its width, flow or foam change, or its alpha is not a line.
+    Values,
+
+    /// The curve misses a row.
+    Curve,
+}
+
+/// A segment over `rows` when it passes them (the first row is the segment before's end, but on the river's first segment).
+fn fit_segment(rows: &[RiverRow], first: bool) -> Result<RiverSegment, Misfit> {
+    let (r0, r1) = (&rows[0], &rows[rows.len() - 1]);
+    let own = if first { rows } else { &rows[1..] };
+    // The width comes from the edge vertices: f32 noise of a few 1e-5 of it.
+    let one = |f: fn(&RiverRow) -> f32, tolerance: f32| own.iter().all(|r| (f(r) - f(&own[0])).abs() <= tolerance);
+    if !(one(|r| r.width, 0.01) && one(|r| r.flow, 1e-4) && one(|r| r.foam, 1e-4)) {
+        return Err(Misfit::Values);
+    }
+
+    let span = r1.along - r0.along;
+    if span <= 0.0 {
+        return Err(Misfit::Values);
+    }
+
+    let t = |r: &RiverRow| (r.along - r0.along) / span;
+    let inner = &rows[1..rows.len() - 1];
+    if inner.iter().any(|r| (r0.alpha + (r1.alpha - r0.alpha) * t(r) - r.alpha).abs() > 1e-3) {
+        return Err(Misfit::Values);
+    }
+
+    let mut seg = line(r0, r1);
+    seg.foam = [own[0].foam; 2];
+    seg.flow = [own[0].flow; 2];
+    seg.width = [own[0].width; 2];
+    let (p0, p3) = (r0.centre, r1.centre);
+    if inner.len() >= 2 {
+        // Least squares for P1 and P2 (the basis 3t(1-t)^2, 3t^2(1-t)), each coordinate on its own.
+        let (mut s11, mut s12, mut s22) = (0.0f64, 0.0f64, 0.0f64);
+        let (mut q1, mut q2) = ([0.0f64; 3], [0.0f64; 3]);
+        for r in inner {
+            let t = f64::from(t(r));
+            let s = 1.0 - t;
+            let (b0, b1, b2, b3) = (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t);
+            s11 += b1 * b1;
+            s12 += b1 * b2;
+            s22 += b2 * b2;
+            for k in 0..3 {
+                let rest = f64::from(r.centre[k]) - b0 * f64::from(p0[k]) - b3 * f64::from(p3[k]);
+                q1[k] += b1 * rest;
+                q2[k] += b2 * rest;
+            }
+        }
+
+        let det = s11 * s22 - s12 * s12;
+        if det.abs() > 1e-12 {
+            seg.points[1] = [0, 1, 2].map(|k| ((s22 * q1[k] - s12 * q2[k]) / det) as f32);
+            seg.points[2] = [0, 1, 2].map(|k| ((s11 * q2[k] - s12 * q1[k]) / det) as f32);
+        }
+    }
+
+    let worst = inner
+        .iter()
+        .map(|r| {
+            let q = weigh(&seg.points, position_powers(t(r)));
+            let d = [0, 1, 2].map(|k| q[k] - r.centre[k]);
+            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+        })
+        .fold(0.0f32, f32::max);
+    // Between two rows the curve keeps near their chord, as BOB's rows of a curve do (a row is kept where the river has turned by about
+    // 11 degrees, an arc's sag then up to 2.5 % of its chord): halfway, within 3 % of the chord and 2 cm, its height within 5 cm and
+    // 0.5 % of the chord.
+    let wanders = rows.windows(2).any(|w| {
+        let q = weigh(&seg.points, position_powers((t(&w[0]) + t(&w[1])) * 0.5));
+        let m = [0, 1, 2].map(|k| (w[0].centre[k] + w[1].centre[k]) * 0.5);
+        let chord = (w[1].centre[0] - w[0].centre[0]).hypot(w[1].centre[2] - w[0].centre[2]);
+        (q[0] - m[0]).hypot(q[2] - m[2]) > 0.03 * chord + FIT_TOLERANCE || (q[1] - m[1]).abs() > 0.05 + 0.005 * chord
+    });
+    if worst <= FIT_TOLERANCE && !wanders { Ok(seg) } else { Err(Misfit::Curve) }
+}
+
+/// A river block as the terrain meshes hold it after the terrain's blocks.
+pub struct RiverBlock {
+    pub bytes: Vec<u8>,
+
+    /// What it adds to the LOD's vertex and index byte counts.
+    pub vertex_bytes: u32,
+    pub index_bytes: u32,
+}
+
+/// The mesh's river block (its format's type), none without triangles: the vertices numbered by first use, 8 f32 each, u16 indices;
+/// the bounds `FUN_100228f0` gives it (the vertices' x and z, y at -0.1 and 0.1), the material `rigid_default`.
+pub fn river_block(river: &RiverMesh) -> Option<RiverBlock> {
+    let mut number = vec![u32::MAX; river.vertices.len()];
+    let (mut order, mut indices) = (vec![], vec![]);
+    for &i in river.triangles.iter().flatten() {
+        if number[i as usize] == u32::MAX {
+            number[i as usize] = order.len() as u32;
+            order.push(i);
+        }
+
+        indices.push(number[i as usize] as u16);
+    }
+
+    if order.is_empty() {
+        return None;
+    }
+
+    let (mut lo, mut hi) = ([f32::MAX, -0.1, f32::MAX], [f32::MIN, 0.1, f32::MIN]);
+    for v in &river.vertices {
+        for k in [0, 2] {
+            lo[k] = lo[k].min(v[k]);
+            hi[k] = hi[k].max(v[k]);
+        }
+    }
+
+    let (vb, ib) = (order.len() as u32 * 32, indices.len() as u32 * 2);
+    let mut o = vec![];
+    let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
+    for v in [river.format.block_type(), 0x50 + vb + ib, 0x50, order.len() as u32, 0x50 + vb, indices.len() as u32] {
+        put(&mut o, v);
+    }
+
+    for v in lo.into_iter().chain(hi) {
+        put(&mut o, v.to_bits());
+    }
+
+    o.extend_from_slice(b"rigid_default");
+    o.resize(0x50, 0);
+    for &i in &order {
+        for c in river.vertices[i as usize] {
+            put(&mut o, c.to_bits());
+        }
+    }
+
+    for &i in &indices {
+        o.extend_from_slice(&i.to_le_bytes());
+    }
+
+    Some(RiverBlock { bytes: o, vertex_bytes: vb, index_bytes: ib })
+}
+
+/// The river block of a terrain mesh (RMV2 version 6, its first LOD): the vertices, the triangles and the block's format; none
+/// without one (or bytes that are not such a mesh).
+pub fn read_river_block(b: &[u8]) -> Option<RiverMesh> {
+    let blocks = mesh_blocks(b)?;
+    let &(at, kind, _) = blocks.iter().find(|(_, kind, _)| RiverFormat::of_block(*kind).is_some())?;
+    let u32_at = |a: usize| b.get(a..a + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    let (voff, vcount, ioff, icount) = (u32_at(at + 8)? as usize, u32_at(at + 12)? as usize, u32_at(at + 16)? as usize, u32_at(at + 20)? as usize);
+    let vb = b.get(at + voff..at + voff + vcount * 32)?;
+    let vertices = vb.chunks_exact(32).map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]]))).collect();
+    let ib = b.get(at + ioff..at + ioff + icount * 2)?;
+    let indices = ib.chunks_exact(2).map(|c| u32::from(u16::from_le_bytes([c[0], c[1]]))).collect::<Vec<_>>();
+    let triangles = indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect();
+    Some(RiverMesh { vertices, triangles, format: RiverFormat::of_block(kind)? })
+}
+
+/// The first LOD's blocks of an RMV2 version 6 mesh: (offset, type, size) each. The LOD table after the 0x8c byte header: block
+/// count, vertex bytes, index bytes, the first block's offset, the distance.
+fn mesh_blocks(b: &[u8]) -> Option<Vec<(usize, u32, usize)>> {
+    let u32_at = |a: usize| b.get(a..a + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    if b.get(..4) != Some(b"RMV2") || u32_at(8)? == 0 {
+        return None;
+    }
+
+    let (count, mut at) = (u32_at(0x8c)?, u32_at(0x98)? as usize);
+    let mut out = vec![];
+    for _ in 0..count {
+        let (kind, size) = (u32_at(at)?, u32_at(at + 4)? as usize);
+        if size == 0 || at + size > b.len() {
+            return None;
+        }
+
+        out.push((at, kind, size));
+        at += size;
+    }
+
+    Some(out)
+}
+
+/// A terrain mesh with its river block replaced by `river`'s (removed when it has no triangles, added after the other blocks when the
+/// mesh had none); the other blocks and the bytes after them as they were. None for bytes that are not such a mesh (one LOD).
+pub fn with_river_block(b: &[u8], river: &RiverMesh) -> Option<Vec<u8>> {
+    let blocks = mesh_blocks(b)?;
+    let u32_at = |a: usize| u32::from_le_bytes([b[a], b[a + 1], b[a + 2], b[a + 3]]);
+    if u32_at(8) != 1 {
+        return None;
+    }
+
+    let end = blocks.last().map_or(u32_at(0x98) as usize, |&(at, _, size)| at + size);
+    let (mut count, mut vbytes, mut ibytes) = (u32_at(0x8c), u32_at(0x90), u32_at(0x94));
+    let mut out = b[..u32_at(0x98) as usize].to_vec();
+    for &(at, kind, size) in &blocks {
+        if RiverFormat::of_block(kind).is_some() {
+            count -= 1;
+            vbytes -= u32_at(at + 12) * 32;
+            ibytes -= u32_at(at + 20) * 2;
+        } else {
+            out.extend_from_slice(&b[at..at + size]);
+        }
+    }
+
+    if let Some(r) = river_block(river) {
+        out.extend_from_slice(&r.bytes);
+        count += 1;
+        vbytes += r.vertex_bytes;
+        ibytes += r.index_bytes;
+    }
+
+    out.extend_from_slice(&b[end..]);
+    for (k, v) in [count, vbytes, ibytes].into_iter().enumerate() {
+        out[0x8c + 4 * k..0x90 + 4 * k].copy_from_slice(&v.to_le_bytes());
+    }
+
+    Some(out)
 }
 
 /// IEEE half to f32 (exact).
@@ -473,11 +865,112 @@ mod tests {
         // One straight segment 10 m long along x, 4 m wide (across from the left bank, z + 2): samples at 0, 1/8 .. 6/8 and 1 (twice: BOB's unique keeps the tail).
         let p = |x: f32| [x, 0.0, 50.0];
         let seg = RiverSegment { points: [p(0.0), p(10.0 / 3.0), p(20.0 / 3.0), p(10.0)], foam: [0.0; 2], alpha: [1.0; 2], flow: [0.5; 2], width: [4.0; 2] };
-        let mesh = tessellate(&[vec![seg]]);
+        let mesh = tessellate(&[vec![seg]], RiverFormat::Attila);
         assert_eq!(mesh.vertices.len(), 9 * 5);
         assert_eq!(mesh.triangles.len(), 8 * 4 * 2);
         let first = &mesh.vertices[..5];
         assert_eq!(first.iter().map(|v| v[2]).collect::<Vec<_>>(), [52.0, 51.0, 50.0, 49.0, 48.0]);
         assert_eq!(mesh.vertices[40][5], mesh.vertices[35][5]);
+    }
+
+    /// Two curved segments, the second narrower and slower, the alpha fading out at the end.
+    fn bend() -> Vec<RiverSegment> {
+        vec![
+            RiverSegment {
+                points: [[100.0, -6.0, 100.0], [140.0, -6.0, 100.0], [180.0, -6.1, 120.0], [200.0, -6.2, 160.0]],
+                foam: [0.1; 2],
+                alpha: [1.0; 2],
+                flow: [0.5; 2],
+                width: [30.0; 2],
+            },
+            RiverSegment {
+                points: [[200.0, -6.2, 160.0], [220.0, -6.3, 200.0], [260.0, -6.3, 220.0], [300.0, -6.3, 210.0]],
+                foam: [0.2; 2],
+                alpha: [1.0, 0.0],
+                flow: [0.1; 2],
+                width: [20.0; 2],
+            },
+        ]
+    }
+
+    #[test]
+    fn rome2_vertices_hold_the_values_in_its_order() {
+        let mesh = tessellate(&[bend()], RiverFormat::Rome2);
+        let attila = tessellate(&[bend()], RiverFormat::Attila);
+        assert_eq!(mesh.vertices.len(), attila.vertices.len());
+        for (r, a) in mesh.vertices.iter().zip(&attila.vertices) {
+            // Position and flow alike; across and along as shares; alpha; the foam of the segment.
+            assert_eq!(r[..4], a[..4]);
+            assert_eq!(r[4], a[7]);
+            assert!((r[5] * attila.vertices.last().expect("rows")[5] - a[5]).abs() < 1e-2);
+            assert_eq!(r[6], a[6]);
+            assert!(r[7] == 0.1 || r[7] == 0.2);
+        }
+    }
+
+    #[test]
+    fn fitted_splines_make_the_rows_again() {
+        for format in [RiverFormat::Attila, RiverFormat::Rome2] {
+            let rows = river_rows(&tessellate(&[bend()], format));
+            assert_eq!(rows.len(), 1);
+            let fitted = fit_splines(&rows[0]);
+            assert!(fitted.len() <= 4, "{} segments", fitted.len());
+            let again = river_rows(&tessellate(&[fitted.clone()], format));
+            assert_eq!(again.len(), 1);
+
+            // The rows lie on the fitted curve (sampled densely: to the polyline of the samples).
+            let curve = fitted.iter().flat_map(|s| (0..=400).map(|i| weigh(&s.points, position_powers(i as f32 / 400.0)))).collect::<Vec<_>>();
+            for r in &rows[0] {
+                let to = |a: [f32; 3], b: [f32; 3]| {
+                    let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
+                    let len2 = dx * dx + dz * dz;
+                    let t = if len2 > 0.0 { (((r.centre[0] - a[0]) * dx + (r.centre[2] - a[2]) * dz) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                    (r.centre[0] - a[0] - dx * t).hypot(r.centre[2] - a[2] - dz * t)
+                };
+                let off = curve.windows(2).map(|w| to(w[0], w[1])).fold(f32::MAX, f32::min);
+                assert!(off < 0.02, "{format:?}: a row {off} m from the fitted curve: {r:?}");
+            }
+
+            // The width comes from the edge vertices: f32 noise.
+            let last = fitted.last().expect("segments");
+            assert!((fitted[0].width[0] - 30.0).abs() < 1e-3 && (last.width[0] - 20.0).abs() < 1e-3);
+            assert_eq!((fitted[0].flow[0], last.flow[0], last.alpha[1]), (0.5, 0.1, 0.0));
+        }
+    }
+
+    #[test]
+    fn the_river_block_is_replaced_in_a_mesh() {
+        // A mesh of one terrain block (its type and size only) and the river.
+        let put = |o: &mut Vec<u8>, v: u32| o.extend_from_slice(&v.to_le_bytes());
+        let mut mesh = b"RMV2".to_vec();
+        put(&mut mesh, 6);
+        put(&mut mesh, 1);
+        mesh.resize(0x8c, 0);
+        let terrain = {
+            let mut b = vec![];
+            for v in [0x42, 0x60, 0x50, 2, 0x58, 4] {
+                put(&mut b, v);
+            }
+
+            b.resize(0x60, 7);
+            b
+        };
+        for v in [1, 32, 8, 0xa0, 0] {
+            put(&mut mesh, v);
+        }
+
+        mesh.resize(0xa0, 0);
+        mesh.extend_from_slice(&terrain);
+        let river = tessellate(&[bend()], RiverFormat::Rome2);
+        let with = with_river_block(&mesh, &river).expect("a mesh");
+        let read = read_river_block(&with).expect("a river block");
+        assert_eq!((read.format, read.triangles.len()), (RiverFormat::Rome2, river.triangles.len()));
+        assert_eq!(&with[0xa0..0x100], &terrain[..]);
+
+        // The counts: the terrain's plus the river's; replaced again by nothing, the mesh as it was.
+        let u = |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+        let block = river_block(&river).expect("triangles");
+        assert_eq!([u(&with, 0x8c), u(&with, 0x90), u(&with, 0x94)], [2, 32 + block.vertex_bytes, 8 + block.index_bytes]);
+        assert_eq!(with_river_block(&with, &RiverMesh::default()).expect("a mesh"), mesh);
     }
 }

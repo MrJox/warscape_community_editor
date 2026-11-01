@@ -550,6 +550,7 @@ impl Tile {
         }
 
         let u = self.unit();
+        let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
         let (mut rivers, mut ribbons) = (0, 0);
         let mut new_water = vec![];
         let sc = self.tscene();
@@ -596,6 +597,7 @@ impl Tile {
                 width: f64,
                 flow: f64,
                 foam: f64,
+                alpha: f64,
             }
 
             let mut samples = vec![];
@@ -610,6 +612,7 @@ impl Tile {
                     let y = bez(a.y, a.cout[1], b.cin[1], b.y, t);
                     samples.push(Sample {
                         x, z, y, width: a.width + (b.width - a.width) * t, flow: a.flow + (b.flow - a.flow) * t, foam: a.foam + (b.foam - a.foam) * t,
+                        alpha: a.fade + (b.fade - a.fade) * t,
                     });
                 }
             }
@@ -643,9 +646,18 @@ impl Tile {
                 let fadelen = 8.0f64.max(s.width);
                 let fade = if fade_ends { (cum[i].min(total - cum[i]) / fadelen).clamp(0.0, 1.0) as f32 } else { 1.0 };
                 let y = s.y as f32;
-                let vertex = |sign: f64| WaterVertex {
-                    x: (s.x + sign * nx * hw) as f32, y, z: (s.z + sign * nz * hw) as f32, across: (sign * hw) as f32, u: (sign * hw) as f32, v: cum[i] as f32,
-                    flow: s.flow as f32, fade,
+                let at = |sign: f64| ((s.x + sign * nx * hw) as f32, (s.z + sign * nz * hw) as f32);
+                let vertex = |sign: f64| match rome2 {
+                    // Rome 2's river block, as its shaders read it (`baked_river`): flow, the place across (0 on BOB's first edge: the
+                    // tangent turned left in the files' frame, whose z is the other way: sign -1 here) and along (0 to 1), the alpha lerped
+                    // between the points, the foam.
+                    true => WaterVertex {
+                        x: at(sign).0, y, z: at(sign).1, across: s.flow as f32, u: ((1.0 + sign) * 0.5) as f32, v: (cum[i] / total.max(1e-9)) as f32,
+                        flow: s.alpha as f32, fade: s.foam as f32,
+                    },
+                    false => WaterVertex {
+                        x: at(sign).0, y, z: at(sign).1, across: (sign * hw) as f32, u: (sign * hw) as f32, v: cum[i] as f32, flow: s.flow as f32, fade,
+                    },
                 };
 
                 wt.verts.push(vertex(-1.0));

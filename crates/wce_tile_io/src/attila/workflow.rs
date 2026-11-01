@@ -383,9 +383,9 @@ pub fn save_exported_with(
         (Some(entry), Some(base)) => {
             let settings = game.kit_settings(&kind)?;
             let mut db = merge_entries(base, &String::from_utf8_lossy(&settings), &[&entry])?;
-            // A decompiled project's entry has the height range of its height map (and its density); while the terrain is as decompiled,
-            // the row keeps the database's.
-            if super::stage_b::unchanged(&raw, super::stage_b::Group::Terrain) {
+            // A decompiled project's entry has the height range of its height map (and its density); while the terrain is as decompiled
+            // (but maybe its rivers), the row keeps the database's.
+            if super::stage_b::ground_unchanged(&raw) {
                 keep_height_range(&mut db, base, &folder);
             }
 
