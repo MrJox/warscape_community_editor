@@ -378,6 +378,17 @@ impl Renderer {
         cbs.set_f("grass_PS", "g_far_addition", &[-1.0]);
         cbs.set_f("grass_PS", "g_far_scale", &[1.0, 1.0]);
         cbs.set_f("grass_PS", "g_clip_bias", &[0.0]);
+
+        // Rome 2's grass_PS (a capture of a battle): its own lod distance, how much a blade takes the ground's colour (g_alpha, with the
+        // vertex alpha) and its normal decode; and the terrain's detail and noise (`terrain_rome2`), which tint the ground it takes.
+        if self.game == super::game::RenderGame::Rome2 {
+            cbs.set_f("grass_PS", "g_inv_lod_distance", &[0.005]);
+            cbs.set_f("grass_PS", "g_alpha", &[1.0, 0.75]);
+            cbs.set_f("grass_PS", "g_normal_scale_bias", &[2.0, -1.0]);
+            cbs.set_f("grass_PS", "g_distance_scale", &[1.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &super::terrain_rome2::ROME2_DETAIL);
+            cbs.set_f("ps_height_map_cb", "g_noise_params", &super::terrain_rome2::ROME2_NOISE);
+        }
         if !self.terrain.active {
             cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[20.0, 550.0, 3.0, 0.9]);
             cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.6, 0.0]);

@@ -35,6 +35,10 @@ const R2_COMPOSITE50_PS: &str = "dx11_sm_5_0_rigidterrain.hlsl_ps_ps50_terrain_c
 const R2_RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const R2_RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
 
+/// ps_height_map_cb's mid-distance detail and noise of a Rome 2 battle (a RenderDoc capture, 2026-11-01).
+pub(crate) const ROME2_DETAIL: [f32; 4] = [20.0, 400.0, 3.0, 0.6];
+pub(crate) const ROME2_NOISE: [f32; 4] = [0.7, 0.3, 0.001, 0.0];
+
 /// The terrain noise of the resolve (`s_noise_map`).
 pub(crate) const NOISE_MAP: &str = "terrain/textures/common/terrain_noise.dds";
 
@@ -285,13 +289,15 @@ impl Renderer {
         ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         ctx.set_input_layout(Some(&il));
 
-        // ps_height_map_cb as Rome 2's battle database's render parameters say (mid-distance detail: far 256 m, repeat 400 m, strength 0.6;
-        // its normal strength 1; the slope 0.96); the noise off (scale 0, offset 1).
+        // ps_height_map_cb as a capture of a Rome 2 battle has it (the terrain resolve and the grass): the mid-distance detail fading in over
+        // the first 20 units and repeating every 400 (game units: the battle database's mid_distance_detail_near and _scale), strength 0.6;
+        // its normal strength 1, the slope 0.96; the noise on: the albedo times 0.3 + 0.7 x terrain_noise at world xz / 1000. With the noise
+        // off and the detail's distances doubled (scene units), the ground and the grass (which takes the ground's colour) came out too bright.
         let cbs = &mut self.cbs;
-        cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[256.0 * u, 400.0 * u, 3.0, 0.6]);
+        cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[ROME2_DETAIL[0], ROME2_DETAIL[1], ROME2_DETAIL[2], ROME2_DETAIL[3]]);
         cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[1.0]);
         cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.96, 3.0]);
-        cbs.set_f("ps_height_map_cb", "g_noise_params", &[0.0, 1.0, 1.0, 0.0]);
+        cbs.set_f("ps_height_map_cb", "g_noise_params", &ROME2_NOISE);
         cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
         self.upload();
         self.bind(&res_vs);
