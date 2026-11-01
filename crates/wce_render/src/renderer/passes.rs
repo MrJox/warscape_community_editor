@@ -409,9 +409,9 @@ impl Renderer {
         bind_sampler(&self.ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
         self.bind_baked_shadow(&ps);
 
-        // gfx_cloud_shadows (Thrones of Britannia; fn 0x117c3680): the clouds' shade over the sun, in battle scale 0.0005 and every pixel
-        // (w 1); off: zero, the shade never applies.
-        let shade = self.settings.cloud_shadows && self.game != super::game::RenderGame::Rome2 && !self.env.active && ps.textures.contains_key("cloud_shade_sampler");
+        // gfx_cloud_shadows (Thrones of Britannia; fn 0x117c3680; Rome 2 the same, a capture of a battle: cloud_shade.dds, scale 0.0005, w 1):
+        // the clouds' shade over the sun; off: zero, the shade never applies.
+        let shade = self.settings.cloud_shadows && !self.env.active && ps.textures.contains_key("cloud_shade_sampler");
         let [ox, oy] = self.cloud_shade;
         self.cbs.set_f("directional_light_PS", "g_cloud_shade_params", &if shade { [ox, oy, CLOUD_SHADE_BATTLE_SCALE, 1.0] } else { [0.0; 4] });
         if shade {
