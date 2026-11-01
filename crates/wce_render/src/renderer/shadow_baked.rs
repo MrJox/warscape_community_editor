@@ -37,7 +37,7 @@ const BAKED_PARAMS: [f32; 4] = [0.000_520_183, 238.7, -0.020_946_795, 6.0];
 
 /// The casters are stored this much lower (game units of height) than they are: a surface compared with itself across the map's 1-unit
 /// texels (linear, five taps) otherwise shades itself in stripes (the flat roofs flickered as the camera moved).
-const BAKED_HEIGHT_BIAS: f32 = 1.0;
+const BAKED_HEIGHT_BIAS: f32 = 1.5;
 
 /// The camera moves this far (game units) before the map is made again around it.
 const BAKED_CELL: f32 = 128.0;
@@ -164,7 +164,7 @@ impl Renderer {
         self.ctx.clear_depth_stencil_view(&dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
         self.ctx.set_viewports(&[viewport(0.0, 0.0, BAKED_SIZE as f32, BAKED_SIZE as f32)]);
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
-        self.ctx.set_rasterizer_state(self.states.rs_shadow_rome2.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_shadow_baked.as_ref());
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(&rel, u).data());
