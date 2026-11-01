@@ -20,6 +20,7 @@ pub mod minimap_panel;
 pub mod new_tile_dialog;
 pub mod placement_modes;
 pub mod prefab_panel;
+pub mod proton;
 pub mod scene_panel;
 pub mod settings;
 mod thumbnails;

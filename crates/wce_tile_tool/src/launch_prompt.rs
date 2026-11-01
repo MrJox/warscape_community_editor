@@ -245,6 +245,9 @@ pub(crate) struct LaunchJob {
     staging: PathBuf,
     note: String,
 
+    /// Outside Windows: the Proton folder of the settings (none: Steam's for the game).
+    proton: Option<PathBuf>,
+
     /// When it started; the step going on and when it started; how long the steps took (`None`: not run, or skipped).
     started: Instant,
     step: usize,
@@ -342,6 +345,10 @@ impl TileTool {
                 return Err("the game launched before is still running".to_owned());
             }
 
+            if !cfg!(windows) && crate::proton::build_of(&game_dir, profile.exe) == crate::proton::Build::Linux {
+                return Err(format!("{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)", game_dir.display(), profile.exe));
+            }
+
             let running = launch::processes_running(&[profile.exe, "steam.exe"]);
             if running.as_ref().is_some_and(|r| r[0]) {
                 return Err(format!("{} is running already: close it first (the game refuses a second instance)", profile.exe));
@@ -378,6 +385,7 @@ impl TileTool {
         std::fs::create_dir_all(&staging).map_err(|err| format!("{}: {err}", staging.display()))?;
 
         let tile_settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
+        let proton = tile_settings.launch.proton.clone();
         let (settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
         let (position, mut note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
         if position.is_none() && !climate.is_empty() && !climate.eq_ignore_ascii_case(launch::ALONE_CLIMATE) {
@@ -400,7 +408,7 @@ impl TileTool {
         let now = Instant::now();
         let first = if plan.inputs.game.is_none() { GAME } else { COMPILE };
         let mut job = LaunchJob {
-            rx: channel().1, game: profile, tile: tile.clone(), dry_run, loose, game_dir, staging, note, started: now, step: first, step_started: now, took: [None; 5], before,
+            rx: channel().1, game: profile, tile: tile.clone(), dry_run, loose, game_dir, staging, note, proton, started: now, step: first, step_started: now, took: [None; 5], before,
         };
 
         if !ask {
@@ -455,7 +463,7 @@ impl TileTool {
 
         // The launch pack is in data\ already (the work copied it).
         let data = job.game_dir.join(profile.data_dir);
-        let child = match launch::start(&job.game_dir, profile.exe, &command) {
+        let (child, started) = match launch::start(&job.game_dir, profile, &command, job.proton.as_deref(), &job.staging) {
             Ok(c) => c,
             Err(err) => {
                 let _ = launch::remove_launch_pack(&data, profile.key);
@@ -463,6 +471,7 @@ impl TileTool {
             }
         };
 
+        log::info(format!("launch in game: started {started}"));
         self.launched = Some(Running { child, game: profile.key, data, staging: job.staging.clone() });
         Ok(format!(
             "launched {} into a battle on {} ({how}, {} mod pack(s)) in {:.0} s; its files are removed when the game exits",
