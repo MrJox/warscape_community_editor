@@ -662,6 +662,17 @@ impl Tile {
             new_water.push(wt);
         }
 
+        // A tile decompiled from the packs has no river splines: the water surface baked into its terrain mesh (Rome 2's river tiles).
+        let mut baked = false;
+        if rivers == 0
+            && self.display.show_water
+            && let Some(wt) = super::baked_river::baked_rivers(&self.project.dir, self.extent_z(), u)
+        {
+            baked = true;
+            ribbons += wt.verts.len();
+            new_water.push(wt);
+        }
+
         // The sea plane. Lakes are not the sea: a lakes tile has its water as SIMPLE_MESH_INSTANCE water planes (water_plane models scaled
         // over the lake, at the lake's own height: -6.9 m on lakes/10x10/aa), drawn as models.
         // It reaches the horizon as the game's does (its mesh's rings go out to 28.8 km around the camera, docs/re/water.md): cut at the
@@ -682,8 +693,9 @@ impl Tile {
             self.water_entities.push(e);
         }
 
-        self.water_note = if rivers != 0 || sea {
-            format!("{rivers} river spline(s) ({ribbons} samples){}", if sea { ", the sea at 0 m" } else { "" })
+        self.water_note = if rivers != 0 || baked || sea {
+            let what = if baked { format!("the rivers baked into the terrain mesh ({ribbons} vertices)") } else { format!("{rivers} river spline(s) ({ribbons} samples)") };
+            format!("{what}{}", if sea { ", the sea at 0 m" } else { "" })
         } else {
             "no water in this tile".to_owned()
         };
