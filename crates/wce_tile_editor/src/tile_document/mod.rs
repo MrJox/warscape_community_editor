@@ -14,6 +14,7 @@
 //! a pointer to the render scene it publishes into, the scene is passed in (`set_terrain_look`, `diagnostics`), and the document remembers
 //! which scene it published into by its address only.
 
+mod baked_river;
 mod collapse;
 mod columns;
 pub mod brush;

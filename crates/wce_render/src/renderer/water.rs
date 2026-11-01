@@ -159,7 +159,8 @@ impl Renderer {
         let shadows = if self.game == super::game::RenderGame::Rome2 { self.rome2_shadows_on() } else { self.settings.shadows };
         let ps = match (rivers, shadows) {
             (true, true) => self.shader(RIVER_PS_SHADOWS).or_else(|| self.shader(RIVER_PS)),
-            (true, false) => self.shader(RIVER_PS),
+            // Rome 2 ships the river's pixel shader with shadows only (none at shadow level 0 then: its maps empty).
+            (true, false) => self.shader(RIVER_PS).or_else(|| self.shader(RIVER_PS_SHADOWS)),
             (false, true) if ultra => self.shader(SEA_PS_SHADOWS).or_else(|| self.shader(&sea_ps)),
             (false, _) => self.shader(&sea_ps),
         };
@@ -205,7 +206,12 @@ impl Renderer {
                 return;
             }
         }
-        let nt = self.textures.get(if rivers { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
+        // Rome 2's water planes (`waterplane.hlsl`) read their normal as (r, a, b) * 2 - 1, an RGB normal map with b up; its
+        // `sea/water_detail_normal.dds` is the other layout (DXT5nm: r 1, b 0, the normal in g and a), which tilted every normal and
+        // turned the sun's specular term (sun_colour unscaled) into a white glare over the lakes. The river's normal map has the layout.
+        // ASSUMPTION: which map the engine binds to RIGID_WATER_SHADER's `t_normal` was not traced (the plane's model names none).
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        let nt = self.textures.get(if rivers || rome2 { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let layout = if rivers {
             let mut el = vec![element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false)];

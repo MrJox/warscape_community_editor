@@ -143,7 +143,13 @@ Status legend: **done**, **partial**, **todo**.
 
 ## Phase 3: editor — partial
 
-- **todo** Rivers are broken in Rome 2 (user report 2026-11-01; not looked at yet).
+- **done** Rivers (user report 2026-11-01: no river water, in a tile or a map context): the packs ship no river splines, the water
+  surface is baked into the terrain mesh's last block (Rome 2's type 48, Attila's 90), which a decompiled tile carries; drawn from it
+  (`tile_document::baked_river`, the eight floats passed to the river shader as they are; x, z the tile's metres, z the other way).
+  Rome 2 ships the river pixel shader with shadows only: it is the fallback. Lakes (the same report: a white plane): Rome 2's
+  `waterplane.hlsl` reads an RGB normal map, its `sea/water_detail_normal.dds` is DXT5nm, so every normal tilted and the sun's
+  unscaled specular term glared; the river's normal map bound (ASSUMPTION: the engine's `t_normal` for water planes not traced). The
+  lakes come out dark: their planar reflection is not drawn.
 - **todo** Launch in game on Rome 2: the battle shows only water across the map (user report 2026-11-01; not looked at yet).
 - **done** The tile's weather follows its climate (2026-11-01): a map context gives the tile its placement's climate after the tile picked
   its weather; a weather of another climate's folder gives way to the new climate's first dry one (`WeatherUi::follow_climate`).
