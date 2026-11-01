@@ -53,7 +53,16 @@ Status legend: **done**, **partial**, **todo**.
   swizzle's source, the far composite, the virtual texture path.
 - **done** The sun's shadow cascades (2026-10-28): Rome 2's orthographic fit, splits and constants (they were Attila's warped ones,
   which its light pass cannot read: no shadows at all). **todo** The cloud shade and baked shadows: check against a frame of the game.
-- **done** The sea (the forward ocean; no planar reflection).
+- **done** The sea (the forward ocean). 2026-11-01, against the user's screenshots of Carthage (`greek_carthage/large`, its campaign
+  placement, ROME_Med, summer, day, dry): the planar reflection (the mirrored sky; ASSUMPTION: the game's reflects the scene too), the
+  shadowed variant, the sea around the battle's centre (docs/re/rome2_renderer.md, "Sea"). Open: the whitecaps and the colour (to
+  capture the game).
+- **done** The terrain-blend meshes (2026-11-01; the settlements' cliff faces, `cliff`, `cliff02`): Rome 2's `rigidterrainblend` has no
+  terrain-material entry (ps30_gbuffer, ps30_null_gbuffer, shadow). ps30_gbuffer writes the vertex alpha (0 on the plateau, 1 on the
+  faces) into the normal's and the albedo's alpha: drawn after the terrain resolve and blended by it (`terrain_rome2.rs`, step 4) over the
+  ground the resolve gave them. ASSUMPTION: the game blends it over ps30_null_gbuffer's (the terrain's virtual texture). Not applied: the
+  climate's variants of their textures (`cliff_rome_med_diffuse.dds`, `rock01_rome_med_*`, `rockstraight_*`), which the engine picks
+  as it does the custom meshes' (`<name>_<climate>_diffuse.dds`; not traced for buildings).
 - **partial** The effects (docs/re/rome2_vfx.md): the billboard emitters (`continuous_mesh`, `burst_mesh`) are a port of the game's
   CPU simulation (`vfx_rome2::sim`: its state machines, spawning, update and generator order) drawn with the shaders generated per
   effect, sorted as the game sorts (its `std::sort`). Open: the Distortion, SeaColourOverlay and shadow views, ribbons, spawn spacing,
@@ -79,6 +88,12 @@ Status legend: **done**, **partial**, **todo**.
   captures to `~/wce_re/scratch/rome2/captures/`.
 
 ## Phase 3: editor — partial
+
+- **done** The tile's weather follows its climate (2026-11-01): a map context gives the tile its placement's climate after the tile picked
+  its weather; a weather of another climate's folder gives way to the new climate's first dry one (`WeatherUi::follow_climate`).
+- **known** In a map context, the first frames after the camera jumps far can show dark rectangles in the sky and dark patches on the
+  ground (seen on Rome 2's Carthage, also with the sea in its old frame); 20 frames later they are gone. Not traced (the LF window and
+  the streamed chunks' level changes are the suspects). Scripted captures wait 30 frames after `map_context_settle`.
 
 - **done** The game selector in the top bar: the toolbar's first item, a combo of the games (as File > Game).
 - **done** The map context in Rome 2 (user report 2026-10-26, Carthage): a tile the map names without a variation is found as any of its
