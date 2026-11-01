@@ -15,6 +15,7 @@ pub use safe::{ContextExt, DescExt, DeviceExt, InitData, InputElement, Mapped, V
 
 /// Prepares the platform for the first D3D11 call. On Linux, tells DXVK-native to use SDL3 for windows, and to log to stderr
 /// only instead of writing `<exe>_d3d11.log` files into the working directory, unless `DXVK_WSI_DRIVER` / `DXVK_LOG_PATH` say otherwise.
+/// Programs the editor starts inherit them: Launch in game takes them out for the game (`wce_tile_tool::proton::EDITOR_ONLY_ENV`).
 ///
 /// # Safety
 ///

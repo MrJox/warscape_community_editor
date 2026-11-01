@@ -18,6 +18,10 @@ use std::process::Command;
 /// The verb Steam gives the tools for a game: wait for the prefix's last process, then run.
 const VERB: &str = "waitforexitandrun";
 
+/// The environment the editor sets for its own DXVK-native (`wce_d3d11::init_platform`), which the game must not inherit: Proton's DXVK
+/// reads them too, and with `DXVK_WSI_DRIVER=SDL3` the game crashes while a battle loads (Attila, `Empire.Retail.dll+0x178c1b6`).
+pub const EDITOR_ONLY_ENV: [&str; 2] = ["DXVK_WSI_DRIVER", "DXVK_LOG_PATH"];
+
 /// A KeyValues (VDF) value: a string or a block.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Vdf {
@@ -365,7 +369,12 @@ pub fn start(game_dir: &Path, exe: &str, command_line: &str, app: u32, proton: O
     std::fs::write(&bat, batch_file(game_dir, exe, command_line)).map_err(|e| format!("{}: {e}", bat.display()))?;
 
     let (program, args) = launcher.command.split_first().ok_or("no Proton command")?;
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    for name in EDITOR_ONLY_ENV {
+        command.env_remove(name);
+    }
+
+    let child = command
         .args(args)
         .args(["c:\\windows\\system32\\cmd.exe".to_owned(), "/c".to_owned(), windows_path(&bat)])
         .envs(&launcher.env)
