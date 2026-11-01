@@ -85,6 +85,13 @@ Status legend: **done**, **partial**, **todo**.
   brighter; Rome 2's light pass applies the cloud shade (`cloud_shade.dds`, as Thrones of Britannia), which the editor had off. With it:
   within 2 .. 12 % (the shade's drifting offset differs). `day_dry_01`'s far haze looking into the sun is the weather's own (the same
   pipeline matches the game's `day_dry_04` and `day_dry_05`); not compared with the game in that file.
+- **done** Objects off the ground in a map context (2026-11-01, user report: the grass pebbles floated everywhere): the open tile's ground
+  was drawn relative to the mean LF under it, 0.2 m over the flat LF the campaign has under the battle (its edges pulled the mean up);
+  the median now (docs/re/battle_maps.md, "Heights as the game draws them").
+- **done** The open tile's edge against the sea tiles (2026-11-01, user report: a bright strip along the tile's seaward edges): a gap
+  between its edge (2 .. 20 m under the sea) and the sea tiles' bed (40 m) let the views under the tile reach the sky; the open tile has
+  a skirt in a map context. What stays: its edge stands over the sea tiles' bed, seen faintly through the water (the game's LF ramps 0.14 to
+  -20 m over the 4 texels past the tile; its sea tiles at -40 m, the same step: not compared with the game there).
 - **done** The shore foam band (2026-11-01, the capture; it was a thin line where the game's is a wide band): the game draws its terrain
   surface with a slope-scaled depth bias (DepthBias 1, SlopeScaledDepthBias 2, the shadows' state), so where the camera grazes the beach
   the ground's depth lies 1.7 units behind it and the sea covers the shore's edge further up (`States::rs_terrain_rome2`). The sea bed

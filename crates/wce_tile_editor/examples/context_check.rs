@@ -113,7 +113,7 @@ fn main() {
         let o = f.open;
         for (cx, cy) in [(o[0], o[1]), (o[2], o[1]), (o[0], o[3]), (o[2], o[3]), ((o[0] + o[2]) / 2, (o[1] + o[3]) / 2), (o[0] - CHUNK, o[1]), (o[2] + CHUNK, o[3])] {
             let (x, z) = f.from_map.apply(f64::from(cx) + 0.3, f64::from(cy) + 0.6);
-            let want = (f.map.lf_metres(f64::from(cx) + 0.3, f64::from(cy) + 0.6) - f.lf_mean) / f.unit;
+            let want = (f.map.lf_metres(f64::from(cx) + 0.3, f64::from(cy) + 0.6) - f.lf_level) / f.unit;
             println!("  cell ({cx}, {cy}) at ({x:.0}, {z:.0}): {:.2} (map {want:.2})", lf.height_at(x as f32, z as f32));
         }
     }

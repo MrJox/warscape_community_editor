@@ -135,10 +135,13 @@ plains (aa .. ad) elsewhere.
   name are not in the key: `map_context_cache clear` empties it.
 - **Heights as the game draws them**: the map's LF laid into the open frame (`LfMap`: the frame's axes are the map's turned by quarter
   turns, so its samples are the map's pixels, 8128 x 5748 on the campaign map) under every terrain, through the game's vertex shader
-  (`t_low_res_height_map`, `g_height_map_lf_scale`, `g_height_map_vertical_offset`: `LF * 3000 - 20 - mean LF under the open tile`, scene
+  (`t_low_res_height_map`, `g_height_map_lf_scale`, `g_height_map_vertical_offset`: `LF * 3000 - 20 - median LF under the open tile`, scene
   units), each tile's own heights in the vertices (`dot(P0, P2) * g_height_map_hf_scale`). The open tile's ground is drawn on it too (its
   objects and picking keep its own heights: where the LF varies under it, they are off by that much; the report gives the range). The
-  neighbours' objects are lifted by the LF at their position.
+  neighbours' objects are lifted by the LF at their position. The reference is the median (2026-11-01, was the mean): the campaign LF is
+  flat under a battle's tile (Rome 2's Carthage: 0.142 m over its 8 x 8 cells, and the game's 256 x 256 LF window there is the campaign
+  LF, whole-texel aligned, 0.07 m apart), but for its edges and corners, which pulled the mean 0.2 m up: the ground lay under the tile's
+  objects (the grass pebbles floated) wherever it was flat.
 - **Placements as world matrices**: a terrain entity may be turned about y (the renderer's patch rows take the rotation; the LF is looked up
   by world position, so it stays right), its blend box is the material's rectangle turned with it, and the rotation index the blend shader
   takes (`T2.x`, its `icb` table) turns the maps back: no resampling per placement or rotation (the first version resampled every
@@ -222,13 +225,14 @@ plains (aa .. ad) elsewhere.
     sea = 1, pass 0x15; techniques `sea_geometry_30(_new)`, `ps_sea_geom`). The editor draws the `sea` set's tiles on that LF (taken as 0:
     -20 m) in every ring; drawn so, the matched view agrees with the game's screenshot. ASSUMPTION: that pass is what draws the sea tiles
     (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Side effect: at a beach the sea tiles sit a
-    few metres lower than on the land's LF, and the open tile (drawn without skirts) leaves a wider gap under the water at its seaward
-    edge (it had a thin one before).
+    few metres lower than on the land's LF, and the open tile's seaward edge stands over them. The open tile has a skirt in a map context
+    since 2026-11-01 (`view.rs` `skirted`, 40 scene units): without one, at Carthage (its sea edges 2 .. 20 m under the sea, the sea tiles
+    beside it at 40 m) the views through the gap ran under the tile to the sky, which the sea refracted as a bright strip along its edges.
     Only where the land LF under the tile is at or under the sea (the median of its quarter-cell samples at most 10 m above 0;
     `Frame::on_sea_lf`): TDD builds the Long Lake of `rom_third_age_map` from `sea` tiles on a flat 626 m LF, and its battle sea LF is
     -20 m there; on it the lake's tiles sank 646 m into pits between their coast tiles.
   - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
-- ASSUMPTIONS / known gaps: the mean-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
+- ASSUMPTIONS / known gaps: the median-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the tiles' alpha is the game's per-size texture (below, 2026-10-31); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread
   (several arriving in one frame hitch it) - fixed, below.
@@ -261,7 +265,7 @@ plains (aa .. ad) elsewhere.
   and the alpha texels (4). A move rolls the LF normal map on the GPU (one level, from an unrolled copy: up to four region copies),
   shifts the decals' instances, makes the sea bed again (5 to 8 ms) and the particles alive keep their old places. The shadow cascades are fitted around the camera relative to it too (fitted absolute and
   moved to the origin after, their matrices lost the precision: the shadows, the trees' most, flickered as the camera moved); culling keeps
-  an absolute copy. Its height is the sea's (`RenderScene::sea_level`, the map context's `-mean LF / unit`): the shaders get heights
+  an absolute copy. Its height is the sea's (`RenderScene::sea_level`, the map context's `-median LF / unit`): the shaders get heights
   relative to the sea, as the game's are to its sea at 0, so the terrain vertex shader's 9 cm lift of land and drop of sea bed (by the
   height's sign) separates the shore from the water as the game means it (relative to the open tile, it pushed all ground near a coast
   down). DEVIATION (2026-10-21): the height is measured from 1.5 steps of the 16-bit LF (6.9 cm) above the sea (`Frame::bias_y`). The

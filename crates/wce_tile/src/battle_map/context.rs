@@ -273,22 +273,18 @@ impl PlacedMap {
         self.lf.as_ref().map_or(0.0, |f| f.metres(x, y, self.width, self.height))
     }
 
-    /// The mean and range (max - min) of the LF over a cell rectangle, sampled every quarter cell.
+    /// The median and range (max - min) of the LF over a cell rectangle, sampled every quarter cell. The median: the campaign LF is flat
+    /// under a battle's tile (Rome 2's Carthage: 0.142 m, the battle's LF window the same), but for its edges and corners, which pulled
+    /// the mean 0.2 m up.
     pub fn lf_stats(&self, r: [i32; 4]) -> (f64, f64) {
-        let (mut sum, mut n, mut lo, mut hi) = (0.0, 0.0, f64::MAX, f64::MIN);
         let steps_x = ((r[2] - r[0]) * 4).max(1);
         let steps_y = ((r[3] - r[1]) * 4).max(1);
-        for j in 0..=steps_y {
-            for i in 0..=steps_x {
-                let v = self.lf_metres(f64::from(r[0]) + f64::from(i) / 4.0, f64::from(r[1]) + f64::from(j) / 4.0);
-                sum += v;
-                n += 1.0;
-                lo = lo.min(v);
-                hi = hi.max(v);
-            }
-        }
-
-        (sum / n, hi - lo)
+        let mut v: Vec<f64> = (0..=steps_y)
+            .flat_map(|j| (0..=steps_x).map(move |i| (i, j)))
+            .map(|(i, j)| self.lf_metres(f64::from(r[0]) + f64::from(i) / 4.0, f64::from(r[1]) + f64::from(j) / 4.0))
+            .collect();
+        v.sort_by(f64::total_cmp);
+        (v[v.len() / 2], v[v.len() - 1] - v[0])
     }
 }
 
@@ -315,8 +311,8 @@ pub struct Context {
     /// The open tile's cells.
     pub open: [i32; 4],
 
-    /// The mean and range of the LF under the open tile (metres).
-    pub lf_mean: f64,
+    /// The median and range of the LF under the open tile (metres).
+    pub lf_level: f64,
     pub lf_range: f64,
 }
 
@@ -341,8 +337,8 @@ impl PlacedMap {
             .map(|i| (i, from_map.then_after(&self.placements[i].to_map())))
             .collect();
 
-        let (lf_mean, lf_range) = self.lf_stats(r);
-        Context { neighbours, to_map: Some(to_map), window, open: r, lf_mean, lf_range }
+        let (lf_level, lf_range) = self.lf_stats(r);
+        Context { neighbours, to_map: Some(to_map), window, open: r, lf_level, lf_range }
     }
 }
 

@@ -191,7 +191,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
    `terrain_zw_`, also the hardware depth, stencil 2 where the surface is nearest) and again with `ps_depth` (view-space z into `terrain_viewz_`, depth test EQUAL).
    *Addressing of the height texture* (the shader's own, read from the DXBC): `uv = world xz / g_world_dimensions + g_lf_uv_offset` (one scalar offset for both axes), the second axis flipped
    (`row = size - k`), texel = `uv * g_height_map_dimension`, four `ld` loads and a manual bilinear, no clamp below sample 1 and `1 - 1/size` above. It holds the map context's LF
-   (R16 unorm, a square window around the camera, rows stored top = highest z; `g_height_map_lf_scale` = the LF's height, `g_height_map_vertical_offset` = 20 m plus the mean LF under the
+   (R16 unorm, a square window around the camera, rows stored top = highest z; `g_height_map_lf_scale` = the LF's height, `g_height_map_vertical_offset` = 20 m plus the median LF under the
    open tile), or a zero texture for a tile alone. One offset for both axes: the terrain of an LF window is drawn in a frame shifted so that its column 0 and its rows start at the same
    x and z (the camera constants shifted with it, put back after), the offset sliding that frame's origin to the camera along the window's diagonal (a shift to the map's corner lost the
    depth's precision: 80 km of coordinates). See docs/re/battle_maps.md, "The map context in the editor".

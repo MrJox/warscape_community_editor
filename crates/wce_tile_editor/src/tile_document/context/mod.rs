@@ -11,7 +11,7 @@
 //! rivers, far the LF ground alone (a placement's rectangle of it). Every cell has one owner at any level, so the levels never overlap.
 //!
 //! Heights (ASSUMPTION, see the module docs of `context` in wce_tile for the game's formula): the game puts every tile on the map's LF
-//! (`LF * 3000 - 20 + the tile's height`). The open tile's ground is drawn on it too, relative to the mean LF under it (its objects and
+//! (`LF * 3000 - 20 + the tile's height`). The open tile's ground is drawn on it too, relative to the median LF under it (its objects and
 //! picking keep its own heights: off by the LF's variation under it, which the report gives); the neighbours' objects are lifted by the LF at
 //! their position.
 
@@ -164,8 +164,8 @@ fn position(m: &Float4x4) -> (f64, f64) {
 }
 
 /// The map's LF in the open frame, on the LF's own lattice (the frame's axes are the map's turned by whole quarter turns, so its samples are
-/// the map's pixels): heights relative to the mean LF under the open tile.
-fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_mean: f64, unit: f64) -> Option<LfMap> {
+/// the map's pixels): heights relative to the median LF under the open tile.
+fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_level: f64, unit: f64) -> Option<LfMap> {
     let f = map.lf.as_ref().filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
     let s = CELL / ppx;
@@ -187,7 +187,7 @@ fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_mean: f64, u
     });
 
     let mut lf = LfMap {
-        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values, scale: (LF_HEIGHT / unit) as f32, offset: ((VERTICAL_OFFSET + lf_mean) / unit) as f32,
+        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values, scale: (LF_HEIGHT / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
         id: next_id(&NORMAL_IDS), ..Default::default()
     };
 
@@ -259,8 +259,8 @@ pub struct Frame {
     pub to_map: Affine2,
     pub from_map: Affine2,
 
-    /// The mean and range of the LF under the open tile (metres).
-    pub lf_mean: f64,
+    /// The median and range of the LF under the open tile (metres).
+    pub lf_level: f64,
     pub lf_range: f64,
     pub lf: Option<Arc<LfMap>>,
 
@@ -299,8 +299,8 @@ impl Frame {
         let open = me.rect();
         let to_map = me.to_map();
         let from_map = to_map.inverse();
-        let (lf_mean, lf_range) = map.lf_stats(open);
-        let lf = lf_map(&map, &from_map, &to_map, lf_mean, rq.unit).map(Arc::new);
+        let (lf_level, lf_range) = map.lf_stats(open);
+        let lf = lf_map(&map, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
         // The first to cover a cell owns it (the open tile, then the placements in the map's order).
         let (w, h) = (map.width as i32, map.height as i32);
@@ -350,7 +350,7 @@ impl Frame {
         }
 
         Self {
-            map, unit: rq.unit, open, to_map, from_map, lf_mean, lf_range, lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
+            map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
             groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
             plain_bases: Mutex::default(), plains: Mutex::default(),
         }
@@ -524,7 +524,7 @@ impl Frame {
 
     /// The height of the sea (0 m) in the frame.
     pub fn sea_y(&self) -> f32 {
-        (-self.lf_mean / self.unit) as f32
+        (-self.lf_level / self.unit) as f32
     }
 
     /// The height the shaders measure from (the scene's `sea_level`): the sea, plus a step and a half of the 16-bit LF (6.9 cm). The terrain
@@ -533,7 +533,7 @@ impl Frame {
     /// ground was land, rose 18 cm against the quays and fought with them as the camera moved. A deviation from the game's arithmetic: ground
     /// less than 6.9 cm above the sea counts as sea bed.
     pub fn bias_y(&self) -> f32 {
-        ((LF_HEIGHT / 65535.0 * 1.5 - self.lf_mean) / self.unit) as f32
+        ((LF_HEIGHT / 65535.0 * 1.5 - self.lf_level) / self.unit) as f32
     }
 
     /// The sea: one plane at 0 m over the cells within `reach` of a frame point (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is
@@ -702,7 +702,7 @@ impl Frame {
     /// A line for the report: the LF under the open tile.
     pub fn lf_note(&self) -> String {
         format!(
-            "LF under the tile {:.1} m mean, {:.1} m range{}", self.lf_mean, self.lf_range,
+            "LF under the tile {:.1} m median, {:.1} m range{}", self.lf_level, self.lf_range,
             if self.lf_range > 2.0 { format!(": its objects may be off the ground by up to {:.1} m", self.lf_range * 0.5 / self.unit) } else { String::new() }
         )
     }
