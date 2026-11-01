@@ -47,7 +47,7 @@ fn main() {
     for &i in found.iter().take(8) {
         let p = &m.placements[i];
         let c = m.context(&Spot { x: p.x, y: p.y, rotation: p.rotation }, p.w, p.h, radius);
-        println!("  ({}, {}) rot {:#x}: {} neighbours in {:?}, lf mean {:.1} m range {:.1} m", p.x, p.y, p.rotation, c.neighbours.len(), c.window, c.lf_mean, c.lf_range);
+        println!("  ({}, {}) rot {:#x}: {} neighbours in {:?}, lf median {:.1} m range {:.1} m", p.x, p.y, p.rotation, c.neighbours.len(), c.window, c.lf_level, c.lf_range);
         if a.iter().any(|v| v == "--names") {
             for (n, _) in &c.neighbours {
                 let q = &m.placements[*n];

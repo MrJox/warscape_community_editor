@@ -114,6 +114,22 @@ fn empty_overlay() -> Payload {
     Payload::Overlay(Overlay { pickable: false, ..Default::default() })
 }
 
+/// How far the skirt of the open tile's ground goes down in a map context (scene units).
+const CONTEXT_SKIRT: f32 = 40.0;
+
+/// The terrain grid with a ring of vertices one step outside it, CONTEXT_SKIRT below its edge: in a map context the open tile's edge
+/// stands over its neighbours' ground where they are lower (Rome 2's Carthage: its sea edges 2 .. 20 m under the sea, the sea tiles
+/// beside it at 40 m), and through that gap the views under the tile reached the sky, which the sea refracted as a bright strip along
+/// the edge. The neighbours' templates have theirs (`context::template`).
+fn skirted(t: Terrain) -> Terrain {
+    let (nx, nz) = (t.nx + 2, t.nz + 2);
+    let heights = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| {
+        let h = t.heights[((j - 1).clamp(0, t.nz - 1) * t.nx + (i - 1).clamp(0, t.nx - 1)) as usize];
+        if i == 0 || j == 0 || i == nx - 1 || j == nz - 1 { h - CONTEXT_SKIRT } else { h }
+    }).collect();
+    Terrain { nx, nz, origin_x: t.origin_x - t.step, origin_z: t.origin_z - t.step, heights: Arc::new(heights), ..t }
+}
+
 impl Tile {
 
     pub(crate) fn source(&self, item: u64) -> SourceRef {
@@ -143,7 +159,7 @@ impl Tile {
         self.material_base.clone()
     }
 
-    /// The map context's LF map under the tile (its ground is drawn on it as the game does, relative to the mean LF under it), or none.
+    /// The map context's LF map under the tile (its ground is drawn on it as the game does, relative to the median LF under it), or none.
     pub fn set_context_lf(&mut self, scene: &mut RenderScene, lf: Option<Arc<LfMap>>) {
         if self.context_lf.as_ref().map(|l| l.id) == lf.as_ref().map(|l| l.id) {
             return;
@@ -889,6 +905,10 @@ impl Tile {
             });
 
             t.heights = Arc::new(heights);
+            if self.clip_to_tile {
+                t = skirted(t);
+            }
+
             t.lod = true;
             let mut w = Float4x4::IDENTITY;
             w.m[2][2] = k;
