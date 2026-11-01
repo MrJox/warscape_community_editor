@@ -1817,7 +1817,7 @@ impl Editor {
         if gui::begin_menu("Help") {
             gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
-            if gui::menu_item(self.updates_menu_label(), None, false, true) {
+            if gui::menu_item(&self.updates_menu_label(), None, false, true) {
                 self.updates_menu_clicked();
             }
 

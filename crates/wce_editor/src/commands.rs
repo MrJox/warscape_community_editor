@@ -1043,7 +1043,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     },
     );
 
-    c.add("check_updates", "check_updates", "Help > Check for updates: looks for a newer release on GitHub and shows the Updates window", |e, _| {
+    c.add("check_updates", "check_updates", "Help > Update Manager: looks for a newer release and newer rpfm schemas on GitHub and shows the Update Manager", |e, _| {
         e.check_for_updates(true);
         ok("")
     });

@@ -401,15 +401,15 @@ impl Editor {
         gui::set_cursor_pos_x(LABEL_WIDTH);
         match wce_foundation::settings::rpfm_schema_path_in(game, d.db_schemas_dir().as_deref()) {
             Some(p) => gui::text_disabled(&format!("{}: {}", game.display_name, p.display())),
-            None => gui::text_colored(theme::warning(), &format!("{}  {}: no {} here or in rpfm's schemas folder", icons::TRIANGLE_ALERT, game.display_name, game.rpfm_schema)),
+            None => gui::text_colored(theme::warning(), &format!("{}  {}: no {} here, in the editor's or in rpfm's schemas folder (Help > Update Manager downloads it)", icons::TRIANGLE_ALERT, game.display_name, game.rpfm_schema)),
         }
 
-        help("rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses rpfm's own.");
+        help("rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses the ones the Update Manager downloaded, then rpfm's own.");
 
         gui::separator_text("Updates");
         gui::checkbox("Check for updates at start", &mut d.updates.check_on_start);
         gui::checkbox("Include pre-releases (betas)", &mut d.updates.prereleases);
-        help("Updates come from the editor's releases on GitHub. Help > Check for updates looks for one at any time.");
+        help("Updates come from the editor's releases on GitHub, rpfm's schemas from its schema repository. Help > Update Manager looks for both at any time; without the current game's schema it is looked for at start anyway.");
     }
 
     fn draw_game_page(&mut self) {

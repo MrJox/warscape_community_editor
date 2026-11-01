@@ -163,7 +163,7 @@ impl GameFacts {
         }
 
         let schema = wce_foundation::settings::rpfm_schema_path(vfs.profile());
-        let phases = schema.ok_or_else(|| format!("no rpfm schema ({} in the DB schemas folder or rpfm's)", vfs.profile().rpfm_schema)).and_then(|path| {
+        let phases = schema.ok_or_else(|| format!("no rpfm schema ({} in the DB schemas folder or rpfm's; Help > Update Manager downloads it)", vfs.profile().rpfm_schema)).and_then(|path| {
             let schema = Schema::load(&path, None).map_err(|e| format!("{}: {e}", path.display()))?;
             let tables = vfs.list(&format!("db/{CLIMATE_PHASES_TABLE}/"), "").into_iter().filter_map(|p| vfs.read(p).ok()).collect::<Vec<_>>();
             climate_phases(&tables, &schema)
