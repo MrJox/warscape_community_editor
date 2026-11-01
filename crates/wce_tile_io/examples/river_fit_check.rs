@@ -105,8 +105,9 @@ fn main() {
             let fails = off[0] > 0.1 || off[1] > 0.5 || off[2] > 0.05 || off[3] > 1e-3;
             bad += usize::from(fails);
             println!(
-                "{}{n}: {} rivers, {rows} rows, {segments} segments; off {:.3} m, width {:.3}, alpha {:.3}, flow / foam {:.4}",
+                "{}{n} ({:?}): {} rivers, {rows} rows, {segments} segments; off {:.3} m, width {:.3}, alpha {:.3}, flow / foam {:.4}",
                 if fails { "FAIL " } else { "" },
+                block.format,
                 rivers.len(),
                 off[0],
                 off[1],
