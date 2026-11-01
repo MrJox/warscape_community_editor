@@ -22,7 +22,7 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
+use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedAttrsCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{AlignTo, CopiedItem, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -2939,6 +2939,265 @@ impl TileDocument {
         if ins.gesture_ended() {
             self.history.break_merge();
         }
+    }
+
+    /// Whether the Inspector shows a property of an element, and edits it (the rules that need its building's category or polygon's shape).
+    fn prop_access(&self, e: usize, prop: &Prop) -> Access {
+        let t = self.tile();
+        let doc = t.tscene().doc();
+        let key = doc.get(e, "key").unwrap_or_default();
+        let category = if t.tscene().type_of(e) == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
+        let shape = doc.get(e, "polygon_shape");
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some() };
+        wce_tile::properties::access(prop, &ctx)
+    }
+
+    /// The Inspector with several elements selected: the properties all of them have (the same attribute of the same kind, shown for each),
+    /// but their place (position, orientation, scale) and name; a value they do not share is marked, and shows the first one's. An edit sets
+    /// it on all of them, one undo entry (a drag merges). False when fewer than two of the items are elements.
+    pub(crate) fn inspect_elements(&mut self, items: &[SourceRef], ins: &mut dyn Inspector) -> bool {
+        let n = self.tile().tscene().doc().elements().len();
+        let mut elems = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| e < n).collect::<Vec<_>>();
+        elems.dedup();
+        if elems.len() < 2 {
+            return false;
+        }
+
+        // What is selected, by type.
+        let mut types: BTreeMap<String, usize> = BTreeMap::new();
+        for &e in &elems {
+            *types.entry(self.tile().tscene().type_of(e).to_owned()).or_default() += 1;
+        }
+
+        ins.section(&format!("{} items", elems.len()));
+        ins.text("types", "types", &types.iter().map(|(t, n)| format!("{t} x{n}")).collect::<Vec<_>>().join(", "));
+
+        // The properties shown for every one of them, in the first one's order.
+        let excluded = |p: &Prop| matches!(p.kind, Kind::Position | Kind::Orientation) || p.attr == "scale" || p.attr == "name";
+        let mut common: Option<Vec<(Prop, bool)>> = None;
+        for &e in &elems {
+            let Some(schema) = wce_tile::properties::schema(self.tile().tscene().type_of(e)) else {
+                common = Some(vec![]);
+                break;
+            };
+
+            let mine = schema.iter().filter(|p| !excluded(p)).filter_map(|p| {
+                let access = self.prop_access(e, p);
+                (access != Access::Hidden).then_some((*p, access == Access::Edit))
+            }).collect::<Vec<_>>();
+
+            common = Some(match common {
+                None => mine,
+                Some(c) => c.into_iter().filter_map(|(p, edit)| mine.iter().find(|(m, _)| m.attr == p.attr && m.kind == p.kind).map(|(_, e2)| (p, edit && *e2))).collect(),
+            });
+        }
+
+        // Flags and placement need the attribute in every element (an added one is text the attribute edits cannot take back).
+        let doc = self.tile().tscene().doc();
+        let common = common.unwrap_or_default().into_iter().filter(|(p, _)| match p.kind {
+            Kind::Flags => elems.iter().all(|&e| doc.get(e, "flags").is_some()),
+            Kind::Placement => elems.iter().all(|&e| self.tile().is_instance(e) && doc.get(e, "surface_mode").is_some()),
+            _ => true,
+        }).collect::<Vec<_>>();
+
+        if common.is_empty() {
+            ins.text("none", "", "no property in common");
+            return true;
+        }
+
+        // The values they do not share.
+        let mut marks = vec![];
+        for (p, _) in &common {
+            let first = doc.get(elems[0], p.attr);
+            if elems[1..].iter().any(|&e| doc.get(e, p.attr) != first) {
+                marks.push((p.attr.to_owned(), "differs between the selected items: the first one's is shown".to_owned()));
+            }
+        }
+
+        ins.section("Common properties");
+        ins.mark_fields(marks);
+        for (prop, editable) in common {
+            self.common_row(&elems, &prop, editable, ins);
+        }
+
+        true
+    }
+
+    /// A row of [`Self::inspect_elements`].
+    fn common_row(&mut self, elems: &[usize], prop: &Prop, editable: bool, ins: &mut dyn Inspector) {
+        let first = elems[0];
+        let base = (u64::from(self.id()) << 40) ^ 0x5151_0000 ^ elems.len() as u64;
+        let text = self.tile().tscene().doc().get(first, prop.attr);
+        let cur = text.clone().unwrap_or_default();
+        match prop.kind {
+            Kind::Flags => {
+                let t = self.tile();
+                let names = ["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"];
+                let before = names.map(|f| t.own_flag(first, f));
+                let mut on = before;
+                if editable && ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut on) {
+                    for (i, flag) in names.iter().enumerate() {
+                        if on[i] != before[i] {
+                            self.set_flags(elems, flag, on[i]);
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            Kind::Placement => {
+                use wce_tile::project_files::SURFACE_ATTR;
+                let doc = self.tile().tscene().doc();
+                let on_entity = doc.get(first, SURFACE_ATTR).is_some_and(|v| v == "entity");
+                let modes = ["Landscape: Above", "Freeform", "Entity: Above"].map(str::to_owned);
+                let mut idx = if on_entity { 2 } else { i32::from(self.tile().placement(first) == Placement::Freeform) };
+                if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable {
+                    self.set_placement(elems, if idx == 0 { Placement::Landscape } else { Placement::Freeform });
+                    self.history.break_merge();
+                    self.set_attribute_all(elems, SURFACE_ATTR, if idx == 2 { "entity" } else { "" });
+                }
+
+                return;
+            }
+
+            // Each season on its own: the others keep each element's.
+            Kind::Seasons => {
+                let present = text.is_some();
+                let before = if present { parse_seasons(&cur) } else { [true; 4] };
+                let mut on = before;
+                if editable && ins.edit_checks(prop.attr, prop.attr, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
+                    let doc = self.tile().tscene().doc();
+                    let values = elems.iter().map(|&e| {
+                        let mut s = doc.get(e, prop.attr).map_or([true; 4], |v| parse_seasons(&v));
+                        for i in 0..4 {
+                            if on[i] != before[i] {
+                                s[i] = on[i];
+                            }
+                        }
+
+                        format_seasons(s)
+                    }).collect::<Vec<_>>();
+                    self.set_property_each(elems, prop, &values, 0);
+                } else if !editable {
+                    ins.text(prop.attr, prop.attr, &cur);
+                }
+
+                return;
+            }
+
+            _ => {}
+        }
+
+        if !editable {
+            ins.text(prop.attr, prop.attr, &cur);
+            return;
+        }
+
+        let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x9;
+        let prop = &self.tile().game_choices(prop);
+        let levels = elems.iter().map(|&e| {
+            let key = self.tile().tscene().doc().get(e, "key").unwrap_or_default();
+            i64::from(self.tile().destruction_levels(&key))
+        }).min().unwrap_or(1);
+        let mut new = edit_value(prop, &cur, text.is_some(), levels, ins);
+        if prop.kind == Kind::Text {
+            // Typed text is applied when the typing ends (a key edit loads models).
+            let drafts_key = (usize::MAX, prop.attr.to_owned());
+            let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| cur.clone());
+            if ins.edit_string(prop.attr, prop.attr, &mut shown) {
+                self.tile_mut().drafts.insert(drafts_key.clone(), shown);
+            }
+
+            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
+                new = Some(v);
+            }
+        }
+
+        if let Some(v) = new {
+            self.set_property_each(elems, prop, &vec![v; elems.len()], gesture);
+        }
+
+        if ins.gesture_ended() {
+            self.history.break_merge();
+        }
+    }
+
+    /// Sets a property every one of the elements has and can edit, as the Inspector does with them selected (a script); how many changed.
+    ///
+    /// # Errors
+    ///
+    /// One of them does not have the property, or it is read-only for it.
+    pub fn set_common(&mut self, elems: &[usize], attr: &str, value: &str) -> Result<usize, String> {
+        let first = *elems.first().ok_or("nothing selected")?;
+        let prop = wce_tile::properties::schema(self.tile().tscene().type_of(first)).and_then(|s| s.iter().find(|p| p.attr == attr)).copied()
+            .ok_or_else(|| format!("{} has no property {attr}", self.tile().tscene().type_of(first)))?;
+        for &e in elems {
+            let has = wce_tile::properties::schema(self.tile().tscene().type_of(e)).is_some_and(|s| s.iter().any(|p| p.attr == attr && p.kind == prop.kind));
+            if !has || self.prop_access(e, &prop) != Access::Edit {
+                return Err(format!("element {e} ({}) cannot edit {attr}", self.tile().tscene().type_of(e)));
+            }
+        }
+
+        let doc = self.tile().tscene().doc();
+        let changed = elems.iter().filter(|&&e| doc.get(e, attr).as_deref() != Some(value)).count();
+        self.set_property_each(elems, &prop, &vec![value.to_owned(); elems.len()], 0);
+        Ok(changed)
+    }
+
+    /// Sets an attribute of several elements, one undo entry (a text splice; empty: as [`Self::set_attribute`] does with it).
+    pub fn set_attribute_all(&mut self, elems: &[usize], attr: &str, value: &str) -> bool {
+        let n = self.tile().tscene().doc().elements().len();
+        let todo = elems.iter().copied().filter(|&e| e < n && self.tile().tscene().doc().get(e, attr).as_deref() != Some(value)).collect::<Vec<_>>();
+        if todo.is_empty() {
+            return true;
+        }
+
+        let Ok(mark) = self.begin() else { return false };
+        for &e in &todo {
+            self.tscene_mut().set_attr(e, attr, value);
+        }
+
+        let items = todo.iter().map(|&e| item_of(e)).collect::<Vec<_>>();
+        self.push_splice(format!("Set {attr} of {} items", todo.len()), mark, items.clone(), items);
+        true
+    }
+
+    /// Sets a property (and its twin) of several elements, each to its value: one undo entry, the steps of a drag (`gesture`) merge. Elements
+    /// that lack the attribute get it first, by one text splice.
+    pub fn set_property_each(&mut self, elems: &[usize], prop: &Prop, values: &[String], gesture: u64) -> bool {
+        let attrs = std::iter::once(prop.attr).chain(prop.twin).collect::<Vec<_>>();
+        let n = self.tile().tscene().doc().elements().len();
+        let pairs = elems.iter().copied().zip(values.iter().cloned()).filter(|(e, _)| *e < n).collect::<Vec<_>>();
+
+        // The attributes missing (an empty optional text stays out of the file, as `set_property` keeps it).
+        let doc = self.tile().tscene().doc();
+        let missing = pairs.iter().flat_map(|(e, v)| attrs.iter().filter(move |a| doc.get(*e, a).is_none() && !(v.is_empty() && prop.kind == Kind::Text)).map(move |a| (*e, *a, v.clone()))).collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let Ok(mark) = self.begin() else { return false };
+            for (e, a, v) in &missing {
+                self.tscene_mut().set_attr(*e, a, v);
+            }
+
+            let items = missing.iter().map(|(e, _, _)| item_of(*e)).collect::<Vec<_>>();
+            self.push_splice(format!("Set {} of {} items", prop.attr, pairs.len()), mark, items.clone(), items);
+            self.history.break_merge();
+        }
+
+        let doc = self.tile().tscene().doc();
+        let edits = pairs.iter().filter_map(|(e, v)| {
+            let tag = self.tile().tscene().type_of(*e);
+            let steps = attrs.iter().filter_map(|a| doc.get(*e, a).filter(|old| old != v).map(|old| ((*a).to_owned(), old, v.clone()))).collect::<Vec<_>>();
+            (!steps.is_empty()).then(|| TedAttrCommand { name: String::new(), elem: *e, steps, gesture, rebuild: tag == "BUILDING_INSTANCE" && prop.attr == "key" })
+        }).collect::<Vec<_>>();
+
+        if edits.is_empty() {
+            return true;
+        }
+
+        let name = format!("Set {} of {} items", prop.attr, edits.len());
+        self.history.push(Box::new(TedAttrsCommand { name, edits, gesture }));
+        true
     }
 
     /// Moves a civilian shelter's target to a world point (TEd drags it over the ground), as the Inspector's `target` row writes it; the

@@ -336,6 +336,60 @@ impl Command<Tile> for TedAttrCommand {
     }
 }
 
+/// One property of several elements at once (the Inspector with several items selected): each element's [`TedAttrCommand`] in one undo
+/// entry. The steps of one drag merge.
+pub(crate) struct TedAttrsCommand {
+    pub name: String,
+    pub edits: Vec<TedAttrCommand>,
+    pub gesture: u64,
+}
+
+impl Command<Tile> for TedAttrsCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        for e in &self.edits {
+            e.put(t, true);
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        for e in self.edits.iter().rev() {
+            e.put(t, false);
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        self.gesture
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.edits.len() == self.edits.len()) else { return false };
+        let same = n.edits.iter().zip(&self.edits).all(|(a, b)| a.elem == b.elem && a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0));
+        if !same {
+            return false;
+        }
+
+        for (mine, theirs) in self.edits.iter_mut().zip(&n.edits) {
+            for (m, t) in mine.steps.iter_mut().zip(&theirs.steps) {
+                m.2.clone_from(&t.2);
+            }
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        if self.edits.iter().any(|e| e.rebuild) { vec![] } else { self.edits.iter().map(|e| item_of(e.elem)).collect() }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// The eye / cursor of one or more layers or instances: the flags text is replaced, so undo restores the original bytes. Visibility changes what
 /// is drawn below the element, so the document republishes everything (no dirty items).
 pub(crate) struct TedFlagCommand {

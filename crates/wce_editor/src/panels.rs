@@ -560,7 +560,16 @@ pub fn inspector(e: &mut Editor) {
         match e.docs.find_mut(r.doc) {
             None => gui::text_disabled("The document is closed."),
             Some(d) => {
+                // Several: what they have in common, when the document tells (the items of the first one's document).
                 if count > 1 {
+                    let items = e.selection.items().iter().copied().filter(|i| i.doc == r.doc).collect::<Vec<_>>();
+                    let mut ins = ImGuiInspector { local: e.viewport.local_coordinates, ..Default::default() };
+                    ins.begin(r.doc, r.item);
+                    if d.inspect_many(&items, &mut ins) {
+                        gui::end();
+                        return;
+                    }
+
                     gui::text_disabled(&format!("{count} items selected, showing the first"));
                 }
 
