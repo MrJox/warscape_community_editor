@@ -317,7 +317,7 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
       longer matches the subtiles.
   - Exact: river/4x4_y_l1_r0_b3/aa (masked, T 128, a river and links) and atlantic_mountains/small_round/aa (masked, T 32), in every
     terrain file, the final heights and alpha too.
-- **The river** (`FUN_1001c610`; `attila::river`): the meshes' last block, type 90.
+- **The river** (`FUN_1001c610`; `attila::river`): the meshes' last block, type 90 (Rome 2's: type 48, below).
   - **Reading the splines** (`FUN_10011a20`): `river_spline0.xml`, `river_spline1.xml`, … up to the first missing file (the
     unnumbered `river_spline.xml` is not read).
     - Each `SPLINE` is a segment: POINT0..3, and at each end (POINT0 and POINT3) `foam_amount`, `alpha_fade`, `flow_speed` and
@@ -352,6 +352,15 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     - The river's bounds, y fixed at -0.1 / 0.1 (`FUN_100228f0`).
     - `rigid_default` in 32 bytes (tail uninitialised).
     - The LOD header's block count and byte totals include it.
+  - **Rome 2's block** (`conventions::RiverFormat`; no Rome 2 BOB, read from its packs' 283 blocks): type 48, the same header, rows
+    and triangles (the samples at 0, 1/8 .. 6/8 and the kept turns are there); the vertex x, y, z, flow, c, u (0 to 1 along), alpha,
+    and the foam (0.1 nearly everywhere, TEd's default; ASSUMPTION: lerped as the other values).
+  - **A decompiled tile's rivers** (`stage_b::stage_b_files`): the stage's fingerprints hold `ground`, the terrain's inputs without the
+    rivers. When only the rivers changed, the carried meshes are kept with their river block made again in the game's format
+    (`river::with_river_block`: the other blocks as they were, the LOD header's counts and byte totals adjusted), the variation keeps
+    the database's height range, and `hf_water_map.data` is made again. Rome 2's meshes are not the port's format (its terrain blocks
+    are type 0x42, 16-byte vertices), so a river edit keeps the game's terrain. Checked with `examples/tile_workflow_check.rs`
+    (`WCE_WORKFLOW_RIVER=1`) on Rome 2's and Attila's river tiles: the meshes the same but their river block.
 - **`hf_water_map.data`** (`FUN_10089b80`): written only when there is a river or a water plane (BOB deletes it otherwise).
   - The field (the final heights' size) starts at -1000.
   - The river's triangles are rasterised into it as the terrain's are (row `size - 1 - z`).

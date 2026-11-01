@@ -4,7 +4,8 @@
 //!
 //!   cargo run --release -p wce_tile_io --example tile_workflow_check -- <game folder> <scratch dir> <tile folder> [<tile folder> ...]
 //!
-//! `$WCE_GAME_KEY` chooses the game (`rome_2`; Attila by default).
+//! `$WCE_GAME_KEY` chooses the game (`rome_2`; Attila by default). `WCE_WORKFLOW_EDIT=1` edits a tree and the heights before saving;
+//! `WCE_WORKFLOW_RIVER=1` moves the first river 5 m and compares the saved meshes with the packs' but for their river block.
 //!
 //! A tile folder is the packs' path, `terrain/tiles/battle/farm_western/1x1/aa`. The scratch dir gets `workspace/` and `out/`.
 
@@ -49,6 +50,37 @@ fn edit(dir: &std::path::Path) -> Result<(), String> {
     written.write_to(dir, None).map_err(|e| e.to_string())
 }
 
+/// A river edit as the editor would save it: every point of the first river file moved 5 m along x.
+fn edit_river(dir: &std::path::Path) -> Result<(), String> {
+    let files = TileFiles::from_kit_dir(dir).map_err(|e| e.to_string())?;
+    let (mut p, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
+    let river = p.rivers.first_mut().ok_or("the project has no river")?;
+    for spline in &mut river.root.children {
+        for point in &mut spline.children {
+            if let Some(Value::Float(x)) = point.get("x").cloned() {
+                point.set("x", Value::Float(x + 5.0));
+            }
+        }
+    }
+
+    let (written, _) = TedProject.write(&p).map_err(|e| e.to_string())?;
+    written.write_to(dir, None).map_err(|e| e.to_string())
+}
+
+/// A terrain mesh saved against the packs': the same but the river block (`WCE_WORKFLOW_RIVER`), and the saved river's block.
+fn compare_meshes(name: &str, ours: &[u8], theirs: &[u8]) {
+    use wce_tile_io::attila::river::{RiverMesh, read_river_block, with_river_block};
+    let bare = |b: &[u8]| with_river_block(b, &RiverMesh::default());
+    let river = read_river_block(ours);
+    println!(
+        "  {name}: the same but the river block: {}; the saved river: {:?}, {} vertices (the packs': {})",
+        bare(ours).is_some() && bare(ours) == bare(theirs),
+        river.as_ref().map(|r| r.format),
+        river.as_ref().map_or(0, |r| r.vertices.len()),
+        read_river_block(theirs).map_or(0, |r| r.vertices.len())
+    );
+}
+
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 3 {
@@ -70,6 +102,12 @@ fn main() -> Result<(), String> {
             edit(&project)?;
         }
 
+        // WCE_WORKFLOW_RIVER=1: the first river moved 5 m along x; the meshes are compared but for their river block.
+        let river_edit = std::env::var_os("WCE_WORKFLOW_RIVER").is_some();
+        if river_edit {
+            edit_river(&project)?;
+        }
+
         let out = scratch.join("out");
         let (dir, notes) = save_exported(&game, &project, &out)?;
         for n in &notes.notes {
@@ -84,6 +122,10 @@ fn main() -> Result<(), String> {
             let theirs = blob.bytes().map_err(|e| e.to_string())?;
             match saved.get(&name.to_lowercase()).map(std::fs::read).unwrap_or_else(|| Err(std::io::ErrorKind::NotFound.into())) {
                 Ok(ours) if ours == theirs[..] => same.push(name.clone()),
+                Ok(ours) if river_edit && name.ends_with("mesh.rigid_model_v2") => {
+                    compare_meshes(name, &ours, &theirs);
+                    differ.push(name.clone());
+                }
                 Ok(_) => differ.push(name.clone()),
                 Err(_) => missing.push(name.clone()),
             }

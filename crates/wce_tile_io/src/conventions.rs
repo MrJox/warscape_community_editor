@@ -14,6 +14,34 @@ pub enum BuildingListLayout {
     Rome2,
 }
 
+/// How a game's terrain meshes store the river surface: a block of 8 f32 vertices after the terrain's (`attila::river`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RiverFormat {
+    /// Attila's type 90: x, y, z, flow speed, the width across (0 on the strip's first edge), the distance along, alpha fade, the
+    /// position across (0 to 1).
+    #[default]
+    Attila,
+
+    /// Rome 2's type 48: x, y, z, flow speed, the position across (0 to 1), the position along (0 to 1), alpha fade, foam amount (the
+    /// packs' blocks: the same rows as Attila's tessellation, these values in TEd's defaults, flow 0.5 and foam 0.1, and others).
+    Rome2,
+}
+
+impl RiverFormat {
+    /// The block's type.
+    pub fn block_type(self) -> u32 {
+        match self {
+            Self::Attila => 0x5a,
+            Self::Rome2 => 0x30,
+        }
+    }
+
+    /// The format of a block type.
+    pub fn of_block(kind: u32) -> Option<Self> {
+        [Self::Attila, Self::Rome2].into_iter().find(|f| f.block_type() == kind)
+    }
+}
+
 /// The conventions of a game's exported tiles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileConventions {
@@ -36,6 +64,9 @@ pub struct TileConventions {
 
     /// The building list versions the game's TEd wrote, first and last (the others are legacy lists, carried as files).
     pub building_list_versions: (i64, i64),
+
+    /// The river block of the terrain meshes.
+    pub river: RiverFormat,
 }
 
 impl Default for TileConventions {
@@ -56,6 +87,7 @@ impl TileConventions {
         building_list_version: 12,
         not_shipped: &[],
         building_list_versions: (12, 12),
+        river: RiverFormat::Attila,
     };
 
     /// Rome 2's: the highest versions of its packs (prop 6, particle emitter 5, point light 2).
@@ -69,6 +101,7 @@ impl TileConventions {
         building_list_version: 12,
         not_shipped: &["tile.agf"],
         building_list_versions: (10, 12),
+        river: RiverFormat::Rome2,
     };
 
     /// A game's conventions (Attila's for a game without its own).

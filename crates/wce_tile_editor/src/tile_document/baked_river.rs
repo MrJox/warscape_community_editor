@@ -1,5 +1,5 @@
-//! A decompiled tile's rivers: the packs have no river splines (docs/formats/tile_decompile.md, "Not in the binary"), only the water
-//! surface BOB baked into the terrain mesh's last block (`mesh.rigid_model_v2`, carried in the project's `decompiled_terrain`): eight f32
+//! A decompiled tile's rivers when it has no river splines (decompiled before the decompiler fitted them, docs/formats/tile_decompile.md,
+//! "Rivers"): the packs have none, only the water surface BOB baked into the terrain mesh's last block (`mesh.rigid_model_v2`, carried in the project's `decompiled_terrain`): eight f32
 //! a vertex, u16 triangles, in the tile's metres with z the other way (z' = extent - z; 4x4_y_l1_r0_b3: the water 6.2 m
 //! above a bed 11.9 m down, under the ground at 66 of 210 vertices, the bank edges, against 188 the other way). Attila's block is type 90 (x, y, z, flow speed, the width
 //! across in metres, the distance along, alpha fade, the position across 0 .. 1; `wce_tile_io::attila::river`); Rome 2's type 48 (rpfm's

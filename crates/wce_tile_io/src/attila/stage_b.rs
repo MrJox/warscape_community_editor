@@ -27,6 +27,12 @@ const RAW_FOLDER_FILES: [&str; 2] = ["final_heights.dds", "final_alpha.dds"];
 /// The project folder a decompiled tile's stage-B files are carried in ([`super::carry`]).
 pub const CARRIED_DIR: &str = "decompiled_terrain";
 
+/// The fingerprint of the terrain's inputs but the rivers ([`fingerprints`]).
+const GROUND: &str = "ground";
+
+/// The meshes, whose river block a river edit replaces.
+const MESHES: [&str; 2] = ["mesh.rigid_model_v2", "outfield_mesh.rigid_model_v2"];
+
 /// The groups of stage B's files, each made again on its own when its inputs change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
@@ -63,7 +69,8 @@ pub fn group_of(name: &str) -> Option<Group> {
 }
 
 /// What each group is made from, hashed: the entry (all), the blend and ground type maps (textures), the other maps, the buildings'
-/// keys and world matrices, the go outlines and the rivers (terrain), the rivers and the simple meshes (the water planes).
+/// keys and world matrices, the go outlines and the rivers (terrain), the rivers and the simple meshes (the water planes). `ground` is
+/// the terrain's without the rivers: while it holds, a river edit only changes the meshes' river block ([`stage_b_files`]).
 pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64> {
     wce_foundation::wce_prof!("stage_b.fingerprints");
     use super::carry::Fnv;
@@ -100,11 +107,12 @@ pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64>
         }
     }
 
+    let ground = terrain;
     terrain.u32(rivers.0 as u32).u32((rivers.0 >> 32) as u32);
     let mut water = base;
     water.u32(rivers.0 as u32).u32((rivers.0 >> 32) as u32);
     instances(&mut water, super::compile::instances(raw, "SIMPLE_MESH_INSTANCE"));
-    std::collections::BTreeMap::from([("textures", textures.0), ("terrain", terrain.0), ("water", water.0)])
+    std::collections::BTreeMap::from([("textures", textures.0), ("terrain", terrain.0), ("water", water.0), (GROUND, ground.0)])
 }
 
 /// Whether a decompiled project's group is as it was decompiled (its stored fingerprint is the project's).
@@ -113,29 +121,55 @@ pub fn unchanged(raw: &Tile, group: Group) -> bool {
     stored.get(group.name()).is_some_and(|v| fingerprints(raw).get(group.name()) == Some(v))
 }
 
+/// Whether a decompiled project's terrain is as it was decompiled but maybe its rivers (the carried meshes' ground stays).
+pub fn ground_unchanged(raw: &Tile) -> bool {
+    let (_, stored) = super::carry::carried(raw, CARRIED_DIR);
+    let current = fingerprints(raw);
+    [Group::Terrain.name(), GROUND].iter().any(|k| stored.get(*k).is_some_and(|v| current.get(k) == Some(v)))
+}
+
 /// Stage B's files of a project as the exported tile's: a group whose files the project carries (a decompiled tile's, in
 /// [`CARRIED_DIR`]) and whose inputs are unchanged ([`fingerprints`]) is the carried files; the others are made ([`made_files`]). A
-/// group that can't be made is noted, the rest kept.
+/// group that can't be made is noted, the rest kept. When only the rivers changed the terrain's (`ground` holds), its carried files are
+/// kept with the meshes' river block made again from the project's rivers in the game's `river` format: the game's own meshes stay (the
+/// port's are not Rome 2's, docs/formats/rome2_tiles.md).
 ///
 /// # Errors
 ///
 /// Nothing is carried and nothing can be made (the reason of [`made_files`]).
-pub fn stage_b_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
+pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let (carried, stored) = super::carry::carried(raw, CARRIED_DIR);
     // Only a decompiled project stores fingerprints; without them nothing is kept and the project's aren't needed (they hash every map).
     let current = if stored.is_empty() { Default::default() } else { fingerprints(raw) };
     let has = |g: Group| carried.iter().any(|(n, _)| group_of(n) == Some(g));
     // An unchanged group the binary had no file of stays without one.
     let keep = |g: Group| stored.get(g.name()).is_some_and(|v| current.get(g.name()) == Some(v));
+    let ground_kept = stored.get(GROUND).is_some_and(|v| current.get(GROUND) == Some(v));
+    let respliced = !keep(Group::Terrain) && ground_kept && MESHES.iter().all(|m| carried.iter().any(|(n, _)| n == m));
+    let mut notes = CompileNotes::default();
     let mut out = vec![];
+    let tessellated = respliced.then(|| {
+        // The tile's cells along z: the grid's (h - 1) / density of `terrain_files`.
+        let cells_y = raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
+        super::river::tessellate(&super::river::river_splines(raw, cells_y), river)
+    });
     for (name, blob) in &carried {
-        if group_of(name).is_some_and(keep) {
-            out.push(((*name).to_owned(), blob.bytes().map_err(|e| format!("{CARRIED_DIR}/{name}: {e}"))?.to_vec()));
+        let Some(g) = group_of(name) else { continue };
+        if keep(g) || (g == Group::Terrain && respliced) {
+            let mut bytes = blob.bytes().map_err(|e| format!("{CARRIED_DIR}/{name}: {e}"))?.to_vec();
+            if let (Some(t), true) = (&tessellated, MESHES.contains(name)) {
+                bytes = super::river::with_river_block(&bytes, t).ok_or_else(|| format!("{CARRIED_DIR}/{name}: not a terrain mesh"))?;
+            }
+
+            out.push(((*name).to_owned(), bytes));
         }
     }
 
-    let mut notes = CompileNotes::default();
-    let wanted = Group::ALL.into_iter().filter(|&g| !keep(g)).collect::<Vec<_>>();
+    if respliced {
+        notes.notes.push("stage B: the decompiled tile's meshes kept with their river block made again (only the rivers changed)".to_owned());
+    }
+
+    let wanted = Group::ALL.into_iter().filter(|&g| !keep(g) && !(g == Group::Terrain && respliced)).collect::<Vec<_>>();
     if wanted.is_empty() {
         return Ok((out, notes));
     }
@@ -144,7 +178,7 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), 
         notes.notes.push(format!("stage B: the decompiled tile's {} files made again (the project changed since it was decompiled)", g.name()));
     }
 
-    match made_files(raw, ctx) {
+    match made_files(raw, ctx, river) {
         Ok((made, more)) => {
             notes.notes.extend(more.notes);
             out.extend(made.into_iter().filter(|(n, _)| group_of(n).is_some_and(|g| wanted.contains(&g))));
@@ -167,10 +201,10 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), 
 /// # Errors
 ///
 /// The project lacks a blend or height map, or a linking tile's heights are missing.
-pub fn made_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
+pub fn made_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
     // The textures and the terrain are made from different maps: side by side on the thread pool, their files taken in order.
-    let (textures, terrain) = rayon::join(|| super::bob_tile::textures(raw), || made_terrain(raw, ctx));
+    let (textures, terrain) = rayon::join(|| super::bob_tile::textures(raw), || made_terrain(raw, ctx, river));
     let mut out = textures?;
     let (terrain, more) = terrain?;
     notes.notes.extend(more.notes);
@@ -179,7 +213,7 @@ pub fn made_files(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), Str
 }
 
 /// [`made_files`]' terrain: the building stamps, the meshes, the height fields, the outlines.
-fn made_terrain(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), String> {
+fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
     let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.raw_data);
     if !missing.is_empty() {
@@ -190,7 +224,7 @@ fn made_terrain(raw: &Tile, ctx: &StageB) -> Result<(Files, CompileNotes), Strin
     }
 
     let angle = super::terrain_mesh::decimation_angle(ctx.raw_data);
-    let terrain = super::terrain_mesh::terrain_files(raw, ctx.raw_data, angle, &stamps, ctx.models)?;
+    let terrain = super::terrain_mesh::terrain_files(raw, ctx.raw_data, angle, &stamps, ctx.models, river)?;
     Ok((terrain, notes))
 }
 

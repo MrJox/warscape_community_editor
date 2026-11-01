@@ -1871,7 +1871,7 @@ pub fn compile(raw: &Tile, ctx: &CompileContext) -> Result<(Tile, CompileNotes),
         ctx.stage_b.as_ref().map(|b| {
             wce_foundation::wce_prof!("export.compile.stage_b");
             let _a = wce_foundation::activity::start("Stage B: terrain mesh, height, normal, blend and ground type maps");
-            super::stage_b::stage_b_files(raw, b)
+            super::stage_b::stage_b_files(raw, b, ctx.conventions.river)
         })
     };
 

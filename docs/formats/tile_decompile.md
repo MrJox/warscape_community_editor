@@ -123,9 +123,39 @@ writes them back while the project is unchanged (docs/formats/tile_compile.md, "
 
 - Vegetation exclusion polygons: applied to the tree lists by BOB. Four tiles ship a `vegetation_exclusion.xml` bounding box that matches
   no kit polygon.
-- River splines: the river tiles ship the water surface (`hf_water_map.data`) only.
+- River splines: the tiles ship the water surface only, baked into the meshes' river block (and `hf_water_map.data`). The decompiler
+  fits splines to the block (`river::fit_splines`, see "Rivers" below) so the rivers can be edited; the carried meshes keep the
+  game's block while they are unchanged.
 - Civilian shelters: a `CivilianShelter` per record (target and position at y 0, the kit's colours), its capacity as
   `max_shelter_capacity` unless u32::MAX (an attribute the kit's TEd does not know; the compiler reads it). An empty file is carried.
+
+## Rivers
+
+The river block of `mesh.rigid_model_v2` (`river::read_river_block`: Attila's type 90, Rome 2's type 48, docs/formats/tile_compile.md
+"The river") is BOB's tessellation of the splines: rows of five vertices across, kept where the river turns by about 11 degrees, plus
+the rows at 0, 1/8 .. 6/8 of the length.
+
+- **Rows** (`river::river_rows`): the strips are the triangles' connected parts; in each, the vertices grouped by their place along (the
+  repeated last row once), five across, sorted. A row's centre is the vertex at 0.5 across, its width the distance between the edge
+  vertices, its flow, alpha and foam the vertex's (Attila's block has no foam: TEd's 0.1).
+- **Segments** (`river::fit_splines`): from the first row, each segment over the longest run of rows (up to 400) that one cubic Bézier
+  passes, its control points P1 and P2 by least squares, the ends the end rows. A row's parameter on it is its share of the run: BOB
+  samples a river by length and a segment by its own parameter, linearly, so the rows of one TEd segment, or of a part of one, fit a
+  cubic exactly. A run is taken when:
+  - every row is within 2 cm of the curve at its parameter;
+  - halfway between two rows the curve is within 3 % of their chord and 2 cm of the chord's middle (BOB's chords sag by up to 2.5 %),
+    its height within 5 cm and 0.5 % of the chord (a curve fitted to few rows can swing between them);
+  - its width (within 1 cm: it comes from the edge vertices' f32), flow and foam are one, its alpha a line. TEd's files hold the width,
+    flow and foam per segment (point i's on all four points) and lerp only the alpha.
+- Where the values change between two rows, the spline point lies somewhere between them: a straight segment bridges the two rows,
+  with the next row's values (BOB's rows are near straight between neighbours). Where the first row's values are not the second's, a
+  0.5 m lead-in segment holds them.
+- Over the packs' meshes (`examples/river_fit_check.rs`: Rome 2's 283 with a river block, 69,573 rows; Attila's 228, 9,512 rows) every
+  row lies within 1.9 cm of the fitted curves, with its width, flow and foam, and its alpha within 0.002. Rome 2's rivers come out at
+  about 13 rows a segment (a 2x2 river tile: 9 to 11 points), Attila's at under 2 (its rows are sparse).
+- Written as TEd's (`decompile::river_nodes`): a layer `Decompiled rivers` of `SplineRiverInstance`s (freeform, at their first point,
+  the points relative) and their `river_spline<n>.xml`. The scene's x and z are the file's doubled and its widths too
+  (`wce_tile::river_files`); its heights the file's (the factor 1 of TEd's older rivers, which the editor's save keeps).
 
 ## The entry
 
