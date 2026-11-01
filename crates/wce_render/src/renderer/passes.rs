@@ -833,6 +833,7 @@ impl Renderer {
         let size = SHADOW_SIZE as f32;
         self.cbs.set_f("shadowmap_PS", "g_vHardShadowBufferSize", &[size, size, 1.0 / size, 1.0 / size]);
         self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &matrices);
+        self.camera.shadow_splits = matrices;
 
         // float[5], a 16-byte stride.
         let mut dist = [0.0f32; 17];
