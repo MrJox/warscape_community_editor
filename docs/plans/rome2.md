@@ -73,9 +73,19 @@ Status legend: **done**, **partial**, **todo**.
   and resolves with `_ts`; the grass draws with the game's `ps30_gbuffer_no_clip_grass` (one pass, the blade's colour divided by its
   alpha). The beach view: sand and grass within 5 % of the game's.
 - **done** Roof stripes in the baked shadows (user report): casters stored 1 unit lower, drawn at the view's levels of detail.
-- **todo** Seen in the capture, not done: the game's depth of field blurs the distant city (the editor draws it sharp); with the bright
-  `day_dry_01` weather the editor's image is washed out since the grain variant (not compared with the game: the capture is
-  `day_dry_05`).
+- **done** Depth of field (2026-11-01, the capture; `renderer/dof.rs`): `pixel_dof_coc` then `cs_dof_horizontal_blur` /
+  `cs_dof_vertical_blur`, before hdr_to_screen; the distant city blurs as the game's.
+- **done** The shadow atlas at 4096 (the game's at the highest quality); the casters' culling: the light-facing faces (the editor's light
+  space is mirrored against the game's: FRONT for the cascades, BACK for the baked map).
+- **done** The buildings' climate variants (`cliff_rome_med_diffuse.dds` ..., `Renderer::climate_variant`; ASSUMPTION: resolved as the
+  custom meshes' are).
+- **checked, nothing to do** The sea tiles' LF scale (400 in the game): the sea LF is 0 around Carthage (5246 non-zero pixels on the whole
+  map, as Attila's), so `LF * 400 - 20` is the editor's -20.
+- **todo** The bright `day_dry_01` looks washed out at a distance since the grain variant (+7 .. 18 %); the grain's code matches the game
+  at `day_dry_05`: needs a capture of the game in `day_dry_01` to tell.
+- **todo** The shore foam band: the game's land LF is a 256 x 256 window of the campaign LF around the battle (64 game units a texel,
+  whole-texel aligned with `lf_height_map.dds`, 0.26 m mean difference); at Carthage's shore the game's ground is 0.6 m under its sea bed,
+  the editor's 0.07 m. Not traced further (the editor's sub-texel placement of the open tile on the LF, its `bias_y`).
 - **done** The output (2026-11-01, the capture): `hdr_to_screen`'s grain variants with gfx_grain (the image 1.7 x brighter before gamma
   with it); the vignette is the tone mapper's `vignette_buffer` (gfx_vignette; no lens-flare vignette). Gamma and brightness were the
   game's already.
