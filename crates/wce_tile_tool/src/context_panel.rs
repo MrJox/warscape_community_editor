@@ -503,7 +503,9 @@ impl ContextUi {
         log::info(format!("map context: {}", s.frame().lf_note()));
         self.streamer = Some(s);
         let at = self.focus(e).unwrap_or_default();
-        let sea = add_range(&mut e.scene, self.layer, id, vec![self.streamer.as_ref().expect("set").frame().sea(at, self.sea_reach())]);
+        let frame = self.streamer.as_ref().expect("set").frame().clone();
+        let deepest = e.docs.find_as::<TileDocument>(id).and_then(|d| d.project().height.as_ref().map(|h| h.min_height())).unwrap_or(0.0);
+        let sea = add_range(&mut e.scene, self.layer, id, std::iter::once(frame.sea(at, self.sea_reach())).chain(frame.open_floor(deepest)).collect());
         (self.sea, self.sea_at) = (Some(sea.start), at);
 
         // The open tile's height map border would lie over the neighbours; its ground goes on the LF like theirs.

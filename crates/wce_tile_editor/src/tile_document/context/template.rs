@@ -191,7 +191,7 @@ fn alpha_map(m: &TerrainMaterial, ex: f64, ez: f64) -> TerrainImage {
 /// the tile with its border (one cell around, (cells + 2) * 128 pixels a side), 1 over the tile and an irregular part of the border, so
 /// neighbours overlap and fade into each other over 32 .. 96 m in organic shapes (the resolve divides by the weights' sum). None when the
 /// game has no such texture.
-fn game_alpha(entry: &wce_formats::tile_entry::TileEntry, cells: (u32, u32), files: &dyn Files) -> Option<TerrainImage> {
+pub(crate) fn game_alpha(entry: &wce_formats::tile_entry::TileEntry, cells: (u32, u32), files: &dyn Files) -> Option<TerrainImage> {
     let custom = entry.custom_alpha_blend_texture().replace('\\', "/").to_lowercase();
     let kind = Some(entry.kind()).filter(|k| !k.is_empty()).unwrap_or_else(|| "battle".to_owned());
     let path = if custom.is_empty() { format!("terrain/textures/{kind}/alpha/{}x{}.dds", cells.0, cells.1) } else { custom };
