@@ -400,6 +400,7 @@ impl Renderer {
         bind_sampler(&self.ctx, &ps, "s_environment", self.states.s_clamp_linear.as_ref());
         bind_sampler(&self.ctx, &ps, "s_ssao", self.states.s_clamp_linear.as_ref());
         bind_sampler(&self.ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
+        self.bind_baked_shadow(&ps);
 
         // gfx_cloud_shadows (Thrones of Britannia; fn 0x117c3680): the clouds' shade over the sun, in battle scale 0.0005 and every pixel
         // (w 1); off: zero, the shade never applies.
@@ -849,8 +850,8 @@ impl Renderer {
         self.cbs.set_f("shadowmap_PS", "g_shadow_light_direction", &[light_dir.x, light_dir.y, light_dir.z]);
 
         // Rome 2's light pass picks the cascade by the number of split ends the pixel's view depth (game units) is past, shades nothing
-        // beyond the shadow range, blends a cascade into the next over g_fFadeRange.x and fades out over .y before the last split; its baked
-        // shadows are unused (their distance out of reach). The game's values (fn 0x1147aa90): range `shadow_farz` 360, fade (3, half the
+        // beyond the shadow range, blends a cascade into the next over g_fFadeRange.x and fades out over .y before the last split; past them
+        // its baked shadows (shadow_baked.rs). The game's values (fn 0x1147aa90): range `shadow_farz` 360, fade (3, half the
         // third split), sample bias 0.1 (battle). docs/re/rome2_renderer.md.
         if rome2 {
             let end = |i: usize| splits[i] * u;
@@ -858,8 +859,9 @@ impl Renderer {
             self.cbs.set_f("shadowmap_PS", "g_vShadowRange", &[360.0, 0.0, 0.0, 0.0]);
             self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[3.0, end(3) * 0.5]);
             self.cbs.set_f("shadowmap_PS", "g_sample_bias", &[0.1]);
-            self.cbs.set_f("shadowmap_PS", "g_vBakedShadowmapParams", &[0.0, 1.0e9, 0.0, 1.0]);
         }
+
+        self.pass_baked_shadows(scene, cam, light_dir);
     }
 
     pub(crate) fn pass_fog(&mut self) {

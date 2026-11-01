@@ -273,6 +273,7 @@ impl Renderer {
         bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
+        self.bind_baked_shadow(&ps);
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
         // Rome 2's planar reflection (the mirrored sky, as the sea's).
         let reflection = self.water_reflection_srv();
