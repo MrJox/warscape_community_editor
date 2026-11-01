@@ -135,7 +135,7 @@ impl Renderer {
 
         self.cbs.set_f("point_light_PS", "g_viewport_offset_scale", &[0.0, 0.0, 1.0, 1.0]);
         self.upload();
-        self.ctx.set_render_targets(std::slice::from_ref(&self.gbuffer.hdr.rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.lights.rs.as_ref());
         self.ctx.set_blend_state(self.lights.bs.as_ref());

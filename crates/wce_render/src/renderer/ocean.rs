@@ -628,12 +628,12 @@ impl Renderer {
         self.upload();
 
         let rtvs = if rome2 {
-            vec![self.gbuffer.hdr.rtv.clone()]
+            vec![self.gbuffer.scene_hdr_rtv()]
         } else {
-            vec![self.gbuffer.channels[0].rtv.clone(), self.gbuffer.channels[1].rtv.clone(), self.gbuffer.channels[2].rtv.clone(), self.gbuffer.hdr.rtv.clone()]
+            self.gbuffer.scene_rtvs()[..3].iter().cloned().chain([self.gbuffer.scene_hdr_rtv()]).collect()
         };
         null_ps_srvs(&self.ctx, 16);
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.water.ds.as_ref(), 1);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());

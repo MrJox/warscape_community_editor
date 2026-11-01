@@ -321,8 +321,8 @@ impl Renderer {
         }
 
         self.grass_constants();
-        let rtvs = self.gbuffer.channels[..4].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        let rtvs = self.gbuffer.scene_rtvs()[..4].to_vec();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_blend_state(if rome2 { self.states.bs_opaque.as_ref() } else { self.grass.bs.as_ref() });

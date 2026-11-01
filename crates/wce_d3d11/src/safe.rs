@@ -551,6 +551,8 @@ pub trait ContextExt {
     fn generate_mips(&self, srv: &ID3D11ShaderResourceView);
 
     fn copy_resource(&self, dst: &ID3D11Resource, src: &ID3D11Resource);
+    /// A multisampled texture averaged into a one-sample one (subresource 0 of both).
+    fn resolve_subresource(&self, dst: &ID3D11Resource, src: &ID3D11Resource, format: DXGI_FORMAT);
     fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, dst_at: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>);
 
     /// Copies `data` into a subresource, or the `dst_box` region of it, with these pitches.
@@ -818,6 +820,11 @@ impl ContextExt for ID3D11DeviceContext {
     fn copy_resource(&self, dst: &ID3D11Resource, src: &ID3D11Resource) {
         // SAFETY: a GPU copy; the runtime checks the resources match.
         unsafe { self.CopyResource(dst, src) };
+    }
+
+    fn resolve_subresource(&self, dst: &ID3D11Resource, src: &ID3D11Resource, format: DXGI_FORMAT) {
+        // SAFETY: a GPU resolve; the runtime checks the resources and format.
+        unsafe { self.ResolveSubresource(dst, 0, src, 0, format) };
     }
 
     fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, [x, y, z]: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>) {

@@ -42,8 +42,7 @@ No MLAA with MSAA. The tone mapper's `..._with_bloom_and_gamma_ms_Nx` techniques
    intermediates and view depth) and is resolved into the MS G-buffer; its depth and stencil expanded into the MS depth. Grass, rigid
    meshes, trees and billboards drawn into the MS targets with their `_ms` techniques (`ps41_gbuffer_alpha_test_ms`,
    `ps50_gbuffer_ms`, `ps50_gbuffer_grass_ms`: alpha as coverage, `g_num_of_samples`). Then the depth resolve into s1 depth and an s1
-   channel 4 for the s1 readers (SSAO, refraction, particles, depth analysis). Until step 2, a sample-0 copy of channels 1..3 keeps the
-   s1 lighting working.
+   channel 4 for the s1 readers (SSAO, refraction, particles, depth analysis). Done together with step 2 (see "Design").
 2. **Lighting into an MS light buffer.** Directional and point lights, decals, environment specular and its blur, fog with their `_ms`
    techniques; rivers, sea, sky, clouds, sun and particles drawn into the MS light buffer; `ResolveSubresource` before tone mapping;
    `hdr_to_screen`'s `_ms` variant.

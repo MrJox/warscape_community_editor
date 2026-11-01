@@ -19,6 +19,8 @@ pub(crate) const BLEND_MATERIAL_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_p
 
 /// One draw of the terrain-blend meshes: the shaders, what they draw into and how.
 pub(crate) struct BlendDraw<'a> {
+    /// The depth-stencil: the scene's (MS with MSAA) for the G-buffer pass, the one-sample one for the terrain's own targets.
+    pub dsv: Option<ID3D11DepthStencilView>,
     pub vs: &'a str,
     pub ps: &'a str,
     pub targets: Vec<Option<ID3D11RenderTargetView>>,
@@ -37,7 +39,7 @@ impl Renderer {
 
         let (Some(vs), Some(ps)) = (self.shader(d.vs), self.shader(d.ps)) else { return };
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
-        self.ctx.set_render_targets(&d.targets, self.gbuffer.dsv.as_ref());
+        self.ctx.set_render_targets(&d.targets, d.dsv.as_ref());
         self.ctx.set_depth_stencil_state(d.depth_stencil.as_ref(), d.stencil_ref);
         self.ctx.set_blend_state(d.blend.as_ref());
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());

@@ -1149,6 +1149,7 @@ impl Renderer {
         let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
         let firsts = self.draw_lists.gbuffer_firsts;
         let d = blend_mesh::BlendDraw {
+            dsv: self.gbuffer.dsv.clone(),
             vs: blend_mesh::BLEND_GEOM_VS, ps: blend_mesh::BLEND_GEOM_PS, targets: vec![viewz_rtv.clone()], depth_stencil: self.terrain.ds_lequal.clone(), stencil_ref: 0,
             blend: self.states.bs_opaque.clone(),
         };
@@ -1337,6 +1338,7 @@ impl Renderer {
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let d = blend_mesh::BlendDraw {
+            dsv: self.gbuffer.dsv.clone(),
                 vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_MATERIAL_PS, targets: self.terrain.acc.iter().map(|a| a.rtv.clone()).collect(),
                 depth_stencil: self.terrain.ds_equal.clone(), stencil_ref: 0, blend: self.terrain.bs_add.clone(),
             };
@@ -1357,8 +1359,8 @@ impl Renderer {
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
         let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
         let Some(il) = self.layout(&res_vs, "terrain_resolve", &el) else { return };
-        let rtvs = self.gbuffer.channels.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        let rtvs = self.gbuffer.scene_rtvs();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.terrain.ds_resolve.as_ref(), 2);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());

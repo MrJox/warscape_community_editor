@@ -412,8 +412,8 @@ impl Renderer {
         cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
         self.upload();
 
-        let rtvs = self.gbuffer.channels[..3].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        let rtvs = self.gbuffer.scene_rtvs()[..3].to_vec();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
         self.ctx.set_depth_stencil_state(self.decals.ds.as_ref(), u32::from(DECAL_RECEIVER));
         self.ctx.set_rasterizer_state(self.decals.rs.as_ref());
         self.ctx.set_blend_state(self.decals.bs.as_ref());
