@@ -30,6 +30,7 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const GRASS_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_main_grass";
 const GRASS_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_gbuffer_grass";
+const GRASS_MS_PS: &str = "dx11_sm_5_0_rigidgrass.hlsl_ps_ps50_gbuffer_grass_ms";
 const GRASS_SHADOW_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_shadow_grass";
 const GRASS_SHADOW_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_shadow_grass";
 const DISSOLVE_MAP: &str = "commontextures/dissolve.dds";
@@ -299,7 +300,9 @@ impl Renderer {
             return;
         }
 
-        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), self.shader(GRASS_PS)) else { return };
+        // With MSAA the coverage technique (`ps50_gbuffer_grass_ms`).
+        let ms_ps = if self.gbuffer.ms.is_some() { self.shader(GRASS_MS_PS) } else { None };
+        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), ms_ps.or_else(|| self.shader(GRASS_PS))) else { return };
         let Some(layout) = self.grass_layout(&vs) else { return };
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
         // gfx_alpha_blend: the near patches are the order-independent transparency's (`pass_oit`).
