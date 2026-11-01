@@ -593,6 +593,11 @@ impl Renderer {
     pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
         // In game units, as the rows (the depth analysis is in scene units); the slices go back to scene units below. Mixed, every
         // cascade came out twice the game's length (coast dump: 9.9, 41, 134, 352, 819 against the editor's 9.8, 73, 261, 700, 1640).
+        let size = if self.game == super::game::RenderGame::Rome2 { ROME2_SHADOW_SIZE } else { SHADOW_SIZE };
+        if self.shadow_map.size != size {
+            self.shadow_map = ShadowMap::new(&self.dev, size);
+        }
+
         let u = self.camera.units;
         let row = SHADOW_ROWS[self.settings.shadow_quality.clamp(0, 3) as usize];
         let n = cam.znear.max(1.0);
@@ -658,7 +663,7 @@ impl Renderer {
                 inv_view.transform_point(v)
             });
 
-            let tile = (SHADOW_SIZE / 2) as f32;
+            let tile = (self.shadow_map.size / 2) as f32;
             if rome2 {
                 // Fitted in game units (the texel snap is the game's); `light_rel` takes scene units.
                 let fit = shadow_fit::fit_rome2(&pts.map(|p| p * u), light_dir, tile);
@@ -675,7 +680,7 @@ impl Renderer {
                 texel_c[c] = fit.width / u / tile;
 
                 // The atlas (fn 0x1141f840): x scale + offset to the tile's centre (and half a texel), y flipped.
-                let size = SHADOW_SIZE as f32;
+                let size = self.shadow_map.size as f32;
                 let (ox, oy) = ((SHADOW_BOUNDS[c][0] * size + 0.5) / size + 0.25, (SHADOW_BOUNDS[c][1] * size + 0.5) / size + 0.25);
                 let mut m = g;
                 m.m[0] = std::array::from_fn(|k| 0.25 * g.m[0][k] + ox * g.m[3][k]);
@@ -733,6 +738,10 @@ impl Renderer {
 
             self.ctx.set_rasterizer_state(rs_shadow.as_ref());
 
+            // Rome 2 culls the rigid casters' back faces (a capture of a battle: CullMode BACK, depth bias 1, slope 2, as its terrain; only the
+            // swaying vegetation draws two-sided). Two-sided, a roof's own top was in the map and shaded it in bands.
+            let rs_shadow_rigid = if rome2 { rs_shadow_terrain.clone() } else { rs_shadow.clone() };
+
             let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
             let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
             let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
@@ -741,8 +750,8 @@ impl Renderer {
             let terrain_material = self.terrain.active && !self.env.active;
             for c in 0..4 {
                 self.ctx.set_input_layout(Some(&layout));
-                let half = SHADOW_SIZE as f32 / 2.0;
-                self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
+                let half = self.shadow_map.size as f32 / 2.0;
+                self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32, SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32, half, half)]);
                 self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(&light_rel[c], self.camera.units).data());
                 self.upload();
                 self.bind(&vs);
@@ -779,7 +788,9 @@ impl Renderer {
                 }
 
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+                self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
                 let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
+                self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
                 if terrain_material {
@@ -831,7 +842,7 @@ impl Renderer {
         self.ctx.set_render_targets(&[], None);
 
         // shadowmap_PS as the game fills it (the layout and constants from the memory dump).
-        let size = SHADOW_SIZE as f32;
+        let size = self.shadow_map.size as f32;
         self.cbs.set_f("shadowmap_PS", "g_vHardShadowBufferSize", &[size, size, 1.0 / size, 1.0 / size]);
         self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &matrices);
         self.camera.shadow_splits = matrices;

@@ -2,7 +2,6 @@
 
 use wce_d3d11::*;
 
-use super::SHADOW_SIZE;
 
 /// A texture with its render target and shader resource views.
 #[derive(Clone, Debug, Default)]
@@ -306,12 +305,15 @@ impl PostTargets {
 pub(crate) struct ShadowMap {
     pub dsv: Option<ID3D11DepthStencilView>,
     pub srv: Option<ID3D11ShaderResourceView>,
+
+    /// Its side: SHADOW_SIZE (Attila's dump), Rome 2's ROME2_SHADOW_SIZE.
+    pub size: u32,
 }
 
 impl ShadowMap {
-    pub fn new(dev: &ID3D11Device) -> Self {
+    pub fn new(dev: &ID3D11Device, size: u32) -> Self {
         let td = D3D11_TEXTURE2D_DESC {
-            Width: SHADOW_SIZE, Height: SHADOW_SIZE, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Width: size, Height: size, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
         };
 
@@ -319,7 +321,7 @@ impl ShadowMap {
         let dd = D3D11_DEPTH_STENCIL_VIEW_DESC { Format: DXGI_FORMAT_D32_FLOAT, ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D, ..Default::default() };
         let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R32_FLOAT, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D), ..Default::default() };
         sd.Anonymous.Texture2D.MipLevels = 1;
-        Self { dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(), srv: dev.create_shader_resource_view(&tex, Some(&sd)).ok() }
+        Self { dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(), srv: dev.create_shader_resource_view(&tex, Some(&sd)).ok(), size }
     }
 }
 
