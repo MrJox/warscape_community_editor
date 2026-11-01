@@ -524,8 +524,10 @@ impl Renderer {
             DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
         });
 
-        // The blend boxes: their back faces cover the pixels once, also from inside the box.
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_FRONT, DepthClipEnable: true.into(), ..Default::default() };
+        // The blend boxes: their back faces cover the pixels once, also from inside the box. Not clipped by depth (clamped instead): the
+        // back face of a box at the horizon lies past the far plane, and clipped, the ground there got no material (black: the light
+        // pass's 0, which Rome 2's log-luminance tone mapping spread into dark blocks).
+        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_FRONT, DepthClipEnable: false.into(), ..Default::default() };
         t.rs_front_cull = dev.create_rasterizer_state(&rd).ok();
 
         // The unit box: corner i = (i & 1, i >> 1 & 1, i >> 2 & 1); triangles wound so that (b - a) x (c - a) points outwards, which is clockwise
