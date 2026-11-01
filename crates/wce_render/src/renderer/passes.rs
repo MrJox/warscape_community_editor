@@ -487,11 +487,16 @@ impl Renderer {
         bind_srv(&self.ctx, &es, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
         bind_srv(&self.ctx, &es, "t_depth_stencil_int", self.post.stencil.srv.as_ref());
 
-        // With MSAA the MS G-buffer, light buffer and the real stencil (the shader marches where its low four bits are 1: geometry).
+        // With MSAA the MS G-buffer and light buffer, and the MS stencil stand-in (1 everywhere, as the one above: the shader marches
+        // where the low four bits are 1, and the real stencil has the rivers and the terrain at 2).
         self.bind_gbuffer_ms(&es);
         if let Some(ms) = &self.gbuffer.ms {
+            if let Some(rtv) = &ms.stencil.rtv {
+                self.ctx.clear_render_target_view(rtv, [1.0, 1.0, 0.0, 0.0]);
+            }
+
             bind_srv(&self.ctx, &es, "t_light_accumulation_buffer_ms", ms.hdr.srv.as_ref());
-            bind_srv(&self.ctx, &es, "t_depth_stencil_int_ms", ms.depth.stencil_srv.as_ref());
+            bind_srv(&self.ctx, &es, "t_depth_stencil_int_ms", ms.stencil.srv.as_ref().or(ms.depth.stencil_srv.as_ref()));
         }
         bind_srv(&self.ctx, &es, "t_jitter", self.res.jitter_srv.as_ref());
         ps_samplers(&self.ctx, &es, &self.states.s_clamp_point);
