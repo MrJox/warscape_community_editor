@@ -146,16 +146,30 @@ pub struct View {
     pub no_context: bool,
 }
 
-/// The quality options' levels that switch a model's first LODs off in battle (docs/re/graphics_options.md: Attila's fn 0x1180c370 and
-/// fn 0x11841280, Thrones of Britannia's the same): gfx_building_quality, gfx_unit_quality and gfx_tree_quality. `None`: no LOD is off
-/// (the highest levels, and Rome 2, whose pass is not found).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LodQuality(pub Option<[i32; 3]>);
+/// The quality options' LOD rules in battle (docs/re/graphics_options.md).
+///
+/// Attila and Thrones of Britannia switch a model's first LODs off (Attila's fn 0x1180c370 and fn 0x11841280, Thrones of Britannia's the
+/// same): `off` holds gfx_building_quality, gfx_unit_quality and gfx_tree_quality, `None` when no LOD is off (the highest levels).
+///
+/// Rome 2 instead sets a building's LOD distances from its own table (fn 0x114dfc60, `battle_building_lod0_distance` ..
+/// `battle_building_lod4_distance`) with the first three scaled by the building level's `lod_multiplier_for_*`: `rome2_building` holds
+/// that multiplier. The file's distances are not used then.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LodQuality {
+    pub off: Option<[i32; 3]>,
+    pub rome2_building: Option<f32>,
+}
+
+/// Rome 2's `battle_building_lod0_distance` .. `battle_building_lod4_distance` defaults (registered at 0x100c7e50 ..).
+pub const ROME2_BUILDING_LOD_DISTANCE: [f32; 5] = [100.0, 200.0, 300.0, 600.0, 10000.0];
+
+/// Rome 2's `lod_multiplier_for_low` .. `lod_multiplier_for_extreme` defaults, by gfx_building_quality level.
+pub const ROME2_LOD_MULTIPLIER: [f32; 6] = [0.25, 0.25, 0.35, 0.5, 2.0, 3.0];
 
 impl LodQuality {
     /// The LODs switched off for a model of this type with `n` LODs: a range of LOD indices (the last LOD always stays).
     pub fn off(&self, material: u16, n: usize) -> std::ops::Range<usize> {
-        let Some([building, unit, tree]) = self.0 else { return 0..0 };
+        let Some([building, unit, tree]) = self.off else { return 0..0 };
         let last = n.saturating_sub(1);
 
         // The level a model's type takes (fn 0x11841280, battle) and the pass's numbers for it: (first kept when spared, end of the run,
@@ -171,6 +185,20 @@ impl LodQuality {
 
         let first = if spare < last { start } else { last };
         first..end.min(last).max(first)
+    }
+
+    /// A LOD's switch distance: Rome 2's building table when set (the last LOD stays to any distance), else the file's.
+    ///
+    /// ASSUMPTION: Rome 2 gives every placed model the building type (0x49: its scene's building nodes; the type is the node's, not the
+    /// file's material). At levels 4 and 5 (`battle_building_fix_lod_range`) the engine takes a LOD's table entry by its meshes' +0xa8,
+    /// read here as the LOD's own index. Not modelled: `battle_building_no_draw_*` (the last LOD hidden past 200 x the model's size when
+    /// the building has no name).
+    pub fn distance(&self, lod: usize, file: &[f32]) -> f32 {
+        match self.rome2_building {
+            Some(_) if lod + 1 >= file.len() => f32::INFINITY,
+            Some(m) => ROME2_BUILDING_LOD_DISTANCE[lod.min(4)] * if lod < 3 { m } else { 1.0 },
+            None => file[lod],
+        }
     }
 }
 
@@ -533,7 +561,7 @@ impl DrawSet {
 
                     // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
                     let off = v.quality.off(me.material, last + 1);
-                    while lod < last && (off.contains(&lod) || d > me.lod_distance[lod]) {
+                    while lod < last && (off.contains(&lod) || d > v.quality.distance(lod, &me.lod_distance)) {
                         lod += 1;
                     }
 
@@ -704,6 +732,21 @@ impl DrawSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rome2_building_lod_distances_come_from_its_table() {
+        let file = [100.0, 200.0, 400.0, 500.0, 1000.0];
+        let q = |m| LodQuality { off: None, rome2_building: Some(m) };
+
+        // The first three scaled by the level's multiplier, the fourth not, the last to any distance.
+        let at = |q: LodQuality| (0..5).map(|l| q.distance(l, &file)).collect::<Vec<_>>();
+        assert_eq!(at(q(ROME2_LOD_MULTIPLIER[0])), [25.0, 50.0, 75.0, 600.0, f32::INFINITY]);
+        assert_eq!(at(q(ROME2_LOD_MULTIPLIER[5])), [300.0, 600.0, 900.0, 600.0, f32::INFINITY]);
+        assert_eq!(q(2.0).distance(1, &file[..2]), f32::INFINITY);
+
+        // Attila's: the file's.
+        assert_eq!(at(LodQuality::default()), file);
+    }
 
     #[test]
     fn removing_items_keeps_the_others_and_their_parameters() {

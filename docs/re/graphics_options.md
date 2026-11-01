@@ -93,9 +93,22 @@ How its renderer applies them (static analysis, 2026-11-01; the functions in Rom
 - Effects (fns 0x115b2130, 0x115be0d0, 0x115d9ca0): variant 2 at 0 .. 2, 1 at 3, 0 at 4 and 5 (Attila's scheme at other thresholds).
 - Anti-aliasing: 0 off, 1 MLAA (fn 0x11429450, Attila's passes and constants), 2 .. 4 MSAA 2x .. 8x (techniques switched to their `_ms`
   variants, fn 0x1147d680; far fewer `_ms` techniques than Attila's: not traced).
-- Building and unit detail: no switch-off pass (Attila's fn 0x1180c370); fn 0x114dfc60 scales the LODs' switch distances by a level's
-  `lod_multiplier_for_*` (0.25, 0.25, 0.35, 0.5, 2, 3), from per-type base distances (units 5 / 10 / 30 / 100, buildings 100 / 200 / 300 /
-  600, ...).
+- Building and unit detail: no switch-off pass (Attila's fn 0x1180c370); fn 0x114dfc60 sets a model's LOD switch distances from
+  per-type tables and the level's `lod_multiplier_for_low` .. `_extreme` tweakers (0.25, 0.25, 0.35, 0.5, 2, 3). The type is LOD 0's
+  first mesh's +0x10 and its level fn 0x1151ab60's (0x4a .. 0x4c the unit level; 0x30, 0x48, 0x49, 0x4d, 0x5a, 0x6c the building level;
+  0x5c, 0x5d, 0x6f the settings getter +0x1d4; others 5). These are not the files' material ids: Rome 2's building models are
+  DefaultMaterial (68) and its units Weighted / WeightedSkin* (64, 65, 79, 82) by a scan of its model packs, none of them in the lists.
+  Per type:
+  - 0x49 (buildings, the `battle_building_*` tweakers, registered at 0x100c7d80 .. 0x100c8100): `battle_building_lod0_distance` ..
+    `lod4_distance` 100, 200, 300, 600, 10000, the first three times the multiplier (`enable_lod_size_scale`, off, would scale it by
+    the model's largest extent / `lod_scale_nominal_size` 20). `fix_lod_range` (on) at building levels 4 and 5: a LOD whose meshes all
+    share one +0xa8 value takes that entry of the table instead of its own. The last LOD: `always_draw_last_lod` (on) sets its distance
+    to `no_draw_distance_calibration` 400 x the extent / `no_draw_size_calibration` 2 when the node has no name (`no_draw_enable`, on),
+    else 10000. The files' distances are not read.
+  - 0x4a .. 0x4c (units): 5 / 10 / 30 / 100 times a size scalar per type and the multiplier, at least a floor; 0x48 (ships,
+    `battle_ship_lod*_distance`) 60 / 120 / 200 / 300 times the multiplier; 0x6f, 0x6a and 0x42 their own tables; the others the
+    file's distance times the multiplier squared.
+  The distances are stored squared (+0x38).
 - God rays (fn 0x114281a0): Thrones of Britannia's views and shaders; drawn when on, the weather not night or storm, the sun strong
   enough and ahead of the camera (fn 0x1144f020).
 - Alpha blending: its OIT views are built, but every test of them calls fn 0x100d31d0, which returns false: alpha-tested foliage at
@@ -284,10 +297,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
 - Rome 2 (2026-11-01, above): shadows (`rome2_cascades`: the cascades, their lengths, the baked map's size; levels 1 and 2 keep the
   2 x 2 atlas layout at the game's tile size), water (`rome2_water`, the planar reflection from 3), sky, effects (the Attila level of the
   same variant; ASSUMPTION: the particle pool follows it), texture filtering, MLAA, god rays (not its weather and sun gates), tessellation
-  (its hull and domain shaders' names), alpha blending (alpha test at every level, as its engine).
+  (its hull and domain shaders' names), alpha blending (alpha test at every level, as its engine), building detail
+  (`draw_set::LodQuality::distance`: every placed model takes the building table, the last LOD drawn to any distance; ASSUMPTION: the
+  editor's models are the engine's type 0x49, and a LOD's +0xa8 is its own index).
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): texture quality, trees, grass, terrain,
-Rome 2's MSAA (drawn without anti-aliasing), building and unit detail (its LOD distance multipliers), lightning and foliage hiding.
+Rome 2's MSAA (drawn without anti-aliasing), unit detail (no units), lightning and foliage hiding.
 
 ## Editor only: the render scale
 

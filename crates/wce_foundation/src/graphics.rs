@@ -219,7 +219,7 @@ const ROME_2_OPTIONS: &[GfxOption] = &[
     opt("gfx_grass_quality", "Grass", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_terrain_quality", "Terrain", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_sky_quality", "Sky", GfxKind::Levels(LEVELS_ROME_2), "4", true),
-    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
+    opt("gfx_building_quality", "Building detail", GfxKind::Levels(LEVELS_ROME_2), "4", true),
     opt("gfx_unit_quality", "Unit detail", GfxKind::Levels(LEVELS_ROME_2), "4", false),
     opt("gfx_effects_quality", "Particle effects", GfxKind::Levels(LEVELS_ROME_2), "4", true),
     opt("gfx_ssao", "SSAO", GfxKind::Toggle, "true", true),

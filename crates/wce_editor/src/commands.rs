@@ -155,7 +155,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion|god_rays> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx <shadow_quality|water_quality|sky_quality|effects_quality|aa|texture_filtering> <level> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
+        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion|god_rays> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx <shadow_quality|water_quality|sky_quality|effects_quality|building_quality|aa|texture_filtering> <level> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
         "renderer features and the detail settings of the tile views (speed against quality)", |e, a| {
             let Some(r) = e.renderer() else { return fail("no renderer") };
             if a.len() != 2 {
@@ -171,6 +171,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 "water_quality" => r.settings.water_quality = atof(&a[1]) as i32,
                 "sky_quality" => r.settings.sky_quality = atof(&a[1]) as i32,
                 "effects_quality" => r.settings.effects_quality = atof(&a[1]) as i32,
+                "building_quality" => r.settings.building_quality = atof(&a[1]) as i32,
                 "aa" => r.settings.aa = atof(&a[1]) as i32,
                 "texture_filtering" => r.settings.texture_filtering = atof(&a[1]) as i32,
                 "view" => {
