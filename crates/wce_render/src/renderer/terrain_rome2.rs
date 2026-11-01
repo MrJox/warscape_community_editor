@@ -102,7 +102,7 @@ impl Renderer {
 
         // ---- 1. The surface.
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom_rome2", &geom_layout()) else { return };
-        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_terrain_rome2.as_ref());
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_input_layout(Some(&geom_il));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

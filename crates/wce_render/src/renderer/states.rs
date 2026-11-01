@@ -25,7 +25,11 @@ pub(crate) struct States {
     pub ds_depth_write: Option<ID3D11DepthStencilState>,
     pub rs_back: Option<ID3D11RasterizerState>,
     pub rs_none: Option<ID3D11RasterizerState>,
-    pub rs_shadow: Option<ID3D11RasterizerState>,
+    /// Rome 2's terrain surface (a capture of a battle at Carthage, 2026-11-01): the shadows' bias, DepthBias 1, SlopeScaledDepthBias 2,
+    /// so the ground's depth is pushed back where the camera grazes it (1.7 game units at 270 on a beach) and the sea covers the shore's
+    /// edge further up.
+    pub rs_terrain_rome2: Option<ID3D11RasterizerState>,
+    pub rs_shadow:Option<ID3D11RasterizerState>,
     pub rs_shadow_terrain: Option<ID3D11RasterizerState>,
     /// Rome 2's (fn 0x11456f70): DepthBias 1, SlopeScaledDepthBias 2.
     pub rs_shadow_rome2: Option<ID3D11RasterizerState>,
@@ -117,6 +121,7 @@ impl States {
         st.rs_back = dev.create_rasterizer_state(&r).ok();
         r.CullMode = D3D11_CULL_NONE;
         st.rs_none = dev.create_rasterizer_state(&r).ok();
+        st.rs_terrain_rome2 = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { DepthBias: 1, SlopeScaledDepthBias: 2.0, ..r }).ok();
 
         let all = D3D11_COLOR_WRITE_ENABLE_ALL as u8;
         st.bs_opaque = blend_state(dev, D3D11_RENDER_TARGET_BLEND_DESC { RenderTargetWriteMask: all, ..Default::default() });

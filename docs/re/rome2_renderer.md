@@ -149,15 +149,22 @@ its square (x, z in [-1024, 1024] around the world origin, the battle's centre; 
   view_projection and its inverse, camera_position_and_reflection_height (eye, 0), min / max water height 0 / 1, tiles_per_dim 256,
   playable_area_size 2048, quality_factor 0.8; textures: scene_tex = the refraction copy, depth_tex = the depth, water_height_tex 256 x
   256 RGBA8) blend the scene's reflection over it (SRC_ALPHA / INV_SRC_ALPHA). Then the sea, before the sky.
-- The sea bed info texture (1024 x 1024 B8G8R8A8, `r * 25 - 20`) holds the tiles' own heights: at the shore the ground is drawn 0.6 m under
-  the texture's value (the LF's share), so the water there is deeper than the texture says, and the shore foam is a wide band.
+- The sea bed info texture (1024 x 1024 B8G8R8A8, `r * 25 - 20`, the same in every capture of the battle) holds the ground as drawn,
+  the LF in: at the shore it is within its 8-bit step of the terrain's vertices (traced with RenderDoc's vertex debugger).
+- The terrain surface (`rigidterrain` geom, events 1323 .. 1535) is drawn with DepthBias 1, SlopeScaledDepthBias 2 (the shadows'
+  state), CULL_FRONT: where the camera grazes the ground its depth lies behind it (1.7 units at 270 units' distance on the beach), so
+  ground positions read back from the depth buffer are too low there (0.5 m at that beach), and the sea, depth-tested against it, covers
+  the shore's edge further up: the wide foam band of the game's shore. The land's LF is the 256 x 256 window (`g_height_map_dimension`
+  256, `g_ws_lf_aabb` (8192, 8192, 16384, 16384), `LF * 3000 - 20`), sampled by a gather whose texel i sits at u = i / 256 (not its
+  centre); the sea tiles' the whole sea LF (4064 x 2874, `* 400`). The terrain mesh is decimated (vertices 2 to 16 units apart on the
+  2-unit grid).
 - The editor's values for that weather equal the game's (sun direction and colour, the deep water colour, the fog, the ambient cube, the
   tone mapper's limits, the S-curve, the black and white points); the light buffer before the tone mapper within a few per cent.
 - The editor (`renderer/reflection.rs`, `ocean.rs`): the mirrored sky and clouds (not the fog pass, no oblique plane), then the game's
   SSR over them; its water height map is one texel (water at 0 everywhere: the game's only skips the pixels with no water under them). The
   sea is drawn around the battle's centre (its camera and cascade constants moved to that frame for the draw,
-  `Renderer::shift_camera_constants`), so the sea bed square, and the foam, stays on the battle as the game's. The sea bed leaves the
-  terrains' LF out.
+  `Renderer::shift_camera_constants`), so the sea bed square, and the foam, stays on the battle as the game's. Its terrain surface takes
+  the game's depth bias (`States::rs_terrain_rome2`).
 - Shadows past the cascades: `g_tBakedShadowBuffer` (4096 x 4096 R16, sampled with a linear LESS_EQUAL comparison, wrapping)
   and `g_vBakedShadowmapScale` (1 / 4272, 1 / 4272, -1 / 439.3), `_Offset` (toroidal, around the camera; depth 0.9467), `_Shear` (the
   sun's x / -y and z / -y times the scale), `_Params` (1 / 1922, 238.7, -1 / 47.74, 6): see `renderer/shadow_baked.rs`. The light pass
@@ -165,10 +172,6 @@ its square (x, z in [-1024, 1024] around the world origin, the battle's centre; 
   shadowed).
 - The terrain resolve's and the grass's `ps_height_map_cb`: `g_mid_distance_details` (20, 400, 3, 0.6) in game units, `g_noise_params`
   (0.7, 0.3, 0.001, 0); grass_PS `g_inv_lod_distance` 0.005, `g_alpha` (1, 0.75), `g_normal_scale_bias` (2, -1), `g_distance_scale` 1.
-- Open: the shore foam band is still narrower than the game's at Carthage: the game's ground there is 0.6 m under its sea bed, the
-  editor's 0.07 m. The game's land LF is a 256 x 256 window over 16384 units (64 units a texel, `LF * 3000 - 20`; the sea tiles' the sea
-  LF, 4064 x 2874, at `LF * 400 - 20`); the editor samples the campaign's 8128 x 5748 LF: the two differ by about 0.5 m at that coast. To
-  compare the window texture with the campaign LF there.
 
 ## Rivers and water planes (`water.rs`)
 
