@@ -94,6 +94,11 @@ pub(crate) struct MsTargets {
     pub channels: [Target; 3],
     pub hdr: Target,
     pub depth: DepthStencil,
+
+    /// The environment specular pass's stand-in for the depth-stencil it reads (`t_depth_stencil_int_ms`), as `PostTargets::stencil`
+    /// is without MSAA: the stencil 1 in .y everywhere. The real stencil has Attila's rivers and the terrain at 2, which the pass skips
+    /// (it runs where the low bits are 1): their reflection was lost with MSAA.
+    pub stencil: Target,
 }
 
 /// A depth-stencil texture's view.
@@ -143,6 +148,7 @@ impl GBuffer {
             channels: std::array::from_fn(|_| make_target_ms(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples)),
             hdr: make_target_ms(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, samples),
             depth: DepthStencil::new(dev, w, h, samples),
+            stencil: make_target_ms(dev, w, h, DXGI_FORMAT_R8G8_UINT, samples),
         }).filter(|m| m.channels.iter().chain([&m.hdr]).all(|t| t.rtv.is_some() && t.srv.is_some()) && m.depth.dsv.is_some() && m.depth.depth_srv.is_some());
 
         Self {
