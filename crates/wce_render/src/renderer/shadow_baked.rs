@@ -107,7 +107,7 @@ impl Renderer {
 
     /// Makes the baked map again when what it shows changed (Rome 2, shadows on), and sets its constants.
     pub(crate) fn pass_baked_shadows(&mut self, scene: &RenderScene, cam: &Camera, light_dir: Float3) {
-        if self.game != game::RenderGame::Rome2 || !self.settings.shadows || self.env.active {
+        if self.game != game::RenderGame::Rome2 || !self.settings.shadows || self.env.active || std::env::var("WCE_NOBAKED").is_ok() {
             self.baked.valid = false;
             self.set_baked_constants(Float3::default());
             return;
@@ -204,7 +204,8 @@ impl Renderer {
         self.draw_stats.shadow_instances += instances;
         self.draw_stats.shadow_triangles += triangles;
 
-        // The trees, alpha-tested on their diffuse map.
+        // The trees, alpha-tested on their diffuse map, two-sided.
+        self.ctx.set_rasterizer_state(self.states.rs_shadow_rome2.as_ref());
         let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));

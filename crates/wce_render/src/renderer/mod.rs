@@ -283,6 +283,10 @@ pub(crate) const SKY_CUBE: u32 = 256;
 
 /// The cascaded shadow atlas: 2048^2, four 1024^2 quadrants (the layout of the game's g_split_uv_texture_bounds).
 pub(crate) const SHADOW_SIZE: u32 = 2048;
+
+/// Rome 2's cascaded shadow atlas. The game's at the highest shadow quality is 4096 (a RenderDoc capture of a battle: 2048 x 2048
+/// quadrants); at 4096 the editor's roofs came out uniformly shadowed (not traced yet), so it stays at Attila's 2048.
+pub(crate) const ROME2_SHADOW_SIZE: u32 = 2048;
 pub(crate) const READBACK_RING: usize = 4;
 
 /// Compiles a helper shader.
@@ -975,7 +979,7 @@ impl Renderer {
             gbuffer: GBuffer::default(),
             gbuffer_samples: 1,
             post: PostTargets::default(),
-            shadow_map: ShadowMap::new(dev),
+            shadow_map: ShadowMap::new(dev, SHADOW_SIZE),
             baked: shadow_baked::BakedShadow::default(),
             draw_lists: SceneDraws::default(),
             camera: CameraState::default(),

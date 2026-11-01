@@ -269,8 +269,8 @@ impl Renderer {
         ps_samplers(&self.ctx, &ps, &self.states.s_wrap_linear);
         bind_srv(&self.ctx, &ps, "s_dissolve_map", dissolve.as_ref());
         for (c, vp) in light_vp.iter().enumerate() {
-            let half = SHADOW_SIZE as f32 / 2.0;
-            self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * SHADOW_SIZE as f32, super::passes::SHADOW_BOUNDS[c][1] * SHADOW_SIZE as f32, half, half)]);
+            let half = self.shadow_map.size as f32 / 2.0;
+            self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32, super::passes::SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32, half, half)]);
             self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
             self.upload();
             let mut first = 0u32;
