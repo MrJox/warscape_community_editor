@@ -231,13 +231,18 @@ impl Renderer {
         }
     }
 
-    /// The quality options' levels that switch LODs off: the building, unit and tree levels (all at their highest: none), not in Rome 2
-    /// (its pass is not found).
+    /// The quality options' LOD rules: Attila's and Thrones of Britannia's LODs switched off by the building, unit and tree levels (all at
+    /// their highest: none), Rome 2's building LOD distances by the building level.
     pub(crate) fn lod_quality(&self) -> crate::draw_set::LodQuality {
         let s = &self.settings;
+        if self.game == super::game::RenderGame::Rome2 {
+            let m = crate::draw_set::ROME2_LOD_MULTIPLIER[s.building_quality.clamp(0, 5) as usize];
+            return crate::draw_set::LodQuality { off: None, rome2_building: Some(m) };
+        }
+
         let levels = [s.building_quality, s.unit_quality, s.tree_quality];
-        let off = self.game != super::game::RenderGame::Rome2 && levels.iter().any(|&l| l < 2);
-        crate::draw_set::LodQuality(off.then_some(levels))
+        let off = levels.iter().any(|&l| l < 2);
+        crate::draw_set::LodQuality { off: off.then_some(levels), rome2_building: None }
     }
 
     /// The terrain patches of visible terrain entities (their own draw set: a brush stroke only rebuilds this one).

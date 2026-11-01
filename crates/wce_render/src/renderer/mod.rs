@@ -497,8 +497,8 @@ pub struct RenderSettings {
     /// ultra).
     pub water_quality: i32,
 
-    /// gfx_building_quality, gfx_unit_quality, gfx_tree_quality: the first LODs of some models are switched off at the low levels
-    /// (`draw_set::LodQuality`).
+    /// gfx_building_quality, gfx_unit_quality, gfx_tree_quality: the first LODs of some models are switched off at the low levels; Rome 2's
+    /// building level sets the buildings' LOD distances (`draw_set::LodQuality`).
     pub building_quality: i32,
     pub unit_quality: i32,
     pub tree_quality: i32,
